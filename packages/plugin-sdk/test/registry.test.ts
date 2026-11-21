@@ -4,14 +4,15 @@ import {
   createExtensionKindRegistry,
   createLingExtensionRegistry,
 } from "../dist/index.js";
+import type { RunnerExtensionMetadata, ToolExtensionMetadata } from "../dist/index.js";
 
-function toolExtension(id, kind = "tool") {
+function toolExtension(id: string, kind = "tool"): ToolExtensionMetadata {
   return {
     manifest: {
       id,
       name: `Tool ${id}`,
       version: "0.1.0",
-      kind,
+      kind: kind as "tool",
       trustLevel: "internal",
       capabilities: [id],
     },
@@ -21,7 +22,7 @@ function toolExtension(id, kind = "tool") {
   };
 }
 
-function runnerExtension(id) {
+function runnerExtension(id: string): RunnerExtensionMetadata {
   return {
     manifest: {
       id,
@@ -35,7 +36,7 @@ function runnerExtension(id) {
     supportedTools: ["read"],
     supportedProviderApis: ["openai-completions"],
     eventTypes: ["run_start", "run_end"],
-  };
+  } as unknown as RunnerExtensionMetadata;
 }
 
 test("kind registry rejects wrong kinds and exposes read-only snapshots", () => {
@@ -45,7 +46,7 @@ test("kind registry rejects wrong kinds and exposes read-only snapshots", () => 
   assert.equal(tools.get("tool:read")?.toolName, "read");
   assert.equal(tools.has("tool:read"), true);
   assert.deepEqual(tools.list().map((extension) => extension.manifest.id), ["tool:read"]);
-  assert.throws(() => tools.list().push(toolExtension("tool:write")), /object is not extensible|Cannot add property/);
+  assert.throws(() => (tools.list() as ToolExtensionMetadata[]).push(toolExtension("tool:write")), /object is not extensible|Cannot add property/);
   assert.throws(() => tools.register(toolExtension("runner:pi", "runner")), /expected tool/);
 });
 
@@ -88,7 +89,7 @@ test("manifest validation rejects invalid required fields", () => {
           ...toolExtension("tool:bad-trust").manifest,
           trustLevel: "external",
         },
-      }),
+      } as unknown as ToolExtensionMetadata),
     /trust level/,
   );
 });

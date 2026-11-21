@@ -40,7 +40,9 @@ script changes and opaque validation commands force full regression.
 the existing `test`, `test:ci`, `typecheck` and `typecheck:ci` scripts when all other
 manifest fields and scripts are unchanged. It recognizes complete top-level
 `node --test` globs for `.test.mjs`/`.test.ts`, no-emit package-local `tsc`
-commands, and wrappers around those CI entries and unchanged build prefixes.
+commands, and wrappers around those CI entries and unchanged builds, including
+`corepack pnpm run build`. A local `test` script can call an already verified
+`corepack pnpm typecheck` before its test command.
 Name filters, shell additions, no-op commands, omitted test languages and empty
 discovery retain full scope. Each test entrypoint discovered by the baseline glob
 must retain its directory and basename under the current glob; `.mjs`/`.ts`
@@ -445,6 +447,14 @@ existing test runner. Its `typecheck:ci` checks source and the strict, no-emit
 `packages/remote-protocol/tsconfig.test.json`, including the shared signing fixture
 helper; local `typecheck` builds dependencies and package declarations before
 running the same checks. Tests continue to import the package's `dist` output.
+Remote Client's `test:ci` discovers its four `.test.ts` files with the same Node
+test runner. Its `typecheck:ci` checks source and the strict, no-emit
+`packages/remote-client/tsconfig.test.json`, including the typed signing fixture
+helper. The local `test` command builds package declarations and runs the same
+typecheck before executing the suite.
+Plugin SDK's `test:ci` discovers its two `.test.ts` files with Node's existing
+test runner. Its `typecheck:ci` checks source and the strict, no-emit
+`packages/plugin-sdk/tsconfig.test.json`.
 
 Local fixture and package checks are not evidence of Linux/macOS hosted-runner
 latency. Compare queue, setup, test-file and total durations after the next

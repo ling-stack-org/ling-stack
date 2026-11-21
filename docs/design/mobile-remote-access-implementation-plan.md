@@ -1491,7 +1491,7 @@ than hiding them in one end-to-end script:
 | Approval CAS/service | `packages/core/test/approval-request-store.test.mjs` plus daemon approval tests | PC/Mobile first-decision-wins, one side-effect set, expiry, checkpoint/continuation parity |
 | Remote approval | `packages/daemon/test/remote-approval-facade.test.mjs` | Provenance, redaction, eligibility, critical block, resolve replay, revoke race |
 | Remote creation | `packages/daemon/test/remote-creation-facade.test.mjs` | Atomic normal/direct/channel create, server defaults, catalog, additive member, forbidden fields |
-| Client | `packages/remote-client/test/client.test.mjs` | State machine, reconnect, cold-start snapshot, sequence gap, retry deadline, busy, binding change |
+| Client | `packages/remote-client/test/client.test.ts` | State machine, reconnect, cold-start snapshot, sequence gap, retry deadline, busy, binding change |
 | Mobile unit | `apps/mobile/test/remote-connection-state.test.ts` plus approval/creation contract tests | Secure-key boundary, UI states, shared message adapter, approval/local-auth/race, drafts/forms/pickers |
 | Real-device E2E | `apps/mobile/e2e/remote-access.real-device.md` plus the selected iOS/Android harness | Ling Server direct/relay, Wi-Fi/cellular, background/foreground, PC restart, revoke |
 

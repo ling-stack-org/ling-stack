@@ -57,9 +57,11 @@ export function packageValidationScope({ current, previous, directory, root, rep
       }
     }
     const buildCommands = typeof candidate.build === "string" ? candidate.build.split(" && ") : [];
-    const prefixes = ["", "corepack pnpm build && ",
+    const buildPrefixes = ["", "corepack pnpm build && ", "corepack pnpm run build && ",
       ...buildCommands.map((_, index) => `${buildCommands.slice(0, index + 1).join(" && ")} && `)];
-    for (const task of ["test", "typecheck"]) {
+    // The local test command can call the verified local typecheck command.
+    for (const task of ["typecheck", "test"]) {
+      const prefixes = task === "test" ? [...buildPrefixes, "corepack pnpm typecheck && "] : buildPrefixes;
       const suffixes = [candidate[`${task}:ci`], `corepack pnpm ${task}:ci`];
       if (!prefixes.some(prefix => suffixes.some(suffix => candidate[task] === prefix + suffix))) return undefined;
     }

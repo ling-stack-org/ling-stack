@@ -1,26 +1,52 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { RemoteSessionClient } from "../dist/index.js";
+import type {
+  RemoteBindingV1,
+  RemoteSocketCloseEvent,
+  RemoteSocketMessageEvent,
+  RemoteWebSocketLike,
+} from "../dist/index.js";
+import { fixture } from "./canonical-signing-fixture.ts";
 
-const fixture = JSON.parse(await readFile(new URL("../../remote-protocol/fixtures/v1/canonical-signing.json", import.meta.url), "utf8"));
 const now = "2026-07-31T10:00:00.000Z";
 
-class FakeSocket {
+interface SentFrame {
+  readonly type?: string;
+  readonly candidateSessionId?: string;
+  readonly payload?: {
+    readonly scope?: { readonly workspaceId?: string };
+    readonly ackServerSeq?: number;
+  };
+  readonly [key: string]: unknown;
+}
+
+class FakeSocket implements RemoteWebSocketLike {
   readyState = 0;
-  sent = [];
-  listeners = { open: [], message: [], close: [], error: [] };
+  sent: SentFrame[] = [];
+  listeners: {
+    open: Array<() => void>;
+    message: Array<(event: RemoteSocketMessageEvent) => void>;
+    close: Array<(event: RemoteSocketCloseEvent) => void>;
+    error: Array<() => void>;
+  } = { open: [], message: [], close: [], error: [] };
 
-  addEventListener(type, listener) {
-    this.listeners[type].push(listener);
+  addEventListener(
+    type: "open" | "message" | "close" | "error",
+    listener: (() => void) | ((event: RemoteSocketMessageEvent) => void) | ((event: RemoteSocketCloseEvent) => void),
+  ): void {
+    if (type === "open") this.listeners.open.push(listener as () => void);
+    if (type === "message") this.listeners.message.push(listener as (event: RemoteSocketMessageEvent) => void);
+    if (type === "close") this.listeners.close.push(listener as (event: RemoteSocketCloseEvent) => void);
+    if (type === "error") this.listeners.error.push(listener as () => void);
   }
 
-  send(data) {
-    this.sent.push(JSON.parse(data));
+  send(data: string): void {
+    this.sent.push(JSON.parse(data) as SentFrame);
   }
 
-  close(code, reason) {
+  close(code?: number, reason?: string): void {
     this.readyState = 3;
     for (const listener of this.listeners.close) listener({ code, reason });
   }
@@ -30,14 +56,14 @@ class FakeSocket {
     for (const listener of this.listeners.open) listener();
   }
 
-  message(frame) {
+  message(frame: unknown): void {
     for (const listener of this.listeners.message) listener({ data: JSON.stringify(frame) });
   }
 }
 
 test("session authentication restores the binding and starts a full workspace subscription", async () => {
   const socket = new FakeSocket();
-  let binding = {
+  let binding: RemoteBindingV1 | undefined = {
     version: 1,
     status: "active",
     gatewayId: "gateway-fixture-1",
@@ -55,13 +81,13 @@ test("session authentication restores the binding and starts a full workspace su
     clock: { now: () => now },
     entropy: {
       randomBytes: (length) => new Uint8Array(length).fill(2),
-      randomId: (() => { let sequence = 0; return (prefix) => `${prefix}_${++sequence}`; })(),
+      randomId: (() => { let sequence = 0; return (prefix: string) => `${prefix}_${++sequence}`; })(),
     },
     keys: {
       generateOrLoad: async () => { throw new Error("not_used"); },
       sign: async () => fixture.authProof.signatureBase64Url,
       verify: async () => true,
-      delete: async () => undefined,
+      delete: async (): Promise<void> => undefined,
     },
     bindingStore: {
       read: async () => binding,
@@ -75,9 +101,9 @@ test("session authentication restores the binding and starts a full workspace su
     },
     http: {
       getJson: async () => { throw new Error("not_used"); },
-      postJson: async (_origin, path, body) => {
+      postJson: async <T>(_origin: string, path: string, body: unknown) => {
         assert.equal(path, "/v1/auth/challenge");
-        assert.equal(body.deviceId, "device-fixture-1");
+        assert.equal((body as { deviceId?: string }).deviceId, "device-fixture-1");
         return {
           status: 200,
           body: {
@@ -91,11 +117,11 @@ test("session authentication restores the binding and starts a full workspace su
             expiresAt: "2026-07-31T10:00:30.000Z",
             supportedProtocolVersions: [1],
             gatewaySignature: fixture.authChallenge.signatureBase64Url,
-          },
+          } as T,
         };
       },
     },
-    webSocketFactory: (url) => {
+    webSocketFactory: (url: string) => {
       assert.equal(url, "wss://ling-pc.example.ts.net/v1/session");
       return socket;
     },
@@ -137,9 +163,9 @@ test("session authentication restores the binding and starts a full workspace su
 
   assert.equal(client.state.connection, "connected");
   assert.equal(client.state.workspaceBindingId, "workspace-binding-1");
-  assert.equal(binding.workspaceBindingId, "workspace-binding-1");
-  assert.ok(socket.sent.some((frame) => frame.type === "stream.subscribe" && frame.payload.scope.workspaceId === "default"));
-  assert.ok(socket.sent.some((frame) => frame.type === "stream.ack" && frame.payload.ackServerSeq === 1));
+  assert.equal((binding as RemoteBindingV1).workspaceBindingId, "workspace-binding-1");
+  assert.ok(socket.sent.some((frame) => frame.type === "stream.subscribe" && (frame.payload as { scope: { workspaceId: string } }).scope.workspaceId === "default"));
+  assert.ok(socket.sent.some((frame) => frame.type === "stream.ack" && (frame.payload as { ackServerSeq: number }).ackServerSeq === 1));
 
   const sentBeforeGap = socket.sent.length;
   socket.message({
@@ -150,13 +176,13 @@ test("session authentication restores the binding and starts a full workspace su
   });
   await waitFor(() => socket.sent.slice(sentBeforeGap).some((frame) => frame.type === "snapshot.request"));
   assert.equal(
-    socket.sent.slice(sentBeforeGap).some((frame) => frame.type === "stream.ack" && frame.payload.ackServerSeq === 3),
+    socket.sent.slice(sentBeforeGap).some((frame) => frame.type === "stream.ack" && (frame.payload as { ackServerSeq: number }).ackServerSeq === 3),
     false,
   );
   client.disconnect();
 });
 
-async function waitFor(predicate) {
+async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 1));

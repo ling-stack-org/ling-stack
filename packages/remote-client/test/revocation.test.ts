@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { RemoteSessionClient } from "../dist/index.js";
+import type {
+  RemoteBindingV1,
+  RemoteHttpClient,
+  RemoteSocketCloseEvent,
+  RemoteSocketMessageEvent,
+  RemoteWebSocketLike,
+} from "../dist/index.js";
+import { fixture } from "./canonical-signing-fixture.ts";
 
-const fixture = JSON.parse(await readFile(new URL("../../remote-protocol/fixtures/v1/canonical-signing.json", import.meta.url), "utf8"));
-const binding = {
+const binding: RemoteBindingV1 = {
   version: 1,
   status: "active",
   gatewayId: "gateway-fixture-1",
@@ -33,14 +39,19 @@ const authChallenge = {
 };
 
 test("local revocation attempts every cleanup step and can retry after a partial failure", async () => {
-  const operations = [];
+  const operations: Array<[string, string?]> = [];
   let failFirstWrite = true;
   const client = new RemoteSessionClient({
     binding,
     autoReconnect: false,
+    clock: { now: () => "2026-07-31T10:00:00.000Z" },
+    entropy: {
+      randomBytes: (length) => new Uint8Array(length).fill(2),
+      randomId: (prefix) => `${prefix}_1`,
+    },
     keys: {
       generateOrLoad: async () => { throw new Error("not_used"); },
-      sign: async () => { throw new Error("not_used"); },
+      sign: async (): Promise<string> => { throw new Error("not_used"); },
       verify: async () => false,
       delete: async (keyId) => { operations.push(["delete_key", keyId]); },
     },
@@ -63,7 +74,7 @@ test("local revocation attempts every cleanup step and can retry after a partial
     http: {
       getJson: async () => { throw new Error("not_used"); },
       postJson: async () => { throw new Error("not_used"); },
-    },
+    } satisfies RemoteHttpClient,
     webSocketFactory: () => { throw new Error("not_used"); },
   });
 
@@ -87,7 +98,7 @@ test("local revocation attempts every cleanup step and can retry after a partial
 });
 
 test("revocation invalidates an authentication attempt before it can create a socket", async () => {
-  const signing = deferred();
+  const signing = deferred<string>();
   let signStarted = false;
   let socketCreations = 0;
   const client = new RemoteSessionClient({
@@ -100,7 +111,7 @@ test("revocation invalidates an authentication attempt before it can create a so
     },
     keys: {
       generateOrLoad: async () => { throw new Error("not_used"); },
-      sign: async () => {
+      sign: async (): Promise<string> => {
         signStarted = true;
         return await signing.promise;
       },
@@ -119,8 +130,8 @@ test("revocation invalidates an authentication attempt before it can create a so
     },
     http: {
       getJson: async () => { throw new Error("not_used"); },
-      postJson: async () => ({ status: 200, body: authChallenge }),
-    },
+      postJson: async <T>() => ({ status: 200, body: authChallenge as T }),
+    } satisfies RemoteHttpClient,
     webSocketFactory: () => {
       socketCreations += 1;
       throw new Error("socket_must_not_be_created");
@@ -138,7 +149,7 @@ test("revocation invalidates an authentication attempt before it can create a so
 });
 
 test("a socket close before session ready rejects connect and permits a fresh retry", async () => {
-  const sockets = [];
+  const sockets: RemoteWebSocketLike[] = [];
   const client = new RemoteSessionClient({
     binding,
     autoReconnect: false,
@@ -165,8 +176,8 @@ test("a socket close before session ready rejects connect and permits a fresh re
     },
     http: {
       getJson: async () => { throw new Error("not_used"); },
-      postJson: async () => ({ status: 200, body: authChallenge }),
-    },
+      postJson: async <T>() => ({ status: 200, body: authChallenge as T }),
+    } satisfies RemoteHttpClient,
     webSocketFactory: () => {
       const socket = createClosableSocket();
       sockets.push(socket);
@@ -188,15 +199,15 @@ test("a socket close before session ready rejects connect and permits a fresh re
   client.disconnect();
 });
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((resolvePromise) => {
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
     resolve = resolvePromise;
   });
   return { promise, resolve };
 }
 
-async function waitFor(predicate) {
+async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1));
@@ -204,19 +215,19 @@ async function waitFor(predicate) {
   throw new Error("condition_not_met");
 }
 
-function createClosableSocket() {
-  const listeners = { open: [], message: [], close: [], error: [] };
+function createClosableSocket(): RemoteWebSocketLike {
+  const closeListeners: Array<(event: RemoteSocketCloseEvent) => void> = [];
   return {
     readyState: 0,
-    send() {},
-    addEventListener(type, listener) {
-      listeners[type].push(listener);
+    send: (_data: string): void => undefined,
+    addEventListener: (
+      type: "open" | "message" | "close" | "error",
+      listener: (() => void) | ((event: RemoteSocketMessageEvent) => void) | ((event: RemoteSocketCloseEvent) => void),
+    ): void => {
+      if (type === "close") closeListeners.push(listener as (event: RemoteSocketCloseEvent) => void);
     },
-    close(code, reason) {
-      this.readyState = 3;
-      for (const listener of listeners.close) {
-        listener({ code, reason });
-      }
+    close(code?: number, reason?: string): void {
+      for (const listener of closeListeners) listener({ code, reason });
     },
   };
 }
