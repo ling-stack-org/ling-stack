@@ -3,15 +3,16 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import type {
-  DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceResourceManifestV1,
+  DeviceActionRequestV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceResourceManifestV1,
   DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
-  modbusRtuRegisterCodec, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore,
+  HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
 import { canonicalJsonBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
@@ -123,6 +124,78 @@ test("daemon runtime registers the Modbus codec and restores offline captures wi
   } finally {
     reopened.close();
   }
+});
+
+test("the local protocol workbench imports target-bound capture evidence and resumes the same job after restart", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-workbench-route-"));
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  let server: ReturnType<typeof createDaemonServer> | undefined;
+  let databasePath: string;
+  async function start() {
+    const workspace = createSqliteRunStore(cwd);
+    databasePath = workspace.paths.databasePath;
+    server = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    });
+    await server.start();
+    const address = server.server.address();
+    assert.ok(address && typeof address === "object");
+    return `http://127.0.0.1:${address.port}/v1/device-support/protocol`;
+  }
+  t.after(async () => {
+    await server?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const origin = await start();
+  const targetDeviceId = "offline-rs485";
+  const post = (url: string, body: unknown, extraHeaders: Record<string, string> = {}) => fetch(url, {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
+  });
+  const input = { profileId: "modbus-rtu-registers", targetDeviceId };
+  assert.equal((await fetch(origin + "/profiles")).status, 401);
+  assert.equal((await post(origin + "/sessions", input, { Origin: "https://example.invalid" })).status, 403);
+  const created = await post(origin + "/sessions", input);
+  assert.equal(created.status, 201);
+  const { session } = await created.json() as { session: DeviceDeveloperSessionV1 };
+  assert.equal(session.targetDeviceId, targetDeviceId);
+  assert.equal(session.protocolReplay?.codecVersion, "1.0.0");
+  const replayPath = `/sessions/${session.sessionId}/replay`;
+  const url = origin + replayPath;
+  const at = "2026-11-21T00:00:00.000Z";
+  const capture = new HardwareProtocolWorkbench().capture({
+    captureId: "temperature", targetDeviceId, transport: "rs485", source: "imported", createdAt: at,
+    loss: { reason: "adapter_overrun", droppedFrames: 1 },
+    frames: [{ direction: "rx", bytes: Buffer.from("010302000a3843", "hex"), capturedAt: at }],
+  });
+  const replayInput = { authorizationRevision: session.authorizationRevision, capture };
+  assert.equal((await post(url, { ...replayInput, authorizationRevision: "expired-revision" })).status, 403);
+  assert.equal((await post(url, { ...replayInput, capture: { ...capture, targetDeviceId: "other-target" } })).status, 409);
+  assert.equal((await post(url, { ...replayInput, capture: { ...capture, frames: [{ ...capture.frames[0], digest: "0".repeat(64) }] } })).status, 409);
+  const database = new DatabaseSync(databasePath!);
+  try {
+    database.exec("CREATE TRIGGER fixture_unavailable_capture BEFORE INSERT ON device_protocol_captures BEGIN SELECT RAISE(ABORT, 'capture storage unavailable'); END;");
+    assert.equal((await post(url, replayInput)).status, 503);
+    assert.equal((await fetch(url, { headers })).status, 404);
+    database.exec("DROP TRIGGER fixture_unavailable_capture;");
+  } finally {
+    database.close();
+  }
+  await server?.stop();
+  server = undefined;
+  const reopenedUrl = await start() + replayPath;
+  assert.equal((await post(reopenedUrl, { ...replayInput, capture: { ...capture, captureId: "changed" } })).status, 409);
+  const completed = await post(reopenedUrl, replayInput);
+  assert.equal(completed.status, 201);
+  const result = await completed.json();
+  assert.equal(result.job.taskStatus, "succeeded");
+  assert.equal(result.replay.frames[0].fields.register0, 10);
+  assert.deepEqual(result.replay.loss, capture.loss);
+  assert.equal(result.replay.frames[0].digest, capture.frames[0]?.digest);
+  assert.deepEqual(await (await fetch(reopenedUrl, { headers })).json(), result);
+  const repeated = await post(reopenedUrl, replayInput);
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(await repeated.json(), result);
 });
 
 test("the local daemon activates and rolls back Ed25519-signed resource imports", async t => {

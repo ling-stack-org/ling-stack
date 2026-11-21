@@ -11,6 +11,12 @@ export interface DeviceDeveloperSessionV1 {
   readonly targetKind: DeviceKindV1;
   readonly mode: DeviceSessionModeV1;
   readonly authorizationRevision: string;
+  readonly protocolReplay?: {
+    readonly profileId: string;
+    readonly profileVersion: string;
+    readonly codecId: string;
+    readonly codecVersion: string;
+  };
   readonly artifactDigest?: string;
   readonly status: "created" | "authorized" | "running" | "paused" | "completed" | "failed" | "revoked";
   readonly revision: number;

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type {
+  DeviceKindV1,
   HardwareProtocolCaptureV1, HardwareProtocolCodecManifestV1, HardwareProtocolDecodedFrameV1, HardwareProtocolFrameV1,
   HardwareProtocolProfileV1,
 } from "@ling-stack/contracts";
@@ -85,13 +86,14 @@ export class HardwareProtocolProfileRegistry {
 
   list(): readonly HardwareProtocolProfileV1[] { return [...this.#profiles.values()].sort((left, right) => left.profileId.localeCompare(right.profileId)); }
 
-  resolve(input: { readonly profileId?: string; readonly deviceKind?: string; readonly model?: string; readonly firmwareVersion?: string }): HardwareProtocolProfileV1 {
-    const candidates = input.profileId ? [this.#profiles.get(input.profileId)].filter((profile): profile is HardwareProtocolProfileV1 => profile !== undefined) : this.list();
-    const match = candidates.find(profile => (input.deviceKind === undefined || profile.supportedDeviceKinds.includes(input.deviceKind as HardwareProtocolProfileV1["supportedDeviceKinds"][number]))
-      && (input.model === undefined || profile.supportedModels === undefined || profile.supportedModels.includes(input.model))
-      && (input.firmwareVersion === undefined || profile.supportedFirmwareRanges === undefined || profile.supportedFirmwareRanges.includes(input.firmwareVersion)));
-    if (!match) throw new DeviceFabricError("target_missing", "no protocol profile matches the target facts");
-    return match;
+  resolve(input: { readonly profileId?: string; readonly deviceKind: DeviceKindV1; readonly model?: string; readonly firmwareVersion?: string }): HardwareProtocolProfileV1 {
+    const candidates = this.list().filter(profile => (input.profileId === undefined || profile.profileId === input.profileId)
+      && profile.supportedDeviceKinds.includes(input.deviceKind)
+      && (profile.supportedModels === undefined || (input.model !== undefined && profile.supportedModels.includes(input.model)))
+      && (profile.supportedFirmwareRanges === undefined || (input.firmwareVersion !== undefined && profile.supportedFirmwareRanges.includes(input.firmwareVersion))));
+    if (candidates.length > 1) throw new DeviceFabricError("resource_conflict", "multiple protocol profiles match the target");
+    if (!candidates[0]) throw new DeviceFabricError("target_missing", "no protocol profile matches the target facts");
+    return candidates[0];
   }
 }
 

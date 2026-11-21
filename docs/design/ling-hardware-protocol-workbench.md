@@ -167,4 +167,24 @@ loss, or capture-limit evidence. Replay validates the complete retained capture
 before delivering any frame. The register map for the selected device determines
 meaning, units and scaling.
 
+### Local developer capture replay
+
+Use the authenticated Daemon loopback API to list profiles at
+`GET /v1/device-support/protocol/profiles`. Open a replay session with
+`POST /v1/device-support/protocol/sessions` and the selected `profileId` and
+`targetDeviceId`. When the capture is from a disconnected bench device, the
+target ID is the label already recorded in the capture.
+
+Submit `authorizationRevision` and a capture with source `imported` to
+`POST /v1/device-support/protocol/sessions/:sessionId/replay`. The capture records
+its transport, target, timestamp, ordered frames, base64 bytes, per-frame SHA-256
+digests and optional loss. The response gives the retained job and decoded
+fields, including checksum status, frame digest, direction and time.
+
+The decoder runs against the session's recorded profile and codec revisions.
+`GET` on the same replay URL reconstructs the result from the retained bytes.
+Submitting the same capture after a restart resumes the existing job. A changed
+target, authorization revision or capture digest requires a matching session and job.
+[Daemon replay route](../../packages/daemon/src/features/device-support/protocol-routes.ts)
+
 [D13 delivery and evidence](ling-device-support-platform-implementation-plan.md#d13-hardware-protocol-development-and-debugging)

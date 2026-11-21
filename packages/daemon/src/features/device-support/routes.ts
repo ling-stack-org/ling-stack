@@ -7,6 +7,7 @@ import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
 import type { DeviceDiagnosisRequest } from "./diagnosis-planner.js";
+import { handleDeviceProtocolRoute } from "./protocol-routes.js";
 import { handleDeviceResourceRoute } from "./resource-routes.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
@@ -17,6 +18,7 @@ export async function handleDeviceSupportRoute(
   runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
+  if (url.pathname.startsWith("/v1/device-support/protocol/")) return await handleDeviceProtocolRoute(url, request, response, runtime);
   const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace)$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
