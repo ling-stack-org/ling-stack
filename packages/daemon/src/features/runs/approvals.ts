@@ -102,9 +102,10 @@ export function expireStalePendingApprovals(
     readonly workflowStepId?: string;
     readonly cwd?: string;
     readonly controlPlaneEvents?: ControlPlaneEventHub;
+    readonly now?: string;
   } = {},
 ): void {
-  const now = new Date().toISOString();
+  const now = options.now ?? new Date().toISOString();
   let safety = 0;
   for (;;) {
     const pending = store.listApprovalRequests({

@@ -8,6 +8,7 @@ import { orderCompanionAttentionItems } from "@ling-stack/contracts";
 import type { RunStore, WorkUnit } from "@ling-stack/core";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { terminalReportIsEligibleForDisplay } from "../channels/terminal-report-eligibility.js";
+import { expireStalePendingApprovals } from "../runs/approvals.js";
 
 const DEFAULT_LIMIT = 120;
 const THREAD_PAGE_LIMIT = 100;
@@ -58,6 +59,7 @@ export function buildCompanionAttentionProjection(input: {
     }
   }
 
+  expireStalePendingApprovals(input.store, { cwd: input.cwd, now });
   const pendingApprovals = input.store.listApprovalRequests({ status: "pending", limit: 500 });
   const approvalRunIds = new Set<string>();
   for (const approval of pendingApprovals) {
