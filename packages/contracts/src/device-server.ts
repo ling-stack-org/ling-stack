@@ -1,4 +1,5 @@
 import type { JsonValue } from "./device.js";
+import type { RemoteP256PublicJwkV1 } from "./remote-access.js";
 
 export const LING_SERVER_PEER_FRAME_DEFAULT_BYTES_V1 = 256 * 1024;
 export const LING_SERVER_PEER_FRAME_MAX_BYTES_V1 = 4 * 1024 * 1024;
@@ -78,6 +79,40 @@ export interface LingServerCommandReceiptV1 {
 
 export type LingServerPeerRoleV1 = "gateway" | "mobile";
 export type LingServerTransportRouteV1 = "lan" | "direct" | "relay";
+
+export const LING_SERVER_SIGNAL_PAYLOAD_BYTES_V1 = 32 * 1024;
+
+export type LingServerSignalingOperationV1 =
+  | { readonly kind: "publish"; readonly sequence: number; readonly messageType: "offer" | "answer" | "ice_candidate"; readonly payload: string }
+  | { readonly kind: "poll"; readonly nonce: string; readonly afterSequence: number };
+
+export interface LingServerSignalingInputV1 {
+  readonly version: 1;
+  readonly instanceId: string;
+  readonly installationId: string;
+  readonly applicationKeyFingerprint: string;
+  readonly bindingId: string;
+  readonly routeAttemptId: string;
+  readonly preferredRoute: LingServerTransportRouteV1;
+  readonly peerEpoch: number;
+  readonly gatewayId: string;
+  readonly mobileDeviceId: string;
+  readonly role: LingServerPeerRoleV1;
+  readonly protocolMajor: number;
+  readonly features: readonly string[];
+  readonly expiresAt: string;
+  readonly operation: LingServerSignalingOperationV1;
+}
+
+export interface LingServerSignedSignalingV1 {
+  readonly input: LingServerSignalingInputV1;
+  readonly publicKeyJwk: RemoteP256PublicJwkV1;
+  readonly signature: string;
+}
+
+export type LingServerSignalingResponseV1 =
+  | { readonly kind: "published"; readonly sequence: number; readonly replayed: boolean }
+  | { readonly kind: "signals"; readonly messages: readonly LingServerSignedSignalingV1[]; readonly latestSequence: number; readonly hasMore: boolean };
 
 export interface LingServerRelayCredentialV1 {
   readonly url: string;

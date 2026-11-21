@@ -157,6 +157,16 @@ WebRTC validates the DTLS certificate fingerprint authenticated in that SDP. Ver
 the key, signature, epoch and negotiation scope before installing the remote
 description or accepting candidates. Scope ICE restart to a new route attempt.
 
+For a registered route, the peers read the service instance ID at
+`GET /v1/signaling/instance` and submit ES256-signed messages to
+`POST /v1/signaling`. The active binding supplies each role's key fingerprint.
+The signature covers the instance, installation, application key, epoch, route,
+roles, features, expiry and exact signaling message. Each sender has an ordered
+lane. The other role polls it with a signed, single-use nonce and a cursor. The
+service keeps the signed payloads in memory until expiration. Restart, revoke and
+relay fallback invalidate the earlier signaling scope.
+[Signaling protocol](../../packages/remote-protocol/src/ling-server-signaling.ts)
+
 After the DataChannel opens, authenticate again at the Remote Gateway using the
 paired keys and a fresh application session challenge bound to the verified route.
 Perform protocol negotiation and capability filtering before projection or command

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import type { LingServerSignalingInputV1, LingServerSignedSignalingV1 } from "@ling-stack/contracts";
+import { fingerprintPublicJwkSync, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 
 test("self-hosted Ling Server control plane requires auth and preserves route fallback", async () => {
@@ -88,4 +91,86 @@ test("self-hosted Ling Server restores control metadata after restart", async ()
   } finally {
     await second.stop();
   }
+});
+
+test("paired peers exchange signed signaling over a bounded route and reject replay, tampering and revocation", async t => {
+  let clock = "2026-11-21T00:00:00.000Z";
+  const control = new LingServerControlPlane({ authToken: "server-token", now: () => clock, transport: { features: ["ordered-channel"] } });
+  t.after(() => control.stop());
+  const address = await control.start();
+  const origin = `http://${address.host}:${address.port}`;
+  const send = (base: string, body: unknown) => fetch(base + "/v1/signaling", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const instance = async (base: string) => {
+    const response = await fetch(base + "/v1/signaling/instance");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const { instanceId } = await response.json() as { instanceId: string };
+    return instanceId;
+  };
+  function peerKey() {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const jwk = validateRemoteP256PublicJwkV1(publicKey.export({ format: "jwk" }));
+    return { jwk, privateKey, fingerprint: fingerprintPublicJwkSync(jwk) };
+  }
+  const gateway = peerKey();
+  const mobile = peerKey();
+  const serverKey = peerKey();
+  control.registry.registerInstallation({
+    installationId: "self-hosted", serverOrigin: "https://ling.example", applicationKeyFingerprint: serverKey.fingerprint,
+    revision: 1, status: "active",
+  });
+  control.registry.bindPeers({
+    bindingId: "binding-1", installationId: "self-hosted", gatewayId: "pc-1", mobileDeviceId: "phone-1",
+    gatewayKeyFingerprint: gateway.fingerprint, mobileKeyFingerprint: mobile.fingerprint, epoch: 1, revision: 1, status: "active",
+  });
+  const expiresAt = "2026-11-21T00:03:00.000Z";
+  control.registry.beginRoute({ bindingId: "binding-1", routeAttemptId: "route-1", preferred: "direct", status: "checking", expiresAt });
+  const input = {
+    version: 1, instanceId: await instance(origin), installationId: "self-hosted",
+    applicationKeyFingerprint: serverKey.fingerprint, bindingId: "binding-1", routeAttemptId: "route-1", preferredRoute: "direct", peerEpoch: 1,
+    gatewayId: "pc-1", mobileDeviceId: "phone-1", protocolMajor: 1, features: ["ordered-channel"], expiresAt,
+  } as const;
+  const proof = (body: LingServerSignalingInputV1, key: ReturnType<typeof peerKey>): LingServerSignedSignalingV1 => ({
+    input: body, publicKeyJwk: key.jwk,
+    signature: sign("sha256", lingServerSignalingSigningBytes(body), { key: key.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url"),
+  });
+  const offer = { kind: "publish", messageType: "offer", sequence: 1, payload: "v=0\r\ns=ling-pc-fixture\r\n" } as const;
+  const signedOffer = proof({ ...input, role: "gateway", operation: offer }, gateway);
+  assert.equal((await send(origin, { ...signedOffer, input: { ...signedOffer.input, operation: { ...offer, payload: "changed" } } })).status, 403);
+  assert.equal((await send(origin, proof({ ...input, role: "gateway", operation: offer }, mobile))).status, 403);
+  assert.equal((await send(origin, proof({ ...input, role: "gateway", operation: { ...offer, sequence: 2 } }, gateway))).status, 409);
+  assert.deepEqual(await (await send(origin, signedOffer)).json(), { kind: "published", sequence: 1, replayed: false });
+  assert.deepEqual(await (await send(origin, signedOffer)).json(), { kind: "published", sequence: 1, replayed: true });
+  assert.equal((await send(origin, proof({ ...input, role: "gateway", operation: { ...offer, payload: "different valid message" } }, gateway))).status, 409);
+  const poll = { kind: "poll", afterSequence: 0, nonce: randomBytes(32).toString("base64url") } as const;
+  const phoneRead = proof({ ...input, role: "mobile", operation: poll }, mobile);
+  assert.deepEqual(await (await send(origin, phoneRead)).json(), { kind: "signals", messages: [signedOffer], latestSequence: 1, hasMore: false });
+  assert.equal((await send(origin, phoneRead)).status, 409);
+  const answer = proof({ ...input, role: "mobile",
+    operation: { kind: "publish", messageType: "answer", sequence: 1, payload: "v=0\r\ns=ling-mobile-fixture\r\n" },
+  }, mobile);
+  assert.equal((await send(origin, answer)).status, 200);
+  const pcRead = proof({ ...input, role: "gateway", operation: { ...poll, nonce: randomBytes(32).toString("base64url") } }, gateway);
+  assert.deepEqual((await (await send(origin, pcRead)).json()).messages, [answer]);
+  const cursor = proof({ ...input, role: "mobile", operation: { ...poll, afterSequence: 1, nonce: randomBytes(32).toString("base64url") } }, mobile);
+  assert.deepEqual((await (await send(origin, cursor)).json()).messages, []);
+  assert.equal((await send(origin, proof({ ...input, role: "mobile", operation: { ...offer, payload: "x".repeat(33_000) } }, mobile))).status, 400);
+  await control.stop();
+  const restarted = await control.start();
+  const reopenedOrigin = `http://${restarted.host}:${restarted.port}`;
+  const nextInstance = await instance(reopenedOrigin);
+  assert.notEqual(nextInstance, input.instanceId);
+  assert.equal((await send(reopenedOrigin, signedOffer)).status, 403);
+  const nextOffer = proof({ ...signedOffer.input, instanceId: nextInstance }, gateway);
+  assert.equal((await send(reopenedOrigin, nextOffer)).status, 200);
+  control.registry.failoverRoute("route-1", clock);
+  assert.equal((await send(reopenedOrigin, nextOffer)).status, 403);
+  const relayOffer = proof({ ...nextOffer.input, preferredRoute: "relay" }, gateway);
+  assert.equal((await send(reopenedOrigin, relayOffer)).status, 200);
+  clock = expiresAt;
+  assert.equal((await send(reopenedOrigin, relayOffer)).status, 403);
+  clock = "2026-11-21T00:02:00.000Z";
+  control.registry.revokeBinding("binding-1", 2);
+  assert.equal((await send(reopenedOrigin, relayOffer)).status, 403);
 });

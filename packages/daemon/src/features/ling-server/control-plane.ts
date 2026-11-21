@@ -1,7 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
+import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
+import { RemoteProtocolError } from "@ling-stack/remote-protocol";
+import { LingServerSignaling } from "./signaling.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -37,6 +39,8 @@ export class LingServerControlPlane {
   readonly #relayIssuer?: LingServerRelayCredentialIssuer;
   #storeClosed = false;
   #server?: Server;
+  #signaling?: LingServerSignaling;
+  #signalExpiryTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: LingServerControlPlaneOptions) {
     if (!options.authToken.trim()) throw new Error("Ling Server control auth token is required");
@@ -67,12 +71,20 @@ export class LingServerControlPlane {
       server.listen(this.#port, this.#host, () => { server.off("error", reject); resolve(); });
     });
     this.#server = server;
+    this.#signaling = new LingServerSignaling({
+      registry: this.registry, protocolMajor: this.#transportOptions.protocolMajor ?? 1,
+      features: this.#transportOptions.features ?? [], now: this.#now,
+    });
+    this.#signalExpiryTimer = setInterval(() => this.#signaling?.purge(), 5_000);
+    this.#signalExpiryTimer.unref();
     return this.address();
   }
 
   async stop(): Promise<void> {
     const server = this.#server;
     this.#server = undefined;
+    clearInterval(this.#signalExpiryTimer);
+    this.#signaling = undefined;
     if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
     if (this.#ownsStore && !this.#storeClosed) {
       this.#store?.close();
@@ -89,6 +101,14 @@ export class LingServerControlPlane {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && url.pathname === "/healthz") {
       writeJson(response, 200, { status: "ok", generatedAt: this.#now() });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/signaling/instance") {
+      writeJson(response, 200, { instanceId: this.#signaling?.instanceId });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/signaling") {
+      await this.exchangeSignaling(request, response);
       return;
     }
     if (!safeToken(request.headers.authorization, this.#authToken)) {
@@ -108,7 +128,9 @@ export class LingServerControlPlane {
       const revoke = /^\/v1\/bindings\/([^/]+)\/revoke$/u.exec(url.pathname);
       if (request.method === "POST" && revoke) {
         const input = requireBody<{ readonly revision: number }>(body);
-        writeJson(response, 200, this.registry.revokeBinding(decodeURIComponent(revoke[1]!), input.revision));
+        const revoked = this.registry.revokeBinding(decodeURIComponent(revoke[1]!), input.revision);
+        this.#signaling?.purge();
+        writeJson(response, 200, revoked);
         return;
       }
       if (request.method === "POST" && url.pathname === "/v1/routes") {
@@ -183,6 +205,27 @@ export class LingServerControlPlane {
       writeJson(response, 404, { error: "not_found" });
     } catch (error) {
       writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  private async exchangeSignaling(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = await readJson(request).catch(() => undefined);
+    if (body === undefined) {
+      writeJson(response, 400, { error: "invalid_signaling_request" });
+      return;
+    }
+    try {
+      if (!this.#signaling) {
+        writeJson(response, 503, { error: "signaling_unavailable" });
+        return;
+      }
+      writeJson(response, 200, this.#signaling.exchange(body));
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_signaling_request" });
+      else if (error instanceof DeviceFabricError) {
+        const status = error.code === "lease_busy" ? 429 : error.code === "revision_conflict" ? 409 : 403;
+        writeJson(response, status, { error: status === 403 ? "signaling_denied" : error.code });
+      } else writeJson(response, 503, { error: "signaling_unavailable" });
     }
   }
 }
