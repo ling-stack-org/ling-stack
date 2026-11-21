@@ -22,8 +22,9 @@ export async function handleDeviceSupportRoute(
   const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace)$/u.exec(url.pathname);
   const dispatchStop = /^\/v1\/device-support\/devices\/([^/]+)\/dispatch-stop$/u.exec(url.pathname)?.[1];
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
+  const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
-  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !dispatchStop && !linuxAction && !fleetHealth) return false;
+  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !dispatchStop && !linuxAction && !homeAssistant && !fleetHealth) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2] === "trace", request, response, runtime);
@@ -35,6 +36,10 @@ export async function handleDeviceSupportRoute(
   }
   if (linuxAction) {
     await handleLinuxSshRequest(linuxAction, request, response, runtime);
+    return true;
+  }
+  if (homeAssistant) {
+    await handleHomeAssistantDiagnosis(request, response, runtime);
     return true;
   }
   if (fleetHealth) {
@@ -68,6 +73,26 @@ export async function handleDeviceSupportRoute(
     writeDeviceOperationError(response, error);
   }
   return true;
+}
+
+async function handleHomeAssistantDiagnosis(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("Allow", "POST");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const body = await readJsonBody(request, 4096).catch(() => undefined);
+    if (!isRecord(body) || typeof body.entityId !== "string" || body.entityId.length > 160
+      || !/^[a-z0-9_]+\.[a-z0-9_]+$/u.test(body.entityId)) {
+      throw new DeviceBrokerError("invalid_request", "Home Assistant diagnosis requires an entity ID");
+    }
+    const { entityId, ...options } = body;
+    const { status, report } = await runtime.diagnoseHomeAssistant(entityId, readDiagnosisOptions(options));
+    writePrivateJson(response, 200, { status, report });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
 }
 
 async function handleDispatchStop(

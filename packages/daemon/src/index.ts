@@ -19,6 +19,7 @@ import {
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   createCompositeSecretResolver,
+  isSupportedSecretRef,
   getRunSummaryPath,
   resolveStoragePaths,
   type RunStore,
@@ -162,6 +163,7 @@ import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-f
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
+import { parseHomeAssistantOrigin } from "./features/device-support/adapters/home-assistant.js";
 import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
 import { readDeviceResourceTrustPolicy } from "./features/device-support/resource-trust.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
@@ -303,6 +305,13 @@ export function createDaemonServer(
   const resolvedConfig = resolveConfig(config);
   const linuxSshTargets = readLinuxSshTargets(config.deviceSupport?.linuxSshTargetsFile ?? process.env.LING_STACK_DEVICE_SSH_TARGETS_FILE);
   const deviceResourceTrust = readDeviceResourceTrustPolicy(config.deviceSupport?.resourceTrustFile ?? process.env.LING_STACK_DEVICE_RESOURCE_TRUST_FILE);
+  const homeAssistantOrigin = config.deviceSupport?.homeAssistant?.origin ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_ORIGIN;
+  const homeAssistantTokenRef = config.deviceSupport?.homeAssistant?.tokenRef ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_TOKEN_REF;
+  if ((homeAssistantOrigin !== undefined || homeAssistantTokenRef !== undefined)
+    && (!homeAssistantOrigin || !homeAssistantTokenRef || !isSupportedSecretRef(homeAssistantTokenRef))) {
+    throw new Error("Home Assistant startup configuration requires an origin and a secret reference");
+  }
+  const homeAssistantBaseUrl = homeAssistantOrigin ? parseHomeAssistantOrigin(homeAssistantOrigin) : undefined;
   const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner, resolvedConfig);
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
@@ -1011,6 +1020,9 @@ export function createDaemonServer(
   const deviceSupport = createDeviceSupportRuntime({
     databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
     resourceTrust: deviceResourceTrust,
+    ...(homeAssistantBaseUrl && homeAssistantTokenRef ? { homeAssistant: {
+      baseUrl: homeAssistantBaseUrl, token: () => secretResolver.resolve(homeAssistantTokenRef).value,
+    } } : {}),
     createDiagnosisPlanner: createDeviceDiagnosisPlanner({ store: defaultWorkspaceStore, runnerRegistry, secretResolver }),
   });
   const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null

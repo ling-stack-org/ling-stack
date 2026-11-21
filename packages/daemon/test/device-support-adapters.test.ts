@@ -69,9 +69,11 @@ test("Home Assistant adapter keeps credentials out of the profile and distinguis
       const url = String(input);
       calls.push({ url, method: init?.method ?? "GET", authorization: new Headers(init?.headers).get("authorization") ?? undefined });
       if (url.endsWith("/api/config")) return new Response(JSON.stringify({ version: "2026.11" }), { status: 200 });
-      if (url.endsWith("/api/states/light.kitchen")) return new Response(JSON.stringify({ state: "on", attributes: { brightness: 50 } }), { status: 200 });
+      if (url.endsWith("/api/states/light.kitchen")) return new Response(JSON.stringify({
+        entity_id: "light.kitchen", state: "on", attributes: { brightness: 50 },
+      }), { status: 200 });
       if (url.endsWith("/api/states/sensor.unavailable")) return new Response(JSON.stringify({
-        state: "unavailable", attributes: { message: "Untrusted device text" },
+        entity_id: "sensor.unavailable", state: "unavailable", attributes: { message: "Untrusted device text" },
       }), { status: 200 });
       return new Response("missing", { status: 404 });
     },

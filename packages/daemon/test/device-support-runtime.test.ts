@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,13 +13,81 @@ import type {
   DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
-  buildOwnedDevicePlanningInput, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
+  buildOwnedDevicePlanningInput, createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
   HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
 import { canonicalJsonBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
+
+test("the configured Home Assistant instance supplies PC-owned diagnosis evidence", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-home-assistant-"));
+  const workspace = createSqliteRunStore(cwd);
+  const accessToken = "fixture-ha-access-token";
+  const paths: string[] = [];
+  const home = createServer((req, res) => {
+    if (req.headers.authorization !== `Bearer ${accessToken}`) {
+      res.writeHead(401).end();
+      return;
+    }
+    paths.push(req.url ?? "");
+    if (req.url === "/api/config") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "2026.11.4" }));
+    } else if (req.url === "/api/states/sensor.garage") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+        entity_id: "sensor.garage", state: "unavailable", attributes: { description: "private device output" },
+      }));
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  t.after(async () => {
+    await daemon?.stop();
+    await new Promise<void>(resolve => home.close(() => resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  home.listen(0, "127.0.0.1");
+  await once(home, "listening");
+  const homeAddress = home.address();
+  assert.ok(homeAddress && typeof homeAddress === "object");
+  const authToken = "fixture-daemon-authority";
+  daemon = createDaemonServer({
+    host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd,
+    deviceSupport: { homeAssistant: { origin: `http://127.0.0.1:${homeAddress.port}`, tokenRef: "env:HA_FIXTURE" } },
+  }, {
+    storeFactory: () => workspace, secretResolver: createEnvSecretResolver({ HA_FIXTURE: accessToken }),
+    chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}/v1/device-support`;
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const post = (body: object, extraHeaders: Record<string, string> = {}) => fetch(base + "/home-assistant/diagnose", {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
+  });
+  assert.equal((await post({ entityId: "sensor.garage" }, { Origin: "https://foreign.example" })).status, 403);
+  assert.equal((await post({ entityId: "sensor.garage", origin: "https://other.example" })).status, 400);
+  assert.deepEqual(paths, []);
+  const response = await post({ entityId: "sensor.garage" });
+  assert.equal(response.status, 200);
+  const { status, report } = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
+  assert.equal(status, "succeeded");
+  assert.deepEqual(report.facts.map(fact => fact.value), [{ availability: "unavailable" }]);
+  assert.equal(report.hypotheses[0]?.code, "integration_or_device_issue");
+  assert.deepEqual(paths, ["/api/config", "/api/config", "/api/states/sensor.garage"]);
+  const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    assert.equal(store.getTask(report.taskId)?.ownerKind, "daemon");
+    assert.equal(store.listDevices().find(profile => profile.device.kind === "home_assistant")?.device.firmwareVersion, "2026.11.4");
+    assert.doesNotMatch(JSON.stringify([report, store.listEvents(report.taskId), store.listObservations(report.taskId)]),
+      /private device output|fixture-ha-access-token/u);
+  } finally {
+    store.close();
+  }
+});
 
 test("daemon device-support runtime composes the durable store, broker and remote facade", () => {
   const root = mkdtempSync(join(tmpdir(), "ling-device-runtime-"));

@@ -9,21 +9,19 @@ import type {
   DeviceProfileV1,
   DeviceActionResultV1,
 } from "@ling-stack/contracts";
-import type {
-  DeviceAdapter,
-  DeviceAdapterDiscoveryInput,
-  DeviceAdapterExecutionResult,
-  DeviceAdapterVerificationInput,
-  DeviceAdapterVerificationResult,
+import {
+  DeviceBrokerError,
+  type DeviceAdapter,
+  type DeviceAdapterDiscoveryInput,
+  type DeviceAdapterExecutionResult,
+  type DeviceAdapterVerificationInput,
+  type DeviceAdapterVerificationResult,
 } from "@ling-stack/core";
-import type { JsonValue } from "@ling-stack/contracts";
 
 import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
 
 export interface HomeAssistantEntityRead {
   readonly entityId: string;
-  readonly state?: string;
-  readonly attributes: Record<string, unknown>;
   readonly availability: "available" | "unavailable" | "absent";
   readonly quality: DeviceObservationQualityV1;
   readonly observedAt: string;
@@ -31,7 +29,7 @@ export interface HomeAssistantEntityRead {
 
 export interface HomeAssistantAdapterOptions {
   readonly baseUrl: string;
-  readonly token: string;
+  readonly token: string | (() => string | undefined);
   readonly fetchImpl?: typeof globalThis.fetch;
   readonly now?: () => string;
 }
@@ -93,37 +91,34 @@ const homeAssistantManifest: AdapterManifestV1 = {
 
 export class HomeAssistantAdapter implements DeviceAdapter {
   readonly manifest = homeAssistantManifest;
+  readonly deviceId: string;
   readonly #baseUrl: string;
-  readonly #token: string;
+  readonly #token: HomeAssistantAdapterOptions["token"];
   readonly #fetch: typeof globalThis.fetch;
   readonly #now: () => string;
 
   constructor(options: HomeAssistantAdapterOptions) {
-    const baseUrl = options.baseUrl.trim().replace(/\/+$/u, "");
-    const parsed = new URL(baseUrl);
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-      throw new Error("Home Assistant base URL must not contain credentials or query data");
-    }
-    if (!options.token.trim()) throw new Error("Home Assistant token is required");
-    this.#baseUrl = baseUrl;
+    this.#baseUrl = parseHomeAssistantOrigin(options.baseUrl);
+    this.deviceId = `home-assistant:${createHash("sha256").update(this.#baseUrl).digest("hex").slice(0, 24)}`;
     this.#token = options.token;
     this.#fetch = options.fetchImpl ?? globalThis.fetch;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
 
   async discover(input: DeviceAdapterDiscoveryInput): Promise<DeviceProfileV1> {
-    await this.request("/api/config", { method: "GET", signal: input.signal });
-    const deviceId = `home-assistant:${createHash("sha256").update(this.#baseUrl).digest("hex").slice(0, 24)}`;
+    const version = await this.readVersion(input.signal);
+    const profileRevision = `${this.deviceId}:${version}`;
     return {
       device: {
-        id: deviceId,
+        id: this.deviceId,
         ownerScope: input.ownerId,
         displayName: "Home Assistant",
         kind: "home_assistant",
         vendor: "Home Assistant",
         model: "core",
         lifecycleStatus: "healthy",
-        profileRevision: `ha:${this.#baseUrl}`,
+        firmwareVersion: version,
+        profileRevision,
         runtimeOwnerId: input.ownerId,
         lastSeenAt: this.#now(),
       },
@@ -132,14 +127,29 @@ export class HomeAssistantAdapter implements DeviceAdapter {
       transports: ["https"],
       connectionRefs: [`https:${new URL(this.#baseUrl).host}`],
       transportDeployments: this.manifest.transportDeployments,
-      profileRevision: `ha:${this.#baseUrl}`,
+      profileRevision,
       source: "adapter",
     };
   }
 
   async getCapabilities(input: { readonly profile: DeviceProfileV1; readonly connectionRevision: string; readonly signal?: AbortSignal }): Promise<DeviceCapabilitySnapshotV1> {
-    await this.request("/api/config", { method: "GET", signal: input.signal });
+    this.assertTarget(input.profile);
+    if (await this.readVersion(input.signal) !== input.profile.device.firmwareVersion) {
+      throw new DeviceBrokerError("target_changed", "Home Assistant version changed during enrollment");
+    }
     return createAdapterCapabilitySnapshot(this.manifest, input, this.#now());
+  }
+
+  private async readVersion(signal?: AbortSignal): Promise<string> {
+    const body = await readJson(await this.request("/api/config", { method: "GET", signal }));
+    if (typeof body.version !== "string" || !/^\d{4}\.\d{1,2}(?:\.\d+)?(?:[a-z0-9.+-]{0,24})$/iu.test(body.version)) {
+      throw new DeviceBrokerError("service_unavailable", "Home Assistant did not identify its version");
+    }
+    return body.version;
+  }
+
+  private assertTarget(profile: DeviceProfileV1): void {
+    if (profile.device.id !== this.deviceId) throw new DeviceBrokerError("target_changed", "Home Assistant instance changed");
   }
 
   async readEntity(entityId: string, signal?: AbortSignal): Promise<HomeAssistantEntityRead> {
@@ -147,22 +157,31 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     const observedAt = this.#now();
     const response = await this.request(`/api/states/${encodeURIComponent(entityId)}`, { method: "GET", signal, allowNotFound: true });
     if (response.status === 404) {
-      return { entityId, attributes: {}, availability: "absent", quality: "unknown", observedAt };
+      await response.body?.cancel();
+      return { entityId, availability: "absent", quality: "unknown", observedAt };
     }
     const body = await readJson(response);
+    if (body.entity_id !== entityId) throw new DeviceBrokerError("target_changed", "Home Assistant returned another entity");
     const state = typeof body.state === "string" ? body.state : undefined;
-    const attributes = isRecord(body.attributes) ? body.attributes : {};
     if (!state || state === "unknown" || state === "unavailable") {
-      return { entityId, state, attributes, availability: "unavailable", quality: "degraded", observedAt };
+      return { entityId, availability: "unavailable", quality: "degraded", observedAt };
     }
-    return { entityId, state, attributes, availability: "available", quality: "good", observedAt };
+    return { entityId, availability: "available", quality: "good", observedAt };
   }
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
+    this.assertTarget(input.profile);
     const startedAt = this.#now();
     const args = asObject(input.request.normalizedInput);
     if (input.capability.id === "home_assistant.read_entity") {
-      const entity = await this.readEntity(requireString(args.entityId, "entityId"), input.signal);
+      let entity: HomeAssistantEntityRead;
+      try {
+        entity = await this.readEntity(requireString(args.entityId, "entityId"), input.signal);
+      } catch (error) {
+        if (!(error instanceof DeviceBrokerError)) throw error;
+        return { actionId: input.request.actionId, status: "rejected", errorCode: error.code,
+          startedAt, finishedAt: this.#now(), observationIds: [] };
+      }
       const action: DeviceActionResultV1 = {
         actionId: input.request.actionId,
         status: entity.availability === "absent" ? "rejected" : "completed",
@@ -190,6 +209,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
   }
 
   async verify(input: DeviceAdapterVerificationInput): Promise<DeviceAdapterVerificationResult> {
+    this.assertTarget(input.profile);
     const { request } = input;
     const args = asObject(request.normalizedInput);
     const entityId = typeof args.entityId === "string" ? args.entityId : undefined;
@@ -217,26 +237,34 @@ export class HomeAssistantAdapter implements DeviceAdapter {
       id,
       subjectId,
       source: "home_assistant",
-      value: { entityId: entity.entityId, state: entity.state ?? null, availability: entity.availability, attributes: entity.attributes as Record<string, JsonValue> },
+      value: { entityId: entity.entityId, availability: entity.availability },
       observedAt: entity.observedAt,
       receivedAt: this.#now(),
       freshnessUntil: new Date(Date.parse(entity.observedAt) + 30_000).toISOString(),
       quality: entity.availability === "absent" ? "good" : entity.quality,
-      provenance: [this.#baseUrl, entity.entityId, ...(subjectId === entity.entityId ? [] : [subjectId])],
+      provenance: [this.deviceId, entity.entityId],
       redactionClass: "public",
     };
   }
 
   private async request(path: string, init: RequestInit & { readonly allowNotFound?: boolean }): Promise<Response> {
     const { allowNotFound, ...requestInit } = init;
+    const token = typeof this.#token === "function" ? this.#token() : this.#token;
+    if (!token || token.length > 8192 || !/^[\x21-\x7e]+$/u.test(token)) {
+      throw new DeviceBrokerError("authentication_required", "Home Assistant credential is unavailable");
+    }
+    const deadline = AbortSignal.timeout(8_000);
+    const signal = requestInit.signal ? AbortSignal.any([requestInit.signal, deadline]) : deadline;
     const response = await this.#fetch(`${this.#baseUrl}${path}`, {
       ...requestInit,
-      headers: { accept: "application/json", authorization: `Bearer ${this.#token}`, ...(requestInit.headers ?? {}) },
+      headers: { accept: "application/json", authorization: `Bearer ${token}`, ...(requestInit.headers ?? {}) },
       redirect: "error",
+      signal,
     });
     if (!response.ok && !(allowNotFound && response.status === 404)) {
-      await response.arrayBuffer();
-      throw new Error(`Home Assistant request failed: ${response.status}`);
+      await response.body?.cancel();
+      throw new DeviceBrokerError(response.status === 401 || response.status === 403 ? "permission_denied" : "service_unavailable",
+        "Home Assistant request failed");
     }
     return response;
   }
@@ -244,6 +272,20 @@ export class HomeAssistantAdapter implements DeviceAdapter {
 
 export function homeAssistantAdapterManifest(): AdapterManifestV1 {
   return homeAssistantManifest;
+}
+
+export function parseHomeAssistantOrigin(value: string): string {
+  const failure = new DeviceBrokerError("invalid_request", "Home Assistant requires an HTTPS origin or a loopback HTTP origin");
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw failure;
+  }
+  const loopback = ["127.0.0.1", "[::1]", "localhost"].includes(url.hostname);
+  if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.username || url.password
+    || url.pathname !== "/" || url.search || url.hash || url.origin.length > 480) throw failure;
+  return url.origin;
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
@@ -254,7 +296,10 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 
 async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
   const declared = response.headers.get("content-length");
-  if (declared && Number(declared) > maxBytes) throw new Error("Home Assistant response exceeds the adapter limit");
+  if (declared && Number(declared) > maxBytes) {
+    await response.body?.cancel();
+    throw new Error("Home Assistant response exceeds the adapter limit");
+  }
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -264,7 +309,10 @@ async function readBoundedText(response: Response, maxBytes: number): Promise<st
       const part = await reader.read();
       if (part.done) break;
       total += part.value.byteLength;
-      if (total > maxBytes) throw new Error("Home Assistant response exceeds the adapter limit");
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error("Home Assistant response exceeds the adapter limit");
+      }
       chunks.push(part.value);
     }
   } finally {

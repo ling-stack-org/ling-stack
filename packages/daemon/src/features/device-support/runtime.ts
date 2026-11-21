@@ -4,6 +4,7 @@ import type { DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceL
 import {
   type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
+  createHomeAssistantOfflinePlaybook,
   createLinuxWifiDiagnosisPlaybook,
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
@@ -29,6 +30,7 @@ import {
 } from "@ling-stack/core";
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
 import type { ExternalDeviceAdapter } from "./adapters/external-process.js";
+import { HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
 import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { PcAdapter } from "./adapters/pc.js";
@@ -59,6 +61,7 @@ export interface DeviceSupportRuntime {
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
+  diagnoseHomeAssistant(entityId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
   diagnoseLinuxSshTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
@@ -72,6 +75,7 @@ export function createDeviceSupportRuntime(options: {
   readonly resourceTrust?: DeviceResourceTrustPolicy;
   readonly linuxSshTargets?: readonly ConfiguredLinuxSshTarget[];
   readonly linuxSshRunner?: LocalProcessRunner;
+  readonly homeAssistant?: HomeAssistantAdapterOptions;
   readonly createDiagnosisPlanner?: DeviceDiagnosisPlanner;
   readonly externalAdapters?: readonly ExternalDeviceAdapter[];
 }): DeviceSupportRuntime {
@@ -97,6 +101,7 @@ export function createDeviceSupportRuntime(options: {
   const adapter = new PcAdapter({ executor: new LocalPcTargetExecutor(), now });
   let ssh: ReturnType<typeof bindLinuxSshTargets> | undefined;
   let linuxAdapter: LinuxSshAdapter;
+  let homeAssistant: HomeAssistantAdapter | undefined;
   const linuxTargets = new Map<string, BoundLinuxSshTarget>();
   try {
     protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
@@ -115,6 +120,10 @@ export function createDeviceSupportRuntime(options: {
     ssh = bindLinuxSshTargets(options.linuxSshTargets ?? [], options.linuxSshRunner);
     linuxAdapter = new LinuxSshAdapter({ now, connections: ssh.targets });
     broker.registerAdapter(linuxAdapter);
+    if (options.homeAssistant) {
+      homeAssistant = new HomeAssistantAdapter({ ...options.homeAssistant, now });
+      broker.registerAdapter(homeAssistant);
+    }
     for (const externalAdapter of options.externalAdapters ?? []) {
       if (broker.adapters.get(externalAdapter.manifest.adapterId)) {
         throw new DeviceBrokerError("invalid_request", "external adapter ID is already in use");
@@ -124,8 +133,11 @@ export function createDeviceSupportRuntime(options: {
     for (const target of ssh.targets) linuxTargets.set(linuxSshDeviceId(DEFAULT_WORKSPACE_ID, target.hostKeyFingerprint), target);
     store.withWriteTransaction(() => {
       for (const profile of store.listDevices()) {
-        if (profile.adapterId === linuxAdapter.manifest.adapterId && profile.device.ownerScope === DEFAULT_WORKSPACE_ID
-          && !hasCurrentLinuxConnection(profile)) store.markDeviceOffline(profile.device.id, now());
+        if (profile.device.ownerScope !== DEFAULT_WORKSPACE_ID) continue;
+        if ((profile.adapterId === linuxAdapter.manifest.adapterId && !hasCurrentLinuxConnection(profile))
+          || (profile.adapterId === homeAssistantAdapterManifest().adapterId && profile.device.id !== homeAssistant?.deviceId)) {
+          store.markDeviceOffline(profile.device.id, now());
+        }
       }
     });
   } catch (error) {
@@ -145,7 +157,7 @@ export function createDeviceSupportRuntime(options: {
   const edgeJournal = new EdgeRuntimeJournal({ persistence: fabricStore });
   const fleetProjection = new DeviceFleetProjection();
   let localDiagnosis: { readonly key: string; readonly pending: Promise<DevicePlaybookRunResultV1> } | undefined;
-  const diagnosingLinux = new Set<string>();
+  const activeTargets = new Set<string>();
 
   async function diagnosePc(request: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1> {
     const registered = store.listDevices().find(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID
@@ -221,13 +233,13 @@ export function createDeviceSupportRuntime(options: {
       && profile.connectionRefs[0] === target.connectionRef;
   }
 
-  async function withLinuxTarget<T>(deviceId: string, run: () => Promise<T>): Promise<T> {
-    if (diagnosingLinux.has(deviceId)) throw new DeviceBrokerError("target_busy", "Linux device already has an active operation");
-    diagnosingLinux.add(deviceId);
+  async function withDeviceTarget<T>(deviceId: string, run: () => Promise<T>): Promise<T> {
+    if (activeTargets.has(deviceId)) throw new DeviceBrokerError("target_busy", "device already has an active operation");
+    activeTargets.add(deviceId);
     try {
       return await run();
     } finally {
-      diagnosingLinux.delete(deviceId);
+      activeTargets.delete(deviceId);
     }
   }
 
@@ -268,6 +280,20 @@ export function createDeviceSupportRuntime(options: {
       localDiagnosis ??= { key, pending: diagnosePc(request).finally(() => { localDiagnosis = undefined; }) };
       return await localDiagnosis.pending;
     },
+    async diagnoseHomeAssistant(entityId, request = {}) {
+      const adapter = homeAssistant;
+      if (!adapter) throw new DeviceBrokerError("missing_target", "Home Assistant is not configured on this host");
+      return withDeviceTarget(adapter.deviceId, async () => {
+        const status = store.getDevice(adapter.deviceId)?.device.lifecycleStatus;
+        if (status === "revoked" || status === "retired") {
+          throw new DeviceBrokerError("permission_denied", "Home Assistant registration is no longer active");
+        }
+        const target = await broker.discover(adapter.manifest.adapterId, {
+          ownerId: DEFAULT_WORKSPACE_ID, connectionRef: adapter.deviceId, signal: AbortSignal.timeout(10_000),
+        });
+        return runDiagnosis(target, target.device.id, createHomeAssistantOfflinePlaybook(entityId), request);
+      });
+    },
     listLinuxSshTargets: () => Array.from(linuxTargets, ([deviceId, target]) => {
       const profile = store.getDevice(deviceId);
       return {
@@ -278,7 +304,7 @@ export function createDeviceSupportRuntime(options: {
     }),
     async enrollLinuxSshTarget(connectionId) {
       for (const [deviceId, target] of linuxTargets) {
-        if (target.connectionId === connectionId) return withLinuxTarget(deviceId, () => enrollLinuxTarget(deviceId, target));
+        if (target.connectionId === connectionId) return withDeviceTarget(deviceId, () => enrollLinuxTarget(deviceId, target));
       }
       throw new DeviceBrokerError("missing_target", "Linux SSH connection is unavailable");
     },
@@ -288,7 +314,7 @@ export function createDeviceSupportRuntime(options: {
       if (!sshTarget || profile?.device.ownerScope !== DEFAULT_WORKSPACE_ID || profile.adapterId !== linuxAdapter.manifest.adapterId) {
         throw new DeviceBrokerError("missing_target", "Linux SSH target is not enrolled");
       }
-      return withLinuxTarget(deviceId, async () => {
+      return withDeviceTarget(deviceId, async () => {
         const target = hasCurrentLinuxConnection(profile) && profile.device.lifecycleStatus === "healthy"
           ? profile : await enrollLinuxTarget(deviceId, sshTarget);
         const result = await runDiagnosis(target, target.device.runtimeOwnerId!, createLinuxWifiDiagnosisPlaybook(), request);

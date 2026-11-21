@@ -146,7 +146,11 @@ export class ExternalDeviceAdapter implements DeviceAdapter {
   private startChild(): AdapterChild {
     const child = spawn(this.#options.command, [...(this.#options.args ?? [])], {
       cwd: this.#options.cwd,
-      env: { ...process.env, ...this.#options.env, LING_DEVICE_ADAPTER_PROTOCOL: String(PROTOCOL_VERSION) },
+      env: {
+        ...(process.platform === "win32" && process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+        ...this.#options.env,
+        LING_DEVICE_ADAPTER_PROTOCOL: String(PROTOCOL_VERSION),
+      },
       stdio: ["pipe", "pipe", "ignore"],
       windowsHide: true,
     });

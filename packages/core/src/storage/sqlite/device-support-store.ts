@@ -264,9 +264,10 @@ export class SqliteDeviceSupportStore {
   }
 
   recordApproval(approval: DeviceApprovalBindingV1, principal: DeviceApprovalPrincipalV1 | undefined, now: string): void {
-    const { taskId, recoveryScope: _recoveryScope, ...binding } = approval;
+    const { taskId, ...binding } = approval;
     this.appendEvent(taskId, "approval_recorded", {
       ...binding,
+      ...(approval.recoveryScope === undefined ? {} : { recoveryScope: approval.recoveryScope }),
       ...(principal ? { principal } : {}),
       recordedAt: now,
     }, now);

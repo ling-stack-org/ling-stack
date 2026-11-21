@@ -108,10 +108,7 @@ export function PcDeviceTasksScreen() {
   };
 
   const confirmApproval = (taskId: string, preview: RemoteDeviceApprovalPreviewV1) => {
-    const verification = preview.expectedVerification === undefined
-      ? "执行后由 PC 复测设备状态。"
-      : `复测条件：${compactJson(preview.expectedVerification)}`;
-    Alert.alert("批准设备操作", `${deviceName(preview.targetDeviceId)}\n${preview.capabilityId}\n影响级别：${sideEffectLabel(preview.sideEffect)}\n${verification}`, [
+    Alert.alert("批准设备操作", `${deviceName(preview.targetDeviceId)}\n${preview.capabilityId}\n由 PC 执行 · ${sideEffectLabel(preview.sideEffect)}\n${verificationLabel(preview.expectedVerification)}`, [
       { text: "返回", style: "cancel" },
       { text: "批准执行", onPress: () => void runTaskAction(taskId, { kind: "approve", preview }) },
     ]);
@@ -192,8 +189,8 @@ export function PcDeviceTasksScreen() {
                               <View style={styles.approval}>
                                 {preview ? <View style={styles.approvalSummary}>
                                   <Text style={styles.note}>待确认操作 {preview.capabilityId} · {deviceName(preview.targetDeviceId)}</Text>
-                                  <Text style={styles.note}>影响级别：{sideEffectLabel(preview.sideEffect)}</Text>
-                                  <Text style={styles.note}>{preview.expectedVerification === undefined ? "执行后由 PC 复测设备状态。" : `复测条件：${compactJson(preview.expectedVerification)}`}</Text>
+                                  <Text style={styles.note}>影响级别 {sideEffectLabel(preview.sideEffect)}</Text>
+                                  <Text style={styles.note}>{verificationLabel(preview.expectedVerification)}</Text>
                                 </View> : null}
                                 <View style={styles.actions}>
                                   {preview && canApprove ? <Pressable
@@ -248,16 +245,21 @@ function formatTime(value: string): string {
 }
 
 function sideEffectLabel(value: RemoteDeviceApprovalPreviewV1["sideEffect"]): string {
-  return { read_only: "只读", reversible: "可恢复变更", mutating: "设备变更", irreversible: "不可逆变更", critical: "关键操作" }[value];
+  return { read_only: "只读", reversible: "可逆操作", mutating: "设备变更", irreversible: "不可逆变更", critical: "关键操作" }[value];
 }
 
-function compactJson(value: unknown): string {
-  try {
-    const text = JSON.stringify(value) ?? "";
-    return text.length > 180 ? `${text.slice(0, 177)}…` : text;
-  } catch {
-    return "已声明复测条件";
+function verificationLabel(value: RemoteDeviceApprovalPreviewV1["expectedVerification"]): string {
+  if (value === undefined || value === null) return "任务未提供具体复测条件";
+  if (typeof value !== "object" || Array.isArray(value)) return "PC 将按任务记录复测";
+  const labels: Readonly<Record<string, string>> = {
+    connected: "网络地址", routeAvailable: "路由", gatewayReachable: "网关连通性",
+    dnsReachable: "DNS 连通性", dnsNameResolved: "域名解析", wifiAssociated: "Wi‑Fi 关联",
+  };
+  const entries = Object.entries(value);
+  if (entries.length && entries.every(([key, expected]) => Object.hasOwn(labels, key) && typeof expected === "boolean")) {
+    return `复测 ${entries.map(([key, expected]) => `${labels[key]} ${expected ? "可用" : "不可用"}`).join(" · ")}`;
   }
+  return "PC 将按任务记录复测";
 }
 
 function createStyles(theme: MobileThemeTokens) {
