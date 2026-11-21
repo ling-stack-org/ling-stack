@@ -41,7 +41,7 @@ test("owned IconButton consumers use component props without arbitrary icon geom
   assert.match(source, /icon=\{CollapseIcon\}/u);
 });
 
-function renderDock(collapsed) {
+function renderDock(collapsed: boolean) {
   return renderToStaticMarkup(createElement(RightDockShell, {
     ariaLabel: "Conversation details",
     collapsed,
