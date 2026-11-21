@@ -2,7 +2,7 @@
 
 Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-21 (paired Mobile reconciliation, standalone Home Assistant diagnosis, diagnostic reports, and D14–D22 domain fixtures)
+Last verified: 2026-11-21 (paired Mobile reconciliation, standalone Home Assistant diagnosis, Ling Server peer journaling, Modbus RTU replay, and PC planning evidence)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -675,22 +675,31 @@ only on a successful install or a model response.
 
 - [ ] Build bounded context packs from target relationships, capability snapshots,
   state, evidence, policy, safety facts, freshness, and context budget.
+- [x] Build Daemon planning input from the owning task, current target snapshots
+  and journaled evidence in the same workspace. Project the supported diagnosis
+  fields and preserve the source and freshness of each fact.
 - [x] Preserve trusted fact provenance, observation time, freshness cutoff, quality,
   and redaction metadata while keeping stale, sensitive, and textual output outside
   model facts.
 - [x] Validate typed model or local-playbook proposals against the bound context,
   target scope, capability catalog and dependency graph, and report nodes that need
-  user approval without creating execution evidence.
+  user approval without creating execution evidence. Check each node's owner,
+  target-specific capability snapshot and supplied evidence references.
 - [~] Connect the existing runner and project executor to typed device proposals.
   The core bridge binds runner identity and capability revision, synthesizes typed
   local-playbook graphs, and falls back only when runner planning fails. A concrete
-  Pi/project-executor adapter and durable planning evidence remain open.
+  Pi/project-executor adapter and cross-runtime planning evidence remain open.
+- [x] Record the PC diagnosis playbook plan in the task journal before its first
+  device attempt. Preserve cancellation when a planning request is interrupted.
 - [ ] Keep graph and node authority attached to the owning journals when PC or Mobile
   changes planners. Rebuild the context pack for the selected provider.
 - [ ] Treat device output, logs, captures, and vendor text as untrusted observations.
 
 ### Exit evidence
 
+- The local PC diagnostic entry writes an accepted playbook graph before dispatch,
+  and its owner can rebuild scoped facts from the journal. Tests reject foreign
+  devices, planning references, owners, execution claims, and expired snapshots.
 - A cross-device goal produces a typed graph instead of unscoped tool calls.
 - Context budget and redaction fixtures exclude unrelated devices, credentials,
   unbounded logs, and observation instructions.
@@ -750,7 +759,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D18 | `e25216a21` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Digest-bound installation, optional signature verification, dependency checks, contract/license/platform/device/firmware/permission compatibility, active revision persistence, health disablement and rollback history are implemented | Signed delivery channels, full compatibility policy integration and production adapter registry remain |
 | D19 | `137d06478` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-secrets.ts](../../packages/core/src/device-secrets.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Physical preconditions, emergency stop, target-scoped secret resolution and redacted secret-use records are implemented | Target controllers, policy integration and physical safety acceptance remain |
 | D20 | `f264c06c5` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-access.ts](../../packages/core/src/device-access.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Revisioned lifecycle transitions, ownership transfer history, target-scoped shared/developer access grants and credential rotation/revocation metadata are persisted, with capability, expiry, revoke and revision checks | Fleet projections, upgrade, restore, retirement and field transfer acceptance remain |
-| D21 | `aa8a54cf8` | `corepack pnpm --filter @ling-stack/contracts build:ci`; `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-orchestration.test.ts` | [device-orchestration.ts](../../packages/core/src/device-orchestration.ts), [device-runner.ts](../../packages/core/src/device-runner.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Bounded context packs preserve trusted fact provenance and freshness metadata, typed planner proposals are bound to context, targets, capabilities, graph dependencies and runner identity, and the core bridge synthesizes deterministic local-playbook graphs without turning execution evidence into planning input | Target-scoped context selection, concrete Pi/project-executor integration, durable planning evidence and offline task execution remain |
+| D21 | `aa8a54cf8` and owner-scoped PC planning | Core and Daemon `build:ci` and `typecheck:ci`. Core orchestration, Fabric, broker and Daemon runtime fixtures (34 passed) | [Owner context](../../packages/core/src/device-task-planning-context.ts), [Proposal admission](../../packages/core/src/device-orchestration.ts), [Planner bridge](../../packages/core/src/device-runner.ts), [Daemon runtime test](../../packages/daemon/test/device-support-runtime.test.ts) | PC diagnosis records its local plan before dispatch. The builder projects typed facts from current task evidence. Plan admission verifies each node's owner, snapshot, capability and planning references. Cancelled model requests preserve cancellation | Concrete Pi/project-executor integration, cross-runtime planning evidence and provider switching remain |
 | D22 | `a9c0f3c54` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Cross-layer trace spans and validated conformance reports are persisted and can be read by identity | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
 
 ## Definition of platform completion

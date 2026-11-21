@@ -5,7 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceTaskAttemptV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest, modbusRtuRegisterCodec, SqliteDeviceSupportStore } from "@ling-stack/core";
+import {
+  buildOwnedDevicePlanningInput, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
+  modbusRtuRegisterCodec, SqliteDeviceSupportStore,
+} from "@ling-stack/core";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 
@@ -135,6 +138,20 @@ test("the local daemon diagnostic route records the PC-owned report and rejects 
     assert.equal(tasks[0]?.status, "succeeded");
     assert.equal(tasks[0]?.ownerId, tasks[0]?.targetDeviceIds[0]);
     assert.equal(journal.listObservations(report.taskId).length, 2);
+    const events = journal.listEvents(report.taskId);
+    const planIndex = events.findIndex(event => event.type === "device_plan_accepted");
+    const firstDispatch = events.findIndex(event => event.type === "attempt_prepared");
+    assert.ok(planIndex >= 0 && firstDispatch > planIndex);
+    assert.equal(events[planIndex]?.body.source, "local_playbook");
+    assert.equal(events[planIndex]?.body.taskId, report.taskId);
+    const input = {
+      store: journal, taskId: report.taskId, ownerId: tasks[0]!.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
+      contextId: "fixture-context", maxBytes: 4096, now: new Date().toISOString(),
+    };
+    const planned = buildOwnedDevicePlanningInput(input);
+    assert.deepEqual(planned.context.facts, report.facts.map(fact => fact.value));
+    assert.deepEqual(planned.targets.map(target => target.snapshot.deviceId), tasks[0]?.targetDeviceIds);
+    assert.throws(() => buildOwnedDevicePlanningInput({ ...input, workspaceId: "elsewhere" }), /outside the workspace/);
   } finally {
     journal.close();
   }

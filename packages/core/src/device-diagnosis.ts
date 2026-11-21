@@ -61,11 +61,11 @@ export function buildDeviceDiagnosisReport(input: {
         continue;
       }
       untrustedTextRefs.add(id);
-      if (!isCurrentObservation(observation, input.generatedAt)) {
+      if (!isCurrentDeviceObservation(observation, input.generatedAt)) {
         remainingUncertainty.push({ code: "unusable_observation", ref: id });
         continue;
       }
-      const evidence = projectDiagnosticEvidence(request, observation);
+      const evidence = projectDeviceDiagnosticEvidence(request, observation);
       if (!evidence) {
         remainingUncertainty.push({ code: "unusable_observation", ref: id });
         continue;
@@ -96,7 +96,7 @@ export function buildDeviceDiagnosisReport(input: {
   };
 }
 
-function isCurrentObservation(observation: DeviceObservationV1, now: string): boolean {
+export function isCurrentDeviceObservation(observation: DeviceObservationV1, now: string): boolean {
   return (observation.quality === "good" || observation.quality === "degraded")
     && observation.redactionClass === "public"
     && Date.parse(observation.observedAt) <= Date.parse(now)
@@ -104,7 +104,7 @@ function isCurrentObservation(observation: DeviceObservationV1, now: string): bo
     && observation.provenance.includes(observation.subjectId);
 }
 
-function projectDiagnosticEvidence(
+export function projectDeviceDiagnosticEvidence(
   request: DeviceSupportStoreAttemptRecord["request"],
   observation: DeviceObservationV1,
 ): { readonly value: JsonValue; readonly hypotheses: readonly DeviceDiagnosisHypothesisV1["code"][] } | undefined {

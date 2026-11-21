@@ -1,5 +1,4 @@
 import type {
-  CapabilityDescriptorV1,
   DeviceContextPackV1,
   DevicePlannerAcceptanceV1,
   DevicePlannerProposalV1,
@@ -7,13 +6,12 @@ import type {
   DeviceTaskGraphV1,
   DeviceTaskStatusV1,
 } from "@ling-stack/contracts";
-import type { DevicePlaybookV1 } from "./device-playbooks.js";
-import { DeviceModelOrchestrator } from "./device-orchestration.js";
+import { isDevicePlaybookV1, type DevicePlaybookV1 } from "./device-playbooks.js";
+import { DeviceModelOrchestrator, type DevicePlanningTarget } from "./device-orchestration.js";
 
 export interface DevicePlanningRunnerInput {
   readonly context: DeviceContextPackV1;
-  readonly allowedTargetDeviceIds: readonly string[];
-  readonly capabilities: ReadonlyMap<string, CapabilityDescriptorV1>;
+  readonly targets: readonly DevicePlanningTarget[];
   readonly planningInputRefs: readonly string[];
   readonly signal?: AbortSignal;
 }
@@ -40,7 +38,7 @@ export interface DeviceRunnerPlanResult {
   readonly source: "runner" | "local_playbook";
   readonly proposal: DevicePlannerProposalV1;
   readonly acceptance: DevicePlannerAcceptanceV1;
-  readonly fallbackReason?: string;
+  readonly fallbackReason?: "runner_unavailable";
 }
 
 /** Connects a verified model runner to typed device proposals and retains a deterministic fallback. */
@@ -52,50 +50,43 @@ export class DeviceRunnerPlanningBridge {
   }
 
   async plan(input: DeviceRunnerPlanInput, runner?: DevicePlanningRunner): Promise<DeviceRunnerPlanResult> {
+    input.signal?.throwIfAborted();
     if (runner) {
       let proposal: DevicePlannerProposalV1;
       try {
-        proposal = await runner.plan(input);
+        const { context, targets, planningInputRefs, signal } = input;
+        proposal = await runner.plan({ context, targets, planningInputRefs, signal });
       } catch (error) {
-        if (!input.localPlaybook) throw error;
-        const fallbackProposal = createLocalPlaybookProposal({
-          context: input.context,
-          planningInputRefs: input.planningInputRefs,
-          ...input.localPlaybook,
-        });
-        return {
-          source: "local_playbook",
-          proposal: fallbackProposal,
-          acceptance: this.#orchestrator.acceptProposal({
-            proposal: fallbackProposal,
-            context: input.context,
-            allowedTargetDeviceIds: input.allowedTargetDeviceIds,
-            capabilities: input.capabilities,
-            now: input.now,
-          }),
-          fallbackReason: error instanceof Error ? error.message : String(error),
-        };
+        input.signal?.throwIfAborted();
+        if (!input.localPlaybook || (error instanceof Error && error.name === "AbortError")) throw error;
+        return this.planLocal(input, "runner_unavailable");
       }
+      input.signal?.throwIfAborted();
       return {
         source: "runner",
         proposal,
         acceptance: this.#orchestrator.acceptProposal({
+          ...input,
           proposal,
-          context: input.context,
-          allowedTargetDeviceIds: input.allowedTargetDeviceIds,
-          capabilities: input.capabilities,
           runnerId: runner.runnerId,
           runnerCapabilityRevision: runner.capabilityRevision,
-          now: input.now,
         }),
       };
     }
-    if (!input.localPlaybook) throw new Error("device planning runner is unavailable and no local playbook was provided");
-    const proposal = createLocalPlaybookProposal({ context: input.context, planningInputRefs: input.planningInputRefs, ...input.localPlaybook });
+    return this.planLocal(input);
+  }
+
+  private planLocal(input: DeviceRunnerPlanInput, fallbackReason?: DeviceRunnerPlanResult["fallbackReason"]): DeviceRunnerPlanResult {
+    const local = input.localPlaybook;
+    if (!local || !local.playbook.localFallback || !isDevicePlaybookV1(local.playbook)) {
+      throw new Error("device planning requires a supported local fallback playbook");
+    }
+    const proposal = createLocalPlaybookProposal({ context: input.context, planningInputRefs: input.planningInputRefs, ...local });
     return {
       source: "local_playbook",
       proposal,
-      acceptance: this.#orchestrator.acceptProposal({ proposal, context: input.context, allowedTargetDeviceIds: input.allowedTargetDeviceIds, capabilities: input.capabilities, now: input.now }),
+      acceptance: this.#orchestrator.acceptProposal({ ...input, proposal }),
+      ...(fallbackReason ? { fallbackReason } : {}),
     };
   }
 }

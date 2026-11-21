@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  buildOwnedDevicePlanningInput,
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
   DeviceCapabilityBroker,
+  DeviceRunnerPlanningBridge,
   HardwareProtocolWorkbench,
   modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
@@ -56,6 +58,7 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
   const adapter = new PcAdapter({ executor: new LocalPcTargetExecutor(), now });
   broker.registerAdapter(adapter);
   const remoteFacade = createRemoteDeviceFacade({ store, broker, now });
+  const planner = new DeviceRunnerPlanningBridge();
   let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
   const diagnose = async (): Promise<DevicePlaybookRunResultV1> => {
     const registered = store.listDevices().find(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID
@@ -76,9 +79,23 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
       createdAt: timestamp,
       updatedAt: timestamp,
     });
+    const playbook = createPcSoftwareDiagnosisPlaybook();
+    const planningInput = buildOwnedDevicePlanningInput({
+      store, taskId: task.id, ownerId: task.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
+      contextId: `device_context_${randomUUID()}`, maxBytes: 32 * 1024, now: timestamp,
+    });
+    const plan = await planner.plan({
+      ...planningInput,
+      localPlaybook: {
+        playbook, targetDeviceId: target.device.id, ownerKind: task.ownerKind, ownerId: task.ownerId,
+        capabilitySnapshotId: snapshot.snapshotId,
+      },
+      now: timestamp,
+    });
+    store.recordPlanningAcceptance(plan.acceptance, plan.source);
     return await runDeviceReadOnlyPlaybook({
       broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
-      playbook: createPcSoftwareDiagnosisPlaybook(),
+      playbook,
     });
   };
   return {

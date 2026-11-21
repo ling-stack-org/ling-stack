@@ -7,6 +7,7 @@ import {
   type DeviceActionResultV1,
   type DeviceCapabilitySnapshotV1,
   type DeviceObservationV1,
+  type DevicePlannerAcceptanceV1,
   type DeviceProfileV1,
   type DeviceTaskAttemptV1,
   type DeviceTaskReconciliationV1,
@@ -154,6 +155,18 @@ export class SqliteDeviceSupportStore {
       .run(task.id, 0, task.status, JSON.stringify(task), task.createdAt, now);
     this.appendEvent(task.id, "task_created", { task });
     return task;
+  }
+
+  recordPlanningAcceptance(acceptance: DevicePlannerAcceptanceV1, source: "runner" | "local_playbook"): void {
+    this.withWriteTransaction(() => {
+      const task = this.requireTask(acceptance.taskId);
+      if (task.status !== "planning" || acceptance.graph.graphId !== task.id
+        || acceptance.graph.nodes.some(node => node.ownerKind !== task.ownerKind || node.ownerId !== task.ownerId
+          || !task.targetDeviceIds.includes(node.targetDeviceId) || !task.capabilitySnapshotIds.includes(node.capabilitySnapshotId))) {
+        throw new Error("Device plan is outside the task's current owner and target binding");
+      }
+      this.appendEvent(task.id, "device_plan_accepted", { source, ...acceptance });
+    });
   }
 
   saveActionProposal(request: DeviceActionRequestV1, requestDigest: string, now: string): void {
