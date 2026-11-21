@@ -5,10 +5,12 @@ import {
   WorkflowSafetyValidationError,
   workflowGraphFingerprintV1,
   workflowStepSideEffectClasses,
+  type WorkflowGraph,
+  type WorkflowStepExecutionSafety,
 } from "../dist/index.js";
 
-const declaration = (parallelPolicy = {}) => ({ sideEffectClass: "analysis_readonly", parallelPolicy });
-const invalid = (value) => assert.throws(() => parseWorkflowStepExecutionSafety(value), (error) =>
+const declaration = <Policy>(parallelPolicy: Policy) => ({ sideEffectClass: "analysis_readonly" as const, parallelPolicy });
+const invalid = (value: unknown) => assert.throws(() => parseWorkflowStepExecutionSafety(value), (error) =>
   error instanceof WorkflowSafetyValidationError && error.code === "workflow_safety_invalid");
 
 test("safety extraction leaves legacy records unclassified and never parses unrelated step fields", () => {
@@ -27,7 +29,7 @@ test("safety extraction leaves legacy records unclassified and never parses unre
 });
 
 test("policy defaults remain conservative and parsing a write request grants no authority", () => {
-  assert.deepEqual(parseWorkflowStepExecutionSafety(declaration()), declaration({ autoParallel: false }));
+  assert.deepEqual(parseWorkflowStepExecutionSafety(declaration({})), declaration({ autoParallel: false }));
   const input = declaration({ maxParallelSiblings: 2, resourceKeys: ["port:2", "port:1"],
     requiresArtifactOnly: false, cancelSiblingsOnFailure: true });
   const original = structuredClone(input);
@@ -35,7 +37,7 @@ test("policy defaults remain conservative and parsing a write request grants no 
   assert.deepEqual(parsed, { ...input, parallelPolicy: { ...input.parallelPolicy, autoParallel: false } });
   assert.deepEqual(input, original);
   assert.notEqual(parsed.parallelPolicy, input.parallelPolicy);
-  assert.notEqual(parsed.parallelPolicy.resourceKeys, input.parallelPolicy.resourceKeys);
+  assert.notEqual(parsed.parallelPolicy!.resourceKeys, input.parallelPolicy.resourceKeys);
   for (const sideEffectClass of ["analysis_readonly", "workspace_write"]) {
     const request = { sideEffectClass, parallelPolicy: { autoParallel: true } };
     assert.deepEqual(parseWorkflowStepExecutionSafety(request), request);
@@ -45,7 +47,7 @@ test("policy defaults remain conservative and parsing a write request grants no 
   assert.deepEqual(parseWorkflowStepExecutionSafety(artifactOnly), artifactOnly);
   for (const sideEffectClass of ["external_mutation", "release"]) {
     invalid({ sideEffectClass, parallelPolicy: { autoParallel: true } });
-    assert.equal(parseWorkflowStepExecutionSafety({ sideEffectClass, parallelPolicy: {} }).parallelPolicy.autoParallel, false);
+    assert.equal(parseWorkflowStepExecutionSafety({ sideEffectClass, parallelPolicy: {} })!.parallelPolicy!.autoParallel, false);
   }
   invalid({ sideEffectClass: "test_artifact_only", parallelPolicy: { autoParallel: true } });
   invalid({ sideEffectClass: "test_artifact_only", parallelPolicy: { autoParallel: true, requiresArtifactOnly: false } });
@@ -64,7 +66,7 @@ test("parallel counts are positive safe integers without imposing Host capacity 
     invalid(declaration({ maxParallelSiblings: value }));
   }
   for (const maxParallelSiblings of [1, 2, Number.MAX_SAFE_INTEGER]) {
-    assert.equal(parseWorkflowStepExecutionSafety(declaration({ maxParallelSiblings })).parallelPolicy.maxParallelSiblings,
+    assert.equal(parseWorkflowStepExecutionSafety(declaration({ maxParallelSiblings }))!.parallelPolicy!.maxParallelSiblings,
       maxParallelSiblings);
   }
 });
@@ -76,11 +78,11 @@ test("resource declarations have bounded, unique, exact keys without whitespace 
     invalid(declaration({ resourceKeys }));
   }
   for (const resourceKeys of [[], ["x".repeat(256)], Array.from({ length: 32 }, (_, i) => `resource:${i}`)]) {
-    assert.deepEqual(parseWorkflowStepExecutionSafety(declaration({ resourceKeys })).parallelPolicy.resourceKeys, resourceKeys);
+    assert.deepEqual(parseWorkflowStepExecutionSafety(declaration({ resourceKeys }))!.parallelPolicy!.resourceKeys, resourceKeys);
   }
 });
 
-function graph(safety = {}) {
+function graph(safety: Partial<WorkflowStepExecutionSafety> = {}): WorkflowGraph {
   return {
     schemaVersion: 1, id: "safety-graph", name: "Safety graph", entryNodeId: "review",
     nodes: [{ id: "review", kind: "step", name: "Review", prompt: "Read evidence", requiredTools: ["read"], ...safety }],

@@ -6,7 +6,7 @@ import {
   notificationMatchesTone,
 } from "../dist/index.js";
 
-function at(time) {
+function at(time: string) {
   return new Date(`2026-10-26T${time}:00`);
 }
 
