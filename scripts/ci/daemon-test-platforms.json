@@ -661,6 +661,7 @@
     "test/packaged-restricted-command-bootstrap.test.mjs",
     "test/platform-native-sandbox.test.mjs",
     "test/plugin-manager-api.test.mjs",
+    "test/plugin-remote-catalog.test.mjs",
     "test/proposed-plan-history-actions.test.mjs",
     "test/proposed-plan-patch-scope.test.mjs",
     "test/proposed-plan-source-completion.test.mjs",
