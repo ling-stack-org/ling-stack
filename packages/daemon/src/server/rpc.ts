@@ -232,6 +232,7 @@ class RpcConnection {
   private readonly cancelledRequests = new Set<string>();
   private readonly externalTaskIds = new Set<string>();
   private externalAgentUnsubscribe?: () => void;
+  private externalAgentCwd?: string;
   private readonly onMessage = (data: RawData): void => { void this.handleMessage(data); };
   private readonly onConnectionClose = (): void => this.close();
   private readonly onConnectionError = (): void => this.close();
@@ -618,7 +619,10 @@ class RpcConnection {
       case "externalAgent/register":
         return this.registerExternalAgent(params);
       case "externalAgent/capabilities/read":
-        return this.externalAgents.readCapabilities(readStringField(readParamsRecord(params), "registrationId"));
+        {
+          const record = this.workspaceParams(params);
+          return this.externalAgentsFor(record.cwd).readCapabilities(readStringField(record, "registrationId"));
+        }
       case "externalAgent/task/start":
         return this.startExternalAgentTask(params);
       case "externalAgent/task/reconnect":
@@ -885,16 +889,20 @@ class RpcConnection {
     }
   }
 
-  private get externalAgents(): ExternalAgentFederationService {
-    const { cwd } = this.workspaceParams(undefined);
+  private externalAgentsFor(cwd: string): ExternalAgentFederationService {
     const federation = getExternalAgentFederation(this.context, cwd);
-    this.externalAgentUnsubscribe ??= federation.subscribe(event => this.handleExternalAgentEvent(event));
+    if (this.externalAgentCwd !== cwd) {
+      this.externalAgentUnsubscribe?.();
+      this.externalAgentCwd = cwd;
+      this.externalAgentUnsubscribe = federation.subscribe(event => this.handleExternalAgentEvent(event));
+    }
     return federation;
   }
 
   private registerExternalAgent(params: unknown): unknown {
     try {
-      const result = this.externalAgents.register(params as never);
+      const record = this.workspaceParams(params);
+      const result = this.externalAgentsFor(record.cwd).register(record as never);
       if (this.appServer) {
         this.send({ jsonrpc: "2.0", method: "externalAgent/registered", params: result });
       }
@@ -911,7 +919,7 @@ class RpcConnection {
     const submission = readParamsRecord(record.submission);
     const workItemId = readStringField(submission, "workItemId");
     const workItemRevision = readStringField(submission, "workItemRevision");
-    const federation = this.externalAgents;
+    const federation = this.externalAgentsFor(cwd);
     const store = this.context.storeRegistry.getStore(cwd);
     const assertAdmission = () => {
       const workItem = store.getWorkItem(workItemId);
@@ -1015,7 +1023,8 @@ class RpcConnection {
 
   private reconnectExternalAgentTask(params: unknown): unknown {
     try {
-      const result = this.externalAgents.reconnectTask(params as never);
+      const record = this.workspaceParams(params);
+      const result = this.externalAgentsFor(record.cwd).reconnectTask(record as never);
       if (result.reason !== "authorization_changed") this.externalTaskIds.add(result.task.taskId);
       if (this.appServer) this.send({ jsonrpc: "2.0", method: "externalAgent/task/reconnected", params: result });
       return result;
@@ -1026,10 +1035,11 @@ class RpcConnection {
 
   private async cancelExternalAgentTask(params: unknown): Promise<unknown> {
     try {
-      const taskId = readStringField(readParamsRecord(params), "taskId");
-      const federation = this.externalAgents;
+      const record = this.workspaceParams(params);
+      const taskId = readStringField(record, "taskId");
+      const federation = this.externalAgentsFor(record.cwd);
       const active = activeExternalDispatches.get(this.context)?.get(taskId);
-      return await federation.cancelTask(params as never, active ? async () => {
+      return await federation.cancelTask(record as never, active ? async () => {
         active.abort();
         return "unknown";
       } : undefined);
