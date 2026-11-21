@@ -6,6 +6,7 @@ import {
   AndroidAdbAdapter,
   HomeAssistantAdapter,
   LinuxSshAdapter,
+  ObdVehicleAdapter,
   PcAdapter,
 } from "../dist/features/device-support/adapters/index.js";
 
@@ -111,4 +112,23 @@ test("Android ADB adapter exposes fixed head-unit operations and verifies artifa
   const actionResult = "action" in action ? action.action : action;
   assert.equal((await adapter.verify({ profile, request: { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" }, action: actionResult })).status, "verified");
   assert.deepEqual(operations, ["inventory", "install", "packages"]);
+});
+
+test("OBD adapter exposes typed vehicle info, PID and DTC reads", async () => {
+  const operations: string[] = [];
+  const adapter = new ObdVehicleAdapter({
+    now: () => now,
+    executor: {
+      async readVehicleInfo() { operations.push("info"); return { vin: "VIN-1", make: "Test", model: "Car", protocol: "iso15765" }; },
+      async readPid(pid) { operations.push(`pid:${pid}`); return { pid, value: 90, unit: "%" }; },
+      async readDtc() { operations.push("dtc"); return ["P0300"]; },
+    },
+  });
+  const profile = await adapter.discover({ connectionRef: "obd:bridge-1", ownerId: "edge-1" });
+  assert.equal(profile.device.kind, "vehicle");
+  const pid = await adapter.execute({ profile, capability: { id: "vehicle.read.pid" }, request: { actionId: "pid-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "vehicle.read.pid", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { pid: "0C" }, idempotencyKey: "task-1:pid-1" } });
+  assert.equal("action" in pid ? pid.action.status : pid.status, "completed");
+  const dtc = await adapter.execute({ profile, capability: { id: "vehicle.read.dtc" }, request: { actionId: "dtc-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "vehicle.read.dtc", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: {}, idempotencyKey: "task-1:dtc-1" } });
+  assert.equal("action" in dtc ? dtc.action.status : dtc.status, "completed");
+  assert.deepEqual(operations, ["info", "pid:0C", "dtc"]);
 });
