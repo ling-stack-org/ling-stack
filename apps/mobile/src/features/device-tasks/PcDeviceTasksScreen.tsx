@@ -32,6 +32,8 @@ export function PcDeviceTasksScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
   const [failedTaskId, setFailedTaskId] = useState<string>();
+  const [actionTaskId, setActionTaskId] = useState<string>();
+  const [actionFailed, setActionFailed] = useState<string>();
   const detail = deviceTask?.task.taskId === selectedTaskId ? deviceTask?.task : undefined;
   const connected = connection === "connected";
   const selectedTask = deviceOverview?.recentTasks?.find(task => task.taskId === selectedTaskId);
@@ -62,6 +64,19 @@ export function PcDeviceTasksScreen() {
 
   const deviceName = (deviceId: string) =>
     deviceOverview?.devices.find(device => device.deviceId === deviceId)?.displayName ?? deviceId;
+
+  const runTaskAction = async (taskId: string, action: () => Promise<unknown>) => {
+    if (actionTaskId) return;
+    setActionTaskId(taskId);
+    setActionFailed(undefined);
+    try {
+      await action();
+    } catch {
+      setActionFailed(taskId);
+    } finally {
+      setActionTaskId(undefined);
+    }
+  };
 
   return (
     <SafeAreaView edges={["bottom"]} style={styles.screen}>
@@ -111,6 +126,41 @@ export function PcDeviceTasksScreen() {
                             <Text style={styles.note}>执行主机 PC · {currentDetail.ownerId}</Text>
                             <Text style={styles.note}>执行记录 {currentDetail.attemptIds.length} 条</Text>
                             {currentDetail.lastVerificationId ? <Text selectable style={styles.note}>复测记录 {currentDetail.lastVerificationId}</Text> : null}
+                            {currentDetail.pendingApproval ? (
+                              <View style={styles.approval}>
+                                <Text style={styles.note}>待确认操作 {currentDetail.pendingApproval.capabilityId} · {currentDetail.pendingApproval.sideEffect}</Text>
+                                {currentDetail.pendingApproval.expectedVerification ? <Text style={styles.note}>复测条件已绑定</Text> : null}
+                                <View style={styles.actions}>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityState={{ disabled: actionTaskId !== undefined }}
+                                    disabled={actionTaskId !== undefined}
+                                    onPress={() => void runTaskAction(task.taskId, async () => {
+                                      const handle = await client?.approveDeviceTask(task.taskId, currentDetail.pendingApproval!);
+                                      if (!handle) throw new Error("remote_device_approval_unavailable");
+                                      await handle.completion;
+                                    })}
+                                    style={styles.primaryAction}
+                                  >
+                                    <Text style={styles.primaryActionText}>{actionTaskId === task.taskId ? "提交中…" : "批准执行"}</Text>
+                                  </Pressable>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityState={{ disabled: actionTaskId !== undefined }}
+                                    disabled={actionTaskId !== undefined}
+                                    onPress={() => void runTaskAction(task.taskId, async () => {
+                                      const handle = await client?.revokeDeviceTask(task.taskId);
+                                      if (!handle) throw new Error("remote_device_revoke_unavailable");
+                                      await handle.completion;
+                                    })}
+                                    style={styles.secondaryAction}
+                                  >
+                                    <Text style={styles.secondaryActionText}>撤销</Text>
+                                  </Pressable>
+                                </View>
+                                {actionFailed === task.taskId ? <Text accessibilityRole="alert" style={styles.note}>操作失败，请刷新后重试。</Text> : null}
+                              </View>
+                            ) : null}
                           </>
                         ) : <Text style={styles.note}>
                           {!connected ? "连接 PC 后读取执行记录" : failedTaskId === task.taskId ? "读取失败，请重新打开此任务。" : "正在读取执行记录…"}
@@ -143,5 +193,11 @@ function createStyles(theme: MobileThemeTokens) {
     label: { color: theme.text.strong, fontSize: 15, fontWeight: "600" },
     note: { color: theme.text.muted, fontSize: 13, lineHeight: 19 },
     detail: { paddingTop: 8, gap: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.border.default },
+    approval: { paddingTop: 8, gap: 8 },
+    actions: { flexDirection: "row", gap: 8 },
+    primaryAction: { minHeight: 40, paddingHorizontal: 14, borderRadius: theme.radius.medium, justifyContent: "center", backgroundColor: theme.action.accent },
+    primaryActionText: { color: theme.action.foreground, fontSize: 14, fontWeight: "600" },
+    secondaryAction: { minHeight: 40, paddingHorizontal: 14, borderRadius: theme.radius.medium, justifyContent: "center", borderWidth: StyleSheet.hairlineWidth, borderColor: theme.border.default },
+    secondaryActionText: { color: theme.text.strong, fontSize: 14, fontWeight: "600" },
   });
 }

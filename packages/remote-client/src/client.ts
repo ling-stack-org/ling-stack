@@ -8,6 +8,8 @@ import {
   type RemoteClientFrameV1,
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
+  type RemoteDeviceApprovalPreviewV1,
+  type DeviceApprovalBindingV1,
   type RemoteConversationOpenCommandV1,
   type RemoteMarkConversationReadCommandV1,
   type RemoteProfileUpdateCommandV1,
@@ -242,6 +244,36 @@ export class RemoteSessionClient {
   async requestDeviceTaskStatus(taskId: string): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.status"]>> {
     return await this.sendCommand("device.task.status", {
       commandId: await this.options.entropy.randomId("device_task"),
+      workspaceId: this.requireDeviceWorkspaceId(),
+      taskId,
+    });
+  }
+
+  async approveDeviceTask(taskId: string, preview: RemoteDeviceApprovalPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.approve"]>> {
+    const approvalId = await this.options.entropy.randomId("device_approval");
+    const expiresAt = new Date(Date.parse(this.options.clock.now()) + 5 * 60_000).toISOString();
+    const approval: DeviceApprovalBindingV1 = {
+      approvalId,
+      taskId,
+      actionId: preview.actionId,
+      targetDeviceId: preview.targetDeviceId,
+      capabilitySnapshotId: preview.capabilitySnapshotId,
+      connectionRevision: preview.connectionRevision,
+      policyRevision: preview.policyRevision,
+      normalizedInputDigest: preview.normalizedInputDigest,
+      expiresAt,
+    };
+    return await this.sendCommand("device.task.approve", {
+      commandId: await this.options.entropy.randomId("device_task_approve"),
+      workspaceId: this.requireDeviceWorkspaceId(),
+      taskId,
+      approval,
+    });
+  }
+
+  async revokeDeviceTask(taskId: string): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.revoke"]>> {
+    return await this.sendCommand("device.task.revoke", {
+      commandId: await this.options.entropy.randomId("device_task_revoke"),
       workspaceId: this.requireDeviceWorkspaceId(),
       taskId,
     });

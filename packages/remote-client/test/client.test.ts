@@ -233,6 +233,40 @@ test("device overview is restored offline and refreshed from the same PC task wi
   resumed.disconnect();
 });
 
+test("device approval and revoke commands bind the exact preview to typed Gateway frames", async () => {
+  const harness = createHarness();
+  const client = harness.createClient();
+  const socket = await harness.connect(client, [...legacyCapabilities, "device.read"] as const);
+  const preview = {
+    actionId: "action-1", targetDeviceId: "pc-1", capabilityId: "pc.repair.network", capabilitySchemaVersion: "1.0",
+    capabilitySnapshotId: "snapshot-1", connectionRevision: "connection-1", policyRevision: "device-policy-v1",
+    normalizedInputDigest: "digest-1", sideEffect: "reversible",
+  } as const;
+  const approved = await client.approveDeviceTask("task-1", preview);
+  const approvalFrame = socket.frames().find(frame => frame.type === "device.task.approve");
+  assert.ok(approvalFrame);
+  assert.equal(approvalFrame.payload.taskId, "task-1");
+  assert.equal(approvalFrame.payload.approval.actionId, preview.actionId);
+  assert.equal(approvalFrame.payload.approval.normalizedInputDigest, preview.normalizedInputDigest);
+  assert.equal(approvalFrame.payload.approval.expiresAt, "2026-07-31T10:05:00.000Z");
+  socket.message("command.completed", {
+    commandId: approved.commandId, commandType: "device.task.approve",
+    result: { kind: "device_task_approved", taskId: "task-1" }, completedAt: now,
+  }, 2);
+  assert.deepEqual(await approved.completion, { kind: "device_task_approved", taskId: "task-1" });
+
+  const revoked = await client.revokeDeviceTask("task-1");
+  const revokeFrame = socket.frames().find(frame => frame.type === "device.task.revoke");
+  assert.ok(revokeFrame);
+  assert.equal(revokeFrame.payload.taskId, "task-1");
+  socket.message("command.completed", {
+    commandId: revoked.commandId, commandType: "device.task.revoke",
+    result: { kind: "device_task_revoked", taskId: "task-1" }, completedAt: now,
+  }, 3);
+  assert.deepEqual(await revoked.completion, { kind: "device_task_revoked", taskId: "task-1" });
+  client.disconnect();
+});
+
 async function waitFor(predicate: () => boolean) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;
