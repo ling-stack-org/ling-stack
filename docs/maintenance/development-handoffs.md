@@ -2,14 +2,14 @@
 
 Status: retained implementation handoffs; historical checkpoints are not current acceptance
 Owner: repository maintainers
-Last verified: 2026-10-08 (document relocation and links only)
+Last verified: 2026-11-21 (Device Support Platform implementation checkpoint)
 Document type: maintenance handoff
 Code and test anchors: the owning plans and source modules linked below
 
 ## Reading Boundary
 
 This page preserves the implementation handoff previously embedded in the design index
-and five source checkpoints. Their test counts, branch names, remaining work and local
+and subsequent development checkpoints. Their test counts, branch names, remaining work and local
 instructions describe the recorded snapshot, not today's `main` or a new authorization.
 Use [Implementation Status](../design/implementation-status.md), the
 [Typed Transcript implementation plan](../design/conversation-codex-style-transcript-implementation-plan.md),
@@ -26,12 +26,73 @@ are not published here. The relay URL and temporary development checkout are exa
 
 ## Contents
 
+- [Device Support Platform checkpoint, 2026-11-21](#device-support-platform-checkpoint-2026-11-21)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
 - [Office observation boundary, 2026-10-05](#office-observation-boundary-2026-10-05)
 - [Office readonly closure facts, 2026-10-06](#office-readonly-closure-facts-2026-10-06)
 - [Reasoning-summary and automatic-review checkpoint, 2026-09-14](#reasoning-autoreview-checkpoint-2026-09-14)
+
+## Device Support Platform Checkpoint 2026-11-21
+
+The `codex/device-platform-implementation` branch incorporates `origin/main` at
+`7bd8cb5fb` through merge commit `8986aad3a`. The earlier merge `93791a2ec` keeps
+the complete Remote Client TypeScript test entry point and the device-task
+approval, revoke, reconnect and readback tests. D1 and D2 have completed their
+tracked core checks. D3–D22 remain in progress.
+[Per-slice implementation ledger](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+
+Commit `fdb3b50f7` uses the configured OpenSSH trust-store path and reads the target's
+IPv4 configuration, route lookup and wireless association as separate facts. Gateway
+and DNS reachability remain unknown without probes. An interrupted restart retains
+its uncertain receipt. The broker appends fresh observations to evaluate the approved
+rule, and a replay returns the original attempt. The fixture exercises missing,
+negative and matching readback with a single restart dispatch.
+[SSH executor](../../packages/daemon/src/features/device-support/adapters/linux-ssh-executor.ts)
+[Readback fixture](../../packages/daemon/test/device-support-adapters.test.ts)
+
+### Software verification
+
+The device checkpoint passed 234 local tests. The combined run used the package type checks
+for Contracts, Core, Daemon, Remote Protocol, Remote Client and Mobile, plus the Core
+and Daemon builds. Remote Client's `test` command also built its shared dependencies.
+
+| Area | Command from the repository root | Passed |
+| --- | --- | ---: |
+| Contracts | `node --test packages/contracts/test/device.test.ts` | 5 |
+| Core | `node --test packages/core/test/device-{support,developer,fabric,fabric-store,orchestration}.test.ts packages/core/test/ling-server-protocol.test.ts` | 57 |
+| Daemon | `node --test packages/daemon/test/{device-support-adapters,device-support-runtime,device-remote-facade,linux-ssh-executor,local-pc-executor,ling-server-control-plane}.test.ts packages/daemon/test/remote-gateway-security.test.mjs` | 23 |
+| Remote Protocol | `corepack pnpm --filter @ling-stack/remote-protocol test:ci` | 42 |
+| Remote Client | `corepack pnpm --filter @ling-stack/remote-client test` | 12 |
+| Mobile | `corepack pnpm --filter @ling-stack/mobile test:ci` | 95 |
+
+The main sync also passed 42 scope-selection tests with
+`node --test scripts/ci/classify-scope.test.ts`.
+
+OpenSSH `ssh -G` resolved the explicit known-hosts file path with spaces. This
+checkpoint exercised device paths through local fixtures and loopback services. Linux
+LAN and hotspot runs, packaged PC and Mobile clients, and physical head-unit,
+smart-home, hardware and Edge runs remain on the acceptance ledger.
+[Platform completion criteria](../design/ling-device-support-platform-implementation-plan.md#definition-of-platform-completion)
+
+### Resume work
+
+1. Wire authorized Linux connection enrollment and its credential reference to the
+   Daemon broker. Use the existing task journal for a read-only Linux diagnosis
+   report and confirm that the selected target identity persists across reconnects.
+   Record association, addressing, route and DNS evidence on the intended LAN and
+   phone hotspot. [Linux case flow](../design/ling-device-developer-execution.md#4-case-flow-linux-device-with-wi-fi-trouble)
+2. Attach the Mobile client to the owner's resumable task evidence and carry the
+   approval audit through the existing task detail. Keep phone-owned execution and
+   PC-owned tasks in their respective journals when adding native SSH.
+   [D6 paired Mobile](../design/ling-device-support-platform-implementation-plan.md#d6-mobile-device-task-facade)
+   [D9 standalone Mobile](../design/ling-device-support-platform-implementation-plan.md#d9-standalone-mobile-execution)
+   [D17 event plane](../design/ling-device-support-platform-implementation-plan.md#d17-event-and-telemetry-plane)
+3. Continue the developer, peer connectivity and Edge integration against the
+   per-slice gates. Capture direct and relayed workflows and keep each physical
+   result linked to its owner, adapter version, target and verification attempt.
+   [Developer, connectivity and field gates](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
 ## Typed Transcript Handoff
 

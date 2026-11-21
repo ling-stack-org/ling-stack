@@ -156,6 +156,13 @@ export function MyScreen({ navigation }: Props) {
           </Pressable>
         </Section>
 
+        <Section title="本机设备">
+          <Pressable accessibilityRole="button" onPress={() => navigation.navigate("StandaloneDevices")} style={styles.settingsRow}>
+            <Text style={styles.settingsLabel}>手机设备诊断</Text>
+            <Ionicons color={theme.text.muted} name="chevron-forward" size={15} />
+          </Pressable>
+        </Section>
+
         <Section title="已绑定的 PC">
           <View style={styles.settingsRow}>
             <View style={styles.settingsCopy}>
@@ -167,6 +174,16 @@ export function MyScreen({ navigation }: Props) {
               <Text style={[styles.pcStatusText, { color: theme.text.muted }]}>{remoteState.connection === "connected" ? "已连接" : "离线"}</Text>
             </View>
           </View>
+          {remoteState.policy?.capabilities.includes("device.read") ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => navigation.navigate("PcDeviceTasks")}
+              style={[styles.settingsRow, styles.settingsRowBorder]}
+            >
+              <Text style={styles.settingsLabel}>设备与任务</Text>
+              <Ionicons color={theme.text.muted} name="chevron-forward" size={15} />
+            </Pressable>
+          ) : null}
         </Section>
 
         <Pressable accessibilityRole="button" onPress={confirmUnpair} style={styles.unpair}><Text style={styles.unpairText}>取消绑定</Text></Pressable>

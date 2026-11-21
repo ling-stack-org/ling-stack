@@ -50,6 +50,8 @@ import type { CuaDriverPooledClientFactory } from "./features/plugins/cua-driver
 import type { CuaDriverLeaseMcpClient } from "./features/plugins/cua-driver-lease-client.js";
 import type { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
 import type { RemoteAccessController } from "./features/remote-access/controller.js";
+import type { DeviceSupportRuntime } from "./features/device-support/runtime.js";
+import type { LocalProcessRunner } from "./features/device-support/adapters/local-pc-executor.js";
 import type { RemoteReplyDispatcher } from "./features/remote-access/dispatch-worker.js";
 import type { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
 import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
@@ -161,6 +163,7 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  readonly linuxSshProcessRunner?: LocalProcessRunner;
   /** Optional synchronous observation of the exact production-owned Store after initialization. */
   readonly onStoreInitialized?: (cwd: string, store: RunStore) => void;
   /** Optional in-memory QA Provider authority. Absence keeps model task execution disabled. */
@@ -262,6 +265,7 @@ export interface DaemonContext {
   readonly computerUseRouteToken?: string;
   readonly computerUseTargetOwnershipTimeoutMs?: number;
   readonly remoteAccess: RemoteAccessController;
+  readonly deviceSupport: DeviceSupportRuntime;
   readonly engineManagement: EngineManagementFeature;
   readonly nativeRunDispatcher?: NativeRunDispatcher;
   readonly chromeBrowserSessions: ChromeBrowserSessionController;

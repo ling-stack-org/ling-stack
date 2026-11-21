@@ -8,6 +8,7 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteConversationDeltaV1,
+  type RemoteDeviceTaskSnapshotV1,
   type RemoteLifecycleCommandTypeV1,
   type RemoteServerEventPayloadMapV1,
   type RemoteServerEventTypeV1,
@@ -25,6 +26,7 @@ import {
   sha256,
 } from "@ling-stack/remote-protocol";
 import type { RemoteConversationFacade, RemoteProjectedEvent } from "./conversation-facade.js";
+import type { RemoteDeviceFacade } from "./device-facade.js";
 import { RemoteAccessError } from "./errors.js";
 import type { AuthenticatedRemoteSession } from "./pairing-auth-service.js";
 
@@ -44,6 +46,7 @@ export interface RemoteGatewaySessionOptions {
   readonly authenticated: AuthenticatedRemoteSession;
   readonly gatewayId: string;
   readonly facade: RemoteConversationFacade;
+  readonly deviceFacade?: RemoteDeviceFacade;
   readonly policy: RemoteAccessPolicySummaryV1;
   readonly now?: () => string;
   readonly onMutation?: () => void;
@@ -165,12 +168,22 @@ export class RemoteGatewaySession {
       commandType,
       acceptedAt: this.now(),
     }, this.controlStream, frame.messageId);
+    const command = this.executeAuthorizedCommand(frame);
+    if (frame.type === "device.task.approve" || frame.type === "device.task.reconcile") {
+      // Keep consuming ordered frames while the admitted device request waits for its adapter.
+      void command.catch(() => this.closePolicyViolation("Remote command processing failed."));
+      return;
+    }
+    await command;
+  }
+
+  private async executeAuthorizedCommand(frame: Exclude<RemoteClientFrameV1, { readonly type: "stream.ack" }>): Promise<void> {
     try {
       this.assertCapability(frame.type);
-      await this.executeCommand(frame as Exclude<RemoteClientFrameV1, { readonly type: "stream.ack" }>);
+      await this.executeCommand(frame);
     } catch (error) {
       const remoteError = toRemoteError(error);
-      this.sendCommandFailed(commandType, frame.payload.commandId, remoteError, frame.messageId);
+      this.sendCommandFailed(frame.type, frame.payload.commandId, remoteError, frame.messageId);
     }
   }
 
@@ -253,9 +266,49 @@ export class RemoteGatewaySession {
         this.complete(frame, { kind: "device_unpaired" });
         this.options.onSelfUnpair?.();
         return;
+      case "device.list": {
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).listDevices(frame.payload.workspaceId);
+        this.sendEvent("device.list_snapshot", snapshot, this.workspaceStream(), frame.messageId);
+        this.complete(frame, { kind: "device_list_requested" });
+        return;
+      }
+      case "device.task.status": {
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).taskSnapshot(frame.payload);
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.complete(frame, { kind: "device_task_status_requested", taskId: frame.payload.taskId });
+        return;
+      }
+      case "device.task.approve": {
+        const snapshot = await this.requireDeviceFacade(frame.payload.workspaceId).approveTask(frame.payload);
+        this.complete(frame, { kind: "device_task_approved", taskId: frame.payload.taskId });
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.options.onMutation?.();
+        return;
+      }
+      case "device.task.revoke": {
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).revokeTask(frame.payload);
+        this.complete(frame, { kind: "device_task_revoked", taskId: frame.payload.taskId });
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.options.onMutation?.();
+        return;
+      }
+      case "device.task.reconcile": {
+        const { snapshot, status } = await this.requireDeviceFacade(frame.payload.workspaceId).reconcileTask(frame.payload);
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.complete(frame, { kind: "device_task_rechecked", taskId: frame.payload.taskId, status });
+        return;
+      }
       default:
         throw new RemoteAccessError("protocol_incompatible", `Unsupported command: ${(payload as { commandId: string }).commandId}`);
     }
+  }
+
+  private sendDeviceTaskSnapshot(snapshot: RemoteDeviceTaskSnapshotV1, requestId: string): void {
+    if (snapshot.task.pendingReconciliation && !this.options.policy.capabilities.includes("device.reconcile")) {
+      const { pendingReconciliation: _preview, ...task } = snapshot.task;
+      snapshot = { ...snapshot, task };
+    }
+    this.sendEvent("device.task.snapshot", snapshot, this.workspaceStream(), requestId);
   }
 
   private complete(
@@ -292,6 +345,9 @@ export class RemoteGatewaySession {
       this.sendEvent("workspace.summary", this.options.facade.workspaceSummary(), stream);
       this.sendEvent("conversation.list_snapshot", this.options.facade.listConversations(stream.scope.workspaceId), stream);
       this.sendEvent("profile.snapshot", this.options.facade.readProfile(stream.scope.workspaceId), stream);
+      if (this.options.deviceFacade && this.options.policy.capabilities.includes("device.read")) {
+        this.sendEvent("device.list_snapshot", this.options.deviceFacade.listDevices(stream.scope.workspaceId), stream);
+      }
     } else {
       this.sendEvent("conversation.snapshot", this.options.facade.openConversation(
         stream.scope.workspaceId,
@@ -305,6 +361,14 @@ export class RemoteGatewaySession {
     if (required && !this.options.policy.capabilities.includes(required)) {
       throw new RemoteAccessError("capability_not_allowed", `Remote capability is not allowed: ${required}`);
     }
+  }
+
+  private requireDeviceFacade(workspaceId: string): RemoteDeviceFacade {
+    if (workspaceId !== this.options.policy.workspaceId) {
+      throw new RemoteAccessError("workspace_not_allowed", "Device request is outside the paired workspace.");
+    }
+    if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+    return this.options.deviceFacade;
   }
 
   private sendEvent<TType extends RemoteServerEventTypeV1>(
@@ -442,6 +506,18 @@ function commandCapability(
   }
   if (commandType === "security.unpair") {
     return "security.unpair";
+  }
+  if (commandType === "device.list" || commandType === "device.task.status") {
+    return "device.read";
+  }
+  if (commandType === "device.task.approve") {
+    return "device.approve";
+  }
+  if (commandType === "device.task.revoke") {
+    return "device.revoke";
+  }
+  if (commandType === "device.task.reconcile") {
+    return "device.reconcile";
   }
   return undefined;
 }

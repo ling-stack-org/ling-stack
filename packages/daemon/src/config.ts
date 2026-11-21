@@ -26,6 +26,8 @@ export interface DaemonConfig {
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
   readonly remoteAccess?: RemoteAccessFeatureConfig;
+  /** Trusted startup configuration for connector endpoints and credential references. */
+  readonly deviceSupport?: { readonly linuxSshTargetsFile?: string };
   readonly workspaceSnapshots?: WorkspaceSnapshotFeatureConfig;
   readonly harness?: HarnessFeatureConfig;
 }

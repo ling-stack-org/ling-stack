@@ -55,7 +55,7 @@ export interface RemoteWebSocketLike {
   addEventListener(type: "error", listener: () => void): void;
 }
 
-export type RemoteWebSocketFactory = (url: string) => RemoteWebSocketLike;
+export type RemoteWebSocketFactory = (url: string, subprotocols?: string | string[]) => RemoteWebSocketLike;
 
 export interface RemoteBindingV1 {
   readonly version: 1;

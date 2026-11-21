@@ -1,0 +1,7 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["expo.modules.lingdevicetransport.LingDeviceTransportModule"]
+  }
+}
+

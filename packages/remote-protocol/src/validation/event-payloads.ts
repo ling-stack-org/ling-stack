@@ -36,6 +36,7 @@ import {
   expectSafeInteger,
   expectString,
 } from "./primitives.js";
+import { validateDeviceListSnapshot, validateDeviceTaskSnapshot } from "./device.js";
 
 function validateCommandResult(value: unknown, path: string): RemoteCommandResultV1 {
   const record = expectRecord(value, path);
@@ -51,6 +52,11 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "profile_read_requested",
     "profile_updated",
     "device_unpaired",
+    "device_list_requested",
+    "device_task_status_requested",
+    "device_task_approved",
+    "device_task_revoked",
+    "device_task_rechecked",
   ] as const, `${path}.kind`);
   switch (kind) {
     case "pong":
@@ -86,6 +92,23 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "profile_updated":
       assertStrictKeys(record, ["kind", "revision"], [], path);
       return { kind, revision: expectSafeInteger(record.revision, `${path}.revision`, { minimum: 0 }) };
+    case "device_list_requested":
+      assertStrictKeys(record, ["kind"], [], path);
+      return { kind };
+    case "device_task_status_requested":
+      assertStrictKeys(record, ["kind", "taskId"], [], path);
+      return { kind, taskId: expectIdentifier(record.taskId, `${path}.taskId`) };
+    case "device_task_approved":
+    case "device_task_revoked":
+      assertStrictKeys(record, ["kind", "taskId"], [], path);
+      return { kind, taskId: expectIdentifier(record.taskId, `${path}.taskId`) };
+    case "device_task_rechecked":
+      assertStrictKeys(record, ["kind", "taskId", "status"], [], path);
+      return {
+        kind,
+        taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+        status: expectEnum(record.status, ["verified", "unresolved"] as const, `${path}.status`),
+      };
   }
 }
 
@@ -135,6 +158,11 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "profile.read": "profile_read_requested",
   "profile.update": "profile_updated",
   "security.unpair": "device_unpaired",
+  "device.list": "device_list_requested",
+  "device.task.status": "device_task_status_requested",
+  "device.task.approve": "device_task_approved",
+  "device.task.revoke": "device_task_revoked",
+  "device.task.reconcile": "device_task_rechecked",
 };
 
 function validateCommandCompleted(value: unknown, path: string): RemoteCommandCompletedV1 {
@@ -242,6 +270,12 @@ export function validateServerPayload<TType extends RemoteServerEventTypeV1>(
       break;
     case "workspace.binding_changed":
       payload = validateBindingChanged(value, path);
+      break;
+    case "device.list_snapshot":
+      payload = validateDeviceListSnapshot(value, path);
+      break;
+    case "device.task.snapshot":
+      payload = validateDeviceTaskSnapshot(value, path);
       break;
   }
   return payload as RemoteServerEventPayloadMapV1[TType];

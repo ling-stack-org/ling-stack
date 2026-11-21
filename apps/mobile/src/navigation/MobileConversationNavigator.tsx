@@ -3,6 +3,8 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
 import { ConversationDetailScreen } from "../features/conversations/screens/ConversationDetailScreen";
 import { ConversationIndexScreen } from "../features/conversations/screens/ConversationIndexScreen";
+import { PcDeviceTasksScreen } from "../features/device-tasks/PcDeviceTasksScreen";
+import { StandaloneDeviceScreen } from "../features/device-tasks/StandaloneDeviceScreen";
 import { MyScreen } from "../features/profile/MyScreen";
 import { useMobileTheme } from "../theme/mobile-theme-provider";
 import type { MobileStackParamList } from "./types";
@@ -29,6 +31,16 @@ export function MobileConversationNavigator() {
         <Stack.Screen component={ConversationIndexScreen} name="Conversations" />
         <Stack.Screen component={ConversationDetailScreen} name="ConversationDetail" />
         <Stack.Screen component={MyScreen} name="My" />
+        <Stack.Screen
+          component={PcDeviceTasksScreen}
+          name="PcDeviceTasks"
+          options={{ headerShown: true, title: "PC 设备任务", headerBackTitle: "返回" }}
+        />
+        <Stack.Screen
+          component={StandaloneDeviceScreen}
+          name="StandaloneDevices"
+          options={{ headerShown: true, title: "手机设备诊断", headerBackTitle: "返回" }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

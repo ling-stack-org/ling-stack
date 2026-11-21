@@ -109,7 +109,7 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
       keys: nativeSecureDeviceKeyAdapter,
       entropy: nativeSecureEntropy,
       clock: systemRemoteClock,
-      webSocketFactory: (url) => new WebSocket(url) as unknown as RemoteWebSocketLike,
+      webSocketFactory: (url, subprotocol) => new WebSocket(url, subprotocol) as unknown as RemoteWebSocketLike,
     });
     let observedWorkspaceBindingId = nextBinding.workspaceBindingId;
     unsubscribeClient.current = nextClient.subscribe((nextState) => {

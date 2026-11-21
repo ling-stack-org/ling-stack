@@ -7,8 +7,9 @@
       "react/jsx-dev-runtime": ["./node_modules/react-types-mobile/jsx-dev-runtime.d.ts"]
     },
     "strict": true,
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "types": ["react-types-mobile"]
+    "types": ["react-types-mobile", "node"]
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }

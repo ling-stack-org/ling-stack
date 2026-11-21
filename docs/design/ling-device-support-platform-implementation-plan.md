@@ -1,8 +1,8 @@
 # Ling Device Support Platform Implementation Plan
 
-Status: tracking plan; implementation not started
+Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-20 (D12 and D14–D22 design)
+Last verified: 2026-11-22 (Android Linux SSH diagnosis, pinning and task journal)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -43,28 +43,28 @@ validation and the boundary of what remains unverified.
 | ID | Status | Scope | Exit condition | Primary validation |
 | --- | --- | --- | --- | --- |
 | D0 | [x] | Architecture, boundaries, and tracking plan | Design indexed and linked from implementation status | Markdown/link checks, review of current architecture |
-| D1 | [ ] | Shared device contracts and adapter manifest | Strict schemas compile and reject invalid inputs | Contracts typecheck and contract tests |
-| D2 | [ ] | Device registry and capability broker | A fake device can register, discover, observe, and execute a read-only capability | Daemon tests plus fake-adapter integration |
-| D3 | [ ] | Task state, approval, verification, and evidence | A task survives reconnect and distinguishes unknown outcome from success | State/recovery tests and evidence inspection |
-| D4 | [ ] | Home Assistant adapter | One real or fixture HA instance supports discovery, status, diagnosis, and a low-risk action | Adapter contract tests and HA acceptance |
-| D5 | [ ] | PC adapter and target-side executor | A Windows PC supports bounded diagnostics and one verified repair | Windows acceptance with a clean fixture machine |
-| D6 | [ ] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, and revoke a device task | Remote protocol fixtures and real-device acceptance |
-| D7 | [ ] | Playbooks and operator evidence | Common configuration/repair flows are explainable and replayable | Playbook fixtures and evidence review |
-| D8 | [ ] | Additional ecosystems | Each added adapter meets the same contract and support gates | Per-adapter simulator and field acceptance |
-| D9 | [ ] | Standalone Mobile execution | One phone restores a supported BLE device's network connection with no PC or Gateway and verifies the result | Shared contract fixtures and real phone/device acceptance |
-| D10 | [ ] | Developer device sessions | Complete build, deploy, debug, verify, and native-tool workflows on supported host and target combinations | Project/device integration, native-tool and reattach acceptance |
-| D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
-| D12 | [ ] | Ling Server connectivity | Self-hosted control, direct peer paths, NAT traversal, encrypted relay fallback, and paired conversation/device-task sync work without third-party network services | Multi-network tests, peer identity, payload confidentiality, and reconnect evidence |
-| D13 | [ ] | Hardware protocol development and debugging | Capture, decode, replay, and verify a hardware protocol and register the tested adapter for standard use | Shared codec fixtures and physical PC and Mobile device runs |
-| D14 | [ ] | Semantic device graph and twin | PC, Mobile, vehicle, hardware, and smart-home identities and state views resolve through one semantic model | Identity, relationship, freshness, and twin fixtures |
-| D15 | [ ] | Cross-device task graph | One task can plan and execute nodes on different owners with approvals, partial results, recovery, and verification | Graph scheduler, owner leases, and cross-device acceptance |
-| D16 | [ ] | Edge Runtime and bridge contract | An enrolled Linux edge executor and a phone-owned bridge use the shared device contract | Enrollment, reconnect, local journal, capability, and bridge tests |
-| D17 | [ ] | Event and telemetry plane | Device, task, health, and evidence events use one envelope with ordering, freshness, backpressure, and snapshots | Stream fixtures, gap recovery, telemetry retention, and peer projection |
-| D18 | [ ] | Resource and adapter registry | Supported resources install, update, and roll back through their platform delivery channels | Manifest, license, dependency, digest, and rollback tests |
-| D19 | [ ] | Safety, policy, and secrets | Actions check device authority and current operating conditions and record their verification | Risk fixtures, controller boundaries, and target-specific acceptance |
-| D20 | [ ] | Fleet and lifecycle | Enrollment, ownership, health, credentials, upgrade, revoke, retire, and restore are durable | Lifecycle state machine and upgrade/recovery evidence |
-| D21 | [ ] | Model context and orchestration | Model context packs and cross-device plans use bounded evidence, local playbooks, and observation trust | Context budget, prompt-injection, planner, and offline fixtures |
-| D22 | [ ] | Observability and conformance | One trace links model, graph, runtime, adapter, protocol, target, and verification | Simulator, hardware-in-loop, chaos, field, and reproducible conformance report |
+| D1 | [x] | Shared device contracts and adapter manifest | Strict schemas compile and reject invalid inputs | Contracts typecheck and contract tests |
+| D2 | [x] | Device registry and capability broker | A fake device can register, discover, refresh capabilities, lease a target, and execute a read-only capability | Core broker tests with fake adapter |
+| D3 | [~] | Task state, approval, verification, and evidence | A task keeps its approval, dispatch intent, receipt and verification through interruptions, with user-visible reconciliation and recovery | Core SQLite journal and daemon startup recovery tests |
+| D4 | [~] | Home Assistant adapter | Fixture adapter supports discovery, entity availability classification, and a low-risk service action | Daemon adapter fixture tests |
+| D5 | [~] | PC adapter and target-side executor | Typed PC inventory, network/services observations, and one reversible repair are implemented | Daemon adapter fixture tests |
+| D6 | [~] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, revoke, and request readback through a typed Gateway surface | Remote protocol and facade fixtures |
+| D7 | [~] | Playbooks and operator evidence | Bounded read-only playbook validation and replayable task attempts are implemented | Core playbook fixture tests |
+| D8 | [~] | Additional ecosystems | PC-owned Linux SSH enrolls a pinned target and journals IPv4, route, Wi-Fi and optional DNS observations | Daemon HTTP, reconnect fixtures and OpenSSH loopback |
+| D9 | [~] | Standalone Mobile execution | Phone-owned typed execution, local journal, foreground gate, exact approval, and resume recovery are implemented | Mobile source fixtures |
+| D10 | [~] | Developer device sessions | The Daemon coordinator persists target-bound sessions, artifacts and job outcomes | Core and Daemon developer-session fixtures |
+| D11 | [~] | PC-assisted Mobile execution | Phone-owned collaboration proposals and chunked artifacts preserve owner and target binding | Core collaboration fixtures |
+| D12 | [~] | Ling Server connectivity | Self-hosted control metadata and durable peer journals enforce route and revocation fences. Native connectivity remains in progress | Core route, peer-journal and HTTP fixtures |
+| D13 | [~] | Hardware protocol development and debugging | Capture integrity, loss metadata, and offline Modbus RTU decoding are implemented in the Daemon workbench runtime | Core protocol and Daemon restart fixtures |
+| D14 | [~] | Semantic device graph and twin | Graph identity, relationships, merge/split, and freshness-aware twin views are implemented | Core graph/twin fixtures |
+| D15 | [~] | Cross-device task graph | Dependency validation, ready-node placement, owner leases, partial aggregation, and result lineage are implemented | Core task-graph fixtures |
+| D16 | [~] | Edge Runtime and bridge contract | Enrollment and revocation registry foundation is implemented | Core edge registry fixtures |
+| D17 | [~] | Event and telemetry plane | The owning Daemon task journal exposes resumable, redacted event pages | Core journal and Daemon HTTP fixtures |
+| D18 | [~] | Resource and adapter registry | Digest-bound install and rollback registry is implemented | Core resource fixtures |
+| D19 | [~] | Safety, policy, and secrets | Physical preconditions, emergency stop, and secret-reference checks are implemented | Core safety fixtures |
+| D20 | [~] | Fleet and lifecycle | Revisioned lifecycle transitions are implemented | Core lifecycle fixtures |
+| D21 | [~] | Model context and orchestration | Bounded facts, hypotheses, observation refs, and untrusted text refs are implemented | Core context fixtures |
+| D22 | [~] | Observability and conformance | Cross-layer trace spans and conformance report construction are implemented | Core trace fixtures |
 
 ## D0: Design baseline
 
@@ -86,19 +86,19 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Add strict DeviceIdentity, DeviceProfile, CapabilityDescriptor, AdapterManifest,
+- [x] Add strict DeviceIdentity, DeviceProfile, CapabilityDescriptor, AdapterManifest,
   Observation, ActionRequest, ActionResult, VerificationResult, and DeviceTask contracts.
-- [ ] Add schema versions and reject unknown fields where the contract is security- or
+- [x] Add schema versions and reject unknown fields where the contract is security- or
   wire-sensitive.
-- [ ] Select a shared contract major and compatible capability schemas. Allow additive
+- [x] Select a shared contract major and compatible capability schemas. Allow additive
   display metadata within a supported version.
-- [ ] Define side-effect, approval, permission, idempotency, timeout, verification, and
+- [x] Define side-effect, approval, permission, idempotency, timeout, verification, and
   rollback metadata.
-- [ ] Define per-operation deadlines, response size limits, and the total task budget.
-- [ ] Define normalized error categories without exposing raw credentials or protocol
+- [x] Define per-operation deadlines, response size limits, and the total task budget.
+- [x] Define normalized error categories without exposing raw credentials or protocol
   payloads.
-- [ ] Define adapter conformance fixtures and a fake adapter.
-- [ ] Record the deployment rule for each transport: no target install, target-side
+- [x] Define adapter conformance fixtures and a fake adapter.
+- [x] Record the deployment rule for each transport: no target install, target-side
   executor, or hardware bridge, with pairing and removal behavior.
 
 ### Exit evidence
@@ -113,14 +113,14 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Add device registration, revocation, health, and capability snapshot storage.
-- [ ] Resolve a stable device id independently from addresses and transport handles.
-- [ ] Load adapter manifests and reject incompatible contract versions.
-- [ ] Track capability support, current availability, and authorization independently.
-- [ ] Refresh stale snapshots after expiry and changes to connection, firmware, adapter,
+- [x] Add device registration, revocation, health, and capability snapshot storage.
+- [x] Resolve a stable device id independently from addresses and transport handles.
+- [x] Load adapter manifests and reject incompatible contract versions.
+- [x] Track capability support, current availability, and authorization independently.
+- [x] Refresh stale snapshots after expiry and changes to connection, firmware, adapter,
   or authority. Recheck target identity and prerequisites at dispatch.
-- [ ] Add target leases and bounded concurrency for device tasks.
-- [ ] Keep adapter crashes and transport failures isolated from the daemon process where
+- [x] Add target leases and bounded concurrency for device tasks.
+- [~] Keep adapter crashes and transport failures isolated from the daemon process where
   external adapters are used.
 
 ### Exit evidence
@@ -136,28 +136,52 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Add durable device-task transitions from creation through verification.
-- [ ] Reuse Ling approval policy without allowing adapter installation to change policy.
-- [ ] Persist capability and policy snapshots with each task.
-- [ ] Show the target, action, host, impact, verification, and recovery option before a
-  write. Bind confirmation to the exact action and current device and policy revisions.
-- [ ] Persist dispatch intent and an attempt ID before invoking the adapter. Serialize
-  the dispatch decision with cancellation and revocation.
-- [ ] Require verification for any action that claims to repair or configure a device.
-- [ ] Record action response, device verification, and user outcome independently.
-- [ ] Preserve unknown outcomes and reconcile by observation after a possibly
-  dispatched write. Track any later authorized action under a new attempt.
-- [ ] Require a supported recovery plan for writes that can strand a previously
-  reachable device on its control path.
-- [ ] Add redacted observations and artifact references to the existing audit/evidence
+- [x] Add durable device-task transitions from creation through verification.
+- [~] Reuse Ling approval policy. The broker validates exact approval bindings. Existing
+  Ling approval UI and audit integration remain open.
+- [~] Keep capability snapshot IDs and policy revision with each task. Retain the full
+  planning snapshot and authority history for later inspection.
+- [~] Show the target, capability and PC owner before a write and bind confirmation to
+  the exact action and current revisions. Detailed argument, impact, verification and
+  recovery views remain open.
+- [x] Persist dispatch intent and an attempt ID before invoking the adapter. The owning
+  daemon checks task scope, current proposal, approval, and lease in the admission
+  transaction. A stop before admission cancels the task. A stop after admission
+  preserves the attempt as potentially effective and requests adapter cancellation.
+- [x] Require verification for any action that claims to repair or configure a device.
+- [x] Record action response, device verification, and user outcome independently.
+- [x] Preserve unknown outcomes from interrupted dispatch, missing readback, authority
+  changes and daemon restart. Exact retries return the prior attempt. A reconciliation
+  read uses a current read-only capability, fresh target evidence and the owner's
+  current connection revision. Late receipts cannot restore success after revocation.
+- [x] Let a paired Mobile request PC readback for an unknown task. Bind the request to
+  the durable attempt and the current PC capability snapshot. A renewed snapshot stays
+  bound to the registered connection and its target.
+- [~] Require a supported recovery plan for writes that can strand a previously
+  reachable device on its control path. Verify target rollback timers or a separate
+  recovery route before accepting this path.
+- [x] Add redacted observations and artifact references to the existing audit/evidence
   model.
-- [ ] Ensure reconnecting clients read durable task state rather than infer cancellation.
+- [x] Ensure reconnecting clients read durable task state rather than infer cancellation.
 
 ### Exit evidence
 
 - Recovery fixtures for daemon restart, client disconnect, cancel or revoke before
   dispatch, and stop or timeout after dispatch intent. Assert the dispatch count and
   subsequent outcome evidence.
+- A signed Gateway session revokes a task while its approval command is waiting on
+  the adapter. The stop persists immediately. Replaying the approval returns the
+  recorded attempt. Its late receipt remains visible, and the task remains unknown.
+- SQLite fixtures cover legacy lease migration and target exclusion during late
+  verification. Thrown transport errors keep their stable error category and redact
+  the transport exception text.
+- A current PC snapshot and a fresh PC network readback can reconcile an unknown
+  network repair exactly once. Stale snapshots, stale readback and a revoked target
+  leave the task unresolved.
+- An authenticated Gateway fixture exercises the v1 Mobile snapshot, v2 reconciliation,
+  incorrect workspace and attempt bindings, renewal of an expired snapshot, unresolved
+  readback followed by verification, and a request repeated after verification. The
+  original write count stays at one.
 - Evidence fixture showing before and after state, verification, and user outcome. For
   each supported automatic recovery path, verify restoration of the recorded baseline
   after a simulated connection loss.
@@ -167,16 +191,16 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Register a Home Assistant adapter with explicit URL, authentication, and instance
+- [x] Register a Home Assistant adapter with explicit URL, authentication, and instance
   health configuration.
-- [ ] Discover devices, entities, services, and current availability.
-- [ ] Normalize state and service metadata into Ling capabilities.
-- [ ] Use a read-only Home Assistant flow to verify discovery, version selection, and
+- [x] Discover devices, entities, services, and current availability.
+- [x] Normalize state and service metadata into Ling capabilities.
+- [~] Use a read-only Home Assistant flow to verify discovery, version selection, and
   diagnosis for unavailable entities, stale state, integration failure, and automation
   failure.
-- [ ] Add a small set of low-risk, verified actions such as reload integration or
+- [x] Add a small set of low-risk, verified actions such as reload integration or
   re-enable a bounded automation where supported.
-- [ ] Preserve Home Assistant entity and service identifiers in evidence without exposing
+- [x] Preserve Home Assistant entity and service identifiers in evidence without exposing
   credentials.
 
 ### Exit evidence
@@ -190,12 +214,14 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Define the Windows/Linux/macOS target-side executor boundary.
-- [ ] Implement inventory, process/service, network, log, and software-version
+- [x] Define the Windows/Linux/macOS target-side executor boundary.
+- [~] Implement inventory, process/service, network, log, and software-version
   observations.
-- [ ] Expose typed repair actions instead of arbitrary shell execution.
-- [ ] Add least-privilege installation, pairing, update, revoke, and uninstall behavior.
-- [ ] Implement one low-risk repair flow with explicit verification.
+- [x] Expose typed repair actions instead of arbitrary shell execution.
+- [x] Add a loopback-authenticated local PC diagnosis route that returns the structured
+  read-only report and persists the daemon-owned task and observations.
+- [~] Add least-privilege installation, pairing, update, revoke, and uninstall behavior.
+- [x] Implement one low-risk repair flow with explicit verification.
 - [ ] Establish a reproducible Windows network fault on a test PC or VM. Reproduce the
   diagnosis with read-only checks before exercising an approved reversible repair and
   retesting the original symptom.
@@ -215,40 +241,58 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Extend the Remote Gateway with a narrow device-task capability surface.
-- [ ] Reuse secure pairing, device identity, replay protection, and signed frames.
-- [ ] Add mobile read-only device list, capability, task status, and evidence projection.
-- [ ] Add eligible approval and revoke flows with server-owned policy ceilings.
-- [ ] Route eligible device-task messages through the Gateway allowlist and keep
-  target credentials with the executing host.
-- [ ] Keep the daemon as the execution owner for this facade. D9 covers standalone
+- [x] Extend the Remote Gateway with a narrow device-task capability surface.
+- [x] Reuse secure pairing, device identity, replay protection, and signed frames.
+- [x] Add mobile read-only device list, capability, PC-owned recent-task status, task
+  detail, and evidence projection through the negotiated ling.device-tasks.v1
+  WebSocket subprotocol.
+- [x] Add approval and revoke commands. Mobile creates a short-lived binding from the
+  current paired session's preview. Gateway admission rechecks the proposal, current
+  snapshot, policy revision and task owner before invoking the broker.
+- [x] Negotiate `ling.device-tasks.v2` for PC-owned readback. The Gateway advertises the
+  reconciliation capability and projects the eligible attempt only on this subprotocol.
+  Clients can fall back to the v1 device-task interface.
+- [x] Route eligible device-task messages through the Gateway allowlist and keep
+  target credentials with the executing host. Legacy clients use the conversation
+  protocol over the same Gateway.
+- [x] Keep the daemon as the execution owner for this facade. D9 covers standalone
   Mobile and D11 covers collaboration on a phone-owned task.
 
 ### Exit evidence
 
 - Protocol fixtures for device task creation, status, approval, and revoke.
-- Mobile reconnect and resync tests show last known state while offline and recover the
-  original daemon task. Duplicate requests return the recorded result or pending
-  attempt. Reusing an attempt key with a different action is rejected.
+- Mobile reconnect and resync tests show last known device/task state while offline and
+  recover the original daemon task. Gateway fixtures verify workspace scoping and
+  legacy-session capability isolation. Duplicate requests return the recorded result
+  or pending attempt. Reusing an attempt key with a different action is rejected.
+- Mobile shows the target and capability and asks the user to approve in the current
+  session. The remote-client fixture verifies the exact approval binding, command
+  frames, stale previews and capability checks. A stop remains available while an
+  approval response is pending.
 - Physical iPhone acceptance for the approved read-only and approval flows.
 - Android compilation and emulator coverage; physical Android evidence remains separately
   reported until available.
+- Expo production bundle export passed for iOS and Android using
+  `corepack pnpm --filter @ling-stack/mobile exec expo export --platform all --output-dir "$LING_MOBILE_BUNDLE_DIR" --max-workers 2`
+  with a temporary output directory. The Mobile package test suite passed 88 tests.
 
 ## D7: Playbooks and operator evidence
 
 ### Scope
 
-- [ ] Define playbook metadata, required capabilities, risk profile, expected evidence,
+- [x] Define playbook metadata, required capabilities, risk profile, expected evidence,
   and supported device profiles.
-- [ ] Add one Home Assistant offline-device playbook.
-- [ ] Add one PC software-diagnosis playbook.
-- [ ] Add structured explanation templates that separate facts, hypotheses, actions,
-  verification, and remaining uncertainty.
-- [ ] Validate freshness and provenance for observations used by a branch. Treat
-  arbitrary instructions in device outputs as observation content.
-- [ ] Provide a bounded local read-only flow that can collect redacted evidence when the
+- [x] Add one Home Assistant offline-device playbook and one PC software-diagnosis
+  playbook with local fallback metadata and read-only typed steps.
+- [x] Project facts, hypotheses, actions, verification, and uncertainty into a shared
+  report from the PC network/service and Home Assistant entity playbooks.
+- [x] Check observation freshness, provenance, redaction and target binding in these
+  templates. Preserve raw device text as observation references.
+- [x] Provide a bounded local read-only flow that can collect redacted evidence when the
   model service is unavailable.
-- [ ] Add replayable fixtures for successful, failed, partial, and unknown outcomes.
+- [x] Add replayable fixtures for successful, failed, partial, and unknown outcomes.
+- [x] Surface the structured report through the local daemon operator route. The model
+  task projection remains a separate integration gate.
 
 ### Exit evidence
 
@@ -265,12 +309,18 @@ that support exists:
 - [ ] Router and NAS APIs.
 - [ ] Printer discovery, queue, driver, and network diagnosis.
 - [ ] Matter, ESPHome, Zigbee, and BLE devices.
-- [ ] Linux network diagnosis through an authorized SSH adapter, with real LAN and
-  phone-hotspot reachability and fault evidence.
-- [ ] Android and head-unit deployment and diagnostics through authorized APIs or
+- [~] Linux network diagnosis through an authorized SSH adapter. The PC verifies
+  a configured host key, persists the diagnosis and rechecks the binding after
+  interruption or an endpoint change. Native Mobile SSH and real LAN and
+  phone-hotspot acceptance remain.
+  [PC-owned Linux SSH diagnosis](ling-device-developer-execution.md#pc-owned-linux-ssh-diagnosis)
+- [x] Android and head-unit deployment and diagnostics through a typed ADB adapter
+  with fixed inventory, packages, logs, artifact install, reboot and verification
+  operations. Real authorized APIs or
   ADB where available. Verify DiPlay on a compatible parked vehicle using
   the [installation case](ling-device-developer-execution.md#5-case-flow-install-diplay-on-an-older-head-unit).
-- [ ] OBD/OpenXC vehicle read and diagnostic operations.
+- [x] Add a typed OBD vehicle adapter for vehicle identity, PID and DTC reads.
+  Real OBD/OpenXC bridge and vehicle acceptance remain separate.
 - [ ] Any vendor-specific adapter with a documented support matrix and authorization path.
 
 For each adapter, record its own contract, simulator, permissions, support matrix, release
@@ -281,24 +331,48 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Reuse D1 device contracts and D3 task, approval, and recovery rules in a phone
+- [x] Reuse D1 device contracts and D3 task, approval, and recovery rules in a phone
   execution module that works without Gateway pairing. D6 and D9 have independent
   acceptance gates.
-- [ ] Add native BLE connection and capability discovery for one documented device
-  profile, including OS permission and device authorization checks.
-- [ ] Run one setup playbook that reconnects a supported smart home device to Wi-Fi
+- [x] Add the native transport bridge checks for one documented device profile, including
+  OS permission, target identity, connection revision, capability support and required
+  transport permissions. Physical BLE/USB/LAN discovery remains a platform gate.
+- [x] Define the Mobile native transport bridge boundary for BLE, USB, LAN and
+  other platform transports, including discovery, OS permission gating, target
+  identity checks, connection revisions and capability snapshots.
+- [~] Run one setup playbook that reconnects a supported smart home device to Wi-Fi
   after explicit user confirmation. Verify that the device comes online.
-- [ ] Persist approval, action attempts, and redacted verification evidence on the
+- [x] Provide a deterministic local read-only playbook runner for diagnosis when the
+  model service is unavailable, using the same Mobile journal and attempt rules.
+- [x] Expose phone-owned Home Assistant diagnosis before PC pairing and from the paired
+  app. The Mobile HTTPS adapter reads a user-selected entity using the instance's
+  trusted TLS endpoint and the supplied Home Assistant token. The phone records
+  only the task and its typed availability evidence.
+- [~] Expose phone-owned Linux diagnosis on Android. Pin the host key inside the
+  handshake, use the entered credentials for the live session, and store
+  enrolled endpoint metadata and typed task facts on the phone. App packaging,
+  native iOS SSH and physical Android acceptance remain.
+  [Phone-owned Linux SSH diagnosis](ling-device-developer-execution.md#phone-owned-linux-ssh-diagnosis)
+- [x] Persist approval, action attempts, and redacted verification evidence on the
   phone. Preserve an unknown result after interruption until state can be checked.
-- [ ] Stop new dispatch after foreground authorization ends or the app is suspended.
-  Recheck the target state and permissions on resume.
-- [ ] Record the tested phone OS, device model and firmware, and transport. Each later
+- [x] The app applies native AppState transitions to the phone execution owner and
+  recovers its journal on foreground entry. The execution module aborts
+  foreground-gated writes when authorization ends.
+  It journals late receipts, prevents concurrent dispatch to the same target, checks
+  the live connection before dispatch, and finalizes a read-only playbook after all its
+  steps.
+- [~] Record the tested phone OS, device model and firmware, and transport. Each later
   phone platform or USB integration gets its own acceptance entry.
 
 ### Exit evidence
 
 - Shared contract fixtures for capability checks, approval, and interpretation of
   verified and unknown results.
+- The Mobile runtime fixture runs the Home Assistant playbook with no PC, Gateway or
+  model service. It records unavailable and absent entity results, access denial and
+  bounded response failures. Reopening a journal restores records and leaves an
+  interrupted attempt unknown. iOS and Android production JavaScript bundles export
+  successfully. This run had no available iOS simulator runtime or connected ADB device.
 - A real phone and supported device complete the BLE flow with no PC or Gateway
   available. Exercise a local playbook while the model service is unavailable. The
   phone journal shows the approval, action, and verified result.
@@ -312,19 +386,26 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add standard and developer session entry points to PC and Mobile. Show the
+- [~] Add standard and developer session entry points to PC and Mobile. Show the
   current workspace, external target, owner, and effective device authorization.
-- [ ] Use the shared device contract for deploy, launch, test, and scoped diagnostics
+- [x] Use the shared device contract for deploy, launch, test, and scoped diagnostics
   on an authorized development target. Bind package identity and the verified
   artifact to the approved device action.
 - [ ] Connect the operator's native workbench to supported, authorized SSH, ADB,
   and vendor maintenance tools. Record tool status, relevant evidence selected by
   the user, and readback after native maintenance.
-- [ ] Persist job identity and reconnect to running build or test work. Record
-  the runtime and device outcome separately.
+- [~] Persist job identity and typed outcomes. Reattachment to a live build or
+  test worker remains a runtime gate.
+- [x] Make the Daemon coordinator use its SQLite store for session and job
+  transitions. Commit each job with its session update and preserve the retained
+  result on replay.
+- [x] Persist developer sessions, jobs, artifacts, phone-owned proposals and
+  chunked artifact transfers in the shared daemon SQLite database.
 
 ### Exit evidence
 
+- The SQLite fixture rejects a partial write of the job/session pair and recovers
+  the accepted job and its unknown outcome across coordinator reopen.
 - A supported app project completes build, install, launch, log collection, test,
   and retest through the developer entry point. Standard and developer sessions
   use the same task journal and outcome rules.
@@ -338,11 +419,12 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Extend the signed remote protocol for an opted-in phone-owned task
-  projection, PC proposals, scoped artifact transfer, and Mobile receipts.
-- [ ] Keep project actions bound to the PC workspace and device actions bound to
+- [~] Define the contracts for an opted-in phone-owned task projection, PC proposals,
+  scoped artifact transfer, and Mobile receipts. Signed transport and the Mobile
+  journal integration remain open.
+- [x] Keep project actions bound to the PC workspace and device actions bound to
   the phone's verified target and local authorization.
-- [ ] Resume the owner's journal from an acknowledged revision or a refreshed
+- [~] Resume the owner's journal from an acknowledged revision or a refreshed
   snapshot. Preserve known and uncertain attempt outcomes after either link fails.
 
 ### Exit evidence
@@ -358,24 +440,37 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Implement the self-hosted Ling Server control API, enrollment, presence,
+- [~] Implement the self-hosted Ling Server control API, enrollment, presence,
   rendezvous, server identity, peer epochs, revocation, and metadata persistence.
-- [ ] Implement signed WebRTC signaling and direct LAN or cross-network ICE paths on
+- [x] Persist installations, peer bindings, route attempts, revocation epochs, and
+  route state in SQLite, with daemon restart recovery fixtures.
+- [x] Persist the logical peer session contract, route-generation changes, ordered
+  frames, command receipts, and directional resume cursors with idempotency checks.
+  Current peer epochs fence admission and replay. Frame and sequence persistence
+  use one transaction. Configuration binds the two fingerprints to the peer roles.
+- [~] Implement signed WebRTC signaling and direct LAN or cross-network ICE paths on
   PC and Mobile. Use Ling Server's configured STUN endpoint for discovery.
-- [ ] Integrate self-hosted coturn for fallback, with scoped credential issuance, UDP
+- [~] Integrate self-hosted coturn for fallback, with scoped credential issuance, UDP
   relay and TURN/TLS on TCP 443. Verify allocation limits and expiry on the chosen stack.
-- [ ] Carry Gateway conversation, developer-collaboration, and device-task messages
-  over the same peer session contract. Preserve cursors, receipts, idempotency,
-  artifact chunking, route migration, and session resumption.
+- [~] Carry Gateway conversation, developer-collaboration, and device-task messages
+  over the same peer session contract. Device Fabric owner-stream events now have a
+  typed, idempotent peer-frame bridge; conversation, collaboration, artifact lanes,
+  and native route acceptance remain open.
 - [ ] Package single-node self-hosting with SQLite and define a scaled deployment
   with PostgreSQL, stateless control workers, and relay affinity.
-- [ ] Add diagnostics for control reachability, candidate paths, selected route,
-  peer handshake, cursor resume, relay quotas, and revocation.
+- [~] Add diagnostics for control reachability, candidate paths, selected route,
+  peer handshake, cursor resume, relay quotas, and revocation. Typed ephemeral
+  transport configuration and redacted route diagnostics are available through the
+  self-hosted control plane; native ICE/WebRTC and relay measurements remain open.
 - [ ] Migrate existing pairings through local confirmation and an explicitly
   versioned routing profile. Exercise key mismatch and retained receipts at cutover.
 
 ### Exit evidence
 
+- The local control fixture checks peer key mismatch and revoked route selection.
+  Core fixtures cover two-direction replay after reopening SQLite, route cutover,
+  revocation from a separate registry instance and rollback when the cursor write
+  fails. These exercise logical sessions and the HTTP control interface.
 - Test a reachable LAN, a direct connection across networks, and a NAT/firewall
   fixture requiring the Ling Relay. Include route switching during live conversation
   and device-task sync and a server outage with local execution available.
@@ -391,17 +486,25 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add a protocol workbench to the developer session, reusing D1–D3 device
-  contracts, ownership, approval, and evidence.
+- [~] The Daemon runtime loads a protocol workbench and a Modbus RTU codec. Connect
+  the workbench to developer sessions and their D1–D3 target binding and evidence.
 - [ ] Keep the hardware transport, protocol codec, and versioned device profile
   independently reusable. Record the verified host, adapter and firmware combination.
-- [ ] Capture request and response evidence, support offline decoder replay and
+- [x] Capture request and response evidence, support offline decoder replay and
   simulator fixtures, and preserve provenance and capture loss.
-- [ ] Register the verified profile and operations through the existing device
+- [x] Persist codec manifests and validated protocol captures so replay evidence
+  survives a workbench or daemon restart.
+- [x] Support offline Modbus RTU register request and response decoding, exception
+  replies and CRC diagnostics. Validate all capture frame digests before decoding or
+  invoking any replay callback. Persist capture loss independently of frame integrity.
+- [~] Register the verified profile and operations through the existing device
   adapter catalog. Record supported devices and verified behavior.
 
 ### Exit evidence
 
+- Core and Daemon fixtures decode a captured register response, distinguish an
+  invalid wire checksum from a changed evidence digest, and restore the capture
+  and its loss metadata after reopening the runtime.
 - Test a documented RS-485 Modbus RTU device on supported PC, Android USB, and
   iPhone local-bridge paths. Capture and decode a measurement, verify a documented
   setting, and read back the exact target.
@@ -418,11 +521,13 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add stable device, component, connection, relationship, location, and
+- [x] Add stable device, component, connection, relationship, location, and
   ownership records. Keep transport aliases separate from stable identity.
+- [x] Persist graph nodes, relationships, and Twin revisions in the device fabric
+  store, with containment-cycle and revision checks.
 - [ ] Add semantic capability verbs with protocol implementations, support ranges,
   freshness, side effects, approvals, prerequisites, and verification.
-- [ ] Add reported, desired, pending, and verified twin views with provenance and
+- [x] Add reported, desired, pending, and verified twin views with provenance and
   freshness. Preserve unknown state after interrupted writes.
 - [ ] Add identity merge and split workflows with adapter evidence or local operator
   confirmation.
@@ -440,9 +545,13 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add parent graph, node, edge, target binding, node owner, precondition,
+- [x] Add parent graph, node, edge, target binding, node owner, precondition,
   approval, attempt, verification, recovery, and evidence contracts.
-- [ ] Coordinate PC, Mobile and Linux edge nodes over their authorized device links.
+- [x] Persist validated task graph revisions and restore graph state after a store
+  reopen.
+- [x] Persist target owner leases with expiry and reject stale graph revisions or
+  competing owners after coordinator restart.
+- [~] Coordinate PC, Mobile and Linux edge nodes over their authorized device links.
   Preserve per-node ownership. Use the declared coordination mechanism for shared
   target and bridge leases.
 - [ ] Support partial result, unknown outcome, graph cancellation, node retry,
@@ -462,8 +571,10 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Define runtime enrollment, key proof, target discovery, local journal,
+- [x] Define runtime enrollment, key proof, target discovery, local journal,
   connection handles, health, cancel, capture, upgrade, and revoke.
+- [x] Persist edge runtime enrollment revisions and cross-layer trace spans in the
+  device fabric store.
 - [ ] Verify a Linux edge executor and a supported phone-owned hardware bridge.
   Validate executor enrollment and each placement's connection, recovery, and task
   ownership.
@@ -482,15 +593,27 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Define the event envelope, stream owner, sequence, freshness, quality,
-  provenance, redaction class, and retention policy.
-- [ ] Add task, state, health, capability, action, verification, evidence, and
-  resource events. Keep high-rate telemetry separate from durable task events.
-- [ ] Add gap recovery, snapshot projection, backpressure, sampling, and peer
-  synchronization.
+- [x] Define the event envelope fields for stream ownership, generation, sequence,
+  freshness, quality, provenance, redaction class, evidence references, and retention class.
+- [x] Persist bounded owner event streams with replay-by-event-id, stale-cursor
+  rejection, gap reporting, and a materialized snapshot cursor.
+- [x] Add a reusable event projector that resumes from a persisted snapshot,
+  applies contiguous deltas, and returns an explicit resync requirement for stale
+  cursors or sequence gaps.
+- [~] Project task state, plan, attempt, verification and public evidence from the
+  append-only Daemon task journal. The local event route provides a current task and
+  a bounded page by task sequence. Health, capability, resource and high-rate
+  telemetry producers remain open.
+- [~] Add gap recovery, snapshot projection, backpressure, sampling, and peer
+  synchronization. Owner-stream events can now cross an authenticated peer frame
+  with idempotent replay; snapshot exchange, backpressure and telemetry policy remain.
 
 ### Exit evidence
 
+- A local daemon serves the report and journal through direct loopback access.
+  Core fixtures interleave other tasks while keeping the queried task's cursor
+  contiguous and hiding private evidence references. An old generation requires
+  the current snapshot.
 - A state gap recovers from a retained range or current snapshot. A duplicate
   event does not change state.
 - High-rate sensor data is sampled or expired according to policy while task and
@@ -501,9 +624,13 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add signed resource manifests for adapters, transports, codecs, profiles,
-  vocabulary, playbooks, simulators, captures, documentation, firmware metadata,
-  and edge packages.
+- [x] Add digest-bound resource installation, optional signature verification,
+  active revision persistence, and rollback history for adapter resources. Commit
+  the payload and active revision together. Verify the active payload digest on read.
+- [x] Enforce declared contract, license, platform, device, firmware and permission
+  compatibility where runtime facts are available, and persist disable/health state.
+- [ ] Add signed resource manifests for transports, codecs, profiles, vocabulary,
+  playbooks, simulators, captures, documentation, firmware metadata, and edge packages.
 - [ ] Validate digest, signature, license, dependency, platform, device, firmware,
   permission, and Ling contract compatibility.
 - [ ] Install, health-check, disable, update, and roll back resources independently.
@@ -514,6 +641,9 @@ only on a successful install or a model response.
   components enter through the signed app build. PC validates a supported native
   adapter installation. Record resource revisions and artifact digests.
 - A failed update restores the last verified resource without deleting task evidence.
+- A SQLite fixture rejects a partial activation and preserves the working version.
+  On reopen, rollback requires the retained bytes and their matching digest.
+  Importing the original verified payload fills an older metadata-only active record.
 - An unsupported license, dependency, platform, or firmware range blocks installation.
 
 ## D19: Safety, policy, and secrets
@@ -522,7 +652,8 @@ only on a successful install or a model response.
 
 - [ ] Declare the physical and permission prerequisites of supported actions.
   Validate the target state, adapter cancellation and recovery behavior.
-- [ ] Add a target-scoped secret broker and auditable secret use references.
+- [x] Add a target-scoped secret broker and auditable secret-use references without
+  persisting secret contents.
 - [ ] Route safety-critical operations through the certified controller or the
   authorized vendor maintenance workflow. Preserve operator evidence and readback.
 
@@ -538,6 +669,14 @@ only on a successful install or a model response.
 
 ### Scope
 
+- [x] Persist revisioned lifecycle transitions and reject invalid or regressing
+  state changes.
+- [x] Persist ownership transfer revisions and retain the previous owner history
+  for task and evidence continuity.
+- [x] Persist target-scoped access grants for shared read-only and developer scopes,
+  with capability allowlists, expiry, revocation and revision fencing.
+- [x] Persist credential rotation and revocation revisions with secret references and
+  fingerprints only. Credential contents remain outside the device fabric store.
 - [ ] Track enrollment and ownership revisions, profile and runtime versions,
   operational health, maintenance and retirement.
 - [ ] Add ownership transfer, shared read-only access, developer scopes, credential
@@ -559,14 +698,31 @@ only on a successful install or a model response.
 
 - [ ] Build bounded context packs from target relationships, capability snapshots,
   state, evidence, policy, safety facts, freshness, and context budget.
-- [ ] Connect the existing runner and project executor to typed device proposals.
-  Record planning inputs and evidence. Support deterministic local playbooks.
+- [x] Build Daemon planning input from the owning task, current target snapshots
+  and journaled evidence in the same workspace. Project the supported diagnosis
+  fields and preserve the source and freshness of each fact.
+- [x] Preserve trusted fact provenance, observation time, freshness cutoff, quality,
+  and redaction metadata while keeping stale, sensitive, and textual output outside
+  model facts.
+- [x] Validate typed model or local-playbook proposals against the bound context,
+  target scope, capability catalog and dependency graph, and report nodes that need
+  user approval without creating execution evidence. Check each node's owner,
+  target-specific capability snapshot and supplied evidence references.
+- [~] Connect the existing runner and project executor to typed device proposals.
+  The core bridge binds runner identity and capability revision, synthesizes typed
+  local-playbook graphs, and falls back only when runner planning fails. A concrete
+  Pi/project-executor adapter and cross-runtime planning evidence remain open.
+- [x] Record the PC diagnosis playbook plan in the task journal before its first
+  device attempt. Preserve cancellation when a planning request is interrupted.
 - [ ] Keep graph and node authority attached to the owning journals when PC or Mobile
   changes planners. Rebuild the context pack for the selected provider.
 - [ ] Treat device output, logs, captures, and vendor text as untrusted observations.
 
 ### Exit evidence
 
+- The local PC diagnostic entry writes an accepted playbook graph before dispatch,
+  and its owner can rebuild scoped facts from the journal. Tests reject foreign
+  devices, planning references, owners, execution claims, and expired snapshots.
 - A cross-device goal produces a typed graph instead of unscoped tool calls.
 - Context budget and redaction fixtures exclude unrelated devices, credentials,
   unbounded logs, and observation instructions.
@@ -578,7 +734,11 @@ only on a successful install or a model response.
 
 - [ ] Propagate conversation, graph, node, attempt, device, runtime, connection,
   adapter, resource, event, and model-turn identifiers.
-- [ ] Add simulator, protocol replay, hardware-in-loop, network interruption, process
+- [x] Persist runtime trace spans by trace identity so a daemon restart can rebuild
+  the recorded execution path.
+- [x] Persist validated conformance reports with unique checks and evidence refs for
+  reproducible runtime and adapter verification.
+- [~] Add simulator, protocol replay, hardware-in-loop, network interruption, process
   restart, resource rollback, and physical acceptance reports.
 - [ ] Produce a reproducible conformance report for each runtime, target, adapter,
   firmware, transport, model, and tested network.
@@ -602,28 +762,28 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | Slice | PR / commit | Validation command or run | Evidence link | Result boundary | Remaining work |
 | --- | --- | --- | --- | --- | --- |
 | D0 | #730 | Documentation and link checks | [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730), [Runtime contract](ling-device-support-platform-runtime-contract.md) | Architecture and tracking only | All runtime slices |
-| D1 | — | — | — | Not started | Contracts and SDK |
-| D2 | — | — | — | Not started | Registry and broker |
-| D3 | — | — | — | Not started | Task recovery and evidence |
-| D4 | — | — | — | Not started | Home Assistant |
-| D5 | — | — | — | Not started | PC |
-| D6 | — | — | — | Not started | Mobile facade |
-| D7 | — | — | — | Not started | Playbooks |
-| D8 | — | — | — | Not started | Additional ecosystems |
-| D9 | — | — | [Design](ling-device-support-platform.md#111-standalone-mobile-execution) | Design recorded, implementation not started | Standalone BLE execution and device acceptance |
-| D10 | — | — | [Developer sessions](ling-device-developer-execution.md#1-device-sessions) | Design recorded, implementation not started | Project, device, and native tool acceptance |
-| D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
-| D12 | — | Documentation links, license and public checks plus diagram rendering | [Ling Server design](ling-server-connectivity.md) | Detailed self-hosted design recorded, implementation not started | WebRTC integration, self-hosted STUN/TURN, migration, and cross-network acceptance |
-| D13 | — | Documentation, license and public checks plus diagram rendering | [Workbench design and research](ling-hardware-protocol-workbench.md) | Proposed design documented, implementation not started | Runtime and library evaluation, offline fixtures, and physical acceptance |
-| D14 | — | — | [Device Fabric](ling-device-fabric.md) | Detailed design recorded, implementation not started | Semantic graph, identity merge, twin state |
-| D15 | — | — | [Device Fabric](ling-device-fabric.md#5-cross-device-task-graph) | Detailed design recorded, implementation not started | Graph scheduler, owners, recovery |
-| D16 | — | — | [Device Fabric](ling-device-fabric.md#6-edge-runtimes-and-bridge-contract) | Detailed design recorded, implementation not started | Runtime enrollment and bridge acceptance |
-| D17 | — | — | [Device Fabric](ling-device-fabric.md#7-event-and-telemetry-plane) | Detailed design recorded, implementation not started | Event streams, freshness, retention |
-| D18 | — | — | [Device Fabric](ling-device-fabric.md#9-resource-and-adapter-registry) | Detailed design recorded, implementation not started | Signed resources, updates, rollback |
-| D19 | — | — | [Device Fabric](ling-device-fabric.md#10-safety-security-and-secrets) | Detailed design recorded, implementation not started | Physical safety and secret broker |
-| D20 | — | — | [Device Fabric](ling-device-fabric.md#11-lifecycle-fleet-and-ownership) | Detailed design recorded, implementation not started | Fleet lifecycle, transfer, upgrades |
-| D21 | — | — | [Device Fabric](ling-device-fabric.md#8-model-context-and-ai-orchestration) | Detailed design recorded, implementation not started | Context packs, planner, local fallback |
-| D22 | — | — | [Device Fabric](ling-device-fabric.md#12-observability-simulation-and-conformance) | Detailed design recorded, implementation not started | Traces, simulation, chaos, field acceptance |
+| D1 | `66ee1fbdb` | `corepack pnpm --filter @ling-stack/contracts typecheck` and `test` | [contracts/device.ts](../../packages/contracts/src/device.ts) | Core contracts, validators, transport deployment metadata, and fake adapter fixtures are implemented | Adapter package extraction and cross-process conformance remain |
+| D2 | `cf0146ff7` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts` (14 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Registry ownership, revocation, legacy lease migration, refresh fencing, current capability snapshots, stable identities, and broker dispatch are covered by fixtures | External-adapter process isolation remains |
+| D3 | `007704512` and paired readback changes | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. `node --test packages/core/test/device-support.test.ts` (21 passed). `node --test packages/daemon/test/device-remote-facade.test.ts packages/daemon/test/remote-gateway-security.test.mjs` (6 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts), [device-remote-facade.test.ts](../../packages/daemon/test/device-remote-facade.test.ts) | Atomic admission, target leases, late receipts, restart recovery and scope-checked Gateway readback preserve the original dispatch journal. An unresolved readback leaves the task unknown | Approval audit projection and physical recovery acceptance remain |
+| D4 | `4a83acfb8` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts) | Fixture Home Assistant adapter supports discovery, entity available/unavailable/absent classification, evidence observations, bounded response sizes, and a reload action without persisting the token | Real Home Assistant instance and field action acceptance remain |
+| D5 | `56e112a84` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/local-pc-executor.test.ts packages/daemon/test/device-support-runtime.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts), [local-pc-executor.ts](../../packages/daemon/src/features/device-support/adapters/local-pc-executor.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | Typed PC executor and loopback diagnosis route expose inventory, network/services observations, a reversible repair boundary and a persisted structured report. The route checks local origin and keeps target credentials out of the response | Windows/Linux/macOS clean-machine, target-side executor install/revoke and field acceptance remain |
+| D6 | `b8daed28a` and paired readback changes | Remote Protocol and Remote Client `build:ci`, `typecheck:ci`, and `test:ci` (42 and 12 passed). Mobile `typecheck:ci` and `test:ci` (92 passed). Gateway fixture covers v1 compatibility and v2 verification | [device-facade.ts](../../packages/daemon/src/features/remote-access/device-facade.ts), [PcDeviceTasksScreen.tsx](../../apps/mobile/src/features/device-tasks/PcDeviceTasksScreen.tsx), [client.test.ts](../../packages/remote-client/test/client.test.ts) | Paired Mobile can approve, stop, reconnect to, and request PC readback for a task. The client requires a current session and attempt preview before requesting reconciliation | Detailed approval presentation, physical iPhone/Android, and PC/mobile packaged acceptance remain |
+| D7 | `56e112a84` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts), [device-diagnosis.ts](../../packages/core/src/device-diagnosis.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | PC and Home Assistant templates project current typed facts, hypotheses, journaled outcomes and remaining uncertainty. The local daemon route returns a report after persisting its read-only task and observations | Model task projection and physical target verification remain |
+| D8 | `fdb3b50f7` and PC-owned Linux SSH enrollment | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. Targeted device suite (87 passed) covers same-name targets, disconnect, changed endpoint and revocation. OpenSSH loopback completed a diagnosis and rejected a mismatched host key | [Linux SSH operation](ling-device-developer-execution.md#pc-owned-linux-ssh-diagnosis), [Enrollment and diagnosis fixture](../../packages/daemon/test/linux-ssh-runtime.test.ts), [Broker readback fixture](../../packages/daemon/test/device-support-adapters.test.ts), [Android ADB adapter](../../packages/daemon/src/features/device-support/adapters/android-adb.ts), [OBD adapter](../../packages/daemon/src/features/device-support/adapters/obd.ts) | Daemon enrolls a target by verified key, then journals typed IPv4, route, Wi-Fi and optional DNS name resolution. Reconnect keeps the device ID and refreshes the connection. A lost repair receipt stays uncertain until fresh readback | Native Mobile SSH, actual LAN/hotspot and DNS evidence, PC network recovery route, ADB/OBD transport, parked head-unit and vehicle acceptance remain |
+| D9 | `52d415e47` and Android Linux SSH diagnosis | Mobile `typecheck:ci` and `test:ci` (98 passed). Expo Android prebuild and both production JS exports passed. JVM loopback verified host-key rejection before authentication, fixed command execution and oversized-output rejection. The Daemon SSH regression suite passed 6 tests | [Standalone screen](../../apps/mobile/src/features/device-tasks/StandaloneDeviceScreen.tsx), [Mobile journal fixture](../../apps/mobile/test/standalone-device-runtime.test.ts), [Android host-pin test](../../apps/mobile/modules/ling-device-transport/android/src/test/java/expo/modules/lingdevicetransport/PinnedSshSessionTest.java), [Shared Linux observations](../../packages/contracts/src/device-linux-ssh.ts) | The app supports phone-owned Home Assistant diagnosis and has an Android native Linux SSH path. The SSH journal retains redacted observations, stable target identity across address changes, and interrupted outcomes after foreground changes | Complete Android native Gradle package, physical LAN/hotspot acceptance, native iOS SSH, BLE/USB discovery and smart-home Wi-Fi provisioning |
+| D10 | `842f18e27` and durable Daemon coordination | Core and Daemon `build:ci` and `typecheck:ci`. Developer coordinator, runtime and Gateway tests (11 passed) | [Coordinator](../../packages/core/src/device-developer.ts), [SQLite store](../../packages/core/src/storage/sqlite/device-developer-store.ts), [Recovery tests](../../packages/core/test/device-developer.test.ts) | The Daemon coordinator persists sessions and jobs atomically. Restart restores an existing job, and replay retains its unresolved outcome | Standard and developer client entry, live job reattachment, native workbench, real PC/Mobile build and packaged target acceptance remain |
+| D11 | `842f18e27` | `node --test packages/core/test/device-developer.test.ts`; `node --test packages/daemon/test/device-support-runtime.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Phone-owned proposals, owner checks, idempotency, chunked artifact transfer and daemon SQLite persistence are implemented | Signed peer transport, live PC assistance and physical head-unit acceptance remain |
+| D12 | `aa8a54cf8` and peer journal fencing | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. `node --test packages/core/test/ling-server-protocol.test.ts packages/core/test/device-fabric-store.test.ts packages/daemon/test/ling-server-control-plane.test.ts` (22 passed) | [Control plane](../../packages/daemon/src/features/ling-server/control-plane.ts), [Peer coordinator](../../packages/core/src/ling-server.ts), [Transport configuration](../../packages/core/src/ling-server-transport.ts), [SQLite peer journal](../../packages/core/src/storage/sqlite/ling-server-store.ts) | The local HTTP control plane checks route epochs and peer keys. The logical peer journal atomically stores frames and sequence counters and resumes each lane independently. Revocation blocks replay and old frames are fenced at route cutover | Signed enrollment/signaling, TLS/WSS packaging, WebRTC/ICE, coturn and multi-network acceptance remain |
+| D13 | `616a43432` and Modbus RTU offline workbench | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. Protocol, Fabric, Daemon startup, Gateway and Ling Server fixtures (30 passed) | [Workbench](../../packages/core/src/device-protocol.ts), [Modbus RTU codec](../../packages/core/src/modbus-rtu.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | Daemon startup registers the codec. Captures retain their source and loss evidence through restart. Full capture validation precedes decoder and offline replay callbacks | Developer UI, vendor register-map profile, live physical transport, adapter catalog and bench acceptance remain |
+| D14 | `1c79e5bc5` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, Twin revisions, freshness projection, and persistent graph/Twin state are implemented | Multi-domain identity evidence and field convergence remain |
+| D15 | `ee7647659` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, persistent target owner leases, stale graph revision rejection, aggregate node results, and persistent task graph revisions are implemented | Cross-runtime scheduler recovery and full graph cancellation/retry reconciliation remain |
+| D16 | `d58112948` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment revisions and trace state are persisted alongside enrollment, revocation, and contiguous bridge sequence rules | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
+| D17 | `aa8a54cf8` and daemon journal projection | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. Device journal, Fabric, Daemon runtime and Gateway fixtures (43 passed) | [Task event projection](../../packages/core/src/device-task-event-projector.ts), [Local task route](../../packages/daemon/src/features/device-support/routes.ts), [Runtime fixtures](../../packages/daemon/test/device-support-runtime.test.ts) | Daemon task journals provide bounded, resumable event pages and a current task projection through the direct-loopback route. Public events expose selected evidence references. Retention and peer-frame replay have separate Core fixtures | Mobile/Gateway event subscription, cross-runtime snapshot exchange, telemetry sampling and backpressure remain |
+| D18 | `e25216a21` and atomic resource payload activation | Core `build:ci` and `typecheck:ci`. `node --test packages/core/test/device-fabric-store.test.ts` (14 passed) | [Resource store](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Activation tests](../../packages/core/test/device-fabric-store.test.ts) | SQLite commits the verified payload with its active revision. Active reads and rollback verify the digest. A missing or corrupted rollback payload leaves the current version active | Signed delivery channels, compatibility policy integration and production adapter installation remain |
+| D19 | `137d06478` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-secrets.ts](../../packages/core/src/device-secrets.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Physical preconditions, emergency stop, target-scoped secret resolution and redacted secret-use records are implemented | Target controllers, policy integration and physical safety acceptance remain |
+| D20 | `f264c06c5` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-access.ts](../../packages/core/src/device-access.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Revisioned lifecycle transitions, ownership transfer history, target-scoped shared/developer access grants and credential rotation/revocation metadata are persisted, with capability, expiry, revoke and revision checks | Fleet projections, upgrade, restore, retirement and field transfer acceptance remain |
+| D21 | `aa8a54cf8` and owner-scoped PC planning | Core and Daemon `build:ci` and `typecheck:ci`. Core orchestration, Fabric, broker and Daemon runtime fixtures (34 passed) | [Owner context](../../packages/core/src/device-task-planning-context.ts), [Proposal admission](../../packages/core/src/device-orchestration.ts), [Planner bridge](../../packages/core/src/device-runner.ts), [Daemon runtime test](../../packages/daemon/test/device-support-runtime.test.ts) | PC diagnosis records its local plan before dispatch. The builder projects typed facts from current task evidence. Plan admission verifies each node's owner, snapshot, capability and planning references. Cancelled model requests preserve cancellation | Concrete Pi/project-executor integration, cross-runtime planning evidence and provider switching remain |
+| D22 | `a9c0f3c54` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Cross-layer trace spans and validated conformance reports are persisted and can be read by identity | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
 
 ## Definition of platform completion
 

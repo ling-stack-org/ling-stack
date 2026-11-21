@@ -74,3 +74,12 @@ test("profile surface remains narrow and unpair calls the ordered remote client 
   assert.match(cleanup, /key\.startsWith\(prefix\)/u);
   assert.match(cleanup, /storage\.multiRemove\(keys\)/u);
 });
+
+test("PC device task details expose explicit approval and revoke controls", async () => {
+  const screen = await source("../src/features/device-tasks/PcDeviceTasksScreen.tsx");
+  assert.match(screen, /approveDeviceTask/u);
+  assert.match(screen, /revokeDeviceTask/u);
+  assert.match(screen, /批准执行/u);
+  assert.match(screen, /撤销/u);
+  assert.match(screen, /pendingApproval/u);
+});
