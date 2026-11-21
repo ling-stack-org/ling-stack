@@ -10,6 +10,7 @@ import {
   createBundledCuaDriverLogicalMcpServerInput,
   createCuaDriverDescriptor,
 } from "../dist/features/plugins/presets.js";
+import { createChromeBrowserDescriptor } from "../dist/features/plugins/chrome-browser.js";
 
 const now = "2026-07-20T00:00:00.000Z";
 const pluginId = "official:cua-driver";
@@ -309,6 +310,52 @@ test("canonical bundled runtime applies the Cua deny overlay without changing ex
       descriptor,
       bundledEmbedded: false,
     }), []);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("built-in runtime adapters expose remote package state after marketplace installation", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-plugin-catalog-remote-adapter-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const descriptor = createChromeBrowserDescriptor();
+    store.upsertManagedPlugin({
+      id: descriptor.id,
+      sourceKind: descriptor.sourceKind,
+      version: descriptor.version,
+      enabled: false,
+      descriptor,
+    }, now);
+    store.upsertManagedPluginPackage({
+      pluginId: descriptor.id,
+      sourceKind: "official-remote",
+      version: descriptor.version,
+      status: "installed",
+      cacheRef: "official-remote/chrome-browser/0.1.1/test",
+      manifestJson: JSON.stringify({ id: descriptor.id, version: descriptor.version }),
+      platform: "darwin",
+      arch: "arm64",
+      sourceUrl: "https://example.test/chrome.ling-plugin.zip",
+      catalogVersion: "2026-11-21T00:00:00.000Z",
+    }, now);
+
+    const plugin = listManagedPluginViews({
+      cwd,
+      extensionRegistry: {},
+      store,
+      now,
+      cuaDriverRuntimeAuthority: undefined,
+      cuaDriverFeatureFlags: featureFlags,
+    }).find((view) => view.id === descriptor.id);
+
+    assert.ok(plugin);
+    assert.equal(plugin.sourceKind, "official-remote");
+    assert.equal(plugin.package?.status, "installed");
+    assert.equal(plugin.actions.canUninstall, true);
+    assert.equal(plugin.actions.canRuntimePreview, true);
+    assert.equal(plugin.runtimePreview?.blockers.includes("Plugin package is not installed."), false);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

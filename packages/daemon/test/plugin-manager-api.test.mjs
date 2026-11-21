@@ -75,9 +75,12 @@ test("Office Documents enables local file tools without an Office-side add-in", 
   try {
     const initial = await getJson(`${daemon.url}/plugins/${encodeURIComponent(officePluginId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(initial.plugin.setup.kind, "office_documents");
+    assert.equal(initial.plugin.sourceKind, "built-in");
     assert.equal(initial.plugin.status, "available");
     assert.equal(initial.plugin.setup.officeState, "not_installed");
     assert.equal(initial.plugin.description.includes("add-in"), false);
+    assert.equal(initial.plugin.actions.canRuntimePreview, true);
+    assert.equal(initial.plugin.runtimePreview.blockers.includes("Plugin package is not installed."), false);
 
     const enabled = await postJson(`${daemon.url}/plugins/${encodeURIComponent(officePluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(enabled.plugin.status, "enabled");

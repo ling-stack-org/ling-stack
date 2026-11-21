@@ -61,8 +61,7 @@ import {
   listPluginSourceViews,
   toPluginPackageView,
 } from "./source-index.js";
-import { fetchOfficialPluginCatalog } from "./remote-catalog.js";
-import { selectOfficialPluginArtifact } from "./remote-catalog.js";
+import { comparePluginVersions, fetchOfficialPluginCatalog, selectOfficialPluginArtifact } from "./remote-catalog.js";
 import { installRemotePluginArtifact, rollbackRemotePluginArtifact } from "./remote-package.js";
 import {
   checkInstalledPluginRuntimeDependencies,
@@ -193,7 +192,17 @@ export async function handleOfficialPluginCatalog(
     const filtered = query
       ? result.catalog.plugins.filter((plugin) => `${plugin.displayName}\n${plugin.description ?? ""}\n${plugin.trustSummary}`.toLocaleLowerCase().includes(query))
       : result.catalog.plugins;
-    const page = filtered.slice(cursor, cursor + limit);
+    const page = filtered.slice(cursor, cursor + limit).map((plugin) => ({
+      ...plugin,
+      artifacts: plugin.artifacts.filter((artifact) => {
+        try {
+          return artifact.platform === toPluginArtifactPlatform(process.platform)
+            && artifact.arch === toPluginArtifactArchitecture(process.arch);
+        } catch {
+          return false;
+        }
+      }),
+    }));
     writeJson(response, 200, {
       cwd,
       catalog: { ...result.catalog, plugins: page },
@@ -979,6 +988,22 @@ async function handlePluginCheck(input: {
       const rolledBackDescriptor = rolledBack.plugin.validation.compiledDescriptor;
       if (rolledBackDescriptor) {
         const enabled = input.store.getManagedPlugin(input.pluginId)?.enabled === true;
+        const previousPackage = input.store.getManagedPluginPackage(input.pluginId);
+        input.store.upsertManagedPluginPackage({
+          pluginId: rolledBackDescriptor.id,
+          sourceKind: "official-remote",
+          version: rolledBackDescriptor.version,
+          status: "installed",
+          cacheRef: rolledBack.pointer.cacheRef ?? "",
+          packageHash: rolledBack.pointer.packageHash ?? "",
+          manifestJson: JSON.stringify(rolledBack.plugin.manifest),
+          artifactId: rolledBack.pointer.artifactId,
+          platform: rolledBack.pointer.platform,
+          arch: rolledBack.pointer.arch,
+          sourceUrl: rolledBack.pointer.sourceUrl,
+          catalogVersion: rolledBack.pointer.catalogVersion,
+          previousVersion: previousPackage?.version,
+        }, now);
         ensureManagedPluginRecord({ store: input.store, descriptor: rolledBackDescriptor, enabled, now });
         await linkVerifiedPluginContributions({
           store: input.store,
@@ -1283,15 +1308,6 @@ function toPluginArtifactPlatform(platform: NodeJS.Platform): "darwin" | "linux"
 function toPluginArtifactArchitecture(arch: string): "arm64" | "x64" | "ia32" | "universal" {
   if (arch === "arm64" || arch === "x64" || arch === "ia32") return arch;
   throw new HttpError(409, "plugin_architecture_unsupported", `Official plugins are not supported on ${arch}.`);
-}
-
-function comparePluginVersions(left: string, right: string): number {
-  const a = left.split(/[.+-]/u).slice(0, 3).map(Number);
-  const b = right.split(/[.+-]/u).slice(0, 3).map(Number);
-  for (let index = 0; index < 3; index += 1) {
-    if (a[index] !== b[index]) return a[index] - b[index];
-  }
-  return 0;
 }
 
 function writeRouteError(response: ServerResponse, error: unknown): void {

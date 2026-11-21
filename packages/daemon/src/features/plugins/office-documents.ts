@@ -23,7 +23,7 @@ export function createOfficeDocumentsDescriptor(): ManagedPluginDescriptor {
     id: OFFICE_DOCUMENTS_PLUGIN_ID,
     displayName: "Office Documents",
     version: "0.1.0",
-    sourceKind: "official-remote",
+    sourceKind: "built-in",
     description: "Create and edit Office files locally, with native live Excel control in Ling Desktop.",
     trustSummary: "Office file processing and live control run locally. Content returned to the conversation follows the selected model's data path.",
     contributions: [{

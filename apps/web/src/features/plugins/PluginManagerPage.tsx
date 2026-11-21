@@ -119,7 +119,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
       || `${entry.displayName}\n${entry.description ?? entry.trustSummary}`.toLocaleLowerCase().includes(query));
   }, [controller.filters.query, props.catalog]);
   const installedPlugins = useMemo(
-    () => new Map(props.plugins.filter((plugin) => plugin.package?.status === "installed").map((plugin) => [plugin.id, plugin])),
+    () => new Map(props.plugins.filter((plugin) => plugin.package?.status === "installed" || plugin.setup?.distribution === "bundled_embedded").map((plugin) => [plugin.id, plugin])),
     [props.plugins],
   );
   const installedEntries = useMemo(
@@ -179,7 +179,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
             <div className="plugin-marketplace-list" onScroll={handleCatalogScroll} ref={catalogListRef}>
               {visibleEntries.map((entry) => {
                 const installed = installedPlugins.get(entry.pluginId);
-                const artifact = entry.artifacts.find((candidate) => candidate.channel === "stable") ?? entry.artifacts[0];
+                const artifact = selectCatalogArtifact(entry.artifacts, installed);
                 const icon = entry.pluginId.includes("chrome")
                   ? <Globe2 />
                   : entry.pluginId.includes("office")
@@ -190,6 +190,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                 const pendingToggle = installed
                   ? controller.pendingActionFor(installed.id, "row", "enable") ?? controller.pendingActionFor(installed.id, "row", "disable")
                   : undefined;
+                const pendingInstall = controller.pendingActionFor(entry.pluginId, "row", "install");
                 const canToggle = installed
                   ? installed.status === "enabled" ? installed.actions.canDisable : installed.actions.canEnable
                   : false;
@@ -222,7 +223,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                       <button
                         type="button"
                         className="plugin-marketplace-action plugin-marketplace-action-primary"
-                        disabled={!artifact}
+                        disabled={!artifact || Boolean(pendingInstall)}
                         onClick={() => artifact && void props.onInstallRemote(entry.pluginId, {
                           owner: "row",
                           requestId: `catalog-install:${entry.pluginId}:${Date.now()}`,
@@ -315,4 +316,16 @@ function formatArtifactSize(sizeBytes: number | undefined): string {
   if (!sizeBytes || !Number.isFinite(sizeBytes)) return "";
   if (sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
   return `${(sizeBytes / (1024 * 1024)).toFixed(0)} MB`;
+}
+
+function selectCatalogArtifact(
+  artifacts: readonly import("@ling-stack/contracts").ManagedPluginArtifactView[],
+  installed: import("@ling-stack/contracts").ManagedPluginView | undefined,
+): import("@ling-stack/contracts").ManagedPluginArtifactView | undefined {
+  const installedPlatform = installed?.package?.platform;
+  const installedArch = installed?.package?.arch;
+  const candidates = installedPlatform && installedArch
+    ? artifacts.filter((artifact) => artifact.platform === installedPlatform && artifact.arch === installedArch)
+    : artifacts;
+  return candidates.find((candidate) => candidate.channel === "stable") ?? candidates[0];
 }

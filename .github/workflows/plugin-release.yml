@@ -49,22 +49,25 @@ jobs:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 10.0.0
+          run_install: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
           cache: pnpm
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
-        with:
-          version: 10.0.0
       - name: Validate reviewed source ref
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+        shell: bash
         run: |
           [[ "$RELEASE_TAG" =~ ^plugins-[0-9]+\.[0-9]+\.[0-9]+$ ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           git show-ref --verify --quiet refs/remotes/origin/main
           git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
+          [[ "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA" ]]
       - run: corepack pnpm install --frozen-lockfile
       - name: Build Chrome extension
         if: matrix.plugin == 'chrome-browser'
@@ -80,6 +83,7 @@ jobs:
           PLUGIN_KIND: ${{ matrix.plugin }}
           PLUGIN_PLATFORM: ${{ matrix.platform }}
           PLUGIN_ARCH: ${{ matrix.arch }}
+        shell: bash
         run: |
           host_suffix=""
           helper_path="ling-office-driver.exe"
@@ -119,11 +123,21 @@ jobs:
           [[ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]]
           git show-ref --verify --quiet refs/remotes/origin/main
           git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
+          [[ "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA" ]]
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           path: plugins/dist
           pattern: plugin-*
           merge-multiple: true
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 10.0.0
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+      - run: corepack pnpm install --frozen-lockfile
       - name: Build plugin SDK
         run: corepack pnpm --filter @ling-stack/plugin-sdk build
       - name: Generate catalog

@@ -25,6 +25,12 @@ import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog
 import { checkCuaDriverProviderHealth } from "./provider-health.js";
 import { pluginHealthFromMcpSnapshot } from "./cua-driver-activation.js";
 import type { LoadedPluginPackage } from "./manifest.js";
+import {
+  CHROME_BROWSER_MCP_SERVER_ID,
+  CHROME_BROWSER_PLUGIN_ID,
+  OFFICE_DOCUMENTS_MCP_SERVER_ID,
+  OFFICE_DOCUMENTS_PLUGIN_ID,
+} from "@ling-stack/contracts";
 
 type ManagedPluginInstallStore =
   ManagedPluginStoreFacet &
@@ -60,10 +66,21 @@ export async function linkVerifiedPluginContributions(input: {
     const linkedResourceId = input.pluginPackage.manifest.id === CUA_DRIVER_PLUGIN_ID
       && contribution.id === "mcp:cua-driver"
       ? CUA_DRIVER_MCP_SERVER_ID
-      : contribution.id;
+      : input.pluginPackage.manifest.id === CHROME_BROWSER_PLUGIN_ID
+        && contribution.id === "mcp:official-chrome-browser"
+        ? CHROME_BROWSER_MCP_SERVER_ID
+        : input.pluginPackage.manifest.id === OFFICE_DOCUMENTS_PLUGIN_ID
+          && contribution.id === "mcp:official-office-documents"
+          ? OFFICE_DOCUMENTS_MCP_SERVER_ID
+          : contribution.id;
     const existing = input.store.getMcpServer(linkedResourceId);
+    const serviceOwnsTransport = input.pluginPackage.manifest.id === CHROME_BROWSER_PLUGIN_ID
+      || input.pluginPackage.manifest.id === OFFICE_DOCUMENTS_PLUGIN_ID;
     const server = existing
-      ? input.store.updateMcpServer(existing.id, { displayName: input.pluginPackage.manifest.displayName, transport, enabled: input.enabled }, input.now) && input.store.getMcpServer(existing.id)
+      ? input.store.updateMcpServer(existing.id, serviceOwnsTransport
+        ? { displayName: input.pluginPackage.manifest.displayName, enabled: input.enabled }
+        : { displayName: input.pluginPackage.manifest.displayName, transport, enabled: input.enabled }, input.now)
+        && input.store.getMcpServer(existing.id)
       : input.store.createMcpServer({
           id: linkedResourceId,
           displayName: input.pluginPackage.manifest.displayName,

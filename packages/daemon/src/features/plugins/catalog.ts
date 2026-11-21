@@ -37,6 +37,7 @@ import {
   buildOfficeDocumentsSetupView,
   createOfficeDocumentsDescriptor,
 } from "./office-documents.js";
+import { getBundledPluginPackage } from "./source-index.js";
 
 const sourceOrder = new Map([
   ["built-in", 0],
@@ -356,8 +357,19 @@ function createManagedPluginView(input: {
   }
   const packageRecord = input.store.getManagedPluginPackage(input.descriptor.id);
   const packageView = packageRecord ? toManagedPluginPackageView(packageRecord) : undefined;
-  const packagedPlugin = input.descriptor.sourceKind === "bundled" || input.descriptor.sourceKind === "official-remote";
-  const runtimePreview = packagedPlugin
+  const bundledPackageAvailable = Boolean(getBundledPluginPackage(input.descriptor.id));
+  // The browser and Office descriptors describe runtime adapters supplied by
+  // Ling itself. Once one of those adapters has a remotely installed package,
+  // the package record becomes the source of truth for distribution actions,
+  // while the built-in descriptor remains the source of truth for runtime
+  // injection and health checks.
+  const effectiveSourceKind = packageRecord?.sourceKind === "official-remote"
+    ? "official-remote"
+    : input.descriptor.sourceKind;
+  const packagedPlugin = effectiveSourceKind === "bundled" || effectiveSourceKind === "official-remote";
+  const runtimeProvidedByLing = isRuntimeProvidedByLing(input.descriptor.id);
+  const runtimePreviewAvailable = packagedPlugin || runtimeProvidedByLing;
+  const runtimePreview = runtimePreviewAvailable
     ? buildManagedPluginRuntimePreview({
         cwd: input.cwd,
         store: input.store,
@@ -369,7 +381,7 @@ function createManagedPluginView(input: {
     id: input.descriptor.id,
     displayName: input.descriptor.displayName,
     version: input.descriptor.version,
-    sourceKind: input.descriptor.sourceKind,
+    sourceKind: effectiveSourceKind,
     status,
     description: input.descriptor.description,
     homepageUrl: input.descriptor.homepageUrl,
@@ -397,15 +409,15 @@ function createManagedPluginView(input: {
         ? !blocked && !requestedEnabled
         : !blocked && status !== "enabled" && (input.descriptor.id !== CUA_DRIVER_PLUGIN_ID || setup?.state === "connected"),
       canDisable: bundledProjection ? requestedEnabled : status === "enabled",
-      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled" || input.descriptor.sourceKind === "official-remote",
-      canCheckUpdate: input.descriptor.sourceKind === "official-remote",
+      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || effectiveSourceKind === "built-in" || effectiveSourceKind === "bundled" || effectiveSourceKind === "official-remote",
+      canCheckUpdate: effectiveSourceKind === "official-remote",
       canApplyPreset: !bundledProjection && !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
-      canInstall: !blocked && input.descriptor.sourceKind === "official-remote" && packageView?.status !== "installed",
-      canInstallRemote: !blocked && input.descriptor.sourceKind === "official-remote" && packageView?.status !== "installed",
+      canInstall: !blocked && bundledPackageAvailable && packageView?.status !== "installed",
+      canInstallRemote: !blocked && !bundledProjection && effectiveSourceKind === "official-remote" && packageView?.status !== "installed",
       canUninstall: !blocked && packagedPlugin && packageView?.status === "installed",
-      canRefreshPackage: !blocked && packagedPlugin && packageView?.status === "installed",
-      canRollback: !blocked && input.descriptor.sourceKind === "official-remote" && Boolean(packageView?.previousVersion),
-      canRuntimePreview: packagedPlugin,
+      canRefreshPackage: !blocked && bundledPackageAvailable && packageView?.status === "installed",
+      canRollback: !blocked && effectiveSourceKind === "official-remote" && Boolean(packageView?.previousVersion),
+      canRuntimePreview: runtimePreviewAvailable,
     },
   };
 }
@@ -468,6 +480,12 @@ function getDescriptorBlocker(descriptor: ManagedPluginDescriptor): string | und
     return CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE;
   }
   return undefined;
+}
+
+function isRuntimeProvidedByLing(pluginId: string): boolean {
+  return pluginId === CHROME_BROWSER_PLUGIN_ID
+    || pluginId === OFFICE_DOCUMENTS_PLUGIN_ID
+    || pluginId === "official:desktop-browser";
 }
 
 function resolveLinkedResource(

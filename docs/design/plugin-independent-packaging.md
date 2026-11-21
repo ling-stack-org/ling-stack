@@ -8,7 +8,7 @@
 
 官方插件包是 `.ling-plugin.zip`，根目录必须包含 `.ling-plugin/plugin.json`、`checksums.json` 和 `provenance.json`。远程包的 manifest 使用 `manifestVersion: 2`、`sourceKind: official-remote` 和 `trustLevel: official`，并固定 `artifactId`、平台和架构。
 
-`plugins/catalog.json` 是静态目录。客户端只接受 HTTPS 地址，校验插件 ID、版本、平台、架构、artifact URL、文件大小和 SHA-256。正式发布时由 CI 生成 `catalog.sig`，并通过 `LING_PLUGIN_CATALOG_PUBLIC_KEY` 启用签名校验；插件 artifact 可使用 `LING_PLUGIN_ARTIFACT_PRIVATE_KEY` 生成 Ed25519 签名，并由客户端 `LING_PLUGIN_ARTIFACT_PUBLIC_KEY` 校验。本地开发目录允许 `signatureVerified: false`。
+`plugins/catalog.json` 是静态目录。客户端只接受 HTTPS 地址，校验插件 ID、版本、平台、架构、artifact URL、文件大小和 SHA-256。正式发布时由 CI 生成 `catalog.sig`，客户端必须配置 `LING_PLUGIN_CATALOG_PUBLIC_KEY` 并通过签名校验；只有通过 `LING_PLUGIN_CATALOG_FILE` 指定的本地开发目录允许 `signatureVerified: false`。插件 artifact 可使用 `LING_PLUGIN_ARTIFACT_PRIVATE_KEY` 生成 Ed25519 签名，并由客户端 `LING_PLUGIN_ARTIFACT_PUBLIC_KEY` 校验。
 
 ## 运行时边界
 

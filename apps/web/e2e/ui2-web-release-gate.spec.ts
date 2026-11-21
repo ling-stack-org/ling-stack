@@ -289,7 +289,7 @@ test("WEB-REL-08 Automations representative surface", async ({ page }) => {
   await mockDaemon(page, state);
   await installReleaseAutomationApi(page);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Scheduled tasks" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automation" }).click();
   const surface = page.locator("[data-automation-ui2-page]");
   const row = surface.locator('[data-automation-id="automation_release_gate"]');
   await expect(row).toBeVisible();

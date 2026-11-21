@@ -6,7 +6,7 @@ import { createMcpStatusSnapshot, createMcpAuthStatus, deriveMcpServerStatus } f
 
 type Store = ManagedPluginStoreFacet & McpStoreFacet;
 export function createDesktopBrowserDescriptor(): ManagedPluginDescriptor {
-  return { id: DESKTOP_BROWSER_PLUGIN_ID, displayName: "Ling Browser", version: "0.1.0", sourceKind: "official-remote",
+  return { id: DESKTOP_BROWSER_PLUGIN_ID, displayName: "Ling Browser", version: "0.1.0", sourceKind: "built-in",
     description: "Browse websites and local development pages inside Ling Desktop.",
     trustSummary: "Uses an isolated workspace browser profile and existing MCP approvals. Page content cannot authorize actions.",
     contributions: [{ kind: "mcp-server", id: DESKTOP_BROWSER_MCP_SERVER_ID, label: "Ling browser tools",

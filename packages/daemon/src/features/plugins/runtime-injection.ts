@@ -51,9 +51,10 @@ export function buildManagedPluginRuntimePreview(input: {
   if (!record?.enabled) {
     blockers.push("Plugin is disabled.");
   }
-  if (input.descriptor.sourceKind !== "built-in" && !bundledEmbedded && (!packageRecord || packageRecord.status !== "installed")) {
+  const runtimeProvidedByLing = isRuntimeProvidedByLing(input.descriptor.id);
+  if (input.descriptor.sourceKind !== "built-in" && !runtimeProvidedByLing && !bundledEmbedded && (!packageRecord || packageRecord.status !== "installed")) {
     blockers.push("Plugin package is not installed.");
-  } else if (input.descriptor.sourceKind !== "built-in" && !bundledEmbedded && packageRecord && !cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
+  } else if (input.descriptor.sourceKind !== "built-in" && !runtimeProvidedByLing && !bundledEmbedded && packageRecord && !cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
     blockers.push("Installed plugin package cache is missing.");
   }
   const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id, input.now);
@@ -99,6 +100,12 @@ export function buildManagedPluginRuntimePreview(input: {
     policyOverlays,
     blockers,
   };
+}
+
+function isRuntimeProvidedByLing(pluginId: string): boolean {
+  return pluginId === "official:chrome-browser"
+    || pluginId === "official:office-documents"
+    || pluginId === "official:desktop-browser";
 }
 
 export function createManagedPluginRuntimeSnapshot(input: {

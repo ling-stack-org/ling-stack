@@ -55,9 +55,30 @@ await writeFile(output, `${JSON.stringify(catalog, null, 2)}\n`);
 console.log(JSON.stringify({ output, pluginCount: catalog.plugins.length, artifactCount: records.length }, null, 2));
 
 function compare(left, right) {
-  const a = left.split(/[.+-]/u).slice(0, 3).map(Number), b = right.split(/[.+-]/u).slice(0, 3).map(Number);
+  const a = parseVersion(left), b = parseVersion(right);
   for (let index = 0; index < 3; index += 1) if (a[index] !== b[index]) return a[index] - b[index];
+  const aPre = a[3], bPre = b[3];
+  if (aPre === bPre) return 0;
+  if (!aPre) return 1;
+  if (!bPre) return -1;
+  const aIds = aPre.split("."), bIds = bPre.split(".");
+  for (let index = 0; index < Math.max(aIds.length, bIds.length); index += 1) {
+    const leftId = aIds[index], rightId = bIds[index];
+    if (leftId === undefined) return -1;
+    if (rightId === undefined) return 1;
+    if (leftId === rightId) continue;
+    const leftNumeric = /^\d+$/u.test(leftId), rightNumeric = /^\d+$/u.test(rightId);
+    if (leftNumeric && rightNumeric) return Number(leftId) - Number(rightId);
+    if (leftNumeric) return -1;
+    if (rightNumeric) return 1;
+    return leftId < rightId ? -1 : 1;
+  }
   return 0;
+}
+function parseVersion(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/u.exec(version.trim());
+  if (!match) return [0, 0, 0, version.trim() || undefined];
+  return [Number(match[1]), Number(match[2]), Number(match[3]), match[4]];
 }
 function artifactFileName(artifact) {
   return `${artifact.pluginId.replace(/[^A-Za-z0-9._-]+/gu, "-").replace(/^-|-$/gu, "") || "plugin"}-${artifact.version}-${artifact.platform}-${artifact.arch}.ling-plugin.zip`;

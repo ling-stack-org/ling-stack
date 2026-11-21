@@ -59,7 +59,7 @@ export async function fetchOfficialPluginCatalog(options: PluginCatalogFetchOpti
   const publicKey = options.publicKey
     ?? process.env.LING_PLUGIN_CATALOG_PUBLIC_KEY
     ?? (url === DEFAULT_PLUGIN_CATALOG_URL ? DEFAULT_PLUGIN_CATALOG_PUBLIC_KEY : undefined);
-  if (!publicKey) return { catalog, url, signatureVerified: false };
+  if (!publicKey) throw new Error("Plugin catalog signature key is not configured.");
   const signatureUrl = options.signatureUrl ?? `${url.slice(0, url.lastIndexOf("/") + 1)}catalog.sig`;
   const signatureResponse = await (options.fetchImpl ?? fetch)(signatureUrl, { redirect: "error" });
   if (!signatureResponse.ok) throw new Error("Plugin catalog signature is unavailable.");
@@ -83,15 +83,53 @@ export function selectOfficialPluginArtifact(input: {
   const plugin = input.catalog.plugins.find((candidate) => candidate.pluginId === input.pluginId);
   if (!plugin) throw new Error(`Plugin is not present in the official catalog: ${input.pluginId}`);
   const channel = input.channel ?? "stable";
-  const version = input.version ?? plugin.latestStableVersion;
-  const artifact = plugin.artifacts.find((candidate) => candidate.platform === input.platform
+  const compatible = plugin.artifacts.filter((candidate) => candidate.platform === input.platform
     && candidate.arch === input.arch
-    && candidate.channel === channel
-    && candidate.version === version);
+    && candidate.channel === channel);
+  const version = input.version ?? compatible.reduce<string | undefined>((latest, candidate) => {
+    if (!latest || comparePluginVersions(candidate.version, latest) > 0) return candidate.version;
+    return latest;
+  }, undefined);
+  const artifact = compatible.find((candidate) => candidate.version === version);
   if (!artifact) {
-    throw new Error(`No ${channel} artifact is available for ${input.pluginId} ${version} on ${input.platform}/${input.arch}.`);
+    throw new Error(`No ${channel} artifact is available for ${input.pluginId} ${version ?? "latest"} on ${input.platform}/${input.arch}.`);
   }
   return artifact;
+}
+
+export function comparePluginVersions(left: string, right: string): number {
+  const leftVersion = parsePluginVersion(left);
+  const rightVersion = parsePluginVersion(right);
+  if (leftVersion[0] !== rightVersion[0]) return leftVersion[0] - rightVersion[0];
+  if (leftVersion[1] !== rightVersion[1]) return leftVersion[1] - rightVersion[1];
+  if (leftVersion[2] !== rightVersion[2]) return leftVersion[2] - rightVersion[2];
+  const leftPre = leftVersion[3];
+  const rightPre = rightVersion[3];
+  if (leftPre === rightPre) return 0;
+  if (!leftPre) return 1;
+  if (!rightPre) return -1;
+  const leftIdentifiers = leftPre.split(".");
+  const rightIdentifiers = rightPre.split(".");
+  for (let index = 0; index < Math.max(leftIdentifiers.length, rightIdentifiers.length); index += 1) {
+    const a = leftIdentifiers[index];
+    const b = rightIdentifiers[index];
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    if (a === b) continue;
+    const aNumeric = /^\d+$/u.test(a);
+    const bNumeric = /^\d+$/u.test(b);
+    if (aNumeric && bNumeric) return Number(a) - Number(b);
+    if (aNumeric) return -1;
+    if (bNumeric) return 1;
+    return a < b ? -1 : 1;
+  }
+  return 0;
+}
+
+function parsePluginVersion(version: string): [number, number, number, string | undefined] {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/u.exec(version.trim());
+  if (!match) return [0, 0, 0, version.trim() || undefined];
+  return [Number(match[1]), Number(match[2]), Number(match[3]), match[4]];
 }
 
 export function catalogEntryFromManifest(input: {
