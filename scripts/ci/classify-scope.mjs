@@ -8,6 +8,8 @@ import { inspectProductVersionChange } from "./product-version-scope.mjs";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
 const WEB_PACKAGE = "@ling-stack/web";
+const CORE_PACKAGE = "@ling-stack/core";
+const PROVIDER_MODEL_CATALOG_PATH = "packages/core/src/provider-model-catalog.generated.ts";
 
 const DOCUMENTATION_ROOT_FILES = new Set([
   "README.md",
@@ -112,6 +114,18 @@ export function classifyChangedFiles(input) {
       : scopeFiles.some(isMaintenancePath) ? "documentation and allowlisted maintenance checks only"
         : "documentation and documentation assets only";
     return buildScope("docs", files, packages, reason);
+  }
+
+  // The generated provider catalog is data consumed by Core's catalog resolver.
+  // Keep its own refreshes on Core validation. A runtime resolver change, a
+  // generator change, or any mixed source edit follows the normal dependency
+  // graph below.
+  const productFiles = scopeFiles.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file));
+  if (productFiles.length > 0 && productFiles.every(file => file === PROVIDER_MODEL_CATALOG_PATH)) {
+    if (!packages.some(entry => entry.name === CORE_PACKAGE)) {
+      return buildScope("full", files, packages, "provider catalog requires the Core package");
+    }
+    return buildProviderModelCatalogScope(files);
   }
 
   const validationManifests = new Set();
@@ -514,6 +528,26 @@ function buildScope(mode, files, packages, reason) {
     macosHelper: mode === "full" || files.some(isMacosNativePath),
     nativeRelease: files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file)),
     reason,
+  };
+}
+
+/** @param {string[]} files */
+function buildProviderModelCatalogScope(files) {
+  return {
+    mode: "affected",
+    files,
+    packages: [CORE_PACKAGE],
+    testPackages: [CORE_PACKAGE],
+    typecheckPackages: [CORE_PACKAGE],
+    dependencyPolicy: false,
+    assurance: false,
+    daemon: false,
+    daemonPlatforms: [],
+    linuxContract: false,
+    macosNative: false,
+    macosHelper: false,
+    nativeRelease: false,
+    reason: "verified generated provider model catalog refresh",
   };
 }
 

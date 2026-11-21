@@ -430,6 +430,34 @@ test("the real package graph keeps Web's CLI and catalog consumers without build
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
 });
 
+test("generated provider model catalog refreshes stay on Core validation", () => {
+  const scope = classify(["packages/core/src/provider-model-catalog.generated.ts", "docs/ci.md"]);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.dependencyPolicy, false);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+  assert.deepEqual(scope.daemonPlatforms, []);
+  assert.equal(scope.macosNative, false);
+  assert.match(scope.reason, /generated provider model catalog/u);
+});
+
+test("provider catalog refreshes mixed with resolver source retain transitive consumers", () => {
+  const scope = classify([
+    "packages/core/src/provider-model-catalog.generated.ts",
+    "packages/core/src/provider-model-catalog.ts",
+  ]);
+  assert.equal(scope.mode, "affected");
+  for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli"]) {
+    assert.ok(scope.packages.includes(name), name);
+  }
+  assert.equal(scope.daemon, true);
+  assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
+  assert.equal(scope.assurance, true);
+});
+
 test("a verified root version update selects non-Web consumers without Daemon or assurance", t => {
   const repo = repositoryFixture(t);
   const manifest = { name: "ling-stack", private: true, version: "1.2.3", scripts: { build: "node build.mjs" } };
