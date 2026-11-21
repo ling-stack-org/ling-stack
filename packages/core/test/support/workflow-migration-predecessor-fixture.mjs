@@ -67,6 +67,9 @@ const overlays = [
   { version: 233, name: "code_assessment_history_filters", tables: [],
     indexes: ["code_assessment_target_history", "code_assessment_snapshot_history", "code_assessment_status_history",
       "code_assessment_updated_history", "code_assessment_finding_filters"], triggers: [] },
+  // The CUA ID migration only rewrites durable plugin rows; it owns no schema
+  // objects, but its marker still belongs in the post-207 inventory.
+  { version: 234, name: "migrate_cua_driver_ids", tables: [], indexes: [], triggers: [] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
