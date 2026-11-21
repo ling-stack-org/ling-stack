@@ -334,7 +334,9 @@ function repositoryFixture(t: TestContext) {
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
   copyFileSync(new URL("../provider-model-catalog-format.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-format.mjs"));
+  copyFileSync(new URL("../provider-model-catalog-normalization.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-normalization.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
+  copyFileSync(new URL("./secret-scan.mjs", import.meta.url), join(root, "scripts/ci/secret-scan.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
   copyFileSync(new URL("../release/desktop-release.mjs", import.meta.url), join(root, "scripts/release/desktop-release.mjs"));
   copyFileSync(new URL("./package-validation-scope.mjs", import.meta.url), join(root, "scripts/ci/package-validation-scope.mjs"));
@@ -365,6 +367,76 @@ test("the Git boundary retains the entire PR and both sides of source-to-doc ren
   assert.ok(scope.files.includes("docs/probe.ts"));
   assert.ok(scope.packages.includes("@ling-stack/core"));
   assert.ok(scope.packages.includes("@ling-stack/daemon"));
+});
+
+test("only a verified documentation history can skip the common job and merge gate runner", t => {
+  const repo = repositoryFixture(t);
+  repo.write("README.zh-CN.md", "# Ling\n");
+  const base = repo.commit();
+
+  repo.write("README.zh-CN.md", "# Ling Stack\n");
+  repo.commit();
+  repo.write("docs/guide.md", "# Guide\n");
+  repo.commit();
+  assert.equal(repo.classify(base).documentationOnly, true);
+
+  repo.write("packages/core/src/temporary.ts", "export {};\n");
+  repo.commit();
+  repo.git("rm", "packages/core/src/temporary.ts");
+  repo.commit();
+  const reverted = repo.classify(base);
+  assert.equal(reverted.mode, "docs");
+  assert.equal(reverted.documentationOnly, false);
+});
+
+test("new standard workspace packages select their own CI even with an isolated lock importer", t => {
+  const repo = repositoryFixture(t);
+  const directory = "packages/new-module";
+  const before = "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\npackages:\n\n  example@1.0.0: {}\n";
+  repo.write("pnpm-lock.yaml", before);
+  const base = repo.commit();
+  const manifest = { name: "@ling-stack/new-module", type: "module", scripts: {
+    build: "tsc -p tsconfig.json",
+    "build:ci": "tsc -p tsconfig.json",
+    typecheck: "corepack pnpm build && corepack pnpm typecheck:ci",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit && corepack pnpm run typecheck:tests",
+    "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
+    test: "corepack pnpm typecheck && corepack pnpm test:ci",
+    "test:ci": "node --test test/*.test.ts",
+  } };
+  repo.write(`${directory}/package.json`, JSON.stringify(manifest));
+  repo.write(`${directory}/src/index.ts`, "export const probe = true;\n");
+  repo.write(`${directory}/tsconfig.json`, JSON.stringify({
+    compilerOptions: { outDir: "dist" }, include: ["src/**/*.ts"],
+  }));
+  repo.write(`${directory}/tsconfig.test.json`, JSON.stringify({
+    compilerOptions: { noEmit: true }, include: ["test/**/*.ts"],
+  }));
+  repo.write(`${directory}/test/probe.test.ts`, "import test from 'node:test'; test('probe', () => {});\n");
+  const after = before.replace("\n\npackages:\n", "\n\n  packages/new-module: {}\n\npackages:\n");
+  repo.write("pnpm-lock.yaml", after);
+  repo.commit();
+
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/new-module"]);
+  assert.deepEqual(scope.testPackages, scope.packages);
+  assert.deepEqual(scope.typecheckPackages, scope.packages);
+  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.assurance, false);
+
+  for (const lockfile of [after.replace("example@1.0.0", "example@2.0.0"), after.replace("  .: {}", "  .:\n    dependencies: {}"),
+    after.replace("  packages/new-module: {}", "  packages/new-module: {}\n\n  packages/new-module: {}")]) {
+    repo.write("pnpm-lock.yaml", lockfile);
+    repo.commit();
+    assert.equal(repo.classify(base).mode, "full");
+  }
+  repo.write("pnpm-lock.yaml", after);
+  manifest.scripts["test:ci"] = "node --test --test-name-pattern=probe test/*.test.ts";
+  repo.write(`${directory}/package.json`, JSON.stringify(manifest));
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
 });
 
 test("verified local output deletions keep the changed paths and use the fast lane", t => {
@@ -450,8 +522,8 @@ test("the real package graph keeps Web's CLI and catalog consumers without build
 
 test("Git verifies provider catalog data before selecting focused Core validation", t => {
   const repo = repositoryFixture(t);
-  const render = (id: string) => {
-    const records = [{ providerId: "openai", id, capabilities: ["chat"] }];
+  const render = (id: string, providerId = "openai", capabilities = ["chat"]) => {
+    const records = [{ providerId, id, capabilities }];
     return renderProviderModelCatalog({ records, version: providerModelCatalogVersion(records),
       generatedAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21" });
   };
@@ -477,11 +549,8 @@ test("Git verifies provider catalog data before selecting focused Core validatio
   for (const candidate of [
     refreshed.replace('"candidate"', '"digest-mismatch"'),
     refreshed.replace("export const providerModelCatalogRecords", "void 0;\nexport const providerModelCatalogRecords"),
-    renderProviderModelCatalog({
-      records: [{ providerId: "untrusted-provider", id: "candidate", capabilities: ["chat"] }],
-      version: providerModelCatalogVersion([{ providerId: "untrusted-provider", id: "candidate", capabilities: ["chat"] }]),
-      generatedAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21",
-    }),
+    render("candidate", "untrusted-provider"),
+    render("candidate", "openai", ["chat", "web_search"]),
   ]) {
     repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
     repo.commit();
@@ -604,7 +673,7 @@ test("a verified Node/TypeScript test migration retains complete owner validatio
   assert.deepEqual(scope.packages, ["@ling-stack/core"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
-  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
   assert.match(scope.reason, /test/u);
@@ -622,7 +691,7 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   assert.deepEqual(scope.packages, ["@ling-stack/core"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
-  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
 });
@@ -664,7 +733,7 @@ test("Localization test migrations retain catalog checks and scope private decla
   assert.deepEqual(scope.packages, ["@ling-stack/localization"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/localization"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/localization"]);
-  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.deepEqual(scope.daemonPlatforms, []);
 
@@ -698,7 +767,7 @@ test("UI React migrations accept the existing strip-types runner and test typech
   repo.write(`${root}/tsconfig.test.json`, JSON.stringify({
     compilerOptions: { noEmit: true }, include: ["test/**/*.ts"],
   }));
-  repo.write(`${root}/test/probe.test.mjs`, "import test from 'node:test'; test('probe', () => {});\\n");
+  repo.write(`${root}/test/probe.test.mjs`, "import test from 'node:test'; test('probe', () => {});\n");
   const base = repo.commit();
 
   repo.git("mv", `${root}/test/probe.test.mjs`, `${root}/test/probe.test.ts`);
@@ -714,7 +783,7 @@ test("UI React migrations accept the existing strip-types runner and test typech
   assert.deepEqual(scope.packages, ["@ling-stack/ui-react"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/ui-react"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/ui-react"]);
-  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
 });
@@ -732,7 +801,7 @@ test("workspace dependency builds and the owning package build closure retain pa
   assert.deepEqual(scope.packages, ["@ling-stack/core"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
-  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
 });
@@ -823,6 +892,11 @@ test("opaque commands, build hooks, metadata changes and incomplete test discove
     repo => { repo.manifest.scripts["test:ci"] += " && node ../../scripts/check.mjs"; },
     repo => { repo.manifest.scripts["build:ci"] = "echo omitted"; },
     repo => { repo.manifest.scripts.pretest = "node prepare.mjs"; },
+    repo => { repo.manifest.scripts["typecheck:tests"] = "node prepare.mjs"; },
+    repo => {
+      repo.manifest.scripts["typecheck:ci"] = "tsc -p tsconfig.test.json";
+      repo.manifest.scripts.typecheck = "corepack pnpm typecheck:ci";
+    },
     repo => { delete repo.manifest.scripts["typecheck:ci"]; },
     repo => { repo.manifest.dependencies["@ling-stack/contracts"] = "workspace:^"; },
     repo => { repo.write("packages/core/test/retained.test.mjs", "// Retained test entry\n"); },

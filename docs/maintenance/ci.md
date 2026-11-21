@@ -10,14 +10,13 @@
 
 CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
-- 只有文档、各级 `README.md`、已登记的 PR／Issue 模板、`CODEOWNERS` 或 `FUNDING.yml` 变更时，Pull Request 工作流通过顶层 `paths-ignore` 直接不启动 hosted CI。PR 同时包含代码时仍进入正常分类；手动、定时和 `full-ci` 运行不受该过滤影响。维护脚本白名单仅包含 `check-markdown-links.mjs`、`check-public-repo-safety.mjs` 和后者的测试，新增脚本仍保守处理。
+- 纯文档 PR 的主 CI 只判断范围。分类器核对完整 Git 差异及 PR 提交历史后，跳过公共检查、产品检查与计时采集，GitHub 仍收到必需质量门的 skipped 结果。维护脚本、已登记 Issue 模板和本地产物清理保留公共检查。混合代码改动按实际影响执行，手动、定时和 `full-ci` 仍执行完整验证。
 - 仓库根目录 `output/` 用于本地产物。Git 差异确认的产物删除进入公共检查和汇总门，路径保留在范围报告中。新增、修改和文件类型变化回退全量，混合改动按其余文件选择产品任务。
 - 工作区源码或包内 TypeScript／构建配置变更时，[分类器](../../scripts/ci/classify-scope.mjs)选择所属包及直接、间接消费者；仅改测试时选择所属包，并补充已识别的跨包测试辅助文件使用方。Web 的目录导入器额外选择 localization 验证，实际依赖图也包含 CLI 对 Web 的依赖；为构建补齐依赖不等于选择这些依赖的测试分片。
 - 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
-- 包级 `package.json` 在 base 与当前包目录、名称、测试／类型检查入口及全部 scripts 内容可核验且不变时，使用新旧依赖边的并集扩大消费者，并选择依赖策略任务。已核验的 Node／TypeScript 测试迁移只选择所属包完整测试、类型检查及共享测试辅助文件的使用方，仍保留依赖策略检查：仅允许已有 `test`、`test:ci`、`typecheck`、`typecheck:ci` 及标准 `typecheck:tests` 变化，其他清单字段、构建脚本和生命周期 hook 必须不变；命令限于完整 Node 测试 glob、包内 no-emit TypeScript 检查及已核验的 CI／构建包装。`typecheck:tests` 只能调用 `tsc -p tsconfig.test.json`，并且该配置必须只包含测试输入。带名称过滤、额外 shell 命令、空操作、遗漏测试语言或空发现结果时回退全量。基线 glob 发现的每个测试入口必须保留目录和同名文件，允许 `.mjs`／`.ts` 扩展名迁移；删除、重命名入口或无法核验基线清单时回退全量。迁移同时改写新旧类型检查命令引用的已有 TypeScript 配置时回退全量；基线命令没有显式 `--noEmit` 时，其配置必须存在于基线清单。仅在显式 no-emit、只包含测试且没有生产脚本／配置使用方时，将新增或未修改的 `tsconfig.test.json`／`tsconfig.tests.json` 视为测试输入；混合源码和其他配置改动仍扩大到消费者。新增、删除、重命名、无法核验的包、脚本入口增删及其他 script 改动均回退全量。根 `package.json`、锁文件、workspace 配置、除上述工具路径和白名单以外的 `.github/`／`scripts/`、补丁、根 TypeScript／构建配置及未知路径仍全量；维护脚本与源码混合不豁免源码检查。两个根版本值一致且根清单只改 `version` 时，按使用方选择受版本影响的 CI 包。Desktop 打包继续核对全部发布版本输入。
-  本地包装允许先调用声明为 `workspace:*` 的直接依赖的 `build`，或运行所属包及其依赖的 `build:ci`。CI 统一构建依赖闭包，再直接运行所属包的 `typecheck:ci` 和 `test:ci`。
+- 已有包的源码和生产配置按新旧依赖边的并集选择本包和消费者。只迁移测试入口且生产清单字段、构建脚本和生命周期 hook 均不变时，CI 跑本包的完整测试、类型检查及共享测试夹具的实际使用方。分类器会核对 Node 测试发现、no-emit TypeScript 配置和已知包装命令，保留基线的测试文件和源代码类型检查。任意命令、名称过滤、未核验的脚本变化和未知路径回退全量。根清单的纯版本变更按版本消费者运行，共享构建配置、依赖解析、补丁和 CI 策略保留完整回归。
+  本地 `test` 和 `typecheck` 可以先构建声明的工作区依赖。CI 只构建一次依赖闭包，再直接执行选择到的 `typecheck:ci` 和 `test:ci`。
 
-新工作区包沿用同一套入口。包放在 `packages/<name>` 或 `apps/<name>`，保留稳定的 `build`、`build:ci`、`typecheck`、`typecheck:ci`、`test` 和 `test:ci`，测试入口使用 `test/*.test.mjs` 或 `test/*.test.ts`，测试类型检查使用独立的 no-emit `tsconfig.test.json`。包加入仓库的首个 PR 仍需完整验证依赖图；合并后仅修改包源码、测试或测试配置时，分类器选择该包及真实消费者，不把新包的后续功能改动升级为全仓回归。共享测试辅助文件必须保留可追踪的相对导入，无法证明使用方时回退全量。
 - 两份固定发布审查清单 `native/office-local/reviewed-packaged-source-v1.json`、`native/sandbox/reviewed-codesign-source-v1.json` 选择 Daemon 构建依赖图及现有 macOS 任务中的 codesign publication、Office publication、Office daemon source-input 三个完整契约文件，不选择无关包或 Daemon 的类型检查和测试分片。`macos-native` 仍要求该任务成功；`macos-helper`、`native-release` 分别选择真实 helper smoke 和发布契约步骤。清单单独变化不编译 helper，混合原生源码改动保留两者；未识别的 Office 路径仍全量，Sandbox 目录其他文件保留 Daemon 验证与真实 helper smoke。全量回归保留原有真实 helper smoke，PR 同时修改审查清单时还执行发布契约。契约核对清单与固定源码 hash，并用明确的模拟编译／签名 fixture 检查发布边界，不生成审批记录，也不代表真实签名或打包验收。复用任务不增加完整矩阵的 runner 数。
 - [工作流](../../.github/workflows/ci.yml)由 Pull Request、手动运行和每日定时触发，没有 `main` push 触发。定时为每天 UTC 03:17，即北京时间 11:17；手动和定时运行始终走现有完整 Linux/macOS 矩阵，即使当天没有提交也执行。GitHub 定时任务可能排队或延迟，不保证准点启动。没有启用成功证据去重或每日 Linux 单独分档。
 - 新增 `full-ci` 标签立即触发全量；已有标签让后续推送继续全量。无关标签事件不替换必需检查结果，也不取消当前验证；移除标签只影响下一次正常 PR 运行，不立即重跑。
@@ -64,11 +63,18 @@ CLI 的 Linux 包测试运行真实 daemon 生命周期和新工作区 doctor �
 
 本地化包的 `typecheck:ci` 和 `test:ci` 已补齐；前者在干净 runner 重新生成未跟踪的 TypeScript 目录文件后检查类型，后者执行翻译目录完整性、占位符检查及本地化单元测试，复用构建阶段的 `dist`。新增[入口覆盖契约](../../scripts/ci/package-script-coverage.test.mjs)，要求分类器选中的每个类型检查／测试包都有对应 CI 脚本，防止 `--if-present` 静默跳过漏配包。
 
+## 新模块接入 CI
+
+- 可独立构建和测试的 Node.js／TypeScript 模块放在 `packages/<name>`，清单使用 `@ling-stack/<name>` 和 `"type": "module"`。在使用方清单显式声明 `workspace:*` 依赖。CI 用依赖图选择消费者并构建依赖闭包。
+- 本地提供 `build`、`typecheck`、`test`。CI 使用 `build:ci` 执行 `tsc -p tsconfig.json` 并输出 `dist/`，用 `typecheck:ci` 检查源码及独立的 no-emit `tsconfig.test.json`，用 `test:ci` 发现完整的 `test/*.test.ts` 或保留的 `test/*.test.mjs`。CI 入口直接使用已构建产物。
+- 用固定的 pnpm 版本更新锁文件。首个 PR 只增加新包的 workspace importer 时，验证新包及实际使用方和依赖策略。影响已有 importer、第三方版本解析、仓库级配置或原生运行器的改动走适用的共享或平台验证。
+- 在提交前运行 `node scripts/ci/classify-scope.mjs --event=pull_request --base=origin/main --head=HEAD`，检查 `packages`、`testPackages` 和 `typecheckPackages` 是否覆盖本包及实际使用方。
+
 ## CodeQL 安全扫描
 
 [CodeQL 工作流](../../.github/workflows/codeql.yml)采用与 OpenClaw 相同的触发策略，按 Ling 的源码目录适配，扫描语言仍为 JavaScript/TypeScript，使用 CodeQL 默认查询集：
 
-- 正式 PR 新建、推送、重开或转为正式评审时，纯文档差异由 CodeQL 的顶层 `paths-ignore` 直接跳过工作流；混合差异仅在源码、依赖、构建配置、扫描脚本或工作流相关路径变化后扫描。Draft 暂缓，转正式后补跑。带源码后缀的文件仍扫描，源码目录内的文档按目录保守纳入。所有进入工作流的正式 PR 先进入轻量范围判断，差异达到 API 的 300 文件上限或无法完整确认时直接扫描。
+- 正式 PR 先用可信基线判断 CodeQL 扫描范围。纯文档和各级 `README.md` 仅做范围判断；源码、依赖、构建配置、扫描策略和工作流改动触发分析。GitHub 文件比较达到 300 个文件、存在分叉或无法完整核验时保留分析。Draft 转正式后重新判断。
 - PR 的范围选择器固定读取事件中的 base SHA，不能执行 PR 自己修改的跳过逻辑；首次引入工作流时，若基线没有选择器则保守扫描。SARIF 确认逻辑直接放在工作流中，不导入待扫描代码。
 - 默认分支每小时 UTC 第 23 分钟检查一次（北京时间每小时第 23 分钟），没有 main push 触发。GitHub 调度可能延迟。
 - 手动运行始终执行扫描，不复用历史成功；默认分支上的手动成功可以作为定时扫描的基线。
@@ -86,7 +92,7 @@ CLI 的 Linux 包测试运行真实 daemon 生命周期和新工作区 doctor �
 | --- | --- |
 | 本地化类型／测试入口 | 本次修复此前被选中却未执行的漏检，并增加入口覆盖契约 |
 | CodeQL / Copilot Autofix | 工作区已包含上节的 PR 范围过滤、每小时检查和手动工作流；GitHub default setup 当前状态及扫描上传验收仍须单独核验。Autofix 建议仍须审查与测试，不自动合并 |
-| 仓库级密钥扫描／推送保护 | 2026-10-19 的历史评估记为开关关闭；本次未核验当前设置。进入完整 CI 的 PR 运行 Gitleaks 历史扫描，纯文档 PR 由路径过滤跳过，Draft preview 延后；上传后的扫描不能代替推送时拦截 |
+| 仓库级密钥扫描／推送保护 | GitHub 仓库设置管理。主 CI 的完整执行档位扫描 Git 历史，确认纯文档改动和历史后只执行范围判定。Draft preview 延后历史扫描 |
 | 新披露的依赖漏洞 | 历史评估记录 Dependabot 告警及安全更新已配置，本次未核验服务端状态；仓库 `.github/dependabot.yml` 仍声明每周版本更新。CI 另测安全补丁与许可策略；新增严重性阻断前须核对现存告警、补丁及无上游修复的基线，不能将旧告警直接当作本次改动引入 |
 | 浏览器与桌面交互 | 选中 Web 时执行当前工作流中的 6 项筛选回归、17 项 Companion 回归和 9 项 conversation change summary 回归，使用模拟 daemon 数据并保留截图；Desktop 主要只有类型检查。后续可逐步扩大交互覆盖；不把每日现有矩阵成功视为桌面打包或设备验收 |
 
@@ -108,7 +114,7 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 
 | 场景 | 必要检查 | macOS 范围 | 完整验证规则 |
 | --- | --- | --- | --- |
-| 纯文档、Issue 模板 | 不启动 Pull Request hosted CI；手动、定时和 `full-ci` 仍可显式运行 | 无 | 路径过滤只对全量为文档的 PR 生效，混合改动按代码范围执行 |
+| 纯文档 | 范围判定后结束主 CI。CodeQL 仅判断范围 | 无 | 必需质量门发布 skipped 结果 |
 | 正式 PR：Web 或其他局部包 | 受影响包及使用方的构建、类型检查、测试；适用的公共与依赖检查 | 未触及原生能力时不运行 | 所有选中的任务必须真实成功 |
 | 正式 PR：Core／Daemon 通用修改 | 受影响包的 Linux 测试；按能力影响关系扩展平台任务 | 无法证明无影响时保留相关 macOS 验证 | 不以目录名或测试名猜测原生影响 |
 | 正式 PR：原生沙箱、Host、Office、桌面能力修改 | Linux 拒绝契约、相关通用测试和原生正向／负向测试 | 运行相应真实 macOS 测试组及 helper smoke | 原生验证失败、取消或意外跳过均阻止通过 |
@@ -125,16 +131,16 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 
 | 改动 | 目标选择 | 保守边界 |
 | --- | --- | --- |
-| `.github/ISSUE_TEMPLATE/**` | Pull Request 文档-only 时不启动 hosted CI；混合改动按其他路径选择 | 修改 CI 工作流本身仍全量 |
+| `.github/ISSUE_TEMPLATE/**` | 公共检查 | 修改 CI 工作流本身仍全量 |
 | 已登记的文档／检查脚本 | 对应脚本、其测试和公共检查 | 未登记脚本、分类器、任务执行器仍全量 |
 | 普通包源码 | 所属包、直接和间接使用方 | 构建继续补齐依赖闭包 |
 | 生成的 Provider 模型目录 `packages/core/src/provider-model-catalog.generated.ts` | 生成格式及版本摘要、Core 构建、类型检查和目录相关测试 | 目录格式无法验证，或同时改动解析器、生成器及其他源码时，按依赖范围选择任务 |
 | 测试与共享夹具 | 所属包和夹具使用方 | 无法识别共享关系时扩大范围 |
 | `native/` 和已登记原生接线 | native、相关 Daemon／Host 测试与平台契约 | 涉及共享启动、权限、运行时契约时扩大；未知 native 路径仍全量 |
 | 包内 TypeScript／构建配置、可核验且全部 scripts 不变的包 manifest（已实现） | 所属包及消费者；manifest 另选依赖策略 | manifest 身份变化、未识别的 scripts 变化或无法核验时全量；新旧依赖边并集不能丢失消费者 |
-| 已核验的包内 Node／TypeScript 测试迁移（已实现） | 所属包完整测试、类型检查和依赖策略；保留共享测试输入使用方 | 生产字段／构建 hook 不变；未知命令、空发现或遗漏测试语言回退全量；混合源码继续选择消费者 |
+| 已核验的包内 Node／TypeScript 测试迁移 | 所属包完整测试、类型检查和共享测试输入的实际使用方 | 生产字段、构建入口和 hook 不变，依赖检查随实际依赖输入变更执行 |
 | 固定 Office／codesign 审查清单（已实现） | 必需的 Daemon 构建及 macOS 发布契约 | 清单单独变化省去产品测试与 helper 编译；混合原生源码保留真实 helper smoke；未知路径全量 |
-| 根配置、workspace、锁文件、补丁、CI 工作流／脚本 | 保留全量 | 文档及明确登记的维护路径例外；未知路径仍全量 |
+| 根配置、workspace、共享锁文件更新、补丁、CI 工作流或脚本 | 完整回归 | 标准新工作区包仅新增自身锁文件 importer 时按包验证 |
 
 分类结果会在 CI Step Summary 和 `ci-scope-report` artifact 中输出命中文件数量、分类理由、受影响包、选中任务、Daemon 平台和每个跳过 lane 的原因，供 PR 摘要核对。scope 阶段同时用同一组变更路径生成一次强制 full scope，并由 [`scope-audit.mjs`](../../scripts/ci/scope-audit.mjs) 验证选择结果是 full scope 的子集；包、平台或任务越界，以及文档范围误选产品任务都会使 scope 失败。这是只读的选择器审计，不代替产品测试，也不放宽 unknown／root／workflow 路径的全量回退。`macos-required` 不能仅由当前的 `daemon=true` 或单个路径正则替代，需要包含共享契约和调用链的影响传播。
 
@@ -154,12 +160,12 @@ scope 阶段还会用同一份 forced-full 分类生成完整测试计划，并�
 
 ### 触发事件与质量门
 
-PR 工作流对纯文档差异使用顶层 `paths-ignore`，避免为无产品影响的改动分配 hosted runner；混合差异和显式完整运行仍进入 job 层分类。以下事件和质量门规则已在 P1 接入，其余平台分组仍待 P2 验证。
+PR 工作流根据完整 Git 差异判断范围。纯文档 PR 由范围任务发布判定，GitHub 将跳过的质量门视为满足必需检查。范围失败仍触发质量门并阻止通过。
 
 - 覆盖 `opened`、`synchronize`、`reopened`、`ready_for_review`、`converted_to_draft`。标签事件不进入 CI 工作流：必需门按名称在该 head 最新一次 CI 运行中解析，任何缺门 job 的运行都会被规则判为缺失并拦截合并。`full-ci` 标签由独立工作流 `full-ci-label.yml` 接管：以 `pull_request_target` 触发（fork PR 才能拿到可 dispatch 的 token），用 head 分支名（而非 SHA）分发一次完整 `workflow_dispatch` 运行；fork 的 head 分支在本仓库没有可寻址 ref，该任务显式失败并提示推送新提交；无关标签不产生任何 CI 运行。`full-ci-label.yml` 只调用 API 分发，绝不 checkout 或执行 PR 代码。`unlabeled` 不触发工作流，移除标签只影响下一次正常运行。
 - Draft 使用明确的轻量反馈结果。稳定的完整质量门不能通过 `if` 跳过来表示完成，也不能把延后的任务视为范围外。`quality` 明确失败并说明 `deferred_by_draft_policy`，轻量任务单独显示结果；转正式评审或显式完整运行后补齐。
 - 汇总门使用 `always()` 和显式的必需任务集合。选中的任务只有 `success` 可通过；`failure`、`cancelled`、`skipped`、空结果均拒绝。只有分类确认范围外的任务才允许跳过。
-- 分类、公共检查、清单校验失败时，汇总门必须失败。路径过滤只适用于纯文档 Pull Request，不改变混合差异的失败语义。
+- 分类、公共检查、清单校验失败时，汇总门必须失败。代码与文档混合时，按代码范围选择所需任务。
 - 完整证据绑定验证提交、PR base 和检查方案。手动运行选择目标分支并默认完整；其他分支或 main 的成功不能代替当前 PR。main 更新后遵守分支保护重新验证的要求。
 - 保留同一 PR 新推送取消旧运行。反馈与完整回归若拆工作流，使用不同并发组，避免轻量反馈误取消所需完整验证。
 

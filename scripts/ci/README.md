@@ -1,10 +1,10 @@
 # CI Test Execution
 
-The existing quality check remains the required merge gate for PRs that enter
-the workflow. Ready PRs run the selected package graph. Documentation-only PRs
-are filtered before a hosted runner starts. Draft previews retain the common
-fast lane; promotion, `full-ci`, manual and scheduled runs retain their
-complete execution policy.
+The existing quality check remains the required merge gate. Ready PRs run the
+selected package graph. Verified documentation-only PRs run the scope job and
+publish the merge check as skipped. Draft previews with code retain the common
+fast lane. Promotion, `full-ci`, manual and scheduled runs use their complete
+execution policy.
 
 ## Scope And Required Checks
 
@@ -14,7 +14,7 @@ Mixed changes union their affected packages and required lanes.
 
 | Changed inputs | Selected product checks |
 | --- | --- |
-| Docs, nested READMEs, PR/Issue templates, CODEOWNERS, FUNDING | No hosted PR CI run; the workflow path filter applies only when every changed path is documentation |
+| Verified documentation-only PR, including nested READMEs and localized root READMEs | Scope only. The merge gate, common checks, telemetry and product jobs are skipped |
 | Allowlisted Markdown-link and public-repository checks | Common fast checks only |
 | Verified deletions under the root `output/` | Common fast checks only for an archive cleanup |
 | Package tests and test support | Owning package; shared test-support importers are included |
@@ -22,12 +22,13 @@ Mixed changes union their affected packages and required lanes.
 | Verified generated provider model catalog refresh | Core build, typecheck, and focused provider catalog tests |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
-| Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests/typecheck and dependency policy; shared test-support consumers remain selected |
+| Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests and typecheck plus shared test-support consumers |
+| Standard new Node/TypeScript package with isolated or unchanged lockfile inputs | Owner, declared consumers, build dependencies and dependency policy |
 | The fixed Office/codesign source-review JSON records | Daemon build closure and macOS publication contracts; no unrelated product tests/typechecks |
 | Dependency-security regression tests | Owning package plus dependency policy |
 | Verified changes to `VERSION` and the root manifest's `version` field | Version consistency and applicable consumers outside Web |
-| Root manifest or TypeScript/build configuration, lockfile, workspace configuration, patches, CI workflows/scripts, unknown paths | Full regression |
-| New, deleted, renamed, or unverifiable package identity, or unrecognized script changes | Full regression |
+| Root manifest or TypeScript/build configuration, shared lockfile changes, workspace configuration, patches, CI workflows/scripts, unknown paths | Full regression |
+| Deleted, renamed, or unverifiable package identity, or unrecognized script changes | Full regression |
 | `full-ci`, manual dispatch, daily schedule | Full regression |
 
 The classifier reads root version inputs from the PR's comparison trees. It
@@ -36,29 +37,26 @@ the version is valid, and the rest of the root manifest is identical. Missing
 or mismatched values retain full scope. Desktop version inputs follow the
 normal package graph and Desktop release validation.
 
-A catalog refresh must match the generator's structure and version digest in
-both comparison trees. The required typecheck job runs the Core provider
-catalog tests. Resolver, generator and mixed source changes follow the normal
-consumer graph.
+A catalog refresh must match the generator's format, trusted providers,
+normalized record fields and version digest in both trees. The required
+typecheck job runs the Core provider catalog tests. Resolver, generator and
+mixed source changes follow the normal consumer graph.
 
 Package manifests are compared with the base checkout before narrowing. The
 directory, name, test/typecheck entry presence and complete scripts fingerprint
-must match. Missing baseline identity, added/removed script entries, production
-script changes and opaque validation commands force full regression.
-[The validation recognizer](package-validation-scope.mjs) permits changes only to
-the existing `test`, `test:ci`, `typecheck`, `typecheck:ci` and `typecheck:tests`
-scripts when all other manifest fields and scripts are unchanged. It recognizes complete top-level
-`node --test` globs for `.test.mjs`/`.test.ts`, no-emit package-local `tsc`
-commands, the standard `typecheck:tests` wrapper for an isolated test config, and wrappers around those CI entries and unchanged builds, including
-`corepack pnpm run build`. A local `test` script can call an already verified
-`corepack pnpm typecheck` before its test command.
+must match for an ordinary manifest edit. The
+[validation recognizer](package-validation-scope.mjs) also checks changes to
+`test`, `test:ci`, `typecheck`, `typecheck:ci` and `typecheck:tests` when all
+production fields and scripts are unchanged. It recognizes complete Node test
+globs, no-emit package-local TypeScript checks, existing JavaScript syntax
+checks and wrappers around those CI entries and declared dependency builds.
+Browser Host retains its existing isolated Node and Rust runner.
 Name filters, shell additions, no-op commands, omitted test languages and empty
 discovery retain full scope. Each test entrypoint discovered by the baseline glob
 must retain its directory and basename under the current glob; `.mjs`/`.ts`
 extension changes are allowed. Missing baseline inventories and deleted or renamed
-entrypoints retain full scope. A migration that rewrites an existing TypeScript
-configuration referenced by either typecheck command retains full scope; baseline
-configs without a command-line `--noEmit` must exist in the base inventory.
+entrypoints retain full scope. An existing test configuration must stay intact
+during the migration. Existing source checks must stay in the CI entrypoint.
 An isolated `tsconfig.test.json`/`tsconfig.tests.json`
 is a test input only with explicit no-emit and test-only includes and no production
 script/config consumer; other package configuration remains a source input.
@@ -71,15 +69,11 @@ AST helpers and tsconfig without declaring a workspace dependency. The real
 manifest graph also includes CLI's dependency on Web. Selecting those consumers
 does not select core/daemon test shards just because a build needs their outputs.
 
-New workspace packages use the same contract. Place the package under one
-`packages/<name>` or `apps/<name>` directory, keep stable `build`, `build:ci`,
-`typecheck`, `typecheck:ci`, `test`, and `test:ci` entries, and put tests under
-`test/*.test.mjs` or `test/*.test.ts`. A test-only `tsconfig.test.json` must be
-no-emit and include only test inputs. The package's initial addition retains
-full validation for the new graph. After it is on the base branch, source,
-test, and test-config changes select the owner and proven consumers without
-expanding to unrelated packages. Shared test helpers need traceable relative
-imports so their real consumers can be selected.
+New modules follow the [workspace CI contract](../../docs/maintenance/ci.md#新模块接入-ci).
+The scope job checks the new module's scripts and test inventory. A lockfile
+change stays local when removing the new workspace importer blocks yields the
+exact baseline lockfile. Changes to shared resolutions or workspace settings
+select full regression.
 
 Dependency policy runs for dependency inputs and its own regression tests, not
 for every source/test edit. Typecheck and Linux unit jobs run only for nonempty
@@ -124,9 +118,10 @@ The aggregate validates explicit assurance/build/dependency/typecheck/unit/daemo
 Selected checks must succeed; only genuinely unselected checks may be skipped.
 Failure, cancellation, missing or malformed results never pass as a skip. Docs
 that enter the workflow must select no product lanes, and full scope must select
-all lanes. Pure documentation Pull Requests are filtered before the workflow
-allocates a runner; manual, scheduled and `full-ci` runs still use the
-complete-tier policy.
+all lanes. A documentation-only PR publishes the skipped merge check after
+successful scope classification. The workflow uses the whole Git diff and PR
+history to distinguish documentation edits from maintenance changes or mixed
+changes. Manual, scheduled and `full-ci` runs use complete validation.
 
 The scope job writes a `ci-scope-report` artifact and appends the same report to
 the GitHub Step Summary. It shows the execution tier, classifier reason, changed
@@ -419,10 +414,11 @@ without Core uses eight Linux Daemon shards; runner arguments must match its pla
 ## Secret Scans
 
 Complete-tier PRs scan every commit after the unique merge-base, including merged
-branches and merge-resolution patches. A documentation-only Pull Request does
-not start this workflow, while a mixed or explicitly complete run still scans
-the full history. Draft preview runs continue to defer the scan; a Draft
-promoted to complete by `full-ci` runs it.
+branches and merge-resolution patches. The scope-only documentation path
+requires both the final diff and the complete PR history to contain only
+documentation paths. A code or scan-policy change reverted before the final
+diff still selects the common job and history scan. Draft previews defer the
+scan until the PR is ready or selects `full-ci`.
 
 Missing/ambiguous history or changes to scanner configuration/ignore policy
 select full history. Scheduled/manual runs scan full reachable history. Checkout

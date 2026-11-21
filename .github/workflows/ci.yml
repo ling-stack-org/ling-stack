@@ -3,34 +3,6 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
-    # Documentation-only PRs do not need a hosted CI run. A PR that mixes
-    # documentation with code still matches the workflow and is classified by
-    # the complete diff below.
-    paths-ignore:
-      - "README.md"
-      - "README.de-DE.md"
-      - "README.es-ES.md"
-      - "README.fr-FR.md"
-      - "README.ja-JP.md"
-      - "README.ko-KR.md"
-      - "README.pt-BR.md"
-      - "README.zh-CN.md"
-      - "**/README.md"
-      - "CHANGELOG.md"
-      - "CODE_OF_CONDUCT.md"
-      - "CONTRIBUTING.md"
-      - "SECURITY.md"
-      - "SUPPORT.md"
-      - "THIRD_PARTY_NOTICES.md"
-      - "WORKFLOW.md"
-      - "WORKFLOW.example.md"
-      - "docs/**"
-      - "LICENSE"
-      - ".github/CODEOWNERS"
-      - ".github/FUNDING.yml"
-      - ".github/PULL_REQUEST_TEMPLATE.md"
-      - ".github/PULL_REQUEST_TEMPLATE/*.md"
-      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
   schedule:
     # Daily full Linux/macOS regression at 11:17 Asia/Shanghai (03:17 UTC).
@@ -56,6 +28,7 @@ jobs:
     outputs:
       execution-tier: ${{ steps.policy.outputs.execution-tier }}
       mode: ${{ steps.classify.outputs.mode }}
+      documentation-only: ${{ steps.classify.outputs.documentation-only }}
       packages: ${{ steps.classify.outputs.packages }}
       test-packages: ${{ steps.classify.outputs.test-packages }}
       typecheck-packages: ${{ steps.classify.outputs.typecheck-packages }}
@@ -99,6 +72,7 @@ jobs:
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: |
           set -euo pipefail
@@ -107,6 +81,7 @@ jobs:
               --event="$GITHUB_EVENT_NAME" \
               --base="$BASE_SHA" \
               --head=HEAD \
+              --pr-head="$PR_HEAD_SHA" \
               --force-full="$FORCE_FULL")"
           else
             scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
@@ -116,6 +91,7 @@ jobs:
           const scope = JSON.parse(process.env.SCOPE_JSON);
           const outputs = {
             mode: scope.mode,
+            "documentation-only": String(scope.documentationOnly === true),
             packages: JSON.stringify(scope.packages),
             "test-packages": JSON.stringify(scope.testPackages),
             "typecheck-packages": JSON.stringify(scope.typecheckPackages),
@@ -151,6 +127,10 @@ jobs:
             --execution-tier="${{ steps.policy.outputs.execution-tier }}" \
             --output=.codex-artifacts/ci/scope-report.md > /dev/null
 
+      - name: Record documentation-only scope
+        if: steps.classify.outputs.documentation-only == 'true'
+        run: printf 'The PR diff and history contain only documentation changes.\n' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Restore timing hints once for the entire run
         if: steps.policy.outputs.execution-tier == 'complete' && (steps.classify.outputs.daemon == 'true' || contains(steps.classify.outputs.test-packages, '"@ling-stack/core"'))
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -161,6 +141,7 @@ jobs:
 
       - name: Plan complete core and daemon file coverage
         id: test-plan
+        if: steps.classify.outputs.documentation-only != 'true'
         env:
           SELECTED_TEST_PACKAGES: ${{ steps.classify.outputs.test-packages }}
           DAEMON_PLATFORMS: ${{ steps.classify.outputs.daemon-platforms }}
@@ -197,6 +178,7 @@ jobs:
             --output=.codex-artifacts/ci/full-test-plan.json > /dev/null
 
       - name: Audit selected test plan against forced full plan
+        if: steps.classify.outputs.documentation-only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -219,7 +201,7 @@ jobs:
           path: .codex-artifacts/ci/test-plan.json
 
       - name: Preserve the scope audit and selection report
-        if: always()
+        if: always() && steps.classify.outputs.documentation-only != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-scope-report
@@ -235,6 +217,7 @@ jobs:
   common-fast:
     name: Common checks (fast lane)
     needs: scope
+    if: needs.scope.outputs.documentation-only != 'true'
     runs-on: ubuntu-latest
     # A policy or ignore-file change forces a complete repository-history
     # Gitleaks scan. Keep this lane bounded, but allow that audit to finish on
@@ -501,8 +484,8 @@ jobs:
         if: needs.scope.outputs.provider-model-catalog == 'true'
         working-directory: packages/core
         run: >-
-          node --test test/provider-check.test.mjs
-          test/provider-model-capabilities.test.mjs test/provider-thinking-levels.test.mjs
+          node --test test/provider-check.test.*
+          test/provider-model-capabilities.test.* test/provider-thinking-levels.test.*
 
       - name: Check Desktop worktree confirmation IPC
         if: contains(needs.scope.outputs.typecheck-packages, '@ling-stack/desktop')
@@ -920,7 +903,8 @@ jobs:
     # The main ruleset requires this check name.
     name: Typecheck, unit tests, and Web build
     needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
-    if: always()
+    # A skipped job publishes the required check for verified docs-only PRs.
+    if: ${{ always() && (needs.scope.result != 'success' || needs.scope.outputs.documentation-only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -998,7 +982,7 @@ jobs:
   timing-telemetry:
     name: CI timing telemetry
     needs: [scope, quality]
-    if: always()
+    if: ${{ always() && needs.scope.outputs.documentation-only != 'true' }}
     runs-on: ubuntu-latest
     # Artifact download plus the Actions API can exceed three minutes on a
     # busy hosted runner. Telemetry is best-effort, so give it a bounded window

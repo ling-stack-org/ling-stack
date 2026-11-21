@@ -9,7 +9,6 @@ import { classifyChangedFiles } from "./classify-scope.mjs";
 import { createTestPlan } from "./test-shard-plan.mjs";
 
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-const codeqlWorkflow = readFileSync(new URL("../../.github/workflows/codeql.yml", import.meta.url), "utf8");
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
@@ -65,7 +64,7 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, testPackages = packages, providerModelCatalog = false, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, testPackages = packages, documentationOnly = false, providerModelCatalog = false, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
     mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(testPackages),
@@ -75,6 +74,7 @@ async function assertScopeOutputs(scope, { mode, packages, testPackages = packag
     "linux-contract": String(daemonPlatforms.includes("linux")), "macos-native": String(macosNative),
     "macos-helper": String(macosNative), "native-release": "false",
     "provider-model-catalog": String(providerModelCatalog),
+    "documentation-only": String(documentationOnly),
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]), { daemonPlatforms: JSON.parse(outputs["daemon-platforms"]) });
   assert.deepEqual(Object.keys(plan.suites).filter(name => name.startsWith("daemon")), daemonSuites);
@@ -144,7 +144,7 @@ test("the catalog regression runs within the required Core typecheck job", async
     daemon: false, matrix: [],
   });
   assert.match(jobSource("typecheck"),
-    /if: needs\.scope\.outputs\.provider-model-catalog == 'true'\n        working-directory: packages\/core\n        run: >-\n          node --test test\/provider-check\.test\.mjs\n          test\/provider-model-capabilities\.test\.mjs test\/provider-thinking-levels\.test\.mjs/u);
+    /if: needs\.scope\.outputs\.provider-model-catalog == 'true'\n        working-directory: packages\/core\n        run: >-\n          node --test test\/provider-check\.test\.\*\n          test\/provider-model-capabilities\.test\.\* test\/provider-thinking-levels\.test\.\*/u);
 });
 
 test("workflow transformations omit Web work and retain its non-Web consumers", { timeout: 90_000 }, async () => {
@@ -176,17 +176,10 @@ test("workflow transformations require every lane for a bounded full package gra
 
 test("PR transitions and full-ci labels trigger validation while full regression is daily", () => {
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft\]/u);
-  for (const source of [workflow, codeqlWorkflow]) {
-    assert.match(source, /paths-ignore:\n      - "README\.md"[\s\S]*      - "\*\*\/README\.md"[\s\S]*      - "docs\/\*\*"/u);
-    for (const path of ["README.de-DE.md", "README.es-ES.md", "README.fr-FR.md", "README.ja-JP.md",
-      "README.ko-KR.md", "README.pt-BR.md", "README.zh-CN.md", ".github/ISSUE_TEMPLATE/**"]) {
-      assert.ok(source.includes(`      - "${path}"`), path);
-    }
-  }
-  assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled, synchronize\]/u);
+  assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled\]/u);
   assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_REF" --repo "\$GITHUB_REPOSITORY"/u);
   assert.match(workflow, /cron: "17 3 \* \* \*"/u);
-  assert.doesNotMatch(workflow, /^  (?:push|paths):/mu);
+  assert.doesNotMatch(workflow, /^  push:|^    paths(?:-ignore)?:/mu);
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
   assert.match(jobSource("scope"), /--base="\$BASE_SHA"/u);
   assert.match(jobSource("scope"), /execution-tier: \$\{\{ steps\.policy\.outputs\.execution-tier \}\}/u);
@@ -224,8 +217,7 @@ test("label events never create CI runs so the latest run always publishes the r
   assert.match(jobSource("quality"), /^    name: Typecheck, unit tests, and Web build$/mu);
   assert.doesNotMatch(jobSource("quality"), /IGNORED_LABEL_EVENT/u);
   assert.doesNotMatch(jobSource("scope"), /^    if:/mu);
-  assert.match(labelWorkflow, /github\.event\.action == 'labeled' && github\.event\.label\.name == 'full-ci'/u);
-  assert.match(labelWorkflow, /github\.event\.action == 'synchronize' && contains\(github\.event\.pull_request\.labels\.\*\.name, 'full-ci'\)/u);
+  assert.match(labelWorkflow, /if: github\.event\.label\.name == 'full-ci'/u);
   assert.match(labelWorkflow, /actions: write/u);
   assert.match(labelWorkflow, /pull_request\.head\.ref/u);
   // The dispatch job holds a write token on pull_request_target; it must stay a
@@ -241,7 +233,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
     assert.doesNotMatch(source, /^    if: .*always\(\)/mu, id);
     assert.match(source, /needs\.build\.result == 'success'/u, id);
   }
-  assert.match(jobSource("quality"), /^    if: always\(\)/mu);
+  assert.match(jobSource("quality"), /^    if: \$\{\{ always\(\) && \(needs\.scope\.result != 'success'/mu);
   const cancelled = runQuality({ UNIT_RESULT: "cancelled", DAEMON_RESULT: "cancelled" });
   assert.equal(cancelled.status, 1, cancelled.stderr);
   assert.match(cancelled.stdout, /UNIT=cancelled.*DAEMON=cancelled/u);
@@ -249,7 +241,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
 
 test("workflow gate requires every selected lane and refuses incomplete Draft validation", () => {
   const quality = jobSource("quality");
-  assert.match(quality, /^    if: always\(\)/mu);
+  assert.match(quality, /^    if: \$\{\{ always\(\) && \(needs\.scope\.result != 'success' \|\| needs\.scope\.outputs\.documentation-only != 'true'\) \}\}$/mu);
   assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);
   assert.match(quality, /SCOPE_MODE: \$\{\{ needs\.scope\.outputs\.mode \}\}/u);
   for (const [selector, output] of Object.entries(selectorOutputs)) {

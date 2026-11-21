@@ -5,9 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isGeneratedProviderModelCatalog, PROVIDER_MODEL_CATALOG_PATH } from "../provider-model-catalog-format.mjs";
 import { packageValidationScope } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
+import { planSecretScan } from "./secret-scan.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
+const LOCKFILE = "pnpm-lock.yaml";
 const WEB_PACKAGE = "@ling-stack/web";
 const CORE_PACKAGE = "@ling-stack/core";
 
@@ -84,7 +86,7 @@ function isAssurancePath(file) {
  * The classifier is intentionally conservative: a path that is not recognized
  * as documentation, allowlisted maintenance, verified local output cleanup, or
  * a workspace package escalates to the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>, generatedProviderCatalog?: boolean}} input
+ * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>, generatedProviderCatalog?: boolean, addedLockImporters?: string[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -94,6 +96,7 @@ export function classifyChangedFiles(input) {
   const nativeSurfaceChanged = files.some(isMacosNativePath);
   const nativeRelease = files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file));
   const versionPaths = new Set(input.versionChange?.paths);
+  const scopedLockfile = (input.addedLockImporters?.length ?? 0) > 0;
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
@@ -105,6 +108,7 @@ export function classifyChangedFiles(input) {
 
   if (scopeFiles.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
     && !versionPaths.has(file)
+    && !(scopedLockfile && file === LOCKFILE)
     && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
@@ -132,25 +136,36 @@ export function classifyChangedFiles(input) {
 
   const validationManifests = new Set();
   const validationInputs = new Set();
+  const newPackages = new Set();
   for (const file of scopeFiles.filter((file) => file.endsWith("/package.json"))) {
     const directory = dirname(file);
     const current = packages.find((entry) => entry.directory === directory);
     const previous = input.basePackageEntries?.find((entry) => entry.directory === directory);
+    if (current && !previous && input.basePackageEntries
+      && !input.basePackageEntries.some(entry => entry.name === current.name)
+      && packages.filter(entry => entry.name === current.name).length === 1
+      && isStandardPackageAddition(current, scopeFiles)) {
+      newPackages.add(directory);
+      continue;
+    }
     if (!current || !previous || current.name !== previous.name
       || current.hasTestScript !== previous.hasTestScript || current.hasTypecheckScript !== previous.hasTypecheckScript
       || !current.scriptsFingerprint || !previous.scriptsFingerprint) {
-      return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
+      return buildScope("full", files, packages, `unverified workspace package identity or validation scripts: ${file}`);
     }
     if (current.scriptsFingerprint !== previous.scriptsFingerprint) {
       const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
         directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
         previousFiles: previous.files, changedFiles: scopeFiles });
       if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
-        return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
+        return buildScope("full", files, packages, `unverified workspace package identity or validation scripts: ${file}`);
       }
       validationManifests.add(file);
       for (const input of validation.testInputs) validationInputs.add(input);
     }
+  }
+  if (scopedLockfile && input.addedLockImporters.some(directory => !newPackages.has(directory))) {
+    return buildScope("full", files, packages, "lockfile changes require verified new workspace importers");
   }
 
   const changedEntries = new Set();
@@ -160,7 +175,7 @@ export function classifyChangedFiles(input) {
 
   for (const file of scopeFiles) {
     if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
-    if (versionPaths.has(file)) continue;
+    if (versionPaths.has(file) || (scopedLockfile && file === LOCKFILE)) continue;
     if (NATIVE_RELEASE_REVIEW_FILES.has(file)) continue;
     if (isMacosNativePath(file)) continue;
     const entry = findOwningPackage(file, packages);
@@ -247,7 +262,8 @@ export function classifyChangedFiles(input) {
       ...(nativeRelease ? ["@ling-stack/daemon"] : [])])].sort(),
     testPackages,
     typecheckPackages,
-    dependencyPolicy: scopeFiles.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
+    dependencyPolicy: scopeFiles.some(file => (file.endsWith("/package.json") && !validationManifests.has(file))
+      || DEPENDENCY_CHECK_FILES.has(file)),
     assurance: scopeFiles.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
     daemonPlatforms,
@@ -265,7 +281,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, providerModelCatalog?: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, providerModelCatalog?: boolean, documentationOnly?: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -385,6 +401,20 @@ function isSupportedTypecheckPackage(directory) {
   return directory.startsWith("packages/")
     || SUPPORTED_TEST_PACKAGE_DIRECTORIES.has(directory)
     || directory === "apps/desktop";
+}
+
+/** @param {PackageEntry} entry @param {string[]} changedFiles */
+function isStandardPackageAddition(entry, changedFiles) {
+  const name = /^packages\/([a-z0-9-]+)$/u.exec(entry.directory)?.[1];
+  const manifest = entry.manifest;
+  const scripts = manifest?.scripts;
+  if (!name || manifest?.name !== `@ling-stack/${name}` || manifest.type !== "module"
+    || !scripts || typeof scripts.build !== "string" || !scripts.build.trim() || scripts["build:ci"] !== "tsc -p tsconfig.json"
+    || !Object.keys(scripts).every(key => ["build", "build:ci", "test", "test:ci", "typecheck", "typecheck:ci", "typecheck:tests"].includes(key))
+    || typeof scripts["typecheck:ci"] !== "string" || !scripts["typecheck:ci"].split(" && ").includes("tsc -p tsconfig.json --noEmit")
+    || !entry.hasTestScript || !entry.hasTypecheckScript) return false;
+  return Boolean(packageValidationScope({ current: manifest, directory: entry.directory, root: repositoryRoot,
+    repositoryFiles: listRepositoryFiles(repositoryRoot), changedFiles }));
 }
 
 /** @param {string} file @param {PackageEntry[]} packages */
@@ -544,6 +574,46 @@ function parseArgs(argv) {
   return args;
 }
 
+// Pinned pnpm writes importer blocks separated by blank lines. Verify that
+// removing the new blocks reproduces the entire baseline lockfile byte for byte.
+function inspectAddedLockImporters(before, after, directories) {
+  const start = after.indexOf("\nimporters:\n\n");
+  if (start === -1 || directories.length === 0) return [];
+  const body = start + "\nimporters:\n\n".length;
+  const end = after.indexOf("\n\npackages:\n", body);
+  if (end === -1) return [];
+  const additions = new Set();
+  const existing = [];
+  for (const block of after.slice(body, end).split("\n\n")) {
+    const [header, ...lines] = block.split("\n");
+    const directory = /^  (packages\/[a-z0-9-]+):(?: \{\})?$/u.exec(header)?.[1];
+    if (!directory || !directories.includes(directory)) {
+      existing.push(block);
+      continue;
+    }
+    if (additions.has(directory) || lines.some(line =>
+      !/^ {4}(?:dependencies|devDependencies|optionalDependencies):$/u.test(line)
+        && !/^ {6}'@ling-stack\/[a-z0-9-]+':$/u.test(line)
+        && !/^ {8}(?:specifier: workspace:\*|version: link:(?:\.\.\/)+(?:[a-z0-9-]+\/)*[a-z0-9-]+)$/u.test(line))) return [];
+    additions.add(directory);
+  }
+  if (additions.size !== directories.length || before !== after.slice(0, body) + existing.join("\n\n") + after.slice(end)) return [];
+  return [...additions];
+}
+
+function documentationOnlyHistory({ base, head }) {
+  try {
+    const plan = planSecretScan({ eventName: "pull_request", base, head, cwd: repositoryRoot });
+    if (plan.mode !== "range") return false;
+    const files = execFileSync("git", [
+      "log", ...plan.logOpts.split(" "), "--format=", "--name-only", "--no-renames", "-z", "--",
+    ], { cwd: repositoryRoot, encoding: "utf8", timeout: 15_000 }).split("\0").filter(Boolean);
+    return files.length > 0 && files.every(isDocumentationPath);
+  } catch {
+    return false;
+  }
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const eventName = args.event ?? process.env.GITHUB_EVENT_NAME ?? "pull_request";
@@ -552,6 +622,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   let basePackageEntries;
   let versionChange;
   let generatedProviderCatalog;
+  let addedLockImporters;
   if (args.files) {
     files = JSON.parse(args.files);
   } else if (eventName === "pull_request" && args.base && args.head) {
@@ -563,6 +634,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         base, args.head, "--", LOCAL_OUTPUT_DIRECTORY]).split("\0").filter(Boolean);
     }
     if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, base);
+    if (args["force-full"] !== "true" && files.includes(LOCKFILE) && basePackageEntries) {
+      const directories = files.filter(file => /^packages\/[a-z0-9-]+\/package\.json$/u.test(file))
+        .map(dirname).filter(directory => !basePackageEntries.some(entry => entry.directory === directory));
+      if (directories.length > 0 && [base, args.head].every(ref =>
+        /^100644 blob /u.test(git(["ls-tree", ref, "--", LOCKFILE])))) {
+        addedLockImporters = inspectAddedLockImporters(git(["show", `${base}:${LOCKFILE}`]),
+          git(["show", `${args.head}:${LOCKFILE}`]), directories);
+      }
+    }
     versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
     if (args["force-full"] !== "true" && files.includes(PROVIDER_MODEL_CATALOG_PATH)) {
       generatedProviderCatalog = [base, args.head].every(ref =>
@@ -572,6 +652,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } else {
     files = [];
   }
-  console.log(JSON.stringify(classifyChangedFiles({ files, deletedOutputFiles, eventName,
-    forceFull: args["force-full"] === "true", basePackageEntries, versionChange, generatedProviderCatalog })));
+  const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName,
+    forceFull: args["force-full"] === "true", basePackageEntries, versionChange, generatedProviderCatalog, addedLockImporters });
+  if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
+    scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });
+  }
+  console.log(JSON.stringify(scope));
 }

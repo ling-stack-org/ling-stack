@@ -2,14 +2,16 @@ import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, matchesGlob } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-// Keep package-local test helpers inside the validation boundary. A helper is
-// still verified below through its exact no-emit TypeScript command, so adding
-// this standard entry does not make arbitrary package scripts opaque.
-const requiredValidationScripts = new Set(["test", "test:ci", "typecheck", "typecheck:ci"]);
+const requiredValidationScripts = ["test", "test:ci", "typecheck", "typecheck:ci"];
 const validationScripts = new Set([...requiredValidationScripts, "typecheck:tests"]);
-const testCommand = /^node (?:--experimental-strip-types )?--test(?: --test-concurrency=\d+)? ((?:(?:test|tests)\/\*\.test\.(?:mjs|ts) ?)+)$/u;
-const typecheckCommand = /^tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?$/u;
+const testCommand = /^node (?:--experimental-strip-types )?--test(?: --test-concurrency=[1-9]\d*)? ((?:(?:test|tests)\/\*\.test\.(?:mjs|ts) ?)+)$/u;
+const typecheckCommand = /^(?:tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?|tsc( --noEmit))$/u;
+const testConfigName = /^tsconfig\.tests?\.json$/u;
+const testTypecheckCall = /^corepack pnpm (?:run )?typecheck:tests$/u;
+const syntaxCheckCommand = /^node --check src\/(?:[\w-]+\/)*[\w-]+(?:\.[\w-]+)*\.(?:js|mjs|cjs)$/u;
 const workspacePackageName = /^@ling-stack\/[a-z0-9-]+$/u;
+const browserHostTestRunner = "node scripts/test.mjs";
+const browserHostTestPatterns = ["test/*.test.mjs", "test/*.test.ts"];
 const localizationTestDeclarations = [
   "scripts/catalog-locales.d.mts",
   "scripts/catalog-utils.d.mts",
@@ -21,22 +23,28 @@ const localizationTestDeclarations = [
  * metadata, build commands, hooks and CI entrypoint presence must stay fixed.
  * Opaque shell commands retain the full-regression fallback.
  */
-export function packageValidationScope({ current, previous, directory, root, repositoryFiles, previousFiles, changedFiles }) {
-  if (!current || !previous || !Array.isArray(previousFiles) || !Array.isArray(changedFiles)
+export function packageValidationScope({ current, previous, directory, root, repositoryFiles, previousFiles = [], changedFiles }) {
+  if (!current || !Array.isArray(previousFiles) || !Array.isArray(changedFiles)
     || [...previousFiles, ...changedFiles].some(file => typeof file !== "string")) return undefined;
   const { scripts, ...metadata } = current;
-  const { scripts: oldScripts, ...oldMetadata } = previous;
-  if (!scripts || !oldScripts || !isDeepStrictEqual(metadata, oldMetadata)
-    || !isDeepStrictEqual(Object.keys(scripts).sort(), Object.keys(oldScripts).sort())) return undefined;
+  const { scripts: oldScripts, ...oldMetadata } = previous ?? current;
+  const candidates = previous ? [oldScripts, scripts] : [scripts];
+  if (!scripts || !oldScripts || !isDeepStrictEqual(metadata, oldMetadata)) return undefined;
   const productionScripts = value => Object.fromEntries(Object.entries(value).filter(([name]) => !validationScripts.has(name)));
   if (!isDeepStrictEqual(productionScripts(scripts), productionScripts(oldScripts))) return undefined;
-  if ([scripts, oldScripts].some(value => [...requiredValidationScripts].some(name => typeof value[name] !== "string" || !value[name].trim()))) return undefined;
+  if (candidates.some(value => requiredValidationScripts.some(name => typeof value[name] !== "string" || !value[name].trim()))) return undefined;
+  if ([...validationScripts].some(name => Object.hasOwn(scripts, `pre${name}`) || Object.hasOwn(scripts, `post${name}`))) return undefined;
 
   const packageRoot = join(root, directory);
   const production = Object.values(productionScripts(scripts));
   const workspaceBuilds = new Set(Object.entries({ ...metadata.dependencies, ...metadata.devDependencies })
     .filter(([name, range]) => workspacePackageName.test(name) && range === "workspace:*")
-    .map(([name]) => `corepack pnpm --filter ${name} build`));
+    .flatMap(([name]) => [`corepack pnpm --filter ${name} build`, `corepack pnpm --filter ${name} run build`]));
+  if (typeof scripts["build:deps"] === "string"
+    && scripts["build:deps"].split(" && ").every(command => workspaceBuilds.has(command))) {
+    workspaceBuilds.add("corepack pnpm build:deps");
+    workspaceBuilds.add("corepack pnpm run build:deps");
+  }
   if (workspacePackageName.test(metadata.name) && typeof scripts["build:ci"] === "string" && scripts["build:ci"].trim()) {
     workspaceBuilds.add(`corepack pnpm --filter ${metadata.name}... run build:ci`);
   }
@@ -44,57 +52,93 @@ export function packageValidationScope({ current, previous, directory, root, rep
   const testConfigs = new Set();
   const typedTestIncludes = new Set();
   const localization = directory === "packages/localization" && metadata.name === "@ling-stack/localization";
+  const browserHost = directory === "packages/browser-host" && metadata.name === "@ling-stack/browser-host"
+    && previousPaths.has("packages/browser-host/scripts/test.mjs") && !changedFiles.includes("packages/browser-host/scripts/test.mjs");
   const testPrelude = localization ? "node scripts/check-catalogs.mjs && " : "";
   const typecheckPrelude = localization ? "node scripts/compile-catalogs.mjs && " : "";
   const testPatterns = [];
-  for (const candidate of [oldScripts, scripts]) {
+  const typecheckInputs = [];
+  for (const candidate of candidates) {
     const testEntry = candidate["test:ci"];
     const typecheckEntry = candidate["typecheck:ci"];
     if (!testEntry.startsWith(testPrelude) || !typecheckEntry.startsWith(typecheckPrelude)) return undefined;
     const nodeTest = testEntry.slice(testPrelude.length);
     const tests = testCommand.exec(nodeTest);
-    if (!tests) return undefined;
-    testPatterns.push(tests[1].trim().split(" "));
+    const hostTests = browserHost && nodeTest === browserHostTestRunner;
+    if (!tests && !hostTests) return undefined;
+    if (browserHost && (nodeTest === browserHostTestRunner) !== (oldScripts["test:ci"] === browserHostTestRunner)) return undefined;
+    testPatterns.push(hostTests ? browserHostTestPatterns : tests[1].trim().split(" "));
     const checks = typecheckEntry.slice(typecheckPrelude.length).split(" && ");
+    const checked = new Set();
+    const sourceChecks = [];
+    const testChecks = [];
+    if (candidate["typecheck:tests"] !== undefined && scripts["typecheck:tests"] !== oldScripts["typecheck:tests"]
+      && !checks.some(command => testTypecheckCall.test(command))) return undefined;
     for (const command of checks) {
-      const match = typecheckCommand.exec(resolveTypecheckCommand(command, candidate));
-      if (!match) return undefined;
-      const configPath = `${directory}/${match[1]}`;
+      if (syntaxCheckCommand.test(command)) {
+        checked.add(command);
+        sourceChecks.push(command);
+        continue;
+      }
+      const wrapped = testTypecheckCall.test(command);
+      const match = typecheckCommand.exec(wrapped ? candidate["typecheck:tests"] ?? "" : command);
+      if (!match || (wrapped && !testConfigName.test(match[1]))) return undefined;
+      const name = match[1] ?? "tsconfig.json";
+      const configPath = `${directory}/${name}`;
       // Reading the checkout can verify a baseline config only when its tracked
       // contents are unchanged across the complete PR diff.
-      if (previousPaths.has(configPath) && changedFiles.includes(configPath)) return undefined;
-      if (!match[2]) {
-        if (candidate === oldScripts && !previousPaths.has(configPath)) return undefined;
+      const noEmitFlag = Boolean(match[2] || match[3]);
+      const isTestConfig = testConfigName.test(name);
+      if ((isTestConfig || !noEmitFlag) && previousPaths.has(configPath) && changedFiles.includes(configPath)) return undefined;
+      if (isTestConfig || !noEmitFlag) {
+        if (previous && candidate === oldScripts && !previousPaths.has(configPath)) return undefined;
         let config;
-        try { config = JSON.parse(readFileSync(join(packageRoot, match[1]), "utf8")); }
+        try { config = JSON.parse(readFileSync(join(packageRoot, name), "utf8")); }
         catch { return undefined; }
-        if (config.compilerOptions?.noEmit !== true) return undefined;
+        if ((!noEmitFlag && config.compilerOptions?.noEmit !== true) || config.compilerOptions?.noCheck === true) return undefined;
         // A config shared with source/build inputs remains a source change.
-        if (/^tsconfig\.tests?\.json$/u.test(match[1]) && Array.isArray(config.include) && config.include.length > 0
+        if (isTestConfig && Array.isArray(config.include) && config.include.length > 0
           && config.include.every(path => typeof path === "string" && /^(?:test|tests)\//u.test(path) && !path.split("/").includes(".."))
           && !config.files && !config.references && !config.exclude
-          && !production.some(command => typeof command !== "string" || command.includes(match[1]))
-          && isolatedConfig(packageRoot, match[1], repositoryFiles.filter(file => file.startsWith(`${directory}/`))
+          && !production.some(command => typeof command !== "string" || command.includes(name))
+          && isolatedConfig(packageRoot, name, repositoryFiles.filter(file => file.startsWith(`${directory}/`))
             .map(file => file.slice(directory.length + 1))) && candidate === scripts) {
-          testConfigs.add(`${directory}/${match[1]}`);
+          testConfigs.add(configPath);
           for (const pattern of config.include) typedTestIncludes.add(pattern);
         }
       }
+      checked.add(configPath);
+      (isTestConfig ? testChecks : sourceChecks).push(command);
     }
+    typecheckInputs.push(checked);
     const buildCommands = typeof candidate.build === "string" ? candidate.build.split(" && ") : [];
     const buildPrefixes = ["", "corepack pnpm build && ", "corepack pnpm run build && ",
       ...buildCommands.map((_, index) => `${buildCommands.slice(0, index + 1).join(" && ")} && `)];
     // The local test command can call the verified local typecheck command.
     for (const task of ["typecheck", "test"]) {
-      const prefixes = task === "test" ? [...buildPrefixes, "corepack pnpm typecheck && "] : buildPrefixes;
-      const suffixes = [candidate[`${task}:ci`], `corepack pnpm ${task}:ci`];
+      const prefixes = task === "test" ? [...buildPrefixes, "corepack pnpm typecheck && ", "corepack pnpm run typecheck && "] : buildPrefixes;
+      const suffixes = [candidate[`${task}:ci`], `corepack pnpm ${task}:ci`, `corepack pnpm run ${task}:ci`];
+      if (task === "typecheck" && previous && candidate === oldScripts && sourceChecks.length > 0) {
+        suffixes.push(typecheckPrelude + sourceChecks.join(" && "));
+      }
+      if (task === "test" && tests) {
+        // Local validation can use the same discovery with default workers,
+        // or run the verified test typecheck after building its dependencies.
+        const direct = [nodeTest, `node --test ${tests[1]}`];
+        suffixes.push(...direct.map(command => testPrelude + command));
+        if (!localization && testChecks.length > 0) {
+          suffixes.push(...direct.map(command => [...testChecks, command].join(" && ")));
+        }
+      }
       if (!prefixes.some(prefix => suffixes.some(suffix =>
         matchesValidationCommand(candidate[task], prefix + suffix, workspaceBuilds))
         || (localization && task === "test" && candidate[task] === testPrelude + prefix + nodeTest))) return undefined;
     }
   }
+  if (previous && [...typecheckInputs[0]].some(input => !typecheckInputs[1].has(input))) return undefined;
   // A migration cannot narrow discovery by leaving another test language out.
-  const [oldPatterns, patterns] = testPatterns;
+  const oldPatterns = previous ? testPatterns[0] : [];
+  const patterns = testPatterns.at(-1);
   const testIdentities = new Set();
   let testCount = 0;
   for (const directoryName of new Set([...patterns, ...oldPatterns].map(pattern => pattern.split("/")[0]))) {
@@ -111,8 +155,8 @@ export function packageValidationScope({ current, previous, directory, root, rep
   }
   if (testCount === 0) return undefined;
   const baselineTests = previousFiles.filter(file => oldPatterns.some(pattern => matchesGlob(file, `${directory}/${pattern}`)));
-  if (baselineTests.length === 0 || baselineTests.some(file =>
-    !testIdentities.has(file.replace(/\.(?:mjs|ts)$/u, "")))) return undefined;
+  if (previous && (baselineTests.length === 0 || baselineTests.some(file =>
+    !testIdentities.has(file.replace(/\.(?:mjs|ts)$/u, ""))))) return undefined;
   const testInputs = [...testConfigs];
   if (localization && typedTestIncludes.size > 0) {
     // These private script declarations accompany the no-emit test config.
@@ -126,11 +170,6 @@ export function packageValidationScope({ current, previous, directory, root, rep
     }
   }
   return { testInputs };
-}
-
-function resolveTypecheckCommand(command, scripts) {
-  if (!["corepack pnpm typecheck:tests", "corepack pnpm run typecheck:tests"].includes(command)) return command;
-  return scripts["typecheck:tests"] === "tsc -p tsconfig.test.json" ? scripts["typecheck:tests"] : command;
 }
 
 function matchesValidationCommand(command, validation, workspaceBuilds) {

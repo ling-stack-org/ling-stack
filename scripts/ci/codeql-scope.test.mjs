@@ -62,7 +62,7 @@ test("PR input selection uses exact event SHAs and a capped diff always scans", 
   const prContext = { eventName: "pull_request", ref: "refs/pull/42/merge",
     payload: { pull_request: { base: { sha: "base" }, head: { sha: "head" } } } };
   for (const [file, expected] of [["docs/maintenance/ci.md", false], ["packages/core/src/index.ts", true],
-    ["apps/web/README.md", true], ["component.svelte", true]]) {
+    ["apps/web/README.md", false], ["packages/core/src/catalog.md", true], ["component.svelte", true]]) {
     const check = fixture({ diff: { status: "ahead", files: [{ filename: file }] } });
     assert.equal((await check.select(prContext)).scan, expected, file);
     assert.deepEqual(check.calls.map((call) => call.name), ["compare"]);
@@ -206,13 +206,13 @@ test("capped, divergent and unavailable comparisons require fresh scans", async 
 test("input selection covers every supported source, dependency and policy type", () => {
   const extensions = ["js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx", "vue", "svelte", "html", "htm"];
   for (const file of [...extensions.flatMap((extension) => [`file.${extension}`, `nested/file.${extension}`]),
-    "apps/web/README.md", "packages/core/.hidden/input", "scripts/foo.txt", "patches/dependency.patch",
+    "packages/core/src/catalog.md", "packages/core/.hidden/input", "scripts/foo.txt", "patches/dependency.patch",
     "package.json", "nested/package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "tsconfig.json",
     "nested/tsconfig.build.json", ".gitattributes", "nested/.gitattributes", ".github/workflows/ci.yml",
     ".github/actions/check/action.yml", ".github/codeql/config.yml"]) {
     assert.equal(isCodeqlInput(file), true, file);
   }
-  for (const file of ["README.md", "docs/maintenance/ci.md", "docs/image.png", "docs/file.ts.md"]) {
+  for (const file of ["README.md", "apps/web/README.md", "docs/maintenance/ci.md", "docs/image.png", "docs/file.ts.md"]) {
     assert.equal(isCodeqlInput(file), false, file);
   }
 });
@@ -220,7 +220,7 @@ test("input selection covers every supported source, dependency and policy type"
 test("workflow keeps hourly/manual/PR admission and restricts write permission to analysis", () => {
   assert.match(workflow, /cron: "23 \* \* \* \*"/u);
   assert.match(workflow, /^  workflow_dispatch:$/mu);
-  assert.doesNotMatch(workflow, /^  (?:push|pull_request_target):|^    paths:/mu);
+  assert.doesNotMatch(workflow, /^  (?:push|pull_request_target):|^    paths(?:-ignore)?:/mu);
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review\]/u);
   const scope = workflow.split("  scope:\n")[1].split("  analyze:\n")[0];
   assert.match(scope, /!github\.event\.pull_request\.draft/u);
