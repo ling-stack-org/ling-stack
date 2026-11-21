@@ -126,6 +126,22 @@ export class LingServerPeerSessionCoordinator {
     return { frame, replayed: false };
   }
 
+  sendFrame(sessionId: string, input: Omit<LingServerPeerFrameV1, "sessionId" | "bindingId" | "peerEpoch" | "transportGeneration" | "sequence">): { readonly frame: LingServerPeerFrameV1; readonly replayed: boolean } {
+    const session = this.requireSession(sessionId);
+    const existing = this.#store?.getFrame(input.frameId);
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify({ ...input, sessionId: session.sessionId, bindingId: session.bindingId, peerEpoch: session.peerEpoch, transportGeneration: session.transportGeneration, sequence: existing.sequence })) throw new DeviceFabricError("revision_conflict", "peer frame id is bound to another frame");
+      return { frame: existing, replayed: true };
+    }
+    if (session.status !== "open") throw new DeviceFabricError("safety_denied", "peer session is not open");
+    const frame: LingServerPeerFrameV1 = { ...input, sessionId: session.sessionId, bindingId: session.bindingId, peerEpoch: session.peerEpoch, transportGeneration: session.transportGeneration, sequence: session.sendSequence + 1 };
+    const next = { ...session, sendSequence: frame.sequence, lastSeenAt: frame.sentAt };
+    this.#store?.saveFrame(frame);
+    this.#store?.saveSession(next);
+    this.#sessions.set(session.sessionId, next);
+    return { frame, replayed: false };
+  }
+
   recordReceipt(receipt: LingServerCommandReceiptV1): LingServerCommandReceiptV1 {
     if (!receipt.commandId.trim() || !receipt.payloadDigest.trim()) throw new DeviceFabricError("revision_conflict", "peer command receipt is invalid");
     const current = this.#store?.getReceipt(receipt.commandId);

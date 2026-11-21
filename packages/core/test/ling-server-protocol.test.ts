@@ -74,6 +74,9 @@ test("Ling Server peer session preserves route migration, frame sequencing, rece
   assert.equal(first.acceptFrame(frame).replayed, false);
   assert.equal(first.acceptFrame(frame).replayed, true);
   assert.equal(first.resume("session-1", 0).frames.length, 1);
+  const outgoing = first.sendFrame("session-1", { frameId: "frame-outgoing", direction: "to_mobile", kind: "receipt", commandId: "command-1", payload: { ok: true }, sentAt: now });
+  assert.equal(outgoing.frame.sequence, 1);
+  assert.equal(first.sendFrame("session-1", { frameId: "frame-outgoing", direction: "to_mobile", kind: "receipt", commandId: "command-1", payload: { ok: true }, sentAt: now }).replayed, true);
   assert.throws(() => first.acceptFrame({ ...frame, frameId: "frame-2", sequence: 3 }), /contiguous/);
   assert.equal(first.recordReceipt({ commandId: "command-1", payloadDigest: "digest-1", status: "completed", result: { ok: true }, recordedAt: now }).status, "completed");
   first.switchRoute("session-1", "route-2", "relay");
