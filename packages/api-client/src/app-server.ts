@@ -36,6 +36,8 @@ import type {
   LingAppServerReviewStatusResult,
   LingAppServerSimplifyStartParams,
   LingAppServerSimplifyStartResult,
+  LingAppServerSimplifyStatusParams,
+  LingAppServerSimplifyStatusResult,
   LingAppServerSubscriptionParams,
   LingAppServerSubscriptionResult,
   LingAppServerVerifyCancelParams,
@@ -46,6 +48,8 @@ import type {
   LingAppServerVerifyStartParams,
   LingAppServerVerifyStatusParams,
   LingAppServerVerifyStatusResult,
+  LingAppServerWorkItemControlParams,
+  LingAppServerWorkItemControlResult,
   LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
   LingAppServerWorkItemCollaborationAppendParams,
@@ -262,6 +266,11 @@ export class LingAppServerClient {
     return await this.request("simplify/start", params);
   }
 
+  async getSimplifyStatus(params: LingAppServerSimplifyStatusParams): Promise<LingAppServerSimplifyStatusResult> {
+    await this.connect();
+    return await this.request("simplify/status", params);
+  }
+
   async runDoctor(params: LingAppServerDoctorRunParams = {}): Promise<LingAppServerDoctorRunResult> {
     await this.connect();
     return await this.request("doctor/run", params);
@@ -280,19 +289,18 @@ export class LingAppServerClient {
 
   async controlWorkItem(
     action: "pause" | "resume" | "cancel",
-    input: {
-      readonly workspaceId: string;
-      readonly workItemId: string;
-      readonly expectedWorkItemRevision: number;
-      readonly expectedControlGeneration: number;
-      readonly idempotencyKey: string;
-      readonly actorId: string;
-      readonly reason?: string;
-    },
+    input: LingAppServerWorkItemControlParams,
   ): Promise<LingAppServerWorkItemSnapshot> {
-    await this.connect();
-    const { workItem } = await this.request<LingAppServerWorkItemResult>(`workItem/${action}`, input);
+    const { workItem } = await this.submitWorkItemControl(action, input);
     return workItem;
+  }
+
+  async submitWorkItemControl(
+    action: "pause" | "resume" | "cancel",
+    input: LingAppServerWorkItemControlParams,
+  ): Promise<LingAppServerWorkItemControlResult> {
+    await this.connect();
+    return await this.request(`workItem/${action}`, input);
   }
 
   async readWorkItemCollaboration(params: LingAppServerWorkItemCollaborationReadParams): Promise<LingAppServerWorkItemCollaborationReadResult> {
@@ -316,15 +324,13 @@ export class LingAppServerClient {
   async subscribe(params: LingAppServerSubscriptionParams): Promise<LingAppServerSubscriptionResult> {
     await this.connect();
     const method = params.threadId ? "thread/subscribe" : "workItem/subscribe";
-    const result = await this.request<LingAppServerSubscriptionResult>(method, params);
     const key = subscriptionKey(method, params);
-    this.subscriptions.set(key, {
+    const subscription = {
       method,
       params,
-      ...(result.subscriptionId ? { subscriptionId: result.subscriptionId } : {}),
       cursor: params.cursor ?? "0",
-    });
-    return result;
+    } satisfies TrackedSubscription;
+    return await this.requestSubscription(key, subscription, params);
   }
 
   async registerExternalAgent(params: LingAppServerExternalAgentRegisterParams): Promise<LingAppServerExternalAgentRegisterResult> {
@@ -378,6 +384,7 @@ export class LingAppServerClient {
   private async openAndInitialize(): Promise<LingAppServerInitializeResult> {
     const socket = this.options.createSocket(this.options.url);
     this.socket = socket;
+    for (const subscription of this.subscriptions.values()) subscription.subscriptionId = undefined;
     const opened = waitForSocketOpen(socket, this.options.requestTimeoutMs ?? 30_000);
     attachSocketListener(socket, "message", (event) => {
       if (this.socket === socket) this.handleMessage(readSocketMessage(event));
@@ -399,7 +406,8 @@ export class LingAppServerClient {
       }
       socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
       this.reconnectAttempt = 0;
-      await this.replaySubscriptions();
+      await this.replaySubscriptions(socket);
+      if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
       return initialized;
     } catch (error) {
       if (this.socket === socket) socket.close(1000, "initialize_failed");
@@ -407,7 +415,7 @@ export class LingAppServerClient {
     }
   }
 
-  private request<T>(method: string, params: unknown): Promise<T> {
+  private request<T>(method: string, params: unknown, onResult?: (result: T) => void): Promise<T> {
     const socket = this.socket;
     if (!socket) return Promise.reject(new Error("Ling App Server is not connected."));
     const id = this.nextId++;
@@ -418,7 +426,15 @@ export class LingAppServerClient {
         reject(Object.assign(new Error(`Ling App Server response timed out for ${method}.`), { code: "rpc_timeout" }));
       }, this.options.requestTimeoutMs ?? 30_000);
       this.pending.set(key, {
-        resolve: (value) => { clearTimeout(timer); resolve(value as T); },
+        resolve: (value) => {
+          clearTimeout(timer);
+          try {
+            onResult?.(value as T);
+            resolve(value as T);
+          } catch (error) {
+            reject(error);
+          }
+        },
         reject: (error) => { clearTimeout(timer); reject(error); },
       });
       try {
@@ -501,15 +517,13 @@ export class LingAppServerClient {
     }, delay);
   }
 
-  private async replaySubscriptions(): Promise<void> {
+  private async replaySubscriptions(socket: LingAppServerSocket): Promise<void> {
     const tracked = [...this.subscriptions.entries()];
     for (const [key, subscription] of tracked) {
+      if (this.socket !== socket) return;
       const params = subscription.cursor ? { ...subscription.params, cursor: subscription.cursor } : subscription.params;
       try {
-        const result = await this.request<LingAppServerSubscriptionResult>(subscription.method, params);
-        this.subscriptions.set(key, {
-          ...subscription, subscriptionId: result.subscriptionId,
-        });
+        const result = await this.requestSubscription(key, subscription, params);
         if (result.disposition === "snapshot_required") {
           const method = subscription.method === "thread/subscribe" ? "thread/resync/required" : "workItem/resync/required";
           for (const listener of this.notificationListeners) listener({ jsonrpc: "2.0", method, params: result });
@@ -518,6 +532,15 @@ export class LingAppServerClient {
         // A failed replay remains tracked and will be retried on the next reconnect.
       }
     }
+  }
+
+  private requestSubscription(
+    key: string, subscription: TrackedSubscription, params: LingAppServerSubscriptionParams,
+  ): Promise<LingAppServerSubscriptionResult> {
+    return this.request<LingAppServerSubscriptionResult>(subscription.method, params, result => {
+      // The acknowledgement and replay frames can arrive in one transport callback.
+      this.subscriptions.set(key, { ...subscription, subscriptionId: result.subscriptionId });
+    });
   }
 }
 

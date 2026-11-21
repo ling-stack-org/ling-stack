@@ -1,4 +1,4 @@
-import type { CodeAssessmentReviewRules, CodeFindingCloseReason } from "./code-assessments.js";
+import type { CodeAssessmentFinding, CodeAssessmentReviewRules, CodeFindingCloseReason } from "./code-assessments.js";
 import type { ApprovalSummary } from "./control-plane.js";
 import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
 import type { RunSession } from "./runtime.js";
@@ -25,6 +25,7 @@ export const LING_APP_SERVER_CAPABILITIES = [
   "input.respond",
   "development.verify",
   "development.review",
+  "development.simplify",
   "development.instructions",
   "workItem.read",
   "workItem.control",
@@ -45,6 +46,7 @@ export const LING_APP_SERVER_IMPLEMENTED_CAPABILITIES = [
   "input.respond",
   "development.verify",
   "development.review",
+  "development.simplify",
   "development.instructions",
   "workItem.read",
   "workItem.control",
@@ -122,6 +124,7 @@ export const LING_APP_SERVER_METHODS = [
   "review/status",
   "review/finding/update",
   "simplify/start",
+  "simplify/status",
   "doctor/run",
   "instructions/init",
   "workItem/create",
@@ -450,6 +453,21 @@ export interface LingAppServerWorkItemResult {
   readonly workItem: LingAppServerWorkItemSnapshot;
 }
 
+export interface LingAppServerWorkItemControlResult extends LingAppServerWorkItemResult {
+  readonly controlReceipt: LingWorkItemControlReceipt;
+  readonly replayed: boolean;
+}
+
+export interface LingAppServerWorkItemControlParams {
+  readonly workspaceId: string;
+  readonly workItemId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly expectedControlGeneration: number;
+  readonly idempotencyKey: string;
+  readonly actorId: string;
+  readonly reason?: string;
+}
+
 /** Durable collaboration records are append-only facts attached to a Work Item.
  * The payload is owned by the record kind and is intentionally opaque to the
  * transport so older clients can preserve records they do not understand. */
@@ -754,14 +772,33 @@ export interface LingAppServerSimplifyStartParams {
   readonly cwd?: string;
   readonly workItemId?: string;
   readonly candidate: LingAppServerCandidateReference;
+  readonly providerPresetId?: string;
   readonly idempotencyKey: string;
 }
 
 export interface LingAppServerSimplifyStartResult {
   readonly operationId: string;
   readonly candidateDigest: string;
-  readonly status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  readonly status: LingAppServerReviewStartResult["status"];
   readonly suggestionArtifactId?: string;
+}
+
+export interface LingAppServerSimplifyStatusParams {
+  readonly cwd?: string;
+  readonly operationId: string;
+  readonly offset?: number;
+}
+
+export type LingAppServerSimplificationSuggestion = Pick<CodeAssessmentFinding,
+  "id" | "title" | "body" | "path" | "side" | "startLine" | "endLine" | "evidence"
+>;
+
+export interface LingAppServerSimplifyStatusResult extends LingAppServerSimplifyStartResult {
+  readonly revision: string;
+  readonly summary?: string;
+  readonly errorMessage?: string;
+  readonly suggestions: readonly LingAppServerSimplificationSuggestion[];
+  readonly nextOffset?: number;
 }
 
 export interface LingAppServerDoctorRunParams {

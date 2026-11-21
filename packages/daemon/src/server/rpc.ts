@@ -15,6 +15,7 @@ import {
   type RunSession,
   type RunStore,
   type WorkItem,
+  type WorkItemControlReceipt,
   type WorkItemSourceType,
   type WorkItemStatus,
 } from "@ling-stack/core";
@@ -32,6 +33,7 @@ import {
   type LingAppServerJsonRpcId,
   type LingAppServerThreadSnapshotResult,
   type LingAppServerTurnResumeResult,
+  type LingAppServerWorkItemControlResult,
   type LingAppServerWorkItemResult,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
@@ -130,12 +132,15 @@ const APP_SERVER_MAX_SUBSCRIPTIONS = 32;
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
   "turn/retry", "turn/steer", "thread/fork", "thread/compact/start", "thread/revert",
-  "handoff/create", "handoff/read", "handoff/resume", "changes/read", "simplify/start",
+  "handoff/create", "handoff/read", "handoff/resume", "changes/read",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
   "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
-const operatorMethods = new Set(["approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update"]);
+const operatorMethods = new Set([
+  "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
+  "simplify/start", "simplify/status",
+]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
@@ -357,7 +362,7 @@ class RpcConnection {
 
   private async dispatch(method: string, params: unknown): Promise<unknown> {
     if (this.appServer && this.draining()
-      && !["initialize", "server/ping", "server/capabilities", "verify/status", "review/status", "externalAgent/task/reconnect"].includes(method)) {
+      && !["initialize", "server/ping", "server/capabilities", "verify/status", "review/status", "simplify/status", "externalAgent/task/reconnect"].includes(method)) {
       throw rpcError(-32002, "server_draining", "App Server is draining.");
     }
     switch (method) {
@@ -500,6 +505,10 @@ class RpcConnection {
         return this.development.getReviewStatus(this.workspaceParams(params) as never);
       case "review/finding/update":
         return await this.development.updateReviewFinding(this.workspaceParams(params, true) as never);
+      case "simplify/start":
+        return await this.development.startSimplify(this.workspaceParams(params, true) as never);
+      case "simplify/status":
+        return this.development.getSimplifyStatus(this.workspaceParams(params, true) as never);
       case "doctor/run":
         return await this.development.runDoctor(params as never);
       case "instructions/init":
@@ -624,7 +633,7 @@ class RpcConnection {
 
   private availableCapabilities(): readonly string[] {
     return LING_APP_SERVER_IMPLEMENTED_CAPABILITIES.filter(capability =>
-      this.authenticated || (capability !== "approval.respond" && capability !== "input.respond"));
+      this.authenticated || (capability !== "approval.respond" && capability !== "input.respond" && capability !== "development.simplify"));
   }
 
   private workspaceParams(params: unknown, operator = false): Record<string, unknown> & { readonly cwd: string } {
@@ -693,14 +702,18 @@ class RpcConnection {
     return { cwd, workspaceId: snapshot.workspaceId, domain, snapshot: snapshot.domains[domain] };
   }
 
-  private createWorkItem(params: unknown): unknown {
+  private createWorkItem(params: unknown): LingAppServerWorkItemResult {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const sourceType = readOptionalWorkItemSourceType(record.sourceType) ?? "manual";
     const sourceId = readStringField(record, "sourceId");
     const title = readStringField(record, "title");
+    const idempotencyKey = readOptionalStringField(record, "idempotencyKey");
+    if (idempotencyKey !== undefined && (!idempotencyKey.trim() || idempotencyKey.length > 200)) {
+      throw rpcError(-32602, "invalid_params", "idempotencyKey must be a non-empty string of up to 200 characters.");
+    }
     const store = this.context.storeRegistry.getStore(cwd);
-    const workItem = store.upsertWorkItem({
+    const input = {
       id: readOptionalStringField(record, "workItemId"),
       sourceType,
       sourceId,
@@ -709,19 +722,21 @@ class RpcConnection {
       description: readOptionalStringField(record, "description"),
       priority: readOptionalWorkItemPriority(record.priority),
       labels: Array.isArray(record.labels) && record.labels.every((value) => typeof value === "string") ? record.labels as string[] : undefined,
-    }, new Date().toISOString());
-    const idempotencyKey = readOptionalStringField(record, "idempotencyKey");
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "work_items",
-      entityType: "work_item",
-      entityId: workItem.id,
-      action: "work_item.created",
-      ...(idempotencyKey ? { idempotencyKey } : {}),
-      data: { workItemId: workItem.id, revision: workItem.revision, status: workItem.status },
-    });
-    return { cwd, workItem: projectWorkItemSnapshot(workItem) };
+      idempotencyKey,
+    };
+    try {
+      const { workItem, event } = store.createWorkItem(input, new Date().toISOString(), cwd);
+      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      return { cwd, workItem: projectWorkItemSnapshot(workItem) };
+    } catch (error) {
+      if (error instanceof Error && error.message === "work_item_creation_idempotency_conflict") {
+        throw rpcError(-32031, "idempotency_conflict", "The creation key was reused with different input.");
+      }
+      if (error instanceof Error && error.message === "work_item_creation_source_conflict") {
+        throw rpcError(-32040, "workspace_binding_invalid", "The Work Item ID does not match the supplied source.");
+      }
+      throw error;
+    }
   }
 
   private acceptWorkItem(params: unknown): unknown {
@@ -1753,7 +1768,7 @@ class RpcConnection {
     return { cwd, workItem: projectWorkItemSnapshot(workItem) };
   }
 
-  private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): LingAppServerWorkItemResult {
+  private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): LingAppServerWorkItemControlResult {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const workItemId = readStringField(record, "workItemId");
@@ -1762,64 +1777,29 @@ class RpcConnection {
     const expectedRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedRevision");
     const expectedControlGeneration = readIntegerField(record, "expectedControlGeneration", "controlGeneration");
     const store = this.context.storeRegistry.getStore(cwd);
-    const existing = store.getWorkItem(workItemId);
-    if (!existing) {
-      throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
-    }
-    const prior = existing.control.receipt;
     const reason = readOptionalStringField(record, "reason");
-    const sameRequest = prior?.idempotencyKey === idempotencyKey && prior.action === action &&
-      prior.actorId === actorId && prior.reason === reason;
-    if (prior?.idempotencyKey === idempotencyKey && !sameRequest) {
-      throw rpcError(-32031, "idempotency_conflict", "The idempotency key was already used for a different Work Item control request.");
+    const result = store.applyWorkItemControl(workItemId, action, {
+      expectedRevision, expectedControlGeneration, actorId, reason, idempotencyKey,
+    }, new Date().toISOString(), cwd);
+    switch (result.status) {
+      case "not_found":
+        throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+      case "idempotency_conflict":
+        throw rpcError(-32031, "idempotency_conflict", "The idempotency key was already used for a different Work Item control request.");
+      case "stale_revision":
+        throw rpcError(-32030, "stale_revision", "The Work Item revision or control generation is stale.");
+      case "blocked":
+        throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${result.workItem.control.state}.`);
+      case "applied":
+      case "replayed": {
+        const workItem = projectWorkItemSnapshot(result.workItem);
+        if (result.event) {
+          this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
+          this.send({ jsonrpc: "2.0", method: "workItem/control/updated", params: { cwd, workItemId, workItem } });
+        }
+        return { cwd, workItem, controlReceipt: projectWorkItemControlReceipt(result.receipt), replayed: result.status === "replayed" };
+      }
     }
-    if (sameRequest) {
-      return { cwd, workItem: projectWorkItemSnapshot(existing) };
-    }
-    if (existing.revision !== expectedRevision || existing.control.generation !== expectedControlGeneration) {
-      throw rpcError(-32030, "stale_revision", "The Work Item revision or control generation is stale.");
-    }
-    const input = {
-      expectedRevision,
-      expectedControlGeneration,
-      actorId,
-      ...(reason === undefined ? {} : { reason }),
-      idempotencyKey,
-    };
-    const workItem = action === "pause"
-      ? store.pauseWorkItem(workItemId, input, new Date().toISOString())
-      : action === "resume"
-        ? store.resumeWorkItem(workItemId, input, new Date().toISOString())
-        : store.cancelWorkItem(workItemId, input, new Date().toISOString());
-    if (!workItem) {
-      throw rpcError(-32030, "stale_revision", "The Work Item changed before the control request committed.");
-    }
-    if (workItem.revision === existing.revision && prior?.idempotencyKey !== idempotencyKey) {
-      throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${existing.control.state}.`);
-    }
-    const projected = projectWorkItemSnapshot(workItem);
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "work_items",
-      entityType: "work_item",
-      entityId: workItemId,
-      action: `work_item.control.${action}`,
-      idempotencyKey,
-      data: {
-        workItemId,
-        revision: projected.revision,
-        controlState: projected.control.state,
-        controlGeneration: projected.control.generation,
-        receiptId: projected.control.receipt?.id,
-      },
-    });
-    this.send({
-      jsonrpc: "2.0",
-      method: "workItem/control/updated",
-      params: { cwd, workItemId, workItem: projected },
-    });
-    return { cwd, workItem: projected };
   }
 
   private readControlPlaneParams(params: unknown): { readonly cwd: string; readonly domains: readonly ControlPlaneDomain[] } {
@@ -2288,23 +2268,18 @@ function projectWorkItemSnapshot(workItem: WorkItem) {
     control: {
       state: workItem.control.state,
       generation: String(workItem.control.generation),
-      ...(workItem.control.receipt ? {
-        receipt: {
-          id: workItem.control.receipt.id,
-          action: workItem.control.receipt.action,
-          generation: String(workItem.control.receipt.generation),
-          requestedAt: workItem.control.receipt.requestedAt,
-          actorId: workItem.control.receipt.actorId,
-          ...(workItem.control.receipt.reason ? { reason: workItem.control.receipt.reason } : {}),
-          outcome: workItem.control.receipt.outcome,
-        },
-      } : {}),
+      ...(workItem.control.receipt ? { receipt: projectWorkItemControlReceipt(workItem.control.receipt) } : {}),
       unresolvedEffectIds: workItem.control.unresolvedEffectIds,
       ...(workItem.control.recoveryOwner ? { recoveryOwner: workItem.control.recoveryOwner } : {}),
     },
     holds: workItem.holds,
     currentExecutionRefs,
   };
+}
+
+function projectWorkItemControlReceipt(receipt: WorkItemControlReceipt): LingAppServerWorkItemControlResult["controlReceipt"] {
+  const { id, action, generation, requestedAt, actorId, reason, outcome } = receipt;
+  return { id, action, generation: String(generation), requestedAt, actorId, ...(reason ? { reason } : {}), outcome };
 }
 
 function readOptionalIntegerField(record: Record<string, unknown>, key: string): number | undefined {

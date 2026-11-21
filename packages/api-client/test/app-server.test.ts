@@ -8,6 +8,8 @@ class FakeSocket implements LingAppServerSocket {
   readonly sent: Array<{ readonly id: number; readonly method: string; readonly params?: Record<string, unknown> }> = [];
   enableSubscriptionResponses = false;
   subscriptionWatermark?: string;
+  subscriptionId = "sub_fixture";
+  replayCursors: readonly string[] = [];
 
   send(data: string): void {
     const request = JSON.parse(data) as { readonly id: number; readonly method: string; readonly params?: Record<string, unknown> };
@@ -53,8 +55,15 @@ class FakeSocket implements LingAppServerSocket {
         this.emit("message", JSON.stringify({
           jsonrpc: "2.0",
           id: request.id,
-          result: { disposition: "complete", subscriptionId: "sub_fixture", cursor: this.subscriptionWatermark ?? request.params?.cursor ?? "0" },
+          result: { disposition: "complete", subscriptionId: this.subscriptionId, cursor: this.subscriptionWatermark ?? request.params?.cursor ?? "0" },
         }));
+        for (const cursor of this.replayCursors) {
+          this.emit("message", JSON.stringify({
+            jsonrpc: "2.0",
+            method: "workItem/status/changed",
+            params: { subscriptionId: this.subscriptionId, cursor },
+          }));
+        }
       }
     });
   }
@@ -104,6 +113,11 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
     url: "ws://fixture/app-server/rpc",
     createSocket: () => {
       const socket = new FakeSocket();
+      if (sockets.length > 0) {
+        socket.enableSubscriptionResponses = true;
+        socket.subscriptionId = "sub_reconnected";
+        socket.replayCursors = ["6"];
+      }
       sockets.push(socket);
       return socket;
     },
@@ -117,6 +131,7 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
   const first = sockets[0]!;
   first.enableSubscriptionResponses = true;
   first.subscriptionWatermark = "5";
+  first.replayCursors = ["3"];
   const initial = await client.subscribe({ workItemId: "item", cursor: "1" });
   assert.equal(initial.subscriptionId, "sub_fixture");
   assert.equal(initial.cursor, "5");
@@ -126,7 +141,11 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
 
   await waitForCondition(() => sockets.length === 2 && sockets[1]!.sent.some((request) => request.method === "workItem/subscribe"));
   const replay = sockets[1]!.sent.find((request) => request.method === "workItem/subscribe");
-  assert.equal(replay?.params?.cursor, "2");
+  assert.equal(replay?.params?.cursor, "3");
+  await client.connect();
+  sockets[1]!.emit("close", {});
+  await waitForCondition(() => sockets.length === 3 && sockets[2]!.sent.some((request) => request.method === "workItem/subscribe"));
+  assert.equal(sockets[2]!.sent.find((request) => request.method === "workItem/subscribe")?.params?.cursor, "6");
   client.close();
 });
 

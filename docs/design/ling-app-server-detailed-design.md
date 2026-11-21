@@ -74,7 +74,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | Turn | `turn/start`、`turn/steer`、`turn/queue`、`turn/interrupt`、`turn/retry`、`turn/resume` | 返回持久受理回执与状态。实际 Run、Attempt 和证据通过订阅或快照查询。 |
 | 分支和上下文 | `thread/fork`、`thread/compact/start`、`thread/revert`、`context/inspect`、`handoff/create`、`handoff/read`、`handoff/resume` | 从指定可恢复边界分支、压缩或交接。历史变更与实际文件回退各用自己的权限、预览和预期版本。 |
 | 改动和产物 | `changes/capture`、`changes/read`、`changes/apply/preview`、`changes/apply`、`artifact/read` | 以候选、选中 hunk、工作树版本和审批为边界。应用、回退、重放沿用现有 patch 所有者。产物可分页，内容读取限范围和大小。 |
-| 开发验证与审查 | `verify/plan`、`verify/start`、`verify/status`、`verify/cancel`、`review/start`、`review/status`、`review/finding/update`、`simplify/start`、`doctor/run`、`instructions/init` | 指定候选和已配置的规则或配方。运行类返回操作 ID，草案类返回可审阅差异，读取类返回有限证据投影。 |
+| 开发验证与审查 | `verify/plan`、`verify/start`、`verify/status`、`verify/cancel`、`review/start`、`review/status`、`review/finding/update`、`simplify/start`、`simplify/status`、`doctor/run`、`instructions/init` | 指定候选和已配置的规则或配方。运行类返回操作 ID，草案类返回可审阅差异，读取类返回有限证据投影。 |
 | 工作项快照与订阅 | `workItem/list`、`workItem/read`、`workItem/subscribe`、`workItem/unsubscribe` | 按工作区和 Work Item 授权分页发现、读取快照及订阅。订阅接收同一范围的恢复游标，取消使用此连接上的订阅 ID。 [工作项方法](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
 | 工作项控制 | `workItem/pause`、`workItem/resume`、`workItem/cancel` | 协商可选能力 `workItem.control`。暂停、恢复或取消当前 Work Item lineage，使用控制代次和原所有者的收尾回执。独立 effort 不受影响。 [控制合同](ling-agent-operating-model-detailed-design.md#51-work-item-control) |
 | 工作项接入与受理 | `workItem/create`、`workItem/accept`、`workItem/clarify` | 可携带明确 Work Item 或可核验的 GitHub 目标，按授权返回来源回执和可见的默认工作项。接受独立执行时绑定其单独的客体与范围。澄清沿用来源、目标和授权回执。 [目标身份与受理](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity) |
@@ -91,7 +91,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 
 工作项协作写入携带 `expectedWorkItemRevision`、`idempotencyKey` 和适用的阶段、目标实体或候选修订。Daemon 从已认证主体或当前 Attempt 推导写入者。先校验当前读取和操作权限，再查同一作用域的幂等回执。已授权的相同请求可以取回旧回执，新写入核对当前修订和执行归属。候选变化、问答过期或接手条件缺失时，调用方可沿工作项读取当前阻塞及其负责人。 [工作项方法的输入和效果](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods)
 
-Work Item control uses the optional `workItem.control` capability. Its mutations carry expectedWorkItemRevision, expectedControlGeneration and an idempotency key. Pause and cancel persist the control latch before invoking original owners. Resume revalidates current Plan, Goal, Worktree, grants, unresolved effects and independent holds. Control responses never claim that an accepted external effect was reversed. The resulting `WorkItemControlProjection` is included in authorized `workItem/read`, snapshot and control update projections. [Work Item control](ling-agent-operating-model-detailed-design.md#51-work-item-control)
+Work Item control uses the optional `workItem.control` capability. Its mutations carry expectedWorkItemRevision, expectedControlGeneration and an idempotency key. Pause and cancel persist the control latch before invoking original owners. Resume revalidates current Plan, Goal, Worktree, grants, unresolved effects and independent holds. The control response includes the current `workItem` snapshot, the request's `controlReceipt`, and whether it replayed a prior receipt. A replay after a later control returns the earlier operation's receipt alongside the current snapshot. [Work Item control](ling-agent-operating-model-detailed-design.md#51-work-item-control)
 
 ### 2.1 Thread、Turn 和干预语义
 
@@ -282,7 +282,9 @@ CheckEvidence 另带 verifierBasisRef、coverageDigest 和 producerRefs。produc
 
 审批运行候选测试不等于批准候选改变验收标准。人工结案继续使用现有 Goal 的明确授权和理由字段，并单独标记为例外。它不会把缺失的 Verify、Review、CI 或 Delivery 证据改写成通过。
 
-`review/start` 消费候选引用、原始任务、基线指令和可信检查记录，启动独立的只读运行。现有 Code Assessment 保留其 Diff-only 和 findings contract。新增的上下文也采用有边界的只读输入引用，按配置提供对应调用路径。作者上下文的推理和自评保留在原会话。审查发现含候选、捕获位置、触发条件和可见证据。修正走正常 Turn，再计算新候选和保留结果的适用性。`simplify/start` 产出当前 diff 的可行动建议，可委托普通编辑 Turn 应用。 [代码审查工作台](code-review-and-security-workbench.md)
+`review/start` 消费候选引用、原始任务、基线指令和可信检查记录，启动独立的只读运行。现有 Code Assessment 保留其 Diff-only 和 findings contract。新增的上下文也采用有边界的只读输入引用，按配置提供对应调用路径。作者上下文的推理和自评保留在原会话。审查发现含候选、捕获位置、触发条件和可见证据。修正走正常 Turn，再计算新候选和保留结果的适用性。
+
+`simplify/start` 通过 Code Assessment 对已捕获的 diff 运行只读简化审查。建议指出具体代码位置和需要保留的行为。`simplify/status` 返回候选摘要、当前状态、报告引用和建议分页，客户端在有 `nextOffset` 时可以继续读取。编辑通过普通 Turn 受理。 [代码审查工作台](code-review-and-security-workbench.md)
 
 Goal 使用已接受的验收项。代码工作可以指定候选检查、检查具体断言、审查处置或外部 CI 证据。完成事务同时核对候选、记录归属、执行状态、证据类型和覆盖范围。改动包含测试、CI 或验证配方时，独立审查核对其行为覆盖及基线验收要求。CI 按检查声明的 head、集成结果或 merge group 核对实际被测对象、检查来源及有效运行尝试。Draft 预览按对应覆盖范围记录。Ling 发起合并时使用能在执行时约束证据基准的仓库保护，交付记录区分受理、入队和实际合并。 [现有 Goal 验收](../../packages/core/src/storage/sqlite/goal-acceptance.ts) · [CI 范围与档位](../maintenance/ci.md) · [CI 与合并合同](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard)
 

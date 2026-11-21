@@ -7,6 +7,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -24,10 +25,14 @@ import type {
   LingAppServerVerifyPlanResult,
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemCollaborationAppendResult,
+  LingAppServerWorkItemControlResult,
+  LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
   LingAppServerReviewStartResult,
   LingAppServerReviewStatusResult,
   LingAppServerReviewFindingUpdateResult,
+  LingAppServerSimplifyStartResult,
+  LingAppServerSimplifyStatusResult,
   LingAppServerThreadSnapshotResult,
   LingAppServerTurnResumeResult,
   ControlPlaneEventsResponse,
@@ -469,6 +474,65 @@ test("a completed Review binds its candidate and replays the same assessment aft
   assert.equal(provider.requests.length, 1);
 });
 
+test("App Server simplification runs against the captured diff and retains the suggestion artifact", { timeout: 30_000 }, async t => {
+  let snapshotDigest: string;
+  const redundantLine = "export const flags = (ready: boolean) => ready ? true : false;";
+  const provider = await startLoopbackPiProvider(() => ({ text: JSON.stringify({
+    snapshotDigest, summary: "One boolean expression can be simplified.",
+    findings: [{
+      title: "Return the boolean directly", body: "Return ready directly to preserve the boolean result.",
+      severity: "info", confidence: "high", path: "flags.ts", side: "new",
+      startLine: 1, endLine: 1, evidence: redundantLine,
+    }],
+  }) }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  git("init", "-q");
+  git("add", ".gitignore");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Simplification base");
+  await writeFile(join(fixture.cwd, "flags.ts"), redundantLine + "\n");
+  const client = await fixture.connect();
+  const { candidate } = await client.call<{ candidate: LingAppServerCandidateReference }>("changes/capture");
+  snapshotDigest = candidate.candidateDigest;
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const input = { candidate, providerPresetId: preset.id, idempotencyKey: "simplify-fixture" };
+  const { methods } = await client.call<{ methods: string[] }>("server/capabilities");
+  assert.ok(methods.includes("simplify/start"));
+  assert.ok(methods.includes("simplify/status"));
+  await assert.rejects(client.call("simplify/start", { ...input, candidate: { ...candidate, candidateDigest: "stale" } }), { code: "candidate_stale" });
+  const peer = await fixture.connect();
+  const [started, retry] = await Promise.all([
+    client.call<LingAppServerSimplifyStartResult>("simplify/start", input),
+    peer.call<LingAppServerSimplifyStartResult>("simplify/start", input),
+  ]);
+  assert.equal(retry.operationId, started.operationId);
+  const lookup = { operationId: started.operationId };
+  const finished = await waitFor(async () => {
+    const status = await client.call<LingAppServerSimplifyStatusResult>("simplify/status", lookup);
+    return ["queued", "running"].includes(status.status) ? undefined : status;
+  });
+  assert.equal(finished.status, "completed", JSON.stringify(finished));
+  assert.equal(finished.candidateDigest, snapshotDigest);
+  assert.ok(finished.suggestionArtifactId);
+  assert.equal(finished.suggestions[0]?.title, "Return the boolean directly");
+  assert.equal(finished.suggestions[0]?.evidence, redundantLine);
+  assert.deepEqual((await client.call<LingAppServerSimplifyStatusResult>("simplify/status", { ...lookup, offset: 1 })).suggestions, []);
+  assert.equal(provider.requests.length, 1);
+  assert.match(JSON.stringify(provider.requests[0]), /behavior-preserving simplifications/u);
+  assert.equal(await readFile(join(fixture.cwd, "flags.ts"), "utf8"), redundantLine + "\n");
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.deepEqual(await restored.call("simplify/status", lookup), finished);
+  assert.equal((await restored.call<LingAppServerSimplifyStartResult>("simplify/start", input)).suggestionArtifactId, finished.suggestionArtifactId);
+  const artifact = fixture.getStore().getArtifact(finished.suggestionArtifactId);
+  const report = artifact?.sealedPayload as { snapshotDigest: string; findings: { title: string }[] };
+  assert.equal(report?.snapshotDigest, snapshotDigest);
+  assert.equal(report?.findings[0]?.title, "Return the boolean directly");
+  assert.equal(provider.requests.length, 1);
+});
+
 const codexExecutable = process.env.LING_APP_SERVER_CODEX_EXECUTABLE;
 test("installed Codex calls the CLI MCP bridge while a Ling subscription receives the same Turn", {
   skip: !codexExecutable, timeout: 45_000,
@@ -542,6 +606,12 @@ test("installed Codex calls the CLI MCP bridge while a Ling subscription receive
     await waitFor(() => ling.notices.find(notice => notice.method === "turn/completed"
       && notice.params?.subject?.turnId === followUp.id));
     assert.equal((await call<typeof accepted>("ling_turn_start", request)).run.id, accepted.run.id);
+    const attached = await call<LingAppServerTurnResumeResult>("ling_turn_resume", {
+      threadId: thread.id, turnId: followUp.id, expectedTurnRevision: followUp.updatedAt,
+      sourceRunId: queued.intervention.continuationRunId ?? followUp.lastRunId, idempotencyKey: "real-codex-recovery",
+    });
+    assert.equal(attached.disposition, "existing");
+    assert.equal(attached.turn.id, followUp.id);
     assert.equal(provider.requests.length, 2);
     assert.match(JSON.stringify(provider.requests[1]), /Codex sent the next instruction/u);
     let cursor = subscription.cursor;
@@ -692,16 +762,26 @@ test("a second App Server connection cancels the same external dispatch and reco
   assert.deepEqual(starts, [start.task.taskId]);
 });
 
-test("Work Item acceptance, evidence and collaboration retries keep one event per committed revision", { timeout: 20_000 }, async t => {
+test("Work Item creation, acceptance, evidence and collaboration retries keep one event per committed revision", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const client = await fixture.connect();
   const peer = await fixture.connect();
-  const { workItem } = await client.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/create", {
-    sourceId: "idempotent-events", title: "Record task evidence",
-  });
-  const workItemId = workItem.workItemId;
+  const workItemId = "idempotent-events";
   await peer.call("workItem/subscribe", { workItemId });
   const notices = (method: string) => peer.notices.filter(notice => notice.method === method && notice.params?.subject?.workItemId === workItemId);
+  const creation = { sourceId: "app-server-evidence", workItemId, title: "Record task evidence", idempotencyKey: "create-once" };
+  await assert.rejects(client.call("workItem/create", { ...creation, cwd: fixture.root }), { code: "workspace_binding_invalid" });
+  const [created, replayed] = await Promise.all([
+    client.call<LingAppServerWorkItemResult>("workItem/create", creation),
+    peer.call<LingAppServerWorkItemResult>("workItem/create", creation),
+  ]);
+  const { workItem } = created;
+  assert.deepEqual(replayed, created);
+  assert.equal(workItem.workItemId, workItemId);
+  assert.equal(workItem.revision, "1");
+  await waitFor(() => notices("workItem/created")[0]);
+  assert.deepEqual(await peer.call("workItem/create", { ...creation, idempotencyKey: "same-source-another-entry" }), created);
+  await assert.rejects(client.call("workItem/create", { ...creation, sourceId: "different-source" }), { code: "idempotency_conflict" });
   const acceptance = { workItemId, expectedWorkItemRevision: Number(workItem.revision), idempotencyKey: "accept-once" };
   const accepted = await client.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/accept", acceptance);
   await waitFor(() => notices("workItem/status/changed").length > 0 ? true : undefined);
@@ -737,6 +817,7 @@ test("Work Item acceptance, evidence and collaboration retries keep one event pe
   assert.equal(messageReplay.record.id, message.record.id);
   await assert.rejects(client.call("workItem/message/send", { ...messageInput, payload: { text: "Conflicting message" } }), { code: "idempotency_conflict" });
   assert.equal(client.notices.filter(notice => notice.method === "workItem/message/updated").length, 1);
+  assert.equal(notices("workItem/created").length, 1);
   assert.equal(notices("workItem/status/changed").length, 1);
   assert.equal(notices("workItem/evidence/updated").length, 2);
   const persisted = fixture.getStore().listControlPlaneEvents({ workspaceId: workItem.workspaceId, entityId: workItemId });
@@ -745,6 +826,9 @@ test("Work Item acceptance, evidence and collaboration retries keep one event pe
   ]);
   await fixture.restart();
   const restored = await fixture.connect();
+  const restoredItem = await restored.call<typeof created>("workItem/read", { workItemId });
+  assert.deepEqual(await restored.call("workItem/create", creation), restoredItem);
+  await assert.rejects(restored.call("workItem/create", { ...creation, title: "Changed intent" }), { code: "idempotency_conflict" });
   await restored.call("workItem/subscribe", { workItemId, cursor: String(persisted.at(-2)!.seq) });
   const restoredNotice = await waitFor(() => restored.notices.find(notice => notice.method === "workItem/collaboration/updated"));
   assert.equal(restoredNotice.params?.eventId, directNotice.params?.eventId);
@@ -769,6 +853,50 @@ test("Work Item acceptance, evidence and collaboration retries keep one event pe
     expectedWorkItemRevision: Number(paused.revision), expectedControlGeneration: Number(paused.control.generation) });
   assert.equal(resumed.control.state, "active");
   assert.equal((await sdk.readWorkItem(workItem.workspaceId, workItemId)).revision, resumed.revision);
+});
+
+test("Work Item controls commit state, receipt and event together and replay after a later control", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const client = await fixture.connect();
+  const created = await client.call<LingAppServerWorkItemResult>("workItem/create", {
+    sourceId: "atomic-control", title: "Recover Work Item controls",
+  });
+  const { workItemId, workspaceId } = created.workItem;
+  const peer = await fixture.connect();
+  const { cursor } = await peer.call<{ cursor: string }>("workItem/subscribe", { workItemId });
+  const input = {
+    workItemId, actorId: "local-user", expectedWorkItemRevision: 1, expectedControlGeneration: 0, idempotencyKey: "atomic-pause",
+  };
+  const store = fixture.getStore();
+  const database = new DatabaseSync(store.paths.databasePath);
+  try {
+    database.exec("CREATE TRIGGER fail_pause_event BEFORE INSERT ON control_plane_events WHEN NEW.action = 'work_item.control.pause' BEGIN SELECT RAISE(ABORT, 'fixture pause event rejected'); END");
+    await assert.rejects(client.call("workItem/pause", input), /fixture pause event rejected/u);
+    assert.deepEqual(await client.call("workItem/read", { workItemId }), created);
+    assert.equal(store.listAppServerState("work_item_control").length, 0);
+    database.exec("DROP TRIGGER fail_pause_event");
+  } finally {
+    database.close();
+  }
+  const paused = await client.call<LingAppServerWorkItemControlResult>("workItem/pause", input);
+  assert.equal(paused.workItem.control.state, "paused");
+  assert.equal(paused.replayed, false);
+  const resumed = await peer.call<LingAppServerWorkItemControlResult>("workItem/resume", {
+    ...input, expectedWorkItemRevision: 2, expectedControlGeneration: 1, idempotencyKey: "atomic-resume",
+  });
+  assert.equal(resumed.workItem.control.state, "active");
+  const events = () => fixture.getStore().listControlPlaneEvents({ workspaceId, entityId: workItemId, afterSeq: Number(cursor) });
+  assert.deepEqual(events().map(event => event.data.receiptId), [paused.controlReceipt.id, resumed.controlReceipt.id]);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  await restored.call("workItem/subscribe", { workItemId, cursor });
+  await waitFor(() => restored.notices.find(notice => notice.method === "workItem/replay/ready"));
+  const controls = restored.notices.filter(notice => notice.method === "workItem/control/updated");
+  assert.deepEqual(controls.map(notice => notice.params?.event?.action), ["work_item.control.pause", "work_item.control.resume"]);
+  const retry = await restored.call<LingAppServerWorkItemControlResult>("workItem/pause", input);
+  assert.deepEqual(retry, { ...resumed, replayed: true, controlReceipt: paused.controlReceipt });
+  await assert.rejects(restored.call("workItem/pause", { ...input, reason: "Different pause" }), { code: "idempotency_conflict" });
+  assert.equal(events().length, 2);
 });
 
 test("a Pi question is pushed live, accepts the current Host authority once and replays its resolution", { timeout: 30_000 }, async t => {

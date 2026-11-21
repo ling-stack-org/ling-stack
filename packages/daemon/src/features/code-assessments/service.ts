@@ -122,6 +122,7 @@ interface ReviewSubmission {
   readonly idempotencyKey: string;
   readonly fingerprint: string;
   readonly rulesRefs: readonly string[];
+  readonly reviewFocus?: CodeAssessmentDetail["assessment"]["reviewFocus"];
 }
 
 export async function startCodeAssessment(
@@ -147,7 +148,7 @@ export async function startCodeAssessment(
     for (const status of ["queued", "analyzing"] as const) {
       const active = store.listCodeAssessments({ status, limit: 1 }).assessments[0];
       if (!active) continue;
-      if (!submission && active.snapshotDigest === snapshot.digest && active.kind === input.kind && active.providerPresetId === input.providerPresetId
+      if (!submission && !active.reviewFocus && active.snapshotDigest === snapshot.digest && active.kind === input.kind && active.providerPresetId === input.providerPresetId
         && active.instructions === input.instructions) return store.getCodeAssessment(active.id)!;
       throw new HttpError(409, "assessment_busy", "An assessment is already running in this workspace.");
     }
@@ -155,7 +156,7 @@ export async function startCodeAssessment(
       ? await readBaselineReviewRules(store.paths.cwd, snapshot, submission?.rulesRefs) : undefined;
     detail = store.createCodeAssessment({
       id: submission?.assessmentId ?? `assessment_${randomUUID()}`, kind: input.kind,
-      providerPresetId: input.providerPresetId, instructions: input.instructions, snapshot, reviewRules,
+      providerPresetId: input.providerPresetId, instructions: input.instructions, snapshot, reviewRules, reviewFocus: submission?.reviewFocus,
       ...(submission ? { submission: { idempotencyKey: submission.idempotencyKey, fingerprint: submission.fingerprint } } : {}),
       preparedAt, captureStartedAt, metrics: { captureDurationMs: Math.max(0, Date.now() - Date.parse(captureStartedAt)) }, now: now(),
     });

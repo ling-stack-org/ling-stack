@@ -62,6 +62,14 @@ export async function runLingAppServerMcp(
       description: "Request a stop for the current Run on a Ling Turn.",
       inputSchema: z.strictObject({ turnId: objectId }),
     }, async ({ turnId }) => describe(await client.interruptTurn({ turnId })));
+    server.registerTool("ling_turn_resume", {
+      description: "Recover a prepared or stopped Ling Turn using its observed revision. Reuse the recovery key when retrying.",
+      inputSchema: z.strictObject({
+        threadId: objectId, turnId: objectId, expectedTurnRevision: objectId, sourceRunId: objectId.optional(),
+        idempotencyKey: requestKey, instruction: z.string().max(16_384).optional(),
+      }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.resumeTurn(params)));
     server.registerTool("ling_turn_redirect", {
       description: "Stop the observed Ling Turn and submit a follow-up after its Run settles. Retry with the same request key.",
       inputSchema: followupInput,

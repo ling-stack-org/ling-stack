@@ -93,6 +93,7 @@ export interface CodeAssessment {
   readonly branchName?: string;
   readonly providerPresetId: string;
   readonly instructions?: string;
+  readonly reviewFocus?: "simplification";
   readonly reviewRules?: CodeAssessmentReviewRules;
   readonly runId?: string;
   readonly phaseRuns?: readonly CodeAssessmentPhaseRun[];

@@ -6,6 +6,7 @@ export interface CodeAssessmentStore {
     readonly kind: CodeAssessmentKind;
     readonly providerPresetId: string;
     readonly instructions?: string;
+    readonly reviewFocus?: CodeAssessment["reviewFocus"];
     readonly reviewRules?: CodeAssessmentReviewRules;
     readonly submission?: { readonly idempotencyKey: string; readonly fingerprint: string };
     readonly snapshot: CodeAssessmentSnapshot;

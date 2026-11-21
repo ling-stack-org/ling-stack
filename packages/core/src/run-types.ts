@@ -2690,6 +2690,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
     now: string,
   ): ExternalWorkSchedulerState | undefined;
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem;
+  createWorkItem(input: import("./work-item-types.js").CreateWorkItemInput, now: string, eventCwd?: string): import("./work-item-types.js").CreateWorkItemResult;
   getWorkItem(id: string): WorkItem | undefined;
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
@@ -2710,6 +2711,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
+  applyWorkItemControl(id: string, action: import("./work-item-types.js").WorkItemControlAction, input: WorkItemControlRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemControlResult;
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;

@@ -58,6 +58,7 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
     const assessment: CodeAssessment = {
       id: input.id, kind: input.kind, providerPresetId: input.providerPresetId, status: "queued",
       ...(input.instructions ? { instructions: input.instructions } : {}),
+      ...(input.reviewFocus ? { reviewFocus: input.reviewFocus } : {}),
       ...(input.reviewRules ? { reviewRules: input.reviewRules } : {}),
       phase: "collecting_diff", phaseHistory: [{ phase: "preparing", enteredAt: input.preparedAt ?? input.now }, { phase: "collecting_diff", enteredAt: input.captureStartedAt ?? input.now }],
       metrics: mergeMetrics({ snapshotBytes: Buffer.byteLength(JSON.stringify(input.snapshot), "utf8"), diffBytes: input.snapshot.files.reduce((size, file) => size + Buffer.byteLength(file.diff, "utf8"), 0) }, input.metrics),
@@ -74,7 +75,8 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
       db.prepare("INSERT INTO code_assessments(id,kind,status,snapshot_id,created_at,body_json) VALUES (?,?,?,?,?,?)").run(assessment.id, assessment.kind, assessment.status, assessment.snapshotId, assessment.createdAt, JSON.stringify(assessment));
       if (input.submission) {
         const receipt = new SqliteAppServerStateStore(this.context).putWithinTransaction({
-          kind: "review_submission", recordId: assessment.id, expectedRevision: 0,
+          kind: input.reviewFocus === "simplification" ? "simplify_submission" : "review_submission",
+          recordId: assessment.id, expectedRevision: 0,
           idempotencyKey: input.submission.idempotencyKey, payload: input.submission.fingerprint,
         }, input.now);
         if (receipt?.status !== "created") throw new Error("The review submission already has an assessment.");

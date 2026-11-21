@@ -14,8 +14,11 @@ import type {
   LingAppServerReviewStartResult,
   LingAppServerReviewStatusParams,
   LingAppServerReviewStatusResult,
+  LingAppServerSimplificationSuggestion,
   LingAppServerSimplifyStartParams,
   LingAppServerSimplifyStartResult,
+  LingAppServerSimplifyStatusParams,
+  LingAppServerSimplifyStatusResult,
   LingAppServerVerificationCheckPlan,
   LingAppServerVerificationCheckStatus,
   LingAppServerVerifyCancelParams,
@@ -67,7 +70,7 @@ export interface AppServerDevelopmentOptions {
 
 /** Coordinates durable verification state and delegates code assessment to its Run owner. */
 export class AppServerDevelopmentService {
-  private readonly pendingReviews = new Map<string, { fingerprint: string; result: Promise<LingAppServerReviewStartResult> }>();
+  private readonly pendingReviews = new Map<string, { fingerprint: string; result: Promise<CodeAssessmentDetail> }>();
   private readonly activeVerifications = new Map<string, AbortController>();
 
   constructor(private readonly options: AppServerDevelopmentOptions) {}
@@ -227,6 +230,17 @@ export class AppServerDevelopmentService {
   }
 
   async startReview(input: LingAppServerReviewStartParams): Promise<LingAppServerReviewStartResult> {
+    return reviewStartResult(await this.startReviewAssessment(input));
+  }
+
+  private async startReviewAssessment(
+    input: LingAppServerReviewStartParams,
+    reviewFocus?: CodeAssessmentDetail["assessment"]["reviewFocus"],
+  ): Promise<CodeAssessmentDetail> {
+    if (!isRecord(input.candidate) || typeof input.candidate.workspaceId !== "string"
+      || typeof input.candidate.candidateDigest !== "string" || !input.candidate.candidateDigest.trim()) {
+      throw new HttpError(400, "invalid_params", "Supply a code assessment candidate and its digest.");
+    }
     const cwd = requireCwd(input.cwd ?? input.candidate.workspaceId);
     const store = this.storeRegistry().getStore(cwd);
     const key = input.idempotencyKey;
@@ -245,13 +259,14 @@ export class AppServerDevelopmentService {
     } catch (error) {
       throw new HttpError(400, "invalid_params", errorMessage(error));
     }
-    const assessmentId = `assessment_app_${digest(key)}`;
+    const kind = reviewFocus === "simplification" ? "simplify_submission" : "review_submission";
+    const assessmentId = `assessment_app_${reviewFocus === "simplification" ? "simplify_" : ""}${digest(key)}`;
     const fingerprint = digest(JSON.stringify([input.workItemId, input.candidate.candidateDigest, request, rulesRefs]));
-    const prior = store.getAppServerState("review_submission", assessmentId);
+    const prior = store.getAppServerState(kind, assessmentId);
     if (prior) {
       assertReviewFingerprint(prior.payload, fingerprint);
       if (this.options.activeRuns) reconcileCodeAssessments(store, this.options.activeRuns);
-      return reviewStartResult(requireAssessment(store, assessmentId));
+      return requireAssessment(store, assessmentId);
     }
     const pendingKey = JSON.stringify([cwd, assessmentId]);
     const pending = this.pendingReviews.get(pendingKey);
@@ -261,8 +276,8 @@ export class AppServerDevelopmentService {
     }
     if (!this.options.startCodeAssessmentRun) throw new Error("Code assessment runner is unavailable.");
     const result = startCodeAssessment(store, request, this.options.startCodeAssessmentRun, {
-      assessmentId, candidateDigest: input.candidate.candidateDigest, idempotencyKey: key, fingerprint, rulesRefs,
-    }).then(reviewStartResult);
+      assessmentId, candidateDigest: input.candidate.candidateDigest, idempotencyKey: key, fingerprint, rulesRefs, reviewFocus,
+    });
     this.pendingReviews.set(pendingKey, { fingerprint, result });
     try {
       return await result;
@@ -352,11 +367,40 @@ export class AppServerDevelopmentService {
     return readReceipt()!;
   }
 
-  startSimplify(input: LingAppServerSimplifyStartParams): LingAppServerSimplifyStartResult {
+  async startSimplify(input: LingAppServerSimplifyStartParams): Promise<LingAppServerSimplifyStartResult> {
+    const { cwd, candidate, workItemId, providerPresetId, idempotencyKey } = input;
+    return simplifyStartResult(await this.startReviewAssessment({ cwd, candidate, workItemId, providerPresetId, idempotencyKey }, "simplification"));
+  }
+
+  getSimplifyStatus(input: LingAppServerSimplifyStatusParams): LingAppServerSimplifyStatusResult {
+    if (typeof input.operationId !== "string" || !/^simplify_assessment_app_simplify_[a-f0-9]{64}$/u.test(input.operationId)) {
+      throw new HttpError(400, "invalid_params", "Supply a simplification operation ID.");
+    }
+    const offset = input.offset === undefined ? 0 : input.offset;
+    if (!Number.isSafeInteger(offset) || offset < 0) {
+      throw new HttpError(400, "invalid_params", "The suggestion offset must be a non-negative integer.");
+    }
+    const store = this.workspaceStore(input.cwd);
+    if (this.options.activeRuns) reconcileCodeAssessments(store, this.options.activeRuns);
+    const detail = requireAssessment(store, input.operationId.slice("simplify_".length));
+    const suggestions: LingAppServerSimplificationSuggestion[] = [];
+    // Leave room in the outbound frame for the summary and RPC envelope.
+    let remainingBytes = 64 * 1024;
+    for (const { id, title, body, path, side, startLine, endLine, evidence } of detail.findings.slice(offset)) {
+      const suggestion = { id, title, body, path, side, startLine, endLine, evidence };
+      const bytes = Buffer.byteLength(JSON.stringify(suggestion), "utf8") + 1;
+      if (bytes > remainingBytes) break;
+      remainingBytes -= bytes;
+      suggestions.push(suggestion);
+    }
+    const nextOffset = offset + suggestions.length;
     return {
-      operationId: `simplify_${randomUUID()}`,
-      candidateDigest: input.candidate.candidateDigest,
-      status: "queued",
+      ...simplifyStartResult(detail),
+      revision: detail.assessment.updatedAt,
+      ...(detail.assessment.summary ? { summary: detail.assessment.summary } : {}),
+      ...(detail.assessment.errorMessage ? { errorMessage: detail.assessment.errorMessage } : {}),
+      suggestions,
+      ...(nextOffset < detail.findings.length ? { nextOffset } : {}),
     };
   }
 
@@ -515,7 +559,7 @@ function assessmentTarget(candidate: LingAppServerCandidateReference): CreateCod
 
 function assertReviewFingerprint(stored: unknown, expected: string): void {
   if (stored !== expected) {
-    throw Object.assign(new Error("Review idempotency key was reused with a different request."), { jsonRpcCode: -32031, code: "idempotency_conflict" });
+    throw Object.assign(new Error("Code assessment idempotency key was reused with a different request."), { jsonRpcCode: -32031, code: "idempotency_conflict" });
   }
 }
 
@@ -531,6 +575,15 @@ function reviewStartResult(detail: CodeAssessmentDetail): LingAppServerReviewSta
     assessmentId: detail.assessment.id,
     candidateDigest: detail.snapshot.digest,
     status: assessmentStatus(detail),
+  };
+}
+
+function simplifyStartResult(detail: CodeAssessmentDetail): LingAppServerSimplifyStartResult {
+  return {
+    operationId: `simplify_${detail.assessment.id}`,
+    candidateDigest: detail.snapshot.digest,
+    status: assessmentStatus(detail),
+    ...(detail.assessment.reportArtifactId ? { suggestionArtifactId: detail.assessment.reportArtifactId } : {}),
   };
 }
 

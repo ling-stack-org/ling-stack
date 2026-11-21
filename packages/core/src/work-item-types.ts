@@ -131,6 +131,17 @@ export interface UpsertWorkItemInput {
   readonly retryBudget?: number;
 }
 
+export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
+  "id" | "sourceType" | "sourceId" | "title" | "description" | "initialStatus" | "priority" | "labels"
+> {
+  readonly idempotencyKey?: string;
+}
+
+export interface CreateWorkItemResult {
+  readonly workItem: WorkItem;
+  readonly event?: ControlPlaneEvent;
+}
+
 export interface ListWorkItemsOptions {
   readonly channelId?: string;
   readonly status?: WorkItemStatus;
@@ -167,6 +178,11 @@ export interface WorkItemAcceptanceResult {
   readonly replayed: boolean;
   readonly event?: ControlPlaneEvent;
 }
+
+export type WorkItemControlResult =
+  | { readonly status: "not_found" | "stale_revision" | "idempotency_conflict" }
+  | { readonly status: "blocked"; readonly workItem: WorkItem }
+  | { readonly status: "applied" | "replayed"; readonly workItem: WorkItem; readonly receipt: WorkItemControlReceipt; readonly event?: ControlPlaneEvent };
 
 export interface WorkItemClaimRequest {
   readonly ownerId: string;

@@ -2,7 +2,7 @@
 
 - **状态** App Server 本机传输、Turn 控制与恢复、Verify 和 Federation 已通过定向验收。Agent Operating Model 已接入工作项接单、控制和协作记录。下文列出完整实施与发行仍需完成的工作包。
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** 2026-11-22，`origin/main@75ad8920f`
+- **核对基线** 2026-11-22，`origin/main@20ec1c528`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
@@ -17,13 +17,13 @@
 
 | 工作包 | 已验证场景与证据边界 |
 | --- | --- |
-| A2/B1 会话恢复和事件 | `thread/resume` 从读快照取得当前 Turn 和事件游标。两个连接同时恢复已准备的 Turn 只启动一个 Run，并使用原来封存的项目规则。停止的 Turn 以原 Run 效果收敛和请求键为前提续接。订阅者可以接收普通 Pi Turn 的实时增量、结束通知和最终 Item 引用。以旧游标重接会回放最终 Item。 |
+| A2/B1 会话恢复和事件 | `thread/resume` 从读快照取得当前 Turn 和事件游标。两个连接同时恢复已准备的 Turn 只启动一个 Run，并使用原来封存的项目规则。停止的 Turn 以原 Run 效果收敛和请求键为前提续接。订阅者可以接收普通 Pi Turn 的实时增量、结束通知和最终 Item 引用。以旧游标重接会回放最终 Item。SDK 在订阅确认时登记连接内的订阅 ID，紧接确认到达的回放也会推进下次重连的游标。 |
 | O2 外部 Runner | 真实 Daemon 使用配置的 Codex Runner Adapter 调用回环模拟后端，核对协商、任务身份、工作区和只读工具范围。完成状态与 Adapter 事件在重启后可重放。未确认的取消保留 `unknown`，存储写入失败时从最后提交状态恢复。 |
-| B2 在途输入 | `turn/queue` 将输入交给持久 Run intervention。前驱已记录执行结束及副作用收敛时，Daemon 可在重启后用同一收据启动后继 Turn。用配置 Pi Runner 核对实际投递一次、重连事件及新旧 Turn 的关联。`turn/interrupt` 可携带明确的重定向输入。`turn/steer` 在当前 Runner 无同 Turn 安全注入能力时返回 `steer_unsupported`。已安装的 Codex 通过 MCP 验证了快照、追加消息和事件读取。 |
+| B2 在途输入 | `turn/queue` 将输入交给持久 Run intervention。前驱已记录执行结束及副作用收敛时，Daemon 可在重启后用同一收据启动后继 Turn。用配置 Pi Runner 核对实际投递一次、重连事件及新旧 Turn 的关联。`turn/interrupt` 可携带明确的重定向输入。`turn/steer` 在当前 Runner 无同 Turn 安全注入能力时返回 `steer_unsupported`。已安装的 Codex 通过 MCP 验证了快照、追加消息、Turn 恢复入口和事件读取。 |
 | C2/F2 版本兼容 | 用 `v0.6.1@3fe77440e` 源码构建在 macOS 上创建 Thread、Turn、待决审批和游标，候选 Daemon 接手原 SQLite，旧 SDK 可读取 Thread 和处置后的审批。候选 SDK 向旧 `/rpc/stream` 尝试提交时，在协商阶段返回 `protocol_version_unsupported`。候选 CLI probe 和本机 Codex MCP 已通过。v0.6.1 未提供 App Server 协议。发布安装包、远程连接及回退对账另行验收。 |
 | E1 Verify 与用户输入恢复 | `verify/status` 提供操作版本。取消受理与停止意图一起写入原操作，同键重试可在重启后读取原受理结果。实际退出通过 `verify/status` 查看，结果无法核实时保留 `unknown`。已绑定工作项的 Verify 状态和 Control Plane 事件同事务提交，两个连接可核对实时状态和重启回放。用户提问的 authority、答案 CAS、投递收据和 `pending/answered/cancelled` 事件也在重启后保持同一请求身份。 |
-| E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。缺证据和引用其他 Thread 的 Run 会被拒绝。Review 已验证候选绑定、发现项处置重放及 freshness 持久化。可信验证器来源与 GitHub CI 交付证据仍需接入 Goal。 |
-| O1/O9 接单和协作 | 接单、证据和协作记录各自与对应的 Control Plane 事件同事务提交。两个客户端加 Daemon 重启的场景核对了幂等、冲突错误和游标回放。阶段运行、定时轮次、交接、裁决与恢复的联合验收仍待下方矩阵。 |
+| E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。缺证据和引用其他 Thread 的 Run 会被拒绝。Review 已验证候选绑定、发现项处置重放及 freshness 持久化。`simplify/start` 对同一候选运行只读简化审查，`simplify/status` 可分页读取建议和报告引用，重启后重试复用原操作。可信验证器来源与 GitHub CI 交付证据仍需接入 Goal。 |
+| O1/O8/O9 接单、控制和协作 | App Server 按来源标识创建或取得现有工作项。工作项创建、控制、接单、证据和协作写入各自与对应的事件同事务提交。控制回执在后继操作和 Daemon 重启后可按原请求找回。两个客户端验证了幂等、冲突错误、事件写入失败回滚和游标回放。阶段运行、定时轮次、交接、裁决与恢复的联合验收仍待下方矩阵。 |
 
 源码兼容用例由 `LING_APP_SERVER_PREVIOUS_BUILD` 指向已构建的上一版源码目录。`LING_APP_SERVER_CODEX_EXECUTABLE` 指向已安装的 Codex。两项均使用隔离状态和回环服务，配置 Pi Runner 使用脚本化 Provider。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
@@ -146,7 +146,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 
 | 项目 | 状态 |
 | --- | --- |
-| 隔离开发分支 | `codex/ling-app-server-implementation` 已合入 `origin/main@75ad8920f`。 |
+| 隔离开发分支 | `codex/ling-app-server-implementation` 已合入 `origin/main@20ec1c528`。 |
 | 目标态、协议、验收与索引 | 本组设计文档，按上表的真实代码入口接入。 |
 | 重叠工作搜索 | 核对主线的 Ling Server Connectivity、Ling Device Fabric、原生执行引擎和现有 RPC，GitHub 开放 Issue/PR 的 “app server” 搜索均为空。 |
 | 依赖及源码基线 | macOS arm64，Node 24.22.1、pnpm 10.0.0、Rust 1.97.1。完整锁文件安装后，Contracts、API Client、Daemon 和 CLI 的 `build:ci`/`typecheck:ci` 通过。 |

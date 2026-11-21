@@ -584,13 +584,17 @@ import type {
   RecordAutomationMonitorSnapshotResult,
 } from "../automation-monitor-types.js";
 import {
+  type CreateWorkItemInput,
+  type CreateWorkItemResult,
   type ListWorkItemsOptions,
   type UpsertWorkItemInput,
   type WorkItem,
   type WorkItemClaimBlocker,
   type WorkItemClaimRequest,
   type WorkItemCompleteRequest,
+  type WorkItemControlAction,
   type WorkItemControlRequest,
+  type WorkItemControlResult,
   type WorkItemFailRequest,
   type WorkItemHeartbeatRequest,
   type WorkItemReleaseRequest,
@@ -6094,6 +6098,10 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.upsertWorkItem(input, now);
   }
 
+  createWorkItem(input: CreateWorkItemInput, now: string, eventCwd = this.paths.cwd): CreateWorkItemResult {
+    return this.workItems.createWorkItem(input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
+  }
+
   getWorkItem(id: string): WorkItem | undefined {
     return this.workItems.getWorkItem(id);
   }
@@ -6176,6 +6184,10 @@ export class SqliteRunStore implements RunStore {
 
   cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
     return this.workItems.cancelWorkItem(id, input, now);
+  }
+
+  applyWorkItemControl(id: string, action: WorkItemControlAction, input: WorkItemControlRequest, now: string, eventCwd = this.paths.cwd): WorkItemControlResult {
+    return this.workItems.applyWorkItemControl(id, action, input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
   }
 
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {
