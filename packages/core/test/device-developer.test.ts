@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,7 +13,7 @@ import { SqliteDeviceDeveloperStore } from "../dist/storage/sqlite/device-develo
 
 const now = "2026-11-21T00:00:00.000Z";
 
-test("developer sessions bind artifacts to the target and reattach jobs", () => {
+test("developer sessions bind artifacts to the target and record job state", () => {
   const coordinator = new DeviceDeveloperSessionCoordinator();
   coordinator.createSession({ sessionId: "session-1", workspaceId: "workspace-1", ownerKind: "daemon", ownerId: "daemon-1", targetDeviceId: "android-1", targetKind: "android", mode: "developer", authorizationRevision: "auth-0", status: "created", revision: 1, createdAt: now, updatedAt: now });
   coordinator.authorize("session-1", "auth-1", now);
@@ -52,4 +52,46 @@ test("developer sessions, jobs, proposals and artifact transfers survive SQLite 
   assert.equal(second.getJob("job-1")?.status, "running");
   assert.deepEqual(second.acceptChunk("transfer-1", 1).receivedChunks, [1]);
   second.close();
+});
+
+test("developer session and job transitions commit together and restore after SQLite reopen", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-developer-coordinator-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "developer.sqlite");
+  const firstStore = new SqliteDeviceDeveloperStore({ databasePath: path });
+  const first = new DeviceDeveloperSessionCoordinator({ store: firstStore });
+  const session = { sessionId: "session-1", workspaceId: "workspace-1", ownerKind: "daemon", ownerId: "daemon-1",
+    targetDeviceId: "android-1", targetKind: "android", mode: "developer", authorizationRevision: "auth-0",
+    status: "created", revision: 1, createdAt: now, updatedAt: now } as const;
+  const job = { jobId: "job-1", sessionId: session.sessionId, kind: "logs", status: "running",
+    targetDeviceId: session.targetDeviceId, taskStatus: "executing", revision: 1, updatedAt: now } as const;
+  try {
+    first.createSession(session);
+    first.authorize(session.sessionId, "auth-1", now);
+    firstStore.database.exec(`
+      CREATE TEMP TRIGGER reject_developer_session_update BEFORE UPDATE ON device_developer_sessions
+      BEGIN SELECT RAISE(ABORT, 'fixture session write failure'); END;
+    `);
+    assert.throws(() => first.startJob(job), /fixture session write failure/);
+    assert.equal(first.getJob(job.jobId), undefined);
+    assert.equal(first.getSession(session.sessionId)?.status, "authorized");
+    firstStore.database.exec("DROP TRIGGER reject_developer_session_update");
+    assert.deepEqual(first.startJob(job), job);
+  } finally {
+    firstStore.close();
+  }
+  const secondStore = new SqliteDeviceDeveloperStore({ databasePath: path });
+  const second = new DeviceDeveloperSessionCoordinator({ store: secondStore });
+  try {
+    assert.equal(second.getSession(session.sessionId)?.status, "running");
+    assert.throws(() => second.createSession(session), /already exists/);
+    assert.throws(() => second.startJob({ ...job, targetDeviceId: "other-device" }), /another job/);
+    assert.deepEqual(second.startJob(job), job);
+    const settled = second.settleJob(job.jobId, "unknown", "output-ref", now);
+    assert.equal(second.getSession(session.sessionId)?.status, "paused");
+    assert.deepEqual(second.startJob(job), settled);
+    assert.throws(() => second.settleJob(job.jobId, "completed", undefined, now), /retained outcome/);
+  } finally {
+    secondStore.close();
+  }
 });

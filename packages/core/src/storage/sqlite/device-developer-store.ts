@@ -32,6 +32,18 @@ export class SqliteDeviceDeveloperStore {
     `);
   }
 
+  withWriteTransaction<T>(write: () => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = write();
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   saveSession(session: DeviceDeveloperSessionV1): DeviceDeveloperSessionV1 {
     const current = this.getSession(session.sessionId);
     if (current && session.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "developer session revision must advance");

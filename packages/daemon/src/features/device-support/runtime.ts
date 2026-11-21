@@ -6,6 +6,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   DeviceCapabilityBroker,
   DeviceRunnerPlanningBridge,
+  DeviceDeveloperSessionCoordinator,
   HardwareProtocolWorkbench,
   modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
@@ -25,6 +26,7 @@ export interface DeviceSupportRuntime {
   readonly developerStore: SqliteDeviceDeveloperStore;
   readonly protocolStore: SqliteDeviceProtocolStore;
   readonly protocolWorkbench: HardwareProtocolWorkbench;
+  readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
@@ -59,6 +61,7 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
   broker.registerAdapter(adapter);
   const remoteFacade = createRemoteDeviceFacade({ store, broker, now });
   const planner = new DeviceRunnerPlanningBridge();
+  const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
   let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
   const diagnose = async (): Promise<DevicePlaybookRunResultV1> => {
     const registered = store.listDevices().find(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID
@@ -104,6 +107,7 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
     developerStore,
     protocolStore,
     protocolWorkbench,
+    developerSessions,
     broker,
     remoteFacade,
     diagnoseLocalPc: () => {

@@ -21,6 +21,13 @@ test("daemon device-support runtime composes the durable store, broker and remot
   assert.ok(runtime.protocolStore.database);
   assert.equal(runtime.broker.store, runtime.store);
   assert.equal(runtime.remoteFacade.listDevices("workspace-1").devices.length, 0);
+  const now = new Date().toISOString();
+  const session = runtime.developerSessions.createSession({
+    sessionId: "local-developer-session", workspaceId: DEFAULT_WORKSPACE_ID, ownerKind: "daemon", ownerId: "local-runtime",
+    targetDeviceId: "fixture-target", targetKind: "android", mode: "developer", authorizationRevision: "local-confirmation",
+    status: "created", revision: 1, createdAt: now, updatedAt: now,
+  });
+  assert.deepEqual(runtime.developerStore.getSession(session.sessionId), session);
   runtime.close();
 });
 
