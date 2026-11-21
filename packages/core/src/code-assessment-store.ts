@@ -28,7 +28,6 @@ export interface CodeAssessmentStore {
     readonly reason?: string;
     readonly now: string;
     readonly expectedRevision?: string;
-    readonly verifiedCurrent?: boolean;
     readonly freshness?: { readonly state: "current"; readonly checkedAt: string };
     readonly submission?: { readonly recordId: string; readonly idempotencyKey: string; readonly fingerprint: string };
   }): CodeAssessmentFinding;

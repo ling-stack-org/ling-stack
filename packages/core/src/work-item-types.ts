@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ControlPlaneEvent } from "./run-types.js";
 
 export type WorkItemStatus =
   | "intake"
@@ -164,6 +165,7 @@ export interface WorkItemAcceptanceResult {
   readonly workItem: WorkItem;
   readonly receipt: WorkItemAcceptanceReceipt;
   readonly replayed: boolean;
+  readonly event?: ControlPlaneEvent;
 }
 
 export interface WorkItemClaimRequest {

@@ -75,6 +75,7 @@ export interface ExternalAgentFederationTaskRecord {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly statusRevision: number;
+  readonly hostDispatch?: true;
 }
 
 export interface ExternalAgentFederationSnapshot {
@@ -164,9 +165,11 @@ export class ExternalAgentFederationService {
     const snapshot = this.persistence?.load();
     if (snapshot) {
       this.restore(snapshot);
-      for (const { task } of snapshot.tasks) {
+      for (const { task, hostDispatch } of snapshot.tasks) {
         if (task.status === "running" || task.status === "waiting_for_approval") {
           this.markUnknown(task.taskId, "daemon_restart_reconciliation_required");
+        } else if (task.status === "accepted" && hostDispatch) {
+          this.markUnknown(task.taskId, "daemon_restart_before_dispatch");
         }
       }
     }
@@ -234,7 +237,7 @@ export class ExternalAgentFederationService {
     return this.registrations.get(registrationId);
   }
 
-  startTask(params: LingAppServerExternalAgentTaskStartParams, admit?: () => void): LingAppServerExternalAgentTaskStartResult {
+  startTask(params: LingAppServerExternalAgentTaskStartParams, admit?: () => void, hostDispatch = false): LingAppServerExternalAgentTaskStartResult {
     const registration = this.requireRegistration(params.registrationId);
     const submission = validateSubmission(params.submission);
     assertCapability(registration, EXTERNAL_AGENT_TASK_START_CAPABILITIES, "task.start");
@@ -283,6 +286,7 @@ export class ExternalAgentFederationService {
       createdAt: now,
       updatedAt: now,
       statusRevision: 0,
+      ...(hostDispatch ? { hostDispatch: true as const } : {}),
     };
     this.tasks.set(task.taskId, record);
     this.tasksBySubmission.set(idempotencyKey, task.taskId);
@@ -355,7 +359,7 @@ export class ExternalAgentFederationService {
       const result = { taskId: task.task.taskId, status: "unknown" as const };
       this.idempotency.set(params.idempotencyKey, { kind: "cancel", fingerprint, result });
       if (current.task.status !== "unknown") {
-        this.replaceTask(current, "unknown");
+        this.replaceTask(current, "unknown", "cancellation_outcome_unknown");
         this.publish(task.task.taskId, "task_unknown", { reason: "cancellation_outcome_unknown" });
       } else this.persist();
       return result;
@@ -381,8 +385,9 @@ export class ExternalAgentFederationService {
 
   markUnknown(taskId: string, reason = "external_dispatch_outcome_unknown"): LingAppServerExternalAgentTaskReceipt {
     const task = this.requireTask(taskId);
-    if (task.task.status !== "running" && task.task.status !== "waiting_for_approval") return task.task;
-    this.replaceTask(task, "unknown");
+    if (task.task.status !== "running" && task.task.status !== "waiting_for_approval"
+      && !(task.task.status === "accepted" && task.hostDispatch)) return task.task;
+    this.replaceTask(task, "unknown", reason);
     this.publish(taskId, "task_unknown", { reason });
     return this.requireTask(taskId).task;
   }
@@ -485,12 +490,13 @@ export class ExternalAgentFederationService {
     return record;
   }
 
-  private replaceTask(record: ExternalAgentFederationTaskRecord, status: LingAppServerExternalAgentTaskReceipt["status"]): void {
+  private replaceTask(record: ExternalAgentFederationTaskRecord, status: LingAppServerExternalAgentTaskReceipt["status"], outcomeReason?: string): void {
     const next: ExternalAgentFederationTaskRecord = {
       ...record,
       task: {
         ...record.task,
         status,
+        ...(outcomeReason ? { outcomeReason } : {}),
       },
       statusRevision: record.statusRevision + 1,
       updatedAt: this.now(),

@@ -7,6 +7,7 @@ import {
   evaluateDeliberationTrigger,
   type ControlPlaneDomain,
   type ControlPlaneEvent,
+  type LingThreadGoal,
   type RunEventEnvelope,
   type RunSession,
   type WorkItem,
@@ -57,6 +58,7 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
+import { parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
@@ -71,7 +73,7 @@ import {
   getExternalAgentFederation,
   type ExternalAgentFederationEvent,
 } from "../runtime/external-agent/federation.js";
-import { assertDispatchReady, dispatchExternalAgentTask } from "../runtime/external-agent/task-dispatcher.js";
+import { assertDispatchReady, dispatchExternalAgentTask, ExternalAgentDispatchError } from "../runtime/external-agent/task-dispatcher.js";
 import {
   AppServerCollaborationError,
   appendAppServerWorkItemCollaboration,
@@ -113,7 +115,7 @@ const APP_SERVER_MAX_REQUESTS = 64;
 const APP_SERVER_MAX_SUBSCRIPTIONS = 32;
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
-  "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
+  "turn/retry", "turn/steer", "thread/fork", "thread/compact/start", "thread/revert",
   "handoff/create", "handoff/read", "handoff/resume", "changes/read", "simplify/start",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
   "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
@@ -716,7 +718,7 @@ class RpcConnection {
     };
     let result;
     try {
-      result = store.acceptWorkItem(workItemId, input, new Date().toISOString());
+      result = store.acceptWorkItem(workItemId, input, new Date().toISOString(), cwd);
     } catch (error) {
       if (error instanceof Error && error.message === "work_item_acceptance_idempotency_conflict") {
         throw rpcError(-32031, "idempotency_conflict", "The acceptance key was reused with different input.");
@@ -727,13 +729,8 @@ class RpcConnection {
       throw error;
     }
     if (!result) throw rpcError(-32030, "stale_revision", "The Work Item is no longer eligible for acceptance at this revision.");
-    const { workItem, receipt, replayed } = result;
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: workItem.workspaceId, cwd, domain: "work_items",
-      entityType: "work_item", entityId: workItemId, action: "work_item.accepted",
-      idempotencyKey: receipt.id,
-      data: { workItemId, revision: receipt.workItemRevision, actorId: receipt.actorId, acceptanceId: receipt.id },
-    }, receipt.acceptedAt);
+    const { workItem, receipt, replayed, event } = result;
+    if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
     return { cwd, accepted: true, workItem: projectWorkItemSnapshot(workItem), acceptance: receipt, replayed };
   }
 
@@ -787,19 +784,11 @@ class RpcConnection {
       content,
       sourceRefs: sourceRefs as import("@ling-stack/core").WorkItemEvidenceSourceRef[],
       visibility: readOptionalStringField(record, "visibility") as import("@ling-stack/core").WorkItemEvidenceVisibility | undefined,
-    }, new Date().toISOString());
+    }, new Date().toISOString(), { cwd });
     if (!result) throw rpcError(-32030, "stale_revision", "The Work Item or evidence revision is stale.");
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "work_items",
-      entityType: "work_item",
-      entityId: workItemId,
-      action: "work_item.evidence.updated",
-      idempotencyKey,
-      data: { workItemId, evidenceId: result.entry.id, sequence: result.entry.sequence, workItemRevision: result.workItemRevision },
-    });
-    return { cwd, workItemId, ...result };
+    const { event, ...evidence } = result;
+    if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+    return { cwd, workItemId, ...evidence };
   }
 
   private readCollaboration(kind: import("@ling-stack/contracts").LingAppServerCollaborationKind | undefined, params: unknown): unknown {
@@ -840,7 +829,7 @@ class RpcConnection {
         if (!decision.shouldOpen) throw rpcError(-32061, "resume_blocked", decision.reason);
         payload = { ...(typeof payload === "object" && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload }), triggerDecision: decision };
       }
-      const result = appendAppServerWorkItemCollaboration(this.context.storeRegistry.getStore(cwd), {
+      const { event, ...result } = appendAppServerWorkItemCollaboration(this.context.storeRegistry.getStore(cwd), {
         ...record,
         cwd,
         workItemId,
@@ -848,22 +837,11 @@ class RpcConnection {
         action,
         payload,
       } as never, new Date().toISOString());
-      const store = this.context.storeRegistry.getStore(cwd);
-      appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-        workspaceId: DEFAULT_WORKSPACE_ID,
-        cwd,
-        domain: "work_items",
-        entityType: "work_item",
-        entityId: workItemId,
-        action: `work_item.collaboration.${kind}.${action}`,
-        idempotencyKey: readStringField(record, "idempotencyKey"),
-        data: { workItemId, collaborationId: result.record.id, collaborationRevision: result.record.collaborationRevision },
-      });
-      if (this.appServer) {
-        this.send({
-          jsonrpc: "2.0",
-          method: collaborationNotificationMethod(kind),
-          params: { cwd, workItemId, record: result.record },
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        if (this.appServer) this.send({
+          jsonrpc: "2.0", method: collaborationNotificationMethod(kind),
+          params: { cwd, workItemId, record: result.record, eventId: `${event.workspaceId}:${event.seq}`, cursor: String(event.seq) },
         });
       }
       return { cwd, ...result };
@@ -914,7 +892,8 @@ class RpcConnection {
       }
     };
     try {
-      const result = federation.startTask(record as never, assertAdmission);
+      const hostDispatch = this.appServer && this.authenticated;
+      const result = federation.startTask(record as never, assertAdmission, hostDispatch);
       const task = result.task;
       this.externalTaskIds.add(task.taskId);
       if (!result.replayed) {
@@ -923,7 +902,7 @@ class RpcConnection {
           entityId: task.taskId, action: "external_agent.task.started", idempotencyKey: task.submissionId,
           data: { registrationId, workItemId, status: task.status, dispatchDepth: task.dispatchDepth },
         });
-        this.maybeDispatchExternalAgentTask(cwd, federation, registrationId, task.taskId, submission, assertAdmission);
+        if (hostDispatch) this.dispatchExternalAgentTask(cwd, federation, registrationId, task.taskId, submission, assertAdmission);
       }
       const response = { ...result, task: federation.getTask(task.taskId)!.task };
       if (this.appServer && !result.replayed) this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: response });
@@ -934,7 +913,7 @@ class RpcConnection {
     }
   }
 
-  private maybeDispatchExternalAgentTask(
+  private dispatchExternalAgentTask(
     cwd: string,
     federation: ExternalAgentFederationService,
     registrationId: string,
@@ -942,9 +921,15 @@ class RpcConnection {
     submission: Record<string, unknown>,
     assertAdmission: () => void,
   ): void {
-    if (!this.appServer || !this.authenticated || !this.context.storeRegistry.isTrustedWorkspaceRoot(cwd)) return;
+    if (!this.context.storeRegistry.isTrustedWorkspaceRoot(cwd)) {
+      federation.markUnknown(taskId, "dispatch_workspace_untrusted");
+      return;
+    }
     const registration = federation.getRegistration(registrationId)?.registration;
-    if (!registration) return;
+    if (!registration) {
+      federation.markUnknown(taskId, "dispatch_registration_unavailable");
+      return;
+    }
     const runnerId = registration.adapterKind === "acp" ? "openclaw-acp" : registration.adapterKind;
     const runner = this.context.runnerRegistry.get(runnerId);
     const acceptance = typeof submission.acceptanceSnapshot === "object" && submission.acceptanceSnapshot !== null
@@ -952,7 +937,15 @@ class RpcConnection {
       : {};
     const provider = typeof acceptance.provider === "object" && acceptance.provider !== null
       ? acceptance.provider as Record<string, unknown> : undefined;
-    if (!runner || !provider || typeof provider.provider !== "string" || typeof provider.model !== "string") return;
+    if (!runner) {
+      federation.markUnknown(taskId, "dispatch_runner_unavailable");
+      return;
+    }
+    if (!provider || typeof provider.provider !== "string" || !provider.provider.trim()
+      || typeof provider.model !== "string" || !provider.model.trim()) {
+      federation.markUnknown(taskId, "dispatch_provider_unavailable");
+      return;
+    }
     const objective = readStringField(submission, "objective");
     const controller = new AbortController();
     const dispatch = {
@@ -965,15 +958,22 @@ class RpcConnection {
         signal: controller.signal,
       },
     };
-    try { assertDispatchReady(dispatch); } catch { return; }
+    try {
+      assertDispatchReady(dispatch);
+    } catch (error) {
+      federation.markUnknown(taskId, error instanceof ExternalAgentDispatchError ? error.code : "dispatch_preflight_failed");
+      return;
+    }
     let active = activeExternalDispatches.get(this.context);
     if (!active) {
       active = new Map();
       activeExternalDispatches.set(this.context, active);
     }
     active.set(taskId, controller);
-    const settled = dispatchExternalAgentTask(dispatch).catch(() => {
-      try { federation.markUnknown(taskId); } catch { /* The retained dispatch receipt is available for recovery. */ }
+    const settled = dispatchExternalAgentTask(dispatch).catch(error => {
+      try {
+        federation.markUnknown(taskId, error instanceof ExternalAgentDispatchError ? error.code : undefined);
+      } catch { /* The retained dispatch receipt is available for recovery. */ }
     }).finally(() => active.delete(taskId));
     this.context.activeRuns.trackCompletion(settled);
   }
@@ -994,16 +994,10 @@ class RpcConnection {
       const taskId = readStringField(readParamsRecord(params), "taskId");
       const federation = this.externalAgents;
       const active = activeExternalDispatches.get(this.context)?.get(taskId);
-      const result = await federation.cancelTask(params as never, active ? async () => {
+      return await federation.cancelTask(params as never, active ? async () => {
         active.abort();
         return "unknown";
       } : undefined);
-      if (this.appServer) this.send({
-        jsonrpc: "2.0",
-        method: result.status === "unknown" ? "externalAgent/task/unknown" : "externalAgent/task/updated",
-        params: result,
-      });
-      return result;
     } catch (error) {
       throw externalAgentRpcError(error);
     }
@@ -1261,25 +1255,20 @@ class RpcConnection {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const threadId = readStringField(record, "threadId");
-    const objective = readStringField(record, "objective");
+    const { replaceExisting, tokenBudget, ...input } = parsePutLingThreadGoalBody(record);
     const store = this.context.storeRegistry.getStore(cwd);
     if (!store.getLingThread(threadId)) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
-    const tokenBudget = readOptionalIntegerField(record, "tokenBudget");
     const now = new Date().toISOString();
     const existing = store.getLingThreadGoal(threadId);
+    assertGoalRevision(existing, readOptionalStringField(record, "expectedGoalRevision"));
+    if (existing && !replaceExisting) {
+      throw rpcError(-32030, "goal_replace_required", "Pass replaceExisting=true to accept a replacement for the current Goal.");
+    }
+    const goalInput = { ...input, threadId, tokenBudget: tokenBudget ?? undefined };
     const goal = existing
-      ? store.updateLingThreadGoal(existing.id, { objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }, now)
-      : store.createLingThreadGoal({ threadId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }, now);
-    if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "runs",
-      entityType: "thread_goal",
-      entityId: goal.id,
-      action: "thread.goal.updated",
-      data: { threadId, goalId: goal.id, status: goal.status },
-    });
+      ? store.replaceLingThreadGoal(goalInput, now)
+      : store.createLingThreadGoal(goalInput, now);
+    this.publishThreadGoal(store, cwd, goal);
     return { cwd, threadId, goal };
   }
 
@@ -1292,15 +1281,7 @@ class RpcConnection {
     if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
     const updated = store.updateLingThreadGoal(goal.id, { status }, new Date().toISOString());
     if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "runs",
-      entityType: "thread_goal",
-      entityId: goal.id,
-      action: "thread.goal.updated",
-      data: { threadId, goalId: goal.id, status: updated.status },
-    });
+    this.publishThreadGoal(store, cwd, updated);
     return { cwd, threadId, goal: updated };
   }
 
@@ -1311,6 +1292,7 @@ class RpcConnection {
     const store = this.context.storeRegistry.getStore(cwd);
     const goal = store.clearLingThreadGoal(threadId, new Date().toISOString());
     if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
+    this.publishThreadGoal(store, cwd, goal);
     return { cwd, threadId, goal };
   }
 
@@ -1321,14 +1303,28 @@ class RpcConnection {
     const store = this.context.storeRegistry.getStore(cwd);
     const goal = store.getLingThreadGoal(threadId);
     if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
-    const updated = store.updateLingThreadGoal(goal.id, {
-      status: "complete",
-      completedBy: readOptionalStringField(record, "completedBy") as "local-user" | "ling-agent" | undefined ?? "local-user",
-      completedReason: readOptionalStringField(record, "reason") ?? "completed_by_app_server",
-      completionVerificationSummary: readOptionalStringField(record, "verificationSummary"),
-    }, new Date().toISOString());
+    assertGoalRevision(goal, readOptionalStringField(record, "expectedGoalRevision"));
+    const input = parseCompleteLingThreadGoalBody({
+      ...record, actor: record.actor ?? record.completedBy,
+      evidenceRefs: record.evidenceRefs ?? record.completionEvidenceRefs,
+      completionVerificationSummary: record.completionVerificationSummary ?? record.verificationSummary,
+    });
+    const updated = store.updateLingThreadGoal(goal.id, input, new Date().toISOString());
     if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
+    this.publishThreadGoal(store, cwd, updated);
     return { cwd, threadId, goal: updated };
+  }
+
+  private publishThreadGoal(store: import("@ling-stack/core").RunStore, cwd: string, goal: LingThreadGoal): void {
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: goal.workspaceId,
+      cwd,
+      domain: "runs",
+      entityType: "thread_goal",
+      entityId: goal.id,
+      action: "thread.goal.updated",
+      data: { threadId: goal.threadId, goalId: goal.id, status: goal.status, revision: goal.updatedAt },
+    });
   }
 
   private readPlan(params: unknown): unknown {
@@ -2308,6 +2304,12 @@ function rpcError(jsonRpcCode: number, code: string, message: string): Error & {
   return Object.assign(new Error(message), { jsonRpcCode, code });
 }
 
+function assertGoalRevision(goal: LingThreadGoal | undefined, expected: string | undefined): void {
+  if (expected !== undefined && expected !== goal?.updatedAt) {
+    throw rpcError(-32030, "stale_revision", "The Thread Goal revision has changed.");
+  }
+}
+
 function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; readonly code: string; readonly message: string } {
   if (typeof error === "object" && error !== null && "jsonRpcCode" in error && "code" in error) {
     const record = error as { readonly jsonRpcCode?: unknown; readonly code?: unknown; readonly message?: unknown };
@@ -2326,6 +2328,12 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   if (error instanceof HttpError) {
     return { jsonRpcCode: error.statusCode === 400 ? -32602 : -32061, code: error.code, message: error.message };
   }
+  if (error instanceof Error && error.message === "work_item_evidence_idempotency_conflict") {
+    return { jsonRpcCode: -32031, code: "idempotency_conflict", message: "The evidence key was reused with different input." };
+  }
+  if (error instanceof Error && /^goal_(acceptance|completion|supervision)_/u.test(error.message)) {
+    return { jsonRpcCode: -32061, code: error.message, message: error.message };
+  }
   return {
     jsonRpcCode: -32000,
     code: "internal_error",
@@ -2333,7 +2341,7 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   };
 }
 
-function collaborationRpcError(error: unknown): Error & { readonly jsonRpcCode: number; readonly code: string } {
+function collaborationRpcError(error: unknown): unknown {
   if (error instanceof AppServerCollaborationError) {
     const mapped = error.code === "work_item_not_found"
       ? { jsonRpcCode: -32040, code: "workspace_binding_invalid" }
@@ -2344,10 +2352,7 @@ function collaborationRpcError(error: unknown): Error & { readonly jsonRpcCode: 
           : { jsonRpcCode: -32602, code: "invalid_params" };
     return Object.assign(new Error(error.message), mapped);
   }
-  return Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
-    jsonRpcCode: -32000,
-    code: "collaboration_error",
-  });
+  return error;
 }
 
 function collaborationNotificationMethod(kind: import("@ling-stack/contracts").LingAppServerCollaborationKind): string {
@@ -2426,6 +2431,7 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent): unknown | und
 }
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
+  if (event.action === "thread.goal.updated") return "thread/goal/updated";
   if (event.entityType === "thread") {
     if (event.action === "thread.started") return "thread/started";
     if (event.action === "thread.archived") return "thread/archived";

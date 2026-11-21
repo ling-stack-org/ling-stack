@@ -275,11 +275,14 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
       const closing = input.disposition === "dismissed" || input.disposition === "resolved";
       if ((closing && !reason) || (reason && reason.length > 2000)) throw new Error("Closing a finding requires a bounded reason.");
       if (closing && !["false_positive", "accepted_risk", "not_reproducible", "duplicate", "out_of_scope"].includes(input.closeReason ?? "")) throw new Error("Closing a finding requires a typed close reason.");
-      if (input.disposition === "resolved" && !input.verifiedCurrent && detail.assessment.freshness?.state !== "current") throw new Error("Resolving a finding requires a current snapshot freshness check.");
+      if (input.disposition === "resolved" && !input.freshness && detail.assessment.freshness?.state !== "current") throw new Error("Resolving a finding requires a current snapshot freshness check.");
       const finding = detail.findings.find(item => item.id === findingId);
       if (!finding) throw new Error("Finding not found.");
-      const next = { ...finding, disposition: input.disposition, dispositionReason: closing ? reason : undefined, closeReason: closing ? input.closeReason : undefined };
-      db.prepare("UPDATE code_assessment_findings SET body_json=? WHERE id=? AND assessment_id=?").run(JSON.stringify(next), findingId, assessmentId);
+      const next: CodeAssessmentFinding = { ...finding, disposition: input.disposition,
+        dispositionReason: closing ? reason : undefined, closeReason: closing ? input.closeReason : undefined,
+        ...(input.freshness ? { freshnessState: "current" } : {}) };
+      const updateFinding = db.prepare("UPDATE code_assessment_findings SET body_json=? WHERE id=? AND assessment_id=?");
+      updateFinding.run(JSON.stringify(next), findingId, assessmentId);
       const previous = Date.parse(detail.assessment.updatedAt);
       const updatedAt = input.submission
         ? new Date(Math.max(Date.parse(input.now), previous + 1)).toISOString()
@@ -289,8 +292,9 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
       this.write(nextAssessment);
       if (input.freshness) {
         for (const currentFinding of detail.findings) {
-          db.prepare("UPDATE code_assessment_findings SET body_json=? WHERE id=? AND assessment_id=?")
-            .run(JSON.stringify({ ...currentFinding, freshnessState: "current" }), currentFinding.id, assessmentId);
+          if (currentFinding.id !== findingId) {
+            updateFinding.run(JSON.stringify({ ...currentFinding, freshnessState: "current" }), currentFinding.id, assessmentId);
+          }
         }
       }
       if (input.submission) {

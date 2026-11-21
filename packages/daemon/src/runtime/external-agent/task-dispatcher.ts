@@ -77,9 +77,9 @@ export async function dispatchExternalAgentTask(input: ExternalAgentDispatchRequ
       eventCount: result.events.length,
     });
     return { taskId: input.taskId, outcome: "completed", result };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    input.federation.markUnknown(input.taskId, input.options.signal?.aborted ? "external_dispatch_cancelled_unknown" : reason.slice(0, 500));
+  } catch {
+    const reason = input.options.signal?.aborted ? "external_dispatch_cancelled_unknown" : "external_adapter_failed";
+    input.federation.markUnknown(input.taskId, reason);
     return { taskId: input.taskId, outcome: "unknown", reason };
   }
 }

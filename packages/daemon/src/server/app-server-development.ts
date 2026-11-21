@@ -265,15 +265,17 @@ export class AppServerDevelopmentService {
       throw new HttpError(404, "finding_not_found", "Code assessment finding was not found.");
     }
     assertReviewRevision(detail, input.expectedRevision);
+    let expectedRevision = input.expectedRevision;
     let freshness: { readonly state: "current"; readonly checkedAt: string } | undefined;
     if (input.disposition === "resolved") {
+      expectedRevision ??= detail.assessment.updatedAt;
       const current = await captureCodeAssessmentSnapshot(store.paths.cwd, detail.snapshot.target);
       const replay = readReceipt();
       if (replay) return replay;
       if (current.digest !== detail.snapshot.digest || current.coverage !== "complete") {
         throw new HttpError(409, "candidate_stale", "Resolving a finding requires a current candidate with complete coverage.");
       }
-      assertReviewRevision(requireAssessment(store, input.assessmentId), input.expectedRevision);
+      assertReviewRevision(requireAssessment(store, input.assessmentId), expectedRevision);
       freshness = { state: "current", checkedAt: current.capturedAt };
     }
     try {
@@ -282,8 +284,7 @@ export class AppServerDevelopmentService {
         disposition: input.disposition,
         closeReason: input.closeReason,
         reason: input.reason,
-        expectedRevision: input.expectedRevision,
-        verifiedCurrent: input.disposition === "resolved",
+        expectedRevision,
         freshness,
         submission: { recordId, idempotencyKey: key, fingerprint },
         now: new Date().toISOString(),

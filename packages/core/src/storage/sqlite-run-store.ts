@@ -6102,8 +6102,8 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.routeWorkItem(id, input, now);
   }
 
-  acceptWorkItem(id: string, input: import("../work-item-types.js").WorkItemAcceptanceRequest, now: string): import("../work-item-types.js").WorkItemAcceptanceResult | undefined {
-    return this.workItems.acceptWorkItem(id, input, now, this.appServerState);
+  acceptWorkItem(id: string, input: import("../work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd = this.paths.cwd): import("../work-item-types.js").WorkItemAcceptanceResult | undefined {
+    return this.workItems.acceptWorkItem(id, input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
   }
 
   claimWorkItem(
@@ -6130,8 +6130,8 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.failWorkItem(id, input, now);
   }
 
-  appendWorkItemEvidence(input: import("../work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string): import("../work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined {
-    return this.workItemEvidence.appendWorkItemEvidence(input, now);
+  appendWorkItemEvidence(input: import("../work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string, event?: import("../work-item-evidence-types.js").WorkItemEvidenceEventOptions): import("../work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined {
+    return this.workItemEvidence.appendWorkItemEvidence(input, now, event ? { ...event, store: this.controlPlane } : undefined);
   }
 
   getWorkItemEvidence(id: string): import("../work-item-evidence-types.js").WorkItemEvidenceEntry | undefined {

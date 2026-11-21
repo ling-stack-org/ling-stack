@@ -6,17 +6,22 @@ import {
   type AppendWorkItemEvidenceResult,
   type ListWorkItemEvidenceOptions,
   type WorkItemEvidenceEntry,
+  type WorkItemEvidenceEventOptions,
   type WorkItemEvidenceKind,
   type WorkItemEvidenceSourceRef,
   type WorkItemEvidenceVisibility,
 } from "../../work-item-evidence-types.js";
 import { parseJson, readNullableString, readNumber, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 
 export class SqliteWorkItemEvidenceStore {
   constructor(private readonly context: SqliteStoreContext) {}
 
-  appendWorkItemEvidence(input: AppendWorkItemEvidenceInput, now: string): AppendWorkItemEvidenceResult | undefined {
+  appendWorkItemEvidence(
+    input: AppendWorkItemEvidenceInput, now: string,
+    events?: WorkItemEvidenceEventOptions & { readonly store: SqliteControlPlaneStore },
+  ): AppendWorkItemEvidenceResult | undefined {
     validateEvidenceInput(input);
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
@@ -98,8 +103,18 @@ export class SqliteWorkItemEvidenceStore {
       if (updated.changes !== 1) {
         throw new Error("work_item_evidence_work_item_revision_conflict");
       }
+      const committedRevision = workItemRevision + 1;
+      const event = events?.store.appendControlPlaneEventWithinTransaction({
+        workspaceId: entry.workspaceId, cwd: events.cwd, domain: "work_items",
+        entityType: "work_item", entityId: entry.workItemId,
+        idempotencyKey: `work-item-evidence:${entry.id}`,
+        ...(events.project?.(entry, committedRevision) ?? {
+          action: "work_item.evidence.updated",
+          data: { workItemId: entry.workItemId, evidenceId: entry.id, sequence, workItemRevision: committedRevision },
+        }),
+      }, now);
       this.context.database.exec("COMMIT");
-      return { status: "appended", entry, workItemRevision: workItemRevision + 1 };
+      return { status: "appended", entry, workItemRevision: committedRevision, ...(event ? { event } : {}) };
     } catch (error) {
       try { this.context.database.exec("ROLLBACK"); } catch { /* Preserve the original error. */ }
       throw error;

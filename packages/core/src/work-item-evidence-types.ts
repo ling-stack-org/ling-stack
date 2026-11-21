@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AppendControlPlaneEventInput, ControlPlaneEvent } from "./run-types.js";
 
 export type WorkItemEvidenceKind =
   | "observation"
@@ -55,6 +56,12 @@ export interface AppendWorkItemEvidenceResult {
   readonly status: "appended" | "replayed";
   readonly entry: WorkItemEvidenceEntry;
   readonly workItemRevision: number;
+  readonly event?: ControlPlaneEvent;
+}
+
+export interface WorkItemEvidenceEventOptions {
+  readonly cwd: string;
+  readonly project?: (entry: WorkItemEvidenceEntry, workItemRevision: number) => Pick<AppendControlPlaneEventInput, "action" | "data">;
 }
 
 export interface ListWorkItemEvidenceOptions {

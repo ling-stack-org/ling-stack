@@ -22,11 +22,12 @@ import {
   type WorkItemSourceType,
 } from "../../work-item-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { readString, stringifyJson } from "./helpers.js";
+import { readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { mapWorkItem } from "./runtime-work-mappers.js";
 import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
+import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -247,15 +248,31 @@ export class SqliteWorkItemStore {
     return this.getWorkItem(id);
   }
 
-  acceptWorkItem(id: string, input: WorkItemAcceptanceRequest, now: string, state: SqliteAppServerStateStore): WorkItemAcceptanceResult | undefined {
+  acceptWorkItem(
+    id: string,
+    input: WorkItemAcceptanceRequest,
+    now: string,
+    state: SqliteAppServerStateStore,
+    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string },
+  ): WorkItemAcceptanceResult | undefined {
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
     try {
       const result = this.acceptWithinTransaction(id, input, now, state);
+      if (!result || result.replayed) {
+        database.exec("COMMIT");
+        return result;
+      }
+      const { workItem, receipt } = result;
+      const event = events.store.appendControlPlaneEventWithinTransaction({
+        workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items",
+        entityType: "work_item", entityId: id, action: "work_item.accepted", idempotencyKey: receipt.id,
+        data: { workItemId: id, revision: receipt.workItemRevision, actorId: receipt.actorId, acceptanceId: receipt.id },
+      }, now);
       database.exec("COMMIT");
-      return result;
+      return { ...result, event };
     } catch (error) {
-      if (database.isTransaction) database.exec("ROLLBACK");
+      rollbackOwnedSqliteTransaction(database);
       throw error;
     }
   }

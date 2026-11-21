@@ -12,7 +12,7 @@ import {
   toAppServerCollaborationRecord,
   type WorkItemCollaborationRecord,
 } from "@ling-stack/core";
-import type { RunStore } from "@ling-stack/core";
+import type { ControlPlaneEvent, RunStore } from "@ling-stack/core";
 
 export class AppServerCollaborationError extends Error {
   constructor(
@@ -46,15 +46,16 @@ export function appendAppServerWorkItemCollaboration(
   store: RunStore,
   params: LingAppServerWorkItemCollaborationAppendParams,
   now: string,
-): LingAppServerWorkItemCollaborationAppendResult {
+): LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent } {
   const workItem = store.getWorkItem(params.workItemId);
   if (!workItem) throw new AppServerCollaborationError("work_item_not_found", `Work Item was not found: ${params.workItemId}`);
-  const result = appendWorkItemCollaboration(store, fromAppServerCollaborationParams(params), now);
+  const result = appendWorkItemCollaboration(store, fromAppServerCollaborationParams(params), now, params.cwd);
   if (!result) throw new AppServerCollaborationError("stale_revision", "The Work Item revision or collaboration revision is stale.");
   return {
     status: result.status,
     record: toAppServerCollaborationRecord(result.record),
     workItemRevision: result.workItemRevision,
+    ...(result.event ? { event: result.event } : {}),
   };
 }
 

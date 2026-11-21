@@ -8,7 +8,7 @@ import type {
   LingAppServerWorkItemCollaborationAppendParams,
   LingAppServerWorkItemCollaborationRecord,
 } from "@ling-stack/contracts";
-import type { RunStore } from "./run-types.js";
+import type { ControlPlaneEvent, RunStore } from "./run-types.js";
 
 export const WORK_ITEM_COLLABORATION_CONTENT_PREFIX = "ling.collaboration.v1:";
 
@@ -39,6 +39,7 @@ export interface AppendWorkItemCollaborationResult {
   readonly status: "appended" | "replayed";
   readonly record: WorkItemCollaborationRecord;
   readonly workItemRevision: number;
+  readonly event?: ControlPlaneEvent;
 }
 
 type CollaborationStore = Pick<RunStore, "getWorkItem" | "appendWorkItemEvidence" | "listWorkItemEvidence">;
@@ -47,6 +48,7 @@ export function appendWorkItemCollaboration(
   store: CollaborationStore,
   input: AppendWorkItemCollaborationInput,
   now: string,
+  eventCwd?: string,
 ): AppendWorkItemCollaborationResult | undefined {
   validateInput(input);
   const current = store.getWorkItem(input.workItemId);
@@ -65,10 +67,16 @@ export function appendWorkItemCollaboration(
     kind: evidenceKind(input.kind, input.action),
     content,
     sourceRefs: input.sourceRefs ?? [],
-  }, now);
+  }, now, eventCwd ? {
+    cwd: eventCwd,
+    project: (entry, workItemRevision) => ({
+      action: `work_item.collaboration.${input.kind}.${input.action}`,
+      data: { workItemId: entry.workItemId, collaborationId: entry.id, collaborationRevision: entry.sequence, workItemRevision },
+    }),
+  } : undefined);
   if (!result) return undefined;
   const record = decodeCollaborationRecord(result.entry.content, result.entry, result.workItemRevision);
-  return { status: result.status, record, workItemRevision: result.workItemRevision };
+  return { status: result.status, record, workItemRevision: result.workItemRevision, ...(result.event ? { event: result.event } : {}) };
 }
 
 export function listWorkItemCollaboration(
@@ -159,7 +167,8 @@ function validateInput(input: AppendWorkItemCollaborationInput): void {
   if (!input.workItemId.trim() || !input.actorId.trim() || !input.idempotencyKey.trim()) {
     throw new Error("work_item_collaboration_identity_required");
   }
-  if (!input.kind || !input.action || input.payload === undefined) {
+  if (!LING_APP_SERVER_COLLABORATION_KINDS.includes(input.kind)
+    || !LING_APP_SERVER_COLLABORATION_ACTIONS.includes(input.action) || input.payload === undefined) {
     throw new Error("work_item_collaboration_payload_required");
   }
   if (input.expectedWorkItemRevision !== undefined && (!Number.isInteger(input.expectedWorkItemRevision) || input.expectedWorkItemRevision < 1)) {
