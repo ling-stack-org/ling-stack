@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { DeviceLifecycleStatusV1, DeviceProfileV1 } from "@ling-stack/contracts";
+import type { DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DeviceProfileV1 } from "@ling-stack/contracts";
 import {
   type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
@@ -13,6 +13,7 @@ import {
   DeviceRunnerPlanningBridge,
   DeviceDeveloperSessionCoordinator,
   DeviceCollaborationCoordinator,
+  DeviceFleetProjection,
   EdgeRuntimeRegistry,
   HardwareProtocolWorkbench,
   modbusRtuRegisterCodec,
@@ -54,6 +55,7 @@ export interface DeviceSupportRuntime {
   listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
   diagnoseLinuxSshTarget(deviceId: string): Promise<DevicePlaybookRunResultV1>;
+  fleetHealth(workspaceId?: string): DeviceFleetHealthProjectionV1;
   close(): void;
 }
 
@@ -113,6 +115,7 @@ export function createDeviceSupportRuntime(options: {
   const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
+  const fleetProjection = new DeviceFleetProjection();
   let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
   const diagnosingLinux = new Set<string>();
 
@@ -235,6 +238,15 @@ export function createDeviceSupportRuntime(options: {
           store.markDeviceOffline(deviceId, now());
         }
         return result;
+      });
+    },
+    fleetHealth(workspaceId = DEFAULT_WORKSPACE_ID) {
+      return fleetProjection.build({
+        projectionId: `fleet:${workspaceId}`,
+        ownerScope: workspaceId,
+        generatedAt: now(),
+        profiles: store.listDevices(),
+        runtimes: edgeRuntimes.list(),
       });
     },
     close: () => {

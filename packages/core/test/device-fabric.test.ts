@@ -7,6 +7,7 @@ import {
   EdgeBridgeSession,
   DeviceEventBus,
   DeviceFabricError,
+  DeviceFleetProjection,
   DeviceLifecycleManager,
   DeviceResourceRegistry,
   DeviceSafetyBroker,
@@ -137,4 +138,31 @@ test("context packs and trace reports preserve bounded model input and cross-lay
   trace.start({ spanId: "span-1", traceId: "trace-1", kind: "model", sourceId: "runner", startedAt: now, status: "running", metadata: { taskId: "task-1" } });
   assert.equal(trace.finish("span-1", now, "ok").status, "ok");
   assert.equal(trace.report({ reportId: "report-1", runtimeId: "mobile-1", adapterId: "ble", adapterVersion: "1.0", targetProfile: "sensor", transport: "ble", checks: [{ id: "replay", status: "pass" }] }).checks[0].status, "pass");
+});
+
+test("fleet projection keeps lifecycle, adapter and edge runtime health aligned", () => {
+  const projection = new DeviceFleetProjection();
+  const generatedAt = "2026-11-21T00:10:00.000Z";
+  const profiles = [
+    {
+      device: { id: "edge-device", ownerScope: "workspace-1", displayName: "Edge board", kind: "linux", lifecycleStatus: "healthy", runtimeOwnerId: "edge-1", profileRevision: "profile-2", lastSeenAt: "2026-11-21T00:09:55.000Z" },
+      adapterId: "linux-ssh", adapterVersion: "2.0.0", transports: ["ssh"], connectionRefs: ["ssh:edge"], transportDeployments: [], profileRevision: "profile-2", source: "adapter",
+    },
+    {
+      device: { id: "offline-device", ownerScope: "workspace-1", displayName: "Offline", kind: "pc", lifecycleStatus: "offline", profileRevision: "profile-1" },
+      adapterId: "pc", adapterVersion: "1.0.0", transports: ["local_process"], connectionRefs: ["local"], transportDeployments: [], profileRevision: "profile-1", source: "adapter",
+    },
+    {
+      device: { id: "other-workspace", ownerScope: "workspace-2", displayName: "Other", kind: "linux", lifecycleStatus: "healthy", profileRevision: "profile-1" },
+      adapterId: "linux-ssh", adapterVersion: "2.0.0", transports: ["ssh"], connectionRefs: ["ssh:other"], transportDeployments: [], profileRevision: "profile-1", source: "adapter",
+    },
+  ] as const;
+  const result = projection.build({
+    projectionId: "fleet:workspace-1", ownerScope: "workspace-1", generatedAt, profiles,
+    runtimes: [{ runtimeId: "edge-1", displayName: "Edge", publicKeyFingerprint: "fp", contractMajor: 1, supportedTransports: ["ssh"], status: "offline", revision: 2, lastSeenAt: "2026-11-20T23:00:00.000Z" }],
+  });
+  assert.deepEqual(result.items.map(item => item.deviceId), ["edge-device", "offline-device"]);
+  assert.equal(result.items[0]?.health, "offline");
+  assert.deepEqual(result.items[0]?.reasons, ["runtime_offline"]);
+  assert.deepEqual(result.counts, { healthy: 0, degraded: 0, offline: 2, maintenance: 0, revoked: 0, retired: 0, unknown: 0 });
 });

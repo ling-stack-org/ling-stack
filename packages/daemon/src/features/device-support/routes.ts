@@ -16,7 +16,8 @@ export async function handleDeviceSupportRoute(
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
   const eventsPath = /^\/v1\/device-support\/tasks\/([^/]+)\/events$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
-  if (url.pathname !== "/v1/device-support/pc/diagnose" && !eventsPath && !linuxAction) return false;
+  const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
+  if (url.pathname !== "/v1/device-support/pc/diagnose" && !eventsPath && !linuxAction && !fleetHealth) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (eventsPath) {
     writeTaskEvents(url, eventsPath[1]!, request, response, runtime);
@@ -24,6 +25,19 @@ export async function handleDeviceSupportRoute(
   }
   if (linuxAction) {
     await handleLinuxSshRequest(linuxAction, request, response, runtime);
+    return true;
+  }
+  if (fleetHealth) {
+    if (request.method !== "GET") {
+      response.setHeader("Allow", "GET");
+      writePrivateJson(response, 405, { error: "method_not_allowed" });
+      return true;
+    }
+    try {
+      writePrivateJson(response, 200, runtime.fleetHealth());
+    } catch {
+      writePrivateJson(response, 503, { error: "service_unavailable" });
+    }
     return true;
   }
   if (request.method !== "POST") {

@@ -201,6 +201,14 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
   const url = `http://127.0.0.1:${address.port}/v1/device-support/pc/diagnose`;
+  const fleetUrl = `http://127.0.0.1:${address.port}/v1/device-support/fleet/health`;
+  assert.equal((await fetch(fleetUrl, { headers: { Origin: "https://example.invalid", ...headers } })).status, 403);
+  assert.equal((await fetch(fleetUrl, { headers })).status, 200);
+  const fleet = await (await fetch(fleetUrl, { headers })).json() as { projectionId: string; items: unknown[]; counts: Record<string, number> };
+  assert.equal(fleet.projectionId, "fleet:workspace_default");
+  assert.deepEqual(fleet.items, []);
+  assert.equal(fleet.counts.unknown, 0);
+  assert.equal((await fetch(fleetUrl, { method: "POST", headers })).status, 405);
   assert.equal((await fetch(url, { method: "POST", headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
   assert.equal((await fetch(url, { method: "POST" })).status, 401);
   assert.equal((await fetch(url, { headers })).status, 405);

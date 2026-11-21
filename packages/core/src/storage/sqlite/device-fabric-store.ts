@@ -423,6 +423,11 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment") : undefined;
   }
 
+  listEdgeRuntimes(): readonly EdgeRuntimeEnrollmentV1[] {
+    return (this.database.prepare("SELECT runtime_json FROM device_edge_runtimes ORDER BY runtime_id").all() as Row[])
+      .map(row => parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment"));
+  }
+
   saveTraceSpan(span: DeviceTraceSpanV1): DeviceTraceSpanV1 {
     if (!span.spanId.trim() || !span.traceId.trim() || !span.sourceId.trim()) throw new DeviceFabricError("revision_conflict", "trace span identity is invalid");
     const current = this.getTraceSpan(span.spanId);

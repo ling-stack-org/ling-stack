@@ -1,6 +1,7 @@
 import {
   DEVICE_KINDS_V1,
   type DeviceKindV1,
+  type DeviceLifecycleStatusV1,
   type DeviceTaskStatusV1,
   type DeviceTaskV1,
   type JsonValue,
@@ -247,6 +248,33 @@ export interface DeviceCredentialRevisionV1 {
   readonly status: "active" | "rotated" | "revoked";
   readonly authority: string;
   readonly changedAt: string;
+}
+
+export type DeviceFleetHealthStatusV1 = "healthy" | "degraded" | "offline" | "maintenance" | "revoked" | "retired" | "unknown";
+
+export interface DeviceFleetHealthItemV1 {
+  readonly deviceId: string;
+  readonly ownerScope: string;
+  readonly displayName: string;
+  readonly kind: DeviceKindV1;
+  readonly lifecycleStatus: DeviceLifecycleStatusV1;
+  readonly health: DeviceFleetHealthStatusV1;
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly profileRevision: string;
+  readonly runtimeOwnerId?: string;
+  readonly runtimeStatus?: EdgeRuntimeEnrollmentV1["status"];
+  readonly lastSeenAt?: string;
+  readonly reasons: readonly string[];
+  readonly evaluatedAt: string;
+}
+
+export interface DeviceFleetHealthProjectionV1 {
+  readonly projectionId: string;
+  readonly ownerScope: string;
+  readonly generatedAt: string;
+  readonly items: readonly DeviceFleetHealthItemV1[];
+  readonly counts: Readonly<Record<DeviceFleetHealthStatusV1, number>>;
 }
 
 export interface DeviceContextPackV1 {

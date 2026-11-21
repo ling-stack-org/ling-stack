@@ -5,9 +5,13 @@ import type {
   DeviceContextPackV1,
   DeviceEventEnvelopeV1,
   DeviceBridgeFrameV1,
+  DeviceFleetHealthItemV1,
+  DeviceFleetHealthProjectionV1,
+  DeviceFleetHealthStatusV1,
   DeviceGraphNodeV1,
   DeviceGraphRelationshipV1,
   DeviceLifecycleRecordV1,
+  DeviceProfileV1,
   DeviceResourceManifestV1,
   DeviceSafetyContextV1,
   DeviceTaskGraphNodeV1,
@@ -205,11 +209,99 @@ export class EdgeRuntimeRegistry {
   get(runtimeId: string): EdgeRuntimeEnrollmentV1 | undefined {
     return this.#persistence?.getEdgeRuntime(runtimeId) ?? this.#runtimes.get(runtimeId);
   }
+
+  list(): readonly EdgeRuntimeEnrollmentV1[] {
+    return this.#persistence?.listEdgeRuntimes?.() ?? [...this.#runtimes.values()];
+  }
 }
 
 export interface EdgeRuntimePersistence {
   getEdgeRuntime(runtimeId: string): EdgeRuntimeEnrollmentV1 | undefined;
   saveEdgeRuntime(runtime: EdgeRuntimeEnrollmentV1): EdgeRuntimeEnrollmentV1;
+  listEdgeRuntimes?(): readonly EdgeRuntimeEnrollmentV1[];
+}
+
+/** Projects durable device profiles and runtime enrollment into one bounded fleet view. */
+export class DeviceFleetProjection {
+  build(input: {
+    readonly projectionId: string;
+    readonly ownerScope: string;
+    readonly generatedAt: string;
+    readonly profiles: readonly DeviceProfileV1[];
+    readonly runtimes?: readonly EdgeRuntimeEnrollmentV1[];
+    readonly staleAfterMs?: number;
+  }): DeviceFleetHealthProjectionV1 {
+    if (!input.projectionId.trim() || !input.ownerScope.trim() || !Number.isFinite(Date.parse(input.generatedAt))) {
+      throw new DeviceFabricError("revision_conflict", "fleet projection identity or timestamp is invalid");
+    }
+    const staleAfterMs = input.staleAfterMs ?? 5 * 60_000;
+    if (!Number.isInteger(staleAfterMs) || staleAfterMs < 0) throw new DeviceFabricError("revision_conflict", "fleet stale window is invalid");
+    const runtimeById = new Map((input.runtimes ?? []).map(runtime => [runtime.runtimeId, runtime]));
+    const seen = new Set<string>();
+    const items = input.profiles
+      .filter(profile => profile.device.ownerScope === input.ownerScope)
+      .map(profile => {
+        if (seen.has(profile.device.id)) throw new DeviceFabricError("revision_conflict", "fleet projection contains a duplicate device");
+        seen.add(profile.device.id);
+        const runtime = profile.device.runtimeOwnerId ? runtimeById.get(profile.device.runtimeOwnerId) : undefined;
+        return this.projectItem(profile, runtime, input.generatedAt, staleAfterMs);
+      })
+      .sort((left, right) => left.deviceId.localeCompare(right.deviceId));
+    const counts = {
+      healthy: 0, degraded: 0, offline: 0, maintenance: 0, revoked: 0, retired: 0, unknown: 0,
+    } satisfies Record<DeviceFleetHealthStatusV1, number>;
+    for (const item of items) counts[item.health] += 1;
+    return { projectionId: input.projectionId, ownerScope: input.ownerScope, generatedAt: input.generatedAt, items, counts };
+  }
+
+  private projectItem(
+    profile: DeviceProfileV1,
+    runtime: EdgeRuntimeEnrollmentV1 | undefined,
+    evaluatedAt: string,
+    staleAfterMs: number,
+  ): DeviceFleetHealthItemV1 {
+    const reasons: string[] = [];
+    let health: DeviceFleetHealthStatusV1;
+    switch (profile.device.lifecycleStatus) {
+      case "retired": health = "retired"; reasons.push("device_retired"); break;
+      case "revoked": health = "revoked"; reasons.push("device_revoked"); break;
+      case "maintenance": health = "maintenance"; reasons.push("maintenance_scheduled"); break;
+      case "offline": health = "offline"; reasons.push("device_offline"); break;
+      case "degraded": health = "degraded"; reasons.push("device_degraded"); break;
+      case "healthy": health = "healthy"; break;
+      default: health = "unknown"; reasons.push("lifecycle_not_operational"); break;
+    }
+    if (health === "healthy" && profile.device.lastSeenAt !== undefined
+      && Date.parse(evaluatedAt) - Date.parse(profile.device.lastSeenAt) > staleAfterMs) {
+      health = "degraded";
+      reasons.push("last_seen_stale");
+    }
+    if (runtime) {
+      if (runtime.status === "revoked") { health = health === "retired" ? health : "revoked"; reasons.push("runtime_revoked"); }
+      else if (runtime.status === "offline") { health = health === "retired" || health === "revoked" ? health : "offline"; reasons.push("runtime_offline"); }
+      else if (runtime.status === "pending" && health === "healthy") { health = "degraded"; reasons.push("runtime_pending"); }
+      if (runtime.lastSeenAt !== undefined && Date.parse(evaluatedAt) - Date.parse(runtime.lastSeenAt) > staleAfterMs
+        && health === "healthy") { health = "degraded"; reasons.push("runtime_last_seen_stale"); }
+    } else if (profile.device.runtimeOwnerId && health === "healthy") {
+      health = "degraded";
+      reasons.push("runtime_missing");
+    }
+    return {
+      deviceId: profile.device.id,
+      ownerScope: profile.device.ownerScope,
+      displayName: profile.device.displayName,
+      kind: profile.device.kind,
+      lifecycleStatus: profile.device.lifecycleStatus,
+      health,
+      adapterId: profile.adapterId,
+      adapterVersion: profile.adapterVersion,
+      profileRevision: profile.profileRevision,
+      ...(profile.device.runtimeOwnerId ? { runtimeOwnerId: profile.device.runtimeOwnerId } : {}),
+      ...(runtime ? { runtimeStatus: runtime.status, ...(runtime.lastSeenAt ? { lastSeenAt: runtime.lastSeenAt } : {}) } : profile.device.lastSeenAt ? { lastSeenAt: profile.device.lastSeenAt } : {}),
+      reasons: [...new Set(reasons)],
+      evaluatedAt,
+    };
+  }
 }
 
 export class EdgeBridgeSession {
