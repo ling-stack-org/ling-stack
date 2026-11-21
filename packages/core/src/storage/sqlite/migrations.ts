@@ -283,6 +283,8 @@ const WORK_ITEM_CONTROL_MIGRATION_VERSION = 235;
 const WORK_ITEM_CONTROL_MIGRATION_NAME = "add_work_item_control_projection";
 const WORK_ITEM_EVIDENCE_MIGRATION_VERSION = 236;
 const WORK_ITEM_EVIDENCE_MIGRATION_NAME = "create_work_item_evidence";
+const APP_SERVER_STATE_MIGRATION_VERSION = 237;
+const APP_SERVER_STATE_MIGRATION_NAME = "create_app_server_state";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -6160,5 +6162,24 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         ON work_item_evidence(workspace_id, work_item_id, sequence);
     `);
     context.recordMigration(WORK_ITEM_EVIDENCE_MIGRATION_VERSION, WORK_ITEM_EVIDENCE_MIGRATION_NAME);
+  }
+  if (!context.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION)) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS app_server_state (
+        workspace_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        record_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        idempotency_key TEXT,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, kind, record_id),
+        UNIQUE (workspace_id, kind, idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_app_server_state_kind_updated
+        ON app_server_state(workspace_id, kind, updated_at);
+    `);
+    context.recordMigration(APP_SERVER_STATE_MIGRATION_VERSION, APP_SERVER_STATE_MIGRATION_NAME);
   }
 }

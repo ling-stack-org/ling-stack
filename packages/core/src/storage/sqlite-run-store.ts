@@ -863,6 +863,7 @@ import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-schedul
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkItemEvidenceStore } from "./sqlite/work-item-evidence-store.js";
+import { SqliteAppServerStateStore } from "./sqlite/app-server-state-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
@@ -1025,6 +1026,7 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
   private readonly workItemEvidence: SqliteWorkItemEvidenceStore;
+  private readonly appServerState: SqliteAppServerStateStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
@@ -1740,6 +1742,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
+    this.appServerState = new SqliteAppServerStateStore({ database: this.database });
     this.approvalResumes = new SqliteApprovalResumeStore(
       { database: this.database },
       {
@@ -6125,6 +6128,22 @@ export class SqliteRunStore implements RunStore {
 
   listWorkItemEvidence(options: import("../work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("../work-item-evidence-types.js").WorkItemEvidenceEntry[] {
     return this.workItemEvidence.listWorkItemEvidence(options);
+  }
+
+  getAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
+    return this.appServerState.get(kind, recordId, workspaceId);
+  }
+
+  listAppServerState(kind?: import("../app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord[] {
+    return this.appServerState.list(kind, workspaceId);
+  }
+
+  putAppServerState(input: import("../app-server-state-types.js").PutAppServerStateInput, now: string): import("../app-server-state-types.js").PutAppServerStateResult | undefined {
+    return this.appServerState.put(input, now);
+  }
+
+  deleteAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean {
+    return this.appServerState.delete(kind, recordId, workspaceId);
   }
 
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
