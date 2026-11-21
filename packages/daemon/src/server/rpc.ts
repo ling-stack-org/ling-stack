@@ -129,6 +129,10 @@ export interface RpcWebSocketServerHandle {
 const APP_SERVER_RPC_PATH = "/app-server/rpc";
 const APP_SERVER_MAX_REQUESTS = 64;
 const APP_SERVER_MAX_SUBSCRIPTIONS = 32;
+const legacyRpcMethods = new Set([
+  "initialize", "daemon.health", "controlPlane.snapshot", "controlPlane.events",
+  "controlPlane.subscribe", "controlPlane.unsubscribe", "runs.start", "runs.cancel",
+]);
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
   "turn/retry", "turn/steer", "thread/fork", "thread/compact/start", "thread/revert",
@@ -143,7 +147,6 @@ const operatorMethods = new Set([
   "thread/delete", "thread/goal/set", "thread/goal/pause", "thread/goal/resume",
   "thread/goal/clear", "thread/goal/complete", "plan/accept",
 ]);
-const legacyRunMethods = new Set(["runs.start", "runs.cancel"]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
@@ -278,6 +281,10 @@ class RpcConnection {
       this.sendError(id, -32000, "not_initialized", "Call initialize before other RPC methods.");
       return;
     }
+    if (!this.appServer && !legacyRpcMethods.has(request.method)) {
+      this.sendError(id, -32601, "method_not_found", `Unsupported RPC method: ${request.method}`);
+      return;
+    }
 
     const requestKey = request.id === undefined || request.method === "$/cancelRequest" ? undefined : jsonRpcIdKey(request.id);
     if (this.appServer && requestKey) {
@@ -301,8 +308,7 @@ class RpcConnection {
         return;
       }
       if (this.appServer && request.method === "initialized" && request.id === undefined) return;
-      const operator = operatorMethods.has(request.method) && (this.appServer || !legacyRunMethods.has(request.method));
-      const params = this.appServer || operator ? this.workspaceParams(request.params, operator) : request.params;
+      const params = this.appServer ? this.workspaceParams(request.params, operatorMethods.has(request.method)) : request.params;
       if (request.method === "controlPlane.subscribe") {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
@@ -425,7 +431,7 @@ class RpcConnection {
       case "thread/read":
         return this.readThread(params);
       case "thread/resume":
-        return this.appServer ? this.readThreadSnapshot(params) : this.readThread(params);
+        return this.readThreadSnapshot(params);
       case "thread/snapshot":
         return this.readThreadSnapshot(params);
       case "thread/list":
@@ -1526,7 +1532,7 @@ class RpcConnection {
     const instruction = readOptionalStringField(record, "userInstruction") ?? readOptionalStringField(record, "message");
     const shouldRun = record.execute === true || record.task !== undefined || record.providerPresetId !== undefined
       || record.provider !== undefined || record.executionBinding !== undefined;
-    if (this.appServer && shouldRun) {
+    if (shouldRun) {
       this.workspaceParams(params, true);
       return await this.startConversationTurn(record, thread, cwd, instruction);
     }
@@ -1557,13 +1563,7 @@ class RpcConnection {
       action: "turn.started",
       data: { threadId, turnId: turn.id, status: turn.status },
     });
-    if (!shouldRun) {
-      return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) };
-    }
-    const task = record.task ?? { id: `task_${turn.id}`, title: turn.title, prompt: instruction };
-    const runRequest = { ...record, cwd, threadId, turnId: turn.id, task };
-    const accepted = this.startRun(runRequest);
-    return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread), run: accepted };
+    return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) };
   }
 
   private async startConversationTurn(record: Record<string, unknown>, thread: import("@ling-stack/core").LingThread, cwd: string,

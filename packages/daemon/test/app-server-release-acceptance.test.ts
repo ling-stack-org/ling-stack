@@ -1102,6 +1102,40 @@ test("the MCP bridge calls the bound App Server and replays the same Thread on r
   assert.equal((await call("ling_thread_read", { threadId: first.thread.id })).thread.id, first.thread.id);
 });
 
+test("legacy RPC only exposes its existing methods and can still start and cancel a Run", { timeout: 20_000 }, async t => {
+  let finishResponse: () => void = () => undefined;
+  const response = new Promise<void>(resolve => { finishResponse = resolve; });
+  const provider = await startLoopbackPiProvider(async () => {
+    await response;
+    return { text: "Legacy Run response" };
+  });
+  t.after(async () => {
+    finishResponse();
+    await provider.close();
+  });
+  const fixture = await releaseFixture(t, { requireAuth: false });
+  const legacy = await fixture.connect("/rpc/stream");
+
+  for (const method of ["turn/start", "thread/subscribe", "workItem/subscribe"]) {
+    await assert.rejects(legacy.call(method), { code: "method_not_found" }, method);
+  }
+
+  await legacy.call("controlPlane.snapshot", { domains: ["providers"] });
+  const store = fixture.getStore();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const task = { id: "legacy-rpc-run", title: "Legacy Run", prompt: "Check the project instructions." };
+  const accepted = await legacy.call<{ accepted: boolean }>("runs.start", {
+    cwd: fixture.cwd, providerPresetId: preset.id, skipProviderPreflight: true, task, tools: ["read"],
+  });
+  assert.equal(accepted.accepted, true);
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const run = store.listRuns({ limit: 10 }).find(run => run.taskId === task.id);
+  assert.ok(run);
+  const cancelled = await legacy.call<{ cancelled: boolean }>("runs.cancel", { runId: run.id });
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(store.getRun(run.id)?.status, "cancelled");
+});
+
 const previousBuild = process.env.LING_APP_SERVER_PREVIOUS_BUILD;
 test("candidate App Server recovers v0.6.1 Thread state and preserves legacy clients", {
   skip: !previousBuild, timeout: 30_000,
@@ -1229,8 +1263,8 @@ type ReleaseRuntime = {
 const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunStore, resolveStoragePaths };
 
 async function releaseFixture(t: TestContext, {
-  runner, initialRuntime = candidateRuntime, harness,
-}: { runner?: RunnerRegistrationInput; initialRuntime?: ReleaseRuntime; harness?: DaemonConfig["harness"] } = {}) {
+  runner, initialRuntime = candidateRuntime, harness, requireAuth = true,
+}: { runner?: RunnerRegistrationInput; initialRuntime?: ReleaseRuntime; harness?: DaemonConfig["harness"]; requireAuth?: boolean } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
@@ -1240,7 +1274,7 @@ async function releaseFixture(t: TestContext, {
   const stores = new Map<string, SqliteRunStore>();
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
-    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken, harness,
+    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness,
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,
@@ -1286,11 +1320,11 @@ async function releaseFixture(t: TestContext, {
       daemon = makeDaemon(candidateRuntime);
       await daemon.start();
     },
-    async connect() {
+    async connect(path: "/app-server/rpc" | "/rpc/stream" = "/app-server/rpc") {
       const address = daemon.server.address();
       assert.ok(address && typeof address === "object");
-      const socket = new WebSocket(`ws://127.0.0.1:${address.port}/app-server/rpc?cwd=${encodeURIComponent(cwd)}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}?cwd=${encodeURIComponent(cwd)}`, {
+        headers: requireAuth ? { Authorization: `Bearer ${authToken}` } : undefined,
       });
       clients.add(socket);
       await once(socket, "open");
@@ -1310,8 +1344,13 @@ async function releaseFixture(t: TestContext, {
         if (response.error) throw Object.assign(new Error(response.error.message), { code: response.error.data.code });
         return response.result as T;
       };
-      await call("initialize", { protocolVersions: ["ling-app-server/1"] });
-      await call("workItem/list", {});
+      if (path === "/app-server/rpc") {
+        await call("initialize", { protocolVersions: ["ling-app-server/1"] });
+        await call("workItem/list");
+      } else {
+        const initialized = await call<{ ok: boolean }>("initialize");
+        assert.equal(initialized.ok, true);
+      }
       return { call, notices, close: () => socket.terminate() };
     },
   };
