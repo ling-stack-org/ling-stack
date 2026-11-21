@@ -54,6 +54,7 @@ test("canonical conversation items project to browser-safe Channel presentation 
       format: "markdown",
       streaming: false,
       deliveryStatus: "blocked",
+      presentationRole: "execution_summary",
       errorMessage: "target missing",
     },
     domainRefs: [{ type: "run", id: "run_1" }],

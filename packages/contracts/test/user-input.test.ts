@@ -11,7 +11,7 @@ const question = () => ({
   options: [{ optionId: "dark", label: "深色" }, { optionId: "light", label: "浅色" }],
 });
 const toolInput = () => ({ schemaVersion: 1, waitMode: "required", questions: [question()] });
-const request = () => ({
+const request = (): contract.UserInputAnswerRequestContextV1 => ({
   requestId: "request-1",
   requestVersion: 1,
   statusRevision: 3,
@@ -24,7 +24,7 @@ const submission = () => ({
   expectedVersion: 1,
   expectedStatusRevision: 3,
   idempotencyKey: "submit-1",
-  answers: [{ questionId: "theme", kind: "option", optionId: "dark" }],
+  answers: [{ questionId: "theme", kind: "option", optionId: "dark" }] as contract.UserInputAnswerV1[],
 });
 const answerCommand = () => ({
   schemaVersion: 1,
@@ -42,7 +42,7 @@ const answerCommand = () => ({
   idempotencyKey: "submit-1",
   answers: [{ questionId: "theme", kind: "option", optionId: "dark" }],
 });
-const parseTool = (value) => contract.parseUserInputToolInputV1(value);
+const parseTool = (value: unknown) => contract.parseUserInputToolInputV1(value);
 
 test("canonical question/answer anchors contain references only and cannot become plain channel messages", () => {
   const base = { schemaVersion: 1, id: "item-question", workspaceId: "workspace", channelId: "channel",
@@ -53,17 +53,21 @@ test("canonical question/answer anchors contain references only and cannot becom
   for (const kind of ["user_input_request", "user_input_answer"]) {
     const payload = { requestId: "request-1", requestVersion: 1, ...(kind === "user_input_answer" ? { answerId: "answer-1" } : {}) };
     const item = { ...base, kind, payload };
-    assert.equal(contract.isConversationItemV1(item), true);
+    assert.ok(contract.isConversationItemV1(item));
     assert.equal(contract.isChannelMessageConversationItem(item), false);
     assert.throws(() => contract.projectConversationItemToChannelMessage(item), /domain projection/);
     assert.equal(contract.isConversationItemV1({ ...item, payload: { ...payload, body: "duplicate narration" } }), false);
     assert.equal(contract.isConversationItemV1({ ...item, payload: { ...payload, requestVersion: 0 } }), false);
   }
 });
-const parseAnswer = (value) => contract.parseUserInputAnswerSubmissionV1(value);
-const validate = (value, context = request(), clock = now) =>
+const parseAnswer = (value: unknown) => contract.parseUserInputAnswerSubmissionV1(value);
+const validate = (value: unknown, context = request(), clock = now) =>
   contract.validateUserInputAnswerForRequestV1(value, context, clock);
-function error(result, code, reason) {
+function error(
+  result: contract.UserInputValidationResultV1<unknown>,
+  code: contract.UserInputValidationCodeV1,
+  reason?: contract.UserInputInvalidReasonV1,
+) {
   assert.equal(result.ok, false);
   assert.equal(result.error.code, code);
   if (reason) assert.equal(result.error.reason, reason);
@@ -130,10 +134,10 @@ test("question input cannot supply Host identity, grant, dependencies or an appr
     error(parseTool({ ...toolInput(), [key]: "foreign-or-forged" }), "invalid_input", "unknown_field");
   }
   const input = toolInput();
-  input.questions[0].defaultOptionId = "dark";
+  (input.questions[0] as { defaultOptionId?: string }).defaultOptionId = "dark";
   error(parseTool(input), "invalid_input", "unknown_field");
   const nested = toolInput();
-  nested.questions[0].options[0].approvalDecision = "approve_once";
+  (nested.questions[0].options[0] as { approvalDecision?: string }).approvalDecision = "approve_once";
   error(parseTool(nested), "invalid_input", "unknown_field");
 });
 
@@ -256,7 +260,7 @@ test("semantic validation rejects mismatched request or stale schema/status revi
 });
 
 test("every terminal request state blocks new answers, including answered retries", () => {
-  for (const status of ["answered", "skipped", "cancelled", "expired", "superseded"]) {
+  for (const status of ["answered", "skipped", "cancelled", "expired", "superseded"] as const) {
     error(validate(submission(), { ...request(), status }), "request_not_pending");
   }
   // A store may return a committed equivalent retry BEFORE calling this pending-only validator.
@@ -273,7 +277,7 @@ test("expiry is checked against an explicit Host clock with an inclusive boundar
 });
 
 test("semantic validation rejects labels, unknown questions/options and forbidden free text", () => {
-  const withAnswer = (answer) => ({ ...submission(), answers: [answer] });
+  const withAnswer = (answer: contract.UserInputAnswerV1) => ({ ...submission(), answers: [answer] });
   error(validate(withAnswer({ questionId: "other", kind: "text", text: "yes" })), "unknown_question");
   for (const optionId of ["unknown", "深色"]) {
     // Labels are not IDs; invalid identifier syntax fails before request matching.
@@ -293,7 +297,7 @@ test("required answers cannot be omitted while optional omissions remain valid",
 test("corrupt request context fails closed without interpreting answer text", () => {
   for (const context of [
     { ...request(), requestVersion: 0 }, { ...request(), statusRevision: NaN },
-    { ...request(), status: "running" }, { ...request(), requestId: "" },
+    { ...request(), status: "running" as contract.UserInputRequestStatusV1 }, { ...request(), requestId: "" },
     { ...request(), questions: [] }, { ...request(), questions: [question(), question()] },
   ]) error(validate(submission(), context), "invalid_request");
 });
@@ -338,7 +342,7 @@ test("prototype-looking ids use exact map membership, never inherited properties
   error(validate(answer, context), "unknown_question");
   const polluted = JSON.parse(JSON.stringify(toolInput()).replace('"schemaVersion":1', '"schemaVersion":1,"__proto__":{"grant":true}'));
   error(parseTool(polluted), "invalid_input", "unknown_field");
-  assert.equal({}.grant, undefined);
+  assert.equal(({} as { grant?: unknown }).grant, undefined);
 });
 
 test("UTF-16 and exact count/id boundaries are enforced consistently", () => {

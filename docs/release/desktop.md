@@ -118,7 +118,7 @@ corepack pnpm --filter @ling-stack/api-client test
 corepack pnpm --filter @ling-stack/daemon test
 node --test apps/desktop/tests/*.test.mjs
 node --test \
-  packages/contracts/test/computer-use.test.mjs \
+  packages/contracts/test/computer-use.test.ts \
   packages/api-client/test/computer-use.test.mjs \
   packages/daemon/test/computer-use-api.test.mjs \
   packages/daemon/test/computer-use-producer.test.mjs \

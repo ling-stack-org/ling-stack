@@ -8,15 +8,25 @@ import {
 } from "../dist/index.js";
 
 const now = "2026-10-27T08:00:00.000Z";
-const authority = () => ({
+type Mutation<T> = (fixture: T) => void;
+type RootIdentity = { device: string; inode: string | number; extra?: boolean };
+
+const authority = (): AuthorityFixture => ({
   kind: "channel_effective_policy_v1", channelId: "channel", workspaceId: "workspace",
   participantId: "qa", operationId: "validate", sourceItemId: "user", sourceRevision: 0,
   workspaceCwd: "/workspace", executionCwd: "/workspace",
   workspaceRootIdentity: { device: "1", inode: "2" }, executionRootIdentity: { device: "1", inode: "2" },
   channelUpdatedAt: now, workspacePolicyUpdatedAt: now, policyFingerprint: "a".repeat(64),
 });
-const source = { itemId: "user", revision: 0, actorType: "local_user", quote: "@QA 运行 node project/validate.mjs" };
-const policyScope = () => ({ kind: "node_module_closure_v1", projectRoot: ".", sourceRefs: [], policyAuthority: authority() });
+type AuthorityFixture = {
+  kind: string; channelId: string; workspaceId: string; participantId: string; operationId: string;
+  sourceItemId?: string; sourceRevision: number; workspaceCwd: string; executionCwd: string;
+  workspaceRootIdentity?: RootIdentity; executionRootIdentity: RootIdentity;
+  channelUpdatedAt: string; workspacePolicyUpdatedAt: string; policyFingerprint: string; allow?: boolean;
+};
+
+const source = { itemId: "user", revision: 0 as number | undefined, actorType: "local_user" as string | undefined, quote: "@QA 运行 node project/validate.mjs" };
+const policyScope = () => ({ kind: "node_module_closure_v1", projectRoot: ".", sourceRefs: [] as (typeof source)[], policyAuthority: authority() });
 const binding = () => ({ schemaVersion: 1, ownerParticipantId: "qa", ownerSelection: "explicit",
   inputRefs: [{ path: "project/validate.mjs", sourceRefs: [source] }], outputRefs: [], sourceRefs: [source],
   commandInputScope: policyScope(), effectScope: { readPaths: ["project/validate.mjs"], writePaths: [],
@@ -24,7 +34,7 @@ const binding = () => ({ schemaVersion: 1, ownerParticipantId: "qa", ownerSelect
 const operation = () => ({ id: "validate", kind: "run_command", targetKind: "command", required: true, dependsOn: [],
   targetRef: { type: "operation", id: "user:validate", label: "node project/validate.mjs" },
   commandMatchPolicy: { kind: "exact_command", command: "node project/validate.mjs" }, binding: binding() });
-const plan = operations => ({ bindingVersion: 1, operations, fingerprint: channelOperationPlanFingerprintV1(operations) });
+const plan = (operations: readonly unknown[]) => ({ bindingVersion: 1, operations, fingerprint: channelOperationPlanFingerprintV1(operations) });
 
 test("Host policy scope accepts a verified execution root without inventing user provenance", () => {
   const scope = policyScope();
@@ -41,12 +51,12 @@ test("policy authority is a strict identity snapshot, never a serialized permiss
     a => { a.sourceRevision = -1; }, a => { a.sourceRevision = 0.5; },
     a => { a.sourceRevision = Number.MAX_SAFE_INTEGER + 1; },
     a => { a.workspaceCwd = "relative"; }, a => { a.executionCwd = ""; },
-    a => { a.workspaceRootIdentity.device = ""; }, a => { a.workspaceRootIdentity.inode = 2; },
+    a => { a.workspaceRootIdentity!.device = ""; }, a => { a.workspaceRootIdentity!.inode = 2; },
     a => { a.executionRootIdentity.inode = "not-an-inode"; }, a => { a.executionRootIdentity.extra = true; },
     a => { a.channelUpdatedAt = "yesterday"; }, a => { a.workspacePolicyUpdatedAt = ""; },
     a => { a.policyFingerprint = "bad"; }, a => { a.policyFingerprint = "g".repeat(64); },
     a => { a.allow = true; }, a => { delete a.sourceItemId; }, a => { delete a.workspaceRootIdentity; },
-  ]) {
+  ] satisfies Mutation<AuthorityFixture>[]) {
     const scope = policyScope(); mutate(scope.policyAuthority);
     assert.equal(isChannelCommandInputScopeV1(scope), false, String(mutate));
   }
@@ -71,7 +81,7 @@ test("policy source identity must be present in the original local-user binding 
     b => { b.sourceRefs = [{ ...source, actorType: "ling_agent" }]; },
     b => { b.sourceRefs = [{ ...source, actorType: undefined }]; },
     b => { b.sourceRefs = [{ ...source, revision: undefined }]; },
-  ]) {
+  ] satisfies Mutation<ReturnType<typeof binding>>[]) {
     const value = binding(); mutate(value);
     assert.equal(isChannelOperationBindingV1(value), false, String(mutate));
   }
@@ -99,18 +109,21 @@ test("policy scopes keep a direct JavaScript entry input and one exact Node comm
     b => { b.effectScope.exactCommands.push("node project/second.mjs"); },
     b => { b.effectScope.exactCommands = ["python project/validate.mjs"]; },
     b => { b.effectScope.exactCommands = ["node project/validate.mjs\necho injected"]; },
-  ]) {
+  ] satisfies Mutation<ReturnType<typeof binding>>[]) {
     const value = binding(); mutate(value);
     assert.equal(isChannelOperationBindingV1(value), false, String(mutate));
   }
   const value = operation(); value.kind = "file_read"; value.targetKind = "file";
-  delete value.commandMatchPolicy;
+  delete (value as Partial<typeof value>).commandMatchPolicy;
   assert.equal(isChannelIntentExecutionPlanV1(plan([value])), false);
 });
 
 test("explicit user scopes retain their original representation and narrower directory provenance", () => {
   const ref = { ...source, quote: "在项目目录 project 内运行 node project/validate.mjs" };
-  const value = binding(); value.sourceRefs = [ref]; value.inputRefs[0].sourceRefs = [ref];
+  const value: Omit<ReturnType<typeof binding>, "commandInputScope"> & {
+    commandInputScope: Omit<ReturnType<typeof policyScope>, "policyAuthority">;
+  } = binding();
+  value.sourceRefs = [ref]; value.inputRefs[0].sourceRefs = [ref];
   value.commandInputScope = { kind: "node_module_closure_v1", projectRoot: "project",
     sourceRefs: [{ ...ref, quote: "项目目录 project 内" }] };
   assert.equal(isChannelCommandInputScopeV1(value.commandInputScope), true);

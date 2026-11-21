@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HTML_INTERACTIVE_CSP, injectInteractiveHtmlCsp } from "../dist/artifacts.js";
 
-const unescapeAttribute = (value) => value.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+const unescapeAttribute = (value: string) => value.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 const policyMeta = `<meta http-equiv="Content-Security-Policy" content="${HTML_INTERACTIVE_CSP}">`;
 
 test("interactive HTML default-denies remote subresources while keeping local interactivity", () => {
