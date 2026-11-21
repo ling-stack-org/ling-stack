@@ -38,3 +38,27 @@ test("instructions init discovers scoped project rules and blocks unversioned ap
   assert.equal(blocked.status, "blocked");
   assert.deepEqual(blocked.conflicts, ["apply requires expectedWorkspaceRevision"]);
 });
+
+test("verification state survives service recreation and marks in-flight work unknown", async () => {
+  const cwd = await realpath(await mkdtemp(join(tmpdir(), "ling-app-server-verify-state-")));
+  const records = new Map<string, { kind: string; recordId: string; payload: unknown; idempotencyKey?: string }>();
+  const store = {
+    putAppServerState(input: { kind: string; recordId: string; payload: unknown; idempotencyKey?: string }) {
+      records.set(`${input.kind}:${input.recordId}`, input);
+      return { status: "created" as const, record: { workspaceId: "workspace_default", revision: 1, createdAt: "now", updatedAt: "now", ...input } };
+    },
+    getAppServerState(kind: string, recordId: string) {
+      const value = records.get(`${kind}:${recordId}`);
+      return value ? { workspaceId: "workspace_default", revision: 1, createdAt: "now", updatedAt: "now", ...value } : undefined;
+    },
+  };
+  const storeRegistry = { getStore: () => store };
+  const context = { config: { defaultWorkspaceCwd: cwd }, storeRegistry } as never;
+  const first = new AppServerDevelopmentService({ context, storeRegistry: storeRegistry as never });
+  const plan = await first.planVerification({ cwd, candidate: { workspaceId: cwd, candidateDigest: "restart-candidate" } });
+  const operation = await first.startVerification({ planId: plan.planId, planRevision: plan.planRevision, candidateDigest: plan.candidate.candidateDigest, idempotencyKey: "restart-verify" });
+  const second = new AppServerDevelopmentService({ context, storeRegistry: storeRegistry as never });
+  const recovered = second.getVerification({ operationId: operation.operationId });
+  assert.equal(recovered.operation.status, "unknown");
+  assert.equal(recovered.operation.blocker, "daemon_restart_reconciliation_required");
+});

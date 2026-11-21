@@ -104,11 +104,12 @@ export class AppServerDevelopmentService {
       environmentRequirements: ["workspace_store", "authorized_host_execution"],
     };
     this.plans.set(plan.planId, plan);
+    this.persistState("verify_plan", plan.planId, plan, candidate.workspaceId, input.idempotencyKey);
     return plan;
   }
 
   async startVerification(input: LingAppServerVerifyStartParams): Promise<LingAppServerVerifyOperation> {
-    const plan = this.plans.get(input.planId);
+    const plan = this.plans.get(input.planId) ?? this.loadPlan(input.planId);
     if (!plan || plan.planRevision !== input.planRevision || plan.candidate.candidateDigest !== input.candidateDigest) {
       throw new Error("Verification plan is stale or unavailable.");
     }
@@ -132,12 +133,13 @@ export class AppServerDevelopmentService {
       })),
     };
     this.verifications.set(operationId, { operation, plan, cancelRequested: false });
+    this.persistState("verify_operation", operationId, { operation, plan, cancelRequested: false }, plan.candidate.workspaceId, input.idempotencyKey);
     void this.executeVerification(operationId, input.idempotencyKey);
     return operation;
   }
 
   getVerification(input: LingAppServerVerifyStatusParams): LingAppServerVerifyStatusResult {
-    const record = this.verifications.get(input.operationId);
+    const record = this.verifications.get(input.operationId) ?? this.loadVerification(input.operationId);
     if (!record) throw new Error("Verification operation was not found.");
     return { operation: record.operation };
   }
@@ -153,6 +155,11 @@ export class AppServerDevelopmentService {
       cancelRequested: true,
       operation: { ...record.operation, status: "cancelled", completedAt: new Date().toISOString() },
     });
+    this.persistState("verify_operation", input.operationId, {
+      ...record,
+      cancelRequested: true,
+      operation: { ...record.operation, status: "cancelled", completedAt: new Date().toISOString() },
+    }, record.plan.candidate.workspaceId, input.idempotencyKey);
     return { operationId: input.operationId, status: "cancelled" };
   }
 
@@ -282,9 +289,10 @@ export class AppServerDevelopmentService {
   }
 
   private async executeVerification(operationId: string, _idempotencyKey: string): Promise<void> {
-    const record = this.verifications.get(operationId);
+    const record = this.verifications.get(operationId) ?? this.loadVerification(operationId);
     if (!record || !this.options.executeVerificationCheck) return;
     this.verifications.set(operationId, { ...record, operation: { ...record.operation, status: "running", startedAt: new Date().toISOString() } });
+    this.persistState("verify_operation", operationId, this.verifications.get(operationId)!, record.plan.candidate.workspaceId);
     let failed = false;
     const checks = [...record.operation.checks];
     for (let index = 0; index < checks.length; index++) {
@@ -295,10 +303,55 @@ export class AppServerDevelopmentService {
       checks[index] = { ...checks[index]!, status };
       failed ||= status === "failed" || status === "unknown";
       this.verifications.set(operationId, { ...current, operation: { ...current.operation, checks: [...checks] } });
+      this.persistState("verify_operation", operationId, this.verifications.get(operationId)!, record.plan.candidate.workspaceId);
     }
     const current = this.verifications.get(operationId);
     if (!current) return;
     this.verifications.set(operationId, { ...current, operation: { ...current.operation, status: failed ? "failed" : "passed", completedAt: new Date().toISOString() } });
+    this.persistState("verify_operation", operationId, this.verifications.get(operationId)!, record.plan.candidate.workspaceId);
+  }
+
+  private storeForCwd(cwd: string): RunStore | undefined {
+    try { return this.storeRegistry().getStore(cwd); } catch { return undefined; }
+  }
+
+  private persistState(kind: "verify_plan" | "verify_operation", recordId: string, payload: unknown, cwd: string, idempotencyKey?: string): void {
+    const store = this.storeForCwd(cwd);
+    if (!store?.putAppServerState) return;
+    try { store.putAppServerState({ kind, recordId, payload, ...(idempotencyKey ? { idempotencyKey } : {}) }, new Date().toISOString()); } catch { /* durable state is best effort for legacy embeddings */ }
+  }
+
+  private loadPlan(planId: string): LingAppServerVerifyPlanResult | undefined {
+    const store = this.storeForCwd(this.options.context.config.defaultWorkspaceCwd);
+    const record = store?.getAppServerState?.("verify_plan", planId);
+    const plan = record?.payload as LingAppServerVerifyPlanResult | undefined;
+    if (!plan || plan.planId !== planId) return undefined;
+    this.plans.set(planId, plan);
+    return plan;
+  }
+
+  private loadVerification(operationId: string): VerifyRecord | undefined {
+    const store = this.storeForCwd(this.options.context.config.defaultWorkspaceCwd);
+    const record = store?.getAppServerState?.("verify_operation", operationId);
+    const value = record?.payload as VerifyRecord | undefined;
+    if (!value || value.operation?.operationId !== operationId) return undefined;
+    if (value.operation.status === "queued" || value.operation.status === "running") {
+      const recovered: VerifyRecord = {
+        ...value,
+        cancelRequested: false,
+        operation: {
+          ...value.operation,
+          status: "unknown",
+          completedAt: new Date().toISOString(),
+          blocker: "daemon_restart_reconciliation_required",
+        },
+      };
+      this.verifications.set(operationId, recovered);
+      this.persistState("verify_operation", operationId, recovered, value.plan.candidate.workspaceId, record?.idempotencyKey);
+      return recovered;
+    }
+    this.verifications.set(operationId, value);
+    return value;
   }
 }
 
