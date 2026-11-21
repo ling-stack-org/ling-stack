@@ -88,6 +88,14 @@ the broker's typed actions follow the existing execution and verification contra
 
 ### 3.1 Capture provenance and offline replay
 
+The Core hardware transport registry accepts platform-owned USB, BLE, serial,
+RS-485, CAN, OBD and vendor bridges. A registered transport emits timestamped
+frames from one bound target through an asynchronous capture session. The registry
+enforces duration, frame-count and frame-size limits, then creates the same durable
+capture shape used by offline replay. A failed or truncated capture retains its
+completed frames and explicit loss metadata. Driver installation, OS permission,
+device enrollment and physical bench acceptance remain with the host adapter.
+
 - Record target and protocol profile revision, interface or bus channel, acknowledged
   serial or GATT settings, capture source, direction, sequence, bytes or typed fields,
   timestamps, and errors. Mark the capture as host I/O, instrument observation, or
