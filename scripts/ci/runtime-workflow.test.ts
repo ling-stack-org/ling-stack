@@ -90,7 +90,7 @@ test("timing telemetry is independent of the mandatory quality gate", () => {
   const telemetry = job("timing-telemetry");
   assert.doesNotMatch(quality, /timing-telemetry|ci-telemetry|continue-on-error/u);
   assert.match(telemetry, /^    needs: \[scope, quality\]$/mu);
-  assert.match(telemetry, /^    if: always\(\)$/mu);
+  assert.match(telemetry, /^    if: \$\{\{ always\(\) && needs\.scope\.outputs\.documentation-only != 'true' \}\}$/mu);
   assert.match(telemetry, /^    timeout-minutes: 8$/mu);
   assert.match(telemetry, /^    continue-on-error: true$/mu);
   assert.match(telemetry, /permissions:\n      actions: read\n      contents: read/u);
@@ -212,10 +212,11 @@ test("CI tools' TypeScript tests are discovered and typechecked in the required 
   assert.match(daemon.scripts.test, /pnpm test:ci/u);
 });
 
-test("complete PR history scans ignore docs-only final diffs while Draft previews stay deferred", () => {
+test("only verified documentation history skips the common runner before a complete PR history scan", () => {
   const common = job("common-fast");
-  assert.doesNotMatch(common, /^    if:/mu, "the common job must not bypass history scans based on file scope");
-  assert.doesNotMatch(workflow, /^\s+paths(?:-ignore)?:/mu, "docs-only final diffs must still trigger validation");
+  assert.match(common, /^    if: needs\.scope\.outputs\.documentation-only != 'true'$/mu);
+  assert.match(job("scope"), /--pr-head="\$PR_HEAD_SHA"/u);
+  assert.doesNotMatch(workflow, /^    paths(?:-ignore)?:/mu);
   assert.match(common, /^      - name: Scan Git history for secrets\n        if: needs\.scope\.outputs\.execution-tier == 'complete'$/mu);
 });
 

@@ -25,9 +25,13 @@ jobs:
     name: Determine CI scope
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     outputs:
       execution-tier: ${{ steps.policy.outputs.execution-tier }}
       mode: ${{ steps.classify.outputs.mode }}
+      documentation-only: ${{ steps.classify.outputs.documentation-only }}
       packages: ${{ steps.classify.outputs.packages }}
       test-packages: ${{ steps.classify.outputs.test-packages }}
       typecheck-packages: ${{ steps.classify.outputs.typecheck-packages }}
@@ -35,6 +39,7 @@ jobs:
       assurance-selected: ${{ steps.classify.outputs.assurance-selected }}
       build-selected: ${{ steps.classify.outputs.build-selected }}
       typecheck-selected: ${{ steps.classify.outputs.typecheck-selected }}
+      provider-model-catalog: ${{ steps.classify.outputs.provider-model-catalog }}
       unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
       daemon-matrix: ${{ steps.test-plan.outputs.daemon-matrix }}
       unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
@@ -65,12 +70,37 @@ jobs:
           printf 'execution-tier=%s\n' "$execution_tier" >> "$GITHUB_OUTPUT"
           printf 'CI execution tier: **%s**\n' "$execution_tier" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verify model catalog artifact provenance
+        id: catalog-proof
+        if: >-
+          ${{ github.event_name == 'pull_request' &&
+              !contains(github.event.pull_request.labels.*.name, 'full-ci') &&
+              github.repository == 'ling-stack-org/ling-stack' &&
+              github.event.pull_request.user.login == 'ling-stack-model-catalog[bot]' &&
+              github.event.pull_request.head.repo.full_name == github.repository &&
+              github.event.pull_request.head.ref == 'automation/provider-model-catalog' &&
+              github.event.pull_request.base.ref == github.event.repository.default_branch }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const { lstatSync, readFileSync } = require('node:fs');
+            const { pathToFileURL } = require('node:url');
+            const { findProviderModelCatalogProof } = await import(pathToFileURL(
+              process.env.GITHUB_WORKSPACE + '/scripts/ci/provider-model-catalog-proof.mjs'));
+            const path = 'packages/core/src/provider-model-catalog.generated.ts';
+            if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) return;
+            const source = readFileSync(path);
+            const digest = await findProviderModelCatalogProof({ github, context, source });
+            core.setOutput('digest', digest ?? '');
+
       - name: Classify changed files
         id: classify
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          CATALOG_PROOF: ${{ steps.catalog-proof.outputs.digest }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
@@ -78,6 +108,8 @@ jobs:
               --event="$GITHUB_EVENT_NAME" \
               --base="$BASE_SHA" \
               --head=HEAD \
+              --pr-head="$PR_HEAD_SHA" \
+              --catalog-proof="$CATALOG_PROOF" \
               --force-full="$FORCE_FULL")"
           else
             scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
@@ -87,6 +119,7 @@ jobs:
           const scope = JSON.parse(process.env.SCOPE_JSON);
           const outputs = {
             mode: scope.mode,
+            "documentation-only": String(scope.documentationOnly === true),
             packages: JSON.stringify(scope.packages),
             "test-packages": JSON.stringify(scope.testPackages),
             "typecheck-packages": JSON.stringify(scope.typecheckPackages),
@@ -94,6 +127,7 @@ jobs:
             "assurance-selected": String(scope.assurance),
             "build-selected": String(scope.packages.length > 0),
             "typecheck-selected": String(scope.typecheckPackages.length > 0),
+            "provider-model-catalog": String(scope.providerModelCatalog === true),
             daemon: String(scope.daemon),
             "daemon-platforms": JSON.stringify(scope.daemonPlatforms),
             "linux-contract": String(scope.linuxContract),
@@ -121,6 +155,10 @@ jobs:
             --execution-tier="${{ steps.policy.outputs.execution-tier }}" \
             --output=.codex-artifacts/ci/scope-report.md > /dev/null
 
+      - name: Record documentation-only scope
+        if: steps.classify.outputs.documentation-only == 'true'
+        run: printf 'The PR diff and history contain only documentation changes.\n' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Restore timing hints once for the entire run
         if: steps.policy.outputs.execution-tier == 'complete' && (steps.classify.outputs.daemon == 'true' || contains(steps.classify.outputs.test-packages, '"@ling-stack/core"'))
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -131,6 +169,7 @@ jobs:
 
       - name: Plan complete core and daemon file coverage
         id: test-plan
+        if: steps.classify.outputs.documentation-only != 'true'
         env:
           SELECTED_TEST_PACKAGES: ${{ steps.classify.outputs.test-packages }}
           DAEMON_PLATFORMS: ${{ steps.classify.outputs.daemon-platforms }}
@@ -167,6 +206,7 @@ jobs:
             --output=.codex-artifacts/ci/full-test-plan.json > /dev/null
 
       - name: Audit selected test plan against forced full plan
+        if: steps.classify.outputs.documentation-only != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -189,7 +229,7 @@ jobs:
           path: .codex-artifacts/ci/test-plan.json
 
       - name: Preserve the scope audit and selection report
-        if: always()
+        if: always() && steps.classify.outputs.documentation-only != 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-scope-report
@@ -205,6 +245,7 @@ jobs:
   common-fast:
     name: Common checks (fast lane)
     needs: scope
+    if: needs.scope.outputs.documentation-only != 'true'
     runs-on: ubuntu-latest
     # A policy or ignore-file change forces a complete repository-history
     # Gitleaks scan. Keep this lane bounded, but allow that audit to finish on
@@ -466,6 +507,13 @@ jobs:
 
       - name: Typecheck selected packages without rebuilding dependencies
         run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
+
+      - name: Test Core provider model catalog consumers
+        if: needs.scope.outputs.provider-model-catalog == 'true'
+        working-directory: packages/core
+        run: >-
+          node --test test/provider-check.test.*
+          test/provider-model-capabilities.test.* test/provider-thinking-levels.test.*
 
       - name: Check Desktop worktree confirmation IPC
         if: contains(needs.scope.outputs.typecheck-packages, '@ling-stack/desktop')
@@ -883,7 +931,8 @@ jobs:
     # The main ruleset requires this check name.
     name: Typecheck, unit tests, and Web build
     needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
-    if: always()
+    # A skipped job publishes the required check for verified docs-only PRs.
+    if: ${{ always() && (needs.scope.result != 'success' || needs.scope.outputs.documentation-only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -961,7 +1010,7 @@ jobs:
   timing-telemetry:
     name: CI timing telemetry
     needs: [scope, quality]
-    if: always()
+    if: ${{ always() && needs.scope.outputs.documentation-only != 'true' }}
     runs-on: ubuntu-latest
     # Artifact download plus the Actions API can exceed three minutes on a
     # busy hosted runner. Telemetry is best-effort, so give it a bounded window

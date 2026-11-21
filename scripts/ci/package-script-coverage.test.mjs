@@ -7,6 +7,7 @@ import { classifyChangedFiles } from "./classify-scope.mjs";
 const root = new URL("../../", import.meta.url);
 const scope = classifyChangedFiles({ files: [], eventName: "schedule" });
 const manifests = new Map();
+const sourcePackages = [];
 for (const directory of ["apps", "packages"]) {
   for (const entry of readdirSync(new URL(`${directory}/`, root), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -14,11 +15,20 @@ for (const directory of ["apps", "packages"]) {
     try {
       const manifest = JSON.parse(readFileSync(path, "utf8"));
       manifests.set(manifest.name, manifest);
+      if (directory === "packages") sourcePackages.push(manifest);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
   }
 }
+
+test("workspace modules register local and CI validation entrypoints", () => {
+  const entries = ["build", "build:ci", "typecheck", "typecheck:ci", "test", "test:ci"];
+  const missing = sourcePackages.flatMap(({ name, scripts }) => entries
+    .filter(task => typeof scripts?.[task] !== "string" || !scripts[task].trim())
+    .map(task => `${name} ${task}`));
+  assert.deepEqual(missing, []);
+});
 
 // Static coverage complements the runner's fail-closed selected-script check.
 for (const [task, selected] of [["typecheck:ci", scope.typecheckPackages], ["test:ci", scope.testPackages]]) {

@@ -3,6 +3,7 @@ const MAX_PROOF_AGE = 24 * 60 * 60 * 1000;
 
 // Overmatch directory inputs (including dotfiles) rather than miss source changes.
 export function isCodeqlInput(file) {
+  if (/^(?:apps|packages|scripts)\/(?:.*\/)?README\.md$/iu.test(file)) return false;
   return /^(?:\.github\/(?:actions|codeql|workflows)|apps|packages|scripts|patches)\//u.test(file)
     || /\.(?:[cm]?[jt]sx?|vue|svelte|html?)$/u.test(file)
     || /(?:^|\/)(?:package\.json|tsconfig[^/]*\.json|\.gitattributes)$/u.test(file)
