@@ -50,8 +50,6 @@ export function evaluateDeliberationTrigger(
   }
   return { shouldOpen: false, requiresHumanDecision: false, reason: "The signal does not meet the configured deliberation trigger.", triggerKind: signal.kind };
 }
-
 export function defaultDeliberationTriggerPolicy(): LingAppServerDeliberationTriggerPolicyV1 {
   return { ...defaultPolicy };
 }
-

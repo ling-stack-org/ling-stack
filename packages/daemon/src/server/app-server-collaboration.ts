@@ -23,7 +23,6 @@ export class AppServerCollaborationError extends Error {
     this.name = "AppServerCollaborationError";
   }
 }
-
 export function readAppServerWorkItemCollaboration(
   store: RunStore,
   params: LingAppServerWorkItemCollaborationReadParams,
@@ -69,4 +68,3 @@ export function readAppServerWorkItemCollaborationKind(
   const result = readAppServerWorkItemCollaboration(store, { workItemId, kind, afterRevision, limit });
   return result.records;
 }
-

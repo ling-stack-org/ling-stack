@@ -18,7 +18,6 @@ export interface WorkItemCollaborationSourceRef {
   readonly revision?: string;
   readonly digest?: string;
 }
-
 export interface WorkItemCollaborationRecord extends Omit<LingAppServerWorkItemCollaborationRecord, "sourceRefs"> {
   readonly sourceRefs: readonly WorkItemCollaborationSourceRef[];
 }
@@ -189,4 +188,3 @@ export function fromAppServerCollaborationParams(input: LingAppServerWorkItemCol
     idempotencyKey: input.idempotencyKey,
   };
 }
-
