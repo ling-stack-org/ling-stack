@@ -527,6 +527,14 @@ profile.update
 security.unpair
 ```
 
+Device task access is negotiated separately with the
+ling.device-tasks.v1 WebSocket subprotocol. A session that does not request this
+subprotocol receives no device capabilities or device snapshots. A negotiated session
+can read workspace-scoped device summaries, recent daemon-owned task states, and a
+specific task's attempts and verification references. The PC remains the execution
+owner. Mobile caches the last authorized projection and marks it stale while offline.
+Target credentials and adapter payloads remain with the executing PC.
+
 The 2026-08-01 completion scope adds independently removable capabilities and commands:
 
 ```text

@@ -2,8 +2,10 @@ import {
   DEVICE_KINDS_V1,
   DEVICE_LIFECYCLE_STATUSES_V1,
   DEVICE_TASK_STATUSES_V1,
+  REMOTE_DEVICE_RECENT_TASK_LIMIT_V1,
   type RemoteDeviceListCommandV1,
   type RemoteDeviceListSnapshotV1,
+  type RemoteDeviceRecentTaskV1,
   type RemoteDeviceTaskApproveCommandV1,
   type RemoteDeviceTaskRevokeCommandV1,
   type RemoteDeviceTaskSnapshotV1,
@@ -78,9 +80,29 @@ export function validateDeviceTaskRevokeCommand(value: unknown, path: string): R
 
 export function validateDeviceListSnapshot(value: unknown, path: string): RemoteDeviceListSnapshotV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(record, ["workspaceId", "generatedAt", "devices"], [], path);
+  assertStrictKeys(record, ["workspaceId", "generatedAt", "devices"], ["recentTasks"], path);
   const devices = Array.isArray(record.devices) ? record.devices.map((device, index) => validateDeviceSummary(device, `${path}.devices[${index}]`)) : invalid(`${path}.devices`);
-  return { workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`), generatedAt: expectRfc3339(record.generatedAt, `${path}.generatedAt`), devices };
+  return {
+    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+    generatedAt: expectRfc3339(record.generatedAt, `${path}.generatedAt`),
+    devices,
+    ...(record.recentTasks === undefined ? {} : { recentTasks: validateRecentTasks(record.recentTasks, `${path}.recentTasks`) }),
+  };
+}
+
+function validateRecentTasks(value: unknown, path: string): readonly RemoteDeviceRecentTaskV1[] {
+  if (!Array.isArray(value) || value.length > REMOTE_DEVICE_RECENT_TASK_LIMIT_V1) return invalid(path);
+  return value.map((entry, index) => {
+    const itemPath = `${path}[${index}]`;
+    const record = expectRecord(entry, itemPath);
+    assertStrictKeys(record, ["taskId", "primaryTargetDeviceId", "status", "updatedAt"], [], itemPath);
+    return {
+      taskId: expectIdentifier(record.taskId, `${itemPath}.taskId`),
+      primaryTargetDeviceId: expectIdentifier(record.primaryTargetDeviceId, `${itemPath}.primaryTargetDeviceId`),
+      status: expectEnum(record.status, DEVICE_TASK_STATUSES_V1, `${itemPath}.status`),
+      updatedAt: expectRfc3339(record.updatedAt, `${itemPath}.updatedAt`),
+    };
+  });
 }
 
 export function validateDeviceTaskSnapshot(value: unknown, path: string): RemoteDeviceTaskSnapshotV1 {

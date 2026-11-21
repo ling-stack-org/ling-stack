@@ -6,6 +6,9 @@ import type {
   JsonValue,
 } from "./device.js";
 
+export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1 = "ling.device-tasks.v1";
+export const REMOTE_DEVICE_RECENT_TASK_LIMIT_V1 = 20;
+
 export interface RemoteDeviceSummaryV1 {
   readonly deviceId: string;
   readonly displayName: string;
@@ -20,6 +23,14 @@ export interface RemoteDeviceListSnapshotV1 {
   readonly workspaceId: string;
   readonly generatedAt: string;
   readonly devices: readonly RemoteDeviceSummaryV1[];
+  readonly recentTasks?: readonly RemoteDeviceRecentTaskV1[];
+}
+
+export interface RemoteDeviceRecentTaskV1 {
+  readonly taskId: string;
+  readonly primaryTargetDeviceId: string;
+  readonly status: DeviceTaskStatusV1;
+  readonly updatedAt: string;
 }
 
 export interface RemoteDeviceTaskSummaryV1 {

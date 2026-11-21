@@ -1,9 +1,11 @@
-import type {
-  RemoteDeviceListSnapshotV1,
-  RemoteDeviceTaskApproveCommandV1,
-  RemoteDeviceTaskSnapshotV1,
-  RemoteDeviceTaskRevokeCommandV1,
-  RemoteDeviceTaskStatusCommandV1,
+import {
+  REMOTE_DEVICE_RECENT_TASK_LIMIT_V1,
+  type DeviceTaskV1,
+  type RemoteDeviceListSnapshotV1,
+  type RemoteDeviceTaskApproveCommandV1,
+  type RemoteDeviceTaskSnapshotV1,
+  type RemoteDeviceTaskRevokeCommandV1,
+  type RemoteDeviceTaskStatusCommandV1,
 } from "@ling-stack/contracts";
 import type { DeviceCapabilityBroker, SqliteDeviceSupportStore } from "@ling-stack/core";
 import { RemoteAccessError } from "./errors.js";
@@ -40,14 +42,20 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
             adapterVersion: profile.adapterVersion,
             ...(profile.device.lastSeenAt ? { lastSeenAt: profile.device.lastSeenAt } : {}),
           })),
+        recentTasks: options.store.listRecentDaemonTasks(workspaceId, REMOTE_DEVICE_RECENT_TASK_LIMIT_V1)
+          .map(task => ({
+            taskId: task.id,
+            primaryTargetDeviceId: task.targetDeviceIds[0]!,
+            status: task.status,
+            updatedAt: task.updatedAt,
+          })),
       };
     },
     taskSnapshot(input) {
       return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
     },
     async approveTask(input) {
-      const task = options.store.getTask(input.taskId);
-      assertTaskWorkspace(options.store, task, input.workspaceId);
+      requireDaemonTask(options.store, input.taskId, input.workspaceId);
       if (options.approve) {
         await options.approve(input);
       } else if (options.broker) {
@@ -60,9 +68,7 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
       return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
     },
     revokeTask(input) {
-      const task = options.store.getTask(input.taskId);
-      assertTaskWorkspace(options.store, task, input.workspaceId);
-      if (!task) throw new RemoteAccessError("pc_unavailable", "Device task is unavailable.", true);
+      const task = requireDaemonTask(options.store, input.taskId, input.workspaceId);
       if (!["succeeded", "failed", "cancelled"].includes(task.status)) {
         options.store.transitionTask(task.id, "cancelled", {}, now());
       }
@@ -72,9 +78,7 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
 }
 
 function snapshotForTask(store: SqliteDeviceSupportStore, workspaceId: string, taskId: string, generatedAt: string): RemoteDeviceTaskSnapshotV1 {
-  const task = store.getTask(taskId);
-  assertTaskWorkspace(store, task, workspaceId);
-  if (!task) throw new RemoteAccessError("pc_unavailable", "Device task is unavailable.", true);
+  const task = requireDaemonTask(store, taskId, workspaceId);
   return {
     workspaceId,
     generatedAt,
@@ -94,6 +98,7 @@ function snapshotForTask(store: SqliteDeviceSupportStore, workspaceId: string, t
 }
 
 function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: NonNullable<ReturnType<SqliteDeviceSupportStore["getTask"]>>): { readonly pendingApproval?: import("@ling-stack/contracts").RemoteDeviceApprovalPreviewV1 } {
+  if (task.status !== "awaiting_approval") return {};
   const proposal = store.getActionProposal(task.id);
   if (!proposal) return {};
   const snapshot = store.getCapabilitySnapshot(proposal.request.capabilitySnapshotId);
@@ -115,8 +120,11 @@ function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: NonNullab
   };
 }
 
-function assertTaskWorkspace(store: SqliteDeviceSupportStore, task: ReturnType<SqliteDeviceSupportStore["getTask"]>, workspaceId: string): void {
-  if (!task) throw new RemoteAccessError("pc_unavailable", "Device task is unavailable.", true);
-  const belongs = task.targetDeviceIds.every(deviceId => store.getDevice(deviceId)?.device.ownerScope === workspaceId);
+function requireDaemonTask(store: SqliteDeviceSupportStore, taskId: string, workspaceId: string): DeviceTaskV1 {
+  const task = store.getTask(taskId);
+  if (!task || task.ownerKind !== "daemon") throw new RemoteAccessError("pc_unavailable", "PC device task is unavailable.");
+  const belongs = task.targetDeviceIds.length > 0
+    && task.targetDeviceIds.every(deviceId => store.getDevice(deviceId)?.device.ownerScope === workspaceId);
   if (!belongs) throw new RemoteAccessError("workspace_not_allowed", "Device task is outside the paired workspace.");
+  return task;
 }

@@ -420,6 +420,24 @@ test("device task commands and projections stay workspace-scoped and strictly ty
     },
   } as const;
   assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(event)), event);
+
+  const overview = {
+    ...event,
+    type: "device.list_snapshot",
+    payload: {
+      workspaceId: "workspace-1",
+      generatedAt: now,
+      devices: [],
+      recentTasks: [{ taskId: "task-1", primaryTargetDeviceId: "device-1", status: "awaiting_approval", updatedAt: now }],
+    },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(overview)), overview);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...overview, payload: { ...overview.payload, recentTasks: [{ ...overview.payload.recentTasks[0], credentials: "forbidden" }] },
+  })), /unknown field/u);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...overview, payload: { ...overview.payload, recentTasks: Array.from({ length: 21 }, () => overview.payload.recentTasks[0]) },
+  })), /Device projection is invalid/u);
 });
 
 test("conversation snapshots reject cross-workspace and duplicate projected entities", () => {

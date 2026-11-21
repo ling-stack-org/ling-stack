@@ -256,28 +256,26 @@ export class RemoteGatewaySession {
         this.options.onSelfUnpair?.();
         return;
       case "device.list": {
-        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).listDevices(frame.payload.workspaceId);
+        this.sendEvent("device.list_snapshot", snapshot, this.workspaceStream(), frame.messageId);
         this.complete(frame, { kind: "device_list_requested" });
-        this.sendEvent("device.list_snapshot", this.options.deviceFacade.listDevices(frame.payload.workspaceId), this.workspaceStream(), frame.messageId);
         return;
       }
       case "device.task.status": {
-        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).taskSnapshot(frame.payload);
+        this.sendEvent("device.task.snapshot", snapshot, this.workspaceStream(), frame.messageId);
         this.complete(frame, { kind: "device_task_status_requested", taskId: frame.payload.taskId });
-        this.sendEvent("device.task.snapshot", this.options.deviceFacade.taskSnapshot(frame.payload), this.workspaceStream(), frame.messageId);
         return;
       }
       case "device.task.approve": {
-        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
-        const snapshot = await this.options.deviceFacade.approveTask(frame.payload);
+        const snapshot = await this.requireDeviceFacade(frame.payload.workspaceId).approveTask(frame.payload);
         this.complete(frame, { kind: "device_task_approved", taskId: frame.payload.taskId });
         this.sendEvent("device.task.snapshot", snapshot, this.workspaceStream(), frame.messageId);
         this.options.onMutation?.();
         return;
       }
       case "device.task.revoke": {
-        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
-        const snapshot = this.options.deviceFacade.revokeTask(frame.payload);
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).revokeTask(frame.payload);
         this.complete(frame, { kind: "device_task_revoked", taskId: frame.payload.taskId });
         this.sendEvent("device.task.snapshot", snapshot, this.workspaceStream(), frame.messageId);
         this.options.onMutation?.();
@@ -322,7 +320,7 @@ export class RemoteGatewaySession {
       this.sendEvent("workspace.summary", this.options.facade.workspaceSummary(), stream);
       this.sendEvent("conversation.list_snapshot", this.options.facade.listConversations(stream.scope.workspaceId), stream);
       this.sendEvent("profile.snapshot", this.options.facade.readProfile(stream.scope.workspaceId), stream);
-      if (this.options.deviceFacade) {
+      if (this.options.deviceFacade && this.options.policy.capabilities.includes("device.read")) {
         this.sendEvent("device.list_snapshot", this.options.deviceFacade.listDevices(stream.scope.workspaceId), stream);
       }
     } else {
@@ -338,6 +336,14 @@ export class RemoteGatewaySession {
     if (required && !this.options.policy.capabilities.includes(required)) {
       throw new RemoteAccessError("capability_not_allowed", `Remote capability is not allowed: ${required}`);
     }
+  }
+
+  private requireDeviceFacade(workspaceId: string): RemoteDeviceFacade {
+    if (workspaceId !== this.options.policy.workspaceId) {
+      throw new RemoteAccessError("workspace_not_allowed", "Device request is outside the paired workspace.");
+    }
+    if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+    return this.options.deviceFacade;
   }
 
   private sendEvent<TType extends RemoteServerEventTypeV1>(

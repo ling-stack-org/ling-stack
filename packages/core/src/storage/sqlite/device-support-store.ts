@@ -156,6 +156,22 @@ export class SqliteDeviceSupportStore {
     return row ? parseJson<DeviceTaskV1>(row.task_json, isDeviceTaskV1, "device task") : undefined;
   }
 
+  listRecentDaemonTasks(workspaceId: string, limit: number): readonly DeviceTaskV1[] {
+    const rows = this.database.prepare(`
+      SELECT task_json FROM device_tasks
+      WHERE json_extract(task_json, '$.ownerKind') = 'daemon'
+        AND json_array_length(task_json, '$.targetDeviceIds') > 0
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(task_json, '$.targetDeviceIds') AS target
+          LEFT JOIN device_registry AS device ON device.device_id = target.value
+          WHERE json_extract(device.profile_json, '$.device.ownerScope') IS NOT ?
+        )
+      ORDER BY updated_at DESC, task_id
+      LIMIT ?
+    `).all(workspaceId, limit) as Row[];
+    return rows.map(row => parseJson<DeviceTaskV1>(row.task_json, isDeviceTaskV1, "device task"));
+  }
+
   transitionTask(taskId: string, status: DeviceTaskStatusV1, patch: DeviceTaskPatch, now: string): DeviceTaskV1 {
     const current = this.requireTask(taskId);
     if (!isAllowedTransition(current.status, status)) throw new Error(`Invalid device task transition: ${current.status} -> ${status}`);
@@ -382,6 +398,7 @@ export class SqliteDeviceSupportStore {
       );
       CREATE INDEX IF NOT EXISTS idx_device_task_attempts_task ON device_task_attempts(task_id,created_at);
       CREATE INDEX IF NOT EXISTS idx_device_task_events_task ON device_task_events(task_id,sequence);
+      CREATE INDEX IF NOT EXISTS idx_device_tasks_recent ON device_tasks(updated_at DESC,task_id);
     `);
   }
 }

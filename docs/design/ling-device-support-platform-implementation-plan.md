@@ -217,19 +217,23 @@ D0 covers the design and the implementation plan.
 
 - [x] Extend the Remote Gateway with a narrow device-task capability surface.
 - [x] Reuse secure pairing, device identity, replay protection, and signed frames.
-- [x] Add mobile read-only device list, capability, task status, and evidence projection.
+- [x] Add mobile read-only device list, capability, PC-owned recent-task status, task
+  detail, and evidence projection through the negotiated ling.device-tasks.v1
+  WebSocket subprotocol.
 - [~] Add eligible approval and revoke flows with server-owned policy ceilings.
 - [x] Route eligible device-task messages through the Gateway allowlist and keep
-  target credentials with the executing host.
+  target credentials with the executing host. Legacy conversation sessions do not
+  receive device capabilities when they omit the device-task subprotocol.
 - [ ] Keep the daemon as the execution owner for this facade. D9 covers standalone
   Mobile and D11 covers collaboration on a phone-owned task.
 
 ### Exit evidence
 
 - Protocol fixtures for device task creation, status, approval, and revoke.
-- Mobile reconnect and resync tests show last known state while offline and recover the
-  original daemon task. Duplicate requests return the recorded result or pending
-  attempt. Reusing an attempt key with a different action is rejected.
+- Mobile reconnect and resync tests show last known device/task state while offline and
+  recover the original daemon task. Gateway fixtures verify workspace scoping and
+  legacy-session capability isolation. Duplicate requests return the recorded result
+  or pending attempt. Reusing an attempt key with a different action is rejected.
 - Physical iPhone acceptance for the approved read-only and approval flows.
 - Android compilation and emulator coverage; physical Android evidence remains separately
   reported until available.
