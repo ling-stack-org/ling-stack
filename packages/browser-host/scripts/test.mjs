@@ -31,9 +31,10 @@ export async function runBrowserHostTests({
     }
 
     const tests = (await readdir(resolve(packageRoot, "test")))
-      .filter((file) => file.endsWith(".test.mjs"))
+      .filter((file) => /\.test\.(?:mjs|ts)$/u.test(file))
       .sort()
       .map((file) => `test/${file}`);
+    if (tests.length === 0) throw new Error("No Browser Host Node tests discovered");
     run(process.execPath, ["--test", ...tests], { env: environment });
     run(process.env.CARGO ?? "cargo", ["test", "--manifest-path", "native/Cargo.toml"], { env: environment });
   } finally {

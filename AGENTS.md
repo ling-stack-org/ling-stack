@@ -21,3 +21,8 @@ Run the narrowest relevant tests and the owning package's typecheck for test cha
 For documentation-only changes, use the checks in
 [Contributing: Validation](CONTRIBUTING.md#validation). Report checks actually run and
 any platform or runtime acceptance that remains unverified.
+
+For new Node.js or TypeScript workspace modules, follow the
+[workspace CI contract](docs/maintenance/ci.md#新模块接入-ci). Declare workspace
+dependencies in the consuming manifest and keep CI entrypoints aligned with
+test discovery and type checking.
