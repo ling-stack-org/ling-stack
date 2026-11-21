@@ -170,6 +170,15 @@ During relay checks it also retrieves a short-lived coturn credential for its
 own role.
 [Signaling protocol](../../packages/remote-protocol/src/ling-server-signaling.ts)
 
+The Remote Client verifies each polled message against the pinned peer key and
+the current instance, route, epoch, role, features, deadline, and expected sequence.
+It releases a page to the WebRTC adapter after every message verifies. The adapter
+applies the signed SDP and ICE candidates, bounds negotiation time, and creates
+one reliable, ordered `ling-peer.v1` DataChannel. The LAN path uses host candidates,
+the direct path can use the configured STUN services, and the relay path uses the
+issued TURN credential. Cancellation closes an incomplete connection.
+[Endpoint negotiation](../../packages/remote-client/src/ling-server-data-channel.ts)
+
 After the DataChannel opens, authenticate again at the Remote Gateway using the
 paired keys and a fresh application session challenge bound to the verified route.
 Perform protocol negotiation and capability filtering before projection or command

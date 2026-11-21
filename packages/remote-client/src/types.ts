@@ -32,9 +32,11 @@ export interface RemoteHttpResponse<T> {
 }
 
 export interface RemoteHttpClient {
-  getJson<T>(origin: string, path: string): Promise<RemoteHttpResponse<T>>;
-  postJson<T>(origin: string, path: string, body: unknown): Promise<RemoteHttpResponse<T>>;
+  getJson<T>(origin: string, path: string, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>>;
+  postJson<T>(origin: string, path: string, body: unknown, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>>;
 }
+
+type RemoteHttpRequestOptions = Pick<RequestInit, "signal" | "redirect">;
 
 export interface RemoteSocketMessageEvent {
   readonly data: unknown;
@@ -97,11 +99,12 @@ export const systemRemoteClock: RemoteClock = {
 
 export function createFetchRemoteHttpClient(fetchImpl: typeof globalThis.fetch = globalThis.fetch): RemoteHttpClient {
   return {
-    async getJson<T>(origin: string, path: string): Promise<RemoteHttpResponse<T>> {
-      return await requestJson<T>(fetchImpl, origin, path, { method: "GET" });
+    async getJson<T>(origin: string, path: string, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>> {
+      return await requestJson<T>(fetchImpl, origin, path, { ...options, method: "GET" });
     },
-    async postJson<T>(origin: string, path: string, body: unknown): Promise<RemoteHttpResponse<T>> {
+    async postJson<T>(origin: string, path: string, body: unknown, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>> {
       return await requestJson<T>(fetchImpl, origin, path, {
+        ...options,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

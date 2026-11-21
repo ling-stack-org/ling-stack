@@ -1,20 +1,18 @@
 import { createPublicKey, randomUUID, verify } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import type {
-  LingServerPeerRoleV1, LingServerSignedSignalingV1, LingServerSignalingResponseV1, LingServerTransportRouteV1,
+import {
+  LING_SERVER_SIGNAL_LANE_LIMIT_V1, LING_SERVER_SIGNAL_PAGE_LIMIT_V1, LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1,
+  type LingServerPeerRoleV1, type LingServerSignedSignalingV1, type LingServerSignalingResponseV1, type LingServerTransportRouteV1,
 } from "@ling-stack/contracts";
 import { DeviceFabricError, type LingServerPeerRegistry, type LingServerRelayCredentialIssuer } from "@ling-stack/core";
 import {
   decodeBase64Url, lingServerSignalingSigningBytes, matchesPublicJwkFingerprint, validateLingServerSignedSignalingV1,
 } from "@ling-stack/remote-protocol";
 
-const maxRouteLifetimeMs = 5 * 60_000;
 const maxRoutes = 128;
 const maxPayloadBytes = 16 * 1024 * 1024;
-const maxLaneMessages = 96;
 const maxLaneRequests = 1_024;
-const pollPageSize = 8;
 
 interface SignalLane {
   readonly messages: LingServerSignedSignalingV1[];
@@ -58,7 +56,7 @@ export class LingServerSignaling {
     if (input.instanceId !== this.instanceId || input.installationId !== binding.installationId
       || installation?.applicationKeyFingerprint !== input.applicationKeyFingerprint
       || route.bindingId !== binding.bindingId || route.preferred !== input.preferredRoute || route.status === "failed" || route.status === "expired"
-      || !((route.peerEpoch ?? 1) === binding.epoch && expiresAtMs > now && expiresAtMs - now <= maxRouteLifetimeMs)
+      || !((route.peerEpoch ?? 1) === binding.epoch && expiresAtMs > now && expiresAtMs - now <= LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1)
       || Date.parse(input.expiresAt) !== expiresAtMs
       || input.gatewayId !== binding.gatewayId || input.mobileDeviceId !== binding.mobileDeviceId
       || input.protocolMajor !== this.options.protocolMajor || input.features.some(feature => !this.options.features.includes(feature))) {
@@ -103,7 +101,7 @@ export class LingServerSignaling {
       }
       lane.usedNonces.add(operation.nonce);
       const latestSequence = peerLane.messages.length;
-      const end = operation.afterSequence + pollPageSize;
+      const end = operation.afterSequence + LING_SERVER_SIGNAL_PAGE_LIMIT_V1;
       return { kind: "signals", messages: peerLane.messages.slice(operation.afterSequence, end), latestSequence, hasMore: end < latestSequence };
     }
     if ((operation.messageType === "offer" && input.role !== "gateway")
@@ -126,7 +124,7 @@ export class LingServerSignaling {
       throw new DeviceFabricError("revision_conflict", "the route has no offer for this answer");
     }
     const payloadBytes = Buffer.byteLength(operation.payload, "utf8");
-    if (lane.messages.length >= maxLaneMessages || this.#payloadBytes + payloadBytes > maxPayloadBytes) {
+    if (lane.messages.length >= LING_SERVER_SIGNAL_LANE_LIMIT_V1 || this.#payloadBytes + payloadBytes > maxPayloadBytes) {
       throw new DeviceFabricError("lease_busy", "signaling mailbox capacity reached");
     }
     lane.messages.push(signed);

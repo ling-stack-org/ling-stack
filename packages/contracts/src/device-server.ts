@@ -81,6 +81,9 @@ export type LingServerPeerRoleV1 = "gateway" | "mobile";
 export type LingServerTransportRouteV1 = "lan" | "direct" | "relay";
 
 export const LING_SERVER_SIGNAL_PAYLOAD_BYTES_V1 = 32 * 1024;
+export const LING_SERVER_SIGNAL_LANE_LIMIT_V1 = 96;
+export const LING_SERVER_SIGNAL_PAGE_LIMIT_V1 = 8;
+export const LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1 = 5 * 60_000;
 
 export type LingServerSignalingOperationV1 =
   | { readonly kind: "publish"; readonly sequence: number; readonly messageType: "offer" | "answer" | "ice_candidate"; readonly payload: string }

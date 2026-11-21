@@ -2,7 +2,7 @@
 
 Status: retained implementation handoffs; historical checkpoints are not current acceptance
 Owner: repository maintainers
-Last verified: 2026-11-22 (Device Support Platform paired journal and signed resources)
+Last verified: 2026-11-22 (Device Support Platform signed peer channel, paired journal and signed resources)
 Document type: maintenance handoff
 Code and test anchors: the owning plans and source modules linked below
 
@@ -99,8 +99,7 @@ smart-home, hardware and Edge runs remain on the acceptance ledger.
 
 The new `codex/device-platform-complete` branch starts from the current
 `origin/main` at `75ad8920f` and keeps the earlier implementation through merge
-commit `d6f5c5250`. The branch now records the paired Mobile owner-journal path,
-resource activation policy, and access-grant fencing.
+commit `d6f5c5250`. Merge `9b95db2df` advances the baseline to `20ec1c528`.
 
 ### Delivered evidence
 
@@ -116,7 +115,12 @@ resource activation policy, and access-grant fencing.
 - `0652965e4` binds each dispatched attempt to the access-grant revision.
   Revoking a grant during verification leaves the result unknown and blocks
   reconciliation. A read-only grant cannot dispatch a write.
-- `d6f5c5250` merges the latest mainline changes after the branch was created.
+- `51c48dd84` starts Ling Server with TLS peer signaling and private loopback
+  administration. The shared Remote Client negotiates a signed, route-bound
+  WebRTC channel. Two isolated Chromium contexts exchanged ordered messages through
+  a local Pion TURN/UDP relay. The PC and phone integration still needs to bind
+  Gateway authentication and owner-journal resume to the new transport.
+  [D12 checks and outstanding acceptance](../design/ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity)
 
 Focused checks passed for Contracts, Core, Daemon, Remote Protocol, Remote
 Client and Mobile. The Mobile JS export completed for iOS and Android. Android
