@@ -12,7 +12,7 @@ import { createTestPlan } from "./test-shard-plan.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON",
-  "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
+  "LINUX_CONTRACT", "MACOS_NATIVE"];
 
 function job(id: string) {
   const match = new RegExp(`^  ${id}:\\n([\\s\\S]*?)(?=^  [a-z][a-z-]*:|$(?![\\s\\S]))`, "mu").exec(workflow);
@@ -52,7 +52,6 @@ test("offline assurance changes select their own lane without product builds or 
     assert.deepEqual(scope.typecheckPackages, []);
     assert.equal(scope.daemon, false);
     assert.equal(scope.macosNative, false);
-    assert.equal(scope.web, false);
     assert.equal(scope.dependencyPolicy, false);
     const plan = await createTestPlan(scope.testPackages);
     assert.deepEqual(plan.suites, {});
@@ -88,7 +87,6 @@ test("direct and transitive assurance imports retain package validation consumer
     assert.deepEqual(scope.testPackages, packages);
     assert.deepEqual(scope.typecheckPackages, packages);
     assert.equal(scope.daemon, packages.some(name => name === "@ling-stack/daemon"));
-    assert.equal(scope.web, false);
   }
 });
 
@@ -97,8 +95,7 @@ test("mixed assurance and product edits preserve product checks and full-scope f
   const web = classifyChangedFiles({ files: [assurance, "apps/web/src/App.tsx"] });
   assert.equal(web.mode, "affected");
   assert.equal(web.assurance, true);
-  assert.equal(web.web, true);
-  assert.ok(web.testPackages.includes("@ling-stack/web"));
+  assert.deepEqual(web.testPackages, ["@ling-stack/cli", "@ling-stack/localization"]);
   const daemon = classifyChangedFiles({ files: [assurance, "packages/daemon/src/index.ts"] });
   assert.equal(daemon.daemon, true);
   assert.equal(daemon.assurance, true);
@@ -108,7 +105,6 @@ test("mixed assurance and product edits preserve product checks and full-scope f
     assert.equal(scope.mode, "full", file);
     assert.equal(scope.assurance, true, file);
     assert.equal(scope.daemon, true, file);
-    assert.equal(scope.web, true, file);
   }
   for (const options of [{ eventName: "schedule" }, { eventName: "workflow_dispatch" }, { forceFull: true }]) {
     assert.equal(classifyChangedFiles({ files: [assurance], ...options }).mode, "full");
@@ -127,12 +123,12 @@ test("workflow outputs and the real aggregate command require precisely the sele
     const required = new Set(["SCOPE", "COMMON", ...(scope.assurance ? ["ASSURANCE"] : []),
       ...(scope.packages.length ? ["BUILD"] : []), ...(scope.typecheckPackages.length ? ["TYPECHECK"] : []),
       ...(scope.testPackages.some(name => !["@ling-stack/core", "@ling-stack/daemon"].includes(name)) ? ["UNIT"] : []),
-      ...(scope.daemon ? ["DAEMON"] : []), ...(scope.linuxContract ? ["LINUX_CONTRACT"] : []), ...(scope.macosNative ? ["MACOS_NATIVE"] : []), ...(scope.web ? ["WEB_SMOKE"] : [])]);
+      ...(scope.daemon ? ["DAEMON"] : []), ...(scope.linuxContract ? ["LINUX_CONTRACT"] : []), ...(scope.macosNative ? ["MACOS_NATIVE"] : [])]);
     const env = { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: scope.mode,
       ASSURANCE_SELECTED: outputs["assurance-selected"], BUILD_SELECTED: outputs["build-selected"],
       DEPENDENCY_SELECTED: outputs["dependency-policy"], TYPECHECK_SELECTED: outputs["typecheck-selected"],
       UNIT_SELECTED: String(required.has("UNIT")), DAEMON_SELECTED: outputs.daemon, LINUX_CONTRACT_SELECTED: outputs["linux-contract"],
-      MACOS_NATIVE_SELECTED: outputs["macos-native"], WEB_SELECTED: outputs.web,
+      MACOS_NATIVE_SELECTED: outputs["macos-native"],
       ...Object.fromEntries(lanes.map(lane => [`${lane}_RESULT`, required.has(lane) ? "success" : "skipped"])) };
     const run = (overrides: Record<string, string> = {}): SpawnSyncReturns<string> => spawnSync("bash", ["-euo", "pipefail", "-c",
       command.replace(/^ {10}/gmu, "")], { cwd: root, encoding: "utf8", timeout: 10_000, env: { ...env, ...overrides } });

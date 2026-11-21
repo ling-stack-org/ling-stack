@@ -54,7 +54,10 @@ const pnpmArgs = ["pnpm", "--workspace-concurrency=1"];
 for (const packageName of packages) {
   pnpmArgs.push("--filter", includeDependencies ? `${packageName}...` : packageName);
 }
-if (includeDependencies) pnpmArgs.push("--if-present");
+if (includeDependencies) {
+  for (const packageName of excludedPackages) pnpmArgs.push("--filter", `!${packageName}`);
+  pnpmArgs.push("--if-present");
+}
 pnpmArgs.push("run", task);
 
 const result = spawnSync("corepack", pnpmArgs, { stdio: "inherit" });

@@ -11,7 +11,7 @@ const laneDefinitions = [
     scope => `${scope.packages.length} package${scope.packages.length === 1 ? "" : "s"} selected`],
   ["typecheck", "Selected package typecheck", scope => scope.typecheckPackages.length > 0,
     scope => `${scope.typecheckPackages.length} package${scope.typecheckPackages.length === 1 ? "" : "s"} with typecheck selected`],
-  ["unit-tests", "Core, package, and Web tests", scope => scope.testPackages.some(name => name !== "@ling-stack/daemon"),
+  ["unit-tests", "Core and package tests", scope => scope.testPackages.some(name => name !== "@ling-stack/daemon"),
     scope => `${scope.testPackages.filter(name => name !== "@ling-stack/daemon").length} package${scope.testPackages.filter(name => name !== "@ling-stack/daemon").length === 1 ? "" : "s"} with tests selected`],
   ["daemon-tests", "Daemon test shards", scope => scope.daemon,
     scope => scope.daemonPlatforms.length ? `platforms: ${scope.daemonPlatforms.join(", ")}` : "Daemon is outside the affected graph"],
@@ -19,11 +19,9 @@ const laneDefinitions = [
     "the Linux Daemon suite is selected"],
   ["macos-native", "macOS native and release contracts", scope => scope.macosNative,
     scope => `helper=${scope.macosHelper ? "selected" : "skipped"}; release=${scope.nativeRelease ? "selected" : "skipped"}`],
-  ["web-smoke", "Production Web smoke", scope => scope.web,
-    "the Web package is selected"],
 ];
 
-const booleanFields = ["dependencyPolicy", "assurance", "daemon", "linuxContract", "macosNative", "macosHelper", "nativeRelease", "web"];
+const booleanFields = ["dependencyPolicy", "assurance", "daemon", "linuxContract", "macosNative", "macosHelper", "nativeRelease"];
 
 /** @typedef {import("./classify-scope.mjs").CiScope} Scope */
 
@@ -95,7 +93,7 @@ export function auditScope(scope, fullScope) {
   if (fullScope?.mode !== "full") issues.push("forced full scope did not produce mode=full");
   if (fullScope?.mode === "full") {
     if (!Array.isArray(fullScope.packages) || fullScope.packages.length === 0) issues.push("forced full scope selected no packages");
-    for (const field of ["dependencyPolicy", "assurance", "daemon", "linuxContract", "macosNative", "macosHelper", "web"]) {
+    for (const field of ["dependencyPolicy", "assurance", "daemon", "linuxContract", "macosNative", "macosHelper"]) {
       if (fullScope[field] !== true) issues.push(`forced full scope has ${field}=${String(fullScope[field])}`);
     }
     if (JSON.stringify(fullScope.daemonPlatforms) !== JSON.stringify(["linux", "darwin"])) {
@@ -151,10 +149,6 @@ export function renderScopeSummary(scope, fullScope, options = {}) {
     `- Typecheck packages: ${list(scope.typecheckPackages ?? [])}`,
     `- Daemon platforms: ${list(scope.daemonPlatforms ?? [])}`,
     ...(scope.productVersion ? [`- Verified product version: \`${scope.productVersion}\``] : []),
-    ...(scope.webSmoke ? [
-      `- Web smoke specs (common / production / changed on dev): ${list(scope.webSmoke.qa)} / ${list(scope.webSmoke.smoke)} / ${list(scope.webSmoke.changed)}`,
-      ...(scope.webSmoke.manual.length ? [`- Web specs requiring local inputs: ${list(scope.webSmoke.manual)}`] : []),
-    ] : []),
     `- Scope audit: **${audit.passed ? "passed" : "failed"}**${audit.issues.length ? ` (${audit.issues.join("; ")})` : "; selected work is a subset of the forced full scope"}`,
     ...(options.planAudit ? [`- Test plan audit: **${options.planAudit.passed ? "passed" : "failed"}**${options.planAudit.issues.length ? ` (${options.planAudit.issues.join("; ")})` : `; ${options.planAudit.selectedTestFileCount}/${options.planAudit.fullTestFileCount} planned test files selected`}`] : []),
     "",

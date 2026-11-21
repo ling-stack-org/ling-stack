@@ -62,8 +62,8 @@ test("combined plans fit twenty runner slots while preserving isolated suite par
   const siblingJobs = workflow.split(/(?=^  [a-z][a-z-]*:\n)/mu).slice(1)
     .filter(block => /^    needs: \[scope, build\]$/mu.test(block) && !/^    strategy:/mu.test(block))
     .map(block => /^  ([a-z][a-z-]*):/u.exec(block)![1]).sort();
-  assert.deepEqual(siblingJobs, ["daemon-linux-contracts", "restricted-command-macos", "typecheck", "web-smoke"]);
-  for (const extra of [[], ["@ling-stack/web"], ["@ling-stack/api-client"]]) {
+  assert.deepEqual(siblingJobs, ["daemon-linux-contracts", "restricted-command-macos", "typecheck"]);
+  for (const extra of [[], ["@ling-stack/localization"], ["@ling-stack/api-client"]]) {
     const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon", ...extra]);
     const requested = plan.unitMatrix.include.length + plan.daemonMatrix.include.length + siblingJobs.length;
     assert.ok(requested <= 20, `Requested ${requested} runner slots`);

@@ -19,7 +19,6 @@ type Scope = {
   macosNative: boolean;
   macosHelper: boolean;
   nativeRelease: boolean;
-  web: boolean;
   reason: string;
 };
 
@@ -28,20 +27,20 @@ function scope(overrides: Partial<Scope> = {}): Scope {
     mode: "affected", files: ["packages/core/src/index.ts"], packages: ["@ling-stack/core"],
     testPackages: ["@ling-stack/core"], typecheckPackages: ["@ling-stack/core"], dependencyPolicy: false,
     assurance: false, daemon: false, daemonPlatforms: [], linuxContract: false, macosNative: false, macosHelper: false,
-    nativeRelease: false, web: false, reason: "workspace source change with transitive consumers", ...overrides,
+    nativeRelease: false, reason: "workspace source change with transitive consumers", ...overrides,
   };
 }
 
 test("accepts a selective scope only when it is contained by forced full scope", () => {
   const result = auditScope(scope(), scope({ mode: "full", packages: ["@ling-stack/core", "@ling-stack/daemon"],
     testPackages: ["@ling-stack/core", "@ling-stack/daemon"], typecheckPackages: ["@ling-stack/core", "@ling-stack/daemon"],
-    dependencyPolicy: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], linuxContract: true, macosNative: true, macosHelper: true, web: true }));
+    dependencyPolicy: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], linuxContract: true, macosNative: true, macosHelper: true }));
   assert.deepEqual(result, { passed: true, issues: [], selectedPackageCount: 1, fullPackageCount: 2, omittedPackageCount: 1 });
 });
 
 test("reports package, lane, platform, and documentation-scope escapes", () => {
   const result = auditScope(scope({ mode: "docs", packages: ["@ling-stack/core"], testPackages: [], typecheckPackages: [], daemon: true,
-    daemonPlatforms: ["freebsd"], linuxContract: true, web: true }), scope({ mode: "full", packages: [], testPackages: [], typecheckPackages: [], linuxContract: true }));
+    daemonPlatforms: ["freebsd"], linuxContract: true }), scope({ mode: "full", packages: [], testPackages: [], typecheckPackages: [], linuxContract: true }));
   assert.equal(result.passed, false);
   assert.match(result.issues.join("\n"), /packages selects/u);
   assert.match(result.issues.join("\n"), /daemon platform freebsd/u);
@@ -93,7 +92,7 @@ test("renders selected and skipped lanes with bounded changed-path details", () 
   const selective = scope({ files: Array.from({ length: 22 }, (_, index) => `packages/core/src/${index}.ts`) });
   const full = scope({ mode: "full", packages: ["@ling-stack/core", "@ling-stack/daemon"], testPackages: ["@ling-stack/core", "@ling-stack/daemon"],
     typecheckPackages: ["@ling-stack/core", "@ling-stack/daemon"], dependencyPolicy: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], linuxContract: true,
-    macosNative: true, macosHelper: true, web: true });
+    macosNative: true, macosHelper: true });
   const report = renderScopeSummary(selective, full, { executionTier: "complete" });
   assert.match(report, /Mode: \*\*affected\*\*/u);
   assert.match(report, /Selected package build.*selected/u);
@@ -117,7 +116,7 @@ test("CLI writes the same report that it prints", async t => {
   const outputPath = join(directory, "scope.md");
   await writeFile(scopePath, JSON.stringify(scope()));
   await writeFile(fullPath, JSON.stringify(scope({ mode: "full", packages: ["@ling-stack/core"], testPackages: ["@ling-stack/core"], typecheckPackages: ["@ling-stack/core"],
-    dependencyPolicy: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], linuxContract: true, macosNative: true, macosHelper: true, web: true })));
+    dependencyPolicy: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], linuxContract: true, macosNative: true, macosHelper: true })));
   await writeFile(planPath, JSON.stringify({ version: 1, suites: { core: { platform: "linux", files: ["test/a.test.ts"] } }, unitMatrix: { include: [{ suite: "core" }] }, daemonMatrix: { include: [] } }));
   await writeFile(fullPlanPath, JSON.stringify({ version: 1, suites: { core: { platform: "linux", files: ["test/a.test.ts", "test/b.test.ts"] } }, unitMatrix: { include: [{ suite: "core" }] }, daemonMatrix: { include: [] } }));
   const { spawn } = await import("node:child_process");
