@@ -69,6 +69,7 @@ export const LING_APP_SERVER_METHODS = [
   "thread/delete",
   "thread/turns/list",
   "thread/items/list",
+  "thread/events/read",
   "item/read",
   "thread/subscribe",
   "thread/unsubscribe",
@@ -332,6 +333,13 @@ export interface LingAppServerInitializeResult {
   readonly limits: LingAppServerLimits;
   readonly storeIncarnation?: string;
   readonly authorizationEpoch?: string;
+}
+
+export interface LingAppServerCapabilitiesResult {
+  readonly protocolVersion: typeof LING_APP_SERVER_PROTOCOL_VERSION;
+  readonly capabilities: readonly LingAppServerCapability[];
+  readonly methods: readonly LingAppServerMethod[];
+  readonly notifications: readonly LingAppServerNotificationMethod[];
 }
 
 export interface LingAppServerEventSubject {

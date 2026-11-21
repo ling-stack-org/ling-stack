@@ -20,6 +20,7 @@ import {
   LING_APP_SERVER_PROTOCOL_VERSION,
   LING_PRODUCT_VERSION,
   type ControlPlaneSubscribeResult,
+  type ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
@@ -30,12 +31,16 @@ import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { expireStaleApproval } from "../features/runs/approvals.js";
 import { reconcileApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import { HttpError } from "../errors.js";
+import { prepareConversationSubmission } from "../features/conversations/conversation-submission.js";
+import { parseConversationStreamRequest } from "../features/conversations/routes.js";
+import { readConversationSubmission } from "../features/conversations/submission-receipts.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
   CONTROL_PLANE_POLL_MAX_LIMIT,
   CONTROL_PLANE_SSE_FLUSH_MS,
   CONTROL_PLANE_SSE_QUEUE_HARD_LIMIT,
   CONTROL_PLANE_SSE_QUEUE_WARNING_THRESHOLD,
+  trimOversizedEvent,
 } from "../features/control-plane/events.js";
 import { coalesceAndSortControlPlaneEvents } from "../features/control-plane/event-queue.js";
 import {
@@ -47,7 +52,7 @@ import {
 } from "../features/control-plane/processors.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
-import { parseRunRequest } from "../features/runs/schemas.js";
+import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
@@ -84,6 +89,8 @@ interface RpcSubscription {
   readonly domains: readonly ControlPlaneDomain[];
   readonly entityType?: string;
   readonly entityId?: string;
+  readonly filterEvent?: (event: ControlPlaneEvent) => boolean;
+  readonly replayReadyMethod?: "thread/replay/ready" | "workItem/replay/ready";
   readonly closeHub: () => void;
   readonly queue: { readonly event: ControlPlaneEvent; readonly frame: RpcOutboundFrame }[];
   readonly upstreamKey: string;
@@ -98,9 +105,11 @@ export interface RpcWebSocketServerHandle {
 }
 
 const APP_SERVER_RPC_PATH = "/app-server/rpc";
+const APP_SERVER_MAX_REQUESTS = 64;
+const APP_SERVER_MAX_SUBSCRIPTIONS = 32;
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
-  "thread/snapshot", "submission/read", "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
+  "thread/snapshot", "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
   "context/inspect", "handoff/create", "handoff/read", "handoff/resume", "changes/read", "simplify/start",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
   "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
@@ -110,6 +119,7 @@ const operatorMethods = new Set(["approval/respond", "input/respond", "verify/st
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+  const appServerConnections = new Set<RpcConnection>();
   let closed = false;
   let draining = false;
   const handleUpgrade: Parameters<Server["on"]>[1] = (request, socket, head) => {
@@ -144,19 +154,27 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
   server.on("upgrade", handleUpgrade);
   wss.on("connection", (ws, request) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
+    const appServer = url.pathname === APP_SERVER_RPC_PATH;
     const connection = new RpcConnection(
       ws,
       url.searchParams.get("cwd") ?? context.config.defaultWorkspaceCwd,
       context,
-      url.pathname === APP_SERVER_RPC_PATH,
+      appServer,
       Boolean(context.config.authToken),
       () => draining,
     );
+    if (appServer) {
+      appServerConnections.add(connection);
+      ws.once("close", () => appServerConnections.delete(connection));
+    }
     connection.start();
   });
   const beginShutdown = (): void => {
     if (draining) return;
     draining = true;
+    const drainId = randomUUID();
+    const startedAt = new Date().toISOString();
+    for (const connection of appServerConnections) connection.notifyDraining(drainId, startedAt);
     developmentByContext.get(context)?.abortVerifications();
     for (const controller of activeExternalDispatches.get(context)?.values() ?? []) controller.abort();
   };
@@ -211,6 +229,10 @@ class RpcConnection {
     this.ws.on("error", this.onConnectionError);
   }
 
+  notifyDraining(drainId: string, startedAt: string): void {
+    if (this.initialized) this.send({ jsonrpc: "2.0", method: "server/draining", params: { drainId, startedAt } });
+  }
+
   private async handleMessage(data: RawData): Promise<void> {
     if (this.closed) return;
     const request = parseJsonRpcRequest(data);
@@ -228,7 +250,17 @@ class RpcConnection {
       return;
     }
 
-    const requestKey = request.id === undefined ? undefined : jsonRpcIdKey(request.id);
+    const requestKey = request.id === undefined || request.method === "$/cancelRequest" ? undefined : jsonRpcIdKey(request.id);
+    if (this.appServer && requestKey) {
+      if (this.pendingRequests.has(requestKey)) {
+        this.sendError(null, -32600, "invalid_request", "The request ID is already in use.");
+        return;
+      }
+      if (this.pendingRequests.size >= APP_SERVER_MAX_REQUESTS) {
+        this.sendError(id, -32001, "server_overloaded", "The connection has too many in-flight requests.");
+        return;
+      }
+    }
     if (requestKey) this.pendingRequests.add(requestKey);
     try {
       if (request.method === "$/cancelRequest") {
@@ -239,11 +271,13 @@ class RpcConnection {
         }
         return;
       }
+      if (this.appServer && request.method === "initialized" && request.id === undefined) return;
+      const params = this.appServer ? this.workspaceParams(request.params) : request.params;
       if (request.method === "controlPlane.subscribe") {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
         }
-        const prepared = this.prepareControlPlaneSubscription(request.params);
+        const prepared = this.prepareControlPlaneSubscription(params);
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
       }
@@ -251,11 +285,12 @@ class RpcConnection {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "workItem/subscribe requires a request id.");
         }
-        const record = readParamsRecord(request.params);
+        const record = readParamsRecord(params);
         const workItemId = readStringField(record, "workItemId");
         const prepared = this.prepareControlPlaneSubscription({ ...record, domains: ["work_items"] }, {
           entityType: "work_item",
           entityId: workItemId,
+          replayReadyMethod: "workItem/replay/ready",
         });
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
@@ -264,16 +299,21 @@ class RpcConnection {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "thread/subscribe requires a request id.");
         }
-        const record = readParamsRecord(request.params);
+        const record = this.workspaceParams(params);
         const threadId = readOptionalStringField(record, "threadId");
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        if (threadId && !store.getLingThread(threadId)) throw rpcError(-32040, "workspace_binding_invalid", "Thread was not found.");
         const prepared = this.prepareControlPlaneSubscription({
           ...record,
-          domains: ["runs", "work_items", "work_units"],
-        }, threadId ? { entityType: "thread", entityId: threadId } : undefined);
+          domains: ["runs", "approvals", "work_items", "work_units"],
+        }, {
+          ...(threadId ? { filterEvent: (event: ControlPlaneEvent) => threadEventMatches(event, threadId, store) } : {}),
+          replayReadyMethod: "thread/replay/ready",
+        });
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
       }
-      const result = await this.dispatch(request.method, request.params);
+      const result = await this.dispatch(request.method, params);
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
         this.send({ jsonrpc: "2.0", id, result });
       }
@@ -309,6 +349,8 @@ class RpcConnection {
           limits: {
             maxInboundFrameBytes: 1024 * 1024,
             maxOutboundFrameBytes: 128 * 1024,
+            maxPendingRequests: APP_SERVER_MAX_REQUESTS,
+            maxSubscriptions: APP_SERVER_MAX_SUBSCRIPTIONS,
           },
         } : {
           ok: true,
@@ -365,6 +407,19 @@ class RpcConnection {
         return this.listThreadTurns(params);
       case "thread/items/list":
         return this.listThreadItems(params);
+      case "submission/read": {
+        const { cwd, ...record } = this.workspaceParams(params);
+        return readConversationSubmission(this.context.storeRegistry.getStore(cwd), {
+          surface: "normal", threadId: readOptionalStringField(record, "threadId"), idempotencyKey: readStringField(record, "idempotencyKey"),
+        });
+      }
+      case "thread/events/read": {
+        const record = this.workspaceParams(params);
+        const threadId = readStringField(record, "threadId");
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        if (!store.getLingThread(threadId)) throw rpcError(-32040, "workspace_binding_invalid", "Thread was not found.");
+        return this.readThreadEvents(store, threadId, record);
+      }
       case "item/read": {
         const record = this.workspaceParams(params);
         const item = this.context.storeRegistry.getStore(record.cwd).getConversationItem(readStringField(record, "itemId"));
@@ -455,7 +510,9 @@ class RpcConnection {
       case "controlPlane.unsubscribe":
         return this.unsubscribeControlPlane(params);
       case "runs.start":
-        return this.startRun(params);
+        return this.startRun(this.appServer
+          ? { ...readParamsRecord(params), workspaceCwd: this.workspaceParams(params).cwd }
+          : params);
       case "runs.cancel":
         return this.cancelRun(params);
       case "workItem/list":
@@ -564,10 +621,10 @@ class RpcConnection {
   }
 
   private validateInitializeParams(params: unknown): void {
-    if (!this.appServer || params === undefined) return;
+    if (!this.appServer) return;
     const record = readParamsRecord(params);
     const versions = record.protocolVersions;
-    if (versions !== undefined && (!Array.isArray(versions) || !versions.every(value => typeof value === "string"))) {
+    if (!Array.isArray(versions) || !versions.every(value => typeof value === "string")) {
       throw rpcError(-32602, "invalid_params", "protocolVersions must be an array of strings.");
     }
     if (Array.isArray(versions) && !versions.includes(LING_APP_SERVER_PROTOCOL_VERSION)) {
@@ -950,10 +1007,18 @@ class RpcConnection {
     const store = this.context.storeRegistry.getStore(cwd);
     const title = readOptionalStringField(record, "title") ?? "Ling App Server thread";
     const objective = readOptionalStringField(record, "objective") ?? title;
-    const kind = readOptionalStringField(record, "kind") ?? "conversation";
+    const kind = readLingThreadKind(readOptionalStringField(record, "kind") ?? "conversation");
+    const threadId = readOptionalStringField(record, "threadId");
+    const prior = threadId ? store.getLingThread(threadId) : undefined;
+    if (prior) {
+      if (prior.kind !== kind || prior.title !== title || prior.objective !== objective) {
+        throw rpcError(-32031, "idempotency_conflict", "The Thread ID belongs to a different request.");
+      }
+      return { cwd, thread: projectPublicLingThread(prior), replayed: true };
+    }
     const thread = store.createLingThread({
-      id: readOptionalStringField(record, "threadId"),
-      kind: readLingThreadKind(kind),
+      id: threadId,
+      kind,
       title,
       objective,
       status: "open",
@@ -1293,7 +1358,7 @@ class RpcConnection {
     };
   }
 
-  private startTurn(params: unknown): unknown {
+  private async startTurn(params: unknown): Promise<unknown> {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const threadId = readStringField(record, "threadId");
@@ -1301,11 +1366,23 @@ class RpcConnection {
     const thread = store.getLingThread(threadId);
     if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
     const instruction = readOptionalStringField(record, "userInstruction") ?? readOptionalStringField(record, "message");
+    const shouldRun = record.execute === true || record.task !== undefined || record.providerPresetId !== undefined
+      || record.provider !== undefined || record.executionBinding !== undefined;
+    if (this.appServer && shouldRun) return await this.startConversationTurn(record, thread, cwd, instruction);
     if (!instruction?.trim()) throw rpcError(-32602, "invalid_params", "userInstruction or message is required.");
+    const turnId = readOptionalStringField(record, "turnId");
+    const kind = readLingTurnKind(readOptionalStringField(record, "kind") ?? "initial_request");
+    const prior = turnId ? store.getLingTurn(turnId) : undefined;
+    if (prior) {
+      if (prior.threadId !== threadId || prior.kind !== kind || prior.userInstruction !== instruction) {
+        throw rpcError(-32031, "idempotency_conflict", "The Turn ID belongs to a different request.");
+      }
+      return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(prior, thread), replayed: true };
+    }
     const turn = store.createLingTurn({
-      id: readOptionalStringField(record, "turnId"),
+      id: turnId,
       threadId,
-      kind: readLingTurnKind(readOptionalStringField(record, "kind") ?? "initial_request"),
+      kind,
       title: readOptionalStringField(record, "title") ?? instruction.slice(0, 120),
       userInstruction: instruction,
       createdByActor: "local-user",
@@ -1319,7 +1396,6 @@ class RpcConnection {
       action: "turn.started",
       data: { threadId, turnId: turn.id, status: turn.status },
     });
-    const shouldRun = record.execute === true || record.task !== undefined || record.providerPresetId !== undefined || record.provider !== undefined;
     if (!shouldRun) {
       return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) };
     }
@@ -1327,6 +1403,61 @@ class RpcConnection {
     const runRequest = { ...record, cwd, threadId, turnId: turn.id, task };
     const accepted = this.startRun(runRequest);
     return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread), run: accepted };
+  }
+
+  private async startConversationTurn(record: Record<string, unknown>, thread: import("@ling-stack/core").LingThread, cwd: string,
+    instruction: string | undefined): Promise<unknown> {
+    if (thread.kind !== "conversation" || thread.channelId || thread.archivedAt || thread.status === "archived") {
+      throw rpcError(-32040, "workspace_binding_invalid", "This Thread cannot accept a normal conversation Turn.");
+    }
+    if (record.provider !== undefined || record.task !== undefined) {
+      throw rpcError(-32602, "invalid_params", "Select a configured execution binding or provider preset.");
+    }
+    const idempotencyKey = readOptionalStringField(record, "idempotencyKey") ?? readOptionalStringField(record, "turnId");
+    if (!idempotencyKey?.trim() || idempotencyKey.length > 200 || /[\r\n]/u.test(idempotencyKey)) {
+      throw rpcError(-32602, "invalid_params", "An idempotency key of up to 200 characters is required.");
+    }
+    let input: ReturnType<typeof parseConversationStreamRequest>;
+    try {
+      input = parseConversationStreamRequest({ ...record, message: instruction ?? "", threadId: thread.id, idempotencyKey });
+    } catch (error) {
+      throw rpcError(-32602, "invalid_params", error instanceof Error ? error.message : "Invalid conversation input.");
+    }
+    if (input.projectPath && this.workspaceParams({ cwd: input.projectPath }).cwd !== cwd) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The project directory differs from the connection workspace.");
+    }
+    const store = this.context.storeRegistry.getStore(cwd);
+    const prepared = await prepareConversationSubmission({
+      store, workspaceCwd: cwd, runnerRegistry: this.context.runnerRegistry,
+      input, now: new Date().toISOString(), resolveThread: () => thread,
+      title: readOptionalStringField(record, "title"),
+      turnKind: record.kind === undefined ? undefined : readLingTurnKind(readStringField(record, "kind")),
+      imageVisionSummarizer: this.context.imageVisionSummarizer,
+    });
+    const { turn, runRequest, replayed } = prepared;
+    if (input.providerPresetId && input.providerPresetId !== runRequest.providerPresetId
+      || input.executionBinding && JSON.stringify(input.executionBinding) !== JSON.stringify(runRequest.executionBinding)) {
+      throw rpcError(-32031, "idempotency_conflict", "The original submission used a different execution configuration.");
+    }
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID, cwd, domain: "runs", entityType: "turn", entityId: turn.id,
+      action: "turn.started", idempotencyKey: `app-server-turn:${turn.id}`,
+      data: { threadId: thread.id, turnId: turn.id, status: "queued" },
+    });
+    const receipt = readConversationSubmission(store, { surface: "normal", threadId: thread.id, idempotencyKey: input.idempotencyKey! });
+    const runId = turn.activeRunId ?? turn.lastRunId ?? await new Promise<string>((resolve, reject) => {
+      void this.executeRun(runRequest, data => {
+        if (data && typeof data === "object" && "runId" in data && typeof data.runId === "string") resolve(data.runId);
+      }, (statusCode, body) => reject(new HttpError(statusCode,
+        typeof body.error === "string" ? body.error : "turn_execution_blocked",
+        typeof body.message === "string" ? body.message : "The accepted Turn could not start.")))
+        .then(id => id ? resolve(id) : reject(rpcError(-32061, "resume_blocked", "The accepted Turn has no Run yet.")), reject);
+    });
+    const currentThread = store.getLingThread(thread.id) ?? thread;
+    return {
+      cwd, thread: projectPublicLingThread(currentThread), turn: projectPublicLingTurn(store.getLingTurn(turn.id) ?? turn, currentThread),
+      run: projectPublicRunSession(store.getRun(runId), store), receipt, replayed,
+    };
   }
 
   private respondApproval(params: unknown): unknown {
@@ -1349,6 +1480,11 @@ class RpcConnection {
     }
     if (record.runId !== undefined && readStringField(record, "runId") !== run.id) {
       throw rpcError(-32040, "workspace_binding_invalid", "The approval does not belong to the supplied Run.");
+    }
+    const turn = store.getLingTurnForRun(run.id);
+    if (record.threadId !== undefined && readStringField(record, "threadId") !== run.threadId
+      || record.turnId !== undefined && readStringField(record, "turnId") !== turn?.id) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The approval does not belong to the supplied Thread or Turn.");
     }
     if (approval.status !== "pending") throw rpcError(-32051, "request_already_resolved", "The approval is no longer pending.");
     const now = new Date().toISOString();
@@ -1415,7 +1551,7 @@ class RpcConnection {
     }
   }
 
-  private queueTurn(params: unknown): unknown {
+  private queueTurn(params: unknown): Promise<unknown> {
     const record = readParamsRecord(params);
     return this.startTurn({ ...record, kind: "queued_followup", execute: false });
   }
@@ -1537,10 +1673,47 @@ class RpcConnection {
     };
   }
 
-  private prepareControlPlaneSubscription(params: unknown, filter?: { readonly entityType?: string; readonly entityId?: string }): {
+  private readThreadEvents(store: import("@ling-stack/core").RunStore, threadId: string,
+    record: Record<string, unknown> & { readonly cwd: string }): ControlPlaneEventsResponse {
+    const { cwd, afterSeq, limit, domains } = this.readControlPlaneEventParams({
+      ...record, domains: ["runs", "approvals", "work_items", "work_units"], limit: record.limit ?? 25,
+    });
+    return store.readSnapshot(() => {
+      const workspaceId = DEFAULT_WORKSPACE_ID;
+      const { latestSeq, replayFloorSeq } = store.getControlPlaneReplayState(workspaceId);
+      const base = { requestedAfterSeq: afterSeq, upperBoundSeq: latestSeq, replayFloorSeq };
+      if (afterSeq > latestSeq || afterSeq < replayFloorSeq) {
+        return { cwd, workspaceId, events: [], window: { ...base, disposition: "snapshot_required", nextAfterSeq: latestSeq,
+          reason: afterSeq > latestSeq ? "cursor_unavailable" : "retention_gap" } };
+      }
+      const rows = store.listControlPlaneEvents({ workspaceId, afterSeq, limit, domains });
+      const events: ControlPlaneEvent[] = [];
+      let nextAfterSeq = afterSeq;
+      // Leave room in the RPC response for the page envelope and cursor.
+      let remaining = 120 * 1024;
+      for (const event of rows) {
+        if (threadEventMatches(event, threadId, store)) {
+          const projected = trimOversizedEvent(event);
+          const bytes = Buffer.byteLength(JSON.stringify(projected)) + 1;
+          if (bytes > remaining) break;
+          remaining -= bytes;
+          events.push(projected);
+        }
+        nextAfterSeq = event.seq;
+      }
+      if (rows.length < limit && (rows.length === 0 || rows.at(-1)!.seq === nextAfterSeq)) nextAfterSeq = latestSeq;
+      return { cwd, workspaceId, events, window: { ...base, disposition: "complete", nextAfterSeq } };
+    });
+  }
+
+  private prepareControlPlaneSubscription(params: unknown,
+    filter?: Pick<RpcSubscription, "entityType" | "entityId" | "filterEvent" | "replayReadyMethod">): {
     readonly result: ControlPlaneSubscribeResult;
     readonly activate?: () => void;
   } {
+    if (this.appServer && this.subscriptions.size >= APP_SERVER_MAX_SUBSCRIPTIONS) {
+      throw rpcError(-32001, "server_overloaded", "The connection has too many subscriptions.");
+    }
     const parsed = this.readControlPlaneEventParams({
       ...readParamsRecord(params),
       limit: CONTROL_PLANE_POLL_MAX_LIMIT,
@@ -1593,7 +1766,14 @@ class RpcConnection {
           cursor: String(replay.window.nextAfterSeq),
           window: replay.window,
         },
-        activate: () => hubSubscription?.activate(filteredReplay),
+        activate: () => {
+          hubSubscription?.activate(filteredReplay);
+          if (this.appServer && !subscription.closed && subscription.replayReadyMethod) {
+            this.flushControlPlaneSubscription(subscription);
+            this.send({ jsonrpc: "2.0", method: subscription.replayReadyMethod,
+              params: { subscriptionId, cursor: String(replay.window.nextAfterSeq), window: replay.window } });
+          }
+        },
       };
     } catch (error) {
       this.closeSubscription(subscription);
@@ -1613,11 +1793,17 @@ class RpcConnection {
 
   private startRun(params: unknown): unknown {
     const runRequest = parseRunRequest(params);
+    void this.executeRun(runRequest);
+    return { accepted: true };
+  }
+
+  private executeRun(runRequest: RunRequest, onReady?: (data: unknown) => void,
+    onError?: (statusCode: number, body: Record<string, unknown>) => void): Promise<string | undefined> {
     let runCloseListener: (() => void) | undefined;
     const sink = createRpcRunExecutionSink({
-      onReady: (data) => this.sendRunNotification({ kind: "ready", data }),
+      onReady: (data) => { onReady?.(data); this.sendRunNotification({ kind: "ready", data }); },
       onEvent: (event, data) => this.sendRunNotification({ kind: "event", event, data }),
-      onError: (statusCode, body) => this.sendRunNotification({ kind: "error", statusCode, body }),
+      onError: (statusCode, body) => { onError?.(statusCode, readParamsRecord(body)); this.sendRunNotification({ kind: "error", statusCode, body }); },
       onEnd: () => {
         if (runCloseListener) this.runCloseListeners.delete(runCloseListener);
         this.sendRunNotification({ kind: "end" });
@@ -1630,7 +1816,7 @@ class RpcConnection {
         else this.runCloseListeners.add(listener);
       },
     });
-    void executeRunRequest(
+    return executeRunRequest(
       runRequest,
       sink,
       this.context.runnerRegistry,
@@ -1644,17 +1830,18 @@ class RpcConnection {
         controlPlaneEvents: this.context.controlPlaneEvents,
         startupState: this.context.startupState,
         computerUsePreviews: this.context.computerUsePreviews,
+        hostCapabilityBridge: this.context.hostCapabilityBridge,
         nativeRunDispatcher: this.context.nativeRunDispatcher,
       },
     );
-    return { accepted: true };
   }
 
   private cancelRun(params: unknown): unknown {
     const record = readParamsRecord(params);
     const runId = readStringField(record, "runId");
     const cwd = readOptionalStringField(record, "cwd");
-    const store = this.context.storeRegistry.findStoreForRun(runId, cwd);
+    const store = this.appServer ? this.context.storeRegistry.getStore(this.workspaceParams(record).cwd)
+      : this.context.storeRegistry.findStoreForRun(runId, cwd);
     const run = store?.getRun(runId);
     if (!store || !run) {
       throw rpcError(-32004, "run_not_found", "Run was not found in the active daemon stores.");
@@ -2089,6 +2276,9 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   if (error instanceof ControlPlaneBadRequestError) {
     return { jsonRpcCode: -32602, code: "bad_request", message: error.message };
   }
+  if (error instanceof HttpError) {
+    return { jsonRpcCode: error.statusCode === 400 ? -32602 : -32061, code: error.code, message: error.message };
+  }
   return {
     jsonRpcCode: -32000,
     code: "internal_error",
@@ -2219,7 +2409,15 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
 function subscriptionMatchesEvent(subscription: RpcSubscription, event: ControlPlaneEvent): boolean {
   if (subscription.entityType && event.entityType !== subscription.entityType) return false;
   if (subscription.entityId && event.entityId !== subscription.entityId) return false;
-  return true;
+  return subscription.filterEvent?.(event) ?? true;
+}
+
+function threadEventMatches(event: ControlPlaneEvent, threadId: string, store: import("@ling-stack/core").RunStore): boolean {
+  if (event.entityType === "thread") return event.entityId === threadId;
+  if (typeof event.data.threadId === "string") return event.data.threadId === threadId;
+  const runId = event.entityType === "run" ? event.entityId
+    : event.data.ownerType === "run" ? event.data.ownerId : event.data.runId;
+  return typeof runId === "string" && store.getRun(runId)?.threadId === threadId;
 }
 
 function controlPlaneEnvelopeBytes(subscriptionId: string): number {

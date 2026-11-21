@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
+import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
@@ -16,11 +19,14 @@ import type {
   LingAppServerVerifyPlanResult,
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemSnapshot,
+  ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
 import { createSqliteRunStore, resolveStoragePaths, type SqliteRunStore } from "@ling-stack/core";
 import { WebSocket } from "ws";
-import { createDaemonServer } from "../dist/index.js";
+import { createDaemonServer, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio } from "../dist/index.js";
+import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { createRunnerRegistry, type RunnerRegistrationInput } from "../dist/runtime/runners.js";
+import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
 test("App Server executes an allowlisted check once and restores its outcome in the project workspace", { timeout: 30_000 }, async t => {
   const fixture = await releaseFixture(t);
@@ -50,6 +56,98 @@ test("App Server executes an allowlisted check once and restores its outcome in 
   const restored = await fixture.connect();
   assert.deepEqual(await restored.call("verify/start", input), finished);
   assert.equal(await readFile(marker, "utf8"), "checked\n");
+});
+
+test("App Server submits a durable Turn through the configured Pi Runner and replays it after reconnect", { timeout: 30_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Runner accepted the task" }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  const store = fixture.getStore();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const first = await fixture.connect();
+  const started = await first.call<{ thread: { id: string }; turn: { id: string; status: string }; run: { id: string } }>("thread/start", {
+    title: "Runner thread", objective: "Exercise the configured Pi Runner", kind: "conversation", threadId: "release-runner-thread",
+  });
+  const request = {
+    threadId: started.thread.id, message: "Run the configured provider once", providerPresetId: preset.id,
+    execute: true, idempotencyKey: "release-runner-turn",
+  };
+  const result = await first.call<typeof started & { replayed?: boolean }>("turn/start", request);
+  assert.ok(result.run.id);
+  await waitFor(() => store.getRun(result.run.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(provider.requests.length, 1);
+  first.close();
+  const second = await fixture.connect();
+  const receipt = await second.call<{ status: string; turnId: string }>("submission/read", {
+    threadId: started.thread.id, idempotencyKey: request.idempotencyKey,
+  });
+  assert.equal(receipt.status, "accepted");
+  assert.equal(receipt.turnId, result.turn.id);
+  const replay = await second.call<typeof result>("turn/start", request);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.run.id, result.run.id);
+  assert.equal(provider.requests.length, 1);
+  const resumed = await second.call<{ turn: { id: string }; run: { id: string } }>("turn/resume", { turnId: result.turn.id });
+  assert.equal(resumed.turn.id, result.turn.id);
+  assert.equal(resumed.run.id, result.run.id);
+});
+
+const codexExecutable = process.env.LING_APP_SERVER_CODEX_EXECUTABLE;
+test("installed Codex calls the CLI MCP bridge while a Ling subscription receives the same Turn", {
+  skip: !codexExecutable, timeout: 45_000,
+}, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Codex submission reached Ling" }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  const ling = await fixture.connect();
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const cli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
+  const args = [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl, "app-server", "mcp"];
+  const config = `mcp_servers={ ling={ command=${JSON.stringify(process.execPath)}, args=${JSON.stringify(args)}, env_vars=["LING_STACK_AUTH_TOKEN"], required=true } }`;
+  const codexHome = join(fixture.root, "codex-config");
+  await mkdir(codexHome, { mode: 0o700 });
+  const codex = spawn(codexExecutable!, ["app-server", "--stdio", "-c", config, "-c", "analytics.enabled=false"], {
+    cwd: fixture.cwd, stdio: "pipe", env: { PATH: process.env.PATH, CODEX_HOME: codexHome, LING_STACK_AUTH_TOKEN: authToken },
+  });
+  const closed = once(codex, "close");
+  void closed.catch(() => undefined);
+  t.after(async () => { codex.stdin.end(); codex.kill(); await closed; });
+  codex.stdin.on("error", () => undefined);
+  let stderr = "";
+  codex.stderr.setEncoding("utf8").on("data", chunk => { stderr = (stderr + chunk).slice(-4096); });
+  const host = jsonLines(codex.stdin, codex.stdout);
+  try {
+    await host.call("initialize", { clientInfo: { name: "ling-acceptance", version: "1" }, capabilities: { experimentalApi: true } });
+    host.send("initialized", {});
+    const { thread: codexThread } = await host.call<ThreadRead>("thread/start", { cwd: fixture.cwd, ephemeral: true });
+    const call = async <T>(tool: string, args: object): Promise<T> => {
+      const reply = await host.call<{ isError?: boolean; content: Array<{ text: string }> }>("mcpServer/tool/call", {
+        server: "ling", threadId: codexThread.id, tool, arguments: args,
+      });
+      assert.ok(!reply.isError, reply.content[0]?.text);
+      return JSON.parse(reply.content[0]!.text) as T;
+    };
+    const { thread } = await call<ThreadRead>("ling_thread_start", { title: "Codex acceptance", idempotencyKey: "real-codex-thread" });
+    const subscription = await ling.call<{ cursor: string }>("thread/subscribe", { threadId: thread.id });
+    const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+    const request = { threadId: thread.id, message: "Test the installed Codex MCP bridge", providerPresetId: preset.id, idempotencyKey: "real-codex-turn" };
+    const accepted = await call<{ turn: { id: string }; run: { id: string } }>("ling_turn_start", request);
+    await waitFor(() => ling.notices.find(notice => notice.method === "turn/started" && notice.params?.subject?.threadId === thread.id));
+    await waitFor(() => fixture.getStore().getRun(accepted.run.id)?.status === "succeeded" ? true : undefined);
+    assert.equal((await call<typeof accepted>("ling_turn_start", request)).run.id, accepted.run.id);
+    assert.equal(provider.requests.length, 1);
+    let cursor = subscription.cursor;
+    let seen = false;
+    for (let page = 0; page < 30 && !seen; page++) {
+      const result = await call<ControlPlaneEventsResponse>("ling_thread_events", { threadId: thread.id, cursor });
+      seen = result.events.some(event => event.action === "turn.started" && event.entityId === accepted.turn.id);
+      if (String(result.window.nextAfterSeq) === cursor) break;
+      cursor = String(result.window.nextAfterSeq);
+    }
+    assert.ok(seen, "Codex could not recover the Turn event from the subscription cursor.");
+  } catch (error) {
+    throw new Error(`Installed Codex MCP acceptance failed. ${stderr.replaceAll(authToken, "[redacted]")}`, { cause: error });
+  }
 });
 
 test("a second App Server connection cancels the same external dispatch and recovers its receipt after restart", { timeout: 30_000 }, async t => {
@@ -159,15 +257,118 @@ test("an authenticated connection can decide its Run approval and rejects a diff
   await assert.rejects(client.call("approval/respond", params), { code: "request_already_resolved" });
 });
 
+test("stdio and the private Unix socket deliver the same App Server Thread events", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const options = fixture.transportOptions();
+  assert.equal((await probeLingAppServer(options)).protocolVersion, "ling-app-server/1");
+  const input = new PassThrough(), output = new PassThrough();
+  const stdio = runLingAppServerStdio(options, input, output);
+  t.after(async () => { input.end(); await stdio; });
+  const host = jsonLines(input, output);
+  await host.call("initialize", { protocolVersions: ["ling-app-server/1"] });
+  const { thread } = await host.call<{ thread: { id: string } }>("thread/start", { title: "Stdio Thread" });
+  await host.call("thread/subscribe", { threadId: thread.id });
+  await host.call("turn/start", { threadId: thread.id, message: "Keep this durable" });
+  const notice = await waitFor(() => host.notices.find(value => value.method === "turn/started"));
+  assert.equal(notice.params?.subject?.threadId, thread.id);
+
+  const controller = new AbortController();
+  const path = join(fixture.root, "a.sock");
+  const listener = listenLingAppServerSocket(options, path, controller.signal);
+  t.after(async () => { controller.abort(); await listener; });
+  await waitFor(async () => {
+    const mode = (await lstat(path).catch(() => undefined))?.mode;
+    return mode !== undefined && (mode & 0o777) === 0o600 ? true : undefined;
+  });
+  const socket: Duplex = createConnection(path);
+  await once(socket, "connect");
+  t.after(() => socket.destroy());
+  const peer = jsonLines(socket, socket);
+  await peer.call("initialize", { protocolVersions: ["ling-app-server/1"] });
+  assert.equal((await peer.call<ThreadRead>("thread/read", { threadId: thread.id })).thread.id, thread.id);
+});
+
+type ThreadRead = { thread: { id: string } };
+
+function addLoopbackPreset(store: SqliteRunStore, baseUrl: string) {
+  const now = new Date().toISOString();
+  const preset = store.createProviderPreset({
+    kind: "openai-compatible", displayName: "Release Pi fixture", providerId: "release-pi-fixture", model: "static-tools",
+    api: "openai-completions", baseUrl, authHeader: false, reasoning: false, capabilities: ["chat"], enabled: true,
+  }, now);
+  store.recordProviderCheckResult(preset.id, { ok: true, code: "ready", message: "Loopback fixture", checkedAt: now });
+  return preset;
+}
+
+test("the MCP bridge calls the bound App Server and replays the same Thread on retry", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const input = new PassThrough(), output = new PassThrough();
+  const running = runLingAppServerMcp(fixture.transportOptions(), input, output);
+  t.after(async () => { input.end(); await running; });
+  const host = jsonLines(input, output);
+  await host.call("initialize", { protocolVersion: LATEST_PROTOCOL_VERSION, clientInfo: { name: "Fixture", version: "1" }, capabilities: {} });
+  host.send("notifications/initialized", {});
+  const { tools } = await host.call<{ tools: Array<{ name: string }> }>("tools/list");
+  assert.ok(tools.some(tool => tool.name === "ling_turn_start"));
+  assert.ok(tools.every(tool => !tool.name.includes("approval")));
+  const call = async (name: string, args: object) => {
+    const reply = await host.call<{ isError?: boolean; content: Array<{ text: string }> }>("tools/call", { name, arguments: args });
+    assert.ok(!reply.isError, reply.content[0]?.text);
+    return JSON.parse(reply.content[0]!.text) as ThreadRead;
+  };
+  const request = { title: "MCP Thread", idempotencyKey: "identity" };
+  const first = await call("ling_thread_start", request);
+  assert.equal((await call("ling_thread_start", request)).thread.id, first.thread.id);
+  assert.equal((await call("ling_thread_read", { threadId: first.thread.id })).thread.id, first.thread.id);
+});
+
+type JsonLine = {
+  id?: number;
+  method?: string;
+  result?: unknown;
+  error?: { message: string };
+  params?: { subject?: { threadId?: string } };
+};
+
+function jsonLines(input: Writable, output: Readable) {
+  const messages = new Map<number, JsonLine>();
+  const notices: JsonLine[] = [];
+  let next = 0;
+  let pending = "";
+  output.setEncoding("utf8").on("data", (chunk: string) => {
+    pending += chunk;
+    let end: number;
+    while ((end = pending.indexOf("\n")) !== -1) {
+      const message = JSON.parse(pending.slice(0, end)) as JsonLine;
+      pending = pending.slice(end + 1);
+      if (typeof message.id === "number") messages.set(message.id, message);
+      else notices.push(message);
+    }
+  });
+  const send = (method: string, params: object, id?: number) => input.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+  return { send, notices, async call<T>(method: string, params: object = {}) {
+    const id = ++next;
+    send(method, params, id);
+    const response = await waitFor(() => messages.get(id));
+    messages.delete(id);
+    if (response.error) throw new Error(response.error.message);
+    return response.result as T;
+  } };
+}
+
 async function releaseFixture(t: TestContext, runner?: RunnerRegistrationInput) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "ling-app-server-release-")));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
   const authToken = randomUUID();
+  const priorLingHome = process.env.LING_STACK_HOME;
+  process.env.LING_STACK_HOME = join(root, "fixture-home");
   const stores = new Map<string, SqliteRunStore>();
   const clients = new Set<WebSocket>();
   const makeDaemon = () => createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
+    chromeBrowserNativeMessagingEnabled: false,
+    remoteReplyDispatcher: null,
     storeFactory(workspace) {
       const store = createSqliteRunStore(workspace, resolveStoragePaths(workspace, {
         homeDir: join(root, "fixture-home"), env: {}, workspaceStateLocation: "repo-local",
@@ -183,12 +384,21 @@ async function releaseFixture(t: TestContext, runner?: RunnerRegistrationInput) 
     await daemon.stop();
   }
   t.after(async () => {
-    try { await stop(); } finally { await rm(root, { recursive: true, force: true }); }
+    try { await stop(); } finally {
+      if (priorLingHome === undefined) delete process.env.LING_STACK_HOME;
+      else process.env.LING_STACK_HOME = priorLingHome;
+      await rm(root, { recursive: true, force: true });
+    }
   });
   await daemon.start();
   return {
     root,
     cwd,
+    transportOptions() {
+      const address = daemon.server.address();
+      assert.ok(address && typeof address === "object");
+      return { daemonUrl: `http://127.0.0.1:${address.port}`, cwd, authToken };
+    },
     getStore() {
       const store = stores.get(cwd);
       assert.ok(store);
@@ -210,9 +420,11 @@ async function releaseFixture(t: TestContext, runner?: RunnerRegistrationInput) 
       await once(socket, "open");
       let next = 0;
       const messages = new Map<number, { result?: unknown; error?: { data: { code: string }; message: string } }>();
+      const notices: JsonLine[] = [];
       socket.on("message", data => {
         const value = JSON.parse(data.toString());
         if (typeof value.id === "number") messages.set(value.id, value);
+        else notices.push(value);
       });
       const call = async <T>(method: string, params: object = {}): Promise<T> => {
         const id = ++next;
@@ -224,7 +436,7 @@ async function releaseFixture(t: TestContext, runner?: RunnerRegistrationInput) 
       };
       await call("initialize", { protocolVersions: ["ling-app-server/1"] });
       await call("workItem/list", {});
-      return { call, close: () => socket.terminate() };
+      return { call, notices, close: () => socket.terminate() };
     },
   };
 }

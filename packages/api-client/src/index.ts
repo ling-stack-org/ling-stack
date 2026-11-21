@@ -5,6 +5,7 @@ export {
   LingAppServerClient,
   type LingAppServerClientOptions,
   type LingAppServerNotification,
+  type LingAppServerServerRequest,
   type LingAppServerSocket,
   type LingAppServerSocketFactory,
 } from "./app-server.js";

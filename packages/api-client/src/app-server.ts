@@ -2,6 +2,8 @@ import type {
   LingAppServerDoctorRunParams,
   LingAppServerDoctorRunResult,
   LingAppServerCapability,
+  LingAppServerCapabilitiesResult,
+  ControlPlaneEventsResponse,
   LingAppServerExternalAgentCapabilitiesParams,
   LingAppServerExternalAgentCapabilitiesResult,
   LingAppServerExternalAgentRegisterParams,
@@ -65,12 +67,17 @@ export interface LingAppServerClientOptions {
   readonly autoReconnect?: boolean;
   readonly reconnectDelayMs?: number;
   readonly maxReconnectDelayMs?: number;
+  readonly requestTimeoutMs?: number;
 }
 
 export interface LingAppServerNotification {
   readonly jsonrpc: "2.0";
   readonly method: LingAppServerNotificationMethod | string;
   readonly params?: unknown;
+}
+
+export interface LingAppServerServerRequest extends LingAppServerNotification {
+  readonly id: LingAppServerJsonRpcId;
 }
 
 interface LingAppServerResponse {
@@ -96,6 +103,7 @@ export class LingAppServerClient {
   private readonly options: LingAppServerClientOptions;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly notificationListeners = new Set<(notification: LingAppServerNotification) => void>();
+  private readonly serverRequestListeners = new Set<(request: LingAppServerServerRequest) => void>();
   private socket?: LingAppServerSocket;
   private nextId = 1;
   private connectPromise?: Promise<LingAppServerInitializeResult>;
@@ -123,6 +131,21 @@ export class LingAppServerClient {
   async ping(): Promise<{ readonly ok: boolean; readonly connectionId: string; readonly serverTime: string }> {
     await this.connect();
     return await this.request("server/ping", {});
+  }
+
+  async getCapabilities(): Promise<LingAppServerCapabilitiesResult> {
+    await this.connect();
+    return await this.request("server/capabilities", {});
+  }
+
+  async readThread(threadId: string): Promise<unknown> {
+    await this.connect();
+    return await this.request("thread/read", { threadId });
+  }
+
+  async readThreadEvents(params: { readonly threadId: string; readonly cursor?: string; readonly limit?: number }): Promise<ControlPlaneEventsResponse> {
+    await this.connect();
+    return await this.request("thread/events/read", params);
   }
 
   async listWorkItems(params: Record<string, unknown> = {}): Promise<unknown> {
@@ -268,7 +291,7 @@ export class LingAppServerClient {
       method,
       params,
       ...(result.subscriptionId ? { subscriptionId: result.subscriptionId } : {}),
-      ...(result.cursor ? { cursor: result.cursor } : params.cursor ? { cursor: params.cursor } : {}),
+      cursor: params.cursor ?? "0",
     });
     return result;
   }
@@ -303,6 +326,11 @@ export class LingAppServerClient {
     return () => this.notificationListeners.delete(listener);
   }
 
+  onServerRequest(listener: (request: LingAppServerServerRequest) => void): () => void {
+    this.serverRequestListeners.add(listener);
+    return () => this.serverRequestListeners.delete(listener);
+  }
+
   close(): void {
     this.manuallyClosed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -319,21 +347,33 @@ export class LingAppServerClient {
   private async openAndInitialize(): Promise<LingAppServerInitializeResult> {
     const socket = this.options.createSocket(this.options.url);
     this.socket = socket;
-    const opened = waitForSocketOpen(socket);
-    attachSocketListener(socket, "message", (event) => this.handleMessage(readSocketMessage(event)));
-    attachSocketListener(socket, "close", () => this.handleClose());
-    attachSocketListener(socket, "error", () => this.handleClose());
-    await opened;
-    const initialized = await this.request<LingAppServerInitializeResult>("initialize", {
-      protocolVersions: ["ling-app-server/1"],
-      clientInfo: this.options.clientInfo,
-      requiredCapabilities: this.options.requiredCapabilities,
-      optionalCapabilities: this.options.optionalCapabilities,
-      workspaceScope: this.options.workspaceScope,
+    const opened = waitForSocketOpen(socket, this.options.requestTimeoutMs ?? 30_000);
+    attachSocketListener(socket, "message", (event) => {
+      if (this.socket === socket) this.handleMessage(readSocketMessage(event));
     });
-    this.reconnectAttempt = 0;
-    await this.replaySubscriptions();
-    return initialized;
+    attachSocketListener(socket, "close", () => this.handleClose(socket));
+    attachSocketListener(socket, "error", () => this.handleClose(socket));
+    try {
+      await opened;
+      if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
+      const initialized = await this.request<LingAppServerInitializeResult>("initialize", {
+        protocolVersions: ["ling-app-server/1"],
+        clientInfo: this.options.clientInfo,
+        requiredCapabilities: this.options.requiredCapabilities,
+        optionalCapabilities: this.options.optionalCapabilities,
+        workspaceScope: this.options.workspaceScope,
+      });
+      if (initialized?.protocolVersion !== "ling-app-server/1") {
+        throw Object.assign(new Error("The endpoint does not support Ling App Server protocol 1."), { code: "protocol_version_unsupported" });
+      }
+      socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+      this.reconnectAttempt = 0;
+      await this.replaySubscriptions();
+      return initialized;
+    } catch (error) {
+      if (this.socket === socket) socket.close(1000, "initialize_failed");
+      throw error;
+    }
   }
 
   private request<T>(method: string, params: unknown): Promise<T> {
@@ -342,10 +382,18 @@ export class LingAppServerClient {
     const id = this.nextId++;
     const key = `${typeof id}:${String(id)}`;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(key, { resolve: (value) => resolve(value as T), reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(key);
+        reject(Object.assign(new Error(`Ling App Server response timed out for ${method}.`), { code: "rpc_timeout" }));
+      }, this.options.requestTimeoutMs ?? 30_000);
+      this.pending.set(key, {
+        resolve: (value) => { clearTimeout(timer); resolve(value as T); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      });
       try {
         socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
       } catch (error) {
+        clearTimeout(timer);
         this.pending.delete(key);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
@@ -353,13 +401,23 @@ export class LingAppServerClient {
   }
 
   private handleMessage(value: string): void {
-    let parsed: LingAppServerResponse | LingAppServerNotification;
+    let parsed: LingAppServerResponse | LingAppServerNotification | LingAppServerServerRequest;
     try {
       parsed = JSON.parse(value) as LingAppServerResponse | LingAppServerNotification;
     } catch {
       return;
     }
-    if ("id" in parsed && parsed.id !== undefined) {
+    if (!parsed || typeof parsed !== "object") return;
+    if ("method" in parsed) {
+      if ("id" in parsed && (typeof parsed.id === "string" || typeof parsed.id === "number")) {
+        for (const listener of this.serverRequestListeners) listener(parsed as LingAppServerServerRequest);
+      } else {
+        for (const listener of this.notificationListeners) listener(parsed);
+        this.updateSubscriptionCursor(parsed);
+      }
+      return;
+    }
+    if (parsed.id !== undefined) {
       const pending = this.pending.get(`${typeof parsed.id}:${String(parsed.id)}`);
       if (!pending) return;
       this.pending.delete(`${typeof parsed.id}:${String(parsed.id)}`);
@@ -372,14 +430,10 @@ export class LingAppServerClient {
       }
       return;
     }
-    if ("method" in parsed) {
-      this.updateSubscriptionCursor(parsed as LingAppServerNotification);
-      for (const listener of this.notificationListeners) listener(parsed as LingAppServerNotification);
-    }
   }
 
-  private handleClose(): void {
-    if (!this.socket) return;
+  private handleClose(socket: LingAppServerSocket): void {
+    if (this.socket !== socket) return;
     this.socket = undefined;
     const error = new Error("Ling App Server connection closed.");
     for (const pending of this.pending.values()) pending.reject(error);
@@ -393,10 +447,14 @@ export class LingAppServerClient {
     if (typeof params !== "object" || params === null || Array.isArray(params)) return;
     const record = params as Record<string, unknown>;
     const subscriptionId = typeof record.subscriptionId === "string" ? record.subscriptionId : undefined;
-    const cursor = typeof record.cursor === "string" ? record.cursor : undefined;
+    const event = record.event as { readonly seq?: number } | undefined;
+    const cursor = typeof record.cursor === "string" ? record.cursor : Number.isSafeInteger(event?.seq) ? String(event!.seq) : undefined;
     if (!subscriptionId || !cursor) return;
     for (const [key, subscription] of this.subscriptions) {
-      if (subscription.subscriptionId === subscriptionId) this.subscriptions.set(key, { ...subscription, cursor });
+      if (subscription.subscriptionId !== subscriptionId) continue;
+      if (subscription.cursor && /^\d+$/u.test(subscription.cursor) && /^\d+$/u.test(cursor)
+        && Number(cursor) <= Number(subscription.cursor)) continue;
+      this.subscriptions.set(key, { ...subscription, cursor });
     }
   }
 
@@ -419,9 +477,7 @@ export class LingAppServerClient {
       try {
         const result = await this.request<LingAppServerSubscriptionResult>(subscription.method, params);
         this.subscriptions.set(key, {
-          ...subscription,
-          ...(result.subscriptionId ? { subscriptionId: result.subscriptionId } : {}),
-          ...(result.cursor ? { cursor: result.cursor } : {}),
+          ...subscription, subscriptionId: result.subscriptionId,
         });
         if (result.disposition === "snapshot_required") {
           const method = subscription.method === "thread/subscribe" ? "thread/resync/required" : "workItem/resync/required";
@@ -446,7 +502,7 @@ function attachSocketListener(socket: LingAppServerSocket, type: "open" | "messa
   socket.on?.(type, listener);
 }
 
-function waitForSocketOpen(socket: LingAppServerSocket): Promise<void> {
+function waitForSocketOpen(socket: LingAppServerSocket, timeoutMs: number): Promise<void> {
   if (socket.readyState === 1) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     const onOpen = (): void => {
@@ -458,13 +514,18 @@ function waitForSocketOpen(socket: LingAppServerSocket): Promise<void> {
       reject(event instanceof Error ? event : new Error("Ling App Server connection failed."));
     };
     const cleanup = (): void => {
+      clearTimeout(timer);
       socket.removeEventListener?.("open", onOpen);
       socket.removeEventListener?.("error", onError);
       socket.off?.("open", onOpen);
       socket.off?.("error", onError);
+      socket.removeEventListener?.("close", onError);
+      socket.off?.("close", onError);
     };
+    const timer = setTimeout(() => onError(new Error("Ling App Server connection timed out.")), timeoutMs);
     attachSocketListener(socket, "open", onOpen);
     attachSocketListener(socket, "error", onError);
+    attachSocketListener(socket, "close", onError);
   });
 }
 

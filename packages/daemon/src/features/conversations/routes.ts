@@ -45,18 +45,19 @@ import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
-import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
+import { materializeInlineConversationAttachments } from "./materialization.js";
 import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
 import { projectNormalExecutionContextSnapshots } from "./normal-execution-context-snapshots.js";
 import { ConversationNarrationAccumulator } from "./narration-segments.js";
 import { createOwnedRunNarrationAccumulator } from "./narration-owner.js";
 import { prepareNormalConversationInput } from "./normal-conversation-input.js";
-import { normalSubmissionThreadId, readConversationSubmission } from "./submission-receipts.js";
+import { normalSubmissionThreadId } from "./submission-receipts.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 import { buildConversationRunRequest, resolveConversationResponseLanguage } from "./conversation-run-request.js";
 import { readNativeResponsePreferences } from "./native-response-preferences.js";
 export { resolveConversationResponseLanguage } from "./conversation-run-request.js";
-import { resolveConversationExecutionSelection, inheritConversationExecutionSelection } from "./conversation-execution-selection.js";
+import { inheritConversationExecutionSelection } from "./conversation-execution-selection.js";
+import { conversationTitle, prepareConversationSubmission } from "./conversation-submission.js";
 import { parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
@@ -201,22 +202,10 @@ export async function handleConversationStream(
     const input = parseConversationStreamRequest(await readJsonBody(request, config.maxBodyBytes));
     const store = storeRegistry.getStore(workspaceCwd);
     const now = new Date().toISOString();
-    const accepted = input.idempotencyKey && readConversationSubmission(store,
-      { surface: "normal", idempotencyKey: input.idempotencyKey, threadId: input.threadId });
-    const selection = accepted && accepted.status === "accepted" ? undefined
-      : resolveConversationExecutionSelection(store, runnerRegistry, input);
-    const thread = resolveConversationThread(store, input, now);
-    const prepared = prepareNormalConversationInput({ store, thread, message: input.message,
-      title: conversationTitle(input.message.trim() || (input.fileRefs?.some(ref => ref.annotation) ? "Please address the review feedback." : "User attached files.")), attachmentIds: input.attachmentIds ?? [],
-      fileRefs: input.fileRefs ?? [], idempotencyKey: input.idempotencyKey, now });
-    const { turn, attachments: conversationAttachments } = prepared;
-    const attachmentMaterializations = prepared.replayRequest ? new Map<string, ConversationAttachmentMaterialization>() : await materializeInlineConversationAttachments({
-      store,
-      attachments: conversationAttachments,
-      now,
-      imageVisionSummarizer,
+    const { thread, turn, attachments: conversationAttachments, runRequest } = await prepareConversationSubmission({
+      store, workspaceCwd, runnerRegistry, input, now, imageVisionSummarizer,
+      resolveThread: () => resolveConversationThread(store, input, now),
     });
-    const effectiveConfig = prepared.replayRequest ? undefined : await buildEffectiveConfigResponse({ cwd: workspaceCwd, store, runnerRegistry });
     const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments, input.fileRefs ?? []);
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
     let narration = new ConversationNarrationAccumulator();
@@ -347,18 +336,6 @@ export async function handleConversationStream(
       },
     };
 
-    const runRequest = prepared.replayRequest ?? saveNormalConversationPreparedRequest(store, buildConversationRunRequest({
-      workspaceCwd,
-      thread,
-      turn,
-      input: { ...input, ...(selection ?? resolveConversationExecutionSelection(store, runnerRegistry, input)), idempotencyKey: prepared.idempotencyKey },
-      lingConversationTone: effectiveConfig!.values.lingConversationTone.value,
-      defaultReasoningSummary: effectiveConfig!.values.reasoningSummary.value,
-      attachments: conversationAttachments,
-      attachmentMaterializations,
-      normalConversationContext: prepared.context,
-      normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
-    }), now);
     transport.writeReady({ thread, turn, userMessage, assistantMessage });
     await startRun(runRequest, streamSink);
   } catch (error) {
@@ -668,7 +645,7 @@ function listAllConversationItems(
   return items.sort((left, right) => left.sequence - right.sequence);
 }
 
-function parseConversationStreamRequest(value: unknown): ConversationStreamRequest {
+export function parseConversationStreamRequest(value: unknown): ConversationStreamRequest {
   if (!isRecord(value)) {
     throw new Error("Conversation request must be a JSON object.");
   }
@@ -858,11 +835,6 @@ function statusFromRun(run: RunSession | undefined): ConversationTranscriptStatu
     return "running";
   }
   return "succeeded";
-}
-
-function conversationTitle(message: string): string {
-  const oneLine = message.replace(/\s+/g, " ").trim();
-  return oneLine.length > 48 ? `${oneLine.slice(0, 45)}...` : oneLine || "New conversation";
 }
 
 function conversationAssistantMessageId(turnId: string): string {

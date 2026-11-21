@@ -257,6 +257,8 @@ export {
 export { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
 export { createChromeBrowserNativeBroker } from "./features/browser-extension/native-broker.js";
 export { handleChromeBrowserPair } from "./features/browser-extension/routes.js";
+export { listenLingAppServerSocket, probeLingAppServer, runLingAppServerStdio } from "./server/app-server-local-transport.js";
+export { runLingAppServerMcp } from "./server/app-server-mcp.js";
 export { ChromeBrowserPluginService, createChromeBrowserDescriptor, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
 export { createChromeBrowserGenerationBroker, chromeBrowserTools } from "./features/plugins/chrome-browser-generation-broker.js";
 export { OfficeDriverController } from "./features/office-documents/driver-controller.js";
