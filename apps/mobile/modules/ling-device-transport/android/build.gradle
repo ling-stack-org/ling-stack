@@ -18,4 +18,3 @@ dependencies {
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.apache.sshd:sshd-core:2.20.1'
 }
-

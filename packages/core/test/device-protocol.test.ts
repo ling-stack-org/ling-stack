@@ -26,4 +26,3 @@ test("protocol profiles bind a verified codec to target facts and reusable capab
   assert.throws(() => registry.resolve({ deviceKind: "vehicle", model: "other" }), error => error instanceof DeviceFabricError && error.code === "target_missing");
   assert.throws(() => registry.resolve({ deviceKind: "hardware", model: "fixture-controller" }), /matches the target facts/);
 });
-

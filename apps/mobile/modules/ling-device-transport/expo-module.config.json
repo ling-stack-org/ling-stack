@@ -4,4 +4,3 @@
     "modules": ["expo.modules.lingdevicetransport.LingDeviceTransportModule"]
   }
 }
-
