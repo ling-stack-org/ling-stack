@@ -274,9 +274,38 @@ export class SqliteDeviceFabricStore {
     const current = this.getGraphNode(node.nodeId);
     if (current && node.revision < current.revision) throw new DeviceFabricError("revision_conflict", "graph node revision regressed");
     if (node.parentNodeId && !this.getGraphNode(node.parentNodeId)) throw new DeviceFabricError("target_missing", "graph parent node is missing");
+    if (current && node.revision > current.revision) {
+      this.database.prepare("INSERT OR IGNORE INTO device_fabric_graph_node_history(node_id,revision,node_json,changed_at) VALUES(?,?,?,?)")
+        .run(current.nodeId, current.revision, JSON.stringify(current), new Date().toISOString());
+    }
     this.database.prepare("INSERT INTO device_fabric_graph_nodes(node_id,revision,node_json) VALUES(?,?,?) ON CONFLICT(node_id) DO UPDATE SET revision=excluded.revision,node_json=excluded.node_json")
       .run(node.nodeId, node.revision, JSON.stringify(node));
     return node;
+  }
+
+  mergeGraphIdentity(nodeId: string, identityRef: string, revision: number): DeviceGraphNodeV1 {
+    return this.withWriteTransaction(() => {
+      const current = this.getGraphNode(nodeId);
+      if (!current) throw new DeviceFabricError("target_missing", "graph node is missing");
+      if (!identityRef.trim() || revision < current.revision) throw new DeviceFabricError("revision_conflict", "identity merge revision is invalid");
+      const next = { ...current, revision, identityRefs: [...new Set([...current.identityRefs, identityRef])] };
+      return this.upsertGraphNode(next);
+    });
+  }
+
+  splitGraphIdentity(nodeId: string, identityRef: string, newNode: DeviceGraphNodeV1): DeviceGraphNodeV1 {
+    return this.withWriteTransaction(() => {
+      const current = this.getGraphNode(nodeId);
+      if (!current || !current.identityRefs.includes(identityRef)) throw new DeviceFabricError("target_missing", "identity reference is not attached");
+      if (newNode.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "identity split revision must advance");
+      this.upsertGraphNode({ ...current, identityRefs: current.identityRefs.filter(ref => ref !== identityRef), revision: newNode.revision });
+      return this.upsertGraphNode(newNode);
+    });
+  }
+
+  listGraphNodeHistory(nodeId: string): readonly DeviceGraphNodeV1[] {
+    return (this.database.prepare("SELECT node_json FROM device_fabric_graph_node_history WHERE node_id=? ORDER BY revision").all(nodeId) as Row[])
+      .map(row => parseJson<DeviceGraphNodeV1>(row.node_json, "graph node history"));
   }
 
   getGraphNode(nodeId: string): DeviceGraphNodeV1 | undefined {
@@ -577,6 +606,13 @@ export class SqliteDeviceFabricStore {
         node_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
         node_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_fabric_graph_node_history (
+        node_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        node_json TEXT NOT NULL,
+        changed_at TEXT NOT NULL,
+        PRIMARY KEY(node_id, revision)
       );
       CREATE TABLE IF NOT EXISTS device_fabric_graph_relationships (
         relationship_id TEXT PRIMARY KEY NOT NULL,

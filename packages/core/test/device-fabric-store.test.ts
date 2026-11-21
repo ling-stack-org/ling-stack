@@ -186,6 +186,10 @@ test("fabric store persists graph, twin, and task graph revisions", () => {
   const component: DeviceGraphNodeV1 = { nodeId: "component-1", kind: "component", parentNodeId: "device-1", label: "Wi-Fi", identityRefs: [], properties: {}, revision: 1 };
   store.upsertGraphNode(device);
   store.upsertGraphNode(component);
+  assert.deepEqual(store.mergeGraphIdentity("device-1", "ble:board", 2).identityRefs, ["ssh:board", "ble:board"]);
+  store.splitGraphIdentity("device-1", "ble:board", { nodeId: "device-2", kind: "device", label: "Split board", deviceId: "device-2", identityRefs: ["ble:board"], properties: {}, revision: 3 });
+  assert.deepEqual(store.getGraphNode("device-1")?.identityRefs, ["ssh:board"]);
+  assert.equal(store.listGraphNodeHistory("device-1").length, 2);
   store.addGraphRelationship({ relationshipId: "contains-1", fromNodeId: "device-1", toNodeId: "component-1", type: "contains", provenance: ["adapter"], revision: 1 });
   assert.throws(() => store.addGraphRelationship({ relationshipId: "contains-cycle", fromNodeId: "component-1", toNodeId: "device-1", type: "contains", provenance: [], revision: 1 }), (error: unknown) => error instanceof DeviceFabricError && error.code === "invalid_graph");
   store.saveTwin({ deviceId: "device-1", revision: 1, updatedAt: now, values: [] });
