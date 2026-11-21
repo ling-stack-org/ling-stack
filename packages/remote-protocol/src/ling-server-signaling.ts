@@ -51,7 +51,11 @@ export function validateLingServerSignedSignalingV1(value: unknown): LingServerS
 
 function readSignalingOperation(value: unknown, path: string): LingServerSignalingOperationV1 {
   const operation = expectRecord(value, path);
-  const kind = expectEnum(operation.kind, ["publish", "poll"], `${path}.kind`);
+  const kind = expectEnum(operation.kind, ["publish", "poll", "transport_config"], `${path}.kind`);
+  if (kind === "transport_config") {
+    assertStrictKeys(operation, ["kind", "nonce"], [], path);
+    return { kind, nonce: expectNonce(operation.nonce, `${path}.nonce`) };
+  }
   if (kind === "poll") {
     assertStrictKeys(operation, ["kind", "nonce", "afterSequence"], [], path);
     return {

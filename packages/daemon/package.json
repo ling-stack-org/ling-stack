@@ -5,7 +5,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "ling-stack-daemon": "./dist/cli.js"
+    "ling-stack-daemon": "./dist/cli.js",
+    "ling-server": "./dist/ling-server-cli.js"
   },
   "scripts": {
     "build:ci": "tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",

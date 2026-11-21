@@ -84,7 +84,8 @@ export const LING_SERVER_SIGNAL_PAYLOAD_BYTES_V1 = 32 * 1024;
 
 export type LingServerSignalingOperationV1 =
   | { readonly kind: "publish"; readonly sequence: number; readonly messageType: "offer" | "answer" | "ice_candidate"; readonly payload: string }
-  | { readonly kind: "poll"; readonly nonce: string; readonly afterSequence: number };
+  | { readonly kind: "poll"; readonly nonce: string; readonly afterSequence: number }
+  | { readonly kind: "transport_config"; readonly nonce: string };
 
 export interface LingServerSignalingInputV1 {
   readonly version: 1;
@@ -112,7 +113,14 @@ export interface LingServerSignedSignalingV1 {
 
 export type LingServerSignalingResponseV1 =
   | { readonly kind: "published"; readonly sequence: number; readonly replayed: boolean }
-  | { readonly kind: "signals"; readonly messages: readonly LingServerSignedSignalingV1[]; readonly latestSequence: number; readonly hasMore: boolean };
+  | { readonly kind: "signals"; readonly messages: readonly LingServerSignedSignalingV1[]; readonly latestSequence: number; readonly hasMore: boolean }
+  | {
+      readonly kind: "transport_config";
+      readonly route: LingServerTransportRouteV1;
+      readonly stunUrls: readonly string[];
+      readonly turnUrls: readonly string[];
+      readonly relayCredential?: LingServerRelayCredentialV1;
+    };
 
 export interface LingServerRelayCredentialV1 {
   readonly url: string;

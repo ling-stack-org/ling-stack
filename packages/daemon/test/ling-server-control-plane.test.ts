@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { once } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import type { LingServerSignalingInputV1, LingServerSignedSignalingV1 } from "@ling-stack/contracts";
 import { fingerprintPublicJwkSync, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
@@ -95,7 +99,10 @@ test("self-hosted Ling Server restores control metadata after restart", async ()
 
 test("paired peers exchange signed signaling over a bounded route and reject replay, tampering and revocation", async t => {
   let clock = "2026-11-21T00:00:00.000Z";
-  const control = new LingServerControlPlane({ authToken: "server-token", now: () => clock, transport: { features: ["ordered-channel"] } });
+  const control = new LingServerControlPlane({ authToken: "server-token", now: () => clock, transport: {
+    features: ["ordered-channel"], stunUrls: ["stun:stun.ling.example:3478"],
+    turnUrls: ["turns:turn.ling.example:443"], relaySharedSecret: "0123456789abcdef",
+  } });
   t.after(() => control.stop());
   const address = await control.start();
   const origin = `http://${address.host}:${address.port}`;
@@ -137,6 +144,12 @@ test("paired peers exchange signed signaling over a bounded route and reject rep
   });
   const offer = { kind: "publish", messageType: "offer", sequence: 1, payload: "v=0\r\ns=ling-pc-fixture\r\n" } as const;
   const signedOffer = proof({ ...input, role: "gateway", operation: offer }, gateway);
+  const configRequest = { kind: "transport_config", nonce: randomBytes(32).toString("base64url") } as const;
+  const direct = await send(origin, proof({ ...input, role: "mobile", operation: configRequest }, mobile));
+  assert.equal(direct.status, 200);
+  assert.deepEqual(await direct.json(), {
+    kind: "transport_config", route: "direct", stunUrls: ["stun:stun.ling.example:3478"], turnUrls: ["turns:turn.ling.example:443"],
+  });
   assert.equal((await send(origin, { ...signedOffer, input: { ...signedOffer.input, operation: { ...offer, payload: "changed" } } })).status, 403);
   assert.equal((await send(origin, proof({ ...input, role: "gateway", operation: offer }, mobile))).status, 403);
   assert.equal((await send(origin, proof({ ...input, role: "gateway", operation: { ...offer, sequence: 2 } }, gateway))).status, 409);
@@ -168,9 +181,83 @@ test("paired peers exchange signed signaling over a bounded route and reject rep
   assert.equal((await send(reopenedOrigin, nextOffer)).status, 403);
   const relayOffer = proof({ ...nextOffer.input, preferredRoute: "relay" }, gateway);
   assert.equal((await send(reopenedOrigin, relayOffer)).status, 200);
+  const relayConfigRequest = proof({
+    ...input, instanceId: nextInstance, preferredRoute: "relay", role: "mobile", operation: configRequest,
+  }, mobile);
+  const relayConfig = await send(reopenedOrigin, relayConfigRequest);
+  assert.equal(relayConfig.status, 200);
+  assert.equal((await relayConfig.json()).relayCredential.expiresAt, expiresAt);
+  assert.equal((await send(reopenedOrigin, relayConfigRequest)).status, 409);
   clock = expiresAt;
   assert.equal((await send(reopenedOrigin, relayOffer)).status, 403);
   clock = "2026-11-21T00:02:00.000Z";
   control.registry.revokeBinding("binding-1", 2);
   assert.equal((await send(reopenedOrigin, relayOffer)).status, 403);
+});
+
+test("the standalone Ling Server starts a TLS peer listener and private administration", { timeout: 10_000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-server-cli-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const certPath = join(root, "tls.crt");
+  const keyPath = join(root, "tls.key");
+  const cert = spawnSync("openssl", [
+    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=localhost", "-days", "1",
+    "-keyout", keyPath, "-out", certPath,
+  ], { stdio: "ignore" });
+  if ((cert.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+    t.skip("OpenSSL is unavailable for the local TLS certificate fixture");
+    return;
+  }
+  assert.equal(cert.status, 0);
+  const confPath = join(root, "server.json");
+  const token = "fixture-operator-token";
+  writeFileSync(join(root, "operator.txt"), token + "\n", { mode: 0o600 });
+  writeFileSync(confPath, JSON.stringify({
+    host: "127.0.0.1", port: 0, adminPort: 0, authTokenFile: "operator.txt", databasePath: "server.sqlite",
+    tls: { certFile: "tls.crt", keyFile: "tls.key" },
+  }));
+  const cli = fileURLToPath(new URL("../dist/ling-server-cli.js", import.meta.url));
+  const child = spawn(process.execPath, [cli, confPath], { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = once(child, "exit");
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+      await exited;
+    }
+  });
+  let stdout = "";
+  const ready = new Promise<{ peerPort: number; adminPort: number }>(resolve => {
+    child.stdout.on("data", chunk => {
+      stdout += String(chunk);
+      const peerPort = /listening on https:\/\/127\.0\.0\.1:(\d+)\n/u.exec(stdout)?.[1];
+      const adminPort = /administration on http:\/\/127\.0\.0\.1:(\d+)\n/u.exec(stdout)?.[1];
+      if (peerPort && adminPort) resolve({ peerPort: Number(peerPort), adminPort: Number(adminPort) });
+    });
+  });
+  let stderr = "";
+  child.stderr.on("data", chunk => { stderr += String(chunk); });
+  const { peerPort, adminPort } = await Promise.race([ready, exited.then(() => { throw new Error(stderr || "Ling Server exited before listening"); })]);
+  const options = { hostname: "127.0.0.1", port: peerPort, servername: "localhost", ca: readFileSync(certPath), signal: AbortSignal.timeout(3000) };
+  const status = (path: string, method = "GET") => new Promise<number | undefined>((resolve, reject) => {
+    const request = httpsRequest({ ...options, path, method, headers: { Authorization: `Bearer ${token}` } }, response => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+    request.on("error", reject);
+    request.end();
+  });
+  assert.equal(await status("/healthz"), 200);
+  assert.equal(await status("/v1/signaling/instance"), 200);
+  assert.equal(await status("/v1/installations", "POST"), 404);
+  const adminUrl = `http://127.0.0.1:${adminPort}/v1/installations`;
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const publish = (extraHeaders: Record<string, string> = {}) => fetch(adminUrl, {
+    method: "POST", headers: { ...headers, ...extraHeaders },
+    body: JSON.stringify({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" }),
+  });
+  assert.equal((await publish({ "X-Forwarded-For": "192.0.2.42" })).status, 403);
+  assert.equal((await publish()).status, 200);
+  child.kill("SIGTERM");
+  assert.deepEqual(await exited, process.platform === "win32" ? [null, "SIGTERM"] : [0, null]);
+  assert.equal(stdout.includes(token), false);
 });

@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import type {
   LingServerPeerRoleV1, LingServerSignedSignalingV1, LingServerSignalingResponseV1, LingServerTransportRouteV1,
 } from "@ling-stack/contracts";
-import { DeviceFabricError, type LingServerPeerRegistry } from "@ling-stack/core";
+import { DeviceFabricError, type LingServerPeerRegistry, type LingServerRelayCredentialIssuer } from "@ling-stack/core";
 import {
   decodeBase64Url, lingServerSignalingSigningBytes, matchesPublicJwkFingerprint, validateLingServerSignedSignalingV1,
 } from "@ling-stack/remote-protocol";
@@ -13,12 +13,12 @@ const maxRouteLifetimeMs = 5 * 60_000;
 const maxRoutes = 128;
 const maxPayloadBytes = 16 * 1024 * 1024;
 const maxLaneMessages = 96;
-const maxLanePolls = 1_024;
+const maxLaneRequests = 1_024;
 const pollPageSize = 8;
 
 interface SignalLane {
   readonly messages: LingServerSignedSignalingV1[];
-  readonly usedPollNonces: Set<string>;
+  readonly usedNonces: Set<string>;
 }
 
 interface RouteSignals {
@@ -40,6 +40,9 @@ export class LingServerSignaling {
     readonly registry: LingServerPeerRegistry;
     readonly protocolMajor: number;
     readonly features: readonly string[];
+    readonly stunUrls: readonly string[];
+    readonly turnUrls: readonly string[];
+    readonly relayIssuer?: LingServerRelayCredentialIssuer;
     readonly now: () => string;
   }) {}
 
@@ -73,21 +76,32 @@ export class LingServerSignaling {
       signals = {
         routeAttemptId: route.routeAttemptId, bindingId: binding.bindingId, epoch: binding.epoch,
         preferredRoute: route.preferred, expiresAtMs, bytes: 0,
-        lanes: { gateway: { messages: [], usedPollNonces: new Set() }, mobile: { messages: [], usedPollNonces: new Set() } },
+        lanes: { gateway: { messages: [], usedNonces: new Set() }, mobile: { messages: [], usedNonces: new Set() } },
       };
       this.#routes.set(key, signals);
     }
 
     const lane = signals.lanes[input.role];
     const operation = input.operation;
+    if (operation.kind !== "publish") {
+      if (lane.usedNonces.has(operation.nonce)) throw new DeviceFabricError("revision_conflict", "signaling request proof was already used");
+      if (lane.usedNonces.size >= maxLaneRequests) throw new DeviceFabricError("lease_busy", "signaling request quota reached");
+    }
+    if (operation.kind === "transport_config") {
+      const relayCredential = route.preferred === "relay" ? this.options.relayIssuer?.issue({ binding, route, role: input.role }) : undefined;
+      if (route.preferred === "relay" && !relayCredential) throw new DeviceFabricError("resource_conflict", "relay configuration is unavailable");
+      lane.usedNonces.add(operation.nonce);
+      return {
+        kind: "transport_config", route: route.preferred, stunUrls: this.options.stunUrls, turnUrls: this.options.turnUrls,
+        ...(relayCredential ? { relayCredential } : {}),
+      };
+    }
     if (operation.kind === "poll") {
       const peerLane = signals.lanes[input.role === "gateway" ? "mobile" : "gateway"];
-      if (lane.usedPollNonces.has(operation.nonce)) throw new DeviceFabricError("revision_conflict", "signaling poll proof was already used");
-      if (lane.usedPollNonces.size >= maxLanePolls) throw new DeviceFabricError("lease_busy", "signaling poll quota reached");
       if (operation.afterSequence > peerLane.messages.length) {
         throw new DeviceFabricError("revision_conflict", "signaling cursor is outside the peer lane");
       }
-      lane.usedPollNonces.add(operation.nonce);
+      lane.usedNonces.add(operation.nonce);
       const latestSequence = peerLane.messages.length;
       const end = operation.afterSequence + pollPageSize;
       return { kind: "signals", messages: peerLane.messages.slice(operation.afterSequence, end), latestSequence, hasMore: end < latestSequence };

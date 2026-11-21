@@ -165,6 +165,9 @@ roles, features, expiry and exact signaling message. Each sender has an ordered
 lane. The other role polls it with a signed, single-use nonce and a cursor. The
 service keeps the signed payloads in memory until expiration. Restart, revoke and
 relay fallback invalidate the earlier signaling scope.
+A signed `transport_config` request retrieves the configured STUN endpoints.
+During relay checks it also retrieves a short-lived coturn credential for its
+own role.
 [Signaling protocol](../../packages/remote-protocol/src/ling-server-signaling.ts)
 
 After the DataChannel opens, authenticate again at the Remote Gateway using the
@@ -315,6 +318,40 @@ distinct states. This helps a user distinguish a reachable server from a synced 
 or a reachable external device.
 
 ## 8. Deployment and operations
+
+### Standalone control service
+
+Run `ling-server /path/to/server.json` from the Daemon package. A source checkout
+can run `node packages/daemon/dist/ling-server-cli.js /path/to/server.json` after
+building that package. Configuration paths below resolve relative to the JSON file.
+
+```json
+{
+  "host": "0.0.0.0",
+  "port": 443,
+  "adminPort": 17894,
+  "databasePath": "state/ling-server.sqlite",
+  "authTokenFile": "secrets/operator-token",
+  "tls": {
+    "certFile": "tls/fullchain.pem",
+    "keyFile": "tls/private-key.pem"
+  },
+  "transport": {
+    "stunUrls": ["stun:stun.example.com:3478"],
+    "turnUrls": ["turn:relay.example.com:3478?transport=udp", "turns:relay.example.com:443?transport=tcp"],
+    "relaySharedSecretFile": "secrets/coturn-rest-secret"
+  }
+}
+```
+
+The TLS listener exposes health and signed signaling. The administrator binds
+installations and routes using the bearer-token API on the separate
+`127.0.0.1` listener. Configure coturn on the advertised STUN/TURN addresses and
+supply its REST shared secret through the named file. SQLite preserves the control
+metadata across process restart.
+[CLI and configuration](../../packages/daemon/src/ling-server-cli.ts)
+
+### Deployment topology
 
 | Listener or component | Deployment |
 | --- | --- |

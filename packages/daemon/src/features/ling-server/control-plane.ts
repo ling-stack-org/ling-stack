@@ -1,8 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
 import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
 import { RemoteProtocolError } from "@ling-stack/remote-protocol";
+import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { LingServerSignaling } from "./signaling.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -15,6 +17,8 @@ export interface LingServerControlPlaneOptions {
   readonly registry?: LingServerPeerRegistry;
   readonly databasePath?: string;
   readonly store?: SqliteLingServerStore;
+  readonly tls?: Pick<ServerOptions, "cert" | "key">;
+  readonly adminPort?: number;
   readonly transport?: {
     readonly protocolMajor?: number;
     readonly features?: readonly string[];
@@ -37,8 +41,11 @@ export class LingServerControlPlane {
   readonly #ownsStore: boolean;
   readonly #transportOptions: NonNullable<LingServerControlPlaneOptions["transport"]>;
   readonly #relayIssuer?: LingServerRelayCredentialIssuer;
+  readonly #tls?: LingServerControlPlaneOptions["tls"];
+  readonly #adminPort?: number;
   #storeClosed = false;
-  #server?: Server;
+  #server?: HttpServer | HttpsServer;
+  #adminServer?: HttpServer;
   #signaling?: LingServerSignaling;
   #signalExpiryTimer?: ReturnType<typeof setInterval>;
 
@@ -50,6 +57,8 @@ export class LingServerControlPlane {
     this.#host = options.host ?? "127.0.0.1";
     this.#port = options.port ?? 0;
     this.#authToken = options.authToken;
+    this.#tls = options.tls;
+    this.#adminPort = options.adminPort;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#transportOptions = options.transport ?? {};
     if (options.transport?.relaySharedSecret !== undefined) {
@@ -65,15 +74,29 @@ export class LingServerControlPlane {
 
   async start(): Promise<{ readonly host: string; readonly port: number }> {
     if (this.#server?.listening) return this.address();
-    const server = createServer((request, response) => { void this.handleRequest(request, response); });
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(this.#port, this.#host, () => { server.off("error", reject); resolve(); });
+    const handler = (request: IncomingMessage, response: ServerResponse) => {
+      void this.handleRequest(request, response, this.#adminPort === undefined);
+    };
+    const limits = { headersTimeout: 10_000, requestTimeout: 15_000 };
+    const server = this.#tls ? createHttpsServer({ ...this.#tls, ...limits, minVersion: "TLSv1.2" }, handler)
+      : createServer(limits, handler);
+    const adminServer = this.#adminPort === undefined ? undefined : createServer(limits, (request, response) => {
+      void this.handleRequest(request, response);
     });
+    try {
+      if (adminServer) await listen(adminServer, this.#adminPort!, "127.0.0.1");
+      await listen(server, this.#port, this.#host);
+    } catch (error) {
+      if (adminServer) await closeServer(adminServer);
+      await closeServer(server);
+      throw error;
+    }
     this.#server = server;
+    this.#adminServer = adminServer;
     this.#signaling = new LingServerSignaling({
       registry: this.registry, protocolMajor: this.#transportOptions.protocolMajor ?? 1,
-      features: this.#transportOptions.features ?? [], now: this.#now,
+      features: this.#transportOptions.features ?? [], now: this.#now, relayIssuer: this.#relayIssuer,
+      stunUrls: this.#transportOptions.stunUrls ?? [], turnUrls: this.#transportOptions.turnUrls ?? [],
     });
     this.#signalExpiryTimer = setInterval(() => this.#signaling?.purge(), 5_000);
     this.#signalExpiryTimer.unref();
@@ -82,10 +105,12 @@ export class LingServerControlPlane {
 
   async stop(): Promise<void> {
     const server = this.#server;
+    const adminServer = this.#adminServer;
     this.#server = undefined;
+    this.#adminServer = undefined;
     clearInterval(this.#signalExpiryTimer);
     this.#signaling = undefined;
-    if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
+    await Promise.all([server ? closeServer(server) : undefined, adminServer ? closeServer(adminServer) : undefined]);
     if (this.#ownsStore && !this.#storeClosed) {
       this.#store?.close();
       this.#storeClosed = true;
@@ -97,7 +122,12 @@ export class LingServerControlPlane {
     return { host: this.#host, port: typeof address === "object" && address ? address.port : this.#port };
   }
 
-  async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  adminAddress(): { readonly host: string; readonly port: number } | undefined {
+    const bound = this.#adminServer?.address();
+    return typeof bound === "object" && bound ? { host: bound.address, port: bound.port } : undefined;
+  }
+
+  async handleRequest(request: IncomingMessage, response: ServerResponse, admin = true): Promise<void> {
     const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && url.pathname === "/healthz") {
       writeJson(response, 200, { status: "ok", generatedAt: this.#now() });
@@ -111,10 +141,15 @@ export class LingServerControlPlane {
       await this.exchangeSignaling(request, response);
       return;
     }
+    if (!admin) {
+      writeJson(response, 404, { error: "not_found" });
+      return;
+    }
     if (!safeToken(request.headers.authorization, this.#authToken)) {
       writeJson(response, 401, { error: "unauthorized" });
       return;
     }
+    if (!allowLocalServiceRequest(request, response)) return;
     try {
       const body = request.method === "POST" ? await readJson(request) : undefined;
       if (request.method === "POST" && url.pathname === "/v1/installations") {
@@ -223,11 +258,22 @@ export class LingServerControlPlane {
     } catch (error) {
       if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_signaling_request" });
       else if (error instanceof DeviceFabricError) {
-        const status = error.code === "lease_busy" ? 429 : error.code === "revision_conflict" ? 409 : 403;
-        writeJson(response, status, { error: status === 403 ? "signaling_denied" : error.code });
+        const status = error.code === "lease_busy" ? 429 : error.code === "revision_conflict" ? 409 : error.code === "resource_conflict" ? 503 : 403;
+        writeJson(response, status, { error: status === 403 ? "signaling_denied" : status === 503 ? "signaling_unavailable" : error.code });
       } else writeJson(response, 503, { error: "signaling_unavailable" });
     }
   }
+}
+
+function listen(server: HttpServer | HttpsServer, port: number, host: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => { server.off("error", reject); resolve(); });
+  });
+}
+
+function closeServer(server: HttpServer | HttpsServer): Promise<void> {
+  return new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
 }
 
 function safeToken(value: string | undefined, expected: string): boolean {
