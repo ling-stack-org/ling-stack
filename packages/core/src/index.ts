@@ -251,6 +251,7 @@ export * from "./device-playbooks.js";
 export * from "./device-fabric.js";
 export * from "./device-secrets.js";
 export * from "./device-event-projection.js";
+export * from "./device-orchestration.js";
 export * from "./device-developer.js";
 export * from "./ling-server.js";
 export * from "./device-protocol.js";

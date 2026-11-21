@@ -207,3 +207,25 @@ export interface DeviceConformanceReportV1 {
   readonly checks: readonly { readonly id: string; readonly status: "pass" | "fail" | "skip"; readonly evidenceRef?: string }[];
   readonly generatedAt: string;
 }
+
+export interface DevicePlannerProposalV1 {
+  readonly proposalId: string;
+  readonly taskId: string;
+  readonly contextId: string;
+  readonly source: "model" | "local_playbook";
+  readonly providerId?: string;
+  readonly modelTurnId?: string;
+  readonly graph: DeviceTaskGraphV1;
+  readonly planningInputRefs: readonly string[];
+  readonly createdAt: string;
+}
+
+export interface DevicePlannerAcceptanceV1 {
+  readonly proposalId: string;
+  readonly taskId: string;
+  readonly contextId: string;
+  readonly graph: DeviceTaskGraphV1;
+  readonly contextDigest: string;
+  readonly requiredApprovalNodeIds: readonly string[];
+  readonly acceptedAt: string;
+}
