@@ -54,8 +54,14 @@ export function isGeneratedProviderModelCatalogRefresh(before, after) {
   if (!previous || !current) return false;
   // The generator leaves some non-chat models without capabilities. Clearing
   // a model's capabilities or introducing a new empty list needs consumer CI.
-  const baselineEmpty = new Set(previous.filter(record => record.capabilities.length === 0).map(recordKey));
-  return current.every(record => record.capabilities.length > 0 || baselineEmpty.has(recordKey(record)));
+  const previousByKey = new Map(previous.map(record => [recordKey(record), record]));
+  if (current.some(record => record.capabilities.length === 0 && previousByKey.get(recordKey(record))?.capabilities.length !== 0)) return false;
+  const currentByKey = new Map(current.map(record => [recordKey(record), record]));
+  const changedKeys = [...new Set([...previousByKey.keys(), ...currentByKey.keys()])]
+    .filter(key => !isDeepStrictEqual(previousByKey.get(key), currentByKey.get(key)));
+  // Small automated updates use the focused tests. Bulk catalog changes
+  // exercise the provider catalog's consumers as well.
+  return changedKeys.length <= Math.max(2, Math.floor(previous.length / 20));
 }
 
 function readGeneratedRecords(source) {

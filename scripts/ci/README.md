@@ -37,10 +37,11 @@ the version is valid, and the rest of the root manifest is identical. Missing
 or mismatched values retain full scope. Desktop version inputs follow the
 normal package graph and Desktop release validation.
 
-A catalog refresh must match the generator's format, trusted providers,
-normalized record fields and version digest in both trees. The required
-typecheck job runs the Core provider catalog tests. Resolver, generator and
-mixed source changes follow the normal consumer graph.
+Small catalog refreshes by the repository's catalog automation use the focused
+Core catalog tests in the required typecheck job. The classifier verifies the
+normalized fields, provider IDs and digest in both trees. Bulk record changes,
+resolver edits, generator edits and mixed source changes follow the normal
+consumer graph.
 
 Package manifests are compared with the base checkout before narrowing. The
 directory, name, test/typecheck entry presence and complete scripts fingerprint

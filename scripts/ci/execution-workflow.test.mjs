@@ -136,6 +136,10 @@ test("workflow transformations select the eight core shards for core test-only w
 });
 
 test("the catalog regression runs within the required Core typecheck job", async () => {
+  const scopeJob = jobSource("scope");
+  assert.match(scopeJob, /pull_request\.user\.login == 'ling-stack-model-catalog\[bot\]'/u);
+  assert.match(scopeJob, /pull_request\.head\.repo\.full_name == github\.repository/u);
+  assert.match(scopeJob, /--catalog-automation="\$CATALOG_AUTOMATION"/u);
   const scope = classifyChangedFiles({
     files: ["packages/core/src/provider-model-catalog.generated.ts"], generatedProviderCatalog: true,
   });

@@ -644,7 +644,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
     }
     versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
-    if (args["force-full"] !== "true" && files.includes(PROVIDER_MODEL_CATALOG_PATH)) {
+    if (args["force-full"] !== "true" && args["catalog-automation"] === "true" && files.includes(PROVIDER_MODEL_CATALOG_PATH)) {
       generatedProviderCatalog = [base, args.head].every(ref => /^100644 blob /u.test(git(["ls-tree", ref, "--", PROVIDER_MODEL_CATALOG_PATH])))
         && isGeneratedProviderModelCatalogRefresh(git(["show", `${base}:${PROVIDER_MODEL_CATALOG_PATH}`]),
           git(["show", `${args.head}:${PROVIDER_MODEL_CATALOG_PATH}`]));

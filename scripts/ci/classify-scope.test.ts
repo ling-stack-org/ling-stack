@@ -347,8 +347,8 @@ function repositoryFixture(t: TestContext) {
     }));
   }
   const commit = () => { git("add", "."); git("commit", "--quiet", "-m", "fixture"); return git("rev-parse", "HEAD"); };
-  const classify = (base: string): ReturnType<typeof classifyChangedFiles> => JSON.parse(execFileSync(process.execPath, [script,
-    "--event=pull_request", `--base=${base}`, "--head=HEAD"], { encoding: "utf8" }));
+  const classify = (base: string, ...options: string[]): ReturnType<typeof classifyChangedFiles> => JSON.parse(execFileSync(process.execPath, [script,
+    "--event=pull_request", `--base=${base}`, "--head=HEAD", ...options], { encoding: "utf8" }));
   return { root, git, write, commit, classify };
 }
 
@@ -533,7 +533,7 @@ test("Git verifies provider catalog data before selecting focused Core validatio
   repo.write(PROVIDER_MODEL_CATALOG_PATH, refreshed);
   repo.write("docs/ci.md", "# Catalog refresh\n");
   repo.commit();
-  const scope = repo.classify(base);
+  const scope = repo.classify(base, "--catalog-automation=true");
   assert.equal(scope.mode, "affected");
   assert.deepEqual(scope.packages, ["@ling-stack/core"]);
   assert.deepEqual(scope.testPackages, []);
@@ -545,6 +545,11 @@ test("Git verifies provider catalog data before selecting focused Core validatio
   assert.deepEqual(scope.daemonPlatforms, []);
   assert.equal(scope.macosNative, false);
   assert.match(scope.reason, /generated provider model catalog/u);
+  assert.equal(repo.classify(base).providerModelCatalog, undefined);
+
+  const bulkRecords = ["new-a", "new-b", "new-c"].map(id => ({ providerId: "openai", id, capabilities: ["chat"] }));
+  const bulkRefresh = renderProviderModelCatalog({ records: bulkRecords, version: providerModelCatalogVersion(bulkRecords),
+    generatedAt: "2026-11-21T00:00:00.000Z" });
 
   for (const candidate of [
     refreshed.replace('"candidate"', '"digest-mismatch"'),
@@ -556,10 +561,11 @@ test("Git verifies provider catalog data before selecting focused Core validatio
     refreshed.replace('"updatedAt": "2026-11-20"', '"updatedAt": "2026-11-21"'),
     render("candidate", "openai", ["chat"], "2026-11-31"),
     render("candidate", "openai", ["chat"], "2026-11-22"),
+    bulkRefresh,
   ]) {
     repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
     repo.commit();
-    const rejected = repo.classify(base);
+    const rejected = repo.classify(base, "--catalog-automation=true");
     assert.equal(rejected.providerModelCatalog, undefined);
     assert.equal(rejected.daemon, true);
     assert.equal(rejected.assurance, true);

@@ -74,6 +74,12 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          CATALOG_AUTOMATION: >-
+            ${{ github.repository == 'ling-stack-org/ling-stack' &&
+                github.event.pull_request.user.login == 'ling-stack-model-catalog[bot]' &&
+                github.event.pull_request.head.repo.full_name == github.repository &&
+                github.event.pull_request.head.ref == 'automation/provider-model-catalog' &&
+                github.event.pull_request.base.ref == github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
@@ -82,6 +88,7 @@ jobs:
               --base="$BASE_SHA" \
               --head=HEAD \
               --pr-head="$PR_HEAD_SHA" \
+              --catalog-automation="$CATALOG_AUTOMATION" \
               --force-full="$FORCE_FULL")"
           else
             scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
