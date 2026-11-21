@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type {
+  DeviceCapabilitySnapshotV1,
   DeviceConformanceReportV1,
   DeviceContextFactMetadataV1,
   DeviceContextPackV1,
@@ -277,13 +278,14 @@ export interface EdgeRuntimePersistence {
   listEdgeRuntimes?(): readonly EdgeRuntimeEnrollmentV1[];
 }
 
-/** Projects durable device profiles and runtime enrollment into one bounded fleet view. */
+/** Projects device registrations, capability observations and edge runtime enrollment. */
 export class DeviceFleetProjection {
   build(input: {
     readonly projectionId: string;
     readonly ownerScope: string;
     readonly generatedAt: string;
     readonly profiles: readonly DeviceProfileV1[];
+    readonly snapshots?: ReadonlyMap<string, DeviceCapabilitySnapshotV1>;
     readonly runtimes?: readonly EdgeRuntimeEnrollmentV1[];
     readonly staleAfterMs?: number;
   }): DeviceFleetHealthProjectionV1 {
@@ -300,9 +302,10 @@ export class DeviceFleetProjection {
         if (seen.has(profile.device.id)) throw new DeviceFabricError("revision_conflict", "fleet projection contains a duplicate device");
         seen.add(profile.device.id);
         const runtime = profile.device.runtimeOwnerId ? runtimeById.get(profile.device.runtimeOwnerId) : undefined;
-        return this.projectItem(profile, runtime, input.generatedAt, staleAfterMs);
+        const snapshot = input.snapshots?.get(profile.device.id);
+        return this.projectItem(profile, snapshot, runtime, input.generatedAt, staleAfterMs);
       })
-      .sort((left, right) => left.deviceId.localeCompare(right.deviceId));
+      .sort((left, right) => left.deviceId < right.deviceId ? -1 : 1);
     const counts = {
       healthy: 0, degraded: 0, offline: 0, maintenance: 0, revoked: 0, retired: 0, unknown: 0,
     } satisfies Record<DeviceFleetHealthStatusV1, number>;
@@ -312,6 +315,7 @@ export class DeviceFleetProjection {
 
   private projectItem(
     profile: DeviceProfileV1,
+    candidate: DeviceCapabilitySnapshotV1 | undefined,
     runtime: EdgeRuntimeEnrollmentV1 | undefined,
     evaluatedAt: string,
     staleAfterMs: number,
@@ -327,8 +331,13 @@ export class DeviceFleetProjection {
       case "healthy": health = "healthy"; break;
       default: health = "unknown"; reasons.push("lifecycle_not_operational"); break;
     }
-    if (health === "healthy" && profile.device.lastSeenAt !== undefined
-      && Date.parse(evaluatedAt) - Date.parse(profile.device.lastSeenAt) > staleAfterMs) {
+    const asOf = Date.parse(evaluatedAt);
+    const snapshot = candidate?.deviceId === profile.device.id && candidate.adapterId === profile.adapterId
+      && candidate.adapterVersion === profile.adapterVersion && Date.parse(candidate.observedAt) <= asOf ? candidate : undefined;
+    const discoverySeen = profile.device.lastSeenAt;
+    const lastSeenAt = snapshot && (!discoverySeen || Date.parse(snapshot.observedAt) > Date.parse(discoverySeen))
+      ? snapshot.observedAt : discoverySeen;
+    if (health === "healthy" && lastSeenAt !== undefined && asOf - Date.parse(lastSeenAt) > staleAfterMs) {
       health = "degraded";
       reasons.push("last_seen_stale");
     }
@@ -336,11 +345,8 @@ export class DeviceFleetProjection {
       if (runtime.status === "revoked") { health = health === "retired" ? health : "revoked"; reasons.push("runtime_revoked"); }
       else if (runtime.status === "offline") { health = health === "retired" || health === "revoked" ? health : "offline"; reasons.push("runtime_offline"); }
       else if (runtime.status === "pending" && health === "healthy") { health = "degraded"; reasons.push("runtime_pending"); }
-      if (runtime.lastSeenAt !== undefined && Date.parse(evaluatedAt) - Date.parse(runtime.lastSeenAt) > staleAfterMs
+      if (runtime.lastSeenAt !== undefined && asOf - Date.parse(runtime.lastSeenAt) > staleAfterMs
         && health === "healthy") { health = "degraded"; reasons.push("runtime_last_seen_stale"); }
-    } else if (profile.device.runtimeOwnerId && health === "healthy") {
-      health = "degraded";
-      reasons.push("runtime_missing");
     }
     return {
       deviceId: profile.device.id,
@@ -352,8 +358,14 @@ export class DeviceFleetProjection {
       adapterId: profile.adapterId,
       adapterVersion: profile.adapterVersion,
       profileRevision: profile.profileRevision,
+      ...(profile.device.firmwareVersion ? { firmwareVersion: profile.device.firmwareVersion } : {}),
+      ...(snapshot ? { capabilitySnapshotId: snapshot.snapshotId } : {}),
       ...(profile.device.runtimeOwnerId ? { runtimeOwnerId: profile.device.runtimeOwnerId } : {}),
-      ...(runtime ? { runtimeStatus: runtime.status, ...(runtime.lastSeenAt ? { lastSeenAt: runtime.lastSeenAt } : {}) } : profile.device.lastSeenAt ? { lastSeenAt: profile.device.lastSeenAt } : {}),
+      ...(lastSeenAt ? { lastSeenAt } : {}),
+      ...(runtime ? {
+        runtimeStatus: runtime.status, runtimeRevision: runtime.revision,
+        ...(runtime.lastSeenAt ? { runtimeLastSeenAt: runtime.lastSeenAt } : {}),
+      } : {}),
       reasons: [...new Set(reasons)],
       evaluatedAt,
     };

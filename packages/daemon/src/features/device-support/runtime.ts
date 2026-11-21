@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DeviceProfileV1 } from "@ling-stack/contracts";
+import type { DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DeviceProfileV1 } from "@ling-stack/contracts";
 import {
   type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
@@ -290,11 +290,17 @@ export function createDeviceSupportRuntime(options: {
       });
     },
     fleetHealth(workspaceId = DEFAULT_WORKSPACE_ID) {
+      const profiles = store.listDevices().filter(profile => profile.device.ownerScope === workspaceId);
+      const snapshots = new Map<string, DeviceCapabilitySnapshotV1>();
+      for (const profile of profiles) {
+        const snapshot = store.getCurrentCapabilitySnapshot(profile.device.id);
+        if (snapshot) snapshots.set(profile.device.id, snapshot);
+      }
       return fleetProjection.build({
         projectionId: `fleet:${workspaceId}`,
         ownerScope: workspaceId,
         generatedAt: now(),
-        profiles: store.listDevices(),
+        profiles, snapshots,
         runtimes: edgeRuntimes.list(),
       });
     },

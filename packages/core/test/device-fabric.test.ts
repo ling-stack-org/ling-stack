@@ -222,5 +222,8 @@ test("fleet projection keeps lifecycle, adapter and edge runtime health aligned"
   assert.deepEqual(result.items.map(item => item.deviceId), ["edge-device", "offline-device"]);
   assert.equal(result.items[0]?.health, "offline");
   assert.deepEqual(result.items[0]?.reasons, ["runtime_offline"]);
+  assert.equal(result.items[0]?.lastSeenAt, "2026-11-21T00:09:55.000Z");
+  assert.equal(result.items[0]?.runtimeLastSeenAt, "2026-11-20T23:00:00.000Z");
+  assert.equal(result.items[0]?.runtimeRevision, 2);
   assert.deepEqual(result.counts, { healthy: 0, degraded: 0, offline: 2, maintenance: 0, revoked: 0, retired: 0, unknown: 0 });
 });

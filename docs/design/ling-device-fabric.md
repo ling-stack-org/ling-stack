@@ -409,6 +409,12 @@ Discovery produces a candidate. Enrollment binds target and connector identities
 their authorization. A validated profile establishes available capabilities.
 Health and maintenance follow the latest verified device and adapter observations.
 
+The default workspace's authenticated loopback endpoint
+`GET /v1/device-support/fleet/health` reports the registered devices, their profile
+and adapter revisions, known firmware and the matching capability snapshot.
+An enrolled Edge Runtime contributes its revision and last-seen time separately
+from the device observation. [Fleet projection](../../packages/core/src/device-fabric.ts)
+
 An ownership transfer revokes the previous authorization and validates the new holder
 and credentials before offering more actions. Ongoing or unknown attempts remain
 visible to the authority responsible for their reconciliation. An access grant can

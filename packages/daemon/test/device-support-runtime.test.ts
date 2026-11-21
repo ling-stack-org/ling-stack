@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import type {
-  DeviceActionRequestV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceResourceManifestV1,
+  DeviceActionRequestV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
   DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
@@ -285,7 +285,7 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   const fleetUrl = `http://127.0.0.1:${address.port}/v1/device-support/fleet/health`;
   assert.equal((await fetch(fleetUrl, { headers: { Origin: "https://example.invalid", ...headers } })).status, 403);
   assert.equal((await fetch(fleetUrl, { headers })).status, 200);
-  const fleet = await (await fetch(fleetUrl, { headers })).json() as { projectionId: string; items: unknown[]; counts: Record<string, number> };
+  const fleet = await (await fetch(fleetUrl, { headers })).json() as DeviceFleetHealthProjectionV1;
   assert.equal(fleet.projectionId, "fleet:workspace_default");
   assert.deepEqual(fleet.items, []);
   assert.equal(fleet.counts.unknown, 0);
@@ -304,6 +304,12 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   assert.ok(network);
   assert.equal(typeof (network.value as { connected?: unknown }).connected, "boolean");
   assert.doesNotMatch(JSON.stringify(network.value), /gatewayReachable|dnsReachable/u);
+  const liveFleet = await (await fetch(fleetUrl, { headers })).json() as DeviceFleetHealthProjectionV1;
+  assert.equal(liveFleet.counts.healthy, 1);
+  assert.equal(liveFleet.items[0]?.kind, "pc");
+  assert.ok(liveFleet.items[0]?.capabilitySnapshotId);
+  assert.ok(liveFleet.items[0]?.lastSeenAt);
+  assert.equal(liveFleet.items[0]?.runtimeStatus, undefined);
 
   const eventsUrl = `http://127.0.0.1:${address.port}/v1/device-support/tasks/${encodeURIComponent(report.taskId)}/events`;
   assert.equal((await fetch(eventsUrl, { headers: { ...headers, "X-Forwarded-For": "192.0.2.42" } })).status, 403);

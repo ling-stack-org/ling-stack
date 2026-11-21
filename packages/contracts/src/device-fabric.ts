@@ -302,8 +302,12 @@ export interface DeviceFleetHealthItemV1 {
   readonly adapterId: string;
   readonly adapterVersion: string;
   readonly profileRevision: string;
+  readonly firmwareVersion?: string;
+  readonly capabilitySnapshotId?: string;
   readonly runtimeOwnerId?: string;
   readonly runtimeStatus?: EdgeRuntimeEnrollmentV1["status"];
+  readonly runtimeRevision?: number;
+  readonly runtimeLastSeenAt?: string;
   readonly lastSeenAt?: string;
   readonly reasons: readonly string[];
   readonly evaluatedAt: string;
