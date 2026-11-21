@@ -63,6 +63,27 @@ test("expired in-memory task graph leases can be acquired by a new owner", () =>
   coordinator.acquireOwnerLease("pc-1", "mobile-1");
 });
 
+test("task graph cancellation preserves unknown outcomes and failed nodes can be retried", () => {
+  const coordinator = new DeviceTaskGraphCoordinator();
+  const graph: DeviceTaskGraphV1 = {
+    graphId: "recoverable-graph", revision: 1, status: "executing", createdAt: now, updatedAt: now,
+    nodes: [
+      { nodeId: "unknown", targetDeviceId: "vehicle-1", ownerKind: "mobile", ownerId: "phone-1", capabilityId: "vehicle.flash", capabilitySnapshotId: "snap-1", dependencies: [], status: "unknown" },
+      { nodeId: "failed", targetDeviceId: "pc-1", ownerKind: "daemon", ownerId: "pc-1", capabilityId: "pc.repair", capabilitySnapshotId: "snap-2", dependencies: [], status: "failed", resultRef: "failed-result", attemptId: "attempt-1" },
+      { nodeId: "pending", targetDeviceId: "pc-1", ownerKind: "daemon", ownerId: "pc-1", capabilityId: "pc.inspect", capabilitySnapshotId: "snap-2", dependencies: ["failed"], status: "executing" },
+    ],
+  };
+  const cancelled = coordinator.cancelGraph(graph);
+  assert.equal(cancelled.status, "unknown");
+  assert.equal(cancelled.nodes.find(node => node.nodeId === "unknown")?.status, "unknown");
+  assert.equal(cancelled.nodes.find(node => node.nodeId === "pending")?.status, "cancelled");
+  assert.throws(() => coordinator.retryNode(cancelled, "unknown"), error => error instanceof DeviceFabricError && error.code === "safety_denied");
+  const failedRetry = coordinator.retryNode(cancelled, "failed");
+  assert.equal(failedRetry.status, "planned");
+  assert.equal(failedRetry.nodes.find(node => node.nodeId === "failed")?.status, "planning");
+  assert.equal(failedRetry.nodes.find(node => node.nodeId === "failed")?.attemptId, undefined);
+});
+
 test("edge enrollment, ordered event recovery, resource rollback, safety and lifecycle are durable domain rules", () => {
   const edge = new EdgeRuntimeRegistry();
   assert.equal(edge.enroll({ runtimeId: "edge-1", displayName: "Linaro", publicKeyFingerprint: "fp-1", contractMajor: 1, supportedTransports: ["ssh"], status: "pending", revision: 1 }).status, "enrolled");

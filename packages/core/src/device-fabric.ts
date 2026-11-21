@@ -173,6 +173,43 @@ export class DeviceTaskGraphCoordinator {
     this.#persistence?.saveTaskGraph(next);
     return next;
   }
+
+  cancelGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1 {
+    const currentGraph = this.#persistence?.getTaskGraph(graph.graphId) ?? graph;
+    this.validateGraph(currentGraph);
+    if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
+    if (["succeeded", "failed", "cancelled"].includes(currentGraph.status)) return currentGraph;
+    const nodes = currentGraph.nodes.map(node => node.status === "unknown" || node.status === "succeeded" || node.status === "failed"
+      ? node : { ...node, status: "cancelled" as const });
+    for (const node of nodes) if (node.status !== "unknown") this.releaseOwnerLease(node.targetDeviceId, node.ownerId);
+    const next: DeviceTaskGraphV1 = {
+      ...currentGraph,
+      revision: currentGraph.revision + 1,
+      status: nodes.some(node => node.status === "unknown") ? "unknown" : "cancelled",
+      nodes,
+      updatedAt: this.#now(),
+    };
+    this.#persistence?.saveTaskGraph(next);
+    return next;
+  }
+
+  retryNode(graph: DeviceTaskGraphV1, nodeId: string): DeviceTaskGraphV1 {
+    const currentGraph = this.#persistence?.getTaskGraph(graph.graphId) ?? graph;
+    this.validateGraph(currentGraph);
+    if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
+    const target = currentGraph.nodes.find(node => node.nodeId === nodeId);
+    if (!target) throw new DeviceFabricError("target_missing", "task graph node is missing");
+    if (target.status === "unknown") throw new DeviceFabricError("safety_denied", "unknown task graph outcome requires reconciliation before retry");
+    if (target.status !== "failed") throw new DeviceFabricError("invalid_graph", "only a failed task graph node can be retried");
+    const nodes = currentGraph.nodes.map(node => {
+      if (node.nodeId !== nodeId) return node;
+      const { attemptId: _attemptId, ...withoutAttempt } = node;
+      return { ...withoutAttempt, status: "planning" as const };
+    });
+    const next: DeviceTaskGraphV1 = { ...currentGraph, revision: currentGraph.revision + 1, status: "planned", nodes, updatedAt: this.#now() };
+    this.#persistence?.saveTaskGraph(next);
+    return next;
+  }
 }
 
 export interface DeviceTaskGraphPersistence {
