@@ -1,4 +1,5 @@
 import { execFile as nodeExecFile } from "node:child_process";
+import { networkInterfaces } from "node:os";
 import { promisify } from "node:util";
 import type { PcNetworkStatus, PcServiceStatus, PcTargetExecutor } from "./pc.js";
 
@@ -11,14 +12,17 @@ export interface LocalProcessRunner {
 export interface LocalPcTargetExecutorOptions {
   readonly platform?: NodeJS.Platform;
   readonly runner?: LocalProcessRunner;
+  readonly readInterfaces?: typeof networkInterfaces;
 }
 
 export class LocalPcTargetExecutor implements PcTargetExecutor {
   readonly #platform: NodeJS.Platform;
   readonly #runner: LocalProcessRunner;
+  readonly #readInterfaces: typeof networkInterfaces;
 
   constructor(options: LocalPcTargetExecutorOptions = {}) {
     this.#platform = options.platform ?? process.platform;
+    this.#readInterfaces = options.readInterfaces ?? networkInterfaces;
     this.#runner = options.runner ?? {
       async run(file, args, signal) {
         try {
@@ -41,14 +45,12 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
   }
 
   async readNetwork(signal?: AbortSignal): Promise<PcNetworkStatus> {
-    const output = this.#platform === "win32"
-      ? await this.#runner.run("ipconfig.exe", ["/all"], signal)
-      : this.#platform === "darwin"
-        ? await this.#runner.run("ifconfig", [], signal)
-        : await this.#runner.run("ip", ["-j", "addr"], signal);
-    const text = `${output.stdout}\n${output.stderr}`;
-    const connected = output.exitCode === 0 && !/media disconnected|state DOWN|NO-CARRIER/iu.test(text);
-    return { connected, gatewayReachable: connected, dnsReachable: connected, interfaceName: firstInterface(text), address: firstIpv4(text) };
+    signal?.throwIfAborted();
+    for (const [interfaceName, addresses] of Object.entries(this.#readInterfaces())) {
+      const address = addresses?.find(item => !item.internal && !/^(?:169\.254\.|fe[89ab][0-9a-f]:)/iu.test(item.address));
+      if (address) return { connected: true, interfaceName, address: address.address };
+    }
+    return { connected: false };
   }
 
   async readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[]> {
@@ -77,14 +79,6 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
     }
     return { accepted: false, changed: false };
   }
-}
-
-function firstInterface(text: string): string | undefined {
-  return /^(?:\d+:\s+)?([A-Za-z][A-Za-z0-9_.-]*):/mu.exec(text)?.[1];
-}
-
-function firstIpv4(text: string): string | undefined {
-  return /\binet\s+(\d{1,3}(?:\.\d{1,3}){3})\b/u.exec(text)?.[1];
 }
 
 function parseSystemdServices(text: string): readonly PcServiceStatus[] {

@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { DeviceActionRequestV1, DeviceTaskAttemptV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
-import { DeviceBrokerError, digestRequest } from "@ling-stack/core";
+import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceTaskAttemptV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest, SqliteDeviceSupportStore } from "@ling-stack/core";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
+import { createDaemonServer } from "../dist/index.js";
 
 test("daemon device-support runtime composes the durable store, broker and remote facade", () => {
   const root = mkdtempSync(join(tmpdir(), "ling-device-runtime-"));
@@ -69,5 +70,43 @@ test("daemon startup recovers interrupted dispatch and readback from the owner j
     assert.deepEqual(restarted.store.recoverAfterRestart(restartedAt), []);
   } finally {
     restarted.close();
+  }
+});
+
+test("the local daemon diagnostic route records the PC-owned report and rejects a foreign Origin", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-pc-diagnosis-"));
+  const workspace = createSqliteRunStore(cwd);
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { storeFactory: () => workspace });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}/v1/device-support/pc/diagnose`;
+  assert.equal((await fetch(url, { method: "POST", headers: { Origin: "https://example.invalid" } })).status, 403);
+  assert.equal((await fetch(url)).status, 405);
+  const response = await fetch(url, { method: "POST" });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/u);
+  const { status, report } = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
+  assert.equal(status, "succeeded");
+  assert.equal(report.playbookId, "pc-software-diagnosis");
+  assert.deepEqual(report.actions.map(action => action.capabilityId), ["pc.inspect.network", "pc.inspect.services"]);
+  const network = report.facts.find(fact => fact.source === "pc.network");
+  assert.ok(network);
+  assert.equal(typeof (network.value as { connected?: unknown }).connected, "boolean");
+  assert.doesNotMatch(JSON.stringify(network.value), /gatewayReachable|dnsReachable/u);
+
+  const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const tasks = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10);
+    assert.deepEqual(tasks.map(task => task.id), [report.taskId]);
+    assert.equal(tasks[0]?.status, "succeeded");
+    assert.equal(tasks[0]?.ownerId, tasks[0]?.targetDeviceIds[0]);
+    assert.equal(journal.listObservations(report.taskId).length, 2);
+  } finally {
+    journal.close();
   }
 });

@@ -409,6 +409,7 @@ import { handleImDestinations } from "../features/im-destinations/routes.js";
 import { handleSkillsMarketplaceInspect } from "../features/skills/marketplace-route.js";
 import { handleDeliverablesBuild, handleSpreadsheetPreview } from "../features/deliverables/routes.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
+import { handleDeviceSupportRoute } from "../features/device-support/routes.js";
 
 export async function routeRequest(
   request: IncomingMessage,
@@ -486,6 +487,7 @@ export async function routeRequest(
     await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
     return;
   }
+  if (await handleDeviceSupportRoute(url.pathname, request, response, context.deviceSupport)) return;
 
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
