@@ -5,6 +5,11 @@ import {
   listBuiltinProviderExtensions,
   resolveMediaAdapter,
 } from "../dist/index.js";
+import type { MediaOperation } from "../dist/index.js";
+
+function isMediaOperation(value: string): value is MediaOperation {
+  return value === "image_generate" || value === "image_edit" || value === "video_generate";
+}
 
 test("built-in media provider extensions include supported vendor adapters", () => {
   const extensions = listBuiltinProviderExtensions();
@@ -27,6 +32,9 @@ test("built-in media provider extensions preserve media adapter resolution", () 
   const registry = createDefaultMediaAdapterRegistry({ enableStaticFallback: false });
 
   for (const extension of listBuiltinProviderExtensions()) {
+    const { providerCapabilities, mediaOperations = [] } = extension;
+    assert.ok(providerCapabilities.every(isMediaOperation));
+    assert.ok(mediaOperations.every(isMediaOperation));
     const resolution = resolveMediaAdapter(registry, {
       id: extension.manifest.id,
       kind: extension.providerKind,
@@ -34,11 +42,11 @@ test("built-in media provider extensions preserve media adapter resolution", () 
       providerId: extension.providerKind,
       model: extension.providerKind,
       api: "media-job",
-      capabilities: extension.providerCapabilities,
+      capabilities: providerCapabilities,
     });
 
     assert.equal(resolution.ok, true);
-    for (const operation of extension.mediaOperations ?? []) {
+    for (const operation of mediaOperations) {
       assert.equal(resolution.adapter?.supports(operation), true);
     }
   }
