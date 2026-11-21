@@ -1579,16 +1579,18 @@ class RpcConnection {
     try {
       const receipt = store.submitUserInputAnswer({ threadId, submission: submission as never }, new Date().toISOString());
       this.context.userInputDeliveryWorker.wake(store);
-      appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-        workspaceId: DEFAULT_WORKSPACE_ID,
-        cwd,
-        domain: "runs",
-        entityType: "user_input",
-        entityId: requestId,
-        action: "input.answer.accepted",
-        idempotencyKey: submission.idempotencyKey,
-        data: { threadId, requestId, deliveryId: receipt.deliveryId, replayed: receipt.replayed },
-      });
+      if (!receipt.replayed) {
+        appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+          workspaceId: DEFAULT_WORKSPACE_ID,
+          cwd,
+          domain: "runs",
+          entityType: "user_input",
+          entityId: requestId,
+          action: "input.answer.accepted",
+          idempotencyKey: submission.idempotencyKey,
+          data: { threadId, requestId, deliveryId: receipt.deliveryId, replayed: false },
+        });
+      }
       return { cwd, receipt };
     } catch (error) {
       throw rpcError(-32030, "stale_revision", error instanceof Error ? error.message : "The user input request is stale.");

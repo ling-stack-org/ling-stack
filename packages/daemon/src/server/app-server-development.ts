@@ -402,8 +402,10 @@ export class AppServerDevelopmentService {
         status = "unknown";
       }
       stored = store.getAppServerState("verify_operation", operationId)!;
-      record = setCheckStatus(stored.payload as VerifyRecord, check.checkId, status);
+      record = stored.payload as VerifyRecord;
+      record = setCheckStatus(record, check.checkId, status);
       stored = this.updateVerification(store, stored, record);
+      if (record.cancelRequested || signal.aborted) break;
     }
     const statuses = record.operation.checks.map(check => check.status);
     const status = statuses.includes("unknown") ? "unknown"
