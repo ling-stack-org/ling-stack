@@ -1510,7 +1510,10 @@ class RpcConnection {
     const instruction = readOptionalStringField(record, "userInstruction") ?? readOptionalStringField(record, "message");
     const shouldRun = record.execute === true || record.task !== undefined || record.providerPresetId !== undefined
       || record.provider !== undefined || record.executionBinding !== undefined;
-    if (this.appServer && shouldRun) return await this.startConversationTurn(record, thread, cwd, instruction);
+    if (this.appServer && shouldRun) {
+      this.workspaceParams(params, true);
+      return await this.startConversationTurn(record, thread, cwd, instruction);
+    }
     if (!instruction?.trim()) throw rpcError(-32602, "invalid_params", "userInstruction or message is required.");
     const turnId = readOptionalStringField(record, "turnId");
     const kind = readLingTurnKind(readOptionalStringField(record, "kind") ?? "initial_request");

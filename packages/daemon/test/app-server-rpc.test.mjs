@@ -49,6 +49,12 @@ test("App Server WebSocket negotiates the Ling protocol and supports ping", { ti
     assert.ok(!initialized.result.effectiveScopes.includes("approval.decide"));
     socket.send(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "approval/respond", params: { approvalId: "pending-approval", decision: "approve" } }));
     assert.equal((await waitFor(messages, message => message.id === 4)).error.data.code, "authorization_required");
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "thread/start", params: { title: "Unauthenticated turn guard", threadId: "unauthenticated-turn-guard" } }));
+    await waitFor(messages, message => message.id === 5);
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: 6, method: "turn/start", params: {
+      threadId: "unauthenticated-turn-guard", message: "This must require the operator bearer.", providerPresetId: "default",
+    } }));
+    assert.equal((await waitFor(messages, message => message.id === 6)).error.data.code, "authorization_required");
   } finally {
     socket.terminate();
     await daemon.stop();

@@ -167,7 +167,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 交付与审查 | 同一候选、独立审查和 CI 回执 | 修复可追溯到发现和实际回归。Goal 逐项核对候选和必需发现处置，通过当前适用的检查结果确认 CI 条件。 |
 | 真实 Codex | 现成客户端 + 本机 MCP，以及连接两端服务的可编程宿主 | 现成 Codex 可提交、按游标读取和控制任务。宿主视图在真实 Codex 与 Ling 同时连接时持续显示 Ling 事件，可提交明确干预并在重连后补齐。记下实际宿主、入口、可观察界面和版本。 |
 | 平台与安装 | macOS/Linux 的 stdio/Unix socket/WS，Windows 的 stdio/WS。覆盖声明的远程 WSS 与实际发布客户端 | 记录目标 OS、架构、安装包、传输和认证方式、退出和资源清理结果。安装、签名、命令沙箱和真实远程路由结果各有证据。 |
-| App Server operator 边界 | 认证及未认证的回环连接，两个工作区，受理中的 Run、Approval、Verify 与 External Agent | Verify 启动和取消、Review 写入、Approval/Input 决策以及外部 Adapter 派发仅向具备对应授权的连接开放。能力发现只返回当前可调用的方法。 |
+| App Server operator 边界 | 认证及未认证的回环连接，两个工作区，受理中的 Run、Approval、Verify 与 External Agent | 带执行配置的 `turn/start`、Verify 启动和取消、Review 写入、Approval/Input 决策以及外部 Adapter 派发仅向具备对应授权的连接开放。能力发现只返回当前可调用的方法。 |
 | 项目自研 | 以下三个真实任务，稳定工具链与候选实例隔离 | 代码行为和运行状态都能复核。记录任务完成、约束遗漏、人工纠正、使用的模型和验证结果。 |
 | Agent Work Item | 频道、GitHub、Automation、外部 Agent 和设备节点的统一收件箱 | 来源版本、现有派发回执、Goal、Run、Delivery 和反馈可追溯。重复源与并发提交返回同一回执。Workflow 内的授权并行步骤各自持有执行记录。 |
 | 跨入口归并与首次受理 | 临时 SQLite、GitHub webhook、两个分别从对话和 Codex 提交结构化引用的获准调用方，以及一个受限调用方 | 打乱 webhook、对话和 Codex 的到达及重试顺序，工作区内只有一个默认主执行及初始派发，各入口回执可追溯。另测受信 PR 关联、相似文字、越权引用、先受理后断线，以及获准另行执行后默认归属的读取。 |
