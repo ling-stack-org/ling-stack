@@ -4,7 +4,10 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
 import type {
   LingServerInstallationV1,
+  LingServerCommandReceiptV1,
+  LingServerPeerFrameV1,
   LingServerPeerBindingV1,
+  LingServerPeerSessionV1,
   LingServerRouteAttemptV1,
 } from "@ling-stack/contracts";
 
@@ -38,6 +41,23 @@ export class SqliteLingServerStore {
         route_attempt_id TEXT PRIMARY KEY NOT NULL,
         binding_id TEXT NOT NULL,
         route_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ling_server_peer_sessions (
+        session_id TEXT PRIMARY KEY NOT NULL,
+        binding_id TEXT NOT NULL,
+        transport_generation INTEGER NOT NULL,
+        session_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ling_server_peer_frames (
+        frame_id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        frame_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ling_server_command_receipts (
+        command_id TEXT PRIMARY KEY NOT NULL,
+        payload_digest TEXT NOT NULL,
+        receipt_json TEXT NOT NULL
       );
     `);
   }
@@ -75,6 +95,41 @@ export class SqliteLingServerStore {
   saveRoute(route: LingServerRouteAttemptV1): void {
     this.database.prepare("INSERT INTO ling_server_routes(route_attempt_id,binding_id,route_json) VALUES(?,?,?) ON CONFLICT(route_attempt_id) DO UPDATE SET binding_id=excluded.binding_id,route_json=excluded.route_json")
       .run(route.routeAttemptId, route.bindingId, JSON.stringify(route));
+  }
+
+  getSession(sessionId: string): LingServerPeerSessionV1 | undefined {
+    const row = this.database.prepare("SELECT session_json FROM ling_server_peer_sessions WHERE session_id=?").get(sessionId) as Row | undefined;
+    return row ? parseJson<LingServerPeerSessionV1>(row.session_json, "Ling Server peer session") : undefined;
+  }
+
+  saveSession(session: LingServerPeerSessionV1): void {
+    this.database.prepare("INSERT INTO ling_server_peer_sessions(session_id,binding_id,transport_generation,session_json) VALUES(?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET binding_id=excluded.binding_id,transport_generation=excluded.transport_generation,session_json=excluded.session_json")
+      .run(session.sessionId, session.bindingId, session.transportGeneration, JSON.stringify(session));
+  }
+
+  getFrame(frameId: string): LingServerPeerFrameV1 | undefined {
+    const row = this.database.prepare("SELECT frame_json FROM ling_server_peer_frames WHERE frame_id=?").get(frameId) as Row | undefined;
+    return row ? parseJson<LingServerPeerFrameV1>(row.frame_json, "Ling Server peer frame") : undefined;
+  }
+
+  saveFrame(frame: LingServerPeerFrameV1): void {
+    this.database.prepare("INSERT INTO ling_server_peer_frames(frame_id,session_id,sequence,frame_json) VALUES(?,?,?,?) ON CONFLICT(frame_id) DO NOTHING")
+      .run(frame.frameId, frame.sessionId, frame.sequence, JSON.stringify(frame));
+  }
+
+  listFrames(sessionId: string, transportGeneration: number, afterSequence = 0, limit = 100): readonly LingServerPeerFrameV1[] {
+    return (this.database.prepare("SELECT frame_json FROM ling_server_peer_frames WHERE session_id=? AND sequence>? AND json_extract(frame_json,'$.transportGeneration')=? ORDER BY sequence LIMIT ?").all(sessionId, afterSequence, transportGeneration, limit) as Row[])
+      .map(row => parseJson<LingServerPeerFrameV1>(row.frame_json, "Ling Server peer frame"));
+  }
+
+  getReceipt(commandId: string): LingServerCommandReceiptV1 | undefined {
+    const row = this.database.prepare("SELECT receipt_json FROM ling_server_command_receipts WHERE command_id=?").get(commandId) as Row | undefined;
+    return row ? parseJson<LingServerCommandReceiptV1>(row.receipt_json, "Ling Server command receipt") : undefined;
+  }
+
+  saveReceipt(receipt: LingServerCommandReceiptV1): void {
+    this.database.prepare("INSERT INTO ling_server_command_receipts(command_id,payload_digest,receipt_json) VALUES(?,?,?) ON CONFLICT(command_id) DO NOTHING")
+      .run(receipt.commandId, receipt.payloadDigest, JSON.stringify(receipt));
   }
 
   close(): void { this.database.close(); }

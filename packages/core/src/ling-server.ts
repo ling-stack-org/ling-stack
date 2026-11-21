@@ -1,4 +1,4 @@
-import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
+import type { LingServerCommandReceiptV1, LingServerInstallationV1, LingServerPeerBindingV1, LingServerPeerFrameV1, LingServerPeerSessionV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "./device-fabric.js";
 import type { SqliteLingServerStore } from "./storage/sqlite/ling-server-store.js";
 
@@ -76,5 +76,84 @@ export class LingServerPeerRegistry {
     this.#routes.set(routeAttemptId, next);
     this.#store?.saveRoute(next);
     return next;
+  }
+}
+
+export class LingServerPeerSessionCoordinator {
+  readonly #store?: SqliteLingServerStore;
+  readonly #sessions = new Map<string, LingServerPeerSessionV1>();
+  readonly #now: () => string;
+
+  constructor(options: { readonly store?: SqliteLingServerStore; readonly now?: () => string } = {}) {
+    this.#store = options.store;
+    this.#now = options.now ?? (() => new Date().toISOString());
+  }
+
+  openSession(session: LingServerPeerSessionV1): LingServerPeerSessionV1 {
+    validateSession(session);
+    const current = this.#sessions.get(session.sessionId) ?? this.#store?.getSession(session.sessionId);
+    if (current && session.transportGeneration < current.transportGeneration) throw new DeviceFabricError("revision_conflict", "peer session transport generation regressed");
+    const binding = this.#store?.getBinding(session.bindingId);
+    if (binding && (binding.status !== "active" || binding.epoch !== session.peerEpoch)) throw new DeviceFabricError("safety_denied", "peer session binding is not active for this epoch");
+    this.#sessions.set(session.sessionId, session);
+    this.#store?.saveSession(session);
+    return session;
+  }
+
+  switchRoute(sessionId: string, routeAttemptId: string, route: LingServerPeerSessionV1["route"], now = this.#now()): LingServerPeerSessionV1 {
+    const current = this.requireSession(sessionId);
+    const next: LingServerPeerSessionV1 = { ...current, routeAttemptId, route, transportGeneration: current.transportGeneration + 1, sendSequence: 0, receivedSequence: 0, status: "open", lastSeenAt: now };
+    this.#sessions.set(sessionId, next);
+    this.#store?.saveSession(next);
+    return next;
+  }
+
+  acceptFrame(frame: LingServerPeerFrameV1): { readonly frame: LingServerPeerFrameV1; readonly replayed: boolean } {
+    const session = this.requireSession(frame.sessionId);
+    const existing = this.#store?.getFrame(frame.frameId);
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(frame)) throw new DeviceFabricError("revision_conflict", "peer frame id is bound to another frame");
+      return { frame: existing, replayed: true };
+    }
+    if (session.status !== "open" || frame.bindingId !== session.bindingId || frame.peerEpoch !== session.peerEpoch || frame.transportGeneration !== session.transportGeneration) {
+      throw new DeviceFabricError("safety_denied", "peer frame authority does not match the active session");
+    }
+    if (frame.sequence !== session.receivedSequence + 1) throw new DeviceFabricError("revision_conflict", "peer frame sequence is not contiguous");
+    const next = { ...session, receivedSequence: frame.sequence, lastSeenAt: frame.sentAt };
+    this.#store?.saveFrame(frame);
+    this.#store?.saveSession(next);
+    this.#sessions.set(session.sessionId, next);
+    return { frame, replayed: false };
+  }
+
+  recordReceipt(receipt: LingServerCommandReceiptV1): LingServerCommandReceiptV1 {
+    if (!receipt.commandId.trim() || !receipt.payloadDigest.trim()) throw new DeviceFabricError("revision_conflict", "peer command receipt is invalid");
+    const current = this.#store?.getReceipt(receipt.commandId);
+    if (current) {
+      if (current.payloadDigest !== receipt.payloadDigest) throw new DeviceFabricError("revision_conflict", "command id is bound to another payload");
+      return current;
+    }
+    this.#store?.saveReceipt(receipt);
+    return receipt;
+  }
+
+  resume(sessionId: string, lastReceivedSequence: number): { readonly session: LingServerPeerSessionV1; readonly replayFromSequence: number; readonly frames: readonly LingServerPeerFrameV1[]; readonly requiresSnapshot: boolean } {
+    if (!Number.isInteger(lastReceivedSequence) || lastReceivedSequence < 0) throw new DeviceFabricError("revision_conflict", "peer resume cursor is invalid");
+    const session = this.requireSession(sessionId);
+    const frames = this.#store?.listFrames(sessionId, session.transportGeneration, lastReceivedSequence) ?? [];
+    return { session, replayFromSequence: lastReceivedSequence + 1, frames, requiresSnapshot: lastReceivedSequence > session.receivedSequence || (lastReceivedSequence < session.receivedSequence && frames.length === 0) };
+  }
+
+  private requireSession(sessionId: string): LingServerPeerSessionV1 {
+    const session = this.#sessions.get(sessionId) ?? this.#store?.getSession(sessionId);
+    if (!session) throw new DeviceFabricError("target_missing", "peer session is missing");
+    this.#sessions.set(sessionId, session);
+    return session;
+  }
+}
+
+function validateSession(session: LingServerPeerSessionV1): void {
+  if (!session.sessionId.trim() || !session.bindingId.trim() || !session.routeAttemptId.trim() || session.peerEpoch < 1 || session.transportGeneration < 1 || session.sendSequence < 0 || session.receivedSequence < 0 || !session.openedAt.trim() || !session.lastSeenAt.trim()) {
+    throw new DeviceFabricError("revision_conflict", "peer session identity is invalid");
   }
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { HardwareProtocolWorkbench, LingServerPeerRegistry, SqliteDeviceProtocolStore, SqliteLingServerStore } from "../dist/index.js";
+import { HardwareProtocolWorkbench, LingServerPeerRegistry, LingServerPeerSessionCoordinator, SqliteDeviceProtocolStore, SqliteLingServerStore } from "../dist/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 
@@ -59,4 +59,31 @@ test("hardware protocol codec manifests and captures survive SQLite reopen", () 
   assert.equal(second.getCodec("toy-can")?.version, "1.0");
   assert.equal(second.getCapture("capture-persisted")?.frames[0]?.digest, capture.frames[0]?.digest);
   second.close();
+});
+
+test("Ling Server peer session preserves route migration, frame sequencing, receipts and resume state", () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-session-store-"));
+  const path = join(root, "session.sqlite");
+  const firstStore = new SqliteLingServerStore({ databasePath: path });
+  const registry = new LingServerPeerRegistry({ store: firstStore });
+  registry.registerInstallation({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" });
+  registry.bindPeers({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" });
+  const first = new LingServerPeerSessionCoordinator({ store: firstStore, now: () => now });
+  first.openSession({ sessionId: "session-1", bindingId: "binding-1", peerEpoch: 1, routeAttemptId: "route-1", route: "direct", transportGeneration: 1, sendSequence: 0, receivedSequence: 0, status: "open", openedAt: now, lastSeenAt: now });
+  const frame = { frameId: "frame-1", sessionId: "session-1", bindingId: "binding-1", peerEpoch: 1, transportGeneration: 1, sequence: 1, direction: "to_gateway" as const, kind: "device_task" as const, commandId: "command-1", payload: { taskId: "task-1" }, sentAt: now };
+  assert.equal(first.acceptFrame(frame).replayed, false);
+  assert.equal(first.acceptFrame(frame).replayed, true);
+  assert.equal(first.resume("session-1", 0).frames.length, 1);
+  assert.throws(() => first.acceptFrame({ ...frame, frameId: "frame-2", sequence: 3 }), /contiguous/);
+  assert.equal(first.recordReceipt({ commandId: "command-1", payloadDigest: "digest-1", status: "completed", result: { ok: true }, recordedAt: now }).status, "completed");
+  first.switchRoute("session-1", "route-2", "relay");
+  firstStore.close();
+
+  const secondStore = new SqliteLingServerStore({ databasePath: path });
+  const second = new LingServerPeerSessionCoordinator({ store: secondStore, now: () => now });
+  assert.equal(second.resume("session-1", 0).replayFromSequence, 1);
+  assert.equal(second.resume("session-1", 9).requiresSnapshot, true);
+  const migrated = second.openSession({ ...second.resume("session-1", 0).session, status: "open" });
+  assert.equal(migrated.route, "relay");
+  secondStore.close();
 });
