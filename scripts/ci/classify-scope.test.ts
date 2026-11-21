@@ -60,7 +60,6 @@ test("review templates and nested READMEs are documentation before broad infrast
     assert.equal(scope.mode, "docs", file);
     assert.equal(scope.daemon, false, file);
     assert.equal(scope.macosNative, false, file);
-    assert.equal(scope.web, false, file);
     assert.equal(scope.dependencyPolicy, false, file);
   }
 });
@@ -90,7 +89,6 @@ test("Issue templates and allowlisted maintenance checks need no product package
     assert.deepEqual(scope.testPackages, []);
     assert.deepEqual(scope.typecheckPackages, []);
     assert.equal(scope.daemon, false);
-    assert.equal(scope.web, false);
   }
 });
 
@@ -104,7 +102,6 @@ test("maintenance mixed with source retains affected consumers", () => {
   assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
   assert.deepEqual(scope.testPackages, scope.packages);
   assert.equal(scope.daemon, true);
-  assert.equal(scope.web, false);
 });
 
 test("maintenance exceptions do not weaken unknown paths or explicit full runs", () => {
@@ -143,14 +140,14 @@ test("dependency, workflow, and CI script changes force full scope", () => {
   }
 });
 
-test("Web changes stay in Web and its transitive consumers", () => {
+test("Web source changes select its non-Web validation consumers", () => {
   const scope = classify(["apps/web/src/App.tsx"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/localization", "@ling-stack/web"]);
-  assert.equal(scope.web, true);
+  assert.deepEqual(scope.packages, ["@ling-stack/localization"]);
   assert.equal(scope.daemon, false);
   assert.equal(scope.dependencyPolicy, false);
-  assert.ok(scope.testPackages.includes("@ling-stack/web"));
+  assert.deepEqual(scope.testPackages, ["@ling-stack/localization"]);
+  assert.deepEqual(scope.typecheckPackages, []);
 });
 
 test("package-local manifests and tooling configurations select their own consumers, not every package", () => {
@@ -158,13 +155,13 @@ test("package-local manifests and tooling configurations select their own consum
     "apps/web/eslint.config.mjs"]) {
     const scope = classify([file]);
     assert.equal(scope.mode, "affected", file);
-    assert.deepEqual(scope.packages, ["@ling-stack/localization", "@ling-stack/web"], file);
+    assert.deepEqual(scope.packages, ["@ling-stack/localization"], file);
     assert.equal(scope.daemon, false, file);
     assert.equal(scope.dependencyPolicy, file.endsWith("package.json"), file);
   }
   const core = classify(["packages/core/package.json"]);
   assert.equal(core.mode, "affected");
-  assert.deepEqual(core.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon", "@ling-stack/web"]);
+  assert.deepEqual(core.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
   assert.equal(core.daemon, true);
   assert.equal(core.dependencyPolicy, true);
   const desktop = classify(["apps/desktop/package.json"]);
@@ -194,10 +191,9 @@ test("test-only consumers already selected cannot stop transitive source travers
 });
 
 test("removed dependency edges cannot erase consumers from a multi-package PR", () => {
-  const changed = packageEntries.map((entry) => entry.name === "@ling-stack/web" ? { ...entry, dependencies: [] } : entry);
-  const scope = classify(["packages/core/src/index.ts", "apps/web/package.json"], { packageEntries: changed });
-  assert.ok(scope.packages.includes("@ling-stack/web"));
-  assert.ok(scope.packages.includes("@ling-stack/localization"));
+  const changed = packageEntries.map((entry) => entry.name === "@ling-stack/cli" ? { ...entry, dependencies: [] } : entry);
+  const scope = classify(["packages/core/src/index.ts", "docs/change.md"], { packageEntries: changed });
+  assert.ok(scope.packages.includes("@ling-stack/cli"));
 });
 
 test("dependency regressions cannot be skipped with ordinary test-only scope", () => {
@@ -211,18 +207,16 @@ test("dependency regressions cannot be skipped with ordinary test-only scope", (
 test("mixed changes union all affected packages without disabling a dependency lane", () => {
   const scope = classify(["apps/web/package.json", "packages/daemon/test/runtime-supervisor.test.mjs", "scripts/ci/README.md"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/daemon", "@ling-stack/localization", "@ling-stack/web"]);
+  assert.deepEqual(scope.packages, ["@ling-stack/daemon", "@ling-stack/localization"]);
   assert.equal(scope.daemon, true);
-  assert.equal(scope.web, true);
   assert.equal(scope.dependencyPolicy, true);
 });
 
 test("core changes include daemon, CLI, and Web consumers", () => {
   const scope = classify(["packages/core/src/index.ts"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon", "@ling-stack/web"]);
+  assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
   assert.equal(scope.daemon, true);
-  assert.equal(scope.web, true);
 });
 
 test("daemon source changes include CLI but do not pull Web", () => {
@@ -231,7 +225,6 @@ test("daemon source changes include CLI but do not pull Web", () => {
   assert.equal(scope.daemon, true);
   assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
   assert.equal(scope.macosNative, false);
-  assert.equal(scope.web, false);
 });
 
 test("direct Daemon test changes use the assigned platform only", () => {
@@ -324,7 +317,6 @@ function repositoryFixture(t: TestContext) {
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
-  copyFileSync(new URL("./web-smoke.mjs", import.meta.url), join(root, "scripts/ci/web-smoke.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
   copyFileSync(new URL("../release/desktop-release.mjs", import.meta.url), join(root, "scripts/release/desktop-release.mjs"));
   copyFileSync(new URL("./package-validation-scope.mjs", import.meta.url), join(root, "scripts/ci/package-validation-scope.mjs"));
@@ -430,15 +422,15 @@ test("the Git boundary compares validation script contents and CI entrypoints, n
   }
 });
 
-test("the real package graph keeps Web's CLI and catalog consumers without core or daemon shards", () => {
+test("the real package graph keeps Web's CLI and catalog consumers without building or testing Web", () => {
   const scope = classifyChangedFiles({ files: ["apps/web/tsconfig.json"] });
   assert.equal(scope.mode, "affected");
-  for (const name of ["@ling-stack/web", "@ling-stack/cli", "@ling-stack/localization"]) assert.ok(scope.packages.includes(name), name);
+  for (const name of ["@ling-stack/cli", "@ling-stack/localization"]) assert.ok(scope.packages.includes(name), name);
   assert.equal(scope.daemon, false);
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
 });
 
-test("a verified root version update adds the Web build without pulling in Daemon or assurance", t => {
+test("a verified root version update selects non-Web consumers without Daemon or assurance", t => {
   const repo = repositoryFixture(t);
   const manifest = { name: "ling-stack", private: true, version: "1.2.3", scripts: { build: "node build.mjs" } };
   repo.write("VERSION", "1.2.3\n");
@@ -451,11 +443,10 @@ test("a verified root version update adds the Web build without pulling in Daemo
   const scope = repo.classify(base);
   assert.equal(scope.mode, "affected");
   assert.equal(scope.productVersion, "1.2.4");
-  assert.deepEqual(scope.packages, ["@ling-stack/localization", "@ling-stack/web"]);
+  assert.deepEqual(scope.packages, ["@ling-stack/localization"]);
   assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
-  assert.equal(scope.web, true);
 
   repo.write("packages/core/src/probe.ts", "export const probe = true;\n");
   repo.commit();
@@ -540,7 +531,6 @@ test("a verified Node/TypeScript test migration retains complete owner validatio
   assert.equal(scope.dependencyPolicy, true);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
-  assert.equal(scope.web, false);
   assert.match(scope.reason, /test/u);
 });
 
@@ -559,7 +549,6 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   assert.equal(scope.dependencyPolicy, true);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
-  assert.equal(scope.web, false);
 });
 
 test("workspace dependency builds and the owning package build closure retain package-only validation", t => {
@@ -578,7 +567,6 @@ test("workspace dependency builds and the owning package build closure retain pa
   assert.equal(scope.dependencyPolicy, true);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
-  assert.equal(scope.web, false);
 });
 
 test("validation migrations cannot discard baseline test entrypoints", t => {
@@ -590,7 +578,6 @@ test("validation migrations cannot discard baseline test entrypoints", t => {
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "full", replacement ?? "deleted test");
     assert.equal(scope.daemon, true);
-    assert.equal(scope.web, true);
   }
 });
 
@@ -605,7 +592,6 @@ test("validation migrations cannot reinterpret an existing TypeScript configurat
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "full", JSON.stringify(baselineConfig));
     assert.equal(scope.daemon, true);
-    assert.equal(scope.web, true);
   }
 });
 
@@ -621,7 +607,6 @@ test("validation migrations can reuse an unchanged isolated TypeScript configura
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
   assert.equal(scope.daemon, false);
-  assert.equal(scope.web, false);
 });
 
 test("a validation migration mixed with source or production config still selects transitive consumers", t => {
@@ -633,7 +618,7 @@ test("a validation migration mixed with source or production config still select
     repo.commit();
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "affected", file);
-    for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli", "@ling-stack/web"]) {
+    for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli"]) {
       assert.ok(scope.packages.includes(name), `${file}: ${name}`);
     }
     assert.equal(scope.assurance, true);
@@ -649,7 +634,6 @@ test("validation migrations retain shared test-support importers", t => {
   assert.deepEqual(scope.testPackages, ["@ling-stack/core", "@ling-stack/daemon"]);
   assert.equal(scope.daemon, true);
   assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
-  assert.equal(scope.web, false);
 });
 
 test("opaque commands, build hooks, metadata changes and incomplete test discovery retain full regression", t => {
@@ -690,7 +674,6 @@ test("opaque commands, build hooks, metadata changes and incomplete test discove
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "full", String(mutate));
     assert.equal(scope.daemon, true);
-    assert.equal(scope.web, true);
   }
 });
 
@@ -701,7 +684,6 @@ test("a validation config covering source remains a production input", t => {
   const scope = repo.classify(repo.base);
   assert.equal(scope.mode, "full");
   assert.equal(scope.daemon, true);
-  assert.equal(scope.web, true);
 });
 
 test("validation configs consumed by root or nested production configs retain full regression", t => {
@@ -716,6 +698,5 @@ test("validation configs consumed by root or nested production configs retain fu
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "full", file);
     assert.equal(scope.daemon, true);
-    assert.equal(scope.web, true);
   }
 });

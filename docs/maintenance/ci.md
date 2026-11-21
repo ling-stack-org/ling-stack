@@ -14,7 +14,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 - 仓库根目录 `output/` 用于本地产物。Git 差异确认的产物删除进入公共检查和汇总门，路径保留在范围报告中。新增、修改和文件类型变化回退全量，混合改动按其余文件选择产品任务。
 - 工作区源码或包内 TypeScript／构建配置变更时，[分类器](../../scripts/ci/classify-scope.mjs)选择所属包及直接、间接消费者；仅改测试时选择所属包，并补充已识别的跨包测试辅助文件使用方。Web 的目录导入器额外选择 localization 验证，实际依赖图也包含 CLI 对 Web 的依赖；为构建补齐依赖不等于选择这些依赖的测试分片。
 - 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
-- 包级 `package.json` 在 base 与当前包目录、名称、测试／类型检查入口及全部 scripts 内容可核验且不变时，使用新旧依赖边的并集扩大消费者，并选择依赖策略任务。已核验的 Node／TypeScript 测试迁移只选择所属包完整测试、类型检查及共享测试辅助文件的使用方，仍保留依赖策略检查：仅允许已有 `test`、`test:ci`、`typecheck`、`typecheck:ci` 变化，其他清单字段、构建脚本和生命周期 hook 必须不变；命令限于完整 Node 测试 glob、包内 no-emit TypeScript 检查及已核验的 CI／构建包装。带名称过滤、额外 shell 命令、空操作、遗漏测试语言或空发现结果时回退全量。基线 glob 发现的每个测试入口必须保留目录和同名文件，允许 `.mjs`／`.ts` 扩展名迁移；删除、重命名入口或无法核验基线清单时回退全量。迁移同时改写新旧类型检查命令引用的已有 TypeScript 配置时回退全量；基线命令没有显式 `--noEmit` 时，其配置必须存在于基线清单。仅在显式 no-emit、只包含测试且没有生产脚本／配置使用方时，将新增或未修改的 `tsconfig.test.json`／`tsconfig.tests.json` 视为测试输入；混合源码和其他配置改动仍扩大到消费者。新增、删除、重命名、无法核验的包、脚本入口增删及其他 script 改动均回退全量。根 `package.json`、锁文件、workspace 配置、除上述工具路径和白名单以外的 `.github/`／`scripts/`、补丁、根 TypeScript／构建配置及未知路径仍全量；维护脚本与源码混合不豁免源码检查。两个根版本值能核对一致、根清单只改 `version` 时，运行 Web 及其使用方的验证，并合并其他改动的影响。Desktop 打包继续核对全部发布版本输入。
+- 包级 `package.json` 在 base 与当前包目录、名称、测试／类型检查入口及全部 scripts 内容可核验且不变时，使用新旧依赖边的并集扩大消费者，并选择依赖策略任务。已核验的 Node／TypeScript 测试迁移只选择所属包完整测试、类型检查及共享测试辅助文件的使用方，仍保留依赖策略检查：仅允许已有 `test`、`test:ci`、`typecheck`、`typecheck:ci` 变化，其他清单字段、构建脚本和生命周期 hook 必须不变；命令限于完整 Node 测试 glob、包内 no-emit TypeScript 检查及已核验的 CI／构建包装。带名称过滤、额外 shell 命令、空操作、遗漏测试语言或空发现结果时回退全量。基线 glob 发现的每个测试入口必须保留目录和同名文件，允许 `.mjs`／`.ts` 扩展名迁移；删除、重命名入口或无法核验基线清单时回退全量。迁移同时改写新旧类型检查命令引用的已有 TypeScript 配置时回退全量；基线命令没有显式 `--noEmit` 时，其配置必须存在于基线清单。仅在显式 no-emit、只包含测试且没有生产脚本／配置使用方时，将新增或未修改的 `tsconfig.test.json`／`tsconfig.tests.json` 视为测试输入；混合源码和其他配置改动仍扩大到消费者。新增、删除、重命名、无法核验的包、脚本入口增删及其他 script 改动均回退全量。根 `package.json`、锁文件、workspace 配置、除上述工具路径和白名单以外的 `.github/`／`scripts/`、补丁、根 TypeScript／构建配置及未知路径仍全量；维护脚本与源码混合不豁免源码检查。两个根版本值一致且根清单只改 `version` 时，按使用方选择受版本影响的 CI 包。Desktop 打包继续核对全部发布版本输入。
   本地包装允许先调用声明为 `workspace:*` 的直接依赖的 `build`，或运行所属包及其依赖的 `build:ci`。CI 统一构建依赖闭包，再直接运行所属包的 `typecheck:ci` 和 `test:ci`。
 - 两份固定发布审查清单 `native/office-local/reviewed-packaged-source-v1.json`、`native/sandbox/reviewed-codesign-source-v1.json` 选择 Daemon 构建依赖图及现有 macOS 任务中的 codesign publication、Office publication、Office daemon source-input 三个完整契约文件，不选择无关包或 Daemon 的类型检查和测试分片。`macos-native` 仍要求该任务成功；`macos-helper`、`native-release` 分别选择真实 helper smoke 和发布契约步骤。清单单独变化不编译 helper，混合原生源码改动保留两者；未识别的 Office 路径仍全量，Sandbox 目录其他文件保留 Daemon 验证与真实 helper smoke。全量回归保留原有真实 helper smoke，PR 同时修改审查清单时还执行发布契约。契约核对清单与固定源码 hash，并用明确的模拟编译／签名 fixture 检查发布边界，不生成审批记录，也不代表真实签名或打包验收。复用任务不增加完整矩阵的 runner 数。
 - [工作流](../../.github/workflows/ci.yml)由 Pull Request、手动运行和每日定时触发，没有 `main` push 触发。定时为每天 UTC 03:17，即北京时间 11:17；手动和定时运行始终走现有完整 Linux/macOS 矩阵，即使当天没有提交也执行。GitHub 定时任务可能排队或延迟，不保证准点启动。没有启用成功证据去重或每日 Linux 单独分档。
@@ -42,9 +42,9 @@ Core 单独选择时使用八个 Linux shard，与 Daemon 同跑时使用五个�
 
 [平台清单契约](../../scripts/ci/daemon-test-platforms.test.ts)验证 discovery 的并集、互斥与原生文件归属，并检查通用文件及共享 fixture 的原生平台约束。混有 Darwin 正向用例的文件整体保留 macOS；文件缺失、重复、新增未分类或 stale 清单直接失败。源码契约不能替代同一提交在 Linux 与 macOS 上的实际执行和原生用例数量核对。
 
-Core 与 Daemon 双平台同跑时，两组 Linux 分片合计十一个，加上四个 macOS 分片、类型检查、Web smoke、普通 packages 和 Linux 原生契约；完整回归再加独立 macOS native smoke，最多占二十个 runner、其中五个 macOS，符合 GitHub Free 的[并发上限](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners)。Linux-only Daemon 测试计划只保留六个 Linux Daemon shard 并将 Core 保持五个，Darwin-only 计划省去 Linux Daemon shard 并将 Core 恢复八个。普通 Daemon 改动省去额外的 macOS smoke runner。Web smoke 在构建完成后独立启动。其他工作流仍共享组织容量，不能据此保证没有排队；分片数量不影响文件发现、覆盖或 watchdog。
+Core 与 Daemon 双平台同跑时，两组 Linux 分片合计十一个，加上四个 macOS 分片、类型检查、普通 packages 和 Linux 原生契约；完整回归再加独立 macOS native smoke，最多占十九个 runner、其中五个 macOS，符合 GitHub Free 的[并发上限](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners)。Linux-only Daemon 测试计划只保留六个 Linux Daemon shard 并将 Core 保持五个，Darwin-only 计划省去 Linux Daemon shard 并将 Core 恢复八个。普通 Daemon 改动省去额外的 macOS smoke runner。其他工作流仍共享组织容量，不能据此保证没有排队；分片数量不影响文件发现、覆盖或 watchdog。
 
-Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务保留检查名 `Typecheck, unit tests, and Web build`，统一判断适用任务的结果。
+Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务保留检查名 `Typecheck, unit tests, and Web build`，供 GitHub 规则集识别，汇总当前适用任务的结果。
 
 整合 `main@328bb10a`（#515）后，类型检查、单元测试、Daemon 及 Linux 契约／macOS helper 任务条件使用 `!cancelled()`，使手动取消或新推送的自动取消能终止长任务。只使用 `always()` 时 GitHub 重新计算条件仍为真，任务可能继续运行；汇总门保留 `always()`，明确拒绝取消或未完成的验证。
 
@@ -56,9 +56,9 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 CLI 的 Linux 包测试运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。构建任务负责生成共享产物，不重复运行这组用例。
 
-独立 `web-smoke` 任务按范围报告运行选中的 browser spec。Companion、会话变更摘要、主题背景、媒体和插件有明确的功能映射；公共路径、未知输入和全量范围仍保留通用 QA、Companion 与会话摘要回归。新增或修改的 spec 如果不在生产 smoke 计划中，就使用 Vite dev 支持其测试页面。依赖本地照片和目录的视觉验收在范围报告里列为本地执行。任务使用固定版本和 digest 的官方 Playwright Noble 镜像并复用 `ci-dist`；选中任务的失败和取消会阻止合并。浏览器范围计划和测试证据保存为 `ci-linux-source-web-smoke`，保留七天。
+主 CI 的 PR、手动和定时运行均排除 `@ling-stack/web` 的构建、类型检查、单元测试、lint、i18n 检查和浏览器测试。CLI 和 localization 按依赖范围执行各自的检查。Web 验证可在本地运行，Desktop 打包按发布流程构建其 Web 资源。
 
-会话操作记录、复制、文件审查、composer 变更摘要、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
+会话操作记录、复制、文件审查、composer 变更摘要、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的本地 `typecheck` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
 
 本地化包的 `typecheck:ci` 和 `test:ci` 已补齐；前者在干净 runner 重新生成未跟踪的 TypeScript 目录文件后检查类型，后者执行翻译目录完整性、占位符检查及本地化单元测试，复用构建阶段的 `dist`。新增[入口覆盖契约](../../scripts/ci/package-script-coverage.test.mjs)，要求分类器选中的每个类型检查／测试包都有对应 CI 脚本，防止 `--if-present` 静默跳过漏配包。
 
@@ -193,7 +193,7 @@ timeout/leaked-process 计数。job 启动延迟包含依赖等待，不能当�
 | --- | --- | --- |
 | P1：规则与开发阶段分档（已接入） | 分类器、执行策略、CI 工作流、现有 CI 契约测试、本文 | 模板／已登记脚本不误触全量；未知配置仍全量；Draft 不冒充完整通过；转正式和 `full-ci` 标签正确补齐；所有必需任务意外跳过均被拒绝；定时完整矩阵每日运行 |
 | P2：平台分工（已实现，hosted 验收待完成） | 测试清单、Daemon 分片执行器、平台契约、工作流 | discovery 与清单守恒；Linux 通用组通过；原有 Darwin 正向／负向用例实际执行；额外 Linux 拒绝与原生路径映射的 native smoke 保留；共享变更正确扩大平台范围 |
-| P3：耗时与定时优化（部分实现） | Core／Daemon 分片执行、文件级计时、必要的 CI 任务、定时选择 | Core 八分片与两 worker、Daemon Linux／macOS 独立分片和必需 Web smoke、普通入口排除、共享计划及计时报表已实现；hosted 性能收益待验证。每日去重／每周 macOS 尚未实现，仍须满足可信成功证据与平台覆盖规则 |
+| P3：耗时与定时优化（部分实现） | Core／Daemon 分片执行、文件级计时、必要的 CI 任务、定时选择 | Core 八分片与两 worker、Daemon Linux／macOS 独立分片、普通入口排除、共享计划及计时报表已实现；hosted 性能收益待验证。每日去重／每周 macOS 尚未实现，仍须满足可信成功证据与平台覆盖规则 |
 
 实施前以分类和汇总契约测试覆盖文档、局部源码、共享契约、未知路径、标签、Draft 转正式、平台新增文件、上游失败和意外跳过。P2 在真实 Linux 与 macOS 上验证同一候选提交的原有覆盖后，才允许减少 macOS 任务。P3 对相同任务集合比较改动前后的累计运行时间和等待时间。
 
@@ -233,7 +233,7 @@ node scripts/ci/node-test-shard.mjs --suite=daemon \
 ## 未决事项
 
 - **平台清单待 hosted 验收**：已实现明确分组、覆盖守恒和原生源码约束；仍须确认同一候选提交的 Linux 通用组完整通过、macOS 原有正向／负向用例实际执行，才能发布平台切换。
-- **十分钟目标尚未验证**：Core 八分片、Daemon 平台分工和并行 Web smoke 已实现；仍须比较同等覆盖下的排队、准备、测试及总时长与累计任务分钟，不能从本地文件计时推导 hosted 加速或费用下降。
+- **十分钟目标尚未验证**：Core 八分片和 Daemon 平台分工已实现；仍须比较同等覆盖下的排队、准备、测试及总时长与累计任务分钟，不能从本地文件计时推导 hosted 加速或费用下降。
 - **主 CI 定时去重尚未实现**：当前按本次要求每天运行完整矩阵；上节 CodeQL 的定时基线不适用于该矩阵。若未来重新提出分层或去重，必须满足平台覆盖与成功基线规则。
 
 以上缺口不阻塞 P1。P1 的本地契约验证不能代替 GitHub runner 实际验收，也不能证明原生平台测试已通过；运行额度仍由账户账单决定。

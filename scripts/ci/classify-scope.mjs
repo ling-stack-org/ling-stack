@@ -4,10 +4,10 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { packageValidationScope } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
-import { planWebSmoke } from "./web-smoke.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
+const WEB_PACKAGE = "@ling-stack/web";
 
 const DOCUMENTATION_ROOT_FILES = new Set([
   "README.md",
@@ -67,7 +67,7 @@ const DAEMON_PLATFORMS = ["linux", "darwin"];
 let daemonPlatformManifest;
 // The catalog importer reads Web's AST helper, locale sources and tsconfig
 // without a manifest dependency. Keep that validation consumer in the graph.
-const VALIDATION_CONSUMERS = new Map([["@ling-stack/web", ["@ling-stack/localization"]]]);
+const VALIDATION_CONSUMERS = new Map([[WEB_PACKAGE, ["@ling-stack/localization"]]]);
 // Offline calibration loads the Core grader; the external consumer builds these SDK producers.
 const ASSURANCE_PACKAGES = new Set(["@ling-stack/core", "@ling-stack/localization",
   "@ling-stack/contracts", "@ling-stack/plugin-sdk", "@ling-stack/api-client"]);
@@ -162,11 +162,11 @@ export function classifyChangedFiles(input) {
 
   // The root release number is embedded in the production Web build.
   if (versionPaths.size > 0) {
-    if (!packages.some(entry => entry.name === "@ling-stack/web")) {
+    if (!packages.some(entry => entry.name === WEB_PACKAGE)) {
       return buildScope("full", files, packages, "a product version consumer could not be verified");
     }
-    changedEntries.add("@ling-stack/web");
-    changedSourceEntries.add("@ling-stack/web");
+    changedEntries.add(WEB_PACKAGE);
+    changedSourceEntries.add(WEB_PACKAGE);
   }
 
   // The native helper lives outside a workspace package, but its build and
@@ -205,7 +205,7 @@ export function classifyChangedFiles(input) {
   });
   for (const name of testSupportImporters) affectedNames.add(name);
 
-  const affectedEntries = packages.filter((entry) => affectedNames.has(entry.name));
+  const affectedEntries = packages.filter((entry) => entry.name !== WEB_PACKAGE && affectedNames.has(entry.name));
   const unsupportedAffected = affectedEntries.filter((entry) => !isSupportedAffectedPackage(entry));
   if (unsupportedAffected.length > 0) {
     return buildScope("full", files, packages, `platform package requires the full supported CI lane: ${unsupportedAffected.map((entry) => entry.name).join(", ")}`);
@@ -239,9 +239,6 @@ export function classifyChangedFiles(input) {
     macosNative: nativeSurfaceChanged || nativeRelease,
     macosHelper: nativeSurfaceChanged,
     nativeRelease,
-    web: affectedNames.has("@ling-stack/web"),
-    webSmoke: affectedNames.has("@ling-stack/web") ? planWebSmoke({ files: scopeFiles.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file)
-      && !versionPaths.has(file)) }) : undefined,
     productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
     reason: versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
       : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
@@ -252,7 +249,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, web: boolean, webSmoke?: ReturnType<typeof planWebSmoke>, productVersion?: string, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -501,23 +498,21 @@ function readFileIfText(file) {
 
 /** @param {"docs"|"affected"|"full"} mode @param {string[]} files @param {PackageEntry[]} packages @param {string} reason */
 function buildScope(mode, files, packages, reason) {
-  const names = mode === "full" ? packages.map((entry) => entry.name).sort() : [];
+  const selected = mode === "full" ? packages.filter((entry) => entry.name !== WEB_PACKAGE) : [];
   return {
     mode,
     files,
-    packages: names,
-    testPackages: mode === "full" ? packages.filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory)).map((entry) => entry.name).sort() : [],
-    typecheckPackages: mode === "full" ? packages.filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory)).map((entry) => entry.name).sort() : [],
+    packages: selected.map((entry) => entry.name).sort(),
+    testPackages: selected.filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory)).map((entry) => entry.name).sort(),
+    typecheckPackages: selected.filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory)).map((entry) => entry.name).sort(),
     dependencyPolicy: mode === "full",
     assurance: mode === "full",
-    daemon: mode === "full" || names.includes("@ling-stack/daemon"),
+    daemon: mode === "full",
     daemonPlatforms: mode === "full" ? [...DAEMON_PLATFORMS] : [],
     linuxContract: mode === "full",
     macosNative: mode === "full" || files.some(isMacosNativePath),
     macosHelper: mode === "full" || files.some(isMacosNativePath),
     nativeRelease: files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file)),
-    web: mode === "full" || names.includes("@ling-stack/web"),
-    webSmoke: mode === "full" ? planWebSmoke({ files, full: true }) : undefined,
     reason,
   };
 }
