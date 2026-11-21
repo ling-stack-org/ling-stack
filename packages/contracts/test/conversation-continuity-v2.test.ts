@@ -22,19 +22,27 @@ import {
   isLingThreadContinuityV2,
   isTurnContextAssignment,
   serializeConversationContinuityGoldenFixtureV1,
+  type ChannelIntentDecisionV2,
+  type ConversationContinuityGoldenFixtureV1,
+  type DelegatedStepRequirementV1,
+  type RequiredParticipantV1,
 } from "../dist/index.js";
 
 const now = "2026-08-09T00:00:00.000Z";
 const later = "2026-08-09T00:01:00.000Z";
 const fixturePath = new URL("../fixtures/channel-conversation-continuity-v2.json", import.meta.url);
-const goldenFixture = JSON.parse(await readFile(fixturePath, "utf8"));
+const goldenFixture = JSON.parse(await readFile(fixturePath, "utf8")) as ConversationContinuityGoldenFixtureV1;
 const exportedGoldenFixture = (
   await import("@ling-stack/contracts/fixtures/channel-conversation-continuity-v2.json", {
     with: { type: "json" },
   })
 ).default;
 
-function delegatedLineage(workflowId, workflowStepId, participantId, runId = "run-1", attemptId = "attempt-1", evidenceRefs = []) {
+function delegatedLineage(
+  workflowId: string, workflowStepId: string, participantId: string,
+  runId: string | null = "run-1", attemptId: string | null = "attempt-1",
+  evidenceRefs: readonly { type: string; id: string }[] = [],
+) {
   return {
     workflowId,
     workflowStepId,
@@ -56,7 +64,7 @@ test("Continuity v2 golden fixture is consumable through the public package expo
 });
 
 test("delegated step requirements are deterministic, immutable, and fail closed", () => {
-  const source = {
+  const source: Omit<DelegatedStepRequirementV1, "fingerprint"> = {
     schemaVersion: 1,
     workflowId: "workflow-1",
     workflowStepId: "step-1",
@@ -103,9 +111,9 @@ test("Continuity v2 golden fixture freezes the ten approved scenarios", () => {
     .flatMap((scenario) => scenario.turns)
     .map((turn) => turn.expected.intentAction)
     .filter(Boolean);
-  assert.equal(expectedActions.includes("single_reply"), false);
-  assert.equal(expectedActions.includes("direct_workflow"), false);
-  assert.equal(expectedActions.every((action) => channelIntentDecisionV2Actions.includes(action)), true);
+  assert.equal((expectedActions as readonly (string | undefined)[]).includes("single_reply"), false);
+  assert.equal((expectedActions as readonly (string | undefined)[]).includes("direct_workflow"), false);
+  assert.equal(expectedActions.every((action) => (channelIntentDecisionV2Actions as readonly (string | undefined)[]).includes(action)), true);
 });
 
 test("golden fixture serialization is deterministic and rejects v1 action names", () => {
@@ -115,7 +123,7 @@ test("golden fixture serialization is deterministic and rejects v1 action names"
   assert.deepEqual(JSON.parse(first), goldenFixture);
 
   const legacy = structuredClone(goldenFixture);
-  legacy.scenarios[0].turns[1].expected.intentAction = "single_reply";
+  (legacy.scenarios[0].turns[1].expected as { intentAction?: string }).intentAction = "single_reply";
   assert.equal(isConversationContinuityGoldenFixtureV1(legacy), false);
   assert.throws(
     () => serializeConversationContinuityGoldenFixtureV1(legacy),
@@ -572,7 +580,7 @@ test("ChannelIntentDecision v2 accepts only the clean-break action contract", ()
 });
 
 test("required participant manifest has deterministic identity and rejects mutation", () => {
-  const participants = [{
+  const participants: RequiredParticipantV1[] = [{
     participantId: "teammate_builtin_engineer",
     role: "engineer",
     requirement: "required",
@@ -715,7 +723,7 @@ test("workflow participant provider binding and blocker contracts fail closed", 
   assert.equal(isWorkflowParticipantProviderBlockerV1({ ...blocker, message: "" }), false);
 });
 
-function buildItem(kind, payload, sequence = 1) {
+function buildItem<Payload>(kind: string, payload: Payload, sequence = 1) {
   return {
     schemaVersion: 1,
     id: `item-${sequence}`,
@@ -738,7 +746,16 @@ function buildItem(kind, payload, sequence = 1) {
   };
 }
 
-function buildDecision(overrides) {
+type DecisionOverrides = Record<string, unknown> & {
+  action?: string;
+  selectedTeammateIds?: ChannelIntentDecisionV2["selectedTeammateIds"];
+  participantManifest?: ChannelIntentDecisionV2["participantManifest"];
+  execution?: Record<string, unknown> & {
+    operations?: readonly (Record<string, unknown> & { id: string; required: boolean })[];
+  };
+};
+
+function buildDecision(overrides: DecisionOverrides) {
   const action = overrides.action ?? "reply";
   const selectedTeammateIds = overrides.selectedTeammateIds
     ?? (action === "execute" || action === "workflow_proposal" ? ["teammate-1"] : []);
@@ -755,7 +772,7 @@ function buildDecision(overrides) {
       requestedBy: "selector_policy",
     })),
   );
-  return {
+  const decision = {
     schemaVersion: 2,
     id: "decision-1",
     workspaceId: "workspace-1",
@@ -774,7 +791,6 @@ function buildDecision(overrides) {
     createdAt: now,
     updatedAt: now,
     ...overrides,
-    selectedTeammateIds,
-    participantManifest,
   };
+  return { ...decision, selectedTeammateIds, participantManifest };
 }

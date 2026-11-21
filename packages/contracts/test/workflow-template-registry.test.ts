@@ -10,7 +10,7 @@ const policy = () => ({ onRunFailed: "block_for_user", onRunCancelled: "cancel_w
 const gate = () => ({ stage: "pre", approvalProfile: { mode: "strict", risk: "high",
   requiredForTools: ["read"], requiredForActions: ["workflow_step"] }, title: "Review", reason: "Check evidence",
   requiredForStatuses: ["claimed", "succeeded"] });
-const invalid = value => assert.throws(() => parseWorkflowTemplate(value), error =>
+const invalid = (value: unknown) => assert.throws(() => parseWorkflowTemplate(value), error =>
   error instanceof WorkflowTemplateValidationError && error.code === "workflow_template_invalid");
 
 test("registry template parser copies JSON, defaults auto-start off and never resolves runtime capabilities", () => {
@@ -21,7 +21,7 @@ test("registry template parser copies JSON, defaults auto-start off and never re
   const before = structuredClone(input), parsed = parseWorkflowTemplate(input);
   assert.deepEqual(parsed, { ...input, autoStartDefault: false });
   assert.deepEqual(input, before);
-  parsed.steps[0].policy.maxRetries = 3;
+  (parsed.steps[0].policy as { maxRetries: number }).maxRetries = 3;
   assert.deepEqual(input, before);
   assert.equal(parseWorkflowTemplate(template({ autoStartDefault: true })).autoStartDefault, true);
   assert.equal(parsed.steps[0].sideEffectClass, undefined, "legacy declarations stay unclassified");
@@ -42,7 +42,7 @@ test("registry graphs reject duplicate IDs/dependencies, missing dependencies an
     ["empty", []], ["duplicate-id", [step(), step()]], ["duplicate-dependency", [step(), step({ id: "next", dependsOn: ["read", "read"] })]],
     ["missing", [step({ dependsOn: ["missing"] })]], ["self", [step({ dependsOn: ["read"] })]],
     ["cycle", [step({ dependsOn: ["next"] }), step({ id: "next", dependsOn: ["read"] })]],
-  ]) await t.test(name, () => invalid(template({ steps })));
+  ] as const) await t.test(name, () => invalid(template({ steps })));
   const steps = [step({ dependsOn: ["next"] }), step({ id: "next" })];
   assert.deepEqual(parseWorkflowTemplate(template({ steps })).steps, steps, "forward declarations are valid");
 });
@@ -54,7 +54,7 @@ test("unknown fields are refused at every template, step, safety, policy and gat
     ["policy", template({ steps: [step({ policy: { ...policy(), allowAll: true } })] })],
     ["gate", template({ steps: [step({ gates: [{ ...gate(), approved: true }] })] })],
     ["approval", template({ steps: [step({ gates: [{ ...gate(), approvalProfile: { mode: "strict", allowAll: true } }] })] })],
-  ]) await t.test(name, () => invalid(input));
+  ] as const) await t.test(name, () => invalid(input));
 });
 
 test("non-JSON values, accessors, toJSON hooks, sparse arrays and symbols are not evaluated", () => {
