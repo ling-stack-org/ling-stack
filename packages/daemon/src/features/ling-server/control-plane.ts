@@ -127,23 +127,22 @@ export class LingServerControlPlane {
           readonly localKeyFingerprint: string;
           readonly remoteKeyFingerprint: string;
           readonly expiresAt: string;
-          readonly relayCredential?: { readonly url: string; readonly username: string; readonly credential: string; readonly expiresAt: string };
         }>(body);
-        const binding = this.registry.getBinding(input.bindingId);
+        if (Object.hasOwn(input, "relayCredential")) throw new Error("relay credentials are issued by the control plane");
+        const binding = this.registry.requireActiveBinding(input.bindingId);
         const route = this.registry.requireRoute(input.routeAttemptId);
-        if (!binding) throw new Error("binding is missing");
         const installation = this.registry.getInstallation(binding.installationId);
         if (!installation) throw new Error("installation is missing");
-        const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now });
-        writeJson(response, 200, planner.createConfig({ binding, route, role: input.role, localKeyFingerprint: input.localKeyFingerprint, remoteKeyFingerprint: input.remoteKeyFingerprint, expiresAt: input.expiresAt, relayCredential: input.relayCredential }));
+        const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now, relayIssuer: this.#relayIssuer });
+        writeJson(response, 200, planner.createConfig({ binding, route, role: input.role, localKeyFingerprint: input.localKeyFingerprint, remoteKeyFingerprint: input.remoteKeyFingerprint, expiresAt: input.expiresAt }));
         return;
       }
       if (request.method === "POST" && url.pathname === "/v1/routes/relay-credential") {
-        const input = requireBody<{ readonly bindingId: string; readonly role: "gateway" | "mobile"; readonly ttlMs?: number }>(body);
-        const binding = this.registry.getBinding(input.bindingId);
-        if (!binding) throw new Error("binding is missing");
+        const input = requireBody<{ readonly bindingId: string; readonly routeAttemptId: string; readonly role: "gateway" | "mobile"; readonly ttlMs?: number }>(body);
+        const binding = this.registry.requireActiveBinding(input.bindingId);
+        const route = this.registry.requireRoute(input.routeAttemptId);
         if (!this.#relayIssuer) throw new Error("relay credential issuer is not configured");
-        writeJson(response, 200, this.#relayIssuer.issue({ binding, role: input.role, ttlMs: input.ttlMs }));
+        writeJson(response, 200, this.#relayIssuer.issue({ binding, route, role: input.role, ttlMs: input.ttlMs }));
         return;
       }
       if (request.method === "POST" && url.pathname === "/v1/routes/diagnostics") {

@@ -217,6 +217,15 @@ destination networks, and tests per-installation abuse controls. Keep coturn's a
 interface private. Record the maximum remaining lifetime of an allocation when a pair
 is revoked. Gateway authorization uses the live binding independently.
 
+The local operator control API accepts the binding ID, route-attempt ID and role
+at `POST /v1/routes/relay-credential` once the route enters relay checks.
+`POST /v1/routes/transport-config` includes a server-issued credential for a
+connected relay route. The shared secret is supplied to the control plane through
+its transport configuration. The credential expiry in the response matches the
+whole-second expiry in the coturn REST username. Issuance counts are process-local.
+Existing coturn allocations follow the deployment's allocation policy.
+[Control plane](../../packages/daemon/src/features/ling-server/control-plane.ts)
+
 Local execution, including a phone task with an authorized external-device link,
 can continue during a Ling Server outage. A live direct peer route can continue
 within its already authorized lease while it remains reachable. New cross-network

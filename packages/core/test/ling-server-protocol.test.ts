@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,18 +116,29 @@ test("Ling Server transport planner emits ephemeral direct and relay configurati
   assert.throws(() => planner.createConfig({ binding, route, role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:05:01.000Z" }), /outlive/);
 });
 
-test("Ling Server relay credentials are binding-scoped, short-lived and quota-bound", () => {
+test("Ling Server relay credentials use a route-bound coturn username and replay within the issuing quota", () => {
+  let currentTime = "2026-11-21T00:00:00.250Z";
+  const sharedSecret = "0123456789abcdef";
   const issuer = new LingServerRelayCredentialIssuer({
-    turnUrls: ["turns:turn.ling.example:443"], sharedSecret: "0123456789abcdef", now: () => now,
+    turnUrls: ["turns:turn.ling.example:443"], sharedSecret, now: () => currentTime,
     maxTtlMs: 120_000, maxActiveCredentialsPerBinding: 1,
   });
   const binding = { bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 2, revision: 2, status: "active" as const };
-  const credential = issuer.issue({ binding, role: "mobile", ttlMs: 60_000 });
+  const route = { routeAttemptId: "relay-attempt", bindingId: binding.bindingId, peerEpoch: 2, preferred: "relay", status: "checking", expiresAt: "2026-11-21T00:01:00.125Z" } as const;
+  const request = { binding, route, role: "mobile" } as const;
+  const credential = issuer.issue(request);
   assert.equal(credential.url, "turns:turn.ling.example:443");
-  assert.equal(credential.username.split(":").slice(1).join(":"), "binding-1:2:mobile");
-  assert.ok(credential.credential.length > 20);
-  assert.throws(() => issuer.issue({ binding, role: "gateway", ttlMs: 60_000 }), /quota/);
-  assert.throws(() => issuer.issue({ binding: { ...binding, status: "revoked" }, role: "mobile" }), /active peer binding/);
+  assert.equal(credential.expiresAt, "2026-11-21T00:01:00.000Z");
+  assert.match(credential.username, new RegExp(`^${Date.parse(credential.expiresAt) / 1_000}:[0-9a-f]{64}:mobile$`, "u"));
+  assert.equal(credential.credential, createHmac("sha1", sharedSecret).update(credential.username).digest("base64"));
+  assert.deepEqual(issuer.issue(request), credential);
+  assert.throws(() => issuer.issue({ ...request, role: "gateway" }), /quota/);
+  assert.throws(() => issuer.issue({ ...request, binding: { ...binding, status: "revoked" } }), /active peer binding/);
+  assert.throws(() => issuer.issue({ ...request, route: { ...route, peerEpoch: 1 } }), /current peer epoch/);
+  assert.throws(() => issuer.issue({ ...request, route: { ...route, preferred: "direct" } }), /requires a relay route/);
+  currentTime = "2026-11-21T00:01:00.000Z";
+  assert.throws(() => issuer.issue(request), /will expire/);
+  assert.notEqual(issuer.issue({ ...request, route: { ...route, routeAttemptId: "relay-next", expiresAt } }).username, credential.username);
 });
 
 test("hardware protocol codec manifests and captures survive SQLite reopen", () => {
