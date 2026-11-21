@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { HardwareProtocolWorkbench, LingServerPeerRegistry, SqliteLingServerStore } from "../dist/index.js";
+import { HardwareProtocolWorkbench, LingServerPeerRegistry, SqliteDeviceProtocolStore, SqliteLingServerStore } from "../dist/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 
@@ -46,4 +46,17 @@ test("Ling Server peer registry restores installation, binding and route state f
   assert.equal(second.selectRoute("route-1", "direct", now).selected, "direct");
   assert.equal(second.revokeBinding("binding-1", 2).epoch, 2);
   secondStore.close();
+});
+
+test("hardware protocol codec manifests and captures survive SQLite reopen", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "ling-protocol-store-")), "protocol.sqlite");
+  const first = new SqliteDeviceProtocolStore({ databasePath: path });
+  first.registerCodec({ codecId: "toy-can", version: "1.0", transport: "can", messageTypes: ["status"], license: "MIT" });
+  const capture = new HardwareProtocolWorkbench().capture({ captureId: "capture-persisted", targetDeviceId: "vehicle-1", transport: "can", createdAt: now, frames: [{ direction: "rx", bytes: Uint8Array.from([1, 2, 3]), capturedAt: now }] });
+  first.saveCapture(capture);
+  first.close();
+  const second = new SqliteDeviceProtocolStore({ databasePath: path });
+  assert.equal(second.getCodec("toy-can")?.version, "1.0");
+  assert.equal(second.getCapture("capture-persisted")?.frames[0]?.digest, capture.frames[0]?.digest);
+  second.close();
 });
