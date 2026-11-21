@@ -200,6 +200,7 @@ import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollecti
 import {
   handlePluginItem,
   handlePluginPackageItem,
+  handleOfficialPluginCatalog,
   handlePluginSourcesCollection,
   handlePluginsCollection,
   handlePluginsImport,
@@ -971,6 +972,11 @@ export async function routeRequest(
 
   if (url.pathname === "/plugins/sources") {
     await handlePluginSourcesCollection(request, response, config);
+    return;
+  }
+
+  if (url.pathname === "/plugins/catalog") {
+    await handleOfficialPluginCatalog(request, response, config);
     return;
   }
 

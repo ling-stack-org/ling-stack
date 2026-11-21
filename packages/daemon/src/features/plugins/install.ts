@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import type {
   ManagedPluginDescriptor,
   ManagedPluginPackageRecord,
@@ -22,6 +24,13 @@ import {
 import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog.js";
 import { checkCuaDriverProviderHealth } from "./provider-health.js";
 import { pluginHealthFromMcpSnapshot } from "./cua-driver-activation.js";
+import type { LoadedPluginPackage } from "./manifest.js";
+import {
+  CHROME_BROWSER_MCP_SERVER_ID,
+  CHROME_BROWSER_PLUGIN_ID,
+  OFFICE_DOCUMENTS_MCP_SERVER_ID,
+  OFFICE_DOCUMENTS_PLUGIN_ID,
+} from "@ling-stack/contracts";
 
 type ManagedPluginInstallStore =
   ManagedPluginStoreFacet &
@@ -31,6 +40,63 @@ type ManagedPluginInstallStore =
 export interface PluginInstallResult {
   readonly descriptor: ManagedPluginDescriptor;
   readonly packageRecord: ManagedPluginPackageRecord;
+}
+
+/** Materialize only declarative MCP contributions from a verified remote package. */
+export async function linkVerifiedPluginContributions(input: {
+  readonly store: ManagedPluginInstallStore;
+  readonly pluginPackage: LoadedPluginPackage;
+  readonly enabled: boolean;
+  readonly now: string;
+}): Promise<void> {
+  const linked: Array<{
+    readonly contributionKind: "mcp-server";
+    readonly contributionId: string;
+    readonly linkedResourceId: string;
+    readonly enabled: boolean;
+  }> = [];
+  for (const contribution of input.pluginPackage.manifest.contributions) {
+    if (contribution.kind !== "mcp-server") continue;
+    const filePath = resolve(input.pluginPackage.packageRoot, contribution.path);
+    const raw = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
+    const transport = toMcpTransport(raw);
+    // Cua's declarative contribution keeps its manifest-facing id while the
+    // runtime uses the canonical server id shared by the provider lease and
+    // health checks. Every other remote contribution uses its own id.
+    const linkedResourceId = input.pluginPackage.manifest.id === CUA_DRIVER_PLUGIN_ID
+      && contribution.id === "mcp:cua-driver"
+      ? CUA_DRIVER_MCP_SERVER_ID
+      : input.pluginPackage.manifest.id === CHROME_BROWSER_PLUGIN_ID
+        && contribution.id === "mcp:official-chrome-browser"
+        ? CHROME_BROWSER_MCP_SERVER_ID
+        : input.pluginPackage.manifest.id === OFFICE_DOCUMENTS_PLUGIN_ID
+          && contribution.id === "mcp:official-office-documents"
+          ? OFFICE_DOCUMENTS_MCP_SERVER_ID
+          : contribution.id;
+    const existing = input.store.getMcpServer(linkedResourceId);
+    const serviceOwnsTransport = input.pluginPackage.manifest.id === CHROME_BROWSER_PLUGIN_ID
+      || input.pluginPackage.manifest.id === OFFICE_DOCUMENTS_PLUGIN_ID;
+    const server = existing
+      ? input.store.updateMcpServer(existing.id, serviceOwnsTransport
+        ? { displayName: input.pluginPackage.manifest.displayName, enabled: input.enabled }
+        : { displayName: input.pluginPackage.manifest.displayName, transport, enabled: input.enabled }, input.now)
+        && input.store.getMcpServer(existing.id)
+      : input.store.createMcpServer({
+          id: linkedResourceId,
+          displayName: input.pluginPackage.manifest.displayName,
+          transport,
+          enabled: input.enabled,
+          required: false,
+        }, input.now);
+    if (!server) throw new Error(`Failed to materialize plugin MCP contribution: ${contribution.id}`);
+    linked.push({
+      contributionKind: "mcp-server",
+      contributionId: contribution.id,
+      linkedResourceId: server.id,
+      enabled: input.enabled,
+    });
+  }
+  if (linked.length > 0) input.store.replaceManagedPluginContributions(input.pluginPackage.id, linked, input.now);
 }
 
 export async function installBundledPluginPackage(input: {
@@ -49,7 +115,7 @@ export async function installBundledPluginPackage(input: {
     throw new HttpError(400, "plugin_package_invalid", "Plugin package validation failed.");
   }
 
-  if (input.pluginId === "bundled:cua-driver") {
+  if (input.pluginId === "official:cua-driver") {
     validateCuaInstallEnvironment(input.store, descriptor, input.options, input.now);
     assertBundledCuaMcpServerOwnershipMigratable(input.store, descriptor);
   }
@@ -77,7 +143,7 @@ export async function installBundledPluginPackage(input: {
     now: input.now,
   });
 
-  if (descriptor.id === "bundled:cua-driver") {
+  if (descriptor.id === "official:cua-driver") {
     linkCuaMcpServer({
       store: input.store,
       descriptor,
@@ -171,7 +237,7 @@ export async function checkInstalledPluginRuntimeDependencies(input: {
   readonly secretResolver: SecretResolver;
   readonly now: string;
 }): Promise<void> {
-  if (input.descriptor.id !== "bundled:cua-driver") {
+  if (input.descriptor.id !== "official:cua-driver") {
     return;
   }
   const server = input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID);
@@ -308,6 +374,33 @@ function validateCuaInstallEnvironment(
   }
 }
 
+function toMcpTransport(value: Record<string, unknown>) {
+  if (value.transport && typeof value.transport === "object" && !Array.isArray(value.transport)) {
+    const transport = value.transport as Record<string, unknown>;
+    if (transport.type === "streamable-http" && typeof transport.url === "string" && /^https?:\/\//u.test(transport.url)) {
+      return {
+        type: "streamable-http" as const,
+        url: transport.url,
+        headers: {},
+        secretHeaderRefs: {},
+      };
+    }
+    throw new Error("Remote plugin MCP transport must be a supported HTTPS streamable-http transport.");
+  }
+  const command = typeof value.command === "string" ? value.command.trim() : "";
+  const args = Array.isArray(value.args) && value.args.every((item) => typeof item === "string")
+    ? value.args as string[]
+    : [];
+  if (!command || command.includes("/") || command.includes("\\") || args.length > 64) throw new Error("Remote plugin MCP contribution must declare a valid command and args.");
+  return {
+    type: "stdio" as const,
+    command,
+    args,
+    env: {},
+    secretEnvRefs: {},
+  };
+}
+
 function linkCuaMcpServer(input: {
   readonly store: ManagedPluginInstallStore;
   readonly descriptor: ManagedPluginDescriptor;
@@ -410,7 +503,7 @@ function migrateLegacyCuaMcpServerOwnershipForBundledInstall(input: {
   if (legacyRecord) {
     input.store.updateManagedPlugin(CUA_DRIVER_PLUGIN_ID, {
       enabled: false,
-      disabledReason: "Migrated to bundled:cua-driver.",
+      disabledReason: "Migrated to official:cua-driver.",
     }, input.now);
     input.store.replaceManagedPluginContributions(CUA_DRIVER_PLUGIN_ID, [], input.now);
     input.store.appendManagedPluginEvent({

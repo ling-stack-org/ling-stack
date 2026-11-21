@@ -23,11 +23,9 @@ import {
   isCuaDriverPlatformSupported,
   listTrustedLocalPresetDescriptors,
 } from "./presets.js";
-import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { buildCuaDriverSetupView } from "./cua-driver.js";
 import { createDesktopBrowserDescriptor } from "./desktop-browser.js";
 import { readBundledCuaDriverSetupMetadata } from "./cua-driver-catalog-projection.js";
-import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
 import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
 import { CHROME_BROWSER_PLUGIN_ID, OFFICE_DOCUMENTS_PLUGIN_ID } from "@ling-stack/contracts";
@@ -39,11 +37,13 @@ import {
   buildOfficeDocumentsSetupView,
   createOfficeDocumentsDescriptor,
 } from "./office-documents.js";
+import { getBundledPluginPackage } from "./source-index.js";
 
 const sourceOrder = new Map([
   ["built-in", 0],
   ["bundled", 1],
-  ["trusted-local-preset", 2],
+  ["official-remote", 2],
+  ["trusted-local-preset", 3],
 ]);
 
 type ManagedPluginCatalogStore =
@@ -84,7 +84,6 @@ export function listManagedPluginViews(input: {
       lockedControlProjection: input.lockedControlProjection,
     }));
   return views
-    .filter((view) => input.includeHidden || view.id !== BUNDLED_CUA_DRIVER_PLUGIN_ID)
     .sort(compareManagedPluginViews);
 }
 
@@ -157,9 +156,6 @@ function buildDescriptorMap(
 ): Map<string, ManagedPluginDescriptor> {
   const descriptors = new Map<string, ManagedPluginDescriptor>();
   for (const descriptor of listProductManagedBuiltInPluginDescriptors(extensionRegistry)) {
-    descriptors.set(descriptor.id, descriptor);
-  }
-  for (const descriptor of listBundledPackageDescriptors()) {
     descriptors.set(descriptor.id, descriptor);
   }
   for (const descriptor of listTrustedLocalPresetDescriptors()) {
@@ -361,7 +357,19 @@ function createManagedPluginView(input: {
   }
   const packageRecord = input.store.getManagedPluginPackage(input.descriptor.id);
   const packageView = packageRecord ? toManagedPluginPackageView(packageRecord) : undefined;
-  const runtimePreview = input.descriptor.sourceKind === "bundled"
+  const bundledPackageAvailable = Boolean(getBundledPluginPackage(input.descriptor.id));
+  // The browser and Office descriptors describe runtime adapters supplied by
+  // Ling itself. Once one of those adapters has a remotely installed package,
+  // the package record becomes the source of truth for distribution actions,
+  // while the built-in descriptor remains the source of truth for runtime
+  // injection and health checks.
+  const effectiveSourceKind = packageRecord?.sourceKind === "official-remote"
+    ? "official-remote"
+    : input.descriptor.sourceKind;
+  const packagedPlugin = effectiveSourceKind === "bundled" || effectiveSourceKind === "official-remote";
+  const runtimeProvidedByLing = isRuntimeProvidedByLing(input.descriptor.id);
+  const runtimePreviewAvailable = packagedPlugin || runtimeProvidedByLing;
+  const runtimePreview = runtimePreviewAvailable
     ? buildManagedPluginRuntimePreview({
         cwd: input.cwd,
         store: input.store,
@@ -373,7 +381,7 @@ function createManagedPluginView(input: {
     id: input.descriptor.id,
     displayName: input.descriptor.displayName,
     version: input.descriptor.version,
-    sourceKind: input.descriptor.sourceKind,
+    sourceKind: effectiveSourceKind,
     status,
     description: input.descriptor.description,
     homepageUrl: input.descriptor.homepageUrl,
@@ -401,12 +409,15 @@ function createManagedPluginView(input: {
         ? !blocked && !requestedEnabled
         : !blocked && status !== "enabled" && (input.descriptor.id !== CUA_DRIVER_PLUGIN_ID || setup?.state === "connected"),
       canDisable: bundledProjection ? requestedEnabled : status === "enabled",
-      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled",
+      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || effectiveSourceKind === "built-in" || effectiveSourceKind === "bundled" || effectiveSourceKind === "official-remote",
+      canCheckUpdate: effectiveSourceKind === "official-remote",
       canApplyPreset: !bundledProjection && !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
-      canInstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status !== "installed",
-      canUninstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
-      canRefreshPackage: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
-      canRuntimePreview: input.descriptor.sourceKind === "bundled",
+      canInstall: !blocked && bundledPackageAvailable && packageView?.status !== "installed",
+      canInstallRemote: !blocked && !bundledProjection && effectiveSourceKind === "official-remote" && packageView?.status !== "installed",
+      canUninstall: !blocked && packagedPlugin && packageView?.status === "installed",
+      canRefreshPackage: !blocked && bundledPackageAvailable && packageView?.status === "installed",
+      canRollback: !blocked && effectiveSourceKind === "official-remote" && Boolean(packageView?.previousVersion),
+      canRuntimePreview: runtimePreviewAvailable,
     },
   };
 }
@@ -469,6 +480,12 @@ function getDescriptorBlocker(descriptor: ManagedPluginDescriptor): string | und
     return CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE;
   }
   return undefined;
+}
+
+function isRuntimeProvidedByLing(pluginId: string): boolean {
+  return pluginId === CHROME_BROWSER_PLUGIN_ID
+    || pluginId === OFFICE_DOCUMENTS_PLUGIN_ID
+    || pluginId === "official:desktop-browser";
 }
 
 function resolveLinkedResource(

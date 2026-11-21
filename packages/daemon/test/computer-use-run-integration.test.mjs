@@ -141,7 +141,7 @@ test("bundled current lease enters the run snapshot and Computer Use projection 
     assert.ok(capture.store);
 
     const enable = await fetch(
-      `${baseUrl}/plugins/${encodeURIComponent("trusted-local:cua-driver")}/enable?cwd=${encodeURIComponent(cwd)}`,
+      `${baseUrl}/plugins/${encodeURIComponent("official:cua-driver")}/enable?cwd=${encodeURIComponent(cwd)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -195,12 +195,9 @@ test("bundled current lease enters the run snapshot and Computer Use projection 
 
     const run = capture.store.listRuns({ limit: 20 }).find((candidate) => candidate.taskId === taskId);
     assert.ok(run);
-    assert.deepEqual(run.requestSnapshot.managedPluginRuntime.pluginIds, [
-      "bundled:cua-driver",
-      "trusted-local:cua-driver",
-    ]);
+    assert.deepEqual(run.requestSnapshot.managedPluginRuntime.pluginIds, ["official:cua-driver"]);
     const capability = run.requestSnapshot.managedPluginRuntime.capabilities.find(
-      (candidate) => candidate.pluginId === "trusted-local:cua-driver",
+      (candidate) => candidate.pluginId === "official:cua-driver",
     );
     assert.equal(capability?.status, "injectable");
     assert.equal(capability?.package, undefined);
@@ -263,7 +260,7 @@ test("bundled package selection stays in the run snapshot while its Desktop leas
     assert.ok(run);
     assert.deepEqual(
       run.requestSnapshot.managedPluginRuntime.pluginIds,
-      ["bundled:cua-driver"],
+      ["official:cua-driver"],
     );
     assert.deepEqual(run.requestSnapshot.managedPluginRuntime.capabilities, []);
   } finally {

@@ -1413,7 +1413,9 @@ async function executeAdmittedRunRequest(
           && isBundledEmbeddedCuaDriverSelected(mcpBroker.cuaDriverRuntimeAuthority, workspaceCwd)
           ? [createCuaDriverDescriptor()]
           : []),
-      ];
+      ].filter((descriptor, index, descriptors) =>
+        descriptors.findIndex((candidate) => candidate.id === descriptor.id) === index,
+      );
       managedPluginRuntime = createManagedPluginRuntimeSnapshot({
         cwd: runRequest.cwd,
         runId,

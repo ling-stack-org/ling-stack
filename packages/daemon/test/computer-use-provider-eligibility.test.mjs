@@ -86,7 +86,7 @@ test("Cua projection eligibility accepts the canonical bundled lease runtime wit
       cuaDriverRuntimeAuthority: noLeaseAuthority,
     });
     assert.equal(pendingSnapshot.cwd, executionCwd);
-    assert.deepEqual(pendingSnapshot.pluginIds, ["bundled:cua-driver"]);
+    assert.deepEqual(pendingSnapshot.pluginIds, ["official:cua-driver"]);
     assert.deepEqual(pendingSnapshot.capabilities, []);
     assert.equal(resolveManagedCuaDriverProvider({
       store,
@@ -288,7 +288,7 @@ test("bundled eligibility fails closed for every inconsistent durable activation
       mutate({ store, descriptor, server }) {
         const conflictingDescriptor = {
           ...descriptor,
-          id: "trusted-local:cua-driver-conflict",
+          id: "official:cua-driver-conflict",
           name: "Conflicting Cua Driver owner",
         };
         store.upsertManagedPlugin({
@@ -501,11 +501,11 @@ test("Cua projection eligibility requires the approved bundled package and exact
       authorizedServerIds: [CUA_MCP_SERVER_ID],
       platform: "win32",
     }), []);
-    store.replaceManagedPluginContributions("trusted-local:cua-driver", [], now);
+    store.replaceManagedPluginContributions("official:cua-driver", [], now);
 
     const expiresAt = new Date(Date.parse(now) + 10 * 60 * 1000).toISOString();
     store.upsertManagedPluginHealthSnapshot({
-      pluginId: "bundled:cua-driver",
+      pluginId: "official:cua-driver",
       status: "ready",
       checkedAt: now,
       expiresAt,
@@ -529,7 +529,7 @@ test("Cua projection eligibility requires the approved bundled package and exact
       platform: "win32",
     }), []);
 
-    const packageRecord = store.getManagedPluginPackage("bundled:cua-driver");
+    const packageRecord = store.getManagedPluginPackage("official:cua-driver");
     assert.ok(packageRecord);
     store.upsertManagedPluginPackage({
       pluginId: packageRecord.pluginId,
@@ -542,7 +542,7 @@ test("Cua projection eligibility requires the approved bundled package and exact
       installedAt: packageRecord.installedAt,
     }, now);
     store.upsertManagedPluginHealthSnapshot({
-      pluginId: "bundled:cua-driver",
+      pluginId: "official:cua-driver",
       status: "ready",
       checkedAt: now,
       expiresAt,
@@ -658,7 +658,7 @@ function seedReadyEmbeddedProvider(store, cwd, now) {
   assert.equal(ready.committed, true);
   return {
     descriptor,
-    descriptors: [...listBundledPackageDescriptors(), descriptor],
+    descriptors: [descriptor],
     server,
     cuaDriverRuntimeAuthority: {
       enabled: true,

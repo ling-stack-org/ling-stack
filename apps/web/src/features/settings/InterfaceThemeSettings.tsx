@@ -25,7 +25,7 @@ export function InterfaceThemeSettings(): React.JSX.Element {
   const [applyingThemeId, setApplyingThemeId] = useState<string>();
   const [systemApplying, setSystemApplying] = useState(false);
   const options = themes
-    .filter((theme) => theme.source === "built-in")
+    .filter((theme) => theme.source === "built-in" || theme.source === "local-import")
     .map((theme) => themePickerOption(theme, resolved.themeId, t));
 
   const selectTheme = (themeId: string): void => {
@@ -123,7 +123,7 @@ function themePickerOption(
 ): ThemePickerOption {
   const { manifest } = theme;
   const scheme = manifest.colorScheme === "dark" ? t("Dark") : t("Light");
-  const source = t("Built-in");
+  const source = theme.source === "built-in" ? t("Built-in") : t("Local theme");
   const disabledReason = theme.state === "ready"
     ? undefined
     : theme.validationIssue ?? t("Theme unavailable");
@@ -139,7 +139,7 @@ function themePickerOption(
     name: manifest.name,
     accessibleLabel,
     colorSchemeLabel: scheme,
-    sourceLabel: undefined,
+    sourceLabel: theme.source === "built-in" ? undefined : source,
     disabled: theme.state !== "ready",
     disabledReason,
     scene: manifest.scene?.id,

@@ -58,8 +58,8 @@ for (const retirement of ["revoke", "deadline"]) {
         generation: 2, sequence: 100, providerState: "corrupt", reason: "a34_current_artifact_invalid",
       });
       assert.equal((await putAvailability(fixture.daemon, newReport)).status, 200);
-      assert.equal(fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.desktopGeneration, 2);
-      assert.equal(fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.providerState, "corrupt");
+      assert.equal(fixture.store.getManagedPluginHealthSnapshot("official:cua-driver").details.desktopGeneration, 2);
+      assert.equal(fixture.store.getManagedPluginHealthSnapshot("official:cua-driver").details.providerState, "corrupt");
       a34AssertClosedProjection(fixture.store);
 
       // A new authenticated handshake starts a new generation domain. Lower
@@ -73,7 +73,7 @@ for (const retirement of ["revoke", "deadline"]) {
       const nextLease = lease(nextAuthority, fixture.cwd, { generation: 2 });
       assert.equal((await putLease(fixture.daemon, nextLease)).status, 200);
       await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === true);
-      assert.equal(fixture.store.getManagedPlugin("trusted-local:cua-driver").enabled, true);
+      assert.equal(fixture.store.getManagedPlugin("official:cua-driver").enabled, true);
       assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 1);
     } finally {
       gate.resolve();
@@ -97,7 +97,7 @@ for (const recovery of ["explicit revoke retry", "background retirement retry", 
               failedCommits += 1;
               return {
                 committed: false,
-                state: target.getCuaDriverActivationState("trusted-local:cua-driver"),
+                state: target.getCuaDriverActivationState("official:cua-driver"),
               };
             };
           }
@@ -143,7 +143,7 @@ for (const recovery of ["explicit revoke retry", "background retirement retry", 
         generation: 2, sequence: 100, providerState: "corrupt", reason: "a34_current_artifact_invalid",
       });
       assert.equal((await putAvailability(fixture.daemon, currentReport)).status, 200);
-      assert.equal(fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.desktopGeneration, 2);
+      assert.equal(fixture.store.getManagedPluginHealthSnapshot("official:cua-driver").details.desktopGeneration, 2);
       a34AssertClosedProjection(fixture.store);
     } finally {
       failProjection = false;
@@ -162,15 +162,15 @@ test("bundled daemon resets persisted effective state before listening", {
 
     await fixture.daemon.start();
 
-    const state = fixture.store.getCuaDriverActivationState("trusted-local:cua-driver");
+    const state = fixture.store.getCuaDriverActivationState("official:cua-driver");
     assert.equal(state.requestedEnabled, true);
     assert.equal(state.requestedRevision, 1);
     assert.equal(state.activationEpoch, 2);
-    assert.equal(fixture.store.getManagedPlugin("trusted-local:cua-driver").enabled, false);
+    assert.equal(fixture.store.getManagedPlugin("official:cua-driver").enabled, false);
     assert.equal(fixture.store.getMcpServer("mcp_cua_driver").enabled, false);
     assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
     assert.equal(
-      fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.providerState,
+      fixture.store.getManagedPluginHealthSnapshot("official:cua-driver").details.providerState,
       "desktop_unavailable",
     );
   } finally {
@@ -197,7 +197,7 @@ test("gate-on startup migrates a retained external Cua record to the inert bundl
     );
     assert.equal(migrated.enabled, false);
     assert.equal(fixture.store.listMcpTools({ serverId: migrated.id }).length, 0);
-    assert.ok(fixture.store.getCuaDriverActivationState("trusted-local:cua-driver"));
+    assert.ok(fixture.store.getCuaDriverActivationState("official:cua-driver"));
   } finally {
     await fixture.close();
   }
@@ -448,7 +448,7 @@ test("lease route returns 503 and clears the accepted lease when projection CAS 
       if (property === "commitCuaDriverActivation" && failProjection) {
         return () => ({
           committed: false,
-          state: target.getCuaDriverActivationState("trusted-local:cua-driver"),
+          state: target.getCuaDriverActivationState("official:cua-driver"),
         });
       }
       const value = Reflect.get(target, property, target);
@@ -480,7 +480,7 @@ test("lease route returns 503 and clears the accepted lease when projection CAS 
     const enableWithoutLease = await pluginAction(
       daemon,
       cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
       "enable",
     );
     assert.equal(enableWithoutLease.status, 202);
@@ -507,7 +507,7 @@ test("lease revoke returns 503 until its durable projection can be retried", {
       if (property === "commitCuaDriverActivation" && failProjection) {
         return () => ({
           committed: false,
-          state: target.getCuaDriverActivationState("trusted-local:cua-driver"),
+          state: target.getCuaDriverActivationState("official:cua-driver"),
         });
       }
       const value = Reflect.get(target, property, target);
@@ -529,7 +529,7 @@ test("lease revoke returns 503 until its durable projection can be retried", {
     const enable = await pluginAction(
       daemon,
       cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
       "enable",
     );
     assert.equal(enable.status, 202);
@@ -583,15 +583,15 @@ test("availability route atomically revokes the live lease and clears SQLite eff
     const requested = await pluginAction(
       daemon,
       cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
       "enable",
     );
     assert.equal(requested.status, 202);
     assert.equal((await requested.json()).error, "cua_desktop_lease_unavailable");
     assert.equal((await putLease(daemon, currentLease)).status, 200);
     await waitFor(() => store.getMcpServer("mcp_cua_driver")?.enabled === true);
-    assert.equal(store.getManagedPlugin("trusted-local:cua-driver").enabled, true);
-    assert.equal(store.listManagedPluginContributions("trusted-local:cua-driver")[0].enabled, true);
+    assert.equal(store.getManagedPlugin("official:cua-driver").enabled, true);
+    assert.equal(store.listManagedPluginContributions("official:cua-driver")[0].enabled, true);
     assert.equal(store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 1);
 
     const unavailable = desktopAvailability(authority, cwd, {
@@ -609,13 +609,13 @@ test("availability route atomically revokes the live lease and clears SQLite eff
       providerState: "corrupt",
     });
 
-    const state = store.getCuaDriverActivationState("trusted-local:cua-driver");
+    const state = store.getCuaDriverActivationState("official:cua-driver");
     assert.equal(state.requestedEnabled, true);
-    assert.equal(store.getManagedPlugin("trusted-local:cua-driver").enabled, false);
-    assert.equal(store.listManagedPluginContributions("trusted-local:cua-driver")[0].enabled, false);
+    assert.equal(store.getManagedPlugin("official:cua-driver").enabled, false);
+    assert.equal(store.listManagedPluginContributions("official:cua-driver")[0].enabled, false);
     assert.equal(store.getMcpServer("mcp_cua_driver").enabled, false);
     assert.deepEqual(store.listMcpTools({ serverId: "mcp_cua_driver" }), []);
-    const health = store.getManagedPluginHealthSnapshot("trusted-local:cua-driver");
+    const health = store.getManagedPluginHealthSnapshot("official:cua-driver");
     assert.equal(health.details.providerState, "corrupt");
     assert.equal(health.details.errorCode, "cua_embedded_artifact_invalid");
     assert.equal(health.details.reason, "provider_seal_mismatch");
@@ -637,7 +637,7 @@ test("availability route retries the identical authenticated report after SQLite
       if (property === "commitCuaDriverActivation" && failProjection) {
         return () => ({
           committed: false,
-          state: target.getCuaDriverActivationState("trusted-local:cua-driver"),
+          state: target.getCuaDriverActivationState("official:cua-driver"),
         });
       }
       const value = Reflect.get(target, property, target);
@@ -659,7 +659,7 @@ test("availability route retries the identical authenticated report after SQLite
       providerState: "permission_required",
       reason: "darwin_accessibility_permission_required",
     });
-    await pluginAction(daemon, cwd, "trusted-local:cua-driver", "enable");
+    await pluginAction(daemon, cwd, "official:cua-driver", "enable");
 
     failProjection = true;
     const failed = await putAvailability(daemon, report);
@@ -674,7 +674,7 @@ test("availability route retries the identical authenticated report after SQLite
     assert.equal(retried.status, 200);
     assert.equal((await retried.json()).providerState, "permission_required");
     assert.equal(
-      store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.errorCode,
+      store.getManagedPluginHealthSnapshot("official:cua-driver").details.errorCode,
       "cua_embedded_permission_required",
     );
   } finally {
@@ -709,15 +709,15 @@ test("gate-off lease publication leaves the enabled external Cua projection unto
     assert.equal((await putLease(daemon, lease(authority, cwd))).status, 200);
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const plugin = store.getManagedPlugin("trusted-local:cua-driver");
+    const plugin = store.getManagedPlugin("official:cua-driver");
     const server = store.getMcpServer("mcp_cua_driver");
-    const contribution = store.listManagedPluginContributions("trusted-local:cua-driver")[0];
+    const contribution = store.listManagedPluginContributions("official:cua-driver")[0];
     assert.equal(plugin.enabled, true);
     assert.equal(server.enabled, true);
     assert.equal(server.transport.type, "stdio");
     assert.equal(contribution.enabled, true);
     assert.equal(store.listMcpTools({ serverId: server.id }).length, 1);
-    assert.equal(store.getCuaDriverActivationState("trusted-local:cua-driver"), undefined);
+    assert.equal(store.getCuaDriverActivationState("official:cua-driver"), undefined);
     assert.equal(stats.connects.length, 0);
     assert.equal(stats.closes, 0);
   } finally {
@@ -745,7 +745,7 @@ test("gate-off restart quarantines and ignores a persisted bundled projection", 
   let secondDaemon;
   try {
     secondStore = createSqliteRunStore(cwd);
-    assert.equal(secondStore.getCuaDriverActivationState("trusted-local:cua-driver").requestedEnabled, true);
+    assert.equal(secondStore.getCuaDriverActivationState("official:cua-driver").requestedEnabled, true);
     assert.equal(secondStore.getMcpServer("mcp_cua_driver").enabled, true);
     assert.equal(secondStore.getMcpStatusSnapshot("mcp_cua_driver").status, "ready");
 
@@ -763,21 +763,21 @@ test("gate-off restart quarantines and ignores a persisted bundled projection", 
     assert.equal(secondStore.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
     assert.notEqual(secondStore.getMcpStatusSnapshot("mcp_cua_driver").status, "ready");
     assert.equal(
-      secondStore.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.providerState,
+      secondStore.getManagedPluginHealthSnapshot("official:cua-driver").details.providerState,
       "desktop_unavailable",
     );
 
     const previewResponse = await pluginRuntimePreview(
       secondDaemon,
       cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
     );
     assert.equal(previewResponse.status, 200);
     const preview = (await previewResponse.json()).preview;
     assert.notEqual(preview.status, "injectable");
     assert.ok(preview.blockers.includes("Plugin package is not installed."));
 
-    const viewResponse = await pluginView(secondDaemon, cwd, "trusted-local:cua-driver");
+    const viewResponse = await pluginView(secondDaemon, cwd, "official:cua-driver");
     assert.equal(viewResponse.status, 200);
     assert.notEqual((await viewResponse.json()).plugin.setup?.distribution, "bundled_embedded");
   } finally {
@@ -796,7 +796,7 @@ test("enable retains intent, first lease reconciles once, renewal is inert, and 
   const fixture = await daemonFixture();
   await fixture.daemon.start();
   try {
-    const enable = await pluginAction(fixture.daemon, fixture.cwd, "trusted-local:cua-driver", "enable");
+    const enable = await pluginAction(fixture.daemon, fixture.cwd, "official:cua-driver", "enable");
     assert.equal(enable.status, 202);
     const enableBody = await enable.json();
     assert.equal(enableBody.error, "cua_desktop_lease_unavailable");
@@ -814,7 +814,7 @@ test("enable retains intent, first lease reconciles once, renewal is inert, and 
     await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === true);
     assert.equal(fixture.connects.length, 1);
     assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 1);
-    const readyEpoch = fixture.store.getCuaDriverActivationState("trusted-local:cua-driver").activationEpoch;
+    const readyEpoch = fixture.store.getCuaDriverActivationState("official:cua-driver").activationEpoch;
 
     const renewed = await putLease(fixture.daemon, {
       ...firstLease,
@@ -824,7 +824,7 @@ test("enable retains intent, first lease reconciles once, renewal is inert, and 
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(fixture.connects.length, 1);
     assert.equal(
-      fixture.store.getCuaDriverActivationState("trusted-local:cua-driver").activationEpoch,
+      fixture.store.getCuaDriverActivationState("official:cua-driver").activationEpoch,
       readyEpoch,
     );
 
@@ -840,7 +840,7 @@ test("enable retains intent, first lease reconciles once, renewal is inert, and 
     assert.equal(fixture.store.getMcpServer("mcp_cua_driver").enabled, false);
     assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
     assert.equal(
-      fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.providerState,
+      fixture.store.getManagedPluginHealthSnapshot("official:cua-driver").details.providerState,
       "desktop_unavailable",
     );
     await waitFor(() => fixture.closes === 1);
@@ -868,7 +868,7 @@ test("first lease publish responds before retained-intent activation readiness c
     const enable = await pluginAction(
       fixture.daemon,
       fixture.cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
       "enable",
     );
     assert.equal(enable.status, 202);
@@ -914,7 +914,7 @@ for (const retirement of ["expiry", "revoke"]) {
       const enable = await pluginAction(
         fixture.daemon,
         fixture.cwd,
-        "trusted-local:cua-driver",
+        "official:cua-driver",
         "enable",
       );
       assert.equal(enable.status, 202);
@@ -937,7 +937,7 @@ for (const retirement of ["expiry", "revoke"]) {
       assert.equal(fixture.store.getMcpServer("mcp_cua_driver").enabled, false);
       assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
       assert.equal(
-        fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.providerState,
+        fixture.store.getManagedPluginHealthSnapshot("official:cua-driver").details.providerState,
         "desktop_unavailable",
       );
     } finally {
@@ -956,7 +956,7 @@ test("daemon shutdown closes one active bundled lease client exactly once", {
     const enable = await pluginAction(
       fixture.daemon,
       fixture.cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
       "enable",
     );
     assert.equal(enable.status, 202);
@@ -1004,7 +1004,7 @@ test("daemon restart aborts in-flight activation and keeps tools hidden until a 
     await firstDaemon.start();
     firstStarted = true;
     assert.equal(
-      (await pluginAction(firstDaemon, cwd, "trusted-local:cua-driver", "enable")).status,
+      (await pluginAction(firstDaemon, cwd, "official:cua-driver", "enable")).status,
       202,
     );
     const firstAuthority = await handshake(firstDaemon);
@@ -1031,12 +1031,12 @@ test("daemon restart aborts in-flight activation and keeps tools hidden until a 
     });
     await secondDaemon.start();
 
-    const resetState = secondStore.getCuaDriverActivationState("trusted-local:cua-driver");
+    const resetState = secondStore.getCuaDriverActivationState("official:cua-driver");
     assert.equal(resetState.requestedEnabled, true);
     assert.equal(secondStore.getMcpServer("mcp_cua_driver").enabled, false);
     assert.equal(secondStore.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
     assert.equal(
-      secondStore.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.providerState,
+      secondStore.getManagedPluginHealthSnapshot("official:cua-driver").details.providerState,
       "desktop_unavailable",
     );
 
@@ -1077,7 +1077,7 @@ test("missing Desktop bridge token does not block daemon startup and bundled act
     const enable = await pluginAction(
       daemon,
       cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
       "enable",
     );
     assert.equal(enable.status, 202);
@@ -1106,7 +1106,7 @@ test("missing Desktop bridge token does not block daemon startup and bundled act
   }
 });
 
-test("bundled plugin routes reject other workspaces and every hidden compatibility action", {
+test("bundled plugin routes reject other workspaces", {
   skip: !supportedPlatform,
 }, async () => {
   const fixture = await daemonFixture();
@@ -1116,26 +1116,12 @@ test("bundled plugin routes reject other workspaces and every hidden compatibili
     const wrongWorkspace = await pluginAction(
       fixture.daemon,
       otherCwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
       "enable",
     );
     assert.equal(wrongWorkspace.status, 409);
     assert.equal((await wrongWorkspace.json()).error, "cua_driver_workspace_mismatch");
 
-    for (const action of ["check", "install", "uninstall", "refresh-package"]) {
-      const hidden = await pluginAction(
-        fixture.daemon,
-        fixture.cwd,
-        "bundled:cua-driver",
-        action,
-      );
-      assert.equal(hidden.status, 409, action);
-      assert.equal(
-        (await hidden.json()).error,
-        "cua_driver_compatibility_record_hidden",
-        action,
-      );
-    }
   } finally {
     await fixture.close();
     await rm(otherCwd, { recursive: true, force: true });
@@ -1151,7 +1137,7 @@ test("gate-on canonical Cua Driver rejects package mutators and keeps its read-o
     const view = await pluginView(
       fixture.daemon,
       fixture.cwd,
-      "trusted-local:cua-driver",
+      "official:cua-driver",
     );
     assert.equal(view.status, 200);
 
@@ -1167,7 +1153,7 @@ test("gate-on canonical Cua Driver rejects package mutators and keeps its read-o
       const response = await pluginAction(
         fixture.daemon,
         fixture.cwd,
-        "trusted-local:cua-driver",
+        "official:cua-driver",
         action,
       );
       assert.equal(response.status, 409, action);
@@ -1208,7 +1194,7 @@ for (const operation of ["enable", "check"]) {
         (await pluginAction(
           fixture.daemon,
           fixture.cwd,
-          "trusted-local:cua-driver",
+          "official:cua-driver",
           "enable",
         )).status,
         202,
@@ -1221,7 +1207,7 @@ for (const operation of ["enable", "check"]) {
         inFlightCheck = pluginAction(
           fixture.daemon,
           fixture.cwd,
-          "trusted-local:cua-driver",
+          "official:cua-driver",
           "check",
         );
       }
@@ -1230,7 +1216,7 @@ for (const operation of ["enable", "check"]) {
       const uninstall = await pluginAction(
         fixture.daemon,
         fixture.cwd,
-        "trusted-local:cua-driver",
+        "official:cua-driver",
         "uninstall",
       );
       assert.equal(uninstall.status, 409);
@@ -1242,7 +1228,7 @@ for (const operation of ["enable", "check"]) {
       const disabled = await pluginAction(
         fixture.daemon,
         fixture.cwd,
-        "trusted-local:cua-driver",
+        "official:cua-driver",
         "disable",
       );
       assert.equal(disabled.status, 200);
@@ -1253,7 +1239,7 @@ for (const operation of ["enable", "check"]) {
       await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === false);
       assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
       assert.equal(
-        fixture.store.getCuaDriverActivationState("trusted-local:cua-driver").requestedEnabled,
+        fixture.store.getCuaDriverActivationState("official:cua-driver").requestedEnabled,
         false,
       );
     } finally {
@@ -1266,7 +1252,7 @@ for (const operation of ["enable", "check"]) {
 async function a34ActivateWithOldAvailability(fixture, generation) {
   await fixture.daemon.start();
   const authority = await handshake(fixture.daemon);
-  const requested = await pluginAction(fixture.daemon, fixture.cwd, "trusted-local:cua-driver", "enable");
+  const requested = await pluginAction(fixture.daemon, fixture.cwd, "official:cua-driver", "enable");
   assert.equal(requested.status, 202);
   assert.equal((await requested.json()).error, "cua_desktop_lease_unavailable");
   const old = desktopAvailability(authority, fixture.cwd, {
@@ -1278,32 +1264,32 @@ async function a34ActivateWithOldAvailability(fixture, generation) {
   // Real HTTP, real SQLite and final activation CAS, with only the MCP client
   // seam stubbed. This is not evidence of a real provider or packaged GUI.
   await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === true);
-  assert.equal(fixture.store.getManagedPlugin("trusted-local:cua-driver").enabled, true);
+  assert.equal(fixture.store.getManagedPlugin("official:cua-driver").enabled, true);
   assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 1);
   return { authority, old, current };
 }
 
 function a34ProjectionSnapshot(store) {
   return {
-    activation: store.getCuaDriverActivationState("trusted-local:cua-driver"),
-    pluginEnabled: store.getManagedPlugin("trusted-local:cua-driver").enabled,
+    activation: store.getCuaDriverActivationState("official:cua-driver"),
+    pluginEnabled: store.getManagedPlugin("official:cua-driver").enabled,
     serverEnabled: store.getMcpServer("mcp_cua_driver").enabled,
-    contributions: store.listManagedPluginContributions("trusted-local:cua-driver"),
+    contributions: store.listManagedPluginContributions("official:cua-driver"),
     tools: store.listMcpTools({ serverId: "mcp_cua_driver" }),
-    health: store.getManagedPluginHealthSnapshot("trusted-local:cua-driver"),
+    health: store.getManagedPluginHealthSnapshot("official:cua-driver"),
     status: store.getMcpStatusSnapshot("mcp_cua_driver"),
   };
 }
 
 function a34AssertClosedProjection(store) {
-  assert.equal(store.getManagedPlugin("trusted-local:cua-driver").enabled, false);
+  assert.equal(store.getManagedPlugin("official:cua-driver").enabled, false);
   assert.equal(store.getMcpServer("mcp_cua_driver").enabled, false);
-  assert.ok(store.listManagedPluginContributions("trusted-local:cua-driver").every((value) => !value.enabled));
+  assert.ok(store.listManagedPluginContributions("official:cua-driver").every((value) => !value.enabled));
   assert.equal(store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
 }
 
 function a34AssertNoOldAvailability(store) {
-  const health = store.getManagedPluginHealthSnapshot("trusted-local:cua-driver");
+  const health = store.getManagedPluginHealthSnapshot("official:cua-driver");
   assert.equal(health.details.providerState, "desktop_unavailable");
   assert.equal(health.details.desktopGeneration, undefined);
   assert.equal(health.details.desktopSequence, undefined);

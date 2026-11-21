@@ -1,4 +1,4 @@
-export const OFFICE_DOCUMENTS_PLUGIN_ID = "built-in:office-documents" as const;
+export const OFFICE_DOCUMENTS_PLUGIN_ID = "official:office-documents" as const;
 export const OFFICE_DOCUMENTS_MCP_SERVER_ID = "mcp_office_documents" as const;
 export const OFFICE_DRIVER_PROTOCOL = "ling.office.driver.v1" as const;
 export const OFFICE_DRIVER_MAX_FRAME_BYTES = 4 * 1024 * 1024;

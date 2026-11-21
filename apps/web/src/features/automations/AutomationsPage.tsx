@@ -24,7 +24,6 @@ import { AutomationCreateDialog } from "./AutomationCreateDialog.js";
 import { AutomationDiscardDraftDialog } from "./AutomationDiscardDraftDialog.js";
 import { AutomationExecutionInspector } from "./AutomationExecutionInspector.js";
 import { AutomationListPane } from "./AutomationListPane.js";
-import { AutomationMonitorSummary } from "./AutomationMonitorSummary.js";
 import { AutomationScheduleDialog } from "./AutomationScheduleDialog.js";
 import { AutomationSchedulerSummary } from "./AutomationSchedulerSummary.js";
 import { AutomationWorkbenchHeader } from "./AutomationWorkbenchHeader.js";
@@ -146,15 +145,16 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
         t={t}
         onCreate={() => controller.openCreate("template")}
       />
-      <AutomationSchedulerSummary
-        busy={Boolean(props.schedulerAction)}
-        error={props.schedulerError}
-        scheduler={controller.schedulerViewModel}
-        t={t}
-        onStart={() => void runScheduler("start")}
-        onStop={() => void runScheduler("stop")}
-      />
-      <AutomationMonitorSummary monitors={controller.monitorViewModels} t={t} />
+      {controller.summary.totalCount > 0 || props.schedulerError ? (
+        <AutomationSchedulerSummary
+          busy={Boolean(props.schedulerAction)}
+          error={props.schedulerError}
+          scheduler={controller.schedulerViewModel}
+          t={t}
+          onStart={() => void runScheduler("start")}
+          onStop={() => void runScheduler("stop")}
+        />
+      ) : null}
       {props.refreshError ? (
         <InlineFeedback className="automation-ui2-stale" title={t("Could not refresh automations")} tone="warning">
           <span>{props.refreshError}</span>

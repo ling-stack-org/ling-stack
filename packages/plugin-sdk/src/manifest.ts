@@ -11,8 +11,8 @@ export const lingExtensionKinds = [
 export const extensionTrustLevels = ["internal", "internal-isolated"] as const;
 export const approvalRequirementDecisions = ["ask", "deny"] as const;
 export const approvalRequirementRisks = ["low", "medium", "high", "critical"] as const;
-export const lingPluginPackageSourceKinds = ["bundled", "trusted-local"] as const;
-export const lingPluginPackageTrustLevels = ["internal", "internal-isolated", "trusted-local-preset"] as const;
+export const lingPluginPackageSourceKinds = ["built-in", "bundled", "official-remote", "trusted-local"] as const;
+export const lingPluginPackageTrustLevels = ["official", "internal", "internal-isolated", "trusted-local-preset"] as const;
 export const lingPluginPackageContributionKinds = [
   "mcp-server",
   "skill-pack",
@@ -20,7 +20,7 @@ export const lingPluginPackageContributionKinds = [
   "provider",
   "ui-feature",
 ] as const;
-export const supportedLingPluginInterfaceVersions = ["1"] as const;
+export const supportedLingPluginInterfaceVersions = ["1", "2"] as const;
 
 export type LingExtensionKind = (typeof lingExtensionKinds)[number];
 export type ExtensionTrustLevel = (typeof extensionTrustLevels)[number];
@@ -79,17 +79,27 @@ export interface LingPluginPackageManifest {
   readonly id: string;
   readonly displayName: string;
   readonly version: string;
+  /** Package manifest schema. Version 1 is retained for embedded packages. */
+  readonly manifestVersion?: 1 | 2;
   readonly lingInterfaceVersion: SupportedLingPluginInterfaceVersion | string;
   readonly sourceKind: LingPluginPackageSourceKind;
   readonly trustLevel: LingPluginPackageTrustLevel;
   readonly description?: string;
   readonly homepageUrl?: string;
+  readonly license?: string;
   readonly trustSummary: string;
   readonly platforms?: readonly ("darwin" | "linux" | "win32")[];
   readonly contributions: readonly LingPluginPackageContribution[];
   readonly requiredSecrets?: readonly LingPluginPackageSecretRequirement[];
   readonly defaultApprovals?: readonly LingPluginPackageApprovalDefault[];
   readonly healthChecks?: readonly LingPluginPackageHealthCheck[];
+  readonly minLingVersion?: string;
+  readonly maxLingVersion?: string;
+  readonly artifactId?: string;
+  readonly platform?: "darwin" | "linux" | "win32";
+  readonly arch?: "arm64" | "x64" | "ia32" | "universal";
+  readonly rollbackAllowed?: boolean;
+  readonly rollbackMinLingVersion?: string;
 }
 
 export function validateLingExtensionManifest(
@@ -141,6 +151,29 @@ export function validateLingPluginPackageManifest(manifest: LingPluginPackageMan
   }
   if (manifest.homepageUrl !== undefined) {
     assertString(manifest.homepageUrl, "manifest.homepageUrl");
+  }
+  if (manifest.license !== undefined) assertString(manifest.license, "manifest.license");
+  if (manifest.manifestVersion !== undefined && manifest.manifestVersion !== 1 && manifest.manifestVersion !== 2) {
+    throw new Error(`Unsupported plugin manifest version for ${manifest.id}: ${String(manifest.manifestVersion)}`);
+  }
+  if (manifest.minLingVersion !== undefined) {
+    assertSemverCompatible(manifest.minLingVersion, "manifest.minLingVersion");
+  }
+  if (manifest.maxLingVersion !== undefined) {
+    assertSemverCompatible(manifest.maxLingVersion, "manifest.maxLingVersion");
+  }
+  if (manifest.rollbackMinLingVersion !== undefined) assertSemverCompatible(manifest.rollbackMinLingVersion, "manifest.rollbackMinLingVersion");
+  if (manifest.rollbackAllowed !== undefined && typeof manifest.rollbackAllowed !== "boolean") {
+    throw new Error("manifest.rollbackAllowed must be a boolean.");
+  }
+  if (manifest.artifactId !== undefined) {
+    assertNonEmptyString(manifest.artifactId, "manifest.artifactId");
+  }
+  if (manifest.platform !== undefined && !["darwin", "linux", "win32"].includes(manifest.platform)) {
+    throw new Error(`Invalid plugin platform for ${manifest.id}: ${manifest.platform}`);
+  }
+  if (manifest.arch !== undefined && !["arm64", "x64", "ia32", "universal"].includes(manifest.arch)) {
+    throw new Error(`Invalid plugin architecture for ${manifest.id}: ${manifest.arch}`);
   }
   if (manifest.platforms !== undefined) {
     assertStringArray(manifest.platforms, "manifest.platforms");

@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { createSqliteRunStore } from "../dist/index.js";
 
-const pluginId = "trusted-local:cua-driver";
+const pluginId = "official:cua-driver";
 const serverId = "mcp_cua_driver";
 const descriptor = {
   id: pluginId,
@@ -350,7 +350,7 @@ test("migration v105 preserves legacy enable intent and cascades with the manage
     upgraded.close();
 
     const verifyCascade = new DatabaseSync(databasePath);
-    verifyCascade.exec("PRAGMA foreign_keys = ON; DELETE FROM managed_plugins WHERE id = 'trusted-local:cua-driver';");
+    verifyCascade.exec("PRAGMA foreign_keys = ON; DELETE FROM managed_plugins WHERE id = 'official:cua-driver';");
     assert.equal(
       verifyCascade.prepare("SELECT COUNT(*) AS count FROM cua_driver_activation_state WHERE plugin_id = ?").get(pluginId).count,
       0,

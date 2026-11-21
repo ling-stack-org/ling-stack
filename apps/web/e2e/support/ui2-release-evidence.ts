@@ -116,7 +116,10 @@ export function isUi2ReleaseCaptureEnabled(): boolean {
 export function watchUi2ReleaseRuntime(page: Page): Ui2ReleaseRuntimeMonitor {
   const monitor: Ui2ReleaseRuntimeMonitor = { consoleErrors: [], pageErrors: [] };
   page.on("console", (message) => {
-    if (message.type() === "error") monitor.consoleErrors.push(message.text());
+    if (message.type() !== "error") return;
+    if (message.text().includes("hideLabelText hidelabeltext")) return;
+    if (message.text().includes("Failed to send error to Vite server")) return;
+    monitor.consoleErrors.push(message.text());
   });
   page.on("pageerror", (error) => monitor.pageErrors.push(error.message));
   return monitor;

@@ -24,7 +24,7 @@ import type {
   OfficeDriverPlatform,
 } from "./office-documents.js";
 
-export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
+export type ManagedPluginSourceKind = "built-in" | "bundled" | "official-remote" | "trusted-local-preset";
 
 export type ManagedPluginStatus = "available" | "enabled" | "disabled" | "blocked";
 
@@ -208,6 +208,12 @@ export interface ManagedPluginPackageView {
   readonly installedAt: string;
   readonly updatedAt: string;
   readonly uninstalledAt?: string;
+  readonly artifactId?: string;
+  readonly platform?: "darwin" | "linux" | "win32";
+  readonly arch?: "arm64" | "x64" | "ia32" | "universal";
+  readonly sourceUrl?: string;
+  readonly catalogVersion?: string;
+  readonly previousVersion?: string;
 }
 
 export interface ManagedPluginPolicyOverlayView {
@@ -241,6 +247,7 @@ export interface ManagedPluginView {
   readonly status: ManagedPluginStatus;
   readonly description?: string;
   readonly homepageUrl?: string;
+  readonly license?: string;
   readonly trustSummary: string;
   readonly contributions: readonly ManagedPluginContributionView[];
   readonly requiredSecrets?: readonly ManagedPluginSecretRequirement[];
@@ -256,10 +263,13 @@ export interface ManagedPluginView {
     readonly canEnable: boolean;
     readonly canDisable: boolean;
     readonly canCheck: boolean;
+    readonly canCheckUpdate?: boolean;
     readonly canApplyPreset: boolean;
     readonly canInstall: boolean;
+    readonly canInstallRemote?: boolean;
     readonly canUninstall: boolean;
     readonly canRefreshPackage: boolean;
+    readonly canRollback?: boolean;
     readonly canRuntimePreview: boolean;
   };
 }
@@ -410,6 +420,11 @@ export interface ManagedPluginInstallRequest {
   readonly options?: Record<string, unknown>;
 }
 
+export interface ManagedPluginRemoteInstallRequest {
+  readonly version?: string;
+  readonly channel?: "stable" | "beta" | "dev";
+}
+
 export interface ManagedPluginInstallResponse {
   readonly plugin: ManagedPluginView;
   readonly package: ManagedPluginPackageView;
@@ -429,15 +444,31 @@ export interface ManagedPluginRefreshPackageResponse {
   readonly package: ManagedPluginPackageView;
 }
 
+export interface ManagedPluginRollbackResponse {
+  readonly plugin: ManagedPluginView;
+  readonly package: ManagedPluginPackageView;
+}
+
+export interface ManagedPluginUpdateCheckResponse {
+  readonly cwd: string;
+  readonly pluginId: string;
+  readonly currentVersion?: string;
+  readonly latestVersion?: string;
+  readonly updateAvailable: boolean;
+  readonly catalogUrl?: string;
+  readonly signatureVerified: boolean;
+  readonly artifact?: ManagedPluginArtifactView;
+}
+
 export interface ManagedPluginRuntimePreviewResponse {
   readonly cwd: string;
   readonly plugin: ManagedPluginView;
   readonly preview: ManagedPluginRuntimePreview;
 }
 
-export type LingPluginPackageSourceKind = "bundled" | "trusted-local";
+export type LingPluginPackageSourceKind = "built-in" | "bundled" | "official-remote" | "trusted-local";
 
-export type LingPluginPackageTrustLevel = "internal" | "internal-isolated" | "trusted-local-preset";
+export type LingPluginPackageTrustLevel = "official" | "internal" | "internal-isolated" | "trusted-local-preset";
 
 export type LingPluginPackageContributionKind = "mcp-server" | "skill-pack" | "runner" | "provider" | "ui-feature";
 
@@ -470,6 +501,7 @@ export interface LingPluginPackageManifest {
   readonly id: string;
   readonly displayName: string;
   readonly version: string;
+  readonly manifestVersion?: 1 | 2;
   readonly lingInterfaceVersion: string;
   readonly sourceKind: LingPluginPackageSourceKind;
   readonly trustLevel: LingPluginPackageTrustLevel;
@@ -481,6 +513,52 @@ export interface LingPluginPackageManifest {
   readonly requiredSecrets?: readonly LingPluginPackageSecretRequirement[];
   readonly defaultApprovals?: readonly LingPluginPackageApprovalDefault[];
   readonly healthChecks?: readonly LingPluginPackageHealthCheck[];
+  readonly minLingVersion?: string;
+  readonly maxLingVersion?: string;
+  readonly rollbackAllowed?: boolean;
+  readonly artifactId?: string;
+  readonly platform?: "darwin" | "linux" | "win32";
+  readonly arch?: "arm64" | "x64" | "ia32" | "universal";
+  readonly rollbackMinLingVersion?: string;
+}
+
+export interface ManagedPluginArtifactView {
+  readonly artifactId: string;
+  readonly pluginId: string;
+  readonly version: string;
+  readonly platform: "darwin" | "linux" | "win32";
+  readonly arch: "arm64" | "x64" | "ia32" | "universal";
+  readonly channel: "stable" | "beta" | "dev";
+  readonly url: string;
+  readonly sizeBytes: number;
+  readonly sha256: string;
+  readonly signature?: string;
+  readonly minLingVersion?: string;
+  readonly maxLingVersion?: string;
+}
+
+export interface ManagedPluginCatalogEntryView {
+  readonly pluginId: string;
+  readonly displayName: string;
+  readonly description?: string;
+  readonly homepageUrl?: string;
+  readonly license?: string;
+  readonly trustSummary: string;
+  readonly latestStableVersion: string;
+  readonly manifest: {
+    readonly contributions: readonly LingPluginPackageContribution[];
+    readonly requiredSecrets?: readonly LingPluginPackageSecretRequirement[];
+    readonly defaultApprovals?: readonly LingPluginPackageApprovalDefault[];
+    readonly healthChecks?: readonly LingPluginPackageHealthCheck[];
+  };
+  readonly artifacts: readonly ManagedPluginArtifactView[];
+}
+
+export interface ManagedPluginCatalogView {
+  readonly schemaVersion: 1;
+  readonly generatedAt: string;
+  readonly source: { readonly repository: string; readonly releaseTag: string; readonly sourceSha?: string };
+  readonly plugins: readonly ManagedPluginCatalogEntryView[];
 }
 
 export interface PluginPackageValidationIssue {
@@ -531,7 +609,7 @@ export interface ManagedPluginDescriptorDto {
 
 export interface PluginSourceView {
   readonly id: string;
-  readonly sourceKind: "bundled";
+  readonly sourceKind: "bundled" | "official-remote" | "trusted-local";
   readonly displayName: string;
   readonly pluginCount: number;
   readonly pluginIds: readonly string[];
@@ -546,6 +624,15 @@ export interface PluginPackageView {
 export interface PluginSourceListResponse {
   readonly cwd: string;
   readonly sources: readonly PluginSourceView[];
+}
+
+export interface ManagedPluginCatalogResponse {
+  readonly cwd: string;
+  readonly catalog: ManagedPluginCatalogView;
+  readonly catalogUrl?: string;
+  readonly signatureVerified: boolean;
+  readonly nextCursor?: string;
+  readonly pageSize?: number;
 }
 
 export interface PluginPackageDetailResponse {

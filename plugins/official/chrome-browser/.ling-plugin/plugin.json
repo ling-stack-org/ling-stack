@@ -1,0 +1,22 @@
+{
+  "id": "official:chrome-browser",
+  "displayName": "Ling for Chrome",
+  "version": "0.1.1",
+  "manifestVersion": 2,
+  "lingInterfaceVersion": "2",
+  "sourceKind": "official-remote",
+  "trustLevel": "official",
+  "description": "The signed Ling for Chrome extension and native messaging host.",
+  "trustSummary": "Official browser extension package. Browser actions remain subject to Ling approvals and the extension pairing session.",
+  "platforms": ["darwin", "win32"],
+  "contributions": [
+    { "kind": "mcp-server", "id": "mcp:official-chrome-browser", "path": "./mcp-server.json" }
+  ],
+  "healthChecks": [
+    { "id": "chrome-extension", "kind": "descriptor", "label": "Chrome extension" },
+    { "id": "chrome-host", "kind": "binary", "label": "Chrome native messaging host" }
+  ],
+  "defaultApprovals": [
+    { "contributionId": "mcp:official-chrome-browser", "decision": "ask", "reason": "Browser content and interactions may affect signed-in websites." }
+  ]
+}

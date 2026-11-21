@@ -1,7 +1,7 @@
 import windmillReference from "./assets/windmill-reference.png";
 
-export const LAUNCH_ANIMATION_DURATION = 10.966667;
-export const LAUNCH_ANIMATION_FADE_DURATION = 420;
+export const LAUNCH_ANIMATION_DURATION = 5;
+export const LAUNCH_ANIMATION_FADE_DURATION = 220;
 
 export interface LaunchAnimationOptions {
   readonly referenceImageUrl?: string;
@@ -90,7 +90,7 @@ export function createLaunchAnimation(
   const BLADE_RADIUS = 110;
   const DURATION = LAUNCH_ANIMATION_DURATION;
   const SPIN_ANCHOR = 0.5;
-  const DECELERATION_START = 10.25;
+  const DECELERATION_START = 4.5;
   const ANGULAR_SPEED = -2.02;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
   const palette = ["#16b993", "#f4c923", "#ed7d22", "#208fd0", "#df3a78", "#7749bd"];
@@ -143,9 +143,8 @@ export function createLaunchAnimation(
     { time: 1.5, x: 294, y: 278 },
     { time: 2.0, x: 237, y: 315 },
     { time: 3.0, x: 255, y: 278 },
-    { time: 5.0, x: 287, y: 338 },
-    { time: 8.0, x: 287, y: 278 },
-    { time: 10.8, x: 288, y: 369 },
+    { time: 4.0, x: 287, y: 338 },
+    { time: 4.4, x: 287, y: 278 },
     { time: DURATION, x: 288, y: 369 },
   ];
 
@@ -324,7 +323,7 @@ export function createLaunchAnimation(
       { at: 0.58, size: 3.7, color: palette[1], rotation: 0.85 },
       { at: 0.73, size: 5.1, color: palette[5], rotation: -0.42 },
     ];
-    const budsFade = 1 - easeInOut((time - 5.3) / 2.3);
+    const budsFade = 1 - easeInOut((time - 3.2) / 1.8);
     stemBuds.forEach((bud, index) => {
       const t = bud.at;
       const x = lerp(start.x, bottomX, t) + Math.sin(t * 9) * 4;
@@ -802,9 +801,9 @@ export function createLaunchAnimation(
       if (time <= piece.release) return;
       const dt = time - piece.release;
       const point = releasedPosition(piece, time, true);
-      const endFade = 1 - 0.42 * easeInOut((time - 9.4) / 1.6);
+      const endFade = 1 - 0.42 * easeInOut((time - 3.8) / 1.0);
       const alpha = Math.min(0.9, 0.74 + dt * 0.12)
-        * (dt < 10.8 ? 1 : Math.max(0, 1 - (dt - 10.8) / 1.2))
+        * (dt < 4.8 ? 1 : Math.max(0, 1 - (dt - 4.8) / 0.2))
         * Math.max(0.48, endFade);
       drawPetalPiece(
         point.x,

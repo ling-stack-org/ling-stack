@@ -34,7 +34,7 @@ export function PluginManagerTable({
   readonly hasActiveFilters: boolean;
   readonly copy: PluginManagerCopy;
   readonly handlers: PluginActionHandlers;
-  readonly onAdd: () => void;
+  readonly onAdd?: () => void;
   readonly onClearFilters: () => void;
   readonly t: Translate;
 }): React.JSX.Element {
@@ -79,9 +79,9 @@ export function PluginManagerTable({
                 <EmptyState
                   action={hasActiveFilters ? (
                     <Button onClick={onClearFilters} size="sm">{t("Clear filters")}</Button>
-                  ) : (
+                  ) : onAdd ? (
                     <Button onClick={onAdd} size="sm" variant="primary">{t("Add plugin")}</Button>
-                  )}
+                  ) : undefined}
                   className="plugin-table-empty"
                   compact
                   icon={<Plug aria-hidden="true" />}

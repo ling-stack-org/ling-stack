@@ -67,7 +67,7 @@ test("packaged daemon resolves the copied Cua Driver manifest from Electron reso
     const manifest = JSON.parse(
       await readFile(resolve(resolvedRoot, ".ling-plugin/plugin.json"), "utf8"),
     );
-    assert.equal(manifest.id, "bundled:cua-driver");
+    assert.equal(manifest.id, "official:cua-driver");
     assert.deepEqual(manifest.platforms, ["darwin", "win32"]);
     assert.match(manifest.description, /already installed Cua Driver/u);
     assert.equal(manifest.healthChecks.some((health) => health.id === "binary" && health.kind === "binary"), true);
