@@ -709,6 +709,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     ipcMain, getMainWindow: () => mainWindow ?? loadingMainWindow,
     webIndexPath: resources.webIndexPath, daemonBaseUrl,
     getWorkArea: (owner) => screen.getDisplayMatching(owner.getBounds()).workArea,
+    getCursorScreenPoint: () => screen.getCursorScreenPoint(),
     createWindow: (options) => new BrowserWindow(options),
     webRequest: session.defaultSession.webRequest,
   });

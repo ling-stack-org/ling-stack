@@ -233,6 +233,12 @@ type SettingsReturnTarget = {
 
 type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils";
 
+type CompanionSourceTarget = {
+  readonly channelId?: string;
+  readonly threadId?: string;
+  readonly sourceItemId?: string;
+};
+
 function isSettingsWorkspaceToolView(view: ViewId): view is Exclude<SettingsWorkspaceToolView, ""> {
   return view === "providers" || view === "teammates" || view === "councils";
 }
@@ -298,6 +304,7 @@ export function AppShell(): React.JSX.Element {
   const [teammateConversationRefreshToken, setTeammateConversationRefreshToken] = useState(0);
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
   const [companionMiniOpen, setCompanionMiniOpen] = useState(false);
+  const [companionSourceTarget, setCompanionSourceTarget] = useState<CompanionSourceTarget>();
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
   const workspaceDefaultProviderPresetIdRef = useRef<string | undefined>(undefined);
@@ -1573,6 +1580,27 @@ export function AppShell(): React.JSX.Element {
     return true;
   }
 
+  useEffect(() => {
+    const companionWindow = window.lingDesktop?.companionWindow;
+    if (!companionWindow) return undefined;
+    return companionWindow.onSourceRequested((request) => {
+      if (request.channelId) {
+        setCompanionSourceTarget({
+          channelId: request.channelId,
+          ...(request.threadId ? { threadId: request.threadId } : {}),
+          ...(request.sourceItemId ? { sourceItemId: request.sourceItemId } : {}),
+        });
+        selectWorkspaceChannel(request.channelId);
+      } else if (request.threadId) {
+        setCompanionSourceTarget(request.sourceItemId ? { threadId: request.threadId, sourceItemId: request.sourceItemId } : { threadId: request.threadId });
+        setThreadPageTargetId(request.threadId);
+        setActiveView("threads");
+        setActiveSidebarTarget("threads");
+      }
+      if (request.conversationId) void openConversationThread(request.conversationId);
+    });
+  }, [openConversationThread, selectWorkspaceChannel]);
+
   function selectRecentConversation(conversation: SidebarRecentConversation): void {
     void openConversationThread(conversation.id);
   }
@@ -2653,6 +2681,19 @@ export function AppShell(): React.JSX.Element {
           setCompanionMiniOpen(false);
           openSettingsSection("companion");
         }}
+        onOpenSource={(source) => {
+          setCompanionSourceTarget({
+            ...(source.channelId ? { channelId: source.channelId } : {}),
+            ...(source.threadId ? { threadId: source.threadId } : {}),
+            ...(source.sourceItemId ? { sourceItemId: source.sourceItemId } : {}),
+          });
+          if (source.channelId) selectWorkspaceChannel(source.channelId);
+          else if (source.threadId) {
+            setThreadPageTargetId(source.threadId);
+            setActiveView("threads");
+            setActiveSidebarTarget("threads");
+          }
+        }}
       />
       <section
         ref={workspaceSurfaceRef}
@@ -2713,6 +2754,10 @@ export function AppShell(): React.JSX.Element {
             userProfile={userProfile}
             channels={channels}
             selectedChannelId={selectedChannelId}
+            conversationLocateTarget={companionSourceTarget?.channelId === selectedChannelId ? {
+              ...(companionSourceTarget.threadId ? { threadId: companionSourceTarget.threadId } : {}),
+              ...(companionSourceTarget.sourceItemId ? { sourceItemId: companionSourceTarget.sourceItemId } : {}),
+            } : undefined}
             selectedChannelBranchRootThreadId={selectedChannelBranchRootThreadId}
             channelUtilityRequest={channelUtilityRequest}
             onChannelUtilityRequestHandled={id => setChannelUtilityRequest(current => current?.id === id ? undefined : current)}

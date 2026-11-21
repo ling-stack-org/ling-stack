@@ -274,6 +274,7 @@ export function WorkspaceClientView({
   userProfile,
   channels,
   selectedChannelId,
+  conversationLocateTarget,
   selectedChannelBranchRootThreadId,
   channelSessionThreadId,
   channelUtilityRequest,
@@ -2300,6 +2301,34 @@ export function WorkspaceClientView({
       : channelDiscussionRootThread,
     [channelDiscussionRootThread, selectedChannelBranchRootThreadId, visibleChannelWorkThreads],
   );
+
+  useEffect(() => {
+    const sourceItemId = conversationLocateTarget?.sourceItemId;
+    if (!sourceItemId || (conversationLocateTarget.threadId && conversationLocateTarget.threadId !== activeChannelConversationThread?.id)) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    let attempts = 0;
+    const locate = (): void => {
+      if (cancelled) return;
+      const locator = conversationTimelineItemLocatorRef.current;
+      if (!locator) {
+        if (attempts < 50) {
+          attempts += 1;
+          timer = window.setTimeout(locate, 100);
+        }
+        return;
+      }
+      const targetFeedItemIds = [sourceItemId, `message:user:${sourceItemId}`, `message:agent:${sourceItemId}`, `message:${sourceItemId}`];
+      messageFeedState.onLocateIntent();
+      void locator.revealFirstMatchingItem(targetFeedItemIds, revealConversationTarget, () => !cancelled);
+    };
+    timer = window.setTimeout(locate, 80);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [activeChannelConversationThread?.id, conversationLocateTarget?.sourceItemId, conversationLocateTarget?.threadId, messageFeedState.onLocateIntent]);
+
   const channelPlanModeThreadId = isChannelSessionDraft(selectedChannelBranchRootThreadId ?? "") ? "" : activeChannelConversationThread?.id ?? selectedChannelBranchRootThreadId ?? "";
   const channelPlanModeActive = activeChannelConversationThread?.conversationMode.mode === "plan";
   const channelPlanModeBusy = Boolean(channelPlanModeThreadId && workThreadConversationModeId === channelPlanModeThreadId);

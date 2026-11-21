@@ -7880,6 +7880,18 @@ export async function handleDaemonRoute(
   const url = new URL(request.url());
   const path = url.pathname;
 
+  if (request.method() === "GET" && path === "/companion-attention") {
+    await route.fulfill({
+      json: {
+        cwd: url.searchParams.get("cwd") ?? cwd,
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        items: [],
+      },
+    });
+    return;
+  }
+
   if (request.method() === "GET" && path === "/control-plane/snapshot") {
     const requestedDomains = (url.searchParams.get("domains") ?? "")
       .split(",")

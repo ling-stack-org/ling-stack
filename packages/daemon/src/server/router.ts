@@ -309,6 +309,7 @@ import {
 } from "../features/teammates/direct-controls.js";
 import { handleTeammateDirectLinkPreviews } from "../features/teammates/direct-link-previews.js";
 import { handleCompanionItem, handleCompanionsCollection } from "../features/companions/routes.js";
+import { handleCompanionAttention } from "../features/companions/attention-routes.js";
 import {
   handleCompanionMessageStream,
   handleCompanionMessagesCollection,
@@ -837,6 +838,12 @@ export async function routeRequest(
   if (url.pathname === "/companions") {
     if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
     await handleCompanionsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/companion-attention") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleCompanionAttention(request, response, config, storeRegistry);
     return;
   }
 

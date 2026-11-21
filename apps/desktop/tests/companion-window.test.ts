@@ -8,6 +8,8 @@ import { DESKTOP_IPC_CHANNELS as channels } from "../dist/shared/ipc-channels.js
 
 class WindowFixture extends EventEmitter {
   destroyed = false; shown = 0; focused = 0;
+  bounds = { x: 0, y: 0, width: 760, height: 680 };
+  ignoredMouseEvents?: boolean;
   url = "file:///safe/index.html";
   sent: unknown[][] = [];
   webContents = Object.assign(new EventEmitter(), {
@@ -20,6 +22,9 @@ class WindowFixture extends EventEmitter {
   destroy() { this.destroyed = true; this.emit("closed"); }
   show() { this.shown++; }
   focus() { this.focused++; }
+  getBounds() { return this.bounds; }
+  setBounds(bounds: typeof this.bounds) { this.bounds = bounds; }
+  setIgnoreMouseEvents(ignored: boolean) { this.ignoredMouseEvents = ignored; }
   async loadFile(path: string, options: { query: Record<string, string> }) {
     const url = pathToFileURL(path); url.search = new URLSearchParams(options.query).toString();
     this.url = url.href; this.webContents.mainFrame.url = this.url;
@@ -98,6 +103,9 @@ test("trusted native documents project loopback Origin for their daemon requests
     const companion = f.windows[0]!;
     assert.equal(f.headers(companion)?.Origin, base);
     assert.equal(f.headers(companion, { url: `${base}/teammates?cwd=%2Fw` })?.Origin, base);
+    assert.equal(f.headers(companion, { url: `${base}/user-input-answers`, method: "POST" })?.Origin, base);
+    assert.equal(f.headers(companion, { url: `${base}/approvals/approval-1/approve`, method: "POST" })?.Origin, base);
+    assert.equal(f.headers(companion, { url: `${base}/approvals/approval-1`, method: "GET" })?.Origin, base);
     assert.equal(f.headers(companion, { url: `${base}/teammates/teammate_1` })?.Origin, "null");
     assert.equal(f.headers(companion, { url: `${base}/workspaces` })?.Origin, "null");
     assert.equal(f.headers(f.main, { url: `${base}/workspaces`, requestHeaders: {} })?.Origin, base);
@@ -113,4 +121,25 @@ test("trusted native documents project loopback Origin for their daemon requests
     f.main.url += "?untrusted=1"; f.main.webContents.mainFrame.url = f.main.url;
     assert.equal(f.headers(f.main)?.Origin, "null");
   } finally { f.dispose(); }
+});
+
+test("desktop companion returns geometry and accepts bounded transparent layout", async () => {
+  const f = fixture();
+  try {
+    await f.call(channels.companionWindowOpen, f.main.event(), "/workspace");
+    const companion = f.windows[0]!;
+    const geometry = await f.call(channels.companionWindowGeometryGet, companion.event()) as { bounds: typeof companion.bounds; workArea: { width: number; height: number } };
+    assert.equal(geometry.workArea.width, 1440);
+    const result = await f.call(channels.companionWindowLayout, companion.event(), {
+      bounds: { x: -500, y: -500, width: 2000, height: 2000 },
+      anchor: { x: 10, y: 10, width: 100, height: 100 },
+      regions: [{ x: 0, y: 0, width: 100, height: 100 }],
+      pointerPassthrough: true,
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.equal(companion.ignoredMouseEvents, true);
+    assert.deepEqual(companion.bounds, { x: 0, y: 0, width: 1440, height: 900 });
+  } finally {
+    f.dispose();
+  }
 });

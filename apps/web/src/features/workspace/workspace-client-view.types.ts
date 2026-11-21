@@ -82,6 +82,10 @@ export interface WorkspaceClientViewProps {
   readonly userProfile?: UserProfile;
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
+  readonly conversationLocateTarget?: {
+    readonly threadId?: string;
+    readonly sourceItemId?: string;
+  };
   readonly selectedChannelBranchRootThreadId?: string;
   readonly channelUtilityRequest?: {
     readonly id: string; readonly cwd: string; readonly channelId: string; readonly action: "settings" | "rename";

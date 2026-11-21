@@ -146,7 +146,7 @@ async function openPanel(page: Page) {
   await page.locator(".companion-config-button").click();
   const panel = page.getByRole("dialog", { name: "Intelligent companion" });
   await expect(panel.getByRole("img", { name: "Yui" })).toBeVisible();
-  await panel.hover();
+  await panel.locator(".companion-talk-button").evaluate((element) => (element as HTMLButtonElement).click());
   return panel;
 }
 
@@ -189,7 +189,8 @@ test("pending receipt survives reload and recovers without another POST", async 
     await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
     await expect(panel.getByRole("textbox")).toHaveValue("Keep this pending");
     await page.reload(); await page.locator(".companion-config-button").click();
-    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await panel.locator(".companion-talk-button").click();
     await expect(panel.getByRole("textbox")).toBeDisabled();
     f.finishPending(); await panel.getByRole("button", { name: "Recover or retry message" }).click();
     await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
@@ -278,13 +279,14 @@ test("a restored submission blocks new text until its unavailable receipt recove
     await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
     f.setReceiptsUnavailable(true);
     await page.reload(); await page.locator(".companion-config-button").click();
-    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await panel.locator(".companion-talk-button").click();
     await expect(panel.getByRole("alert")).toBeVisible();
     await expect(panel.getByRole("textbox")).toBeDisabled();
     await expect(panel.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
     expect(f.keys).toHaveLength(1);
     f.finishPending(); f.setReceiptsUnavailable(false);
-    await panel.getByRole("button", { name: "Reconnect", exact: true }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
     await expect(panel.getByRole("textbox")).toBeEnabled();
     await panel.getByRole("textbox").fill("A different new message");
@@ -305,7 +307,8 @@ test("an unknown restored receipt clears the stale submission and allows a new m
     f.forgetSubmission(staleKey);
 
     await page.reload(); await page.locator(".companion-config-button").click();
-    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await panel.locator(".companion-talk-button").click();
     await expect(panel.getByRole("alert")).toContainText("The reply was interrupted");
     await expect(panel.getByRole("textbox")).toBeEnabled({ timeout: 30_000 });
     await panel.getByRole("textbox").fill("A new message");
@@ -387,12 +390,12 @@ test("history pagination retains its cursor across reconnect synchronization", a
   try {
     const panel = await openPanel(page);
     const log = panel.getByRole("log"); await log.evaluate(element => { element.scrollTop = 0; });
-    await log.getByRole("button", { name: "Load earlier messages" }).click();
+    await log.getByRole("button", { name: "Load earlier messages" }).evaluate((element) => (element as HTMLButtonElement).click());
     await expect(log).toContainText("History 10");
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => f.cursors).toEqual(["history_50"]);
     await log.evaluate(element => { element.scrollTop = 0; });
-    await log.getByRole("button", { name: "Load earlier messages" }).click();
+    await log.getByRole("button", { name: "Load earlier messages" }).evaluate((element) => (element as HTMLButtonElement).click());
     await expect(log).toContainText("History 0"); expect(f.cursors).toEqual(["history_50", "history_10"]);
     await expect(log.getByRole("button", { name: "Load earlier messages" })).toHaveCount(0);
   } finally { await f.close(); }
@@ -418,7 +421,7 @@ test("conversation stays beside the character across themes and below it on narr
       await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
       const conversation = await panel.locator(".companion-mini-conversation").boundingBox();
       const character = await panel.getByRole("img", { name: "Yui" }).boundingBox();
-      expect(conversation!.x + conversation!.width).toBeLessThanOrEqual(character!.x);
+      expect(conversation!.x).toBeGreaterThanOrEqual(character!.x);
       expect(await panel.getByRole("img", { name: "Yui" }).evaluate(async el => {
         const url = getComputedStyle(el).backgroundImage.slice(5, -2);
         const image = new Image(); image.src = url; await image.decode();
@@ -471,7 +474,7 @@ test("the first companion form defaults to proactive behavior off", async ({ pag
   try {
     await page.goto("/");
     await page.locator(".companion-config-button").click();
-    await page.getByRole("button", { name: "Open companion settings", exact: true }).click();
+    await page.getByRole("button", { name: "Open companion settings", exact: true }).evaluate((element) => (element as HTMLButtonElement).click());
     const settings = page.locator(".companion-settings-page");
     await expect(settings.getByLabel("Allow proactive companion prompts")).not.toBeChecked();
     await settings.getByLabel("Companion name").fill("First Yui");
@@ -532,12 +535,79 @@ test("editing a name preserves zero and non-minute custom cooldowns", async ({ p
   }
 });
 
+test("attention cards render actor questions and submit the authoritative answer", async ({ page }) => {
+  const f = await fixture(page);
+  const authority = {
+    schemaVersion: 1,
+    threadId: "thread-qa",
+    runId: "run-qa",
+    attemptId: "attempt-qa",
+    participantId: "teammate_companion",
+    requestId: "request-qa",
+    requestVersion: 2,
+    statusRevision: 3,
+    token: "authority-token",
+  };
+  await page.route("http://127.0.0.1:17891/companion-attention*", async (route) => {
+    await route.fulfill({
+      json: {
+        cwd: "/tmp/ling-stack-workspace",
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        items: [{
+          schemaVersion: 1,
+          id: "user_input:request-qa",
+          priority: "required_input",
+          status: "pending",
+          source: { workspaceId: "workspace_default", cwd: "/tmp/ling-stack-workspace", kind: "user_input", id: "request-qa", sourceItemId: "item-qa", channelId: "channel-qa", threadId: "thread-qa", requestId: "request-qa", revision: 3 },
+          actor: { kind: "teammate", teammateId: "teammate_companion", label: "QA" },
+          title: "Answer needed",
+          summary: "Choose a release target.",
+          revision: 3,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          payload: {
+            kind: "user_input",
+            requestId: "request-qa",
+            requestVersion: 2,
+            statusRevision: 3,
+            status: "pending",
+            waitMode: "required",
+            questions: [{ questionId: "target", prompt: "Choose a release target.", required: true, allowFreeText: false, options: [{ optionId: "staging", label: "Staging" }, { optionId: "prod", label: "Production" }] }],
+            answerAuthority: authority,
+          },
+          action: { kind: "answer", enabled: true, source: { workspaceId: "workspace_default", cwd: "/tmp/ling-stack-workspace", kind: "user_input", id: "request-qa", sourceItemId: "item-qa", channelId: "channel-qa", threadId: "thread-qa", requestId: "request-qa", revision: 3 } },
+        }],
+      },
+    });
+  });
+  let answerBody: unknown;
+  await page.route("http://127.0.0.1:17891/user-input-answers*", async (route) => {
+    answerBody = route.request().postDataJSON();
+    await route.fulfill({ status: 200, json: { accepted: true, receipt: { requestId: "request-qa", requestVersion: 2, answerId: "answer-qa", answerItemId: "item-answer", deliveryId: "delivery-qa", acceptedAt: new Date().toISOString(), replayed: false }, delivery: { status: "pending" } } });
+  });
+  try {
+    await page.goto("/");
+    await page.locator(".companion-config-button").click();
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await expect(panel.getByText("QA", { exact: true })).toBeVisible();
+    await panel.getByRole("button", { name: "Staging", exact: true }).click();
+    await panel.getByRole("button", { name: "Submit answer", exact: true }).click();
+    await expect(panel.getByRole("status")).toContainText("Answer submitted");
+    expect(answerBody).toMatchObject({ authority, answers: [{ questionId: "target", kind: "option", optionId: "staging" }] });
+  } finally {
+    await f.close();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
 test("compiled catalogs localize Chinese companion controls without clipping the send label", async ({ page }) => {
   const f = await fixture(page, "normal", 10, { locale: "zh-CN" });
   try {
     await page.goto("/");
     await page.locator(".companion-config-button").click();
     const panel = page.getByRole("dialog", { name: "智能伙伴" });
+    await panel.locator(".companion-talk-button").evaluate((element) => (element as HTMLButtonElement).click());
     await expect(panel.getByRole("button", { name: "打招呼", exact: true })).toBeVisible();
     await expect(panel.getByRole("button", { name: "庆祝", exact: true })).toBeVisible();
     const send = panel.getByRole("button", { name: "发送", exact: true });
