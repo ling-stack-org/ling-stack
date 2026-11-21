@@ -68,7 +68,7 @@ export class MobileNativeTransportFactory {
     return devices.map(device => this.toProfile(device));
   }
 
-  async connect(input: { readonly device: MobileNativeDeviceDescriptor; readonly requiredPermissions: readonly string[]; readonly signal?: AbortSignal }): Promise<MobileDeviceTransport & { readonly connectionRevision: string; readonly permissions: readonly string[]; readonly getCapabilities: () => Promise<readonly CapabilityDescriptorV1[]>; readonly close?: () => Promise<void> }> {
+  async connect(input: { readonly device: MobileNativeDeviceDescriptor; readonly requiredPermissions: readonly string[]; readonly signal?: AbortSignal }): Promise<MobileDeviceTransport & { readonly getCapabilities: () => Promise<readonly CapabilityDescriptorV1[]>; readonly close?: () => Promise<void> }> {
     if (input.device.permissionState !== "granted") throw new MobileNativeTransportError("permission_denied", "native device permission has not been granted");
     const unsupported = input.requiredPermissions.filter(permission => !input.device.supportedPermissions.includes(permission));
     if (unsupported.length > 0) throw new MobileNativeTransportError("permission_denied", `native device does not support required permissions: ${unsupported.join(",")}`);
@@ -77,9 +77,16 @@ export class MobileNativeTransportFactory {
       session = await this.#bridge.connect({ deviceId: input.device.deviceId, requiredPermissions: input.requiredPermissions, signal: input.signal });
     } catch (error) {
       if (error instanceof MobileNativeTransportError) throw error;
-      throw new MobileNativeTransportError("transport_unavailable", error instanceof Error ? error.message : "native transport connection failed");
+      throw new MobileNativeTransportError("transport_unavailable", "native transport connection failed");
     }
-    if (session.deviceId !== input.device.deviceId) throw new MobileNativeTransportError("target_missing", "native session identity does not match the selected device");
+    if (session.deviceId !== input.device.deviceId || !session.connectionRevision) {
+      await session.close?.().catch(() => undefined);
+      throw new MobileNativeTransportError("target_missing", "native session identity does not match the selected device");
+    }
+    if (!input.requiredPermissions.every(permission => session.permissions.includes(permission))) {
+      await session.close?.().catch(() => undefined);
+      throw new MobileNativeTransportError("permission_denied", "native session did not grant the required permissions");
+    }
     return {
       deviceId: session.deviceId,
       connectionRevision: session.connectionRevision,

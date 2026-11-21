@@ -21,7 +21,14 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
   const tasksKey = `${prefix}:tasks`;
   const taskKey = (taskId: string) => `${prefix}:task:${taskId}`;
   const attemptKey = (taskId: string, idempotencyKey: string) => `${prefix}:attempt:${taskId}:${encodeURIComponent(idempotencyKey)}`;
+  const attemptsKey = (taskId: string) => `${prefix}:attempts:${taskId}`;
   const observationKey = (taskId: string) => `${prefix}:observations:${taskId}`;
+  let writes = Promise.resolve();
+  const write = (mutation: () => Promise<void>): Promise<void> => {
+    const next = writes.then(mutation);
+    writes = next.catch(() => undefined);
+    return next;
+  };
 
   return {
     async getTask(taskId) {
@@ -32,33 +39,39 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
       const tasks = await Promise.all(ids.map(id => parseTask(storage.getItem(taskKey(id)))));
       return tasks.filter((task): task is DeviceTaskV1 => task !== undefined);
     },
-    async saveTask(task) {
-      if (!isDeviceTaskV1(task)) throw new Error("Invalid mobile device task");
-      await storage.setItem(taskKey(task.id), JSON.stringify(task));
-      const ids = parseStringArray(await storage.getItem(tasksKey));
-      if (!ids.includes(task.id)) await storage.setItem(tasksKey, JSON.stringify([...ids, task.id]));
+    saveTask(task) {
+      return write(async () => {
+        if (!isDeviceTaskV1(task)) throw new Error("Invalid mobile device task");
+        const ids = parseStringArray(await storage.getItem(tasksKey));
+        if (!ids.includes(task.id)) await storage.setItem(tasksKey, JSON.stringify([...ids, task.id]));
+        await storage.setItem(taskKey(task.id), JSON.stringify(task));
+      });
     },
     async getAttemptByIdempotency(taskId, idempotencyKey) {
-      return parseAttempt(storage.getItem(attemptKey(taskId, idempotencyKey)));
+      const attempts = parseAttemptArray(await storage.getItem(attemptsKey(taskId)));
+      return attempts.find(item => item.request.idempotencyKey === idempotencyKey)
+        ?? await parseAttempt(storage.getItem(attemptKey(taskId, idempotencyKey)));
     },
     async listAttempts(taskId) {
-      const all = parseAttemptArray(await storage.getItem(`${prefix}:attempts:${taskId}`));
-      return all;
+      return parseAttemptArray(await storage.getItem(attemptsKey(taskId)));
     },
-    async saveAttempt(record) {
-      if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)) throw new Error("Invalid mobile device attempt");
-      await storage.setItem(attemptKey(record.request.taskId, record.request.idempotencyKey), JSON.stringify(record));
-      const key = `${prefix}:attempts:${record.request.taskId}`;
-      const attempts = parseAttemptArray(await storage.getItem(key));
-      const next = attempts.filter(item => item.request.idempotencyKey !== record.request.idempotencyKey);
-      next.push(record);
-      await storage.setItem(key, JSON.stringify(next));
+    saveAttempt(record) {
+      return write(async () => {
+        if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)) throw new Error("Invalid mobile device attempt");
+        const key = attemptsKey(record.request.taskId);
+        const attempts = parseAttemptArray(await storage.getItem(key));
+        const next = attempts.filter(item => item.request.idempotencyKey !== record.request.idempotencyKey);
+        next.push(record);
+        await storage.setItem(key, JSON.stringify(next));
+      });
     },
-    async saveObservation(taskId, observation: DeviceObservationV1) {
-      if (!isDeviceObservationV1(observation)) throw new Error("Invalid mobile device observation");
-      const key = observationKey(taskId);
-      const current = parseObservationArray(await storage.getItem(key));
-      if (!current.some(item => item.id === observation.id)) await storage.setItem(key, JSON.stringify([...current, observation]));
+    saveObservation(taskId, observation: DeviceObservationV1) {
+      return write(async () => {
+        if (!isDeviceObservationV1(observation)) throw new Error("Invalid mobile device observation");
+        const key = observationKey(taskId);
+        const current = parseObservationArray(await storage.getItem(key));
+        if (!current.some(item => item.id === observation.id)) await storage.setItem(key, JSON.stringify([...current, observation]));
+      });
     },
   };
 }

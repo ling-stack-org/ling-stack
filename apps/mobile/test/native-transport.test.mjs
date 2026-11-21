@@ -70,6 +70,20 @@ test("native mobile transport maps a granted platform session to shared device c
 test("native mobile transport refuses a device without OS authorization", async () => {
   const factory = new MobileNativeTransportFactory({ bridge: bridge(), ownerScope: "workspace-1", ownerId: "mobile-1", now: () => now });
   await assert.rejects(() => factory.connect({ device: { ...descriptor, permissionState: "denied" }, requiredPermissions: ["ble"] }), error => error instanceof MobileNativeTransportError && error.code === "permission_denied");
+  const platform = bridge();
+  let closed = false;
+  const missingPermission = new MobileNativeTransportFactory({
+    ownerScope: "workspace-1", ownerId: "mobile-1", now: () => now,
+    bridge: {
+      ...platform,
+      async connect(input) {
+        return { ...await platform.connect(input), permissions: [], async close() { closed = true; } };
+      },
+    },
+  });
+  await assert.rejects(() => missingPermission.connect({ device: descriptor, requiredPermissions: ["ble"] }),
+    error => error instanceof MobileNativeTransportError && error.code === "permission_denied");
+  assert.equal(closed, true);
 });
 
 test("mobile runs a deterministic read-only playbook through the native transport", async () => {
@@ -84,4 +98,5 @@ test("mobile runs a deterministic read-only playbook through the native transpor
   const result = await runMobileReadOnlyPlaybook({ playbookId: "network-diagnosis", profile, snapshot, task, transport, execution: new MobileDeviceExecution({ ownerId: "mobile-1", journal, now: () => now }), steps: [{ stepId: "status", capabilityId: capability.id, capabilitySchemaVersion: "1.0", normalizedInput: {} }, { stepId: "status-replay", capabilityId: capability.id, capabilitySchemaVersion: "1.0", normalizedInput: {} }] });
   assert.equal(result.status, "succeeded");
   assert.equal(result.attempts.length, 2);
+  assert.equal((await journal.getTask(task.id)).status, "succeeded");
 });

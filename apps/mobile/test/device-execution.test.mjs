@@ -88,9 +88,26 @@ function request(id = "action-1", taskId = "task-1") {
 function transport() {
   return {
     deviceId: profile.device.id,
+    connectionRevision: snapshot.connectionRevision,
+    permissions: ["ble"],
     async execute({ request: action }) {
       return { action: { actionId: action.actionId, status: "completed", startedAt: now, finishedAt: now, observationIds: [] } };
     },
+  };
+}
+
+function approvedWrite(taskId) {
+  const action = { ...request("write", taskId), capabilityId: "hardware.write.status", expectedVerification: { online: true } };
+  const approval = {
+    approvalId: "write-approval", taskId, actionId: action.actionId, targetDeviceId: action.targetDeviceId,
+    capabilitySnapshotId: action.capabilitySnapshotId, connectionRevision: snapshot.connectionRevision,
+    policyRevision: "device-policy-v1", normalizedInputDigest: digestDeviceRequest(action), expiresAt: snapshot.freshnessUntil,
+  };
+  return {
+    profile,
+    snapshot: { ...snapshot, capabilities: [{ ...snapshot.capabilities[0], id: action.capabilityId, sideEffect: "reversible", approvalClass: "ask" }] },
+    task: task(taskId),
+    request: { ...action, approvalId: approval.approvalId, approval },
   };
 }
 
@@ -146,4 +163,80 @@ test("mobile resume marks an interrupted dispatch unknown without replaying the 
   const recovered = await manager.recoverAfterResume();
   assert.equal(recovered[0].attempt.status, "unknown");
   assert.equal((await journal.getTask(interruptedTask.id)).status, "unknown");
+});
+
+test("standalone writes derive authority from the live session and bound task", async () => {
+  const journal = createAsyncStorageMobileDeviceJournal(new MemoryStorage(), "mobile-1");
+  const manager = new MobileDeviceExecution({ ownerId: "mobile-1", journal, now: () => now });
+  const input = approvedWrite("bound-write");
+  const native = transport();
+  for (const [patch, code] of [
+    [{ task: task("other-task") }, "permission_denied"],
+    [{ capabilitySideEffect: "read_only" }, "permission_denied"],
+    [{ transport: { ...native, permissions: [] } }, "permission_denied"],
+    [{ transport: { ...native, connectionRevision: "replacement" } }, "stale_snapshot"],
+  ]) {
+    await assert.rejects(() => manager.execute({ ...input, transport: native, ...patch }),
+      error => error instanceof MobileDeviceExecutionError && error.code === code);
+  }
+  assert.deepEqual(await journal.listAttempts(input.task.id), []);
+});
+
+test("suspending an active standalone write keeps its late receipt and excludes a concurrent dispatch", { timeout: 5_000 }, async () => {
+  const journal = createAsyncStorageMobileDeviceJournal(new MemoryStorage(), "mobile-1");
+  const manager = new MobileDeviceExecution({ ownerId: "mobile-1", journal, now: () => now });
+  const input = approvedWrite("interrupted-write");
+  const entered = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  let dispatches = 0;
+  const native = transport();
+  const pending = {
+    ...native,
+    async execute(operation) {
+      dispatches += 1;
+      entered.resolve(operation.signal);
+      await finish.promise;
+      return native.execute(operation);
+    },
+    async verify() { assert.fail("suspended write should not start a new readback"); },
+  };
+  const running = manager.execute({ ...input, transport: pending });
+  try {
+    const signal = await entered.promise;
+    const other = approvedWrite("same-target");
+    await assert.rejects(() => manager.execute({ ...other, transport: pending }), error => error.code === "target_busy");
+    manager.setForeground(false);
+    assert.equal(signal.aborted, true);
+    assert.deepEqual(await manager.recoverAfterResume(), []);
+  } finally {
+    finish.resolve();
+    await running;
+  }
+  const result = await running;
+  assert.equal(result.attempt.status, "unknown");
+  assert.equal(result.attempt.receipt.status, "completed");
+  assert.equal((await journal.getTask(input.task.id)).status, "unknown");
+  manager.setForeground(true);
+  assert.deepEqual(await manager.execute({ ...input, transport: pending }), result);
+  assert.equal(dispatches, 1);
+});
+
+test("a lost standalone readback leaves the completed write receipt in the phone journal", async () => {
+  const journal = createAsyncStorageMobileDeviceJournal(new MemoryStorage(), "mobile-1");
+  const manager = new MobileDeviceExecution({ ownerId: "mobile-1", journal, now: () => now });
+  const input = approvedWrite("lost-verification");
+  let receiptDuringReadback;
+  const result = await manager.execute({ ...input, transport: {
+    ...transport(),
+    async verify() {
+      const attempts = await journal.listAttempts(input.task.id);
+      receiptDuringReadback = attempts[0]?.attempt.receipt?.status;
+      throw new Error("unavailable transport context");
+    },
+  } });
+  assert.equal(receiptDuringReadback, "completed");
+  assert.equal(result.attempt.receipt.status, "completed");
+  assert.equal(result.attempt.verification.status, "not_evaluable");
+  assert.equal((await journal.getTask(input.task.id)).status, "unknown");
+  assert.doesNotMatch(JSON.stringify(await journal.listAttempts(input.task.id)), /unavailable transport context/);
 });

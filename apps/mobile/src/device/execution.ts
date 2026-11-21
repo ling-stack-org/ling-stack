@@ -28,8 +28,8 @@ export interface MobileDeviceExecutionResult {
 
 export interface MobileDeviceTransport {
   readonly deviceId: string;
-  readonly connectionRevision?: string;
-  readonly permissions?: readonly string[];
+  readonly connectionRevision: string;
+  readonly permissions: readonly string[];
   execute(input: { readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<MobileDeviceExecutionResult>;
   verify?(input: { readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1; readonly signal?: AbortSignal }): Promise<DeviceVerificationResultV1>;
 }
@@ -173,11 +173,11 @@ export class MobileDeviceExecution {
       if (["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus)
         || snapshot.deviceId !== profile.device.id || snapshot.snapshotId !== request.capabilitySnapshotId
         || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion
-        || (transport.connectionRevision !== undefined && snapshot.connectionRevision !== transport.connectionRevision)
+        || snapshot.connectionRevision !== transport.connectionRevision
         || Date.parse(snapshot.freshnessUntil) <= Date.parse(this.#now())) {
         throw new MobileDeviceExecutionError("stale_snapshot", "capability snapshot does not match the active connection");
       }
-      if (transport.permissions !== undefined && !capability.requiredPermissions.every(permission => transport.permissions!.includes(permission))) {
+      if (!capability.requiredPermissions.every(permission => transport.permissions.includes(permission))) {
         throw new MobileDeviceExecutionError("permission_denied", "the current transport lacks a required permission");
       }
       if (needsApproval) {
@@ -238,6 +238,11 @@ export class MobileDeviceExecution {
       outcome = signal.aborted || (capability.sideEffect !== "read_only" && verification.status === "not_evaluable")
         ? "unknown" : verification.status === "verified" ? "succeeded" : "failed";
     }
+    if (signal.aborted && received.attempt.status !== "unknown") {
+      received = { ...received, attempt: { ...received.attempt, status: "unknown" } };
+      await this.#journal.saveAttempt(received);
+      outcome = "unknown";
+    }
     if (input.finalizeTask !== false || outcome === "unknown") {
       await saveStatus(outcome, lastVerificationId);
     } else {
@@ -246,7 +251,7 @@ export class MobileDeviceExecution {
     return received;
   }
 
-  async finishReadOnlyPlaybook(taskId: string, outcome: "succeeded" | "partial" | "failed"): Promise<DeviceTaskStatusV1> {
+  async finishReadOnlyPlaybook(taskId: string, outcome: "succeeded" | "partial" | "failed"): Promise<"succeeded" | "partial" | "failed" | "unknown" | "cancelled"> {
     const task = await this.#journal.getTask(taskId);
     if (!task || task.ownerKind !== "mobile" || task.ownerId !== this.#ownerId || this.#active.has(taskId)) {
       throw new MobileDeviceExecutionError("invalid_request", "phone task is not ready to finalize");

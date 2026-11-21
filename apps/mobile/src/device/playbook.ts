@@ -26,7 +26,7 @@ export interface MobileReadOnlyPlaybookInput {
 export interface MobileReadOnlyPlaybookResult {
   readonly playbookId: string;
   readonly attempts: readonly MobileAttemptRecord[];
-  readonly status: "succeeded" | "partial" | "failed" | "unknown";
+  readonly status: "succeeded" | "partial" | "failed" | "unknown" | "cancelled";
 }
 
 export async function runMobileReadOnlyPlaybook(input: MobileReadOnlyPlaybookInput): Promise<MobileReadOnlyPlaybookResult> {
@@ -54,16 +54,13 @@ export async function runMobileReadOnlyPlaybook(input: MobileReadOnlyPlaybookInp
       finalizeTask: false,
     });
     attempts.push(attempt);
-    if (attempt.attempt.status === "unknown") {
-      await input.execution.finishReadOnlyPlaybook(input.task.id, "failed").catch(() => undefined);
-      return { playbookId: input.playbookId, attempts, status: "unknown" };
-    }
-    if (attempt.attempt.status === "failed") {
-      const status = attempts.length === 1 ? "failed" : "partial";
-      await input.execution.finishReadOnlyPlaybook(input.task.id, status);
+    if (attempt.attempt.status === "unknown") return { playbookId: input.playbookId, attempts, status: "unknown" };
+    if (attempt.attempt.receipt?.status !== "completed"
+      || (attempt.attempt.verification && attempt.attempt.verification.status !== "verified")) {
+      const status = await input.execution.finishReadOnlyPlaybook(input.task.id, attempts.length === 1 ? "failed" : "partial");
       return { playbookId: input.playbookId, attempts, status };
     }
   }
-  await input.execution.finishReadOnlyPlaybook(input.task.id, "succeeded");
-  return { playbookId: input.playbookId, attempts, status: "succeeded" };
+  const status = await input.execution.finishReadOnlyPlaybook(input.task.id, "succeeded");
+  return { playbookId: input.playbookId, attempts, status };
 }
