@@ -27,18 +27,20 @@ import {
   LING_PRODUCT_VERSION,
   parseUserInputAnswerCommandV1,
   type ControlPlaneSubscribeResult,
-  type ControlPlaneEventsResponse,
   type LingAppServerContextInspectResult,
   type LingAppServerInputRespondResult,
   type LingAppServerJsonRpcId,
+  type LingAppServerThreadEventsResult,
   type LingAppServerThreadSnapshotResult,
   type LingAppServerTurnResumeResult,
   type LingAppServerWorkItemControlResult,
+  type LingAppServerWorkItemReadResult,
   type LingAppServerWorkItemResult,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { daemonRequestIsAuthorized } from "./request-auth.js";
+import { loadAppServerReplayIdentity, unavailableAppServerReplayWindow, type AppServerReplayScope } from "./app-server-replay.js";
 import { isAllowedLocalOrigin, isDirectLoopbackRequest } from "../shared/local-workspace-access.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
@@ -112,6 +114,7 @@ interface RpcSubscription {
   readonly entityId?: string;
   readonly filterEvent?: (event: ControlPlaneEvent) => boolean;
   readonly replayReadyMethod?: "thread/replay/ready" | "workItem/replay/ready";
+  readonly replayScope?: AppServerReplayScope;
   readonly threadId?: string;
   readonly closeHub: () => void;
   readonly queue: { readonly event: ControlPlaneEvent; readonly frame: RpcOutboundFrame }[];
@@ -321,12 +324,13 @@ class RpcConnection {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "workItem/subscribe requires a request id.");
         }
-        const record = readParamsRecord(params);
+        const record = this.workspaceParams(params);
         const workItemId = readStringField(record, "workItemId");
         const prepared = this.prepareControlPlaneSubscription({ ...record, domains: ["work_items"] }, {
           filterEvent: (event) => event.entityType === "work_item" && event.entityId === workItemId
             || event.entityType === "verify_operation" && event.data.workItemId === workItemId,
           replayReadyMethod: "workItem/replay/ready",
+          replayScope: this.replayIdentity(record.cwd).scope("workItem", workItemId),
         });
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
@@ -345,6 +349,7 @@ class RpcConnection {
         }, {
           ...(threadId ? { filterEvent: (event: ControlPlaneEvent) => threadEventMatches(event, threadId, store) } : {}),
           replayReadyMethod: "thread/replay/ready",
+          replayScope: this.replayIdentity(record.cwd, store).scope("thread", threadId),
           threadId,
         });
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
@@ -377,8 +382,11 @@ class RpcConnection {
       throw rpcError(-32002, "server_draining", "App Server is draining.");
     }
     switch (method) {
-      case "initialize":
+      case "initialize": {
         this.validateInitializeParams(params);
+        const cwd = this.appServer ? this.workspaceParams(params).cwd : undefined;
+        const store = cwd === undefined ? undefined : this.context.storeRegistry.getStore(cwd);
+        const identity = cwd !== undefined && store ? this.replayIdentity(cwd, store) : undefined;
         this.initialized = true;
         return this.appServer ? {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
@@ -387,6 +395,7 @@ class RpcConnection {
           effectiveScopes: ["controlPlane.read",
             ...(this.authenticated ? ["runs.control", "approval.decide", "input.respond", "verification.execute"] : [])],
           capabilities: this.availableCapabilities(),
+          ...(identity ? { storeIncarnation: identity.storeIncarnation, authorizationEpoch: identity.authorizationEpoch } : {}),
           limits: {
             maxInboundFrameBytes: 1024 * 1024,
             maxOutboundFrameBytes: 128 * 1024,
@@ -402,6 +411,7 @@ class RpcConnection {
             channels: this.context.config.channels,
           },
         };
+      }
       case "server/ping":
         return { ok: true, connectionId: this.connectionId, serverTime: new Date().toISOString() };
       case "server/capabilities":
@@ -652,6 +662,10 @@ class RpcConnection {
         && capability !== "input.respond" && capability !== "development.simplify"));
   }
 
+  private replayIdentity(cwd: string, store = this.context.storeRegistry.getStore(cwd)) {
+    return loadAppServerReplayIdentity(store, cwd, this.context.config.authToken);
+  }
+
   private workspaceParams(params: unknown, operator = false): Record<string, unknown> & { readonly cwd: string } {
     if (operator && (!this.appServer || !this.authenticated)) {
       throw rpcError(-32020, "authorization_required", "This App Server method requires the daemon operator bearer credential.");
@@ -879,7 +893,9 @@ class RpcConnection {
         if (!decision.shouldOpen) throw rpcError(-32061, "resume_blocked", decision.reason);
         payload = { ...(typeof payload === "object" && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload }), triggerDecision: decision };
       }
-      const { event, ...result } = appendAppServerWorkItemCollaboration(this.context.storeRegistry.getStore(cwd), {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const scope = this.replayIdentity(cwd, store).scope("workItem", workItemId);
+      const { event, ...result } = appendAppServerWorkItemCollaboration(store, {
         ...record,
         cwd,
         workItemId,
@@ -891,7 +907,7 @@ class RpcConnection {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         if (this.appServer) this.send({
           jsonrpc: "2.0", method: collaborationNotificationMethod(kind),
-          params: { cwd, workItemId, record: result.record, eventId: `${event.workspaceId}:${event.seq}`, cursor: String(event.seq) },
+          params: { cwd, workItemId, record: result.record, eventId: scope.eventId(event.workspaceId, event.seq), cursor: scope.issue(event.seq) },
         });
       }
       return { cwd, ...result };
@@ -1111,6 +1127,7 @@ class RpcConnection {
     const { cwd, ...record } = this.workspaceParams(params);
     const threadId = readStringField(record, "threadId");
     const store = this.context.storeRegistry.getStore(cwd);
+    const scope = this.replayIdentity(cwd, store).scope("thread", threadId);
     return store.readSnapshot(() => {
       const thread = store.getLingThread(threadId);
       if (!thread) throw rpcError(-32040, "workspace_binding_invalid", "Thread was not found.");
@@ -1131,7 +1148,7 @@ class RpcConnection {
           tokenBudget: goal.tokenBudget, tokensUsed: goal.tokensUsed, timeUsedSeconds: goal.timeUsedSeconds, updatedAt: goal.updatedAt } : null,
         run: run ? { id: run.id, status: run.status, startedAt: run.startedAt, endedAt: run.endedAt } : null,
         pendingApprovals, pendingInputs,
-        cursor: String(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
+        cursor: scope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
     });
   }
 
@@ -1776,15 +1793,19 @@ class RpcConnection {
     return this.cancelRun({ cwd, runId: turn.activeRunId });
   }
 
-  private readWorkItem(params: unknown): LingAppServerWorkItemResult {
+  private readWorkItem(params: unknown): LingAppServerWorkItemReadResult {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const workItemId = readStringField(record, "workItemId");
-    const workItem = this.context.storeRegistry.getStore(cwd).getWorkItem(workItemId);
-    if (!workItem) {
-      throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
-    }
-    return { cwd, workItem: projectWorkItemSnapshot(workItem) };
+    const store = this.context.storeRegistry.getStore(cwd);
+    const scope = this.replayIdentity(cwd, store).scope("workItem", workItemId);
+    return store.readSnapshot(() => {
+      const workItem = store.getWorkItem(workItemId);
+      if (!workItem) {
+        throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+      }
+      return { cwd, workItem: projectWorkItemSnapshot(workItem), cursor: scope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
+    });
   }
 
   private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): LingAppServerWorkItemControlResult {
@@ -1844,13 +1865,16 @@ class RpcConnection {
     };
   }
 
-  private readThreadEvents(store: import("@ling-stack/core").RunStore, threadId: string,
-    record: Record<string, unknown> & { readonly cwd: string }): ControlPlaneEventsResponse {
-    const { cwd, afterSeq, limit, domains } = this.readControlPlaneEventParams({
-      ...record, domains: ["runs", "approvals", "work_items", "work_units"], limit: record.limit ?? 25,
-    });
+  private readThreadEvents(store: RunStore, threadId: string,
+    record: Record<string, unknown> & { readonly cwd: string }): LingAppServerThreadEventsResult {
+    const { cwd } = record;
+    const scope = this.replayIdentity(cwd, store).scope("thread", threadId);
+    const afterSeq = scope.read(record.cursor ?? record.afterSeq);
+    const limit = readRpcLimit(record.limit ?? 25);
+    const domains = ["runs", "approvals", "work_items", "work_units"] as const;
     return store.readSnapshot(() => {
       const workspaceId = DEFAULT_WORKSPACE_ID;
+      if (afterSeq === undefined) return { cwd, workspaceId, events: [], window: unavailableAppServerReplayWindow(store) };
       const { latestSeq, replayFloorSeq } = store.getControlPlaneReplayState(workspaceId);
       const base = { requestedAfterSeq: afterSeq, upperBoundSeq: latestSeq, replayFloorSeq };
       if (afterSeq > latestSeq || afterSeq < replayFloorSeq) {
@@ -1873,20 +1897,28 @@ class RpcConnection {
         nextAfterSeq = event.seq;
       }
       if (rows.length < limit && (rows.length === 0 || rows.at(-1)!.seq === nextAfterSeq)) nextAfterSeq = latestSeq;
-      return { cwd, workspaceId, events, window: { ...base, disposition: "complete", nextAfterSeq } };
+      return { cwd, workspaceId, events, cursor: scope.issue(nextAfterSeq), window: { ...base, disposition: "complete", nextAfterSeq } };
     });
   }
 
   private prepareControlPlaneSubscription(params: unknown,
-    filter?: Pick<RpcSubscription, "entityType" | "entityId" | "filterEvent" | "replayReadyMethod" | "threadId">): {
+    filter?: Pick<RpcSubscription, "entityType" | "entityId" | "filterEvent" | "replayReadyMethod" | "replayScope" | "threadId">): {
     readonly result: ControlPlaneSubscribeResult;
     readonly activate?: () => void;
   } {
     if (this.appServer && this.subscriptions.size >= APP_SERVER_MAX_SUBSCRIPTIONS) {
       throw rpcError(-32001, "server_overloaded", "The connection has too many subscriptions.");
     }
+    const record = readParamsRecord(params);
+    const scope = filter?.replayScope;
+    const afterSeq = scope?.read(record.cursor ?? record.afterSeq);
+    if (scope && afterSeq === undefined) {
+      const store = this.context.storeRegistry.getStore(readRpcCwd(record, this.defaultCwd));
+      return { result: { disposition: "snapshot_required", window: unavailableAppServerReplayWindow(store) } };
+    }
     const parsed = this.readControlPlaneEventParams({
-      ...readParamsRecord(params),
+      ...record,
+      ...(afterSeq === undefined ? {} : { afterSeq }),
       limit: CONTROL_PLANE_POLL_MAX_LIMIT,
     });
     const subscriptionId = `cp_${this.nextSubscriptionId}`;
@@ -1903,6 +1935,7 @@ class RpcConnection {
       queueKey: `${subscriptionId}:queue`,
       closed: false,
     };
+    const envelopeBytes = controlPlaneEnvelopeBytes(subscriptionId, scope?.issue(Number.MAX_SAFE_INTEGER));
     // Register before replay can synchronously publish provisional events or close us.
     this.subscriptions.set(subscriptionId, subscription);
     try {
@@ -1918,7 +1951,7 @@ class RpcConnection {
           },
         } : {}),
         onPendingChange: (bytes, count) => this.outbound.reserve(subscription.upstreamKey,
-          bytes + count * controlPlaneEnvelopeBytes(subscription.id), count),
+          bytes + count * envelopeBytes, count),
         onOverflow: () => this.outbound.close(1013, "slow_client_disconnect"),
       });
       if (this.closed || subscription.closed) {
@@ -1936,11 +1969,12 @@ class RpcConnection {
           },
         };
       }
+      const cursor = scope?.issue(replay.window.nextAfterSeq) ?? String(replay.window.nextAfterSeq);
       return {
         result: {
           disposition: "complete",
           subscriptionId,
-          cursor: String(replay.window.nextAfterSeq),
+          cursor,
           window: replay.window,
         },
         activate: () => {
@@ -1948,7 +1982,7 @@ class RpcConnection {
           if (this.appServer && !subscription.closed && subscription.replayReadyMethod) {
             this.flushControlPlaneSubscription(subscription);
             this.send({ jsonrpc: "2.0", method: subscription.replayReadyMethod,
-              params: { subscriptionId, cursor: String(replay.window.nextAfterSeq), window: replay.window } });
+              params: { subscriptionId, cursor, window: replay.window } });
           }
         },
       };
@@ -2092,12 +2126,13 @@ class RpcConnection {
     if (this.closed || subscription.closed || !subscriptionMatchesEvent(subscription, event)) {
       return;
     }
-    const frame = this.outbound.prepare(controlPlaneNotification(subscription.id, event));
+    const cursor = subscription.replayScope?.issue(event.seq);
+    const frame = this.outbound.prepare(controlPlaneNotification(subscription.id, event, cursor));
     if (!frame) return;
     if (this.appServer) {
       const serverRequest = appServerServerRequestForEvent(event, () => this.context.storeRegistry.getStore(subscription.cwd));
       if (serverRequest) this.send(serverRequest);
-      const notification = appServerEventNotification(subscription.id, event);
+      const notification = appServerEventNotification(subscription, event, cursor);
       if (notification) this.send(notification);
     }
     subscription.queue.push({ event, frame });
@@ -2105,7 +2140,7 @@ class RpcConnection {
       const coalesced = coalesceAndSortControlPlaneEvents(subscription.queue.map(pending => pending.event));
       subscription.queue.length = 0;
       for (const merged of coalesced) {
-        const mergedFrame = this.outbound.prepare(controlPlaneNotification(subscription.id, merged));
+        const mergedFrame = this.outbound.prepare(controlPlaneNotification(subscription.id, merged, subscription.replayScope?.issue(merged.seq)));
         if (!mergedFrame) return;
         subscription.queue.push({ event: merged, frame: mergedFrame });
       }
@@ -2546,11 +2581,11 @@ function getAppServerDevelopmentService(context: DaemonContext): AppServerDevelo
   return created;
 }
 
-function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEvent): unknown {
-  return { jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId, event } };
+function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEvent, cursor?: string): unknown {
+  return { jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId, event, cursor } };
 }
 
-function appServerEventNotification(subscriptionId: string, event: ControlPlaneEvent): unknown | undefined {
+function appServerEventNotification(subscription: RpcSubscription, event: ControlPlaneEvent, cursor: string | undefined): unknown | undefined {
   const method = appServerEventMethod(event);
   if (!method) return undefined;
   const workItemId = event.entityType === "work_item" ? event.entityId
@@ -2559,9 +2594,9 @@ function appServerEventNotification(subscriptionId: string, event: ControlPlaneE
     jsonrpc: "2.0",
     method,
     params: {
-      subscriptionId,
-      cursor: String(event.seq),
-      eventId: `${event.workspaceId}:${event.seq}`,
+      subscriptionId: subscription.id,
+      cursor: cursor ?? String(event.seq),
+      eventId: subscription.replayScope?.eventId(event.workspaceId, event.seq) ?? `${event.workspaceId}:${event.seq}`,
       workspaceId: event.workspaceId,
       subject: event.entityType === "thread"
         ? { kind: "thread", threadId: event.entityId }
@@ -2655,8 +2690,8 @@ function threadEventMatches(event: ControlPlaneEvent, threadId: string, store: i
   return typeof runId === "string" && store.getRun(runId)?.threadId === threadId;
 }
 
-function controlPlaneEnvelopeBytes(subscriptionId: string): number {
-  return Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId } }), "utf8") + 16;
+function controlPlaneEnvelopeBytes(subscriptionId: string, cursor?: string): number {
+  return Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId, cursor } }), "utf8") + 16;
 }
 
 function readRunWorkspaceCwd(run: RunSession): string | undefined {

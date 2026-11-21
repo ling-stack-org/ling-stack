@@ -18,14 +18,15 @@ test("App Server restores Work Item, collaboration and cursor replay after daemo
     socket = first.socket;
     first.send(1, "initialize", { protocolVersions: ["ling-app-server/1"], requiredCapabilities: ["workItem.coordination"] });
     await waitFor(first.messages, message => message.id === 1);
-    first.send(2, "workItem/subscribe", { cwd, workItemId: "pending" });
+    const workItemId = "pending";
+    first.send(2, "workItem/subscribe", { cwd, workItemId });
     const initialSubscription = await waitFor(first.messages, message => message.id === 2);
     assert.equal(initialSubscription.result.disposition, "complete");
     const initialCursor = initialSubscription.result.cursor;
 
-    first.send(3, "workItem/create", { cwd, sourceType: "manual", sourceId: "restart-acceptance", title: "Restart acceptance" });
+    first.send(3, "workItem/create", { cwd, workItemId, sourceType: "manual", sourceId: "restart-acceptance", title: "Restart acceptance" });
     const created = await waitFor(first.messages, message => message.id === 3);
-    const workItemId = created.result.workItem.workItemId;
+    assert.equal(created.result.workItem.workItemId, workItemId);
     first.send(4, "workItem/subscribe", { cwd, workItemId, cursor: initialCursor });
     const itemSubscription = await waitFor(first.messages, message => message.id === 4);
     assert.equal(itemSubscription.result.disposition, "complete");

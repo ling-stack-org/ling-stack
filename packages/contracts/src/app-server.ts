@@ -1,5 +1,5 @@
 import type { CodeAssessmentFinding, CodeAssessmentReviewRules, CodeFindingCloseReason } from "./code-assessments.js";
-import type { ApprovalSummary } from "./control-plane.js";
+import type { ApprovalSummary, ControlPlaneEventsResponse, ControlPlaneReplayWindow } from "./control-plane.js";
 import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
 import type { RunSession } from "./runtime.js";
 import type { LingThread, LingThreadGoal } from "./threads.js";
@@ -399,6 +399,12 @@ export interface LingAppServerSubscriptionResult {
   readonly cursor?: string;
   readonly snapshotId?: string;
   readonly reason?: "cursor_unavailable" | "retention_gap" | "window_exceeded" | "authorization_changed";
+  readonly window?: ControlPlaneReplayWindow;
+}
+
+export interface LingAppServerThreadEventsResult extends ControlPlaneEventsResponse {
+  /** Use the server-issued cursor to continue reading the same Thread. */
+  readonly cursor?: string;
 }
 
 export type LingWorkItemControlState =
@@ -451,6 +457,10 @@ export interface LingAppServerWorkItemSnapshot {
 export interface LingAppServerWorkItemResult {
   readonly cwd: string;
   readonly workItem: LingAppServerWorkItemSnapshot;
+}
+
+export interface LingAppServerWorkItemReadResult extends LingAppServerWorkItemResult {
+  readonly cursor: string;
 }
 
 export interface LingAppServerWorkItemControlResult extends LingAppServerWorkItemResult {

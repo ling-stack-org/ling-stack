@@ -31,8 +31,8 @@ export async function runLingAppServerMcp(
     return describe({ turn, run, cursor });
   });
   server.registerTool("ling_thread_events", {
-    description: "Read a page of Ling Thread events. Use window.nextAfterSeq as the next cursor.",
-    inputSchema: z.strictObject({ threadId: objectId, cursor: z.string().regex(/^\d+$/u).optional() }),
+    description: "Read a page of Ling Thread events. Use the returned cursor to continue reading; use a Thread snapshot if resync is required.",
+    inputSchema: z.strictObject({ threadId: objectId, cursor: z.string().min(1).max(128).optional() }),
     annotations: { readOnlyHint: true },
   }, async ({ threadId, cursor }) => describe(await client.readThreadEvents({ threadId, cursor, limit: 1 })));
 

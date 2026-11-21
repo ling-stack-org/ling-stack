@@ -7,9 +7,9 @@ import type {
   LingAppServerContextInspectResult,
   LingAppServerThreadSnapshotParams,
   LingAppServerThreadSnapshotResult,
+  LingAppServerThreadEventsResult,
   LingAppServerTurnResumeParams,
   LingAppServerTurnResumeResult,
-  ControlPlaneEventsResponse,
   LingAppServerExternalAgentCapabilitiesParams,
   LingAppServerExternalAgentCapabilitiesResult,
   LingAppServerExternalAgentRegisterParams,
@@ -50,7 +50,7 @@ import type {
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemControlParams,
   LingAppServerWorkItemControlResult,
-  LingAppServerWorkItemResult,
+  LingAppServerWorkItemReadResult,
   LingAppServerWorkItemSnapshot,
   LingAppServerWorkItemCollaborationAppendParams,
   LingAppServerWorkItemCollaborationAppendResult,
@@ -110,6 +110,7 @@ interface TrackedSubscription {
   readonly params: LingAppServerSubscriptionParams;
   subscriptionId?: string;
   cursor?: string;
+  afterSeq?: number;
 }
 
 export class LingAppServerClient {
@@ -166,7 +167,7 @@ export class LingAppServerClient {
     return await this.request("context/inspect", params);
   }
 
-  async readThreadEvents(params: { readonly threadId: string; readonly cursor?: string; readonly limit?: number }): Promise<ControlPlaneEventsResponse> {
+  async readThreadEvents(params: { readonly threadId: string; readonly cursor?: string; readonly limit?: number }): Promise<LingAppServerThreadEventsResult> {
     await this.connect();
     return await this.request("thread/events/read", params);
   }
@@ -287,9 +288,13 @@ export class LingAppServerClient {
   }
 
   async readWorkItem(workspaceId: string, workItemId: string): Promise<LingAppServerWorkItemSnapshot> {
-    await this.connect();
-    const { workItem } = await this.request<LingAppServerWorkItemResult>("workItem/read", { workspaceId, workItemId });
+    const { workItem } = await this.readWorkItemSnapshot(workspaceId, workItemId);
     return workItem;
+  }
+
+  async readWorkItemSnapshot(workspaceId: string, workItemId: string): Promise<LingAppServerWorkItemReadResult> {
+    await this.connect();
+    return await this.request("workItem/read", { workspaceId, workItemId });
   }
 
   async controlWorkItem(
@@ -333,7 +338,7 @@ export class LingAppServerClient {
     const subscription = {
       method,
       params,
-      cursor: params.cursor ?? "0",
+      cursor: params.cursor,
     } satisfies TrackedSubscription;
     return await this.requestSubscription(key, subscription, params);
   }
@@ -500,13 +505,15 @@ export class LingAppServerClient {
     const record = params as Record<string, unknown>;
     const subscriptionId = typeof record.subscriptionId === "string" ? record.subscriptionId : undefined;
     const event = record.event as { readonly seq?: number } | undefined;
+    const window = record.window as { readonly nextAfterSeq?: number } | undefined;
     const cursor = typeof record.cursor === "string" ? record.cursor : Number.isSafeInteger(event?.seq) ? String(event!.seq) : undefined;
     if (!subscriptionId || !cursor) return;
+    const seq = event?.seq ?? window?.nextAfterSeq ?? (/^\d+$/u.test(cursor) ? Number(cursor) : undefined);
+    const afterSeq = Number.isSafeInteger(seq) ? seq : undefined;
     for (const [key, subscription] of this.subscriptions) {
       if (subscription.subscriptionId !== subscriptionId) continue;
-      if (subscription.cursor && /^\d+$/u.test(subscription.cursor) && /^\d+$/u.test(cursor)
-        && Number(cursor) <= Number(subscription.cursor)) continue;
-      this.subscriptions.set(key, { ...subscription, cursor });
+      if (subscription.cursor && subscription.afterSeq !== undefined && afterSeq !== undefined && afterSeq <= subscription.afterSeq) continue;
+      this.subscriptions.set(key, { ...subscription, cursor, afterSeq });
     }
   }
 
@@ -531,7 +538,10 @@ export class LingAppServerClient {
         const result = await this.requestSubscription(key, subscription, params);
         if (result.disposition === "snapshot_required") {
           const method = subscription.method === "thread/subscribe" ? "thread/resync/required" : "workItem/resync/required";
-          for (const listener of this.notificationListeners) listener({ jsonrpc: "2.0", method, params: result });
+          const { threadId, workItemId, workspaceId } = subscription.params;
+          for (const listener of this.notificationListeners) {
+            listener({ jsonrpc: "2.0", method, params: { ...result, threadId, workItemId, workspaceId } });
+          }
         }
       } catch {
         // A failed replay remains tracked and will be retried on the next reconnect.
@@ -544,7 +554,13 @@ export class LingAppServerClient {
   ): Promise<LingAppServerSubscriptionResult> {
     return this.request<LingAppServerSubscriptionResult>(subscription.method, params, result => {
       // The acknowledgement and replay frames can arrive in one transport callback.
-      this.subscriptions.set(key, { ...subscription, subscriptionId: result.subscriptionId });
+      if (result.disposition === "snapshot_required") {
+        this.subscriptions.delete(key);
+      } else {
+        this.subscriptions.set(key, { ...subscription, subscriptionId: result.subscriptionId,
+          cursor: result.cursor ?? subscription.cursor,
+          afterSeq: result.window?.nextAfterSeq ?? subscription.afterSeq });
+      }
     });
   }
 }

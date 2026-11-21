@@ -1,7 +1,8 @@
 import type { ControlPlaneEvent } from "./run-types.js";
 
 export type AppServerStateKind = "verify_plan" | "verify_operation" | "review_submission" | "review_finding_update"
-  | "simplify_submission" | "external_federation" | "work_item_creation" | "work_item_acceptance" | "work_item_control";
+  | "simplify_submission" | "external_federation" | "work_item_creation" | "work_item_acceptance" | "work_item_control"
+  | "replay_identity";
 
 export interface AppServerStateRecord {
   readonly workspaceId: string;

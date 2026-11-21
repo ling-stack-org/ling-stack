@@ -26,6 +26,7 @@ import type {
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemControlResult,
+  LingAppServerWorkItemReadResult,
   LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
   LingAppServerReviewStartResult,
@@ -34,6 +35,9 @@ import type {
   LingAppServerSimplifyStartResult,
   LingAppServerSimplifyStatusResult,
   LingAppServerThreadSnapshotResult,
+  LingAppServerThreadEventsResult,
+  LingAppServerInitializeResult,
+  LingAppServerSubscriptionResult,
   LingAppServerTurnResumeResult,
   ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
@@ -159,7 +163,7 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   assert.equal(snapshot.turn?.id, result.turn.id);
   assert.equal(snapshot.run?.id, result.run.id);
   assert.equal(snapshot.run?.status, "succeeded");
-  assert.ok(Number(snapshot.cursor) > 0);
+  assert.match(snapshot.cursor, /^v1\.\d+\.[A-Za-z0-9_-]{43}$/u);
   const receipt = await second.call<{ status: string; turnId: string }>("submission/read", {
     threadId: started.thread.id, idempotencyKey: request.idempotencyKey,
   });
@@ -617,10 +621,10 @@ test("installed Codex calls the CLI MCP bridge while a Ling subscription receive
     let cursor = subscription.cursor;
     let seen = false;
     for (let page = 0; page < 30 && !seen; page++) {
-      const result = await call<ControlPlaneEventsResponse>("ling_thread_events", { threadId: thread.id, cursor });
+      const result = await call<LingAppServerThreadEventsResult>("ling_thread_events", { threadId: thread.id, cursor });
       seen = result.events.some(event => event.action === "turn.started" && event.entityId === accepted.turn.id);
-      if (String(result.window.nextAfterSeq) === cursor) break;
-      cursor = String(result.window.nextAfterSeq);
+      if (!result.cursor || result.cursor === cursor) break;
+      cursor = result.cursor;
     }
     assert.ok(seen, "Codex could not recover the Turn event from the subscription cursor.");
   } catch (error) {
@@ -803,6 +807,7 @@ test("Work Item creation, acceptance, evidence and collaboration retries keep on
     ...evidence, expectedWorkItemRevision: appended.workItemRevision, expectedEvidenceRevision: 1, idempotencyKey: "append-next",
   });
   await waitFor(() => notices("workItem/evidence/updated").length >= 2 ? true : undefined);
+  const { cursor: beforeMessage } = await peer.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
   const messageInput = {
     workItemId, expectedWorkItemRevision: secondEvidence.workItemRevision, expectedCollaborationRevision: 2,
     actorId: "local-user", idempotencyKey: "message-once", payload: { text: "Send after the evidence is committed" },
@@ -826,10 +831,10 @@ test("Work Item creation, acceptance, evidence and collaboration retries keep on
   ]);
   await fixture.restart();
   const restored = await fixture.connect();
-  const restoredItem = await restored.call<typeof created>("workItem/read", { workItemId });
-  assert.deepEqual(await restored.call("workItem/create", creation), restoredItem);
+  const { cwd, workItem: restoredItem } = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  assert.deepEqual(await restored.call("workItem/create", creation), { cwd, workItem: restoredItem });
   await assert.rejects(restored.call("workItem/create", { ...creation, title: "Changed intent" }), { code: "idempotency_conflict" });
-  await restored.call("workItem/subscribe", { workItemId, cursor: String(persisted.at(-2)!.seq) });
+  await restored.call("workItem/subscribe", { workItemId, cursor: beforeMessage });
   const restoredNotice = await waitFor(() => restored.notices.find(notice => notice.method === "workItem/collaboration/updated"));
   assert.equal(restoredNotice.params?.eventId, directNotice.params?.eventId);
 
@@ -863,7 +868,8 @@ test("Work Item controls commit state, receipt and event together and replay aft
   });
   const { workItemId, workspaceId } = created.workItem;
   const peer = await fixture.connect();
-  const { cursor } = await peer.call<{ cursor: string }>("workItem/subscribe", { workItemId });
+  const { cursor, window } = await peer.call<LingAppServerSubscriptionResult>("workItem/subscribe", { workItemId });
+  assert.ok(cursor && window);
   const input = {
     workItemId, actorId: "local-user", expectedWorkItemRevision: 1, expectedControlGeneration: 0, idempotencyKey: "atomic-pause",
   };
@@ -872,7 +878,8 @@ test("Work Item controls commit state, receipt and event together and replay aft
   try {
     database.exec("CREATE TRIGGER fail_pause_event BEFORE INSERT ON control_plane_events WHEN NEW.action = 'work_item.control.pause' BEGIN SELECT RAISE(ABORT, 'fixture pause event rejected'); END");
     await assert.rejects(client.call("workItem/pause", input), /fixture pause event rejected/u);
-    assert.deepEqual(await client.call("workItem/read", { workItemId }), created);
+    const { cwd, workItem } = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+    assert.deepEqual({ cwd, workItem }, created);
     assert.equal(store.listAppServerState("work_item_control").length, 0);
     database.exec("DROP TRIGGER fail_pause_event");
   } finally {
@@ -885,7 +892,7 @@ test("Work Item controls commit state, receipt and event together and replay aft
     ...input, expectedWorkItemRevision: 2, expectedControlGeneration: 1, idempotencyKey: "atomic-resume",
   });
   assert.equal(resumed.workItem.control.state, "active");
-  const events = () => fixture.getStore().listControlPlaneEvents({ workspaceId, entityId: workItemId, afterSeq: Number(cursor) });
+  const events = () => fixture.getStore().listControlPlaneEvents({ workspaceId, entityId: workItemId, afterSeq: window.nextAfterSeq });
   assert.deepEqual(events().map(event => event.data.receiptId), [paused.controlReceipt.id, resumed.controlReceipt.id]);
   await fixture.restart();
   const restored = await fixture.connect();
@@ -1136,6 +1143,56 @@ test("legacy RPC only exposes its existing methods and can still start and cance
   assert.equal(store.getRun(run.id)?.status, "cancelled");
 });
 
+test("App Server replay cursors survive restart and stay bound to the workspace, subject and credential", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const client = await fixture.connect();
+  assert.ok(client.initialization?.storeIncarnation && client.initialization.authorizationEpoch);
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Replay scope" });
+  const other = await client.call<ThreadRead>("thread/start", { title: "Another Thread" });
+  const { cursor } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  const turn = await client.call<{ turn: { id: string } }>("turn/start", { threadId: thread.id, message: "Record a future instruction." });
+  const read = { threadId: thread.id, cursor };
+  const subscription = await client.call<LingAppServerSubscriptionResult>("thread/subscribe", read);
+  assert.equal(subscription.disposition, "complete");
+  const event = await waitFor(() => client.notices.find(notice => notice.method === "turn/started"
+    && notice.params?.event?.entityId === turn.turn.id));
+  assert.ok(event.params?.eventId);
+  const mismatched = await client.call<LingAppServerSubscriptionResult>("thread/subscribe", { ...read, threadId: other.thread.id });
+  assert.equal(mismatched.disposition, "snapshot_required");
+  assert.equal(mismatched.window?.reason, "cursor_unavailable");
+  const differentKind = await client.call<LingAppServerSubscriptionResult>("workItem/subscribe", { workItemId: thread.id, cursor });
+  assert.equal(differentKind.disposition, "snapshot_required");
+
+  const secondCwd = join(fixture.root, "other-workspace");
+  await mkdir(secondCwd);
+  const secondWorkspace = await fixture.connect("/app-server/rpc", secondCwd);
+  await secondWorkspace.call("thread/start", { threadId: thread.id, title: "Same ID in another workspace" });
+  const differentWorkspace = await secondWorkspace.call<LingAppServerThreadEventsResult>("thread/events/read", read);
+  assert.equal(differentWorkspace.window.disposition, "snapshot_required");
+  assert.deepEqual(differentWorkspace.events, []);
+  assert.notEqual(secondWorkspace.initialization?.storeIncarnation, client.initialization?.storeIncarnation);
+
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.equal(restored.initialization?.storeIncarnation, client.initialization?.storeIncarnation);
+  assert.equal(restored.initialization?.authorizationEpoch, client.initialization?.authorizationEpoch);
+  await restored.call("thread/subscribe", read);
+  const replayed = await waitFor(() => restored.notices.find(notice => notice.params?.eventId === event.params?.eventId));
+  assert.equal(replayed.params?.event?.entityId, turn.turn.id);
+
+  await fixture.restart({ rotateAuthToken: true });
+  const rotated = await fixture.connect();
+  assert.equal(rotated.initialization?.storeIncarnation, client.initialization?.storeIncarnation);
+  assert.notEqual(rotated.initialization?.authorizationEpoch, client.initialization?.authorizationEpoch);
+  const resync = await rotated.call<LingAppServerThreadEventsResult>("thread/events/read", read);
+  assert.equal(resync.window.disposition, "snapshot_required");
+  assert.deepEqual(resync.events, []);
+  const current = await rotated.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  assert.equal((await rotated.call<LingAppServerSubscriptionResult>("thread/subscribe", {
+    threadId: thread.id, cursor: current.cursor,
+  })).disposition, "complete");
+});
+
 const previousBuild = process.env.LING_APP_SERVER_PREVIOUS_BUILD;
 test("candidate App Server recovers v0.6.1 Thread state and preserves legacy clients", {
   skip: !previousBuild, timeout: 30_000,
@@ -1188,7 +1245,6 @@ test("candidate App Server recovers v0.6.1 Thread state and preserves legacy cli
     title: "Fixture approval", description: "Verify approval survival across versions",
     payload: { type: "bash", cwd: fixture.cwd, command: "true", riskFlags: [] },
   }, now);
-  const cursor = String(store.getLatestControlPlaneEventSeq(thread.workspaceId));
   const event = store.appendControlPlaneEvent({
     workspaceId: thread.workspaceId, cwd: fixture.cwd, domain: "approvals", entityType: "approval",
     entityId: approval.id, action: "approval.requested", data: { runId: run.id, threadId: thread.id },
@@ -1205,7 +1261,8 @@ test("candidate App Server recovers v0.6.1 Thread state and preserves legacy cli
   assert.equal(snapshot.turn?.id, turn.id);
   assert.equal(snapshot.run?.id, run.id);
   assert.equal(snapshot.pendingApprovals.find(item => item.id === approval.id)?.status, "pending");
-  const replay = await current.readThreadEvents({ threadId: thread.id, cursor });
+  assert.equal((await current.readThreadEvents({ threadId: thread.id, cursor: String(event.seq) })).window.disposition, "snapshot_required");
+  const replay = await current.readThreadEvents({ threadId: thread.id });
   assert.ok(replay.events.some(item => item.seq === event.seq && item.entityId === approval.id));
   assert.equal((await legacyClient().getLingThread(fixture.cwd, thread.id)).thread.id, thread.id);
   await current.respondApproval({ approvalId: approval.id, runId: run.id, decision: "deny" });
@@ -1268,7 +1325,7 @@ async function releaseFixture(t: TestContext, {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
-  const authToken = randomUUID();
+  let authToken = randomUUID();
   const priorLingHome = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(root, "fixture-home");
   const stores = new Map<string, SqliteRunStore>();
@@ -1314,16 +1371,17 @@ async function releaseFixture(t: TestContext, {
       assert.ok(store);
       return store;
     },
-    async restart() {
+    async restart({ rotateAuthToken = false } = {}) {
       await stop();
       stores.clear();
+      if (rotateAuthToken) authToken = randomUUID();
       daemon = makeDaemon(candidateRuntime);
       await daemon.start();
     },
-    async connect(path: "/app-server/rpc" | "/rpc/stream" = "/app-server/rpc") {
+    async connect(path: "/app-server/rpc" | "/rpc/stream" = "/app-server/rpc", workspaceCwd = cwd) {
       const address = daemon.server.address();
       assert.ok(address && typeof address === "object");
-      const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}?cwd=${encodeURIComponent(cwd)}`, {
+      const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}?cwd=${encodeURIComponent(workspaceCwd)}`, {
         headers: requireAuth ? { Authorization: `Bearer ${authToken}` } : undefined,
       });
       clients.add(socket);
@@ -1344,14 +1402,15 @@ async function releaseFixture(t: TestContext, {
         if (response.error) throw Object.assign(new Error(response.error.message), { code: response.error.data.code });
         return response.result as T;
       };
-      if (path === "/app-server/rpc") {
-        await call("initialize", { protocolVersions: ["ling-app-server/1"] });
+      const initialization = path === "/app-server/rpc"
+        ? await call<LingAppServerInitializeResult>("initialize", { protocolVersions: ["ling-app-server/1"] }) : undefined;
+      if (initialization) {
         await call("workItem/list");
       } else {
         const initialized = await call<{ ok: boolean }>("initialize");
         assert.equal(initialized.ok, true);
       }
-      return { call, notices, close: () => socket.terminate() };
+      return { call, notices, initialization, close: () => socket.terminate() };
     },
   };
 }
