@@ -451,9 +451,12 @@ typecheck before executing the suite.
 Plugin SDK's `test:ci` discovers its two `.test.ts` files with Node's existing
 test runner. Its `typecheck:ci` checks source and the strict, no-emit
 `packages/plugin-sdk/tsconfig.test.json`.
-Localization's validation entries retain catalog compilation and auditing.
-Its private catalog script declarations can accompany a verified test migration
-when their runtime modules stay unchanged.
+Localization's `test:ci` audits catalogs before discovering its seven `.test.ts`
+files. Its `typecheck:ci` compiles catalogs, checks source and the strict,
+no-emit `packages/localization/tsconfig.test.json`, and supplies declarations for
+the imported catalog utility scripts at the test boundary.
+The scope classifier recognizes those new private declarations in a verified test
+migration when their runtime modules stay unchanged.
 
 Local fixture and package checks are not evidence of Linux/macOS hosted-runner
 latency. Compare queue, setup, test-file and total durations after the next
