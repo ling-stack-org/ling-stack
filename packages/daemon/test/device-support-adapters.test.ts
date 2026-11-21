@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { isAdapterManifestV1 } from "@ling-stack/contracts";
 import {
+  AndroidAdbAdapter,
   HomeAssistantAdapter,
   LinuxSshAdapter,
   PcAdapter,
@@ -89,4 +90,25 @@ test("Linux SSH adapter exposes diagnosis and network repair through a fixed ope
     idempotencyKey: "wifi-task:wifi-action",
   } });
   assert.deepEqual(operations, ["inventory", "readWifi"]);
+});
+
+test("Android ADB adapter exposes fixed head-unit operations and verifies artifact installation", async () => {
+  const operations: string[] = [];
+  const adapter = new AndroidAdbAdapter({
+    now: () => now,
+    executor: {
+      async inventory() { operations.push("inventory"); return { serial: "head-unit-1", model: "Linaro P", androidVersion: "7.1.2" }; },
+      async readPackages() { operations.push("packages"); return [{ packageId: "com.example.carplay", versionName: "1.0" }]; },
+      async readLogs() { operations.push("logs"); return "carplay ready"; },
+      async installArtifact() { operations.push("install"); return { accepted: true, packageId: "com.example.carplay", versionName: "1.0" }; },
+      async reboot() { operations.push("reboot"); return { accepted: true }; },
+    },
+  });
+  const profile = await adapter.discover({ connectionRef: "adb:head-unit-1", ownerId: "pc-1" });
+  assert.equal(profile.device.kind, "head_unit");
+  const action = await adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" } });
+  assert.equal("action" in action ? action.action.status : action.status, "completed");
+  const actionResult = "action" in action ? action.action : action;
+  assert.equal((await adapter.verify({ profile, request: { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" }, action: actionResult })).status, "verified");
+  assert.deepEqual(operations, ["inventory", "install", "packages"]);
 });
