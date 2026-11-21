@@ -19,6 +19,13 @@ export class SqliteAppServerStateStore {
     return row ? mapRecord(row) : undefined;
   }
 
+  findByIdempotencyKey(kind: AppServerStateKind, idempotencyKey: string, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord | undefined {
+    const row = this.context.database.prepare(`
+      SELECT * FROM app_server_state WHERE workspace_id = ? AND kind = ? AND idempotency_key = ?
+    `).get(workspaceId, kind, idempotencyKey);
+    return row ? mapRecord(row) : undefined;
+  }
+
   list(kind?: AppServerStateKind, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord[] {
     const rows = kind === undefined
       ? this.context.database.prepare("SELECT * FROM app_server_state WHERE workspace_id = ? ORDER BY updated_at DESC, record_id ASC").all(workspaceId)
@@ -27,55 +34,60 @@ export class SqliteAppServerStateStore {
   }
 
   put(input: PutAppServerStateInput, now: string): PutAppServerStateResult | undefined {
-    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
-    if (!input.recordId.trim()) throw new Error("app_server_state_record_id_required");
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
-      const existing = this.get(input.kind, input.recordId, workspaceId);
-      if (existing?.idempotencyKey && input.idempotencyKey === existing.idempotencyKey) {
-        if (JSON.stringify(existing.payload) !== JSON.stringify(input.payload)) throw new Error("app_server_state_idempotency_conflict");
-        this.context.database.exec("COMMIT");
-        return { status: "replayed", record: existing };
-      }
-      if (input.expectedRevision !== undefined && input.expectedRevision !== (existing?.revision ?? 0)) {
-        this.context.database.exec("ROLLBACK");
-        return undefined;
-      }
-      const record: AppServerStateRecord = {
-        workspaceId,
-        kind: input.kind,
-        recordId: input.recordId,
-        revision: (existing?.revision ?? 0) + 1,
-        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
-        payload: input.payload,
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-      };
-      this.context.database.prepare(`
-        INSERT INTO app_server_state (
-          workspace_id, kind, record_id, revision, idempotency_key, payload_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(workspace_id, kind, record_id) DO UPDATE SET
-          revision = excluded.revision,
-          idempotency_key = excluded.idempotency_key,
-          payload_json = excluded.payload_json,
-          updated_at = excluded.updated_at
-      `).run(
-        record.workspaceId,
-        record.kind,
-        record.recordId,
-        record.revision,
-        record.idempotencyKey ?? null,
-        stringifyJson(record.payload),
-        record.createdAt,
-        record.updatedAt,
-      );
+      const result = this.putWithinTransaction(input, now);
       this.context.database.exec("COMMIT");
-      return { status: existing ? "updated" : "created", record };
+      return result;
     } catch (error) {
       try { this.context.database.exec("ROLLBACK"); } catch { /* preserve original */ }
       throw error;
     }
+  }
+
+  putWithinTransaction(input: PutAppServerStateInput, now: string): PutAppServerStateResult | undefined {
+    if (!this.context.database.isTransaction) throw new Error("app_server_state_requires_transaction");
+    if (!input.recordId.trim()) throw new Error("app_server_state_record_id_required");
+    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+    const existing = this.get(input.kind, input.recordId, workspaceId);
+    if (existing?.idempotencyKey && input.idempotencyKey === existing.idempotencyKey) {
+      if (JSON.stringify(existing.payload) !== JSON.stringify(input.payload)) throw new Error("app_server_state_idempotency_conflict");
+      return { status: "replayed", record: existing };
+    }
+    if (input.expectedRevision !== undefined && input.expectedRevision !== (existing?.revision ?? 0)) {
+      return undefined;
+    }
+    const idempotencyKey = input.idempotencyKey ?? existing?.idempotencyKey;
+    const record: AppServerStateRecord = {
+      workspaceId,
+      kind: input.kind,
+      recordId: input.recordId,
+      revision: (existing?.revision ?? 0) + 1,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      payload: input.payload,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.context.database.prepare(`
+      INSERT INTO app_server_state (
+        workspace_id, kind, record_id, revision, idempotency_key, payload_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(workspace_id, kind, record_id) DO UPDATE SET
+        revision = excluded.revision,
+        idempotency_key = excluded.idempotency_key,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `).run(
+      record.workspaceId,
+      record.kind,
+      record.recordId,
+      record.revision,
+      record.idempotencyKey ?? null,
+      stringifyJson(record.payload),
+      record.createdAt,
+      record.updatedAt,
+    );
+    return { status: existing ? "updated" : "created", record };
   }
 
   delete(kind: AppServerStateKind, recordId: string, workspaceId = DEFAULT_WORKSPACE_ID): boolean {

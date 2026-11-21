@@ -1,4 +1,4 @@
-export type AppServerStateKind = "verify_plan" | "verify_operation" | "external_federation";
+export type AppServerStateKind = "verify_plan" | "verify_operation" | "external_federation" | "work_item_acceptance";
 
 export interface AppServerStateRecord {
   readonly workspaceId: string;

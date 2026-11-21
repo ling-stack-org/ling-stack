@@ -17,7 +17,6 @@ import type {
   LingAppServerReviewStatusResult,
   LingAppServerSimplifyStartParams,
   LingAppServerSimplifyStartResult,
-  LingAppServerVerificationCheckKind,
   LingAppServerVerificationCheckPlan,
   LingAppServerVerificationCheckStatus,
   LingAppServerVerifyCancelParams,
@@ -33,17 +32,13 @@ import type {
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../context.js";
 import type { ActiveRunRegistry } from "../runtime/active-runs.js";
-import type { RunStore } from "@ling-stack/core";
+import type { AppServerStateRecord, RunStore } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
 import { startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
+import { verificationRecipes } from "./app-server-verification-recipes.js";
 
 const DEFAULT_PROVIDER_PRESET = "default";
-const DEFAULT_CHECKS: readonly { readonly id: string; readonly kind: LingAppServerVerificationCheckKind; readonly label: string; readonly command: string; readonly required: boolean }[] = [
-  { id: "typecheck", kind: "typecheck", label: "Typecheck", command: "pnpm typecheck:ci", required: true },
-  { id: "test", kind: "test", label: "Tests", command: "pnpm test", required: true },
-];
-
 type VerifyRecord = {
   readonly operation: LingAppServerVerifyOperation;
   readonly plan: LingAppServerVerifyPlanResult;
@@ -60,65 +55,70 @@ export interface AppServerDevelopmentOptions {
     readonly cwd: string;
     readonly check: LingAppServerVerificationCheckPlan;
     readonly candidate: LingAppServerCandidateReference;
-    readonly signal?: AbortSignal;
+    readonly signal: AbortSignal;
   }) => Promise<LingAppServerVerificationCheckStatus>;
 }
 
-/**
- * App Server development methods share the existing code-assessment and doctor
- * owners. The RPC transport owns authorization and dispatch. This class only
- * maps typed App Server requests to those owners and keeps a bounded operation
- * projection for verification and simplify until their durable operation store
- * is connected by the daemon composition root.
- */
+/** Coordinates durable verification state and delegates code assessment to its Run owner. */
 export class AppServerDevelopmentService {
-  private readonly plans = new Map<string, LingAppServerVerifyPlanResult>();
-  private readonly verifications = new Map<string, VerifyRecord>();
+  private readonly activeVerifications = new Map<string, AbortController>();
 
   constructor(private readonly options: AppServerDevelopmentOptions) {}
 
   async planVerification(input: LingAppServerVerifyPlanParams): Promise<LingAppServerVerifyPlanResult> {
-    const candidate = normalizeCandidate(input.candidate);
-    const requested = input.requestedChecks?.length ? input.requestedChecks : DEFAULT_CHECKS.map(check => check.id);
-    const checks = requested.map((id) => {
-      const known = DEFAULT_CHECKS.find(check => check.id === id);
-      const kind = known?.kind ?? inferCheckKind(id);
-      const label = known?.label ?? id;
-      const command = known?.command ?? id;
+    const cwd = requireCwd(input.cwd ?? input.candidate.workspaceId);
+    const store = this.storeRegistry().getStore(cwd);
+    const candidate = { ...input.candidate, workspaceId: store.paths.cwd };
+    const checks = verificationRecipes(input.requestedChecks).map(({ id, kind, label, argv, required }) => {
       return {
         checkId: id,
         kind,
         label,
-        command,
-        recipeDigest: digest(JSON.stringify({ id, kind, command, candidateDigest: candidate.candidateDigest })),
-        verifierBasisRef: input.planRevision,
-        required: known?.required ?? false,
+        ...(argv.length ? { command: argv.join(" ") } : {}),
+        recipeDigest: digest(JSON.stringify({ id, kind, argv, candidateDigest: candidate.candidateDigest })),
+        ...(input.planRevision ? { verifierBasisRef: input.planRevision } : {}),
+        required,
       } satisfies LingAppServerVerificationCheckPlan;
     });
     const plan: LingAppServerVerifyPlanResult = {
       planId: `verify_plan_${randomUUID()}`,
-      planRevision: digest(JSON.stringify({ candidate, checks, requested: input.requestedChecks ?? [] })),
+      planRevision: digest(JSON.stringify({ candidate, checks })),
       candidate,
       checks,
       rationale: ["Selected deterministic workspace checks for the candidate."],
       environmentRequirements: ["workspace_store", "authorized_host_execution"],
     };
-    this.plans.set(plan.planId, plan);
-    this.persistState("verify_plan", plan.planId, plan, candidate.workspaceId, input.idempotencyKey);
+    const prior = input.idempotencyKey && store.findAppServerStateByIdempotencyKey("verify_plan", input.idempotencyKey);
+    if (prior) {
+      const retained = prior.payload as LingAppServerVerifyPlanResult;
+      if (retained.planRevision !== plan.planRevision) throw verificationConflict();
+      return retained;
+    }
+    store.putAppServerState({ kind: "verify_plan", recordId: plan.planId, payload: plan, idempotencyKey: input.idempotencyKey }, new Date().toISOString());
     return plan;
   }
 
   async startVerification(input: LingAppServerVerifyStartParams): Promise<LingAppServerVerifyOperation> {
-    const plan = this.plans.get(input.planId) ?? this.loadPlan(input.planId);
+    const store = this.workspaceStore(input.cwd);
+    const plan = store.getAppServerState("verify_plan", input.planId)?.payload as LingAppServerVerifyPlanResult | undefined;
     if (!plan || plan.planRevision !== input.planRevision || plan.candidate.candidateDigest !== input.candidateDigest) {
-      throw new Error("Verification plan is stale or unavailable.");
+      throw Object.assign(new Error("Verification plan is stale or unavailable."), { jsonRpcCode: -32030, code: "stale_revision" });
+    }
+    if (!input.idempotencyKey?.trim()) throw Object.assign(new Error("An idempotency key is required."), { jsonRpcCode: -32602, code: "invalid_params" });
+    const existing = store.findAppServerStateByIdempotencyKey("verify_operation", input.idempotencyKey);
+    if (existing) {
+      const value = existing.payload as VerifyRecord;
+      if (value.plan.planId !== plan.planId || value.plan.planRevision !== plan.planRevision) throw verificationConflict();
+      return this.readVerification(store, existing).operation;
     }
     const operationId = `verify_${randomUUID()}`;
+    const queued = Boolean(this.options.executeVerificationCheck);
     const operation: LingAppServerVerifyOperation = {
       operationId,
       planId: plan.planId,
       candidateDigest: plan.candidate.candidateDigest,
-      status: "queued",
+      status: queued ? "queued" : "blocked",
+      ...(queued ? {} : { blocker: "verification_executor_unavailable", completedAt: new Date().toISOString() }),
       checks: plan.checks.map(check => ({
         checkId: check.checkId,
         candidateDigest: plan.candidate.candidateDigest,
@@ -128,39 +128,46 @@ export class AppServerDevelopmentService {
         ...(check.verifierBasisRef ? { verifierBasisRef: check.verifierBasisRef } : {}),
         producerRefs: [],
         attemptId: `verify_attempt_${randomUUID()}`,
-        status: "pending",
+        status: queued ? "pending" : "not_run",
         evidenceRefs: [],
       })),
     };
-    this.verifications.set(operationId, { operation, plan, cancelRequested: false });
-    this.persistState("verify_operation", operationId, { operation, plan, cancelRequested: false }, plan.candidate.workspaceId, input.idempotencyKey);
-    void this.executeVerification(operationId, input.idempotencyKey);
+    const payload: VerifyRecord = { operation, plan, cancelRequested: false };
+    store.putAppServerState({ kind: "verify_operation", recordId: operationId, payload, idempotencyKey: input.idempotencyKey }, new Date().toISOString());
+    if (this.options.executeVerificationCheck) {
+      const controller = new AbortController();
+      this.activeVerifications.set(operationId, controller);
+      const settled = this.executeVerification(store, operationId, controller.signal, this.options.executeVerificationCheck)
+        .catch(() => { /* In-flight state is reconciled by the next authorized read. */ })
+        .finally(() => this.activeVerifications.delete(operationId));
+      this.options.activeRuns?.trackCompletion(settled);
+    }
     return operation;
   }
 
   getVerification(input: LingAppServerVerifyStatusParams): LingAppServerVerifyStatusResult {
-    const record = this.verifications.get(input.operationId) ?? this.loadVerification(input.operationId);
+    const store = this.workspaceStore(input.cwd);
+    const record = store.getAppServerState("verify_operation", input.operationId);
     if (!record) throw new Error("Verification operation was not found.");
-    return { operation: record.operation };
+    return { operation: this.readVerification(store, record).operation };
   }
 
   cancelVerification(input: LingAppServerVerifyCancelParams): LingAppServerVerifyCancelResult {
-    const record = this.verifications.get(input.operationId);
-    if (!record) return { operationId: input.operationId, status: "unknown" };
-    if (["passed", "failed", "blocked", "cancelled", "unknown"].includes(record.operation.status)) {
+    const store = this.workspaceStore(input.cwd);
+    const stored = store.getAppServerState("verify_operation", input.operationId);
+    if (!stored) return { operationId: input.operationId, status: "unknown" };
+    const record = this.readVerification(store, stored);
+    if (record.operation.status === "unknown") return { operationId: input.operationId, status: "unknown" };
+    if (!verificationInFlight(record)) {
       return { operationId: input.operationId, status: "already_terminal" };
     }
-    this.verifications.set(input.operationId, {
-      ...record,
-      cancelRequested: true,
-      operation: { ...record.operation, status: "cancelled", completedAt: new Date().toISOString() },
-    });
-    this.persistState("verify_operation", input.operationId, {
-      ...record,
-      cancelRequested: true,
-      operation: { ...record.operation, status: "cancelled", completedAt: new Date().toISOString() },
-    }, record.plan.candidate.workspaceId, input.idempotencyKey);
-    return { operationId: input.operationId, status: "cancelled" };
+    if (!record.cancelRequested) this.updateVerification(store, stored, { ...record, cancelRequested: true });
+    this.activeVerifications.get(input.operationId)?.abort();
+    return { operationId: input.operationId, status: "cancel_requested" };
+  }
+
+  abortVerifications(): void {
+    for (const controller of this.activeVerifications.values()) controller.abort();
   }
 
   async startReview(input: LingAppServerReviewStartParams): Promise<LingAppServerReviewStartResult> {
@@ -187,7 +194,7 @@ export class AppServerDevelopmentService {
 
   getReviewStatus(input: LingAppServerReviewStatusParams): LingAppServerReviewStatusResult {
     if (!input.assessmentId) throw new Error("assessmentId is required.");
-    const cwd = this.options.context.config.defaultWorkspaceCwd;
+    const cwd = requireCwd(input.cwd ?? this.options.context.config.defaultWorkspaceCwd);
     const detail = this.storeRegistry().getStore(cwd).getCodeAssessment(input.assessmentId);
     if (!detail) throw new Error("Code assessment was not found.");
     return {
@@ -201,7 +208,7 @@ export class AppServerDevelopmentService {
   }
 
   async updateReviewFinding(input: LingAppServerReviewFindingUpdateParams): Promise<LingAppServerReviewFindingUpdateResult> {
-    const store = this.storeRegistry().getStore(this.options.context.config.defaultWorkspaceCwd);
+    const store = this.storeRegistry().getStore(requireCwd(input.cwd ?? this.options.context.config.defaultWorkspaceCwd));
     const detail = requireAssessment(store, input.assessmentId);
     const finding = detail.findings.find(item => item.id === input.findingId);
     if (!finding) throw new Error("Code assessment finding was not found.");
@@ -288,75 +295,88 @@ export class AppServerDevelopmentService {
     return this.options.storeRegistry ?? this.options.context.storeRegistry;
   }
 
-  private async executeVerification(operationId: string, _idempotencyKey: string): Promise<void> {
-    const record = this.verifications.get(operationId) ?? this.loadVerification(operationId);
-    if (!record || !this.options.executeVerificationCheck) return;
-    this.verifications.set(operationId, { ...record, operation: { ...record.operation, status: "running", startedAt: new Date().toISOString() } });
-    this.persistState("verify_operation", operationId, this.verifications.get(operationId)!, record.plan.candidate.workspaceId);
-    let failed = false;
-    const checks = [...record.operation.checks];
-    for (let index = 0; index < checks.length; index++) {
-      const current = this.verifications.get(operationId);
-      if (!current || current.cancelRequested) return;
-      const planCheck = record.plan.checks[index]!;
-      const status = await this.options.executeVerificationCheck({ cwd: record.plan.candidate.workspaceId, check: planCheck, candidate: record.plan.candidate });
-      checks[index] = { ...checks[index]!, status };
-      failed ||= status === "failed" || status === "unknown";
-      this.verifications.set(operationId, { ...current, operation: { ...current.operation, checks: [...checks] } });
-      this.persistState("verify_operation", operationId, this.verifications.get(operationId)!, record.plan.candidate.workspaceId);
-    }
-    const current = this.verifications.get(operationId);
-    if (!current) return;
-    this.verifications.set(operationId, { ...current, operation: { ...current.operation, status: failed ? "failed" : "passed", completedAt: new Date().toISOString() } });
-    this.persistState("verify_operation", operationId, this.verifications.get(operationId)!, record.plan.candidate.workspaceId);
+  private workspaceStore(cwd?: string): RunStore {
+    return this.storeRegistry().getStore(requireCwd(cwd ?? this.options.context.config.defaultWorkspaceCwd));
   }
 
-  private storeForCwd(cwd: string): RunStore | undefined {
-    try { return this.storeRegistry().getStore(cwd); } catch { return undefined; }
-  }
-
-  private persistState(kind: "verify_plan" | "verify_operation", recordId: string, payload: unknown, cwd: string, idempotencyKey?: string): void {
-    const store = this.storeForCwd(cwd);
-    if (!store?.putAppServerState) return;
-    try { store.putAppServerState({ kind, recordId, payload, ...(idempotencyKey ? { idempotencyKey } : {}) }, new Date().toISOString()); } catch { /* durable state is best effort for legacy embeddings */ }
-  }
-
-  private loadPlan(planId: string): LingAppServerVerifyPlanResult | undefined {
-    const store = this.storeForCwd(this.options.context.config.defaultWorkspaceCwd);
-    const record = store?.getAppServerState?.("verify_plan", planId);
-    const plan = record?.payload as LingAppServerVerifyPlanResult | undefined;
-    if (!plan || plan.planId !== planId) return undefined;
-    this.plans.set(planId, plan);
-    return plan;
-  }
-
-  private loadVerification(operationId: string): VerifyRecord | undefined {
-    const store = this.storeForCwd(this.options.context.config.defaultWorkspaceCwd);
-    const record = store?.getAppServerState?.("verify_operation", operationId);
-    const value = record?.payload as VerifyRecord | undefined;
-    if (!value || value.operation?.operationId !== operationId) return undefined;
-    if (value.operation.status === "queued" || value.operation.status === "running") {
-      const recovered: VerifyRecord = {
-        ...value,
-        cancelRequested: false,
-        operation: {
-          ...value.operation,
-          status: "unknown",
-          completedAt: new Date().toISOString(),
-          blocker: "daemon_restart_reconciliation_required",
-        },
-      };
-      this.verifications.set(operationId, recovered);
-      this.persistState("verify_operation", operationId, recovered, value.plan.candidate.workspaceId, record ? record.idempotencyKey : undefined);
+  private readVerification(store: RunStore, stored: AppServerStateRecord): VerifyRecord {
+    const record = stored.payload as VerifyRecord;
+    if (verificationInFlight(record) && !this.activeVerifications.has(stored.recordId)) {
+      const recovered = finishVerification(record, "unknown", "daemon_restart_reconciliation_required");
+      this.updateVerification(store, stored, recovered);
       return recovered;
     }
-    this.verifications.set(operationId, value);
-    return value;
+    return record;
+  }
+
+  private updateVerification(store: RunStore, stored: AppServerStateRecord, record: VerifyRecord): AppServerStateRecord {
+    const result = store.putAppServerState({
+      kind: "verify_operation", recordId: stored.recordId, expectedRevision: stored.revision, payload: record,
+    }, new Date().toISOString());
+    if (!result) throw new Error("Verification operation revision changed.");
+    return result.record;
+  }
+
+  private async executeVerification(
+    store: RunStore,
+    operationId: string,
+    signal: AbortSignal,
+    executeCheck: NonNullable<AppServerDevelopmentOptions["executeVerificationCheck"]>,
+  ): Promise<void> {
+    let stored = store.getAppServerState("verify_operation", operationId)!;
+    let record = stored.payload as VerifyRecord;
+    record = { ...record, operation: { ...record.operation, status: "running", startedAt: new Date().toISOString() } };
+    stored = this.updateVerification(store, stored, record);
+    for (const check of record.plan.checks) {
+      if (record.cancelRequested || signal.aborted) break;
+      stored = this.updateVerification(store, stored, setCheckStatus(record, check.checkId, "running"));
+      let status: LingAppServerVerificationCheckStatus;
+      try {
+        status = await executeCheck({ cwd: store.paths.cwd, check, candidate: record.plan.candidate, signal });
+      } catch {
+        status = "unknown";
+      }
+      stored = store.getAppServerState("verify_operation", operationId)!;
+      record = setCheckStatus(stored.payload as VerifyRecord, check.checkId, status);
+      stored = this.updateVerification(store, stored, record);
+    }
+    const statuses = record.operation.checks.map(check => check.status);
+    const status = statuses.includes("unknown") ? "unknown"
+      : record.cancelRequested || signal.aborted || statuses.includes("cancelled") ? "cancelled"
+      : statuses.includes("failed") ? "failed"
+      : statuses.every(status => status === "passed") ? "passed"
+      : "blocked";
+    this.updateVerification(store, stored, finishVerification(record, status));
   }
 }
 
-function normalizeCandidate(candidate: LingAppServerCandidateReference): LingAppServerCandidateReference {
-  return { ...candidate, workspaceId: requireCwd(candidate.workspaceId) };
+function verificationConflict(): Error {
+  return Object.assign(new Error("Verification idempotency key was reused with a different request."), { jsonRpcCode: -32031, code: "idempotency_conflict" });
+}
+
+function verificationInFlight(record: VerifyRecord): boolean {
+  return record.operation.status === "queued" || record.operation.status === "running";
+}
+
+function setCheckStatus(record: VerifyRecord, checkId: string, status: LingAppServerVerificationCheckStatus): VerifyRecord {
+  const checks = record.operation.checks.map(check => check.checkId === checkId ? { ...check, status } : check);
+  return { ...record, operation: { ...record.operation, checks } };
+}
+
+function finishVerification(
+  record: VerifyRecord,
+  status: Exclude<LingAppServerVerifyOperation["status"], "queued" | "running">,
+  blocker?: string,
+): VerifyRecord {
+  const checks = record.operation.checks.map(check => ({
+    ...check,
+    status: check.status === "pending" ? "not_run" as const
+      : check.status === "running" ? "unknown" as const : check.status,
+  }));
+  return {
+    ...record,
+    operation: { ...record.operation, checks, status, completedAt: new Date().toISOString(), ...(blocker ? { blocker } : {}) },
+  };
 }
 
 function assessmentTarget(candidate: LingAppServerCandidateReference): CreateCodeAssessmentRequest["target"] {
@@ -381,14 +401,6 @@ function requireAssessment(store: RunStore, assessmentId: string): CodeAssessmen
   return detail;
 }
 
-function inferCheckKind(id: string): LingAppServerVerificationCheckKind {
-  if (/type|tsc|compile/u.test(id)) return "typecheck";
-  if (/browser|playwright|e2e/u.test(id)) return "browser";
-  if (/platform|ios|macos|android/u.test(id)) return "platform";
-  if (/test|spec|vitest|jest/u.test(id)) return "test";
-  return "command";
-}
-
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -402,6 +414,7 @@ function requireCwd(value: string): string {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
 
 async function instructionPaths(cwd: string, taskPath: string): Promise<readonly string[]> {
   const paths: string[] = [];

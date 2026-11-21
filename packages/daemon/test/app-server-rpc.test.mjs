@@ -39,6 +39,16 @@ test("App Server WebSocket negotiates the Ling protocol and supports ping", { ti
     assert.equal(ping.result.ok, true);
     assert.equal(ping.result.connectionId, initialized.result.connectionId);
     assert.equal(typeof ping.result.serverTime, "string");
+
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "server/capabilities" }));
+    const capabilities = (await waitFor(messages, message => message.id === 3)).result;
+    assert.ok(capabilities.methods.includes("worktree/list"));
+    assert.ok(capabilities.methods.includes("thread/subscribe"));
+    assert.ok(!capabilities.methods.includes("changes/apply"));
+    assert.ok(!capabilities.methods.includes("approval/respond"));
+    assert.ok(!initialized.result.effectiveScopes.includes("approval.decide"));
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "approval/respond", params: { approvalId: "pending-approval", decision: "approve" } }));
+    assert.equal((await waitFor(messages, message => message.id === 4)).error.data.code, "authorization_required");
   } finally {
     socket.terminate();
     await daemon.stop();

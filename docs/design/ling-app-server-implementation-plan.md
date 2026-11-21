@@ -1,17 +1,19 @@
 # Ling App Server 与开发工作流实施计划
 
-- **状态** App Server 与 Agent Operating Model 的实现分支，核心协议与协作切片已落地，联合发布验收仍在进行
+- **状态** App Server WebSocket、Verify、Work Item 与 External Agent 已进入 PR 验收。完整发行和自研准入仍待联合验收
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** 2026-11-21，`origin/main@1ac260606`
+- **核对基线** 2026-11-21，`origin/main@a23aaf5d8`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
 
 ## 当前实现证据
 
+当前支持回环 WebSocket 和 TypeScript 客户端。使用 `server/capabilities` 确认当前连接的方法，支持范围随 Daemon 认证和已有能力变化。上一版的 HTTP/SSE 与 `/rpc/stream` 沿用原入口。只有持 Daemon bearer 的客户端可提交 Run 审批和提问答案、启动 Verify 或 Review，以及触发满足 conformance 的只读外部 Runner 派发。连接按工作区绑定。未登记的检查显示 `blocked`。
+
 实现分支已经把协议合同、WebSocket 协商、Thread/Turn 生命周期、Work Item 控制与证据、开发工作流入口、协作记录、审议触发策略、外部 Agent 注册与任务受理接入同一个 App Server RPC。协作记录复用 Work Item 证据板的持久 CAS 与幂等边界，外部 Agent 任务在派发前核对 Work Item 当前 revision 和 control state。
 
-已验证的关键回归包括 App Server WebSocket、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation 与 API Client。Verify plan/operation 和 Federation ledger 已接入工作区 SQLite 的 `app_server_state`，Daemon 重启后会恢复终态记录，并把无法确认的 queued/running Verify 标记为 `unknown`，要求重新核对。外部任务在 Work Item revision/control、Runner external boundary、工具 conformance 和 admission fence 通过后调用已配置的真实 Adapter，Adapter 失败保留 `unknown`，未配置可执行 Runner 时保留受理回执并等待 owner dispatch。联合重连、真实 Provider 和发布矩阵已纳入定向验收，完整 hosted CI 与人工合并仍属于 PR 阶段。
+已验证的关键回归包括 App Server WebSocket、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation 与 API Client。Verify plan/operation 和 Federation ledger 已接入工作区 SQLite 的 app_server_state，按来源工作区恢复，Daemon 重启后会把无法确认的 queued/running Verify 和外部 running task 标记为 unknown，要求原所有者重新核对。Verify 只接受主机登记的配方，执行前后核对候选 digest，重复 start/cancel 使用同一收据，取消会传递给实际检查进程。Work Item acceptance 通过同一 SQLite 事务写入 receipt、状态和 revision。外部任务在 Work Item revision/control、Runner external boundary、工具 conformance、只读工具范围和 admission fence 通过后调用已配置的真实 Adapter，重复提交不重复派发，Adapter 失败、取消未确认和断线重启均保留 unknown。App Server 的 operator 写操作要求认证凭据，能力与方法表只公布当前连接可用的实现。联合重连、真实 Provider 和发布矩阵已纳入定向验收，完整 hosted CI 与人工合并仍属于 PR 阶段。
 
 ## 目标与开工顺序
 
@@ -143,6 +145,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 交付与审查 | 同一候选、独立审查和 CI 回执 | 修复可追溯到发现和实际回归。Goal 逐项核对候选和必需发现处置，通过当前适用的检查结果确认 CI 条件。 |
 | 真实 Codex | 现成客户端 + 本机 MCP，以及连接两端服务的可编程宿主 | 现成 Codex 可提交、按游标读取和控制任务。宿主视图在真实 Codex 与 Ling 同时连接时持续显示 Ling 事件，可提交明确干预并在重连后补齐。记下实际宿主、入口、可观察界面和版本。 |
 | 平台与安装 | macOS/Linux 的 stdio/Unix socket/WS，Windows 的 stdio/WS。覆盖声明的远程 WSS 与实际发布客户端 | 记录目标 OS、架构、安装包、传输和认证方式、退出和资源清理结果。安装、签名、命令沙箱和真实远程路由结果各有证据。 |
+| App Server operator 边界 | 认证及未认证的回环连接，两个工作区，受理中的 Run、Approval、Verify 与 External Agent | Verify 启动和取消、Review 写入、Approval/Input 决策以及外部 Adapter 派发仅向具备对应授权的连接开放。能力发现只返回当前可调用的方法。 |
 | 项目自研 | 以下三个真实任务，稳定工具链与候选实例隔离 | 代码行为和运行状态都能复核。记录任务完成、约束遗漏、人工纠正、使用的模型和验证结果。 |
 | Agent Work Item | 频道、GitHub、Automation、外部 Agent 和设备节点的统一收件箱 | 来源版本、现有派发回执、Goal、Run、Delivery 和反馈可追溯。重复源与并发提交返回同一回执。Workflow 内的授权并行步骤各自持有执行记录。 |
 | 跨入口归并与首次受理 | 临时 SQLite、GitHub webhook、两个分别从对话和 Codex 提交结构化引用的获准调用方，以及一个受限调用方 | 打乱 webhook、对话和 Codex 的到达及重试顺序，工作区内只有一个默认主执行及初始派发，各入口回执可追溯。另测受信 PR 关联、相似文字、越权引用、先受理后断线，以及获准另行执行后默认归属的读取。 |
@@ -160,6 +163,8 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 审议与执行边界 | 固定候选、scripted Provider、真实 Daemon 和两个客户端 | 按配置开启审议后能查触发依据，事实解决则直接汇总。开票时封存候选与证据，平票后保留结果和裁决依据。覆盖票不足、必需检查失败、重启、取消和候选变化。审批、Verify、Review 和交付保持各自的证据要求。 |
 
 ### 三个实际开发任务
+
+发行验收还需取得真实 Codex MCP 和双 App Server 宿主、签名安装包与多平台传输、发行版本双向兼容、回退后 journal 对账的实测证据。本 PR 的 WebSocket/SQLite 回归与受控 Runner 证据覆盖下表的子场景。工作区自动规则加载、完整 GitHub 交付、定时协作和跨角色阶段交接按各自工作包继续验收。
 
 与 [Framework Assurance](ling-framework-complementary-implementation-plan.md) 复用基线、证据来源绑定和真实试点准入。开始真实 Provider 验收之前，从仓库历史固定任务的起始提交、环境、验证策略和验收断言。保存红测或前置行为作为输入，运行方只收到任务和授权的仓库上下文。
 

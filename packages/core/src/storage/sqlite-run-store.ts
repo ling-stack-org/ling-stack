@@ -6102,6 +6102,10 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.routeWorkItem(id, input, now);
   }
 
+  acceptWorkItem(id: string, input: import("../work-item-types.js").WorkItemAcceptanceRequest, now: string): import("../work-item-types.js").WorkItemAcceptanceResult | undefined {
+    return this.workItems.acceptWorkItem(id, input, now, this.appServerState);
+  }
+
   claimWorkItem(
     id: string,
     input: WorkItemClaimRequest,
@@ -6140,6 +6144,10 @@ export class SqliteRunStore implements RunStore {
 
   getAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
     return this.appServerState.get(kind, recordId, workspaceId);
+  }
+
+  findAppServerStateByIdempotencyKey(kind: import("../app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
+    return this.appServerState.findByIdempotencyKey(kind, idempotencyKey, workspaceId);
   }
 
   listAppServerState(kind?: import("../app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord[] {

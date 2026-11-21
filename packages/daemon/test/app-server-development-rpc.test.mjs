@@ -41,10 +41,24 @@ test("App Server exposes development checks and external Agent admission", { tim
     const plan = await waitFor(messages, message => message.id === 4);
     assert.equal(plan.result.checks.length, 1);
     assert.equal(plan.result.checks[0].kind, "typecheck");
+    send(40, "verify/start", {
+      planId: plan.result.planId, planRevision: plan.result.planRevision,
+      candidateDigest: "candidate-rpc", idempotencyKey: "start-without-operator",
+    });
+    assert.equal((await waitFor(messages, message => message.id === 40)).error.data.code, "authorization_required");
 
     send(5, "workItem/create", { cwd, sourceType: "manual", sourceId: "external-rpc", title: "External task" });
     const created = await waitFor(messages, message => message.id === 5);
-    const workItem = created.result.workItem;
+    assert.equal(created.result.workItem.status, "intake");
+    const acceptance = { workItemId: created.result.workItem.workItemId, expectedWorkItemRevision: Number(created.result.workItem.revision), idempotencyKey: "accept-rpc-1" };
+    send(50, "workItem/accept", acceptance);
+    const accepted = (await waitFor(messages, message => message.id === 50)).result;
+    assert.equal(accepted.workItem.status, "ready");
+    send(51, "workItem/accept", acceptance);
+    const replayed = (await waitFor(messages, message => message.id === 51)).result;
+    assert.equal(replayed.replayed, true);
+    assert.deepEqual(replayed.acceptance, accepted.acceptance);
+    const workItem = accepted.workItem;
     send(6, "externalAgent/register", {
       registration: {
         agentId: "agent-rpc",

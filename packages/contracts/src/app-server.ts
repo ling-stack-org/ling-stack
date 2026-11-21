@@ -593,6 +593,7 @@ export interface LingAppServerVerifyPlanResult {
 }
 
 export interface LingAppServerVerifyStartParams {
+  readonly cwd?: string;
   readonly planId: string;
   readonly planRevision: string;
   readonly candidateDigest: string;
@@ -625,6 +626,7 @@ export interface LingAppServerVerifyOperation {
 }
 
 export interface LingAppServerVerifyStatusParams {
+  readonly cwd?: string;
   readonly operationId: string;
 }
 
@@ -633,6 +635,7 @@ export interface LingAppServerVerifyStatusResult {
 }
 
 export interface LingAppServerVerifyCancelParams {
+  readonly cwd?: string;
   readonly operationId: string;
   readonly expectedRevision?: string;
   readonly idempotencyKey: string;
@@ -661,6 +664,7 @@ export interface LingAppServerReviewStartResult {
 }
 
 export interface LingAppServerReviewStatusParams {
+  readonly cwd?: string;
   readonly operationId?: string;
   readonly assessmentId?: string;
 }
@@ -675,6 +679,7 @@ export interface LingAppServerReviewStatusResult {
 }
 
 export interface LingAppServerReviewFindingUpdateParams {
+  readonly cwd?: string;
   readonly assessmentId: string;
   readonly findingId: string;
   readonly disposition: "open" | "acknowledged" | "resolved" | "dismissed";
@@ -837,6 +842,7 @@ export interface LingAppServerExternalAgentTaskReceipt {
 
 export interface LingAppServerExternalAgentTaskStartResult {
   readonly task: LingAppServerExternalAgentTaskReceipt;
+  readonly replayed?: true;
 }
 
 export interface LingAppServerExternalAgentTaskReconnectParams {
@@ -848,6 +854,12 @@ export interface LingAppServerExternalAgentTaskReconnectParams {
 
 export interface LingAppServerExternalAgentTaskReconnectResult {
   readonly task: LingAppServerExternalAgentTaskReceipt;
+  readonly events?: readonly {
+    readonly cursor: string;
+    readonly type: string;
+    readonly payload?: unknown;
+    readonly createdAt: string;
+  }[];
   readonly resyncRequired: boolean;
   readonly reason?: "cursor_unavailable" | "submission_conflict" | "authorization_changed";
 }

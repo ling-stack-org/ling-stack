@@ -2692,6 +2692,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   getWorkItem(id: string): WorkItem | undefined;
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
+  acceptWorkItem(id: string, input: import("./work-item-types.js").WorkItemAcceptanceRequest, now: string): import("./work-item-types.js").WorkItemAcceptanceResult | undefined;
   claimWorkItem(id: string, input: WorkItemClaimRequest, now: string): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined;
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined;
   releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined;
@@ -2701,6 +2702,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   getWorkItemEvidence(id: string): import("./work-item-evidence-types.js").WorkItemEvidenceEntry | undefined;
   listWorkItemEvidence(options: import("./work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("./work-item-evidence-types.js").WorkItemEvidenceEntry[];
   getAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
+  findAppServerStateByIdempotencyKey(kind: import("./app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   listAppServerState(kind?: import("./app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord[];
   putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
   deleteAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean;

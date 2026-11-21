@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import {
   DEFAULT_WORKSPACE_ID,
   evaluateDeliberationTrigger,
@@ -24,8 +24,11 @@ import {
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { daemonRequestIsAuthorized } from "./request-auth.js";
+import { isAllowedLocalOrigin, isDirectLoopbackRequest } from "../shared/local-workspace-access.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
+import { expireStaleApproval } from "../features/runs/approvals.js";
+import { reconcileApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import { HttpError } from "../errors.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
@@ -50,13 +53,16 @@ import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 import { AppServerDevelopmentService } from "./app-server-development.js";
+import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
+import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
+import { listManagedWorktrees } from "../features/workspaces/worktree-management.js";
 import {
   ExternalAgentFederationService,
   externalAgentRpcError,
   getExternalAgentFederation,
   type ExternalAgentFederationEvent,
 } from "../runtime/external-agent/federation.js";
-import { dispatchExternalAgentTask } from "../runtime/external-agent/task-dispatcher.js";
+import { assertDispatchReady, dispatchExternalAgentTask } from "../runtime/external-agent/task-dispatcher.js";
 import {
   AppServerCollaborationError,
   appendAppServerWorkItemCollaboration,
@@ -87,16 +93,32 @@ interface RpcSubscription {
 }
 
 export interface RpcWebSocketServerHandle {
+  beginShutdown(): void;
   close(): void;
 }
 
 const APP_SERVER_RPC_PATH = "/app-server/rpc";
+const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
+  "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
+  "thread/snapshot", "submission/read", "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
+  "context/inspect", "handoff/create", "handoff/read", "handoff/resume", "changes/read", "simplify/start",
+  "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
+  "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
+]);
+const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
+const operatorMethods = new Set(["approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update"]);
+const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   let closed = false;
+  let draining = false;
   const handleUpgrade: Parameters<Server["on"]>[1] = (request, socket, head) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
     if (url.pathname !== "/rpc/stream" && url.pathname !== APP_SERVER_RPC_PATH) {
+      return;
+    }
+    if (draining && url.pathname === APP_SERVER_RPC_PATH) {
+      rejectUpgrade(socket, 503, "App Server is draining.");
       return;
     }
     if (!context.config.transports.localWebSocketRpc) {
@@ -105,6 +127,10 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     }
     if (!daemonRequestIsAuthorized(context.config.authToken, request.headers.authorization)) {
       rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
+      return;
+    }
+    if (url.pathname === APP_SERVER_RPC_PATH && !context.config.authToken && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
+      rejectUpgrade(socket, 403, "WebSocket RPC access requires a direct loopback Ling page or bearer token.");
       return;
     }
     if (!url.searchParams.get("cwd")) {
@@ -123,13 +149,22 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
       url.searchParams.get("cwd") ?? context.config.defaultWorkspaceCwd,
       context,
       url.pathname === APP_SERVER_RPC_PATH,
+      Boolean(context.config.authToken),
+      () => draining,
     );
     connection.start();
   });
+  const beginShutdown = (): void => {
+    if (draining) return;
+    draining = true;
+    developmentByContext.get(context)?.abortVerifications();
+    for (const controller of activeExternalDispatches.get(context)?.values() ?? []) controller.abort();
+  };
   const closeAll = (): void => {
     if (closed) {
       return;
     }
+    beginShutdown();
     closed = true;
     server.off("upgrade", handleUpgrade);
     for (const client of wss.clients) {
@@ -138,14 +173,13 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     wss.close();
   };
   server.once("close", closeAll);
-  return { close: closeAll };
+  return { beginShutdown, close: closeAll };
 }
 
 class RpcConnection {
   private readonly subscriptions = new Map<string, RpcSubscription>();
   private readonly outbound: RpcOutboundWriter;
   private readonly development: AppServerDevelopmentService;
-  private readonly externalAgents: ExternalAgentFederationService;
   private readonly runCloseListeners = new Set<() => void>();
   private nextSubscriptionId = 1;
   private initialized = false;
@@ -154,7 +188,7 @@ class RpcConnection {
   private readonly pendingRequests = new Set<string>();
   private readonly cancelledRequests = new Set<string>();
   private readonly externalTaskIds = new Set<string>();
-  private readonly externalAgentUnsubscribe: () => void;
+  private externalAgentUnsubscribe?: () => void;
   private readonly onMessage = (data: RawData): void => { void this.handleMessage(data); };
   private readonly onConnectionClose = (): void => this.close();
   private readonly onConnectionError = (): void => this.close();
@@ -164,11 +198,11 @@ class RpcConnection {
     private readonly defaultCwd: string,
     private readonly context: DaemonContext,
     private readonly appServer: boolean,
+    private readonly authenticated: boolean,
+    private readonly draining: () => boolean,
   ) {
     this.outbound = new RpcOutboundWriter(ws, { onClose: () => this.close() });
     this.development = getAppServerDevelopmentService(context);
-    this.externalAgents = getExternalAgentFederation(context);
-    this.externalAgentUnsubscribe = this.externalAgents.subscribe((event) => this.handleExternalAgentEvent(event));
   }
 
   start(): void {
@@ -257,6 +291,10 @@ class RpcConnection {
   }
 
   private async dispatch(method: string, params: unknown): Promise<unknown> {
+    if (this.appServer && this.draining()
+      && !["initialize", "server/ping", "server/capabilities", "verify/status", "review/status", "externalAgent/task/reconnect"].includes(method)) {
+      throw rpcError(-32002, "server_draining", "App Server is draining.");
+    }
     switch (method) {
       case "initialize":
         this.validateInitializeParams(params);
@@ -265,8 +303,9 @@ class RpcConnection {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
           connectionId: this.connectionId,
-          effectiveScopes: ["controlPlane.read", "runs.control"],
-          capabilities: LING_APP_SERVER_IMPLEMENTED_CAPABILITIES,
+          effectiveScopes: ["controlPlane.read", "runs.control",
+            ...(this.authenticated ? ["approval.decide", "input.respond", "verification.execute"] : [])],
+          capabilities: this.availableCapabilities(),
           limits: {
             maxInboundFrameBytes: 1024 * 1024,
             maxOutboundFrameBytes: 128 * 1024,
@@ -285,14 +324,21 @@ class RpcConnection {
       case "server/capabilities":
         return {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
-          capabilities: LING_APP_SERVER_IMPLEMENTED_CAPABILITIES,
-          methods: LING_APP_SERVER_METHODS,
+          capabilities: this.availableCapabilities(),
+          methods: IMPLEMENTED_APP_SERVER_METHODS.filter(method => this.authenticated || !operatorMethods.has(method)),
           notifications: LING_APP_SERVER_NOTIFICATION_METHODS,
         };
       case "workspace/list":
         return { workspaces: [{ workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.defaultCwd }] };
       case "workspace/read":
         return { workspaceId: DEFAULT_WORKSPACE_ID, cwd: readRpcCwd(readParamsRecord(params), this.defaultCwd) };
+      case "worktree/list": {
+        const { cwd } = this.workspaceParams(params);
+        if (!this.context.storeRegistry.isTrustedWorkspaceRoot(cwd)) {
+          throw rpcError(-32020, "authorization_required", "Managed worktrees require a daemon-known workspace.");
+        }
+        return listManagedWorktrees(this.context.storeRegistry.getStore(cwd), cwd);
+      }
       case "provider/list":
         return this.readControlPlaneDomain(params, "providers");
       case "skill/list":
@@ -319,6 +365,13 @@ class RpcConnection {
         return this.listThreadTurns(params);
       case "thread/items/list":
         return this.listThreadItems(params);
+      case "item/read": {
+        const record = this.workspaceParams(params);
+        const item = this.context.storeRegistry.getStore(record.cwd).getConversationItem(readStringField(record, "itemId"));
+        const threadId = readStringField(record, "threadId");
+        if (!item || item.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", "The item does not belong to this Thread.");
+        return { cwd: record.cwd, item };
+      }
       case "thread/mode/get":
         return this.getThreadMode(params);
       case "thread/mode/set":
@@ -342,21 +395,29 @@ class RpcConnection {
       case "thread/unsubscribe":
         return this.unsubscribeControlPlane(params);
       case "verify/plan":
-        return await this.development.planVerification(params as never);
+        return await this.development.planVerification(this.workspaceParams(params) as never);
+      case "changes/capture": {
+        const { cwd } = this.workspaceParams(params);
+        const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+        return {
+          cwd,
+          candidate: { workspaceId: cwd, candidateDigest: snapshot.digest, filePaths: snapshot.files.map(file => file.path) },
+          coverage: snapshot.coverage,
+          headCommit: snapshot.headSha,
+        };
+      }
       case "verify/start":
-        return await this.development.startVerification(params as never);
+        return await this.development.startVerification(this.workspaceParams(params, true) as never);
       case "verify/status":
-        return this.development.getVerification(params as never);
+        return this.development.getVerification(this.workspaceParams(params) as never);
       case "verify/cancel":
-        return this.development.cancelVerification(params as never);
+        return this.development.cancelVerification(this.workspaceParams(params, true) as never);
       case "review/start":
-        return await this.development.startReview(params as never);
+        return await this.development.startReview(this.workspaceParams(params, true) as never);
       case "review/status":
-        return this.development.getReviewStatus(params as never);
+        return this.development.getReviewStatus(this.workspaceParams(params) as never);
       case "review/finding/update":
-        return await this.development.updateReviewFinding(params as never);
-      case "simplify/start":
-        return this.development.startSimplify(params as never);
+        return await this.development.updateReviewFinding(this.workspaceParams(params, true) as never);
       case "doctor/run":
         return await this.development.runDoctor(params as never);
       case "instructions/init":
@@ -475,6 +536,33 @@ class RpcConnection {
     }
   }
 
+  private availableCapabilities(): readonly string[] {
+    return LING_APP_SERVER_IMPLEMENTED_CAPABILITIES.filter(capability =>
+      this.authenticated || (capability !== "approval.respond" && capability !== "input.respond"));
+  }
+
+  private workspaceParams(params: unknown, operator = false): Record<string, unknown> & { readonly cwd: string } {
+    if (operator && (!this.appServer || !this.authenticated)) {
+      throw rpcError(-32020, "authorization_required", "This App Server method requires the daemon operator bearer credential.");
+    }
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    let canonical: string;
+    try {
+      canonical = realpathSync(cwd);
+      if (canonical !== realpathSync(this.defaultCwd)) {
+        throw rpcError(-32040, "workspace_binding_invalid", "The requested workspace differs from the connection workspace.");
+      }
+    } catch (error) {
+      if (error instanceof Error && "jsonRpcCode" in error) throw error;
+      throw rpcError(-32040, "workspace_binding_invalid", "The connection workspace could not be resolved.");
+    }
+    if (operator && !this.context.storeRegistry.isTrustedWorkspaceRoot(canonical)) {
+      throw rpcError(-32020, "authorization_required", "This operation requires a daemon-known workspace.");
+    }
+    return { ...record, cwd: canonical };
+  }
+
   private validateInitializeParams(params: unknown): void {
     if (!this.appServer || params === undefined) return;
     const record = readParamsRecord(params);
@@ -491,7 +579,7 @@ class RpcConnection {
       throw rpcError(-32602, "invalid_params", "requiredCapabilities must be an array of strings.");
     }
     const missing = Array.isArray(requiredCapabilities)
-      ? requiredCapabilities.filter(value => !(LING_APP_SERVER_IMPLEMENTED_CAPABILITIES as readonly string[]).includes(value))
+      ? requiredCapabilities.filter(value => !this.availableCapabilities().includes(value as never))
       : [];
     if (missing.length > 0) {
       throw rpcError(-32011, "required_capability_unavailable", `Required capabilities are unavailable: ${missing.join(", ")}`);
@@ -531,6 +619,7 @@ class RpcConnection {
       sourceType,
       sourceId,
       title,
+      ...(this.appServer ? { initialStatus: "intake" as const } : {}),
       description: readOptionalStringField(record, "description"),
       priority: readOptionalWorkItemPriority(record.priority),
       labels: Array.isArray(record.labels) && record.labels.every((value) => typeof value === "string") ? record.labels as string[] : undefined,
@@ -550,26 +639,37 @@ class RpcConnection {
   }
 
   private acceptWorkItem(params: unknown): unknown {
-    const record = readParamsRecord(params);
-    const cwd = readRpcCwd(record, this.defaultCwd);
+    const record = this.workspaceParams(params);
+    const { cwd } = record;
     const workItemId = readStringField(record, "workItemId");
     const store = this.context.storeRegistry.getStore(cwd);
-    const workItem = store.getWorkItem(workItemId);
-    if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
-    const expectedRevision = readOptionalIntegerField(record, "expectedWorkItemRevision");
-    if (expectedRevision !== undefined && expectedRevision !== workItem.revision) {
-      throw rpcError(-32030, "stale_revision", "The Work Item revision is stale.");
+    if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", "Work Item was not found.");
+    const input = {
+      expectedRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
+      actorId: readOptionalStringField(record, "actorId") ?? "local-user",
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    let result;
+    try {
+      result = store.acceptWorkItem(workItemId, input, new Date().toISOString());
+    } catch (error) {
+      if (error instanceof Error && error.message === "work_item_acceptance_idempotency_conflict") {
+        throw rpcError(-32031, "idempotency_conflict", "The acceptance key was reused with different input.");
+      }
+      if (error instanceof Error && error.message === "work_item_acceptance_already_committed") {
+        throw rpcError(-32030, "stale_revision", "The Work Item already has an accepted dispatch.");
+      }
+      throw error;
     }
+    if (!result) throw rpcError(-32030, "stale_revision", "The Work Item is no longer eligible for acceptance at this revision.");
+    const { workItem, receipt, replayed } = result;
     appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "work_items",
-      entityType: "work_item",
-      entityId: workItem.id,
-      action: "work_item.accepted",
-      data: { workItemId: workItem.id, revision: workItem.revision, actorId: readOptionalStringField(record, "actorId") },
-    });
-    return { cwd, accepted: true, workItem: projectWorkItemSnapshot(workItem) };
+      workspaceId: workItem.workspaceId, cwd, domain: "work_items",
+      entityType: "work_item", entityId: workItemId, action: "work_item.accepted",
+      idempotencyKey: receipt.id,
+      data: { workItemId, revision: receipt.workItemRevision, actorId: receipt.actorId, acceptanceId: receipt.id },
+    }, receipt.acceptedAt);
+    return { cwd, accepted: true, workItem: projectWorkItemSnapshot(workItem), acceptance: receipt, replayed };
   }
 
   private clarifyWorkItem(params: unknown): unknown {
@@ -707,6 +807,13 @@ class RpcConnection {
     }
   }
 
+  private get externalAgents(): ExternalAgentFederationService {
+    const { cwd } = this.workspaceParams(undefined);
+    const federation = getExternalAgentFederation(this.context, cwd);
+    this.externalAgentUnsubscribe ??= federation.subscribe(event => this.handleExternalAgentEvent(event));
+    return federation;
+  }
+
   private registerExternalAgent(params: unknown): unknown {
     try {
       const result = this.externalAgents.register(params as never);
@@ -719,110 +826,97 @@ class RpcConnection {
     }
   }
 
-  private async startExternalAgentTask(params: unknown): Promise<unknown> {
-    const record = readParamsRecord(params);
+  private startExternalAgentTask(params: unknown): unknown {
+    const record = this.workspaceParams(params);
+    const { cwd } = record;
     const registrationId = readStringField(record, "registrationId");
-    try {
-      const submission = readParamsRecord(record.submission);
-      const cwd = readRpcCwd(record, this.defaultCwd);
-      const store = this.context.storeRegistry.getStore(cwd);
-      const workItemId = readStringField(submission, "workItemId");
+    const submission = readParamsRecord(record.submission);
+    const workItemId = readStringField(submission, "workItemId");
+    const workItemRevision = readStringField(submission, "workItemRevision");
+    const federation = this.externalAgents;
+    const store = this.context.storeRegistry.getStore(cwd);
+    const assertAdmission = () => {
       const workItem = store.getWorkItem(workItemId);
-      if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
-      if (readStringField(submission, "workItemRevision") !== String(workItem.revision)) {
+      if (!workItem || submission.workspaceId !== workItem.workspaceId) {
+        throw rpcError(-32040, "workspace_binding_invalid", "The Work Item does not belong to this workspace.");
+      }
+      if (workItemRevision !== String(workItem.revision)) {
         throw rpcError(-32030, "stale_revision", "The external Agent Work Item revision is stale.");
       }
-      if (workItem.control.state !== "active") {
-        throw rpcError(-32061, "resume_blocked", `Work Item cannot dispatch an external Agent while control state is ${workItem.control.state}.`);
+      if (workItem.control.state !== "active" || workItem.holds.some(hold => hold.blocksNewAdmission)
+        || ["intake", "triage", "backlog", "done", "cancelled", "archived", "superseded"].includes(workItem.status)) {
+        throw rpcError(-32061, "resume_blocked", "The current Work Item does not admit external Agent dispatch.");
       }
-      const result = this.externalAgents.startTask(params as never);
+    };
+    try {
+      const result = federation.startTask(record as never, assertAdmission);
       const task = result.task;
       this.externalTaskIds.add(task.taskId);
-      appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-        workspaceId: DEFAULT_WORKSPACE_ID,
-        cwd,
-        domain: "runners",
-        entityType: "external_agent_task",
-        entityId: task.taskId,
-        action: "external_agent.task.started",
-        idempotencyKey: readStringField(readParamsRecord(record.submission), "idempotencyKey"),
-        data: { registrationId, workItemId: task.workItemId, status: task.status, dispatchDepth: task.dispatchDepth },
-      });
-      const current = await this.maybeDispatchExternalAgentTask({
-        cwd,
-        registrationId,
-        taskId: task.taskId,
-        submission,
-        workItemId,
-        workItemRevision: String(workItem.revision),
-      });
-      const response = { task: current ?? this.externalAgents.getTask(task.taskId)?.task ?? task };
-      if (this.appServer) this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: response });
+      if (!result.replayed) {
+        appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+          workspaceId: DEFAULT_WORKSPACE_ID, cwd, domain: "runners", entityType: "external_agent_task",
+          entityId: task.taskId, action: "external_agent.task.started", idempotencyKey: task.submissionId,
+          data: { registrationId, workItemId, status: task.status, dispatchDepth: task.dispatchDepth },
+        });
+        this.maybeDispatchExternalAgentTask(cwd, federation, registrationId, task.taskId, submission, assertAdmission);
+      }
+      const response = { ...result, task: federation.getTask(task.taskId)!.task };
+      if (this.appServer && !result.replayed) this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: response });
       return response;
     } catch (error) {
+      if (error instanceof Error && "jsonRpcCode" in error) throw error;
       throw externalAgentRpcError(error);
     }
   }
 
-  private async maybeDispatchExternalAgentTask(input: {
-    readonly cwd: string;
-    readonly registrationId: string;
-    readonly taskId: string;
-    readonly submission: Record<string, unknown>;
-    readonly workItemId: string;
-    readonly workItemRevision: string;
-  }): Promise<import("@ling-stack/contracts").LingAppServerExternalAgentTaskReceipt | undefined> {
-    const registration = this.externalAgents.getRegistration(input.registrationId)?.registration;
-    if (!registration) return undefined;
-    const runnerId = registration.adapterKind === "codex-app-server"
-      ? "codex-app-server"
-      : registration.adapterKind === "acp"
-        ? "openclaw-acp"
-        : registration.adapterKind;
+  private maybeDispatchExternalAgentTask(
+    cwd: string,
+    federation: ExternalAgentFederationService,
+    registrationId: string,
+    taskId: string,
+    submission: Record<string, unknown>,
+    assertAdmission: () => void,
+  ): void {
+    if (!this.appServer || !this.authenticated || !this.context.storeRegistry.isTrustedWorkspaceRoot(cwd)) return;
+    const registration = federation.getRegistration(registrationId)?.registration;
+    if (!registration) return;
+    const runnerId = registration.adapterKind === "acp" ? "openclaw-acp" : registration.adapterKind;
     const runner = this.context.runnerRegistry.get(runnerId);
-    const acceptance = typeof input.submission.acceptanceSnapshot === "object" && input.submission.acceptanceSnapshot !== null
-      ? input.submission.acceptanceSnapshot as Record<string, unknown>
+    const acceptance = typeof submission.acceptanceSnapshot === "object" && submission.acceptanceSnapshot !== null
+      ? submission.acceptanceSnapshot as Record<string, unknown>
       : {};
     const provider = typeof acceptance.provider === "object" && acceptance.provider !== null
-      ? acceptance.provider as Record<string, unknown>
-      : undefined;
-    if (!runner || runner.status !== "enabled" || !provider
-      || typeof provider.provider !== "string" || typeof provider.model !== "string") {
-      return undefined;
+      ? acceptance.provider as Record<string, unknown> : undefined;
+    if (!runner || !provider || typeof provider.provider !== "string" || typeof provider.model !== "string") return;
+    const objective = readStringField(submission, "objective");
+    const controller = new AbortController();
+    const dispatch = {
+      federation, taskId, runner, assertAdmission,
+      options: {
+        cwd,
+        task: { id: taskId, title: objective.slice(0, 120), prompt: objective },
+        provider: { provider: provider.provider, model: provider.model },
+        tools: registration.toolScopes,
+        signal: controller.signal,
+      },
+    };
+    try { assertDispatchReady(dispatch); } catch { return; }
+    let active = activeExternalDispatches.get(this.context);
+    if (!active) {
+      active = new Map();
+      activeExternalDispatches.set(this.context, active);
     }
-    const objective = readStringField(input.submission, "objective");
-    const options = {
-      cwd: input.cwd,
-      task: { id: input.taskId, title: objective.slice(0, 120), prompt: objective },
-      provider: {
-        provider: provider.provider,
-        model: provider.model,
-        ...(typeof provider.api === "string" ? { api: provider.api as never } : {}),
-      },
-      tools: registration.toolScopes,
-    } as import("@ling-stack/runner-pi").PiRunnerRunOptions;
-    void dispatchExternalAgentTask({
-      federation: this.externalAgents,
-      taskId: input.taskId,
-      runner,
-      options,
-      assertAdmission: () => {
-        const store = this.context.storeRegistry.getStore(input.cwd);
-        const workItem = store.getWorkItem(input.workItemId);
-        if (!workItem || String(workItem.revision) !== input.workItemRevision || workItem.control.state !== "active") {
-          throw new Error("external_agent_work_item_admission_changed");
-        }
-      },
-    }).catch((error) => {
-      try { this.externalAgents.markUnknown(input.taskId, error instanceof Error ? error.message.slice(0, 500) : String(error)); } catch { /* retain the original unknown outcome */ }
-    });
-    return this.externalAgents.getTask(input.taskId)?.task;
+    active.set(taskId, controller);
+    const settled = dispatchExternalAgentTask(dispatch).catch(() => {
+      try { federation.markUnknown(taskId); } catch { /* The retained dispatch receipt is available for recovery. */ }
+    }).finally(() => active.delete(taskId));
+    this.context.activeRuns.trackCompletion(settled);
   }
 
   private reconnectExternalAgentTask(params: unknown): unknown {
     try {
       const result = this.externalAgents.reconnectTask(params as never);
-      this.externalTaskIds.add(result.task.taskId);
+      if (result.reason !== "authorization_changed") this.externalTaskIds.add(result.task.taskId);
       if (this.appServer) this.send({ jsonrpc: "2.0", method: "externalAgent/task/reconnected", params: result });
       return result;
     } catch (error) {
@@ -832,7 +926,13 @@ class RpcConnection {
 
   private async cancelExternalAgentTask(params: unknown): Promise<unknown> {
     try {
-      const result = await this.externalAgents.cancelTask(params as never);
+      const taskId = readStringField(readParamsRecord(params), "taskId");
+      const federation = this.externalAgents;
+      const active = activeExternalDispatches.get(this.context)?.get(taskId);
+      const result = await federation.cancelTask(params as never, active ? async () => {
+        active.abort();
+        return "unknown";
+      } : undefined);
       if (this.appServer) this.send({
         jsonrpc: "2.0",
         method: result.status === "unknown" ? "externalAgent/task/unknown" : "externalAgent/task/updated",
@@ -1230,46 +1330,60 @@ class RpcConnection {
   }
 
   private respondApproval(params: unknown): unknown {
-    const record = readParamsRecord(params);
-    const cwd = readRpcCwd(record, this.defaultCwd);
+    const record = this.workspaceParams(params, true);
+    const { cwd } = record;
     const approvalId = readStringField(record, "approvalId");
     const decision = readStringField(record, "decision");
     if (decision !== "approve" && decision !== "deny") {
       throw rpcError(-32602, "invalid_params", "decision must be approve or deny.");
     }
+    if (record.decisionKind !== undefined && record.decisionKind !== "approve_once") {
+      throw rpcError(-32602, "invalid_params", "App Server supports approve_once and deny decisions.");
+    }
     const store = this.context.storeRegistry.getStore(cwd);
-    const existing = store.getApprovalRequest(approvalId);
-    if (!existing) throw rpcError(-32040, "workspace_binding_invalid", `Approval request was not found: ${approvalId}`);
-    const reason = readOptionalStringField(record, "reason");
+    expireStaleApproval(store, approvalId, this.context.controlPlaneEvents, cwd);
+    const approval = store.getApprovalRequest(approvalId);
+    const run = approval?.runId ? store.getRun(approval.runId) : undefined;
+    if (!approval || !run || approval.workflowStepId || approval.mediaJobId || approval.externalWorkActionId || approval.nodeRerunIntentId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The approval is not owned by a Run in this workspace.");
+    }
+    if (record.runId !== undefined && readStringField(record, "runId") !== run.id) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The approval does not belong to the supplied Run.");
+    }
+    if (approval.status !== "pending") throw rpcError(-32051, "request_already_resolved", "The approval is no longer pending.");
     const now = new Date().toISOString();
     const input = {
-      reason,
+      reason: readOptionalStringField(record, "reason"),
       resolvedBy: "local-user" as const,
-      ...(decision === "approve" ? { decisionKind: readOptionalStringField(record, "decisionKind") as never ?? "approve_once" } : {}),
-      ...(readOptionalStringField(record, "proposedRuleFingerprint") ? { proposedRuleFingerprint: readOptionalStringField(record, "proposedRuleFingerprint") } : {}),
+      ...(decision === "approve" ? { decisionKind: "approve_once" as const } : {}),
     };
     const resolved = decision === "approve"
       ? store.approveApprovalRequest(approvalId, input, now)
       : store.denyApprovalRequest(approvalId, input, now);
-    if (!resolved) throw rpcError(-32051, "request_already_resolved", `Approval request is no longer pending: ${approvalId}`);
-    const continuation = decision === "approve"
-      ? this.context.approvalResumeCoordinator.resumeAfterApproval({ store, approval: resolved })
-      : this.context.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({ store, approval: resolved });
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "approvals",
-      entityType: "approval",
-      entityId: approvalId,
-      action: "approval.resolved",
-      data: { approvalId, status: resolved.status, decision, continuation },
-    });
-    return { cwd, approval: resolved, continuation };
+    if (!resolved) throw rpcError(-32051, "request_already_resolved", "The approval is no longer pending.");
+    let deferred = true;
+    try {
+      deferred = reconcileApprovalPostCommitEffects({
+        store, approval: resolved, cwd, now, controlPlaneEvents: this.context.controlPlaneEvents,
+        onOwnerResolved: () => {
+          if (decision === "deny" && this.context.activeRuns.get(run.id)) return;
+          const result = decision === "approve"
+            ? this.context.approvalResumeCoordinator.resumeAfterApproval({ store, approval: resolved })
+            : this.context.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({ store, approval: resolved });
+          if (result.status === "blocked" || (result.status === "not_applicable" && store.getRun(run.id)?.status === "waiting_for_approval")) {
+            throw new Error("approval_run_owner_unreconciled");
+          }
+        },
+      }).deferred;
+    } catch {
+      // The durable approval and its effect journal remain available for reconciliation.
+    }
+    return { cwd, approval: resolved, ...(deferred ? { postCommit: { status: "deferred" } } : {}) };
   }
 
   private respondInput(params: unknown): unknown {
-    const record = readParamsRecord(params);
-    const cwd = readRpcCwd(record, this.defaultCwd);
+    const record = this.workspaceParams(params, true);
+    const { cwd } = record;
     const threadId = readStringField(record, "threadId");
     const requestId = readStringField(record, "requestId");
     const answers = record.answers;
@@ -1701,7 +1815,7 @@ class RpcConnection {
     this.ws.off("message", this.onMessage);
     this.ws.off("close", this.onConnectionClose);
     this.ws.off("error", this.onConnectionError);
-    this.externalAgentUnsubscribe();
+    this.externalAgentUnsubscribe?.();
     for (const subscription of [...this.subscriptions.values()]) {
       this.closeSubscription(subscription);
     }
@@ -1892,6 +2006,8 @@ function readRpcCwd(record: Record<string, unknown>, fallback: string): string {
   return cwd;
 }
 
+
+
 function parseRpcDomains(value: unknown): readonly ControlPlaneDomain[] {
   if (value === undefined) {
     return parseControlPlaneDomains(null);
@@ -1978,39 +2094,6 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
     code: "internal_error",
     message: error instanceof Error ? error.message : String(error),
   };
-}
-
-async function executeAppServerVerificationCheck(input: {
-  readonly cwd: string;
-  readonly check: import("@ling-stack/contracts").LingAppServerVerificationCheckPlan;
-  readonly candidate: import("@ling-stack/contracts").LingAppServerCandidateReference;
-  readonly signal?: AbortSignal;
-}): Promise<import("@ling-stack/contracts").LingAppServerVerificationCheckStatus> {
-  const command = input.check.command;
-  if (!command) return "blocked";
-  if (input.signal?.aborted) return "cancelled";
-  return await new Promise((resolve) => {
-    let settled = false;
-    const finish = (status: import("@ling-stack/contracts").LingAppServerVerificationCheckStatus): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      input.signal?.removeEventListener("abort", abort);
-      resolve(status);
-    };
-    const child = spawn(command, { cwd: input.cwd, shell: true, stdio: "ignore", env: process.env });
-    const abort = (): void => {
-      child.kill("SIGTERM");
-      finish("cancelled");
-    };
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish("unknown");
-    }, 5 * 60 * 1000);
-    input.signal?.addEventListener("abort", abort, { once: true });
-    child.once("error", () => finish("failed"));
-    child.once("close", (code) => finish(code === 0 ? "passed" : "failed"));
-  });
 }
 
 function collaborationRpcError(error: unknown): Error & { readonly jsonRpcCode: number; readonly code: string } {

@@ -90,12 +90,15 @@ test("federation creates task receipts, streams cursors, reconnects and restores
   const current = service.getTask(first.task.taskId)?.task;
   assert.equal(current?.status, "running");
   assert.equal(events.length, 2);
-  assert.deepEqual(service.reconnectTask({
+  const reconnect = service.reconnectTask({
     registrationId,
     taskId: first.task.taskId,
     submissionId: first.task.submissionId,
     eventCursor: "external-agent:2",
-  }), { task: current, resyncRequired: false });
+  });
+  assert.deepEqual(reconnect.task, current);
+  assert.equal(reconnect.resyncRequired, false);
+  assert.deepEqual(reconnect.events?.map(event => event.payload), [{ text: "progress" }]);
   assert.equal(service.reconnectTask({
     registrationId,
     taskId: first.task.taskId,
@@ -109,7 +112,7 @@ test("federation creates task receipts, streams cursors, reconnects and restores
   assert.deepEqual(restored.getTask(first.task.taskId)?.task, current);
   assert.deepEqual(restored.register({ registration, idempotencyKey: "register_1" }), service.register({ registration, idempotencyKey: "register_1" }));
   const cancellation = await restored.cancelTask({ registrationId, taskId: first.task.taskId, idempotencyKey: "cancel_1" });
-  assert.deepEqual(cancellation, { taskId: first.task.taskId, status: "cancelled" });
+  assert.deepEqual(cancellation, { taskId: first.task.taskId, status: "unknown" });
 });
 
 test("federation preserves unknown cancellation outcome and rejects conflicting idempotency", async () => {

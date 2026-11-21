@@ -112,6 +112,7 @@ export interface UpsertWorkItemInput {
   readonly title: string;
   readonly description?: string;
   readonly status?: WorkItemStatus;
+  readonly initialStatus?: WorkItemStatus;
   readonly waitingReason?: WorkItemWaitingReason;
   readonly priority?: WorkItemPriority;
   readonly labels?: readonly string[];
@@ -141,6 +142,28 @@ export interface WorkItemRouteRequest {
   readonly channelId?: string;
   readonly priority?: WorkItemPriority;
   readonly assigneeTeammateId?: string | null;
+}
+
+export interface WorkItemAcceptanceRequest {
+  readonly expectedRevision: number;
+  readonly actorId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface WorkItemAcceptanceReceipt {
+  readonly id: string;
+  readonly workItemId: string;
+  readonly acceptedRevision: number;
+  readonly workItemRevision: number;
+  readonly actorId: string;
+  readonly idempotencyKey: string;
+  readonly acceptedAt: string;
+}
+
+export interface WorkItemAcceptanceResult {
+  readonly workItem: WorkItem;
+  readonly receipt: WorkItemAcceptanceReceipt;
+  readonly replayed: boolean;
 }
 
 export interface WorkItemClaimRequest {

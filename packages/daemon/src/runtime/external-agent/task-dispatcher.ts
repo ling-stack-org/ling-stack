@@ -30,6 +30,7 @@ export type ExternalAgentDispatchBlocker =
   | "attempt_fencing_unverified"
   | "workspace_boundary_unverified"
   | "artifact_import_unverified"
+  | "tool_scope_unverified"
   | "admission_rejected";
 
 export class ExternalAgentDispatchError extends Error {
@@ -58,12 +59,17 @@ export async function dispatchExternalAgentTask(input: ExternalAgentDispatchRequ
   const options: PiRunnerRunOptions = {
     ...input.options,
     onEvent: (event) => {
+      if (input.options.signal?.aborted || input.federation.getTask(input.taskId)?.task.status !== "running") return;
       input.federation.appendEvent(input.taskId, summarizeRunnerEvent(event));
       onEvent?.(event);
     },
   };
   try {
     const result = await input.runner.adapter.runTask(options);
+    if (input.options.signal?.aborted) {
+      input.federation.markUnknown(input.taskId, "external_dispatch_cancelled_unknown");
+      return { taskId: input.taskId, outcome: "unknown", reason: "external_dispatch_cancelled_unknown" };
+    }
     input.federation.markCompleted(input.taskId);
     input.federation.appendEvent(input.taskId, {
       type: "dispatch_completed",
@@ -95,27 +101,20 @@ export function assertDispatchReady(input: ExternalAgentDispatchRequest): void {
     throw new ExternalAgentDispatchError("adapter_missing", `External Runner ${input.runner.id} has no adapter.`);
   }
   const conformance = input.runner.toolExecutionConformance;
-  const blockers: readonly [ExternalAgentDispatchBlocker, string][] = [
-    ["evidence_commit_unverified", "external evidence commit is not verified"],
-    ["abort_propagation_unverified", "external abort propagation is not verified"],
-    ["attempt_fencing_unverified", "external attempt fencing is not verified"],
-    ["workspace_boundary_unverified", "external workspace boundary is not verified"],
-    ["artifact_import_unverified", "external artifact import is not verified"],
-  ];
-  const fields: Readonly<Record<ExternalAgentDispatchBlocker, keyof typeof conformance>> = {
-    evidence_commit_unverified: "evidenceCommitVerified",
-    abort_propagation_unverified: "abortPropagationVerified",
-    attempt_fencing_unverified: "attemptFencingVerified",
-    workspace_boundary_unverified: "workspaceBoundaryVerified",
-    artifact_import_unverified: "artifactImportVerified",
-    task_id_mismatch: "evidenceCommitVerified",
-    runner_disabled: "evidenceCommitVerified",
-    runner_not_external: "evidenceCommitVerified",
-    adapter_missing: "evidenceCommitVerified",
-    admission_rejected: "evidenceCommitVerified",
-  };
-  for (const [code, message] of blockers) {
-    if (conformance[fields[code]] !== true) throw new ExternalAgentDispatchError(code, `${input.runner.id}: ${message}.`);
+  if (input.runner.adapterRevision !== conformance.adapterRevision || conformance.nativeSideEffectMode !== "disabled"
+    || !conformance.toolSurfaceCurated || input.options.tools?.some(tool => !conformance.curatedTools.includes(tool)
+      || !["none", "workspace_read"].includes(conformance.toolSideEffects[tool] ?? ""))) {
+    throw new ExternalAgentDispatchError("tool_scope_unverified", "Federation requires a verified read-only adapter tool scope.");
+  }
+  const blockers = [
+    ["evidence_commit_unverified", "evidenceCommitVerified", "external evidence commit is not verified"],
+    ["abort_propagation_unverified", "abortPropagationVerified", "external abort propagation is not verified"],
+    ["attempt_fencing_unverified", "attemptFencingVerified", "external attempt fencing is not verified"],
+    ["workspace_boundary_unverified", "workspaceBoundaryVerified", "external workspace boundary is not verified"],
+    ["artifact_import_unverified", "artifactImportVerified", "external artifact import is not verified"],
+  ] as const;
+  for (const [code, field, message] of blockers) {
+    if (conformance[field] !== true) throw new ExternalAgentDispatchError(code, `${input.runner.id}: ${message}.`);
   }
 }
 

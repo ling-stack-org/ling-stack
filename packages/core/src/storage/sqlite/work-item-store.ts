@@ -5,6 +5,9 @@ import {
   type ListWorkItemsOptions,
   type UpsertWorkItemInput,
   type WorkItem,
+  type WorkItemAcceptanceReceipt,
+  type WorkItemAcceptanceRequest,
+  type WorkItemAcceptanceResult,
   type WorkItemClaimBlocker,
   type WorkItemClaimRequest,
   type WorkItemCompleteRequest,
@@ -23,6 +26,7 @@ import { readString, stringifyJson } from "./helpers.js";
 import { mapWorkItem } from "./runtime-work-mappers.js";
 import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -134,7 +138,7 @@ export class SqliteWorkItemStore {
           revision,
           input.title,
           input.description ?? existing?.description ?? null,
-          input.status ?? existing?.status ?? "ready",
+          input.status ?? existing?.status ?? input.initialStatus ?? "ready",
           input.waitingReason ?? existing?.waitingReason ?? null,
           input.priority ?? existing?.priority ?? "normal",
           stringifyJson(labels),
@@ -241,6 +245,50 @@ export class SqliteWorkItemStore {
         id,
       );
     return this.getWorkItem(id);
+  }
+
+  acceptWorkItem(id: string, input: WorkItemAcceptanceRequest, now: string, state: SqliteAppServerStateStore): WorkItemAcceptanceResult | undefined {
+    const { database } = this.context;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.acceptWithinTransaction(id, input, now, state);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private acceptWithinTransaction(id: string, input: WorkItemAcceptanceRequest, now: string, state: SqliteAppServerStateStore): WorkItemAcceptanceResult | undefined {
+    const workItem = this.getWorkItem(id);
+    if (!workItem) return undefined;
+    const prior = state.get("work_item_acceptance", id)?.payload as WorkItemAcceptanceReceipt | undefined;
+    if (prior) {
+      if (prior.idempotencyKey !== input.idempotencyKey) {
+        throw new Error("work_item_acceptance_already_committed");
+      }
+      if (prior.actorId !== input.actorId || prior.acceptedRevision !== input.expectedRevision) {
+        throw new Error("work_item_acceptance_idempotency_conflict");
+      }
+      return { workItem, receipt: prior, replayed: true };
+    }
+    if (workItem.revision !== input.expectedRevision || workItem.control.state !== "active"
+      || workItem.holds.some(hold => hold.blocksNewAdmission)
+      || !["intake", "triage", "backlog", "ready"].includes(workItem.status)) return undefined;
+    const receipt: WorkItemAcceptanceReceipt = {
+      id: `work_item_acceptance_${randomUUID()}`,
+      workItemId: id,
+      acceptedRevision: workItem.revision,
+      workItemRevision: workItem.revision + 1,
+      actorId: input.actorId,
+      idempotencyKey: input.idempotencyKey,
+      acceptedAt: now,
+    };
+    this.context.database.prepare("UPDATE work_items SET status='ready', waiting_reason=NULL, revision=revision+1, updated_at=? WHERE workspace_id=? AND id=?")
+      .run(now, workItem.workspaceId, id);
+    state.putWithinTransaction({ kind: "work_item_acceptance", recordId: id, expectedRevision: 0, payload: receipt }, now);
+    return { workItem: this.getWorkItem(id)!, receipt, replayed: false };
   }
 
   claimWorkItem(

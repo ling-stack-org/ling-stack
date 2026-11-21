@@ -162,7 +162,14 @@ export class ExternalAgentFederationService {
     this.idFactory = options.idFactory ?? randomUUID;
     this.persistence = options.persistence;
     const snapshot = this.persistence?.load();
-    if (snapshot) this.restore(snapshot);
+    if (snapshot) {
+      this.restore(snapshot);
+      for (const { task } of snapshot.tasks) {
+        if (task.status === "running" || task.status === "waiting_for_approval") {
+          this.markUnknown(task.taskId, "daemon_restart_reconciliation_required");
+        }
+      }
+    }
   }
 
   register(params: LingAppServerExternalAgentRegisterParams): LingAppServerExternalAgentRegisterResult {
@@ -185,6 +192,7 @@ export class ExternalAgentFederationService {
       if (existing) {
         const result = this.registrationResult(existing);
         this.idempotency.set(idempotencyKey, { kind: "register", fingerprint, result });
+        this.persist();
         return result;
       }
     }
@@ -226,7 +234,7 @@ export class ExternalAgentFederationService {
     return this.registrations.get(registrationId);
   }
 
-  startTask(params: LingAppServerExternalAgentTaskStartParams): LingAppServerExternalAgentTaskStartResult {
+  startTask(params: LingAppServerExternalAgentTaskStartParams, admit?: () => void): LingAppServerExternalAgentTaskStartResult {
     const registration = this.requireRegistration(params.registrationId);
     const submission = validateSubmission(params.submission);
     assertCapability(registration, EXTERNAL_AGENT_TASK_START_CAPABILITIES, "task.start");
@@ -239,7 +247,7 @@ export class ExternalAgentFederationService {
     const fingerprint = digest({ registrationId: params.registrationId, submission });
     const idempotencyKey = `${params.registrationId}:${submission.idempotencyKey}`;
     const replay = this.replayIdempotency<LingAppServerExternalAgentTaskStartResult>("start", idempotencyKey, fingerprint);
-    if (replay) return replay;
+    if (replay) return { task: this.requireTask(replay.task.taskId).task, replayed: true };
 
     const existingTaskId = this.tasksBySubmission.get(idempotencyKey);
     if (existingTaskId) {
@@ -250,10 +258,12 @@ export class ExternalAgentFederationService {
       if (existing) {
         const result = { task: existing.task } satisfies LingAppServerExternalAgentTaskStartResult;
         this.idempotency.set(idempotencyKey, { kind: "start", fingerprint, result });
-        return result;
+        this.persist();
+        return { ...result, replayed: true };
       }
     }
 
+    admit?.();
     const now = this.now();
     const task: LingAppServerExternalAgentTaskReceipt = {
       taskId: `external_task_${this.idFactory()}`,
@@ -279,8 +289,7 @@ export class ExternalAgentFederationService {
     const result = { task } satisfies LingAppServerExternalAgentTaskStartResult;
     this.idempotency.set(idempotencyKey, { kind: "start", fingerprint, result });
     this.publish(task.taskId, "task_started", { workItemId: task.workItemId, workItemRevision: task.workItemRevision });
-    this.persist();
-    return result;
+    return { task: this.requireTask(task.taskId).task };
   }
 
   reconnectTask(params: LingAppServerExternalAgentTaskReconnectParams): LingAppServerExternalAgentTaskReconnectResult {
@@ -301,6 +310,9 @@ export class ExternalAgentFederationService {
       task: task.task,
       resyncRequired,
       ...(reason ? { reason } : {}),
+      ...(!resyncRequired && requestedCursor !== undefined ? {
+        events: eventList.filter(event => event.sequence > (cursorSequence(requestedCursor) ?? 0)),
+      } : {}),
     };
   }
 
@@ -314,7 +326,8 @@ export class ExternalAgentFederationService {
     if (task.registrationId !== params.registrationId) {
       throw new ExternalAgentFederationError("task_conflict", "Task does not belong to this registration.");
     }
-    const fingerprint = digest({ registrationId: params.registrationId, taskId: params.taskId });
+    requireNonEmpty(params.idempotencyKey, "idempotencyKey");
+    const fingerprint = digest({ registrationId: params.registrationId, taskId: params.taskId, expectedTaskRevision: params.expectedTaskRevision });
     const replay = this.replayIdempotency<LingAppServerExternalAgentTaskCancelResult>("cancel", params.idempotencyKey, fingerprint);
     if (replay) return replay;
     if (params.expectedTaskRevision !== undefined && params.expectedTaskRevision !== String(task.statusRevision)) {
@@ -332,54 +345,59 @@ export class ExternalAgentFederationService {
       this.persist();
       return result;
     }
-    const outcome = settle ? await settle(task) : "cancelled";
+    const outcome = settle ? await settle(task)
+      : task.task.status === "accepted" || task.task.status === "queued" ? "cancelled" : "unknown";
+    const current = this.requireTask(params.taskId);
+    if (current.task.status === "completed" || current.task.status === "failed" || current.task.status === "cancelled") {
+      return { taskId: current.task.taskId, status: "already_terminal" };
+    }
     if (outcome === "unknown") {
-      this.replaceTask(task, "unknown");
-      this.publish(task.task.taskId, "task_unknown", { reason: "cancellation_outcome_unknown" });
       const result = { taskId: task.task.taskId, status: "unknown" as const };
       this.idempotency.set(params.idempotencyKey, { kind: "cancel", fingerprint, result });
-      this.persist();
+      if (current.task.status !== "unknown") {
+        this.replaceTask(current, "unknown");
+        this.publish(task.task.taskId, "task_unknown", { reason: "cancellation_outcome_unknown" });
+      } else this.persist();
       return result;
     }
-    this.replaceTask(task, "cancelled");
-    this.publish(task.task.taskId, "task_cancelled");
+    if (current.task.status === "unknown") return { taskId: current.task.taskId, status: "unknown" };
+    this.replaceTask(current, "cancelled");
     const result = { taskId: task.task.taskId, status: "cancelled" as const };
     this.idempotency.set(params.idempotencyKey, { kind: "cancel", fingerprint, result });
-    this.persist();
+    this.publish(task.task.taskId, "task_cancelled");
     return result;
   }
 
   markRunning(taskId: string): LingAppServerExternalAgentTaskReceipt {
     const task = this.requireTask(taskId);
-    if (task.task.status === "accepted") {
-      this.replaceTask(task, "running");
-      this.publish(taskId, "task_status", { status: "running" });
-      this.persist();
+    this.requireRegistration(task.registrationId);
+    if (task.task.status !== "accepted") {
+      throw new ExternalAgentFederationError("task_conflict", "The external task already passed its dispatch admission.");
     }
+    this.replaceTask(task, "running");
+    this.publish(taskId, "task_status", { status: "running" });
     return this.requireTask(taskId).task;
   }
 
   markUnknown(taskId: string, reason = "external_dispatch_outcome_unknown"): LingAppServerExternalAgentTaskReceipt {
     const task = this.requireTask(taskId);
+    if (task.task.status !== "running" && task.task.status !== "waiting_for_approval") return task.task;
     this.replaceTask(task, "unknown");
     this.publish(taskId, "task_unknown", { reason });
-    this.persist();
     return this.requireTask(taskId).task;
   }
 
   markCompleted(taskId: string): LingAppServerExternalAgentTaskReceipt {
     const task = this.requireTask(taskId);
+    if (task.task.status !== "running") return task.task;
     this.replaceTask(task, "completed");
     this.publish(taskId, "task_status", { status: "completed" });
-    this.persist();
     return this.requireTask(taskId).task;
   }
 
   appendEvent(taskId: string, payload: unknown): ExternalAgentFederationEvent {
     this.requireTask(taskId);
-    const event = this.publish(taskId, "task_event", payload);
-    this.persist();
-    return event;
+    return this.publish(taskId, "task_event", payload);
   }
 
   getTask(taskId: string): ExternalAgentFederationTaskRecord | undefined {
@@ -502,7 +520,10 @@ export class ExternalAgentFederationService {
         updatedAt: event.createdAt,
       });
     }
-    for (const listener of this.listeners) listener(event);
+    this.persist();
+    for (const listener of this.listeners) {
+      try { listener(event); } catch { /* Subscribers cannot invalidate a committed event. */ }
+    }
     return event;
   }
 
@@ -516,30 +537,33 @@ export class ExternalAgentFederationService {
   }
 }
 
-const federationByContext = new WeakMap<object, ExternalAgentFederationService>();
+const federationByContext = new WeakMap<object, Map<string, ExternalAgentFederationService>>();
 
 /** Keep one federation ledger per daemon context so reconnecting App Server
  * connections observe the same registration/task receipts. Persist the ledger
  * through the workspace RunStore when the host exposes the App Server state API. */
-export function getExternalAgentFederation(context: object): ExternalAgentFederationService {
-  const existing = federationByContext.get(context);
+export function getExternalAgentFederation(context: object, cwd: string): ExternalAgentFederationService {
+  let workspaces = federationByContext.get(context);
+  if (!workspaces) {
+    workspaces = new Map();
+    federationByContext.set(context, workspaces);
+  }
+  const existing = workspaces.get(cwd);
   if (existing) return existing;
   const host = context as {
-    readonly config?: { readonly defaultWorkspaceCwd?: string };
     readonly storeRegistry?: { readonly getStore?: (cwd: string) => {
       readonly getAppServerState?: (kind: "external_federation", recordId: string) => { readonly payload: unknown } | undefined;
       readonly putAppServerState?: (input: { readonly kind: "external_federation"; readonly recordId: string; readonly payload: unknown }, now: string) => unknown;
     } };
   };
-  const cwd = host.config?.defaultWorkspaceCwd;
-  const store = cwd && host.storeRegistry?.getStore ? host.storeRegistry.getStore(cwd) : undefined;
+  const store = host.storeRegistry?.getStore?.(cwd);
   const created = new ExternalAgentFederationService(store?.getAppServerState && store.putAppServerState ? {
     persistence: {
       load: () => store.getAppServerState?.("external_federation", "ledger")?.payload as ExternalAgentFederationSnapshot | undefined,
       save: (snapshot) => { store.putAppServerState?.({ kind: "external_federation", recordId: "ledger", payload: snapshot }, new Date().toISOString()); },
     },
   } : {});
-  federationByContext.set(context, created);
+  workspaces.set(cwd, created);
   return created;
 }
 

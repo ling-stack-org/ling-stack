@@ -1170,6 +1170,7 @@ export function createDaemonServer(
   const harnessLifecycle = new HarnessLifecycleCoordinator({
     stopExternalAdmission: () => {
       harnessShuttingDown = true;
+      rpcWebSocketServer.beginShutdown();
       learningReviewCoordinator?.beginShutdown();
       for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();

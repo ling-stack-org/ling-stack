@@ -18,6 +18,7 @@
     "test/app-server-collaboration.test.mjs",
     "test/app-server-development-rpc.test.mjs",
     "test/app-server-development.test.ts",
+    "test/app-server-release-acceptance.test.ts",
     "test/app-server-restart-acceptance.test.mjs",
     "test/app-server-rpc.test.mjs",
     "test/agent-context-consistency.test.mjs",
