@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { LingServerPeerRegistry, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
+import { LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -18,6 +18,9 @@ export interface LingServerControlPlaneOptions {
     readonly features?: readonly string[];
     readonly stunUrls?: readonly string[];
     readonly turnUrls?: readonly string[];
+    readonly relaySharedSecret?: string | Uint8Array;
+    readonly maxRelayCredentialTtlMs?: number;
+    readonly maxActiveRelayCredentialsPerBinding?: number;
     readonly maxFrameBytes?: number;
   };
 }
@@ -31,6 +34,7 @@ export class LingServerControlPlane {
   readonly #store?: SqliteLingServerStore;
   readonly #ownsStore: boolean;
   readonly #transportOptions: NonNullable<LingServerControlPlaneOptions["transport"]>;
+  readonly #relayIssuer?: LingServerRelayCredentialIssuer;
   #storeClosed = false;
   #server?: Server;
 
@@ -44,6 +48,15 @@ export class LingServerControlPlane {
     this.#authToken = options.authToken;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#transportOptions = options.transport ?? {};
+    if (options.transport?.relaySharedSecret !== undefined) {
+      this.#relayIssuer = new LingServerRelayCredentialIssuer({
+        turnUrls: options.transport.turnUrls ?? [],
+        sharedSecret: options.transport.relaySharedSecret,
+        now: this.#now,
+        maxTtlMs: options.transport.maxRelayCredentialTtlMs,
+        maxActiveCredentialsPerBinding: options.transport.maxActiveRelayCredentialsPerBinding,
+      });
+    }
   }
 
   async start(): Promise<{ readonly host: string; readonly port: number }> {
@@ -123,6 +136,14 @@ export class LingServerControlPlane {
         if (!installation) throw new Error("installation is missing");
         const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now });
         writeJson(response, 200, planner.createConfig({ binding, route, role: input.role, localKeyFingerprint: input.localKeyFingerprint, remoteKeyFingerprint: input.remoteKeyFingerprint, expiresAt: input.expiresAt, relayCredential: input.relayCredential }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/routes/relay-credential") {
+        const input = requireBody<{ readonly bindingId: string; readonly role: "gateway" | "mobile"; readonly ttlMs?: number }>(body);
+        const binding = this.registry.getBinding(input.bindingId);
+        if (!binding) throw new Error("binding is missing");
+        if (!this.#relayIssuer) throw new Error("relay credential issuer is not configured");
+        writeJson(response, 200, this.#relayIssuer.issue({ binding, role: input.role, ttlMs: input.ttlMs }));
         return;
       }
       if (request.method === "POST" && url.pathname === "/v1/routes/diagnostics") {

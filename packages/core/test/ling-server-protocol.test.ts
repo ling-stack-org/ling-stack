@@ -6,7 +6,7 @@ import test from "node:test";
 
 import {
   encodeModbusRtuRegisterRead, HardwareProtocolWorkbench, LingServerPeerRegistry, LingServerPeerSessionCoordinator,
-  LingServerTransportPlanner, modbusRtuRegisterCodec, SqliteDeviceProtocolStore, SqliteLingServerStore,
+  LingServerRelayCredentialIssuer, LingServerTransportPlanner, modbusRtuRegisterCodec, SqliteDeviceProtocolStore, SqliteLingServerStore,
 } from "../dist/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -113,6 +113,20 @@ test("Ling Server transport planner emits ephemeral direct and relay configurati
   assert.throws(() => planner.createConfig({ binding, route, role: "gateway", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt }), /do not match/);
   assert.throws(() => planner.createConfig({ binding, route: { ...route, peerEpoch: 1 }, role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt }), /bound epoch/);
   assert.throws(() => planner.createConfig({ binding, route, role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:05:01.000Z" }), /outlive/);
+});
+
+test("Ling Server relay credentials are binding-scoped, short-lived and quota-bound", () => {
+  const issuer = new LingServerRelayCredentialIssuer({
+    turnUrls: ["turns:turn.ling.example:443"], sharedSecret: "0123456789abcdef", now: () => now,
+    maxTtlMs: 120_000, maxActiveCredentialsPerBinding: 1,
+  });
+  const binding = { bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 2, revision: 2, status: "active" as const };
+  const credential = issuer.issue({ binding, role: "mobile", ttlMs: 60_000 });
+  assert.equal(credential.url, "turns:turn.ling.example:443");
+  assert.equal(credential.username.split(":").slice(1).join(":"), "binding-1:2:mobile");
+  assert.ok(credential.credential.length > 20);
+  assert.throws(() => issuer.issue({ binding, role: "gateway", ttlMs: 60_000 }), /quota/);
+  assert.throws(() => issuer.issue({ binding: { ...binding, status: "revoked" }, role: "mobile" }), /active peer binding/);
 });
 
 test("hardware protocol codec manifests and captures survive SQLite reopen", () => {

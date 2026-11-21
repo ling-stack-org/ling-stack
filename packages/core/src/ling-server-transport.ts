@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import {
   LING_SERVER_PEER_FRAME_DEFAULT_BYTES_V1,
   LING_SERVER_PEER_FRAME_MAX_BYTES_V1,
@@ -44,6 +45,55 @@ export interface LingServerTransportDiagnosticInput {
   readonly replayedFrameCount?: number;
   readonly requiresSnapshot?: boolean;
   readonly generatedAt?: string;
+}
+
+export interface LingServerRelayCredentialIssuerOptions {
+  readonly turnUrls: readonly string[];
+  readonly sharedSecret: string | Uint8Array;
+  readonly now?: () => string;
+  readonly maxTtlMs?: number;
+  readonly maxActiveCredentialsPerBinding?: number;
+}
+
+/** Issues short-lived, binding-scoped coturn REST credentials without persisting secrets. */
+export class LingServerRelayCredentialIssuer {
+  readonly #turnUrls: readonly string[];
+  readonly #sharedSecret: Uint8Array;
+  readonly #now: () => string;
+  readonly #maxTtlMs: number;
+  readonly #maxActiveCredentialsPerBinding: number;
+  readonly #issued = new Map<string, string>();
+
+  constructor(options: LingServerRelayCredentialIssuerOptions) {
+    this.#turnUrls = normalizeServerUrls(options.turnUrls, "turn");
+    this.#sharedSecret = typeof options.sharedSecret === "string" ? Buffer.from(options.sharedSecret, "utf8") : Buffer.from(options.sharedSecret);
+    this.#now = options.now ?? (() => new Date().toISOString());
+    this.#maxTtlMs = options.maxTtlMs ?? 60 * 60_000;
+    this.#maxActiveCredentialsPerBinding = options.maxActiveCredentialsPerBinding ?? 16;
+    if (this.#turnUrls.length === 0 || this.#sharedSecret.byteLength < 16 || !Number.isInteger(this.#maxTtlMs) || this.#maxTtlMs < 30_000
+      || !Number.isInteger(this.#maxActiveCredentialsPerBinding) || this.#maxActiveCredentialsPerBinding < 1) {
+      throw new DeviceFabricError("revision_conflict", "relay credential issuer configuration is invalid");
+    }
+  }
+
+  issue(input: { readonly binding: LingServerPeerBindingV1; readonly role: LingServerPeerRoleV1; readonly ttlMs?: number }): LingServerRelayCredentialV1 {
+    if (input.binding.status !== "active" || !input.binding.bindingId.trim() || !Number.isSafeInteger(input.binding.epoch) || input.binding.epoch < 1) {
+      throw new DeviceFabricError("safety_denied", "relay credential requires an active peer binding");
+    }
+    const now = this.#now();
+    const nowMs = Date.parse(now);
+    if (!Number.isFinite(nowMs)) throw new DeviceFabricError("revision_conflict", "relay credential issuer clock is invalid");
+    for (const [key, expiresAt] of this.#issued) if (Date.parse(expiresAt) <= nowMs) this.#issued.delete(key);
+    const activeCount = [...this.#issued.keys()].filter(key => key.startsWith(`${input.binding.bindingId}:`)).length;
+    if (activeCount >= this.#maxActiveCredentialsPerBinding) throw new DeviceFabricError("lease_busy", "relay credential quota is exhausted for this binding");
+    const ttlMs = input.ttlMs ?? this.#maxTtlMs;
+    if (!Number.isInteger(ttlMs) || ttlMs < 30_000 || ttlMs > this.#maxTtlMs) throw new DeviceFabricError("revision_conflict", "relay credential TTL is outside the configured range");
+    const expiresAt = new Date(nowMs + ttlMs).toISOString();
+    const username = `${Math.floor((nowMs + ttlMs) / 1000)}:${input.binding.bindingId}:${input.binding.epoch}:${input.role}`;
+    const credential = createHmac("sha1", this.#sharedSecret).update(username, "utf8").digest("base64");
+    this.#issued.set(`${input.binding.bindingId}:${username}`, expiresAt);
+    return { url: this.#turnUrls[0]!, username, credential, expiresAt };
+  }
 }
 
 /** Builds ephemeral transport input and redacted diagnostics without implementing WebRTC. */

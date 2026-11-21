@@ -7,7 +7,7 @@ import test from "node:test";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 
 test("self-hosted Ling Server control plane requires auth and preserves route fallback", async () => {
-  const control = new LingServerControlPlane({ authToken: "server-token", now: () => "2026-11-21T00:00:00.000Z", transport: { stunUrls: ["stun:stun.ling.example:3478"], turnUrls: ["turns:turn.ling.example:443"] } });
+  const control = new LingServerControlPlane({ authToken: "server-token", now: () => "2026-11-21T00:00:00.000Z", transport: { stunUrls: ["stun:stun.ling.example:3478"], turnUrls: ["turns:turn.ling.example:443"], relaySharedSecret: "0123456789abcdef" } });
   const address = await control.start();
   try {
     const health = await fetch(`http://${address.host}:${address.port}/healthz`);
@@ -19,6 +19,12 @@ test("self-hosted Ling Server control plane requires auth and preserves route fa
     assert.equal(installation.status, 200);
     const binding = await fetch(`http://${address.host}:${address.port}/v1/bindings`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" }) });
     assert.equal(binding.status, 200);
+    const relayCredential = await fetch(`http://${address.host}:${address.port}/v1/routes/relay-credential`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", role: "mobile", ttlMs: 60_000 }) });
+    assert.equal(relayCredential.status, 200);
+    const relay = await relayCredential.json() as { url: string; username: string; credential: string; expiresAt: string };
+    assert.equal(relay.url, "turns:turn.ling.example:443");
+    assert.match(relay.username, /:binding-1:1:mobile$/u);
+    assert.ok(relay.credential.length > 20);
     const route = await fetch(`http://${address.host}:${address.port}/v1/routes`, { method: "POST", headers, body: JSON.stringify({ action: "begin", route: { routeAttemptId: "route-1", bindingId: "binding-1", preferred: "direct", status: "checking", expiresAt: "2026-11-21T00:05:00.000Z" } }) });
     assert.equal(route.status, 200);
     const selected = await fetch(`http://${address.host}:${address.port}/v1/routes`, { method: "POST", headers, body: JSON.stringify({ action: "select", routeAttemptId: "route-1", selected: "direct" }) });
