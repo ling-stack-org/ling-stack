@@ -171,10 +171,24 @@ test("device overview is restored offline and refreshed from the same PC task wi
   const capabilities = [...legacyCapabilities, "device.read"] as const;
   const client = harness.createClient();
   const socket = await harness.connect(client, capabilities);
-  const task = { taskId: "task-1", primaryTargetDeviceId: "pc-1", status: "executing", updatedAt: now } as const;
+  const task = { taskId: "task-1", primaryTargetDeviceId: "pc-1", status: "awaiting_approval", updatedAt: now } as const;
   const overview: RemoteDeviceListSnapshotV1 = { workspaceId: "default", generatedAt: now, devices: [], recentTasks: [task] };
   socket.message("device.list_snapshot", overview, 1, "workspace-1");
-  await waitFor(() => harness.cache?.state.deviceOverview?.recentTasks?.[0]?.status === "executing");
+  socket.message("device.task.snapshot", {
+    workspaceId: "default", generatedAt: now,
+    task: {
+      taskId: task.taskId, ownerKind: "daemon", ownerId: "pc-runtime", targetDeviceIds: ["pc-1"], status: "awaiting_approval",
+      updatedAt: now, attemptIds: [],
+      pendingApproval: {
+        actionId: "action-1", targetDeviceId: "pc-1", capabilityId: "pc.repair.network", capabilitySchemaVersion: "1.0",
+        capabilitySnapshotId: "snapshot-1", connectionRevision: "connection-1", policyRevision: "policy-1",
+        normalizedInputDigest: "digest-1", sideEffect: "reversible",
+      },
+    },
+  }, 2, "workspace-1");
+  await waitFor(() => harness.cache?.state.deviceTask?.task.taskId === task.taskId);
+  assert.equal(client.state.deviceTask?.task.pendingApproval?.actionId, "action-1");
+  assert.equal(harness.cache?.state.deviceTask?.task.pendingApproval, undefined);
   assert.equal(client.state.deviceOverviewCurrent, true);
   client.disconnect();
   assert.equal(client.state.deviceOverviewCurrent, false);
@@ -182,7 +196,7 @@ test("device overview is restored offline and refreshed from the same PC task wi
   const resumed = harness.createClient();
   await resumed.restoreCachedState();
   assert.equal(resumed.state.connection, "disconnected");
-  assert.equal(resumed.state.deviceOverview?.recentTasks?.[0]?.status, "executing");
+  assert.equal(resumed.state.deviceOverview?.recentTasks?.[0]?.status, "awaiting_approval");
   assert.equal(resumed.state.deviceOverviewCurrent, false);
   const reconnected = await harness.connect(resumed, capabilities);
   assert.equal(resumed.state.deviceOverviewCurrent, false);
@@ -210,8 +224,7 @@ test("device overview is restored offline and refreshed from the same PC task wi
   assert.equal(resumed.state.deviceTask?.task.lastVerificationId, "verification-1");
   assert.equal(resumed.state.deviceTask?.task.ownerKind, "daemon");
   assert.deepEqual(reconnected.frames().filter(frame => frame.type.startsWith("device.")).map(frame => frame.type), ["device.task.status"]);
-  await waitFor(() => harness.cache?.state.deviceTask?.task.taskId === task.taskId);
-  assert.equal(harness.cache?.state.deviceTask?.task.taskId, task.taskId);
+  await waitFor(() => harness.cache?.state.deviceTask?.task.lastVerificationId === "verification-1");
   resumed.disconnect();
 
   await harness.connect(resumed);

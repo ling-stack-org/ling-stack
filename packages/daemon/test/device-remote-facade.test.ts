@@ -16,7 +16,7 @@ import {
   type RemoteClientCommandPayloadMapV1,
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   authProofSigningBytes,
   authProofSigningInput,
@@ -31,6 +31,7 @@ import { RemoteAccessController } from "../dist/features/remote-access/controlle
 import { createRemoteDeviceFacade } from "../dist/features/remote-access/device-facade.js";
 import { createRemoteGatewayIdentity } from "../dist/features/remote-access/pairing-auth-service.js";
 import { RemoteAccessStateStore } from "../dist/features/remote-access/state-store.js";
+import { PcAdapter } from "../dist/features/device-support/adapters/pc.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 const profile = {
@@ -110,9 +111,22 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
     store.close();
     await rm(root, { recursive: true, force: true });
   });
-  deviceStore.registerDevice({ ...profile, device: { ...profile.device, ownerScope: DEFAULT_WORKSPACE_ID } }, now);
+  const broker = new DeviceCapabilityBroker({ store: deviceStore, now: () => now });
+  let networkReads = 0;
+  const adapter = new PcAdapter({
+    now: () => now,
+    executor: {
+      async inventory() { return { hostname: "fixture-pc", os: "linux" }; },
+      async readNetwork() { networkReads += 1; return { connected: true, gatewayReachable: true, dnsReachable: true }; },
+      async readServices() { throw new Error("unexpected service read"); },
+      async repairNetwork() { throw new Error("unexpected repair"); },
+    },
+  });
+  broker.registerAdapter(adapter);
+  const target = await broker.discover(adapter.manifest.adapterId, { connectionRef: "local:fixture-pc", ownerId: DEFAULT_WORKSPACE_ID });
+  const capability = await broker.refreshCapabilities(target.device.id, target.device.profileRevision);
   deviceStore.registerDevice({ ...profile, device: { ...profile.device, id: "other-board", ownerScope: "workspace-2" } }, now);
-  deviceStore.createTask(deviceTask("task-1", [profile.device.id]), now);
+  broker.createTask(deviceTask("task-1", [target.device.id], { status: "planning", capabilitySnapshotIds: [capability.snapshotId] }));
   await controller.startIfEnabled();
   const loopback = `127.0.0.1:${listenerPort}`;
 
@@ -167,15 +181,19 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
   assert.ok(first.ready.policy.capabilities.includes("device.read"));
   await first.read("stream.subscribe", { commandId: "subscribe-first", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
   const firstList = await waitForFrame(first.frames, "device.list_snapshot");
-  assert.deepEqual(firstList.payload.recentTasks?.map(task => [task.taskId, task.status]), [["task-1", "awaiting_approval"]]);
+  assert.deepEqual(firstList.payload.recentTasks?.map(task => [task.taskId, task.status]), [["task-1", "planning"]]);
   await first.read("device.list", { commandId: "scope-denied", workspaceId: "workspace-2" });
   assert.equal((await waitForFrame(first.frames, "command.failed")).payload.error.code, "workspace_not_allowed");
   assert.equal(first.frames.some(frame => frame.type === "command.completed" && frame.payload.commandId === "scope-denied"), false);
   await first.close();
 
-  deviceStore.transitionTask("task-1", "executing", {}, now);
-  deviceStore.transitionTask("task-1", "verifying", {}, now);
-  deviceStore.transitionTask("task-1", "succeeded", { lastVerificationId: "verification-1" }, now);
+  const action = await broker.execute({
+    taskId: "task-1", actionId: "inspect-network", targetDeviceId: target.device.id,
+    capabilityId: "pc.inspect.network", capabilitySchemaVersion: "1.0", capabilitySnapshotId: capability.snapshotId,
+    normalizedInput: {}, expectedVerification: { connected: true }, idempotencyKey: "inspect-network-1",
+  });
+  assert.equal(action.attempt.verification?.status, "verified");
+  assert.equal(networkReads, 2);
   const reconnected = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1);
   await reconnected.read("stream.subscribe", { commandId: "subscribe-reconnect", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
   const newList = await waitForFrame(reconnected.frames, "device.list_snapshot");
@@ -184,7 +202,9 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
   const detail = (await waitForFrame(reconnected.frames, "device.task.snapshot")).payload.task;
   assert.equal(detail.taskId, "task-1");
   assert.equal(detail.ownerId, "daemon-1");
-  assert.equal(detail.lastVerificationId, "verification-1");
+  assert.deepEqual(detail.attemptIds, [action.attempt.attemptId]);
+  assert.equal(detail.lastVerificationId, "inspect-network:verification");
+  assert.equal(networkReads, 2);
   assert.equal(deviceStore.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 20).length, 1);
 });
 

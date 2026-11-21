@@ -622,10 +622,16 @@ export class RemoteSessionClient {
     if (!workspaceBindingId || this.binding.status !== "active") {
       return;
     }
+    const { deviceTask } = this.stateValue;
+    let state = { ...this.stateValue, deviceOverviewCurrent: false };
+    if (deviceTask?.task.pendingApproval) {
+      const { pendingApproval: _pendingApproval, ...task } = deviceTask.task;
+      state = { ...state, deviceTask: { ...deviceTask, task } };
+    }
     await this.options.cacheStore.write(workspaceBindingId, {
       version: 1,
       workspaceBindingId,
-      state: { ...this.stateValue, deviceOverviewCurrent: false },
+      state,
       resume: this.resumeCursors(),
       updatedAt: this.options.clock.now(),
     });
