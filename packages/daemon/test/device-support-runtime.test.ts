@@ -20,6 +20,7 @@ test("daemon device-support runtime composes the durable store, broker and remot
   assert.ok(runtime.developerStore.database);
   assert.ok(runtime.protocolStore.database);
   assert.equal(runtime.broker.store, runtime.store);
+  assert.ok(runtime.collaboration);
   assert.equal(runtime.remoteFacade.listDevices("workspace-1").devices.length, 0);
   const now = new Date().toISOString();
   const session = runtime.developerSessions.createSession({

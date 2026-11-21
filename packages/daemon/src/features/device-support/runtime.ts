@@ -11,6 +11,7 @@ import {
   DeviceCapabilityBroker,
   DeviceRunnerPlanningBridge,
   DeviceDeveloperSessionCoordinator,
+  DeviceCollaborationCoordinator,
   HardwareProtocolWorkbench,
   modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
@@ -40,6 +41,7 @@ export interface DeviceSupportRuntime {
   readonly protocolStore: SqliteDeviceProtocolStore;
   readonly protocolWorkbench: HardwareProtocolWorkbench;
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
+  readonly collaboration: DeviceCollaborationCoordinator;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
@@ -97,6 +99,7 @@ export function createDeviceSupportRuntime(options: {
   const remoteFacade = createRemoteDeviceFacade({ store, broker, now });
   const planner = new DeviceRunnerPlanningBridge();
   const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
+  const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
   const diagnosingLinux = new Set<string>();
 
@@ -181,6 +184,7 @@ export function createDeviceSupportRuntime(options: {
     protocolStore,
     protocolWorkbench,
     developerSessions,
+    collaboration,
     broker,
     remoteFacade,
     diagnoseLocalPc: () => {

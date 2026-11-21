@@ -85,10 +85,19 @@ export class SqliteDeviceDeveloperStore {
 
   saveProposal(proposal: DeviceCollaborationProposalV1): DeviceCollaborationProposalV1 {
     const current = this.getProposal(proposal.proposalId);
-    if (current && current.payloadDigest !== proposal.payloadDigest) throw new DeviceFabricError("revision_conflict", "proposal id is bound to another payload");
-    this.database.prepare("INSERT INTO device_collaboration_proposals(proposal_id,payload_digest,proposal_json) VALUES(?,?,?) ON CONFLICT(proposal_id) DO NOTHING")
+    if (current) {
+      if (current.payloadDigest !== proposal.payloadDigest || current.taskId !== proposal.taskId
+        || current.ownerId !== proposal.ownerId || current.targetDeviceId !== proposal.targetDeviceId
+        || !isProposalTransitionAllowed(current.status, proposal.status)) {
+        throw new DeviceFabricError("revision_conflict", "proposal id is bound to another payload or state");
+      }
+      this.database.prepare("UPDATE device_collaboration_proposals SET proposal_json=? WHERE proposal_id=?")
+        .run(JSON.stringify(proposal), proposal.proposalId);
+      return proposal;
+    }
+    this.database.prepare("INSERT INTO device_collaboration_proposals(proposal_id,payload_digest,proposal_json) VALUES(?,?,?)")
       .run(proposal.proposalId, proposal.payloadDigest, JSON.stringify(proposal));
-    return current ?? proposal;
+    return proposal;
   }
 
   getProposal(proposalId: string): DeviceCollaborationProposalV1 | undefined {
@@ -100,7 +109,12 @@ export class SqliteDeviceDeveloperStore {
     const proposal = this.getProposal(transfer.proposalId);
     if (!proposal || proposal.status !== "accepted") throw new DeviceFabricError("safety_denied", "artifact transfer requires an accepted proposal");
     const current = this.getTransfer(transfer.transferId);
-    if (current && (current.digest !== transfer.digest || current.proposalId !== transfer.proposalId)) throw new DeviceFabricError("revision_conflict", "transfer id is bound to another artifact");
+    if (current && (current.digest !== transfer.digest || current.proposalId !== transfer.proposalId
+      || current.sizeBytes !== transfer.sizeBytes || current.chunkSizeBytes !== transfer.chunkSizeBytes
+      || current.totalChunks !== transfer.totalChunks
+      || current.receivedChunks.some(chunk => !transfer.receivedChunks.includes(chunk)))) {
+      throw new DeviceFabricError("revision_conflict", "transfer id is bound to another artifact");
+    }
     this.database.prepare("INSERT INTO device_artifact_transfers(transfer_id,proposal_id,transfer_json) VALUES(?,?,?) ON CONFLICT(transfer_id) DO UPDATE SET transfer_json=excluded.transfer_json")
       .run(transfer.transferId, transfer.proposalId, JSON.stringify(transfer));
     return transfer;
@@ -120,6 +134,13 @@ export class SqliteDeviceDeveloperStore {
   }
 
   close(): void { this.database.close(); }
+}
+
+function isProposalTransitionAllowed(
+  current: DeviceCollaborationProposalV1["status"],
+  next: DeviceCollaborationProposalV1["status"],
+): boolean {
+  return current === next || (current === "proposed" && ["accepted", "rejected", "expired"].includes(next));
 }
 
 type Row = Record<string, SQLOutputValue>;

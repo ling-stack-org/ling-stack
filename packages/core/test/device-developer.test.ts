@@ -54,6 +54,37 @@ test("developer sessions, jobs, proposals and artifact transfers survive SQLite 
   second.close();
 });
 
+test("collaboration coordinator reads and writes proposals and transfers through the durable store", () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-collaboration-store-"));
+  const path = join(root, "developer.sqlite");
+  const firstStore = new SqliteDeviceDeveloperStore({ databasePath: path });
+  const payload = { capabilityId: "adb.install", input: { packageId: "com.example.app" } };
+  const proposal = { proposalId: "proposal-durable", taskId: "task-1", ownerKind: "mobile", ownerId: "mobile-1",
+    proposerKind: "daemon", proposerId: "daemon-1", targetDeviceId: "android-1", kind: "artifact", payload,
+    payloadDigest: digestCollaborationPayload(payload), baseRevision: "rev-1", status: "proposed",
+    createdAt: now, expiresAt: "2026-11-21T00:05:00.000Z" } as const;
+  try {
+    const first = new DeviceCollaborationCoordinator({ store: firstStore });
+    assert.deepEqual(first.propose(proposal), proposal);
+    assert.equal(first.accept(proposal.proposalId, "mobile-1", now).status, "accepted");
+    const transfer = first.registerTransfer({ transferId: "transfer-durable", proposalId: proposal.proposalId,
+      digest: "sha256:artifact", sizeBytes: 10, chunkSizeBytes: 5, totalChunks: 2, receivedChunks: [] });
+    assert.deepEqual(first.acceptChunk(transfer.transferId, 1).receivedChunks, [1]);
+  } finally {
+    firstStore.close();
+  }
+  const secondStore = new SqliteDeviceDeveloperStore({ databasePath: path });
+  try {
+    const second = new DeviceCollaborationCoordinator({ store: secondStore });
+    assert.equal(second.propose(proposal).status, "accepted");
+    assert.deepEqual(second.acceptChunk("transfer-durable", 0).receivedChunks, [0, 1]);
+    assert.throws(() => second.accept(proposal.proposalId, "mobile-1", now), /no longer actionable/);
+  } finally {
+    secondStore.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("developer session and job transitions commit together and restore after SQLite reopen", t => {
   const root = mkdtempSync(join(tmpdir(), "ling-developer-coordinator-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
