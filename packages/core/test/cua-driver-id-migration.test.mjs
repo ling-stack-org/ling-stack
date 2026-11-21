@@ -16,7 +16,6 @@ test("migrates legacy Cua Driver rows to the official plugin id", async () => {
 
   const database = new DatabaseSync(databasePath);
   database.exec(`
-    DELETE FROM schema_migrations WHERE version = 234;
     INSERT INTO managed_plugins (
       id, source_kind, version, enabled, disabled_reason, descriptor_json, created_at, updated_at
     ) VALUES (

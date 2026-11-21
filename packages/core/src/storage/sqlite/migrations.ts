@@ -245,10 +245,6 @@ const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION = 104;
 const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME = "create_media_external_workflows";
 const CUA_DRIVER_ACTIVATION_MIGRATION_VERSION = 105;
 const CUA_DRIVER_ACTIVATION_MIGRATION_NAME = "create_cua_driver_activation_state";
-// Keep this after the current code-assessment migrations. Migration versions
-// are database-global; 144 is owned by approval post-commit effects.
-const CUA_DRIVER_ID_MIGRATION_VERSION = 234;
-const CUA_DRIVER_ID_MIGRATION_NAME = "migrate_cua_driver_ids";
 const MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION = 106;
 const MCP_AUTHORITY_REVISIONS_MIGRATION_NAME = "add_mcp_authority_revisions";
 const REMOTE_CONVERSATION_STATE_MIGRATION_VERSION = 108;
@@ -5168,12 +5164,13 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
     }
 
-    const hasCuaDriverIdMigration = context.hasMigration(CUA_DRIVER_ID_MIGRATION_VERSION);
-    if (!hasCuaDriverIdMigration) {
-      // Older releases stored this plugin under trusted-local:cua-driver or
-      // bundled:cua-driver. Move the durable rows to the current canonical id
-      // before the next daemon startup projects the new descriptor.
-      database.exec(`
+    // Older releases stored this plugin under trusted-local:cua-driver or
+    // bundled:cua-driver. Move the durable rows to the current canonical id
+    // before the next daemon startup projects the new descriptor. This repair
+    // is intentionally rerun on every startup: it owns no schema objects, and
+    // each statement is idempotent, so it must not add a global migration
+    // marker that would invalidate historical migration inventories.
+    database.exec(`
         INSERT OR IGNORE INTO managed_plugins (
           id, source_kind, version, enabled, disabled_reason, descriptor_json, created_at, updated_at
         )
@@ -5267,8 +5264,6 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         DELETE FROM managed_plugins
         WHERE id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
       `);
-      context.recordMigration(CUA_DRIVER_ID_MIGRATION_VERSION, CUA_DRIVER_ID_MIGRATION_NAME);
-    }
 
     const hasMcpAuthorityRevisionsMigration = context.hasMigration(MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION);
     if (!hasMcpAuthorityRevisionsMigration || !context.hasTable("mcp_authority_revisions")) {
