@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import type { DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
 import { DeviceFabricError, DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
+import { DeviceEventProjector } from "../dist/device-event-projection.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -178,5 +179,36 @@ test("task graph coordinator persists owner leases and rejects stale graph revis
   assert.throws(() => second.acquireOwnerLease("device-1", "mobile-1"), (error: unknown) => error instanceof DeviceFabricError && error.code === "lease_busy");
   first.releaseOwnerLease("device-1", "edge-1");
   second.acquireOwnerLease("device-1", "mobile-1");
+  store.close();
+});
+
+test("event projector resumes from a snapshot and requests resync for a stale cursor", () => {
+  const store = new SqliteDeviceFabricStore({ maxEventsPerStream: 2 });
+  store.appendEvent(event(1, { retentionClass: "durable" }), now);
+  store.appendEvent(event(2, { retentionClass: "durable" }), now);
+  const projector = new DeviceEventProjector({
+    store,
+    streamId: "task:task-1",
+    now: () => now,
+    apply: (snapshot, nextEvent) => {
+      const current = snapshot as { count: number };
+      return { ...current, count: current.count + Number((nextEvent.payload as { sequence: number }).sequence) };
+    },
+  });
+  const first = projector.sync({ count: 0 });
+  assert.equal(first.status, "applied");
+  assert.equal(first.sequence, 2);
+  assert.deepEqual(first.snapshot, { count: 3 });
+  store.appendEvent(event(3, { retentionClass: "durable" }), now);
+  const second = projector.sync({ count: 0 });
+  assert.equal(second.eventsApplied, 1);
+  assert.deepEqual(second.snapshot, { count: 6 });
+  store.appendEvent(event(4, { streamId: "stale:1", eventId: "stale-4" }), now);
+  store.appendEvent(event(5, { streamId: "stale:1", eventId: "stale-5" }), now);
+  store.appendEvent(event(6, { streamId: "stale:1", eventId: "stale-6" }), now);
+  const stale = new DeviceEventProjector({ store, streamId: "stale:1", now: () => now, apply: (snapshot) => snapshot });
+  const staleResult = stale.sync({ count: 0 });
+  assert.equal(staleResult.status, "resync_required");
+  assert.equal(staleResult.reason, "snapshot_missing");
   store.close();
 });
