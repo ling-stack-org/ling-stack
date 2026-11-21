@@ -7,10 +7,16 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { messageSourceHash, sourceRevision } from "../scripts/catalog-utils.mjs";
 
-const execute = promisify(execFile);
+const execute = promisify(execFile) as (
+  file: string,
+  args: string[],
+  options: { timeout: number },
+) => Promise<{ stdout: string; stderr: string }>;
+
+type TranslationResult = { code?: number; stdout?: string; stderr?: string };
 
 /** Run the real translator against disposable catalogs and a deterministic transport. */
-async function translateFixture(failSecondBatch) {
+async function translateFixture(failSecondBatch: boolean) {
   const root = await mkdtemp(path.join(tmpdir(), "ling-catalog-translation-"));
   try {
     await cp(new URL("../scripts/", import.meta.url), path.join(root, "scripts"), { recursive: true });
@@ -39,7 +45,7 @@ async function translateFixture(failSecondBatch) {
         return { ok: true, json: async () => [calls === 1 ? 'Premier' : 'Deuxième'] };
       };
     `;
-    let result;
+    let result: TranslationResult;
     try {
       result = await execute(process.execPath, [
         `--import=data:text/javascript,${encodeURIComponent(transport)}`,
@@ -47,7 +53,8 @@ async function translateFixture(failSecondBatch) {
         "--locales=fr-FR", "--batch-size=1", "--concurrency=1", "--delay-ms=0",
       ], { timeout: 15_000 });
     } catch (error) {
-      result = { code: error.code, stderr: error.stderr };
+      const failure = error as { code?: number; stderr?: string };
+      result = { code: failure.code, stderr: failure.stderr };
     }
     return { result, previous, source, text: await readFile(destination, "utf8"), files: await readdir(path.join(root, "catalogs")) };
   } finally {
@@ -58,14 +65,14 @@ async function translateFixture(failSecondBatch) {
 test("a later translation failure preserves the complete previous locale byte-for-byte", async () => {
   const fixture = await translateFixture(true);
   assert.equal(fixture.result.code, 1);
-  assert.match(fixture.result.stderr, /fixture-translation-failed/u);
+  assert.match(fixture.result.stderr ?? "", /fixture-translation-failed/u);
   assert.equal(fixture.text, fixture.previous);
   assert.deepEqual(fixture.files.sort(), ["en-US.json", "fr-FR.json"]);
 });
 
 test("successful translation publishes once after every batch and retains reusable translations", async () => {
   const fixture = await translateFixture(false);
-  assert.equal(fixture.result.code, undefined, fixture.result.stderr);
+  assert.equal(fixture.result.code, undefined, fixture.result.stderr ?? "");
   const catalog = JSON.parse(fixture.text);
   assert.equal(catalog.sourceRevision, fixture.source.sourceRevision);
   assert.deepEqual(catalog.messages, { Alpha: "Premier", Beta: "Deuxième", Reusable: "Réutilisable" });
