@@ -1,3 +1,5 @@
+import type { AssistantMessage, TranscriptContext } from "@earendil-works/pi-ai";
+import type { AgentSession, SessionEntry } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { setImmediate as nextTick } from "node:timers/promises";
 import test from "node:test";
@@ -7,14 +9,22 @@ import { createPiTaskBoundary, createPiSessionStopper } from "../dist/task-bound
 import { translatePiEvent } from "../dist/events.js";
 
 const testOptions = { timeout: 15_000 };
+const boundaryOptions = {
+  cwd: process.cwd(),
+  task: { id: "compaction", title: "Compaction", prompt: "Finish the fixture." },
+  provider: { provider: "fixture", model: "fixture" },
+};
+type CompactionFixture = Awaited<ReturnType<typeof compactionFixture>>;
+type FixtureMessage = AgentSession["messages"][number] | TranscriptContext["messages"][number];
+type FixtureHold = ReturnType<CompactionFixture["hold"]>;
 const prompt = "Finish the fixture and preserve all recorded effects. " + "goal ".repeat(100);
-const compactions = f => f.sessionManager.getEntries().filter(entry => entry.type === "compaction");
-const ends = f => f.events.filter(event => event.type === "compaction_end");
-const providerError = (message, status = 400) => new Response(JSON.stringify({ error: { message,
+const compactions = (f: Awaited<ReturnType<typeof compactionFixture>>) => f.sessionManager.getEntries().filter(entry => entry.type === "compaction");
+const ends = (f: Awaited<ReturnType<typeof compactionFixture>>) => f.events.filter(event => event.type === "compaction_end");
+const providerError = (message: string, status = 400) => new Response(JSON.stringify({ error: { message,
   type: status === 503 ? "server_error" : "invalid_request_error" } }),
   { status, headers: { "content-type": "application/json" } });
 
-function assertToolPairs(messages) {
+function assertToolPairs(messages: readonly FixtureMessage[]) {
   const callIds = new Set(messages.flatMap(message => message.role === "assistant"
     ? message.content.filter(block => block.type === "toolCall").map(block => block.id) : []));
   const results = messages.filter(message => message.role === "toolResult");
@@ -41,9 +51,9 @@ test("SDK 1.1 keeps the preceding tool pair when a trailing result exceeds the r
     assert.equal(end.willRetry, false);
     assert.ok(end.result);
     const kept = f.sessionManager.getEntry(end.result.firstKeptEntryId);
-    assert.equal(kept.type, "message");
-    assert.equal(kept.message.role, "assistant", "never cut at the oversized tool result itself");
-    assert.deepEqual(kept.message.content, [{ type: "toolCall", id: `effect-${index}`,
+    assert.equal(kept!.type, "message");
+    assert.equal(kept!.message.role, "assistant", "never cut at the oversized tool result itself");
+    assert.deepEqual(kept!.message.content, [{ type: "toolCall", id: `effect-${index}`,
       name: "fixture_effect", arguments: {} }]);
     const before = f.events.slice(0, start);
     assert.equal(before.filter(event => event.type === "tool_execution_end").length, index + 1);
@@ -68,12 +78,17 @@ test("SDK 1.1 keeps the preceding tool pair when a trailing result exceeds the r
   await f.session.waitForIdle();
   assert.deepEqual(await f.effects(), ["effect-0", "effect-1", "effect-2"]);
   const followup = f.requests.filter(request => request.phase === "task").at(-1);
-  assertToolPairs(followup.messages);
+  assertToolPairs(followup!.messages);
   assert.equal(compactions(f).length, 3, "stale usage must not trigger compaction again on followup");
 });
 
 test("SDK can compact between tool turns when a safe cut point exists", testOptions, async t => {
-  const installedViews = [];
+  const installedViews: {
+    summary: string;
+    checkpoint?: Extract<SessionEntry, { type: "compaction" }>;
+    projection: ReturnType<CompactionFixture["sessionManager"]["buildSessionProjection"]>["messages"];
+    messages: AgentSession["messages"];
+  }[] = [];
   const f = await compactionFixture(t, {
     compaction: { keepRecentTokens: 200 },
     task: ({ index }) => response(index < 4
@@ -103,14 +118,14 @@ test("SDK can compact between tool turns when a safe cut point exists", testOpti
     assert.deepEqual(installed.messages, installed.projection,
       "compaction_end observes the already-installed canonical journal projection");
     assert.equal(installed.messages[0].role, "system");
-    assert.deepEqual(installed.messages[0], installed.checkpoint.systemMessage,
+    assert.deepEqual(installed.messages[0], installed.checkpoint!.systemMessage,
       "Pi 1.1 persists the leading system authority inside the compaction checkpoint");
     assert.equal(installed.messages[1].role, "compactionSummary");
     assert.equal(installed.messages[1].summary, installed.summary,
       "compaction_end observes the exact model view already installed by the SDK");
     assert.equal(installed.messages.filter(message => message.role === "compactionSummary").length, 1);
-    assert.equal(getCurrentSystemPrompt(installed.messages), f.requests[0].systemPrompt);
-    assert.deepEqual(getCurrentTools(installed.messages), f.requests[0].tools);
+    assert.equal(getCurrentSystemPrompt(installed.messages as TranscriptContext["messages"]), f.requests[0].systemPrompt);
+    assert.deepEqual(getCurrentTools(installed.messages as TranscriptContext["messages"]), f.requests[0].tools);
   }
   for (const request of f.requests.filter(item => item.phase === "task")) {
     assertToolPairs(request.messages);
@@ -171,7 +186,7 @@ test("a completed compacted SDK view cannot be blindly continued after restart",
   const restored = await compactionFixture(t, { compaction: { enabled: false },
     task: () => response({ text: "Continued from committed summary." }) });
   restored.session.state.messages = compactedView;
-  assert.equal(compactedView.at(-1).role, "assistant");
+  assert.equal(compactedView.at(-1)!.role, "assistant");
   await assert.rejects(restored.session.agent.continue(), /Cannot continue from message role: assistant/u);
   assert.equal(restored.requests.filter(request => request.phase === "task").length, 0);
   assert.deepEqual(await restored.effects(), [], "recovery must not re-execute the prior tool call");
@@ -185,14 +200,14 @@ test("SDK lifecycle becomes bounded Runner evidence without publishing summary o
   await successful.session.prompt(prompt);
   await successful.session.waitForIdle();
   const translated = successful.events.map(translatePiEvent).filter(Boolean);
-  const start = translated.find(event => event.type === "context_compaction_start");
-  const end = translated.find(event => event.type === "context_compaction_end");
+  const start = translated.find(event => event!.type === "context_compaction_start");
+  const end = translated.find(event => event!.type === "context_compaction_end");
   assert.deepEqual(start, { type: "context_compaction_start", reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1" });
-  assert.equal(end.outcome, "sdk_installed");
-  assert.equal(end.reason, "threshold");
-  assert.equal(end.willRetry, false);
-  assert.ok(end.tokensBefore > 0);
-  assert.ok(translated.some(event => event.type === "message_end" && event.usage?.input === 1_850));
+  assert.equal(end!.outcome, "sdk_installed");
+  assert.equal(end!.reason, "threshold");
+  assert.equal(end!.willRetry, false);
+  assert.ok(end!.tokensBefore! > 0);
+  assert.ok(translated.some(event => event!.type === "message_end" && event.usage?.input === 1_850));
   assert.equal(JSON.stringify([start, end]).includes("PRIVATE_SUMMARY_CONTENT"), false);
 
   const failed = await compactionFixture(t, {
@@ -202,7 +217,7 @@ test("SDK lifecycle becomes bounded Runner evidence without publishing summary o
   await failed.session.prompt(prompt);
   await failed.session.waitForIdle();
   const failedEnd = failed.events.map(translatePiEvent).find(event => event?.type === "context_compaction_end");
-  assert.equal(failedEnd.outcome, "failed");
+  assert.equal(failedEnd!.outcome, "failed");
   assert.equal(JSON.stringify(failedEnd).includes("PRIVATE_PROVIDER_DETAIL"), false);
 });
 
@@ -216,7 +231,7 @@ test("SDK auto-compaction failure is an event, not a rejected prompt or an insta
   await f.session.waitForIdle();
   assert.equal(ends(f).length, 1);
   assert.equal(ends(f)[0].result, undefined);
-  assert.match(ends(f)[0].errorMessage, /SYNTHETIC_PRIVATE_PROVIDER_DETAIL/);
+  assert.match(ends(f)[0].errorMessage!, /SYNTHETIC_PRIVATE_PROVIDER_DETAIL/);
   assert.equal(ends(f)[0].willRetry, false);
   assert.equal(compactions(f).length, 0);
   assert.equal(f.session.isIdle, true);
@@ -235,7 +250,8 @@ test("a compaction model cannot execute a tool from its summary response", testO
 });
 
 test("SDK 1.1 abort cancels an automatic summary and waits for its uncooperative transport", testOptions, async t => {
-  let entered, release, summarySignal;
+  let entered: FixtureHold, release: FixtureHold;
+  let summarySignal: AbortSignal | undefined;
   const f = await compactionFixture(t, {
     task: () => response({ inputTokens: 1_850, text: "Completed task. " + "text ".repeat(400) }),
     summary: async ({ signal }) => { summarySignal = signal; entered.resolve(); await release.promise; return response({ text: "Late summary" }); },
@@ -246,7 +262,7 @@ test("SDK 1.1 abort cancels an automatic summary and waits for its uncooperative
   let stopped = false;
   const stopping = f.session.abort().then(() => { stopped = true; });
   await nextTick();
-  assert.equal(summarySignal.aborted, true);
+  assert.equal(summarySignal!.aborted, true);
   assert.equal(stopped, false, "session.abort must wait until the ignored cancellation actually settles");
   assert.equal(f.events.filter(event => event.type === "agent_settled").length, 0);
   release.resolve();
@@ -264,7 +280,8 @@ test("SDK 1.1 abort cancels an automatic summary and waits for its uncooperative
 });
 
 test("manual compact aborts an active tool and never automatically resumes the interrupted turn", testOptions, async t => {
-  let entered, release, toolSignal;
+  let entered: FixtureHold, release: FixtureHold;
+  let toolSignal: AbortSignal | undefined;
   const f = await compactionFixture(t, {
     compaction: { enabled: false },
     task: ({ index }) => response(index === 1 ? { toolCallId: "manual-effect" } : { text: "Warmup. " + "text ".repeat(400) }),
@@ -277,7 +294,7 @@ test("manual compact aborts an active tool and never automatically resumes the i
   await entered.promise;
   const compacting = f.session.compact();
   await nextTick();
-  assert.equal(toolSignal.aborted, true);
+  assert.equal(toolSignal!.aborted, true);
   assert.equal(f.events.filter(event => event.type === "compaction_start").length, 0, "must wait for tool cleanup");
   release.resolve();
   await running;
@@ -291,7 +308,7 @@ test("manual compact aborts an active tool and never automatically resumes the i
 });
 
 test("SDK 1.1 retry durably omits a failed response from canonical context without deleting journal evidence", testOptions, async t => {
-  let originalFailure;
+  let originalFailure!: Extract<SessionEntry, { type: "message" }> & { message: AssistantMessage };
   const f = await compactionFixture(t, {
     compaction: { enabled: false },
     retry: { enabled: true, maxRetries: 1, baseDelayMs: 1, provider: { maxRetries: 0 } },
@@ -300,23 +317,24 @@ test("SDK 1.1 retry durably omits a failed response from canonical context witho
     event: event => {
       if (event.type === "auto_retry_start") {
         originalFailure = structuredClone(f.sessionManager.getEntries().findLast(entry => entry.type === "message"
-          && entry.message.role === "assistant" && entry.message.stopReason === "error"));
+          && entry.message.role === "assistant" && entry.message.stopReason === "error")) as typeof originalFailure;
       }
     },
   });
   await f.session.prompt(prompt);
   await f.session.waitForIdle();
   assert.ok(originalFailure, "the failed assistant response is already durable before retry starts");
-  assert.match(originalFailure.message.errorMessage, /PRIVATE_CANONICAL_FAILURE/);
+  assert.match(originalFailure.message.errorMessage!, /PRIVATE_CANONICAL_FAILURE/);
   assert.deepEqual(f.sessionManager.getEntry(originalFailure.id), originalFailure,
     "retry must not mutate or delete the original failed journal entry");
   const omissions = f.sessionManager.getEntries().filter(entry => entry.type === "context_edit"
     && entry.targetId === originalFailure.id);
   assert.equal(omissions.length, 1);
+  assert.equal(omissions[0].type, "context_edit");
   assert.equal(omissions[0].replacement, null, "the journal carries a durable omission, not an ephemeral state filter");
   const projectedFailure = f.sessionManager.buildSessionProjection().entries.find(entry => entry.sourceEntry.id === originalFailure.id);
-  assert.deepEqual(projectedFailure.sourceEntry, originalFailure);
-  assert.deepEqual(projectedFailure.messages, [], "provenance remains visible but contributes no model context");
+  assert.deepEqual(projectedFailure!.sourceEntry, originalFailure);
+  assert.deepEqual(projectedFailure!.messages, [], "provenance remains visible but contributes no model context");
   const requests = f.requests.filter(request => request.phase === "task");
   assert.equal(requests.length, 3);
   assert.deepEqual(requests[2].canonicalMessages, requests[1].canonicalMessages,
@@ -326,14 +344,14 @@ test("SDK 1.1 retry durably omits a failed response from canonical context witho
   assert.equal(JSON.stringify(requests[2].messages).includes("PRIVATE_CANONICAL_FAILURE"), false);
   assert.deepEqual(await f.effects(), ["effect-before-transient-failure"]);
   assert.equal(f.events.filter(event => event.type === "auto_retry_start").length, 1);
-  assert.equal(f.events.find(event => event.type === "auto_retry_end").success, true);
+  assert.equal(f.events.find(event => event.type === "auto_retry_end")!.success, true);
   assert.equal(compactions(f).length, 0);
   f.session.refreshContext();
   assert.equal(f.session.state.messages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
   await f.session.prompt("Follow up without repeating effects or restoring the failed response.");
   await f.session.waitForIdle();
   const followup = f.requests.filter(request => request.phase === "task").at(-1);
-  assert.equal(JSON.stringify(followup.canonicalMessages).includes("PRIVATE_CANONICAL_FAILURE"), false,
+  assert.equal(JSON.stringify(followup!.canonicalMessages).includes("PRIVATE_CANONICAL_FAILURE"), false,
     "a later canonical refresh must not resurrect the omitted failed attempt");
   assert.deepEqual(f.sessionManager.getEntry(originalFailure.id), originalFailure);
   assert.deepEqual(await f.effects(), ["effect-before-transient-failure"]);
@@ -352,19 +370,19 @@ test("overflow compact-and-retry keeps completed effects and removes the failed 
   assert.equal(ends(f)[0].willRetry, true);
   assert.equal(compactions(f).length, 1);
   const retry = f.requests.filter(request => request.phase === "task").at(-1);
-  assert.equal(retry.messages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
+  assert.equal(retry!.messages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
   const failure = f.sessionManager.getEntries().find(entry => entry.type === "message"
     && entry.message.role === "assistant" && entry.message.stopReason === "error");
   assert.ok(failure, "SDK history retains the failed response");
   assert.ok(f.sessionManager.getEntries().some(entry => entry.type === "context_edit"
     && entry.targetId === failure.id && entry.replacement === null),
   "overflow recovery persists canonical omission before compaction and retry");
-  assert.equal(retry.canonicalMessages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
+  assert.equal(retry!.canonicalMessages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
   const evidence = structuredClone(failure);
   f.session.refreshContext();
   assert.deepEqual(f.sessionManager.getEntry(failure.id), evidence);
   assert.equal(f.session.state.messages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
-  assert.equal(f.session.state.messages.at(-1).stopReason, "stop");
+  assert.equal((f.session.state.messages.at(-1) as AssistantMessage).stopReason, "stop");
 });
 
 test("a second overflow ends recovery instead of re-compacting or re-executing effects forever", testOptions, async t => {
@@ -380,9 +398,9 @@ test("a second overflow ends recovery instead of re-compacting or re-executing e
   assert.equal(compactions(f).length, 1);
   assert.equal(f.events.filter(event => event.type === "compaction_start").length, 1);
   assert.equal(ends(f).length, 2, "recovery exhaustion emits an end failure without a second start");
-  assert.match(ends(f)[1].errorMessage, /after one compact-and-retry attempt/);
+  assert.match(ends(f)[1].errorMessage!, /after one compact-and-retry attempt/);
   assert.equal(ends(f)[1].willRetry, false);
-  assert.equal(f.session.state.messages.at(-1).stopReason, "error");
+  assert.equal((f.session.state.messages.at(-1) as AssistantMessage).stopReason, "error");
 });
 
 test("same-millisecond overflow still requires reading assistant failure even without a second compaction_end", testOptions, async t => {
@@ -396,8 +414,10 @@ test("same-millisecond overflow still requires reading assistant failure even wi
   assert.equal(compactions(f).length, 1);
   assert.equal(ends(f).length, 1, "SDK timestamp guard treats a same-millisecond new error as pre-compaction");
   const lastAssistant = f.events.findLast(event => event.type === "message_end" && event.message.role === "assistant");
+  assert.equal(lastAssistant?.type, "message_end");
+  assert.equal(lastAssistant.message.role, "assistant");
   assert.equal(lastAssistant.message.stopReason, "error");
-  assert.equal(lastAssistant.message.timestamp, new Date(compactions(f)[0].timestamp).getTime());
+  assert.equal(lastAssistant!.message.timestamp, new Date(compactions(f)[0].timestamp).getTime());
 });
 
 test("transient summary retry is bounded and does not rerun the completed task", testOptions, async t => {
@@ -431,13 +451,14 @@ test("cancelling summary backoff prevents the retry request and installs no late
   assert.equal(f.requests.filter(request => request.phase === "summary").length, 1);
   assert.equal(f.events.filter(event => event.type === "summarization_retry_attempt_start").length, 0);
   assert.deepEqual(f.events.find(event => event.type === "summarization_retry_finished"), { type: "summarization_retry_finished" });
-  assert.equal(f.requests.find(request => request.phase === "summary").signal.aborted, true);
+  assert.equal(f.requests.find(request => request.phase === "summary")!.signal!.aborted, true);
   assert.equal(ends(f)[0].result, undefined);
   assert.equal(compactions(f).length, 0);
 });
 
 test("cancelling one session's summary leaves an independent concurrent SDK session intact", testOptions, async t => {
-  let entered, release, summarySignal;
+  let entered: FixtureHold, release: FixtureHold;
+  let summarySignal: AbortSignal | undefined;
   const first = await compactionFixture(t, {
     task: () => response({ inputTokens: 1_850, text: "Completed task. " + "text ".repeat(400) }),
     summary: async ({ signal }) => { summarySignal = signal; entered.resolve(); await release.promise; return response(); },
@@ -450,17 +471,18 @@ test("cancelling one session's summary leaves an independent concurrent SDK sess
   first.session.abortCompaction();
   release.resolve();
   await Promise.all([running, second.session.prompt(prompt)]);
-  assert.equal(summarySignal.aborted, true);
+  assert.equal(summarySignal!.aborted, true);
   assert.equal(compactions(first).length, 0);
   assert.deepEqual(await second.effects(), ["independent-effect"]);
-  assert.equal(second.session.state.messages.at(-1).stopReason, "stop");
+  assert.equal((second.session.state.messages.at(-1) as AssistantMessage).stopReason, "stop");
   assert.equal(second.requests.filter(request => request.phase === "task").length, 2);
 });
 
 test("Ling stop plus its runtime guard prevents a late summary from being installed after cancellation", testOptions, async t => {
-  let entered, release, summarySignal;
+  let entered: FixtureHold, release: FixtureHold;
+  let summarySignal: AbortSignal | undefined;
   const caller = new AbortController();
-  const boundary = createPiTaskBoundary({ signal: caller.signal });
+  const boundary = createPiTaskBoundary({ ...boundaryOptions, signal: caller.signal });
   const f = await compactionFixture(t, {
     bindRuntime: runtime => boundary.bindModelRuntime(runtime),
     task: () => response({ inputTokens: 1_850, text: "Completed task. " + "text ".repeat(400) }),
@@ -470,7 +492,7 @@ test("Ling stop plus its runtime guard prevents a late summary from being instal
   const running = f.session.prompt(prompt);
   await entered.promise;
   caller.abort();
-  assert.equal(summarySignal.aborted, true);
+  assert.equal(summarySignal!.aborted, true);
   assert.throws(() => boundary.assertOpen(), { name: "AbortError" });
   const stopping = createPiSessionStopper(f.session)();
   await nextTick();
@@ -481,9 +503,9 @@ test("Ling stop plus its runtime guard prevents a late summary from being instal
 });
 
 test("Ling's stream guard does not cancel SDK-owned summary backoff; stop must also abort compaction", testOptions, async t => {
-  let entered;
+  let entered: FixtureHold;
   const caller = new AbortController();
-  const boundary = createPiTaskBoundary({ signal: caller.signal });
+  const boundary = createPiTaskBoundary({ ...boundaryOptions, signal: caller.signal });
   const f = await compactionFixture(t, {
     bindRuntime: runtime => boundary.bindModelRuntime(runtime),
     retry: { enabled: true, maxRetries: 1, baseDelayMs: 10_000, provider: { maxRetries: 0 } },
@@ -535,7 +557,7 @@ test("a failed compaction cancellation still attempts to stop the agent and rema
 });
 
 test("session stop waits for an uncooperative summary transport to actually settle", testOptions, async t => {
-  let entered, release;
+  let entered: FixtureHold, release: FixtureHold;
   const f = await compactionFixture(t, {
     task: () => response({ inputTokens: 1_850, text: "Completed task. " + "text ".repeat(400) }),
     summary: async () => { entered.resolve(); await release.promise; return response({ text: "Late summary" }); },

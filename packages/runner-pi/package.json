@@ -7,7 +7,7 @@
   "scripts": {
     "build:ci": "tsc -p tsconfig.json",
     "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
-    "test:ci": "node --test test/*.test.mjs test/*.test.ts",
+    "test:ci": "node --test test/*.test.ts",
     "build": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json",
     "typecheck": "corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm typecheck:ci",
     "lint": "echo \"lint not configured yet\"",

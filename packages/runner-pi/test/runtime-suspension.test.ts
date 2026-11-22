@@ -1,34 +1,46 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import assert from "node:assert/strict";
+import type { TranscriptContext } from "@earendil-works/pi-ai";
+import type { PiRunnerEvent, PiRunnerProviderInvocationAdmittedReceipt, PiRunnerProviderInvocationSettledReceipt, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
+import type { Model } from "@earendil-works/pi-ai";
+import type { TestContext } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AgentSession } from "@earendil-works/pi-coding-agent";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { PiRunnerAdapter } from "../dist/adapter.js";
 import { createPiTaskBoundary } from "../dist/task-boundary.js";
 import { PiRunnerSuspended, readRuntimeSuspensionDirective } from "../dist/runtime-suspension.js";
 import * as observation from "../dist/tool-boundary-observation.js";
 
 const testOptions = { timeout: 15_000 };
-const directive = (changes = {}) => ({ schemaVersion: 1, kind: "runtime_suspension",
+const boundaryOptions = {
+  cwd: process.cwd(),
+  task: { id: "suspension", title: "Suspension", prompt: "Finish the fixture." },
+  provider: { provider: "fixture", model: "fixture" },
+};
+const directive = (changes: Record<string, unknown> = {}) => ({ schemaVersion: 1 as const, kind: "runtime_suspension" as const,
   runId: "suspension-run", attemptId: "suspension-attempt", suspensionId: "suspension-1",
   checkpointId: "checkpoint-1", checkpointSha256: "a".repeat(64), ...changes });
 
 /** Real SDK/session/extensions/provider parser; only the network transport is replaced. */
-async function fixture(t, changes = {}, withRead = false, finishReason = "stop", responseText = "Completed from actual evidence.") {
+async function fixture(t: TestContext, changes: Partial<PiRunnerRunOptions> = {}, withRead = false, finishReason = "stop", responseText = "Completed from actual evidence.") {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-runtime-suspension-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   await writeFile(join(cwd, "evidence.txt"), "Actual SDK read evidence.");
   const controller = new AbortController();
-  const events = [], contexts = [], admitted = [], settled = [];
+  const events: PiRunnerEvent[] = [], contexts: TranscriptContext[] = [], admitted: PiRunnerProviderInvocationAdmittedReceipt[] = [], settled: PiRunnerProviderInvocationSettledReceipt[] = [];
   let requests = 0;
-  class FixtureRunner extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  class FixtureRunner extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       runtime.registerProvider(provider.provider, { api: "openai-completions", streamSimple: (model, context, options) => {
         contexts.push(structuredClone(context));
-        return stream(model, context, { ...options, fetch: async () => {
+        return stream(model as Model<"openai-completions">, context, { ...options, fetch: async () => {
           requests += 1;
           const read = withRead && requests === 1;
           const delta = read ? { tool_calls: [{ index: 0, id: "read-1", type: "function",
@@ -43,10 +55,10 @@ async function fixture(t, changes = {}, withRead = false, finishReason = "stop",
     }
   }
   const runner = new FixtureRunner();
-  const options = { cwd, agentDir: join(cwd, "agent"), runId: "suspension-run", runnerAttemptId: "suspension-attempt",
+  const options: PiRunnerRunOptions = { cwd, agentDir: join(cwd, "agent"), runId: "suspension-run", runnerAttemptId: "suspension-attempt",
     task: { id: "suspension-task", title: "Runtime suspension", prompt: "Read evidence then report the result." },
     provider: { provider: "suspension-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1",
-      api: "openai-completions", apiKey: "fixture-no-network", reasoning: false },
+      api: "openai-completions" as const, apiKey: "fixture-no-network", reasoning: false },
     tools: ["read"], signal: controller.signal, hostCompactionEnabled: true,
     onEvent: event => events.push(event), onTaskContinuationBoundary: async () => undefined,
     onProviderInvocationAdmitted: receipt => admitted.push(receipt),
@@ -55,27 +67,28 @@ async function fixture(t, changes = {}, withRead = false, finishReason = "stop",
   return { runner, options: { ...options, preparedInput }, controller, events, contexts, admitted, settled, requests: () => requests };
 }
 
-function assertNoTerminalEvent(f) {
+function assertNoTerminalEvent(f: { events: PiRunnerEvent[] }) {
   assert.equal(f.events.some(event => event.type === "run_error" || event.type === "run_end"), false);
 }
 
 test("provider boundary suspends a paired actual SDK read view without another transport", testOptions, async t => {
-  let captured;
+  let captured: readonly unknown[] | undefined;
   const f = await fixture(t, { onTaskContinuationBoundary: async (point, modelView) => {
-    if (point === "before_provider_request" && modelView?.at(-1)?.role === "toolResult") {
-      captured = structuredClone(modelView);
+    if (point === "before_provider_request" && (modelView?.at(-1) as { role?: string } | undefined)?.role === "toolResult") {
+      captured = structuredClone(modelView) as typeof captured;
       return directive();
     }
   } }, true);
   await assert.rejects(f.runner.runTask(f.options), error => {
-    assert.equal(error.name, "PiRunnerSuspended", error.stack);
+    assert.ok(error instanceof PiRunnerSuspended);
+    assert.equal(error.name, "PiRunnerSuspended", error.stack ?? String(error));
     assert.deepEqual(error.request, directive());
     assert.ok(Number.isFinite(Date.parse(error.sdkStoppedAt)));
     return true;
   });
-  assert.equal(captured.at(-2).content[0].id, "read-1");
-  assert.equal(captured.at(-1).toolCallId, "read-1");
-  assert.match(captured.at(-1).content[0].text, /Actual SDK read evidence/u);
+  assert.equal((captured!.at(-2) as { content: { id: string }[] }).content[0].id, "read-1");
+  assert.equal((captured!.at(-1) as { toolCallId: string }).toolCallId, "read-1");
+  assert.match((captured!.at(-1) as { content: { text: string }[] }).content[0].text, /Actual SDK read evidence/u);
   assert.equal(f.requests(), 1);
   assert.equal(f.events.filter(event => event.type === "tool_start").length, 1);
   assert.equal(f.events.filter(event => event.type === "tool_end").length, 1);
@@ -92,8 +105,8 @@ test("settled boundary receives the real complete SDK view before run_end and ca
   let calls = 0;
   const f = await fixture(t, { onTaskSettledBoundary: async modelView => {
     calls += 1;
-    assert.equal(modelView.at(-1).role, "assistant");
-    assert.equal(modelView.at(-1).stopReason, "stop");
+    assert.equal((modelView.at(-1) as AssistantMessage).role, "assistant");
+    assert.equal((modelView.at(-1) as AssistantMessage).stopReason, "stop");
     assert.equal(f.settled.length, 1);
     assert.equal(f.settled[0].outcome, "succeeded");
     assertNoTerminalEvent(f);
@@ -106,24 +119,25 @@ test("settled boundary receives the real complete SDK view before run_end and ca
 });
 
 test("settled boundary preserves the full paired tool transcript without replay or tail removal", testOptions, async t => {
-  let captured;
+  let captured!: { role: string; content: { id?: string }[]; toolCallId?: string; stopReason?: string }[];
   const f = await fixture(t, { onTaskSettledBoundary: async modelView => {
-    captured = structuredClone(modelView);
+    captured = structuredClone(modelView) as typeof captured;
     return directive();
   } }, true);
   await assert.rejects(f.runner.runTask(f.options), { name: "PiRunnerSuspended" });
-  assert.deepEqual(captured.map(message => message.role), ["user", "assistant", "toolResult", "assistant"]);
-  assert.equal(captured[1].content[0].id, captured[2].toolCallId);
-  assert.equal(captured.at(-1).stopReason, "stop");
+  assert.deepEqual(captured!.map(message => message.role), ["user", "assistant", "toolResult", "assistant"]);
+  assert.equal(captured![1].content[0].id, captured![2].toolCallId);
+  assert.equal(captured!.at(-1)!.stopReason, "stop");
   assert.equal(f.requests(), 2);
   assert.equal(f.events.filter(event => event.type === "tool_end").length, 1);
   assertNoTerminalEvent(f);
 });
 
 test("a real settled callback exposes only its independent ephemeral inventory window", testOptions, async t => {
-  let receipt, inventory;
-  const readSettled = value => observation.readPiSettledBoundaryInventory(value, "suspension-run", "suspension-attempt");
-  const readProvider = value => observation.readPiProviderBoundaryInventory(value, "suspension-run", "suspension-attempt");
+  let receipt!: observation.PiToolBoundaryObservation;
+  let inventory: observation.PiSettledBoundaryInventory | undefined;
+  const readSettled = (value: observation.PiToolBoundaryObservation) => observation.readPiSettledBoundaryInventory(value, "suspension-run", "suspension-attempt");
+  const readProvider = (value: observation.PiToolBoundaryObservation) => observation.readPiProviderBoundaryInventory(value, "suspension-run", "suspension-attempt");
   const f = await fixture(t, {
     onToolBoundaryObservation: value => { receipt = value; },
     onTaskContinuationBoundary: async point => {
@@ -149,20 +163,21 @@ test("a real settled callback exposes only its independent ephemeral inventory w
 });
 
 test("settled snapshot binds the original complete view and cannot be changed by a Host callback", testOptions, async t => {
-  let receipt, captured;
-  const read = value => observation.readPiSettledBoundarySnapshot(value, "suspension-run", "suspension-attempt");
+  let receipt!: observation.PiToolBoundaryObservation;
+  let captured: readonly unknown[] | undefined;
+  const read = (value: observation.PiToolBoundaryObservation) => observation.readPiSettledBoundarySnapshot(value, "suspension-run", "suspension-attempt");
   const f = await fixture(t, {
     onToolBoundaryObservation: value => { receipt = value; },
     onTaskContinuationBoundary: async () => { assert.equal(read(receipt), undefined); },
     onTaskSettledBoundary: async view => {
       captured = structuredClone(view);
       const snapshot = read(receipt);
-      assert.deepEqual(snapshot.modelView, captured);
-      assert.deepEqual(snapshot.inventory.toolCallIds, ["read-1"]);
+      assert.deepEqual(snapshot!.modelView, captured);
+      assert.deepEqual(snapshot!.inventory.toolCallIds, ["read-1"]);
       assert.equal(read({ ...receipt }), undefined);
-      view.at(-1).content[0].text = "mutated callback view";
-      snapshot.modelView.at(-1).content[0].text = "mutated returned snapshot";
-      assert.deepEqual(read(receipt).modelView, captured, "only the original SDK view can become settlement evidence");
+      (view.at(-1) as { content: { text: string }[] }).content[0].text = "mutated callback view";
+      (snapshot!.modelView.at(-1) as { content: { text: string }[] }).content[0].text = "mutated returned snapshot";
+      assert.deepEqual(read(receipt)!.modelView, captured, "only the original SDK view can become settlement evidence");
       return directive();
     },
   }, true);
@@ -174,7 +189,7 @@ test("settled snapshot binds the original complete view and cannot be changed by
 
 test("settled inventory rejects forged/getter receipts and cannot outlive its window", () => {
   const original = observation.createPiToolBoundaryObservation("run", "attempt");
-  const read = receipt => observation.readPiSettledBoundaryInventory(receipt, "run", "attempt");
+  const read = (receipt: observation.PiToolBoundaryObservation) => observation.readPiSettledBoundaryInventory(receipt, "run", "attempt");
   assert.equal(read(original.receipt), undefined);
   original.enter("call", "read");
   original.completeBuiltinRead("call", "read");
@@ -192,7 +207,7 @@ test("settled inventory rejects forged/getter receipts and cannot outlive its wi
   assert.equal(read(original.receipt), undefined);
 });
 
-for (const first of ["Provider", "Settled"]) {
+for (const first of ["Provider", "Settled"] as const) {
   test(`provider and settled windows reject overlapping authority: first=${first}`, () => {
     const original = observation.createPiToolBoundaryObservation("run", "attempt");
     original[`enter${first}Boundary`]();
@@ -228,7 +243,7 @@ test("runtime receipt reader copies only the closed data-only Host identity", ()
   assert.ok(Object.isFrozen(new PiRunnerSuspended(captured, new Date().toISOString()).request));
 });
 
-const malformed = [
+const malformed: [string, (value: Record<PropertyKey, unknown>) => void][] = [
   ["missing schema", value => { delete value.schemaVersion; }],
   ["wrong schema", value => { value.schemaVersion = 2; }],
   ["wrong kind", value => { value.kind = "user_input_required"; }],
@@ -263,7 +278,7 @@ for (const [label, mutate] of malformed) {
 test("runtime receipt rejects missing expected identities and invokes no getter/proxy/serializer", () => {
   const expected = { runId: "suspension-run", runnerAttemptId: "suspension-attempt" };
   for (const changed of [{ runId: undefined }, { runnerAttemptId: undefined }, { runId: "" }, { runnerAttemptId: 1 }]) {
-    assert.throws(() => readRuntimeSuspensionDirective(directive(), { ...expected, ...changed }), /Invalid Pi runtime suspension/u);
+    assert.throws(() => readRuntimeSuspensionDirective(directive(), { ...expected, ...changed } as typeof expected), /Invalid Pi runtime suspension/u);
   }
   let calls = 0;
   const getter = directive();
@@ -281,85 +296,83 @@ test("runtime receipt rejects missing expected identities and invokes no getter/
 test("swallowed suspension remains latched across every Host/tool/provider/compaction admission and duplicates", async () => {
   let hostCalls = 0, effects = 0, transports = 0;
   const request = directive();
-  const boundary = createPiTaskBoundary({ runId: request.runId, runnerAttemptId: request.attemptId,
+  const boundary = createPiTaskBoundary({ ...boundaryOptions, runId: request.runId, runnerAttemptId: request.attemptId,
     onTaskContinuationBoundary: async () => { hostCalls += 1; return request; },
     onToolBefore: () => { effects += 1; return { allowed: true }; },
-    onApprovalRequired: () => { effects += 1; return {}; },
-    onPermissionRequired: () => { effects += 1; return {}; },
-    onToolHydrationRequest: () => { effects += 1; return {}; },
-    onMcpToolCall: () => { effects += 1; return {}; },
-    onHostCapabilityCall: () => { effects += 1; return {}; },
-    onMediaGenerationToolCall: () => { effects += 1; return {}; },
-    onDelegationToolCall: async () => { effects += 1; return {}; },
-    onUserInputRequest: async () => { effects += 1; return {}; },
+    onApprovalRequired: () => { effects += 1; return {} as never; },
+    onPermissionRequired: () => { effects += 1; return {} as never; },
+    onToolHydrationRequest: () => { effects += 1; return {} as never; },
+    onMcpToolCall: () => { effects += 1; return {} as never; },
+    onHostCapabilityCall: () => { effects += 1; return {} as never; },
+    onMediaGenerationToolCall: () => { effects += 1; return {} as never; },
+    onDelegationToolCall: async () => { effects += 1; return {} as never; },
+    onUserInputRequest: async () => { effects += 1; return {} as never; },
     onTaskSettledBoundary: async () => { effects += 1; return request; },
   });
-  let pending;
-  await assert.rejects(boundary.options.onTaskContinuationBoundary("before_provider_request", [{ role: "user" }]), error => {
+  let pending: unknown;
+  await assert.rejects(boundary.options.onTaskContinuationBoundary!("before_provider_request", [{ role: "user" }]), error => {
     pending = error; return true;
   });
   assert.equal(boundary.failure, undefined);
   assert.notEqual(boundary.suspensionRequest, request);
   assert.ok(Object.isFrozen(boundary.suspensionRequest));
   request.checkpointId = "mutated-after-boundary";
-  assert.equal(boundary.suspensionRequest.checkpointId, "checkpoint-1");
-  const runtime = { streamSimple() { transports += 1; } };
-  boundary.bindModelRuntime(runtime);
+  assert.equal(boundary.suspensionRequest!.checkpointId, "checkpoint-1");
+  const runtime = { streamSimple(..._args: unknown[]) { transports += 1; } };
+  boundary.bindModelRuntime(runtime as unknown as ModelRuntime);
   assert.throws(() => runtime.streamSimple({}, {}, {}), error => error === pending);
   for (const name of ["onToolBefore", "onApprovalRequired", "onPermissionRequired", "onToolHydrationRequest", "onMcpToolCall",
-    "onHostCapabilityCall", "onMediaGenerationToolCall"]) {
-    assert.throws(() => boundary.options[name]({}), error => error === pending);
+    "onHostCapabilityCall", "onMediaGenerationToolCall"] as const) {
+    assert.throws(() => boundary.options[name]!({} as never), error => error === pending);
   }
-  for (const name of ["onDelegationToolCall", "onUserInputRequest", "onTaskSettledBoundary"]) {
-    await assert.rejects(boundary.options[name]({}), error => error === pending);
+  for (const name of ["onDelegationToolCall", "onUserInputRequest", "onTaskSettledBoundary"] as const) {
+    await assert.rejects(boundary.options[name]!({} as never) as Promise<unknown>, error => error === pending);
   }
-  await assert.rejects(boundary.options.onTaskContinuationBoundary("before_provider_request", [{}]), error => error === pending);
-  assert.throws(() => boundary.options.onTaskContinuationDirectiveFailure(pending), error => error === pending);
+  await assert.rejects(boundary.options.onTaskContinuationBoundary!("before_provider_request", [{}]), error => error === pending);
+  assert.throws(() => boundary.options.onTaskContinuationDirectiveFailure!(pending), error => error === pending);
   assert.equal(boundary.failure, undefined);
   assert.equal(hostCalls, 1);
   assert.equal(effects, 0);
   assert.equal(transports, 0);
 });
 
-for (const point of ["before_agent_start", "tool_call", "before_provider_request"]) {
+for (const point of ["before_agent_start", "tool_call", "before_provider_request"] as const) {
   test(`runtime suspension refuses an unproven ${point} boundary`, async () => {
-    const boundary = createPiTaskBoundary({ runId: "suspension-run", runnerAttemptId: "suspension-attempt",
+    const boundary = createPiTaskBoundary({ ...boundaryOptions, runId: "suspension-run", runnerAttemptId: "suspension-attempt",
       onTaskContinuationBoundary: async () => directive() });
-    await assert.rejects(boundary.options.onTaskContinuationBoundary(point), /actual provider boundary view/u);
+    await assert.rejects(boundary.options.onTaskContinuationBoundary!(point), /actual provider boundary view/u);
     assert.equal(boundary.suspensionRequest, undefined);
     assert.ok(boundary.failure);
   });
 }
 
 test("concurrent callback returns cannot replace the first latched suspension", async () => {
-  let release;
-  const gate = new Promise(resolve => { release = resolve; });
+  const { promise: gate, resolve: release } = Promise.withResolvers<void>();
   let calls = 0;
-  const boundary = createPiTaskBoundary({ runId: "suspension-run", runnerAttemptId: "suspension-attempt",
+  const boundary = createPiTaskBoundary({ ...boundaryOptions, runId: "suspension-run", runnerAttemptId: "suspension-attempt",
     onTaskContinuationBoundary: async () => {
       const n = ++calls;
       if (n === 1) await gate;
       return directive({ checkpointId: `checkpoint-${n}` });
     } });
-  const first = boundary.options.onTaskContinuationBoundary("before_provider_request", [{}]);
-  await assert.rejects(boundary.options.onTaskContinuationBoundary("before_provider_request", [{}]));
-  release();
+  const first = boundary.options.onTaskContinuationBoundary!("before_provider_request", [{}]);
+  await assert.rejects(boundary.options.onTaskContinuationBoundary!("before_provider_request", [{}]));
+  release!();
   await assert.rejects(first);
-  assert.equal(boundary.suspensionRequest.checkpointId, "checkpoint-2");
+  assert.equal(boundary.suspensionRequest!.checkpointId, "checkpoint-2");
   assert.equal(boundary.failure, undefined);
 });
 
 for (const trigger of ["provider", "settled"]) {
   for (const cleanup of ["idle", "late-cancel", "reject"]) {
     test(`${trigger} suspension awaits actual SDK stop+idle; cleanup=${cleanup}`, testOptions, async t => {
-      let receipt;
-      const changes = trigger === "provider" ? { onTaskContinuationBoundary: async (point, modelView) =>
-        point === "before_provider_request" && modelView?.at(-1)?.role === "toolResult" ? directive() : undefined }
+      let receipt!: observation.PiToolBoundaryObservation;
+      const changes: Partial<PiRunnerRunOptions> = trigger === "provider" ? { onTaskContinuationBoundary: async (point, modelView) =>
+        point === "before_provider_request" && (modelView?.at(-1) as { role?: string } | undefined)?.role === "toolResult" ? directive() : undefined }
         : { onTaskSettledBoundary: async () => directive() };
       const f = await fixture(t, { ...changes, onToolBoundaryObservation: value => { receipt = value; } }, trigger === "provider");
-      let release, entered;
-      const gate = new Promise(resolve => { release = resolve; });
-      const reached = new Promise(resolve => { entered = resolve; });
+      const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+      const { promise: reached, resolve: entered } = Promise.withResolvers<void>();
       const original = AgentSession.prototype.abort;
       AgentSession.prototype.abort = async function () {
         await original.call(this);
@@ -378,8 +391,9 @@ for (const trigger of ["provider", "settled"]) {
       assertNoTerminalEvent(f);
       assert.equal(observation.readPiSettledBoundaryInventory(receipt, "suspension-run", "suspension-attempt"), undefined);
       if (cleanup === "late-cancel") f.controller.abort(new Error("external cancellation wins"));
-      release();
+      release!();
       const result = await outcome;
+      assert.ok("error" in result && result.error instanceof Error);
       if (cleanup === "idle") {
         assert.ok(result.error instanceof PiRunnerSuspended);
         assertNoTerminalEvent(f);
@@ -413,9 +427,10 @@ test("settled Host exception cannot become normal completion or suspension", tes
 
 for (const mutation of ["text", "usage", "identity", "tool"]) {
   test(`suspension never hides a non-control SDK event: ${mutation}`, testOptions, async t => {
-    let requested = false, controlMessage;
+    let requested = false;
+    let controlMessage: AssistantMessage | undefined;
     const f = await fixture(t, { onTaskContinuationBoundary: async (point, modelView) => {
-      if (point === "before_provider_request" && modelView?.at(-1)?.role === "toolResult") {
+      if (point === "before_provider_request" && (modelView?.at(-1) as { role?: string } | undefined)?.role === "toolResult") {
         requested = true; return directive();
       }
     } }, true);
@@ -426,7 +441,7 @@ for (const mutation of ["text", "usage", "identity", "tool"]) {
           controlMessage = event.message;
           if (mutation === "text") controlMessage = { ...event.message, content: [{ type: "text", text: "Real late output" }] };
           if (mutation === "usage") controlMessage = { ...event.message, usage: { ...event.message.usage, input: 1, totalTokens: 1 } };
-          return listener({ ...event, message: controlMessage });
+          return listener({ ...event, message: controlMessage! });
         }
         if (requested && event.type === "turn_end" && controlMessage) {
           if (mutation === "tool") listener({ type: "tool_execution_update", toolCallId: "read-1", toolName: "read",
@@ -451,13 +466,13 @@ test("an unfinished length tail is never offered as a complete settled view", te
   const f = await fixture(t, { hostCompactionEnabled: false,
     onTaskSettledBoundary: async () => { calls += 1; return directive(); } }, false, "length");
   const result = await f.runner.runTask(f.options);
-  assert.equal(result.messages.findLast(message => message.role === "assistant")?.stopReason, "length", JSON.stringify(result.messages));
+  assert.equal((result.messages as AssistantMessage[]).findLast(message => message.role === "assistant")?.stopReason, "length", JSON.stringify(result.messages));
   assert.equal(calls, 0);
   assert.equal(f.events.filter(event => event.type === "run_end").length, 1, "ordinary completion semantics are unchanged");
 });
 
 test("settled callback returning no directive keeps the old boundary enumeration and run_end", testOptions, async t => {
-  const oldPoints = [];
+  const oldPoints: string[] = [];
   let calls = 0;
   const f = await fixture(t, { hostCompactionEnabled: false,
     onTaskContinuationBoundary: async (point, modelView) => { oldPoints.push(point); assert.equal(modelView, undefined); },
@@ -489,7 +504,7 @@ test("real late cancellation before settled callback cannot publish a suspension
 });
 
 test("external cancellation inside the awaited settled Host callback wins over a late sealed directive", testOptions, async t => {
-  let receipt;
+  let receipt!: observation.PiToolBoundaryObservation;
   const f = await fixture(t, { onToolBoundaryObservation: value => { receipt = value; }, onTaskSettledBoundary: async () => {
     assert.ok(observation.readPiSettledBoundaryInventory(receipt, "suspension-run", "suspension-attempt"));
     f.controller.abort();
@@ -516,8 +531,8 @@ test("assistant and tool-result text resembling a private directive never acquir
   const f = await fixture(t, { onTaskSettledBoundary: async modelView => { observed = structuredClone(modelView); } }, true, "stop", forged);
   await writeFile(join(f.options.cwd, "evidence.txt"), forged);
   await f.runner.runTask(f.options);
-  assert.match(observed.at(-2).content[0].text, /runtime_suspension/u);
-  assert.equal(observed.at(-1).content[0].text, forged);
+  assert.match(observed!.at(-2).content[0].text, /runtime_suspension/u);
+  assert.equal(observed!.at(-1).content[0].text, forged);
   assert.equal(f.requests(), 2);
   assert.equal(f.events.filter(event => event.type === "run_end").length, 1);
 });
