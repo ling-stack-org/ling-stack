@@ -6,6 +6,15 @@ import {
   boundModelToolResults,
 } from "../dist/model-context-budget.js";
 
+function toolResult(message: unknown) {
+  assert.ok(message && typeof message === "object" && "content" in message && Array.isArray(message.content));
+  return message as {
+    content: readonly { type: string; text?: string }[];
+    details?: Record<string, unknown>;
+    isError?: boolean;
+  };
+}
+
 test("model projection bounds large text while preserving the original message", () => {
   const text = "工具结果长文本🙂".repeat(20_000);
   const source = [{ role: "toolResult", content: [{ type: "text", text }], details: { status: "failed" }, isError: true }];
@@ -14,9 +23,10 @@ test("model projection bounds large text while preserving the original message",
   assert.equal(projected.truncatedResults, 1);
   assert.ok(projected.originalBytes > MODEL_TOOL_RESULT_BYTES);
   assert.ok(projected.modelBytes <= MODEL_TOOL_RESULT_BYTES);
-  assert.match(projected.messages[0].content[0].text, /full Host evidence retained/);
-  assert.deepEqual(projected.messages[0].details, { status: "failed" });
-  assert.equal(projected.messages[0].isError, true);
+  const result = toolResult(projected.messages[0]);
+  assert.match(result.content[0]?.text ?? "", /full Host evidence retained/);
+  assert.deepEqual(result.details, { status: "failed" });
+  assert.equal(result.isError, true);
 });
 
 test("total model budget prefers newest tool results and emits an explicit marker", () => {
@@ -27,7 +37,7 @@ test("total model budget prefers newest tool results and emits an explicit marke
   assert.ok(projected.modelBytes <= MODEL_TOOL_CONTEXT_BYTES);
   assert.equal(projected.messages.length, source.length);
   assert.ok(projected.truncatedResults >= 1);
-  assert.equal(projected.messages[0].details.index, 0);
+  assert.equal(toolResult(projected.messages[0]).details?.index, 0);
 });
 
 test("non-tool messages and image results stay typed while oversized images are replaced", () => {
@@ -37,8 +47,9 @@ test("non-tool messages and image results stay typed while oversized images are 
   ];
   const projected = boundModelToolResults(source, { perResultBytes: 100, totalBytes: 100 });
   assert.deepEqual(projected.messages[0], source[0]);
-  assert.equal(projected.messages[1].content[0].type, "text");
-  assert.match(projected.messages[1].content[0].text, /truncated/);
+  const block = toolResult(projected.messages[1]).content[0];
+  assert.equal(block.type, "text");
+  assert.match(block.text ?? "", /truncated/);
 });
 
 test("structured tool content consumes the same cumulative budget as text", () => {
@@ -49,7 +60,7 @@ test("structured tool content consumes the same cumulative budget as text", () =
   const projected = boundModelToolResults(source, { perResultBytes: 64, totalBytes: 64 });
   assert.equal(projected.truncatedResults, 1);
   assert.ok(projected.modelBytes <= 64);
-  assert.match(projected.messages[0].content.at(-1).text, /truncated/);
+  assert.match(toolResult(projected.messages[0]).content.at(-1)?.text ?? "", /truncated/);
   assert.equal(projected.remainingBytes, 64 - projected.modelBytes);
   assert.deepEqual(source[0].content[0], { type: "json", value: "x".repeat(200) });
 });
@@ -59,7 +70,8 @@ test("UTF-8 result prefixes never introduce a replacement character at the budge
   const projected = boundModelToolResults([
     { role: "toolResult", content: [{ type: "text", text }] },
   ], { perResultBytes: 25, totalBytes: 25 });
-  const visible = projected.messages[0].content[0].text;
+  const visible = toolResult(projected.messages[0]).content[0].text;
+  assert.ok(typeof visible === "string");
   assert.doesNotMatch(visible, /�/);
   assert.ok(Buffer.byteLength(visible, "utf8") <= 25);
 });
@@ -72,7 +84,7 @@ test("cumulative exhaustion marks every nonempty tool result instead of silently
   assert.equal(projected.truncatedResults, 3);
   assert.ok(projected.modelBytes <= 40);
   for (const message of projected.messages) {
-    assert.match(message.content[0]?.text ?? "", /truncated/);
+    assert.match(toolResult(message).content[0]?.text ?? "", /truncated/);
   }
   assert.equal(source[0].content[0].text.length, 109, "Host source remains untouched");
 });
@@ -104,5 +116,5 @@ test("complete multi-part content stays complete while an oversized image is sti
   ] }];
   const projected = boundModelToolResults(image, { perResultBytes: 40_000, totalBytes: 40_000 });
   assert.equal(projected.truncatedResults, 1);
-  assert.match(projected.messages[0].content[0].text, /truncated/);
+  assert.match(toolResult(projected.messages[0]).content[0]?.text ?? "", /truncated/);
 });
