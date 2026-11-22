@@ -2,6 +2,7 @@ import type { TaskSupervisor } from "./features/runs/task-supervisor.js";
 import type { LearningReviewCoordinator } from "./features/learning/coordinator.js";
 import type {
   McpServer,
+  HardwareProtocolLiveTransport,
   McpRuntimeStatusSnapshot,
   ReplaceMcpServerToolInput,
   SecretPurpose,
@@ -164,6 +165,7 @@ export interface DaemonDependencies {
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
   readonly linuxSshProcessRunner?: LocalProcessRunner;
+  readonly deviceProtocolTransports?: readonly HardwareProtocolLiveTransport[];
   /** Optional synchronous observation of the exact production-owned Store after initialization. */
   readonly onStoreInitialized?: (cwd: string, store: RunStore) => void;
   /** Optional in-memory QA Provider authority. Absence keeps model task execution disabled. */

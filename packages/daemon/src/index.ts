@@ -1019,6 +1019,7 @@ export function createDaemonServer(
   const defaultWorkspaceStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
   const deviceSupport = createDeviceSupportRuntime({
     databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
+    protocolTransports: dependencies.deviceProtocolTransports,
     resourceTrust: deviceResourceTrust,
     ...(homeAssistantBaseUrl && homeAssistantTokenRef ? { homeAssistant: {
       baseUrl: homeAssistantBaseUrl, token: () => secretResolver.resolve(homeAssistantTokenRef).value,

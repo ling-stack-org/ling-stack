@@ -71,9 +71,9 @@ export class DeviceDeveloperSessionCoordinator {
       if (!["authorized", "running"].includes(session.status)) throw new DeviceFabricError("safety_denied", "developer session is not authorized");
       if (input.targetDeviceId !== session.targetDeviceId) throw new DeviceFabricError("target_missing", "job target does not match session");
       if (session.protocolReplay && input.kind !== "workbench") {
-        throw new DeviceFabricError("safety_denied", "protocol replay session only authorizes offline workbench jobs");
+        throw new DeviceFabricError("safety_denied", "protocol session only authorizes workbench jobs");
       }
-      if ((input.status !== "running" && input.status !== "queued") || input.outputRef !== undefined) {
+      if ((input.status !== "running" && input.status !== "queued") || input.outputRef !== undefined || input.outputDigest !== undefined) {
         throw new DeviceFabricError("invalid_graph", "a new developer job requires an admission state");
       }
       if (input.kind === "deploy" && (!input.artifactDigest || input.artifactDigest !== session.artifactDigest)) {
@@ -87,17 +87,22 @@ export class DeviceDeveloperSessionCoordinator {
 
   settleJob(
     jobId: string, status: DeviceDeveloperJobV1["status"], outputRef: string | undefined, updatedAt: string,
-    taskStatus?: DeviceDeveloperJobV1["taskStatus"],
+    taskStatus?: DeviceDeveloperJobV1["taskStatus"], outputDigest?: string,
   ): DeviceDeveloperJobV1 {
     return this.write(() => {
       const job = this.getJob(jobId);
       if (!job) throw new DeviceFabricError("target_missing", "developer job is missing");
+      if (outputDigest !== undefined && (status !== "completed" || !outputRef || !/^[0-9a-f]{64}$/u.test(outputDigest))) {
+        throw new DeviceFabricError("revision_conflict", "developer job output digest is invalid");
+      }
       if (job.status === status && (outputRef === undefined || outputRef === job.outputRef)
-        && (taskStatus === undefined || taskStatus === job.taskStatus)) return job;
+        && (taskStatus === undefined || taskStatus === job.taskStatus)
+        && (outputDigest === undefined || outputDigest === job.outputDigest)) return job;
       if (isTerminalDeveloperJob(job.status)) throw new DeviceFabricError("revision_conflict", "developer job has a retained outcome");
       if (status === "queued") throw new DeviceFabricError("revision_conflict", "developer job cannot return to its queue");
       const session = this.requireSession(job.sessionId);
-      const next = { ...job, status, ...(outputRef ? { outputRef } : {}), taskStatus: taskStatus ?? job.taskStatus, revision: job.revision + 1, updatedAt };
+      const next = { ...job, status, ...(outputRef ? { outputRef } : {}), ...(outputDigest ? { outputDigest } : {}),
+        taskStatus: taskStatus ?? job.taskStatus, revision: job.revision + 1, updatedAt };
       this.saveJob(next);
       if (isTerminalDeveloperJob(status) && session.status !== "revoked") {
         const sessionStatus = status === "completed" ? "completed" : status === "unknown" ? "paused" : "failed";

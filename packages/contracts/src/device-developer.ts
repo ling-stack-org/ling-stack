@@ -16,6 +16,11 @@ export interface DeviceDeveloperSessionV1 {
     readonly profileVersion: string;
     readonly codecId: string;
     readonly codecVersion: string;
+    readonly liveTransport?: {
+      readonly transportId: string;
+      readonly targetProfileRevision: string;
+      readonly connectionRevision: string;
+    };
   };
   readonly artifactDigest?: string;
   readonly status: "created" | "authorized" | "running" | "paused" | "completed" | "failed" | "revoked";
@@ -33,6 +38,7 @@ export interface DeviceDeveloperJobV1 {
   readonly targetDeviceId: string;
   readonly taskStatus: DeviceTaskStatusV1;
   readonly outputRef?: string;
+  readonly outputDigest?: string;
   readonly revision: number;
   readonly updatedAt: string;
 }

@@ -20,6 +20,7 @@ import {
   EdgeRuntimeRegistry,
   HardwareProtocolWorkbench,
   HardwareProtocolTransportRegistry,
+  type HardwareProtocolLiveTransport,
   HardwareProtocolProfileRegistry,
   modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
@@ -78,6 +79,7 @@ export function createDeviceSupportRuntime(options: {
   readonly linuxSshTargets?: readonly ConfiguredLinuxSshTarget[];
   readonly linuxSshRunner?: LocalProcessRunner;
   readonly homeAssistant?: HomeAssistantAdapterOptions;
+  readonly protocolTransports?: readonly HardwareProtocolLiveTransport[];
   readonly createDiagnosisPlanner?: DeviceDiagnosisPlanner;
   readonly externalAdapters?: readonly ExternalDeviceAdapter[];
 }): DeviceSupportRuntime {
@@ -119,6 +121,7 @@ export function createDeviceSupportRuntime(options: {
       license: modbusRtuRegisterCodec.manifest.license,
     });
     protocolStore.registerProfile(modbusProfile);
+    for (const transport of options.protocolTransports ?? []) protocolTransports.register(transport);
     broker.registerAdapter(adapter);
     ssh = bindLinuxSshTargets(options.linuxSshTargets ?? [], options.linuxSshRunner);
     linuxAdapter = new LinuxSshAdapter({ now, connections: ssh.targets });
@@ -145,6 +148,7 @@ export function createDeviceSupportRuntime(options: {
     });
   } catch (error) {
     for (const externalAdapter of options.externalAdapters ?? []) externalAdapter.close();
+    void protocolTransports.close().catch(() => undefined);
     ssh?.close();
     protocolStore.close();
     developerStore.close();
@@ -346,7 +350,7 @@ export function createDeviceSupportRuntime(options: {
     close: () => {
       for (const externalAdapter of options.externalAdapters ?? []) externalAdapter.close();
       ssh?.close();
-      void protocolTransports.close();
+      void protocolTransports.close().catch(() => undefined);
       fabricStore.close();
       developerStore.close();
       protocolStore.close();

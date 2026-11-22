@@ -10,7 +10,7 @@ import test from "node:test";
 
 import type {
   DeviceActionRequestV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
-  DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
+  DeviceProfileV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
@@ -194,6 +194,78 @@ test("daemon runtime registers the Modbus codec and restores offline captures wi
   } finally {
     reopened.close();
   }
+});
+
+test("the Daemon captures and reopens loss-aware frames from an authorized live transport", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-live-protocol-route-"));
+  const timestamp = new Date().toISOString();
+  const profile: DeviceProfileV1 = {
+    device: {
+      id: "fixture-register-bank", kind: "hardware", displayName: "Fixture register bank",
+      ownerScope: DEFAULT_WORKSPACE_ID, lifecycleStatus: "healthy", profileRevision: "board-r1",
+    },
+    adapterId: "fixture-registers", adapterVersion: "1.0.0", profileRevision: "board-r1", source: "operator",
+    transports: ["rs485"], connectionRefs: ["fixture-rs485-r1"],
+    transportDeployments: [{ transport: "rs485", mode: "hardware_bridge", pairing: "os_permission", removal: "disconnect_only" }],
+  };
+  const authToken = "fixture-live-capture-authority";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  let captures = 0;
+  async function start(enroll: boolean) {
+    const workspace = createSqliteRunStore(cwd);
+    if (enroll) {
+      const devices = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+      try { devices.registerDevice(profile, timestamp); } finally { devices.close(); }
+    }
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+      deviceProtocolTransports: [{
+        transportId: "fixture-rs485", targetDeviceId: profile.device.id, connectionRevision: "fixture-rs485-r1", transport: "rs485",
+        async *capture() {
+          captures += 1;
+          yield { direction: "rx", bytes: Buffer.from("010302000a3843", "hex") };
+          throw new Error("fixture cable disconnected");
+        },
+      }],
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return `http://127.0.0.1:${address.port}/v1/device-support/protocol`;
+  }
+  t.after(async () => {
+    await daemon?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const initial = await start(true);
+  const post = (url: string, body: object) => fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  const selection = { profileId: "modbus-rtu-registers", targetDeviceId: profile.device.id, transportId: "fixture-rs485" };
+  assert.equal((await post(initial + "/sessions", { ...selection, targetDeviceId: "another-device" })).status, 404);
+  const sessionResponse = await post(initial + "/sessions", selection);
+  assert.equal(sessionResponse.status, 201);
+  const { session } = await sessionResponse.json() as { session: DeviceDeveloperSessionV1 };
+  const path = `/sessions/${session.sessionId}/capture`;
+  const identity = { authorizationRevision: session.authorizationRevision };
+  assert.equal((await post(initial + path, { authorizationRevision: "wrong" })).status, 403);
+  assert.equal(captures, 0);
+  const response = await post(initial + path, identity);
+  assert.equal(response.status, 201);
+  const receipt = await response.json();
+  assert.equal(receipt.job.taskStatus, "partial");
+  assert.match(receipt.job.outputDigest, /^[0-9a-f]{64}$/u);
+  assert.equal(receipt.replay.source, "live");
+  assert.equal(receipt.replay.frames[0].fields.register0, 10);
+  assert.deepEqual(receipt.replay.loss, { reason: "connection_interrupted" });
+  assert.equal(captures, 1);
+  await daemon?.stop();
+  daemon = undefined;
+  const reopened = await start(false);
+  assert.deepEqual(await (await fetch(reopened + path, { headers })).json(), receipt);
+  const repeated = await post(reopened + path, identity);
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(await repeated.json(), receipt);
+  assert.equal(captures, 1);
 });
 
 test("the local protocol workbench imports target-bound capture evidence and resumes the same job after restart", { timeout: 15_000 }, async t => {
