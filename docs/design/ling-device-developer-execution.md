@@ -549,6 +549,19 @@ and projects the OS version and package count. The snapshot advertises the
 operations supported by the selected executor.
 [Daemon ADB target binding](../../packages/daemon/src/features/device-support/android-adb-targets.ts)
 
+### Android installation readback
+
+An Android adapter with an authorized installation executor binds the approved
+SHA-256, Android package ID and decimal version code to the current connection
+revision. The executor receives that binding. After installation, the adapter
+reads the package inventory from the same target and records the observed version
+in the owner journal. An installed older version fails verification. When
+the target provides package presence alone, the verification stays unresolved.
+The configured PC executor queries package version codes where Android supports
+them and falls back to the package inventory on older targets.
+[Adapter](../../packages/daemon/src/features/device-support/adapters/android-adb.ts)
+[Readback fixture](../../packages/daemon/test/device-support-adapters.test.ts)
+
 ### PC-owned Android developer logs
 
 Set an enrolled target's optional `logTag` to the tag emitted by the app under

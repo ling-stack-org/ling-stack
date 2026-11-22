@@ -3,7 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { DeviceBrokerError } from "@ling-stack/core";
-import type { AndroidAdbInventory, AndroidAdbTarget, AndroidAdbTargetExecutor, AndroidPackageInfo } from "./adapters/android-adb.js";
+import { isAndroidVersionCode, type AndroidAdbInventory, type AndroidAdbTarget, type AndroidAdbTargetExecutor, type AndroidPackageInfo } from "./adapters/android-adb.js";
 import { localProcessRunner, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { isRecord } from "../../shared/validation.js";
 
@@ -28,6 +28,7 @@ const hardwareSerialCommand = [
 ].join("; ");
 const inventoryCommand = ["ro.product.model", "ro.build.version.release", "ro.build.fingerprint"]
   .map(property => `getprop ${property}`).join("; ");
+const packagesCommand = 'if packages=$(pm list packages --show-versioncode 2>/dev/null); then printf "%s\\n" "$packages"; else pm list packages; fi';
 const adbServer = ["-H", "localhost", "-P", "5037"];
 
 export function readAndroidAdbTargets(path: string | undefined, runner: LocalProcessRunner = localProcessRunner): readonly BoundAndroidAdbTarget[] {
@@ -99,7 +100,7 @@ class AndroidAdbProcessExecutor implements AndroidAdbTargetExecutor {
   }
 
   async readPackages(parent?: AbortSignal, revision?: string): Promise<readonly AndroidPackageInfo[]> {
-    return parsePackages(await this.#query("pm list packages", revision, parent));
+    return parsePackages(await this.#query(packagesCommand, revision, parent));
   }
 
   async #query(command: string, revision: string | undefined, parent?: AbortSignal): Promise<readonly string[]> {
@@ -165,16 +166,23 @@ class AndroidAdbProcessExecutor implements AndroidAdbTargetExecutor {
 }
 
 function parsePackages(lines: readonly string[]): readonly AndroidPackageInfo[] {
-  const packages = new Set<string>();
+  const packages = new Map<string, AndroidPackageInfo>();
   for (const line of lines) {
     if (!line) continue;
-    const match = /^package:([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*)$/u.exec(line);
-    if (!match || match[1]!.length > 255 || packages.size >= 2_048) {
+    const match = /^package:([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)*)(?: versionCode:(\d+))?$/u.exec(line);
+    const packageId = match?.[1];
+    const versionCode = match?.[2];
+    if (!packageId || packageId.length > 255 || packages.size >= 2_048
+      || (versionCode !== undefined && !isAndroidVersionCode(versionCode))) {
       throw new DeviceBrokerError("connection_failed", "Android package inventory is malformed or exceeds its budget");
     }
-    packages.add(match[1]!);
+    const previous = packages.get(packageId);
+    if (previous && previous.versionCode !== versionCode) {
+      throw new DeviceBrokerError("connection_failed", "Android package inventory reports competing version codes");
+    }
+    packages.set(packageId, { packageId, ...(versionCode !== undefined ? { versionCode } : {}) });
   }
-  return Array.from(packages, packageId => ({ packageId }));
+  return [...packages.values()];
 }
 
 function sha256(value: string): string { return createHash("sha256").update(value).digest("hex"); }

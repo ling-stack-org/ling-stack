@@ -5,11 +5,13 @@ import type {
   DeviceObservationV1,
   DeviceProfileV1,
   DeviceActionResultV1,
+  DeviceVerificationResultV1,
   JsonValue,
 } from "@ling-stack/contracts";
 import { DeviceBrokerError, type DeviceAdapter, type DeviceAdapterDiscoveryInput, type DeviceAdapterExecutionResult,
   type DeviceAdapterVerificationInput, type DeviceAdapterVerificationResult } from "@ling-stack/core";
 
+import { isRecord } from "../../../shared/validation.js";
 import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
 
 export interface AndroidPackageInfo { readonly packageId: string; readonly versionName?: string; readonly versionCode?: string; }
@@ -24,7 +26,13 @@ export interface AndroidAdbTargetExecutor {
   inventory(signal?: AbortSignal): Promise<AndroidAdbInventory>;
   readPackages(signal?: AbortSignal, connectionRevision?: string): Promise<readonly AndroidPackageInfo[]>;
   readLogs?(input: { readonly tag?: string; readonly signal?: AbortSignal; readonly connectionRevision?: string }): Promise<string>;
-  installArtifact?(input: { readonly artifactDigest: string; readonly packageId?: string; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly packageId?: string; readonly versionName?: string }>;
+  installArtifact?(input: {
+    readonly artifactDigest: string;
+    readonly packageId: string;
+    readonly versionCode: string;
+    readonly connectionRevision: string;
+    readonly signal?: AbortSignal;
+  }): Promise<{ readonly accepted: boolean } & Partial<AndroidPackageInfo>>;
   reboot?(signal?: AbortSignal): Promise<{ readonly accepted: boolean }>;
 }
 
@@ -41,7 +49,7 @@ export const androidAdbLogCapability = "android.capture.logs";
 
 const androidAdbManifest: AdapterManifestV1 = {
   adapterId: androidAdbAdapterId,
-  adapterVersion: "1.1.0",
+  adapterVersion: "1.2.0",
   contractMajor: 1,
   supportedDeviceKinds: ["android", "head_unit"],
   supportedTransports: ["adb"],
@@ -52,7 +60,16 @@ const androidAdbManifest: AdapterManifestV1 = {
     { id: "android.inspect.device", schemaVersion: "1.0", semanticVerb: "inspect.device", inputSchema: { type: "object" }, outputSchema: { type: "object" }, sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["adb.read"], prerequisites: [], timeoutMs: 10_000, responseBytesLimit: 64 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
     { id: "android.inspect.packages", schemaVersion: "1.0", semanticVerb: "inspect.packages", inputSchema: { type: "object" }, outputSchema: { type: "array" }, sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["adb.read"], prerequisites: [], timeoutMs: 15_000, responseBytesLimit: 256 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
     { id: androidAdbLogCapability, schemaVersion: "1.0", semanticVerb: "capture.logs", inputSchema: { type: "object" }, outputSchema: { type: "object" }, sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["adb.read"], prerequisites: [], timeoutMs: 15_000, responseBytesLimit: 256 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
-    { id: "android.install.artifact", schemaVersion: "1.0", semanticVerb: "deploy.artifact", inputSchema: { type: "object", required: ["artifactDigest", "packageId"] }, outputSchema: { type: "object" }, sideEffect: "reversible", approvalClass: "ask", requiredPermissions: ["adb.install"], prerequisites: [], timeoutMs: 60_000, responseBytesLimit: 64 * 1024, idempotency: "target_revision", verificationCapabilityId: "android.inspect.packages", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
+    {
+      id: "android.install.artifact", schemaVersion: "1.1", semanticVerb: "deploy.artifact",
+      inputSchema: {
+        type: "object", additionalProperties: false, required: ["artifactDigest", "packageId", "versionCode"],
+        properties: { artifactDigest: { type: "string" }, packageId: { type: "string" }, versionCode: { type: "string" } },
+      },
+      outputSchema: { type: "object" }, sideEffect: "reversible", approvalClass: "ask", requiredPermissions: ["adb.install"],
+      prerequisites: [], timeoutMs: 60_000, responseBytesLimit: 64 * 1024, idempotency: "target_revision",
+      verificationCapabilityId: "android.inspect.packages", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"],
+    },
     { id: "android.reboot", schemaVersion: "1.0", semanticVerb: "restart.device", inputSchema: { type: "object" }, outputSchema: { type: "object" }, sideEffect: "mutating", approvalClass: "ask", requiredPermissions: ["adb.reboot"], prerequisites: [], timeoutMs: 30_000, responseBytesLimit: 16 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
   ],
   removalBehavior: "revoke_and_disconnect",
@@ -131,12 +148,18 @@ export class AndroidAdbAdapter implements DeviceAdapter {
       return completedObservation(input, startedAt, { text: logs.slice(0, 200_000) }, "android.logcat");
     }
     if (input.capability.id === "android.install.artifact" && executor.installArtifact) {
-      const artifactDigest = requireString(args.artifactDigest, "artifactDigest");
-      const packageId = requirePackageId(args.packageId);
-      await this.#inventory(input.profile, executor, input.signal);
-      const result = await executor.installArtifact({ artifactDigest, packageId, signal: input.signal });
-      if (result.accepted && result.packageId !== undefined && result.packageId !== packageId) {
-        return { actionId: input.request.actionId, status: "rejected", errorCode: "target_changed", startedAt, finishedAt: this.#now(), observationIds: [] };
+      const { artifactDigest, packageId, versionCode } = args;
+      if (typeof artifactDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(artifactDigest)
+        || !isAndroidPackageId(packageId) || !isAndroidVersionCode(versionCode)) {
+        return { actionId: input.request.actionId, status: "rejected", errorCode: "invalid_request",
+          startedAt, finishedAt: this.#now(), observationIds: [] };
+      }
+      const inventory = await this.#inventory(input.profile, executor, input.signal);
+      const result = await executor.installArtifact({ artifactDigest, packageId, versionCode,
+        connectionRevision: inventoryRevision(inventory), signal: input.signal });
+      if (result.accepted && ((result.packageId !== undefined && result.packageId !== packageId)
+        || (result.versionCode !== undefined && result.versionCode !== versionCode))) {
+        return { actionId: input.request.actionId, status: "uncertain", errorCode: "target_changed", startedAt, finishedAt: this.#now(), observationIds: [] };
       }
       return { actionId: input.request.actionId, status: result.accepted ? "completed" : "rejected", errorCode: result.accepted ? undefined : "permission_denied", startedAt, finishedAt: this.#now(), observationIds: [] };
     }
@@ -153,21 +176,32 @@ export class AndroidAdbAdapter implements DeviceAdapter {
       return { verification: { actionId: request.actionId, status: "not_evaluable", rule: request.expectedVerification ?? null, observationIds: [],
         checkedAt: this.#now(), reason: "no verification rule for this action" } };
     }
-    const packageId = requirePackageId(asObject(request.normalizedInput).packageId);
-    const rule = request.expectedVerification ?? { packageId };
-    const verificationRule = asObject(rule);
-    if (Object.keys(verificationRule).length !== 1 || (verificationRule.packageId !== packageId)) {
+    const { packageId, versionCode } = asObject(request.normalizedInput);
+    const rule = request.expectedVerification ?? {
+      ...(isAndroidPackageId(packageId) ? { packageId } : {}),
+      ...(isAndroidVersionCode(versionCode) ? { versionCode } : {}),
+    };
+    if (!isAndroidPackageId(packageId) || !isAndroidVersionCode(versionCode)
+      || !isRecord(rule) || Object.keys(rule).length !== 2 || rule.packageId !== packageId || rule.versionCode !== versionCode) {
       return { verification: { actionId: request.actionId, status: "not_evaluable", rule, observationIds: [],
-        checkedAt: this.#now(), reason: "readback requires the approved package ID" } };
+        checkedAt: this.#now(), reason: "readback requires the approved package ID and version code" } };
     }
     const executor = this.#connection(profile.connectionRefs[0]).executor;
     await this.#inventory(profile, executor, signal);
     const installed = (await executor.readPackages(signal, profile.device.profileRevision)).find(item => item.packageId === packageId);
     const checkedAt = this.#now();
-    const value = { packageId, present: installed !== undefined };
+    const installedVersion = isAndroidVersionCode(installed?.versionCode) ? installed.versionCode : undefined;
+    const value = { packageId, present: installed !== undefined, ...(installedVersion !== undefined ? { versionCode: installedVersion } : {}) };
+    let status: DeviceVerificationResultV1["status"] = "failed";
+    let reason: string | undefined;
+    if (!installed) reason = "the target does not report the approved package";
+    else if (installedVersion === undefined) {
+      status = "not_evaluable";
+      reason = "the target does not report an installed version code";
+    } else if (installedVersion !== versionCode) reason = "the target reports a different package version";
+    else status = "verified";
     return {
-      verification: { actionId: request.actionId, status: installed ? "verified" : "failed", rule,
-        observationIds: [evidenceId], checkedAt },
+      verification: { actionId: request.actionId, status, rule, observationIds: [evidenceId], checkedAt, ...(reason ? { reason } : {}) },
       observations: [androidObservation(profile.device.id, evidenceId, checkedAt, value, "android.packages")],
     };
   }
@@ -209,13 +243,11 @@ function asObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} is required`);
-  return value;
+function isAndroidPackageId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 255 && /^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$/u.test(value);
 }
 
-function requirePackageId(value: unknown): string {
-  const packageId = requireString(value, "packageId");
-  if (!/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*){1,}$/.test(packageId)) throw new Error("packageId is invalid");
-  return packageId;
+export function isAndroidVersionCode(value: unknown): value is string {
+  return typeof value === "string" && /^(?:0|[1-9][0-9]{0,18})$/u.test(value)
+    && (value.length < 19 || value <= "9223372036854775807");
 }

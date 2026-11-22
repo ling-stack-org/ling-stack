@@ -382,44 +382,72 @@ test("Linux network repair reconciles with fresh observations without repeating 
 
 test("Android ADB adapter exposes fixed head-unit operations and verifies artifact installation", async () => {
   const operations: string[] = [];
+  const installRequests: unknown[] = [];
   let serial = "head-unit-1";
+  let installedVersion: string | undefined = "42";
   const adapter = new AndroidAdbAdapter({
     now: () => now,
     executor: {
       async inventory() { operations.push("inventory"); return { serial, model: "Linaro P", androidVersion: "7.1.2" }; },
-      async readPackages() { operations.push("packages"); return [{ packageId: "com.example.carplay", versionName: "1.0" }]; },
+      async readPackages() { operations.push("packages"); return [{ packageId: "com.example.carplay", versionCode: installedVersion }]; },
       async readLogs() { operations.push("logs"); return "carplay ready"; },
-      async installArtifact() { operations.push("install"); return { accepted: true, packageId: "com.example.carplay", versionName: "1.0" }; },
+      async installArtifact(input) {
+        operations.push("install");
+        installRequests.push(input);
+        return { accepted: true, packageId: "com.example.carplay", versionCode: "42" };
+      },
       async reboot() { operations.push("reboot"); return { accepted: true }; },
     },
   });
   const profile = await adapter.discover({ connectionRef: "adb:head-unit-1", ownerId: "pc-1" });
   assert.equal(profile.device.kind, "head_unit");
   const capability = adapter.manifest.capabilities.find(item => item.id === "android.install.artifact")!;
+  const artifactDigest = "sha256:" + "f".repeat(64);
   const request = { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: capability.id,
-    capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1",
-    normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" };
+    capabilitySchemaVersion: capability.schemaVersion, capabilitySnapshotId: "snapshot-1",
+    normalizedInput: { artifactDigest, packageId: "com.example.carplay", versionCode: "42" }, idempotencyKey: "task-1:install-1" };
   const action = await adapter.execute({ profile, capability, request });
   assert.equal("action" in action ? action.action.status : action.status, "completed");
   const actionResult = "action" in action ? action.action : action;
   const result = await adapter.verify({ profile, capability, request, action: actionResult, evidenceId: "inspection-1" });
   assert.equal(result.verification.status, "verified");
+  assert.deepEqual(installRequests, [{ ...request.normalizedInput, connectionRevision: profile.profileRevision, signal: undefined }]);
   assert.deepEqual(result.verification.observationIds, ["inspection-1"]);
   assert.deepEqual(result.observations?.map(item => [item.subjectId, item.value]), [
-    [profile.device.id, { packageId: "com.example.carplay", present: true }],
+    [profile.device.id, { packageId: "com.example.carplay", present: true, versionCode: "42" }],
   ]);
   const foreignPackage = await adapter.verify({ profile, capability, action: actionResult, evidenceId: "inspection-2",
-    request: { ...request, expectedVerification: { packageId: "com.example.other" } } });
+    request: { ...request, expectedVerification: { packageId: "com.example.other", versionCode: "42" } } });
   assert.equal(foreignPackage.verification.status, "not_evaluable");
-  const mismatch = await adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-mismatch", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.other" }, idempotencyKey: "task-1:install-mismatch" } });
-  assert.equal(("action" in mismatch ? mismatch.action : mismatch).errorCode, "target_changed");
-  await assert.rejects(() => adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-invalid", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app" }, idempotencyKey: "task-1:install-invalid" } }), /packageId/u);
+  installedVersion = "41";
+  const oldVersion = await adapter.verify({ profile, capability, request, action: actionResult, evidenceId: "inspection-3" });
+  assert.equal(oldVersion.verification.status, "failed");
+  assert.equal(oldVersion.verification.reason, "the target reports a different package version");
+  assert.deepEqual(oldVersion.observations?.[0]?.value, { packageId: "com.example.carplay", present: true, versionCode: "41" });
+  installedVersion = undefined;
+  const noVersion = await adapter.verify({ profile, capability, request, action: actionResult, evidenceId: "inspection-4" });
+  assert.equal(noVersion.verification.status, "not_evaluable");
+  const legacy = { ...request, capabilitySchemaVersion: "1.0", normalizedInput: { artifactDigest, packageId: "com.example.carplay" } };
+  assert.equal((await adapter.verify({ profile, capability, request: legacy, action: actionResult, evidenceId: "inspection-5" })).verification.status,
+    "not_evaluable");
+  const legacyResult = await adapter.execute({ profile, capability, request: legacy });
+  assert.equal(("action" in legacyResult ? legacyResult.action : legacyResult).errorCode, "invalid_request");
+  const mismatch = await adapter.execute({ profile, capability, request: {
+    ...request, actionId: "install-mismatch", idempotencyKey: "task-1:install-mismatch",
+    normalizedInput: { ...request.normalizedInput, packageId: "com.example.other" },
+  } });
+  const mismatchResult = "action" in mismatch ? mismatch.action : mismatch;
+  assert.equal(mismatchResult.status, "uncertain");
+  assert.equal(mismatchResult.errorCode, "target_changed");
   serial = "another-head-unit";
   await assert.rejects(() => adapter.execute({ profile, capability, request }), { code: "target_changed" });
-  assert.deepEqual(operations, ["inventory", "inventory", "install", "inventory", "packages", "inventory", "install", "inventory"]);
+  assert.deepEqual(operations, [
+    "inventory", "inventory", "install", "inventory", "packages", "inventory", "packages", "inventory", "packages",
+    "inventory", "install", "inventory",
+  ]);
 });
 
-test("configured ADB log captures bind the tag, connection and readback to one target", async t => {
+test("configured ADB logs and package versions use the pinned target connection", async t => {
   const root = mkdtempSync(join(tmpdir(), "ling-adb-operations-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, "targets.json");
@@ -430,6 +458,7 @@ test("configured ADB log captures bind the tag, connection and readback to one t
   let logReads = 0;
   let captureFingerprint = "fixture/fingerprint";
   let output = "I/DiPlay: ready\n";
+  let packageOutput = "package:com.example.carplay versionCode:42\npackage:android\n";
   const runner = {
     async run(_file: string, args: readonly string[]) {
       const operation = args.slice(4);
@@ -443,6 +472,10 @@ test("configured ADB log captures bind the tag, connection and readback to one t
         assert.match(command, /'DiPlay:V' '\*:S'/u);
         return { stdout: `fixture-hardware-id\n${captureFingerprint}\n${output}`, stderr: "", exitCode: 0 };
       }
+      if (command.includes("pm list packages")) {
+        assert.match(command, /pm list packages --show-versioncode.*else pm list packages/u);
+        return { stdout: `fixture-hardware-id\n${captureFingerprint}\n${packageOutput}`, stderr: "", exitCode: 0 };
+      }
       return { stdout: "fixture-hardware-id\nLinaro P\n7.1.2\nfixture/fingerprint\n", stderr: "", exitCode: 0 };
     },
   };
@@ -451,6 +484,11 @@ test("configured ADB log captures bind the tag, connection and readback to one t
   const readLogs = target.executor.readLogs;
   const { connectionRevision } = await target.executor.inventory();
   assert.ok(connectionRevision);
+  assert.deepEqual(await target.executor.readPackages(undefined, connectionRevision), [
+    { packageId: "com.example.carplay", versionCode: "42" }, { packageId: "android" },
+  ]);
+  packageOutput = "package:com.example.carplay versionCode:42\npackage:com.example.carplay versionCode:41\n";
+  await assert.rejects(() => target.executor.readPackages(undefined, connectionRevision), { code: "connection_failed" });
   assert.equal(await readLogs({ connectionRevision }), "I/DiPlay: ready\n");
   await assert.rejects(() => readLogs({ tag: "anotherTag", connectionRevision }), { code: "permission_denied" });
   transportId = "18";
