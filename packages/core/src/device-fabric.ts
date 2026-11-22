@@ -13,6 +13,7 @@ import type {
   DeviceFleetHealthStatusV1,
   DeviceGraphNodeV1,
   DeviceGraphRelationshipV1,
+  DeviceIdentityChangeV1,
   DeviceLifecycleRecordV1,
   DeviceProfileV1,
   DeviceResourceManifestV1,
@@ -67,11 +68,30 @@ export class DeviceSemanticGraph {
     return next;
   }
 
+  mergeIdentityWithEvidence(change: DeviceIdentityChangeV1): DeviceGraphNodeV1 {
+    assertIdentityChange(change, "merge");
+    const node = this.#nodes.get(change.nodeId);
+    if (!node) throw new DeviceFabricError("target_missing", "graph node is missing");
+    if (change.revision === node.revision && node.identityRefs.includes(change.identityRef)) return node;
+    if (change.revision <= node.revision) throw new DeviceFabricError("revision_conflict", "identity merge revision must advance");
+    return this.mergeIdentity(change.nodeId, change.identityRef, change.revision);
+  }
+
   splitIdentity(nodeId: string, identityRef: string, newNode: DeviceGraphNodeV1): DeviceGraphNodeV1 {
     const node = this.#nodes.get(nodeId);
     if (!node || !node.identityRefs.includes(identityRef)) throw new DeviceFabricError("target_missing", "identity reference is not attached");
     this.#nodes.set(nodeId, { ...node, identityRefs: node.identityRefs.filter(ref => ref !== identityRef), revision: Math.max(node.revision, newNode.revision) });
     return this.upsertNode(newNode);
+  }
+
+  splitIdentityWithEvidence(change: DeviceIdentityChangeV1, newNode: DeviceGraphNodeV1): DeviceGraphNodeV1 {
+    assertIdentityChange(change, "split");
+    const node = this.#nodes.get(change.nodeId);
+    if (!node || !node.identityRefs.includes(change.identityRef)) throw new DeviceFabricError("target_missing", "identity reference is not attached");
+    if (change.newNodeId !== newNode.nodeId || change.revision <= node.revision || newNode.revision !== change.revision) {
+      throw new DeviceFabricError("revision_conflict", "identity split revision is inconsistent");
+    }
+    return this.splitIdentity(change.nodeId, change.identityRef, newNode);
   }
 
   setTwin(twin: DeviceTwinV1): DeviceTwinV1 {
@@ -689,6 +709,24 @@ export function assertEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1):
     || !Object.hasOwn(edgeJournalOutcomes, entry.kind) || edgeJournalOutcomes[entry.kind] !== entry.outcome
     || entry.payloadDigest !== undefined && !/^[0-9a-f]{64}$/u.test(entry.payloadDigest)) {
     throw new DeviceFabricError("revision_conflict", "edge journal entry is invalid");
+  }
+}
+
+export function assertIdentityChange(change: DeviceIdentityChangeV1, operation: DeviceIdentityChangeV1["operation"]): void {
+  const evidence = change.evidence;
+  if (Object.keys(change).some(key => !["changeId", "operation", "nodeId", "identityRef", "newNodeId", "evidence", "authority", "revision", "changedAt"].includes(key))
+    || change.operation !== operation
+    || [change.changeId, change.nodeId, change.identityRef, change.authority].some(value => !value.trim() || value.length > 512)
+    || (operation === "split" && (!change.newNodeId || !change.newNodeId.trim()))
+    || !Number.isSafeInteger(change.revision) || change.revision < 1
+    || !Number.isFinite(Date.parse(change.changedAt))
+    || !evidence || Object.keys(evidence).some(key => !["kind", "source", "evidenceRef", "observedAt", "confirmationDigest"].includes(key))
+    || !["adapter", "operator"].includes(evidence.kind)
+    || [evidence.source, evidence.evidenceRef].some(value => !value.trim() || value.length > 512)
+    || !Number.isFinite(Date.parse(evidence.observedAt))
+    || evidence.kind === "operator" && (!evidence.confirmationDigest || !/^[0-9a-f]{64}$/u.test(evidence.confirmationDigest))
+    || evidence.kind === "adapter" && evidence.confirmationDigest !== undefined) {
+    throw new DeviceFabricError("safety_denied", "identity change evidence is invalid");
   }
 }
 

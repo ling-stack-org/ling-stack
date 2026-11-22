@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DeviceProfileV1 } from "@ling-stack/contracts";
+import type { DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DeviceProfileV1, JsonValue } from "@ling-stack/contracts";
 import {
   type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
@@ -33,6 +33,7 @@ import {
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
 import type { ExternalDeviceAdapter } from "./adapters/external-process.js";
 import { HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
+import { assertHomeAssistantCatalogQuery, homeAssistantCatalogCapabilities, type HomeAssistantCatalogQuery } from "./adapters/home-assistant-catalog.js";
 import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { PcAdapter } from "./adapters/pc.js";
@@ -65,6 +66,7 @@ export interface DeviceSupportRuntime {
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   diagnoseHomeAssistant(entityId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
+  readHomeAssistantCatalog(query: HomeAssistantCatalogQuery): Promise<{ readonly taskId: string; readonly deviceId: string; readonly catalog: JsonValue }>;
   listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
   diagnoseLinuxSshTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
@@ -250,6 +252,21 @@ export function createDeviceSupportRuntime(options: {
     }
   }
 
+  async function withHomeAssistant<T>(run: (profile: DeviceProfileV1) => Promise<T>): Promise<T> {
+    const adapter = homeAssistant;
+    if (!adapter) throw new DeviceBrokerError("missing_target", "Home Assistant is not configured on this host");
+    return withDeviceTarget(adapter.deviceId, async () => {
+      const status = store.getDevice(adapter.deviceId)?.device.lifecycleStatus;
+      if (status === "revoked" || status === "retired") {
+        throw new DeviceBrokerError("permission_denied", "Home Assistant registration is no longer active");
+      }
+      const target = await broker.discover(adapter.manifest.adapterId, {
+        ownerId: DEFAULT_WORKSPACE_ID, connectionRef: adapter.deviceId, signal: AbortSignal.timeout(10_000),
+      });
+      return run(target);
+    });
+  }
+
   async function enrollLinuxTarget(deviceId: string, target: BoundLinuxSshTarget): Promise<DeviceProfileV1> {
     const previous = store.getDevice(deviceId);
     if (previous && (previous.device.lifecycleStatus === "revoked" || previous.device.lifecycleStatus === "retired")) {
@@ -289,17 +306,35 @@ export function createDeviceSupportRuntime(options: {
       return await localDiagnosis.pending;
     },
     async diagnoseHomeAssistant(entityId, request = {}) {
-      const adapter = homeAssistant;
-      if (!adapter) throw new DeviceBrokerError("missing_target", "Home Assistant is not configured on this host");
-      return withDeviceTarget(adapter.deviceId, async () => {
-        const status = store.getDevice(adapter.deviceId)?.device.lifecycleStatus;
-        if (status === "revoked" || status === "retired") {
-          throw new DeviceBrokerError("permission_denied", "Home Assistant registration is no longer active");
-        }
-        const target = await broker.discover(adapter.manifest.adapterId, {
-          ownerId: DEFAULT_WORKSPACE_ID, connectionRef: adapter.deviceId, signal: AbortSignal.timeout(10_000),
+      return withHomeAssistant(target => runDiagnosis(target, target.device.id, createHomeAssistantOfflinePlaybook(entityId), request));
+    },
+    async readHomeAssistantCatalog(query) {
+      assertHomeAssistantCatalogQuery(query);
+      return withHomeAssistant(async ({ device }) => {
+        const deviceId = device.id;
+        const snapshot = store.getCurrentCapabilitySnapshot(deviceId);
+        if (!snapshot) throw new DeviceBrokerError("stale_snapshot", "Home Assistant capability snapshot is unavailable");
+        const taskId = `device_task_${randomUUID()}`;
+        const timestamp = now();
+        broker.createTask({
+          id: taskId, ownerKind: "daemon", ownerId: deviceId, targetDeviceIds: [deviceId], status: "planning",
+          capabilitySnapshotIds: [snapshot.snapshotId], createdAt: timestamp, updatedAt: timestamp,
         });
-        return runDiagnosis(target, target.device.id, createHomeAssistantOfflinePlaybook(entityId), request);
+        const { attempt } = await broker.execute({
+          taskId, actionId: `${taskId}:catalog`, targetDeviceId: deviceId,
+          capabilityId: homeAssistantCatalogCapabilities[query.kind], capabilitySchemaVersion: "1.0",
+          capabilitySnapshotId: snapshot.snapshotId, idempotencyKey: taskId,
+          normalizedInput: { limit: query.limit, ...(query.after === undefined ? {} : { after: query.after }) },
+        }, undefined, { onlyUnattendedReads: true });
+        if (attempt.status !== "completed") {
+          throw new DeviceBrokerError(attempt.receipt?.errorCode ?? "service_unavailable", "Home Assistant catalog read failed");
+        }
+        const observationId = attempt.receipt?.observationIds[0];
+        const observation = observationId ? store.getObservation(taskId, observationId) : undefined;
+        if (!observation || observation.subjectId !== deviceId || observation.redactionClass !== "public") {
+          throw new DeviceBrokerError("service_unavailable", "Home Assistant catalog observation is unavailable");
+        }
+        return { taskId, deviceId, catalog: observation.value };
       });
     },
     listLinuxSshTargets: () => Array.from(linuxTargets, ([deviceId, target]) => {

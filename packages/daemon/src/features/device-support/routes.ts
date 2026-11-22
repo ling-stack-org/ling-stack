@@ -8,6 +8,7 @@ import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
 import type { DeviceDiagnosisRequest } from "./diagnosis-planner.js";
+import { isHomeAssistantCatalogKind } from "./adapters/home-assistant-catalog.js";
 import { handleDeviceProtocolRoute } from "./protocol-routes.js";
 import { handleDeviceResourceRoute } from "./resource-routes.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
@@ -24,10 +25,11 @@ export async function handleDeviceSupportRoute(
   const dispatchStop = /^\/v1\/device-support\/devices\/([^/]+)\/dispatch-stop$/u.exec(url.pathname)?.[1];
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
+  const homeAssistantCatalog = url.pathname === "/v1/device-support/home-assistant/catalog";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !dispatchStop && !linuxAction
-    && !homeAssistant && !fleetHealth && !capabilityLookup) return false;
+    && !homeAssistant && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2] === "trace", request, response, runtime);
@@ -43,6 +45,10 @@ export async function handleDeviceSupportRoute(
   }
   if (homeAssistant) {
     await handleHomeAssistantDiagnosis(request, response, runtime);
+    return true;
+  }
+  if (homeAssistantCatalog) {
+    await handleHomeAssistantCatalog(url, request, response, runtime);
     return true;
   }
   if (capabilityLookup) {
@@ -119,6 +125,28 @@ async function handleHomeAssistantDiagnosis(request: IncomingMessage, response: 
     const { entityId, ...options } = body;
     const { status, report } = await runtime.diagnoseHomeAssistant(entityId, readDiagnosisOptions(options));
     writePrivateJson(response, 200, { status, report });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+async function handleHomeAssistantCatalog(url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): Promise<void> {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const params = url.searchParams;
+    const keys = [...params.keys()];
+    const kind = params.get("kind");
+    const limit = params.get("limit");
+    if (!isHomeAssistantCatalogKind(kind) || keys.some(key => !["kind", "limit", "after"].includes(key))
+      || new Set(keys).size !== keys.length || (limit !== null && !/^\d{1,3}$/u.test(limit))) {
+      throw new DeviceBrokerError("invalid_request", "Home Assistant catalog query is invalid");
+    }
+    const page = await runtime.readHomeAssistantCatalog({ kind, limit: limit === null ? 50 : Number(limit), after: params.get("after") ?? undefined });
+    writePrivateJson(response, 200, page);
   } catch (error) {
     writeDeviceOperationError(response, error);
   }

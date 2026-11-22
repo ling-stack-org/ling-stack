@@ -219,6 +219,35 @@ test("fabric store persists graph, twin, and task graph revisions", () => {
   store.close();
 });
 
+test("fabric store records identity evidence with graph history and replays the exact change", () => {
+  const store = new SqliteDeviceFabricStore();
+  const device: DeviceGraphNodeV1 = { nodeId: "device-evidence", kind: "device", label: "Board", identityRefs: ["ssh:board"], properties: {}, revision: 1 };
+  store.upsertGraphNode(device);
+  const change = {
+    changeId: "merge-evidence", operation: "merge", nodeId: device.nodeId, identityRef: "ble:board",
+    evidence: { kind: "adapter", source: "ble", evidenceRef: "observation-1", observedAt: now },
+    authority: "adapter-session", revision: 2, changedAt: now,
+  } as const;
+  assert.deepEqual(store.mergeGraphIdentityWithEvidence(change).identityRefs, ["ssh:board", "ble:board"]);
+  assert.deepEqual(store.listIdentityChanges(device.nodeId), [change]);
+  assert.deepEqual(store.mergeGraphIdentityWithEvidence(change), store.getGraphNode(device.nodeId));
+  assert.throws(() => store.mergeGraphIdentityWithEvidence({
+    ...change, changeId: "operator-without-proof", revision: 3,
+    evidence: { kind: "operator", source: "mobile", evidenceRef: "prompt", observedAt: now },
+  }), /evidence is invalid/u);
+  const split = {
+    changeId: "split-evidence", operation: "split", nodeId: device.nodeId, identityRef: "ble:board", newNodeId: "device-evidence-split",
+    evidence: { kind: "operator", source: "mobile", evidenceRef: "confirmation", confirmationDigest: "b".repeat(64), observedAt: now },
+    authority: "operator", revision: 3, changedAt: now,
+  } as const;
+  store.splitGraphIdentityWithEvidence(split, {
+    nodeId: split.newNodeId, kind: "device", label: "BLE board", identityRefs: ["ble:board"], properties: {}, revision: 3,
+  });
+  assert.equal(store.listIdentityChanges().length, 2);
+  assert.deepEqual(store.getGraphNode(device.nodeId)?.identityRefs, ["ssh:board"]);
+  store.close();
+});
+
 test("fabric store persists edge enrollment and trace spans", () => {
   const store = new SqliteDeviceFabricStore();
   const runtime: EdgeRuntimeEnrollmentV1 = { runtimeId: "edge-1", displayName: "Linux edge", publicKeyFingerprint: "fp-1", contractMajor: 1, supportedTransports: ["ssh"], status: "enrolled", revision: 1, lastSeenAt: now };

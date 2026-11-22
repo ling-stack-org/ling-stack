@@ -82,6 +82,26 @@ export async function readHomeAssistantDeviceRegistry(input: {
   readonly version: string | undefined;
   readonly signal: AbortSignal;
 }): Promise<unknown> {
+  return readHomeAssistantWebSocketCommand(input, "config/device_registry/list");
+}
+
+export async function readHomeAssistantServiceRegistry(input: {
+  readonly origin: string;
+  readonly token: string;
+  readonly version: string | undefined;
+  readonly signal: AbortSignal;
+}): Promise<unknown> {
+  const result = await readHomeAssistantWebSocketCommand(input, "get_services");
+  if (!isRecord(result)) throw invalidCatalog();
+  return Object.entries(result).map(([domain, services]) => ({ domain, services }));
+}
+
+async function readHomeAssistantWebSocketCommand(input: {
+  readonly origin: string;
+  readonly token: string;
+  readonly version: string | undefined;
+  readonly signal: AbortSignal;
+}, commandType: "config/device_registry/list" | "get_services"): Promise<unknown> {
   const endpoint = new URL("/api/websocket", input.origin);
   endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
   if (input.signal.aborted) throw new DeviceBrokerError("timeout", "Home Assistant registry request was cancelled");
@@ -122,7 +142,7 @@ export async function readHomeAssistantDeviceRegistry(input: {
         if (stage === "authentication" && message.type === "auth_ok") {
           if (message.ha_version !== input.version) throw new DeviceBrokerError("target_changed", "Home Assistant registry version changed");
           stage = "catalog";
-          socket.send(JSON.stringify({ id: 1, type: "config/device_registry/list" }));
+          socket.send(JSON.stringify({ id: 1, type: commandType }));
           return;
         }
         if (stage === "catalog" && message.type === "result" && message.id === 1) {

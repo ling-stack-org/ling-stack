@@ -22,7 +22,8 @@ import {
 import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
 import {
   assertHomeAssistantCatalogQuery, HOME_ASSISTANT_CATALOG_MAX_BYTES, homeAssistantCatalogCapabilities, homeAssistantEntityAvailability,
-  projectHomeAssistantCatalog, readHomeAssistantDeviceRegistry, type HomeAssistantCatalogKind, type HomeAssistantCatalogQuery,
+  projectHomeAssistantCatalog, readHomeAssistantDeviceRegistry, readHomeAssistantServiceRegistry,
+  type HomeAssistantCatalogKind, type HomeAssistantCatalogQuery,
 } from "./home-assistant-catalog.js";
 
 export interface HomeAssistantEntityRead {
@@ -300,8 +301,9 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
     const source: unknown = query.kind === "devices"
       ? await readHomeAssistantDeviceRegistry({ origin: this.#baseUrl, version, token: this.requireToken(), signal })
-      : JSON.parse(await readBoundedText(await this.request(query.kind === "entities" ? "/api/states" : "/api/services", { method: "GET", signal }),
-        HOME_ASSISTANT_CATALOG_MAX_BYTES));
+      : query.kind === "services"
+        ? await readHomeAssistantServiceRegistry({ origin: this.#baseUrl, version, token: this.requireToken(), signal })
+        : JSON.parse(await readBoundedText(await this.request("/api/states", { method: "GET", signal }), HOME_ASSISTANT_CATALOG_MAX_BYTES));
     return projectHomeAssistantCatalog(query, source, this.#now());
   }
 

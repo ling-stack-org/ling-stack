@@ -32,6 +32,26 @@ export interface DeviceGraphRelationshipV1 {
   readonly revision: number;
 }
 
+export interface DeviceIdentityEvidenceV1 {
+  readonly kind: "adapter" | "operator";
+  readonly source: string;
+  readonly evidenceRef: string;
+  readonly observedAt: string;
+  readonly confirmationDigest?: string;
+}
+
+export interface DeviceIdentityChangeV1 {
+  readonly changeId: string;
+  readonly operation: "merge" | "split";
+  readonly nodeId: string;
+  readonly identityRef: string;
+  readonly newNodeId?: string;
+  readonly evidence: DeviceIdentityEvidenceV1;
+  readonly authority: string;
+  readonly revision: number;
+  readonly changedAt: string;
+}
+
 export interface DeviceTwinValueV1 {
   readonly key: string;
   readonly reported?: JsonValue;

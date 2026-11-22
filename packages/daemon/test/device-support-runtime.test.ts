@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { WebSocketServer } from "ws";
 
 import type {
   DeviceActionRequestV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
@@ -38,13 +39,44 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
         entity_id: "sensor.garage", state: "unavailable", attributes: { description: "private device output" },
       }));
+    } else if (req.url === "/api/states") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify([
+        { entity_id: "sensor.garage", state: "unavailable", attributes: { description: "private device output" } },
+        { entity_id: "light.kitchen", state: "on", attributes: { description: "private device output" } },
+      ]));
+    } else if (req.url === "/api/services") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify([
+        { domain: "light", services: { turn_on: { target: {}, description: "private device output" } } },
+      ]));
     } else {
       res.writeHead(404).end();
     }
   });
+  const registry = new WebSocketServer({ server: home, path: "/api/websocket" });
+  registry.on("connection", socket => {
+    paths.push("/api/websocket");
+    let authenticated = false;
+    socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.4" }));
+    socket.on("message", raw => {
+      const frame = JSON.parse(raw.toString()) as { type: string; access_token?: string; id?: number };
+      if (!authenticated && frame.type === "auth" && frame.access_token === accessToken) {
+        authenticated = true;
+        socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.4" }));
+      } else if (authenticated && frame.type === "config/device_registry/list") {
+        socket.send(JSON.stringify({
+          id: frame.id, type: "result", success: true, result: [{
+            id: "0123456789abcdef0123456789abcdef", disabled_by: "user", name: "private device output",
+          }],
+        }));
+      } else {
+        socket.close();
+      }
+    });
+  });
   let daemon: ReturnType<typeof createDaemonServer> | undefined;
   t.after(async () => {
     await daemon?.stop();
+    await new Promise<void>(resolve => registry.close(() => resolve()));
     await new Promise<void>(resolve => home.close(() => resolve()));
     rmSync(cwd, { recursive: true, force: true });
   });
@@ -78,12 +110,41 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
   assert.deepEqual(report.facts.map(fact => fact.value), [{ availability: "unavailable" }]);
   assert.equal(report.hypotheses[0]?.code, "integration_or_device_issue");
   assert.deepEqual(paths, ["/api/config", "/api/config", "/api/states/sensor.garage"]);
+  const getCatalog = (query: string, extras: Record<string, string> = {}) =>
+    fetch(base + "/home-assistant/catalog?" + query, { headers: { ...headers, ...extras } });
+  assert.equal((await getCatalog("kind=entities", { Origin: "https://foreign.example" })).status, 403);
+  assert.equal((await getCatalog("kind=entities&origin=https://foreign.example")).status, 400);
+  assert.equal((await getCatalog("kind=entities&limit=101")).status, 400);
+  assert.deepEqual(paths, ["/api/config", "/api/config", "/api/states/sensor.garage"]);
+  const pages = [];
+  for (const [query, items, nextAfter] of [
+    ["kind=entities&limit=1", [{ id: "light.kitchen", availability: "available" }], "light.kitchen"],
+    ["kind=entities&after=light.kitchen", [{ id: "sensor.garage", availability: "unavailable" }]],
+    ["kind=services", [{ id: "light.turn_on", acceptsTarget: true }]],
+    ["kind=devices", [{ id: "0123456789abcdef0123456789abcdef", disabled: true }]],
+  ] as const) {
+    const response = await getCatalog(query);
+    assert.equal(response.status, 200);
+    const page = await response.json() as { taskId: string; deviceId: string; catalog: { items: unknown; nextAfter?: string } };
+    assert.deepEqual(page.catalog.items, items);
+    assert.equal(page.catalog.nextAfter, nextAfter);
+    pages.push(page);
+  }
   const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     assert.equal(store.getTask(report.taskId)?.ownerKind, "daemon");
     assert.equal(store.listDevices().find(profile => profile.device.kind === "home_assistant")?.device.firmwareVersion, "2026.11.4");
     assert.doesNotMatch(JSON.stringify([report, store.listEvents(report.taskId), store.listObservations(report.taskId)]),
       /private device output|fixture-ha-access-token/u);
+    for (const page of pages) {
+      assert.equal(store.getTask(page.taskId)?.status, "succeeded");
+      assert.deepEqual(store.getTask(page.taskId)?.targetDeviceIds, [page.deviceId]);
+      const attempts = store.listAttempts(page.taskId);
+      assert.equal(attempts.length, 1);
+      assert.match(attempts[0]!.request.capabilityId, /^home_assistant\.list_/u);
+      assert.deepEqual(store.listObservations(page.taskId)[0]?.value, page.catalog);
+      assert.doesNotMatch(JSON.stringify([page, store.listEvents(page.taskId)]), /private device output|fixture-ha-access-token/u);
+    }
   } finally {
     store.close();
   }

@@ -12,6 +12,7 @@ import {
   type DeviceEventEnvelopeV1,
   type DeviceGraphNodeV1,
   type DeviceGraphRelationshipV1,
+  type DeviceIdentityChangeV1,
   type DeviceLifecycleRecordV1,
   type DeviceOwnershipRevisionV1,
   type DeviceResourceManifestV1,
@@ -24,7 +25,7 @@ import {
   type JsonValue,
 } from "@ling-stack/contracts";
 
-import { assertEdgeRuntimeJournalEntry, DeviceFabricError, isAllowedDeviceLifecycleTransition } from "../../device-fabric.js";
+import { assertEdgeRuntimeJournalEntry, assertIdentityChange, DeviceFabricError, isAllowedDeviceLifecycleTransition } from "../../device-fabric.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
@@ -328,6 +329,67 @@ export class SqliteDeviceFabricStore {
       this.upsertGraphNode({ ...current, identityRefs: current.identityRefs.filter(ref => ref !== identityRef), revision: newNode.revision });
       return this.upsertGraphNode(newNode);
     });
+  }
+
+  mergeGraphIdentityWithEvidence(change: DeviceIdentityChangeV1): DeviceGraphNodeV1 {
+    assertIdentityChange(change, "merge");
+    return this.withWriteTransaction(() => {
+      const recorded = this.getIdentityChange(change.changeId);
+      if (recorded) {
+        if (!isDeepStrictEqual(recorded, change)) throw new DeviceFabricError("revision_conflict", "identity change id is bound to another change");
+        return this.getGraphNode(change.nodeId)!;
+      }
+      const current = this.getGraphNode(change.nodeId);
+      if (!current) throw new DeviceFabricError("target_missing", "graph node is missing");
+      if (change.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "identity merge revision must advance");
+      const next = this.upsertGraphNode({ ...current, revision: change.revision, identityRefs: [...new Set([...current.identityRefs, change.identityRef])] });
+      this.saveIdentityChange(change);
+      return next;
+    });
+  }
+
+  splitGraphIdentityWithEvidence(change: DeviceIdentityChangeV1, newNode: DeviceGraphNodeV1): DeviceGraphNodeV1 {
+    assertIdentityChange(change, "split");
+    return this.withWriteTransaction(() => {
+      const recorded = this.getIdentityChange(change.changeId);
+      if (recorded) {
+        if (!isDeepStrictEqual(recorded, change)) throw new DeviceFabricError("revision_conflict", "identity change id is bound to another change");
+        return this.getGraphNode(newNode.nodeId)!;
+      }
+      const current = this.getGraphNode(change.nodeId);
+      if (!current || !current.identityRefs.includes(change.identityRef)) throw new DeviceFabricError("target_missing", "identity reference is not attached");
+      if (change.newNodeId !== newNode.nodeId || change.revision <= current.revision || newNode.revision !== change.revision) {
+        throw new DeviceFabricError("revision_conflict", "identity split revision is inconsistent");
+      }
+      this.upsertGraphNode({ ...current, revision: change.revision, identityRefs: current.identityRefs.filter(ref => ref !== change.identityRef) });
+      const next = this.upsertGraphNode(newNode);
+      this.saveIdentityChange(change);
+      return next;
+    });
+  }
+
+  listIdentityChanges(nodeId?: string): readonly DeviceIdentityChangeV1[] {
+    const rows = nodeId === undefined
+      ? this.database.prepare("SELECT change_json FROM device_fabric_identity_changes ORDER BY revision,change_id").all()
+      : this.database.prepare("SELECT change_json FROM device_fabric_identity_changes WHERE node_id=? ORDER BY revision,change_id").all(nodeId);
+    return (rows as Row[]).map(row => parseJson<DeviceIdentityChangeV1>(row.change_json, "identity change"));
+  }
+
+  private getIdentityChange(changeId: string): DeviceIdentityChangeV1 | undefined {
+    const row = this.database.prepare("SELECT change_json FROM device_fabric_identity_changes WHERE change_id=?").get(changeId) as Row | undefined;
+    return row ? parseJson<DeviceIdentityChangeV1>(row.change_json, "identity change") : undefined;
+  }
+
+  private saveIdentityChange(change: DeviceIdentityChangeV1): void {
+    const existing = this.database.prepare("SELECT change_json FROM device_fabric_identity_changes WHERE change_id=?").get(change.changeId) as Row | undefined;
+    if (existing) {
+      if (!isDeepStrictEqual(parseJson<DeviceIdentityChangeV1>(existing.change_json, "identity change"), change)) {
+        throw new DeviceFabricError("revision_conflict", "identity change id is bound to another change");
+      }
+      return;
+    }
+    this.database.prepare("INSERT INTO device_fabric_identity_changes(change_id,node_id,revision,change_json) VALUES(?,?,?,?)")
+      .run(change.changeId, change.nodeId, change.revision, JSON.stringify(change));
   }
 
   listGraphNodeHistory(nodeId: string): readonly DeviceGraphNodeV1[] {
@@ -691,6 +753,12 @@ export class SqliteDeviceFabricStore {
         node_json TEXT NOT NULL,
         changed_at TEXT NOT NULL,
         PRIMARY KEY(node_id, revision)
+      );
+      CREATE TABLE IF NOT EXISTS device_fabric_identity_changes (
+        change_id TEXT PRIMARY KEY NOT NULL,
+        node_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        change_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS device_fabric_graph_relationships (
         relationship_id TEXT PRIMARY KEY NOT NULL,

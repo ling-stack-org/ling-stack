@@ -34,6 +34,29 @@ test("semantic graph merges identities and marks expired twin values stale", () 
   assert.throws(() => graph.addRelationship({ relationshipId: "rel-cycle", fromNodeId: "component-1", toNodeId: "device-1", type: "contains", provenance: [], revision: 1 }), error => error instanceof DeviceFabricError && error.code === "invalid_graph");
 });
 
+test("semantic identity changes require adapter evidence or an operator confirmation digest", () => {
+  const graph = new DeviceSemanticGraph();
+  graph.upsertNode({ nodeId: "device-1", kind: "device", label: "Board", identityRefs: ["ssh:board"], properties: {}, revision: 1 });
+  const adapterChange = {
+    changeId: "merge-1", operation: "merge", nodeId: "device-1", identityRef: "ble:board",
+    evidence: { kind: "adapter", source: "linux-ssh", evidenceRef: "observation-1", observedAt: now },
+    authority: "adapter-session-1", revision: 2, changedAt: now,
+  } as const;
+  assert.deepEqual(graph.mergeIdentityWithEvidence(adapterChange).identityRefs, ["ssh:board", "ble:board"]);
+  assert.throws(() => graph.mergeIdentityWithEvidence({
+    ...adapterChange, changeId: "bad", revision: 3,
+    evidence: { kind: "operator", source: "mobile", evidenceRef: "prompt-1", observedAt: now },
+  }), /evidence is invalid/u);
+  const split = {
+    changeId: "split-1", operation: "split", nodeId: "device-1", identityRef: "ble:board", newNodeId: "device-2",
+    evidence: { kind: "operator", source: "mobile", evidenceRef: "confirmation-1", confirmationDigest: "a".repeat(64), observedAt: now },
+    authority: "operator-1", revision: 3, changedAt: now,
+  } as const;
+  assert.equal(graph.splitIdentityWithEvidence(split, {
+    nodeId: "device-2", kind: "device", label: "BLE board", identityRefs: ["ble:board"], properties: {}, revision: 3,
+  }).nodeId, "device-2");
+});
+
 test("cross-device task graph exposes ready nodes, leases owners, and aggregates results", () => {
   const coordinator = new DeviceTaskGraphCoordinator();
   const graph: DeviceTaskGraphV1 = {
