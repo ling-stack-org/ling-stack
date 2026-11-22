@@ -48,6 +48,7 @@ import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { loadAppServerReplayIdentity, unavailableAppServerReplayWindow, type AppServerReplayScope } from "./app-server-replay.js";
+import { appServerRecoveryFor, type AppServerRecoveryJournal } from "./app-server-recovery.js";
 import { isAllowedLocalOrigin, isDirectLoopbackRequest } from "../shared/local-workspace-access.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
@@ -177,6 +178,7 @@ const operatorMethods = new Set([
   "worktree/create", "worktree/cleanup",
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
+  "server/recovery/read", "server/recovery/prepare", "server/recovery/reconcile",
   "github/subject/read", "github/delivery/reconcile", "github/delivery/enqueue", "github/delivery/queue/read",
   "workItem/delivery/read", "delivery/read",
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
@@ -188,6 +190,12 @@ const operatorMethods = new Set([
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
+const recoveryGuardedMethods = new Set([
+  "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
+  "plan/accept", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
+  "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/handoff/accept",
+  "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
+]);
 export function attachRpcWebSocketServer(
   server: Pick<Server, "on" | "off" | "once">, context: DaemonContext,
   options: { readonly permitsRemoteUpgrade?: (request: IncomingMessage) => boolean } = {},
@@ -256,7 +264,10 @@ export function attachRpcWebSocketServer(
     }
     let grant: LingAppServerGrant | undefined;
     if (scopedBearer) {
-      try { grant = authenticateAppServerGrant(context.storeRegistry.getStore(workspaceCwd), authorization); }
+      try {
+        const store = context.storeRegistry.getStore(workspaceCwd);
+        grant = authenticateAppServerGrant(store, authorization, appServerRecoveryFor(context.config, store));
+      }
       catch { /* A grant cannot authenticate while its workspace store is unavailable. */ }
       if (!grant) {
         rejectUpgrade(socket, 401, "The App Server grant is unavailable.");
@@ -266,7 +277,7 @@ export function attachRpcWebSocketServer(
     wss.handleUpgrade(request, socket, head, (ws) => {
       const connection = new RpcConnection(ws, workspaceCwd, context, appServer, Boolean(context.config.authToken && daemonAuthorized),
         () => draining, grant, (cwd, id) => {
-          for (const peer of daemonConnections) peer.invalidateGrant(cwd, id);
+          for (const peer of daemonConnections) if (peer !== connection) peer.invalidateAuthorization(cwd, id);
         });
       if (appServer) {
         appServerConnections.add(connection);
@@ -331,7 +342,7 @@ class RpcConnection {
     private readonly authenticated: boolean,
     private readonly draining: () => boolean,
     private readonly grant: LingAppServerGrant | undefined,
-    private readonly revokeGrantConnection: (cwd: string, id: string) => void,
+    private readonly invalidatePeerAuthorization: (cwd: string, grantId?: string) => void,
   ) {
     this.outbound = new RpcOutboundWriter(ws, {
       onClose: () => this.close(),
@@ -346,8 +357,8 @@ class RpcConnection {
     this.ws.on("error", this.onConnectionError);
   }
 
-  invalidateGrant(cwd: string, grantId: string): void {
-    if (this.grant?.grantId === grantId && this.defaultCwd === cwd) this.outbound.close(1008, "authorization_changed");
+  invalidateAuthorization(cwd: string, grantId?: string): void {
+    if (this.defaultCwd === cwd && (!grantId || this.grant?.grantId === grantId)) this.outbound.close(1008, "authorization_changed");
   }
 
   notifyDraining(drainId: string, startedAt: string): void {
@@ -408,6 +419,10 @@ class RpcConnection {
       if (this.appServer && isLingAppServerMethod(request.method)) {
         const validation = validateLingAppServerParams(request.method, params);
         if (!validation.ok) throw rpcError(-32602, "invalid_params", `${validation.path} ${validation.message}.`);
+      }
+      if (this.context.config.appServerRecoveryDirectory && recoveryAdmissionRequest(request.method, params)) {
+        const store = this.context.storeRegistry.getStore(readRpcCwd(readParamsRecord(params), this.defaultCwd));
+        appServerRecoveryFor(this.context.config, store)?.assertReady();
       }
       if (request.method === "controlPlane.subscribe") {
         if (this.appServer) {
@@ -522,8 +537,8 @@ class RpcConnection {
         return {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           capabilities: this.availableCapabilities(),
-          methods: IMPLEMENTED_APP_SERVER_METHODS.filter(method => this.grant
-            ? grantAllowsMethod(this.grant, method) : this.authenticated || !operatorMethods.has(method)),
+          methods: IMPLEMENTED_APP_SERVER_METHODS.filter(method => (!method.startsWith("server/recovery/") || this.context.config.appServerRecoveryDirectory)
+            && (this.grant ? grantAllowsMethod(this.grant, method) : this.authenticated || !operatorMethods.has(method))),
           notifications: LING_APP_SERVER_NOTIFICATION_METHODS,
         };
       case "server/grants/create":
@@ -531,11 +546,49 @@ class RpcConnection {
       case "server/grants/revoke": {
         const record = this.workspaceParams(params, true);
         const store = this.context.storeRegistry.getStore(record.cwd);
-        if (method === "server/grants/create") return { cwd: record.cwd, grant: createAppServerGrant(store, record) };
+        const recovery = appServerRecoveryFor(this.context.config, store);
+        if (method === "server/grants/create") return { cwd: record.cwd, grant: createAppServerGrant(store, record, recovery) };
         if (method === "server/grants/list") return { cwd: record.cwd, grants: listAppServerGrants(store) };
-        const grant = revokeAppServerGrant(store, readStringField(record, "grantId"), readIntegerField(record, "expectedRevision", "revision"));
-        this.revokeGrantConnection(record.cwd, grant.grantId);
+        const grant = revokeAppServerGrant(store, readStringField(record, "grantId"), readIntegerField(record, "expectedRevision", "revision"), recovery);
+        this.invalidatePeerAuthorization(record.cwd, grant.grantId);
         return { cwd: record.cwd, grant };
+      }
+      case "server/recovery/read":
+      case "server/recovery/prepare":
+      case "server/recovery/reconcile": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        const recovery = appServerRecoveryFor(this.context.config, store);
+        if (!recovery) throw rpcError(-32601, "method_not_found", "App Server recovery is not configured on this Host.");
+        if (method === "server/recovery/read") return recovery.read();
+        const revision = readIntegerField(record, "expectedRevision", "revision");
+        if (method === "server/recovery/prepare") {
+          const key = readStringField(record, "idempotencyKey");
+          if (!key.trim() || key.length > 200 || /[\r\n\0]/u.test(key)) {
+            throw rpcError(-32602, "invalid_params", "A recovery key of up to 200 characters is required.");
+          }
+          const priorEpoch = recovery.epoch();
+          const result = recovery.prepare(revision, key);
+          if (priorEpoch !== recovery.epoch()) {
+            this.invalidatePeerAuthorization(record.cwd);
+            for (const subscription of this.subscriptions.values()) this.closeSubscription(subscription);
+            this.initialized = false;
+          }
+          return result;
+        }
+        const federation = getExternalAgentFederation(this.context, record.cwd);
+        return recovery.reconcile(revision, fact => {
+          if (fact.kind === "external_agent_dispatch") {
+            const task = federation.getTask(fact.taskId)?.task;
+            return task?.submissionId === fact.submissionId && task.workItemId === fact.workItemId
+              && (task.status === "completed" || task.status === "cancelled");
+          }
+          if (fact.kind === "github_queue_enqueue") return false;
+          const observed = readGitHubDelivery(store, fact.workItemId);
+          return observed?.status === "delivered" && observed.mergedCommit === fact.mergedCommit
+            && observed.subject.repositoryId === fact.repositoryId && observed.subject.number === fact.number
+            && observed.subject.headSha === fact.headSha && observed.acceptanceId === fact.acceptanceId;
+        });
       }
       case "workspace/list":
         return { workspaces: [{ workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.defaultCwd }] };
@@ -903,13 +956,14 @@ class RpcConnection {
     const key = this.grant
       ? JSON.stringify([this.context.config.authToken, this.grant.grantId, this.grant.revision])
       : this.context.config.authToken;
-    return loadAppServerReplayIdentity(store, cwd, key);
+    return loadAppServerReplayIdentity(store, cwd, key, appServerRecoveryFor(this.context.config, store)?.epoch());
   }
 
   private grantIsCurrent(): boolean {
     if (!this.grant) return true;
     try {
-      return appServerGrantStillActive(this.context.storeRegistry.getStore(this.defaultCwd), this.grant);
+      const store = this.context.storeRegistry.getStore(this.defaultCwd);
+      return appServerGrantStillActive(store, this.grant, appServerRecoveryFor(this.context.config, store));
     } catch {
       return false;
     }
@@ -1331,7 +1385,20 @@ class RpcConnection {
     };
     try {
       const hostDispatch = this.appServer && this.authenticated;
-      const result = federation.startTask(record as never, assertAdmission, hostDispatch);
+      const recovery = hostDispatch ? appServerRecoveryFor(this.context.config, store) : undefined;
+      let recoveryDispatch: { readonly journal: AppServerRecoveryJournal; readonly id: string } | undefined;
+      const result = federation.startTask(record as never, () => {
+        assertAdmission();
+        if (!recovery) return;
+        const { registration } = federation.getRegistration(registrationId)!;
+        const id = "external_dispatch_" + createHash("sha256").update(JSON.stringify([
+          registration.adapterKind, registration.agentId, workItemId, submission.idempotencyKey,
+        ])).digest("hex");
+        if (recovery.hasExternalDispatch(id)) {
+          throw rpcError(-32060, "unknown_outcome", "The original dispatch is retained in the recovery journal. Read its receipt before retrying.");
+        }
+        recoveryDispatch = { journal: recovery, id };
+      }, hostDispatch);
       const task = result.task;
       this.externalTaskIds.add(task.taskId);
       if (!result.replayed) {
@@ -1340,7 +1407,7 @@ class RpcConnection {
           entityId: task.taskId, action: "external_agent.task.started", idempotencyKey: task.submissionId,
           data: { registrationId, workItemId, status: task.status, dispatchDepth: task.dispatchDepth },
         });
-        if (hostDispatch) this.dispatchExternalAgentTask(cwd, federation, registrationId, task.taskId, submission, assertAdmission);
+        if (hostDispatch) this.dispatchExternalAgentTask(cwd, federation, registrationId, task.taskId, submission, assertAdmission, recoveryDispatch);
       }
       const response = { ...result, task: federation.getTask(task.taskId)!.task };
       if (this.appServer && !result.replayed) this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: response });
@@ -1358,6 +1425,7 @@ class RpcConnection {
     taskId: string,
     submission: Record<string, unknown>,
     assertAdmission: () => void,
+    recoveryDispatch?: { readonly journal: AppServerRecoveryJournal; readonly id: string },
   ): void {
     if (!this.context.storeRegistry.isTrustedWorkspaceRoot(cwd)) {
       federation.markUnknown(taskId, "dispatch_workspace_untrusted");
@@ -1386,8 +1454,15 @@ class RpcConnection {
     }
     const objective = readStringField(submission, "objective");
     const controller = new AbortController();
+    const task = federation.getTask(taskId)!.task;
     const dispatch = {
-      federation, taskId, runner, assertAdmission,
+      federation, taskId, runner, assertAdmission: () => {
+        assertAdmission();
+        if (recoveryDispatch && !recoveryDispatch.journal.reserveExternalDispatch({ id: recoveryDispatch.id, taskId,
+          submissionId: task.submissionId, workItemId: task.workItemId })) {
+          throw new HttpError(409, "unknown_outcome", "This dispatch was already recorded in the App Server recovery journal.");
+        }
+      },
       options: {
         cwd,
         task: { id: taskId, title: objective.slice(0, 120), prompt: objective },
@@ -1408,7 +1483,9 @@ class RpcConnection {
       activeExternalDispatches.set(this.context, active);
     }
     active.set(taskId, controller);
-    const settled = dispatchExternalAgentTask(dispatch).catch(error => {
+    const settled = dispatchExternalAgentTask(dispatch).then(result => {
+      if (result.outcome === "completed") recoveryDispatch?.journal.confirmExternalDispatch(recoveryDispatch.id);
+    }).catch(error => {
       try {
         federation.markUnknown(taskId, error instanceof ExternalAgentDispatchError ? error.code : undefined);
       } catch { /* The retained dispatch receipt is available for recovery. */ }
@@ -2916,6 +2993,13 @@ function jsonRpcIdKey(id: JsonRpcId): string {
   return `${typeof id}:${String(id)}`;
 }
 
+function recoveryAdmissionRequest(method: string, params: unknown): boolean {
+  if (recoveryGuardedMethods.has(method)) return true;
+  const record = readParamsRecord(params);
+  return method === "instructions/init" && record.mode === "apply"
+    || method === "turn/interrupt" && typeof record.message === "string";
+}
+
 function readParamsRecord(params: unknown): Record<string, unknown> {
   if (params === undefined) {
     return {};
@@ -3034,7 +3118,10 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
     return { jsonRpcCode: -32602, code: "bad_request", message: error.message };
   }
   if (error instanceof HttpError) {
-    return { jsonRpcCode: error.statusCode === 400 ? -32602 : -32061, code: error.code, message: error.message };
+    const code = error.code;
+    const jsonRpcCode = code === "stale_revision" ? -32030 : code === "idempotency_conflict" ? -32031
+      : error.statusCode === 400 ? -32602 : -32061;
+    return { jsonRpcCode, code, message: error.message };
   }
   if (error instanceof WorktreeActionError) {
     const jsonRpcCode = error.code === "stale_revision" ? -32030

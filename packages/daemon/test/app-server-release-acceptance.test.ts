@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
@@ -27,6 +27,7 @@ import type {
   LingAppServerGitHubIntakePollResult,
   LingAppServerGitHubIntakeReceipt,
   LingAppServerGitHubDeliveryResult,
+  LingAppServerRecoveryResult,
   LingAppServerCoordinationSchedule,
   LingAppServerWorkItemCollaborationReadResult,
   LingAppServerGrant,
@@ -1205,7 +1206,7 @@ test("External Agent dispatch calls the configured Codex adapter transport once 
   t.after(() => adapterPeer.close());
   const adapterRevision = "codex-adapter-acceptance/1";
   const toolExecutionConformance = readOnlyExternalConformance(adapterRevision);
-  const fixture = await releaseFixture(t, { runner: {
+  const fixture = await releaseFixture(t, { recoveryJournal: true, runner: {
     id: "codex-app-server", displayName: "Configured Codex Adapter", status: "enabled",
     executionBoundary: "external", adapterRevision, toolExecutionConformance,
     adapter: createCodexAppServerAdapter({ baseUrl: adapterPeer.baseUrl, adapterRevision, toolExecutionConformance, timeoutMs: 5_000 }),
@@ -1231,6 +1232,9 @@ test("External Agent dispatch calls the configured Codex adapter transport once 
     objective: "Read the project contract", acceptanceSnapshot: { provider: { provider: "fixture", model: "fixture" } },
     instructionManifestDigest: "fixture-manifest", idempotencyKey: "codex-adapter-task",
   } };
+  const backup = join(fixture.root, "before-external-dispatch.sqlite");
+  const databasePath = fixture.getStore().paths.databasePath;
+  backupSqlite(databasePath, backup);
   const { task } = await client.call<LingAppServerExternalAgentTaskStartResult>("externalAgent/task/start", input);
   const reconnect = { registrationId, taskId: task.taskId, submissionId: task.submissionId, eventCursor: "external-agent:0" };
   const completed = await waitFor(async () => {
@@ -1248,6 +1252,17 @@ test("External Agent dispatch calls the configured Codex adapter transport once 
   const restored = await fixture.connect();
   assert.deepEqual(await restored.call("externalAgent/task/reconnect", reconnect), completed);
   assert.deepEqual(await restored.call("externalAgent/task/start", input), { task: completed.task, replayed: true });
+  assert.equal(requests.length, 2);
+
+  const prepared = await restored.call<LingAppServerRecoveryResult>("server/recovery/prepare", { expectedRevision: 0,
+    idempotencyKey: "restore-before-external-dispatch" });
+  await fixture.restart({ beforeStart: () => restoreSqlite(databasePath, backup) });
+  const recovered = await fixture.connect();
+  const reconciled = await recovered.call<LingAppServerRecoveryResult>("server/recovery/reconcile", { expectedRevision: prepared.revision });
+  assert.equal(reconciled.status, "ready");
+  assert.ok(reconciled.entries.some(entry => entry.kind === "external_agent_dispatch" && entry.workItemId === workItem.workItemId
+    && entry.taskId === task.taskId && entry.completedAt));
+  await assert.rejects(recovered.call("externalAgent/task/start", input), { code: "unknown_outcome" });
   assert.equal(requests.length, 2);
 });
 
@@ -2727,6 +2742,145 @@ test("App Server replay cursors survive restart and stay bound to the workspace,
   })).disposition, "complete");
 });
 
+test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observed GitHub delivery and grant revocation", { timeout: 35_000 }, async t => {
+  const base = "b".repeat(40), mergedCommit = "c".repeat(40);
+  const workflowPath = ".github/workflows/verify.yml";
+  const workflow = "name: Trusted verification\n";
+  const workflowSha256 = createHash("sha256").update(workflow).digest("hex");
+  const prefix = "https://api.github.com/repos/example/ling";
+  const checkRunUrl = `${prefix}/check-runs/18`;
+  let head = "";
+  const provider = await startLoopbackPiProvider(async () => ({ text: "Received after reconciliation" }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t, {
+    recoveryJournal: true,
+    githubSources: cwd => [{ workspaceRoot: cwd, repository: "example/ling", repositoryId: "73",
+      deliveryPolicies: [{ baseRef: "main", requiredChecks: [
+        { name: "unit", appId: 19, workflowId: 5, workflowPath, workflowSha256, basis: "head", coverageRefs: ["unit"] },
+      ] }],
+    }],
+    externalWorkFetch: async (input, init) => {
+      assert.equal(init?.method ?? "GET", "GET");
+      const path = String(input).slice(prefix.length);
+      const responses: Record<string, object> = {
+        "": { id: 73, full_name: "example/ling" },
+        "/pulls/12": { number: 12, title: "Confirm the delivery", state: "closed", merged: true,
+          base: { sha: base, ref: "main", repo: { id: 73 } }, head: { sha: head }, merge_commit_sha: mergedCommit },
+        [`/git/commits/${mergedCommit}`]: { sha: mergedCommit, parents: [{ sha: base }, { sha: head }] },
+        [`/actions/workflows/5/runs?head_sha=${head}&per_page=100`]: { total_count: 1, workflow_runs: [
+          { id: 15, workflow_id: 5, head_sha: head, created_at: "2026-11-22T00:00:00Z", run_attempt: 1,
+            status: "completed", path: workflowPath, event: "push" },
+        ] },
+        "/actions/runs/15": { id: 15, run_attempt: 1 },
+        "/actions/runs/15/attempts/1/jobs?per_page=100": { total_count: 1, jobs: [
+          { id: 16, run_id: 15, head_sha: head, name: "unit", check_run_url: checkRunUrl, status: "completed", conclusion: "success" },
+        ] },
+        [`/commits/${head}/check-runs?per_page=100&filter=latest`]: { total_count: 1, check_runs: [
+          { id: 18, name: "unit", head_sha: head, status: "completed", conclusion: "success", url: checkRunUrl, app: { id: 19 } },
+        ] },
+        [`/contents/${workflowPath}?ref=${head}`]: {
+          type: "file", path: workflowPath, encoding: "base64", content: Buffer.from(workflow).toString("base64"),
+        },
+      };
+      return Object.hasOwn(responses, path) ? Response.json(responses[path]) : Response.json({}, { status: 404 });
+    },
+  });
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(join(fixture.cwd, "delivery.txt"), "Candidate content\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
+  head = git("rev-parse", "HEAD");
+
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Record a delivery" });
+  const { thread: newWork } = await client.call<ThreadRead>("thread/start", { title: "Next task" });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const created = await client.call<LingAppServerWorkItemResult>("workItem/create", { sourceId: "rollback-delivery", title: "Confirm a merge" });
+  const { workItemId } = created.workItem;
+  const { workItem } = await client.call<LingAppServerWorkItemResult>("workItem/accept", {
+    workItemId, expectedWorkItemRevision: Number(created.workItem.revision), idempotencyKey: "rollback-acceptance",
+  });
+  const { candidate } = await client.call<LingAppServerCaptureChangesResult>("changes/capture");
+  const reconcileDelivery = async (connection: typeof client) => (await connection.call<LingAppServerGitHubDeliveryResult>("github/delivery/reconcile", {
+    workItemId, threadId: thread.id, expectedWorkItemRevision: Number(workItem.revision),
+    repository: "example/ling", pullRequestNumber: 12, candidateDigest: candidate.candidateDigest,
+  })).delivery;
+  const makeGrant = async (label: string, connection = client) => {
+    const secret = createHash("sha256").update(randomUUID()).digest("hex");
+    const { grant } = await connection.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+      label, idempotencyKey: label, subject: { kind: "thread", id: newWork.id }, scopes: ["control", "observe"],
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), credentialSha256: createHash("sha256").update(secret).digest("hex"),
+    });
+    return { grant, token: `las1.${grant.grantId}.${secret}` };
+  };
+  const previous = await makeGrant("Already issued");
+  const revocable = await makeGrant("Revoke during cutover");
+  const observer = await fixture.connect("/app-server/rpc", fixture.cwd, previous.token);
+  await assert.rejects(observer.call("server/recovery/prepare", { expectedRevision: 0, idempotencyKey: "forbidden" }), { code: "capability_denied" });
+  const { cursor } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  await observer.call("thread/subscribe", { threadId: newWork.id });
+
+  const databasePath = fixture.getStore().paths.databasePath;
+  const backup = join(fixture.root, "before-cutover.sqlite");
+  backupSqlite(databasePath, backup);
+
+  const observed = await reconcileDelivery(client);
+  assert.equal(observed.status, "delivered");
+  await client.call("server/grants/revoke", { grantId: revocable.grant.grantId, expectedRevision: revocable.grant.revision });
+  const closed = observer.waitForClose();
+  const prepare = { expectedRevision: 0, idempotencyKey: "restore-pre-cutover-snapshot" };
+  const prepared = await client.call<LingAppServerRecoveryResult>("server/recovery/prepare", prepare);
+  assert.equal(prepared.status, "reconciliation_required");
+  assert.equal((await closed)[0], 1008);
+
+  const premature = await fixture.connect();
+  await assert.rejects(premature.call("server/recovery/reconcile", { expectedRevision: prepared.revision }), { code: "resume_blocked" });
+  await fixture.restart({ beforeStart: () => restoreSqlite(databasePath, backup) });
+  const restored = await fixture.connect();
+  assert.notEqual(restored.initialization?.storeIncarnation, client.initialization?.storeIncarnation);
+  assert.notEqual(restored.initialization?.authorizationEpoch, client.initialization?.authorizationEpoch);
+  assert.equal((await restored.call<LingAppServerThreadEventsResult>("thread/events/read", { threadId: thread.id, cursor })).window.disposition, "snapshot_required");
+  await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, previous.token), /401/u);
+  await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, revocable.token), /401/u);
+  await assert.rejects(restored.call("workItem/delivery/read", { workItemId }), { code: "github_delivery_binding_unavailable" });
+  assert.deepEqual(await restored.call("server/recovery/prepare", prepare), prepared);
+  const recoveryInput = { expectedRevision: prepared.revision };
+  const blocked = await restored.call<LingAppServerRecoveryResult>("server/recovery/reconcile", recoveryInput);
+  assert.equal(blocked.status, "reconciliation_required");
+  assert.equal(blocked.pendingCount, 1);
+  assert.ok(blocked.entries.some(entry => entry.kind === "grant_revocation" && entry.id === revocable.grant.grantId));
+  const request = { threadId: newWork.id, message: "Proceed after reconciliation", providerPresetId: preset.id, idempotencyKey: "after-rollback" };
+  await assert.rejects(restored.call("turn/start", request), { code: "resume_blocked" });
+  assert.equal(provider.requests.length, 0);
+
+  assert.equal((await reconcileDelivery(restored)).deliveryId, observed.deliveryId);
+  const reconciled = await restored.call<LingAppServerRecoveryResult>("server/recovery/reconcile", recoveryInput);
+  assert.equal(reconciled.status, "ready");
+  assert.equal(reconciled.pendingCount, 0);
+  assert.equal(reconciled.entries.filter(entry => entry.kind === "github_delivery").length, 1);
+  assert.deepEqual(await restored.call("server/recovery/read"), reconciled);
+  await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, previous.token), /401/u);
+  await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, revocable.token), /401/u);
+  const renewed = await makeGrant("Current epoch", restored);
+  const controller = await fixture.connect("/app-server/rpc", fixture.cwd, renewed.token);
+  const { run } = await controller.call<{ run: { id: string } }>("turn/start", request);
+  await waitFor(() => fixture.getStore().getRun(run.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(provider.requests.length, 1);
+});
+
+function backupSqlite(databasePath: string, backupPath: string): void {
+  const db = new DatabaseSync(databasePath);
+  try { db.prepare("VACUUM INTO ?").run(backupPath); } finally { db.close(); }
+}
+
+async function restoreSqlite(databasePath: string, backupPath: string): Promise<void> {
+  await rm(`${databasePath}-wal`, { force: true });
+  await rm(`${databasePath}-shm`, { force: true });
+  await copyFile(backupPath, databasePath);
+}
+
 const previousBuild = process.env.LING_APP_SERVER_PREVIOUS_BUILD;
 test("candidate App Server recovers v0.6.1 Thread state and preserves legacy clients", {
   skip: !previousBuild, timeout: 30_000,
@@ -2881,6 +3035,7 @@ const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunSt
 
 async function releaseFixture(t: TestContext, {
   runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, secretResolver, wssConfig,
+  recoveryJournal = false,
 }: {
   runner?: RunnerRegistrationInput;
   initialRuntime?: ReleaseRuntime;
@@ -2891,6 +3046,7 @@ async function releaseFixture(t: TestContext, {
   externalWorkFetch?: typeof fetch;
   secretResolver?: SecretResolver;
   wssConfig?: (root: string) => Promise<DaemonConfig["appServerWss"]>;
+  recoveryJournal?: boolean;
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
@@ -2905,6 +3061,7 @@ async function releaseFixture(t: TestContext, {
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
     host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness,
     appServerVerificationRecipes, appServerGitHubSources: githubSources?.(cwd), appServerWss,
+    ...(recoveryJournal ? { appServerRecoveryDirectory: join(root, "recovery-journal") } : {}),
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,
@@ -2951,9 +3108,10 @@ async function releaseFixture(t: TestContext, {
       assert.ok(store);
       return store;
     },
-    async restart({ rotateAuthToken = false } = {}) {
+    async restart({ rotateAuthToken = false, beforeStart }: { rotateAuthToken?: boolean; beforeStart?: () => Promise<void> } = {}) {
       await stop();
       stores.clear();
+      await beforeStart?.();
       if (rotateAuthToken) authToken = randomUUID();
       daemon = makeDaemon(candidateRuntime);
       await daemon.start();

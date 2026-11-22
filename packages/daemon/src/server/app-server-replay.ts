@@ -11,7 +11,7 @@ export interface AppServerReplayScope {
   eventId(workspaceId: string, seq: number): string;
 }
 
-export function loadAppServerReplayIdentity(store: RunStore, cwd: string, authToken: string | undefined) {
+export function loadAppServerReplayIdentity(store: RunStore, cwd: string, authToken: string | undefined, recoveryEpoch?: string) {
   const record = store.getAppServerState("replay_identity", recordId)
     ?? store.putAppServerState({
       kind: "replay_identity",
@@ -26,8 +26,9 @@ export function loadAppServerReplayIdentity(store: RunStore, cwd: string, authTo
   const key = Buffer.from(record.payload, "hex");
   const digest = (...parts: readonly (string | undefined)[]) =>
     createHmac("sha256", key).update(JSON.stringify(parts)).digest("base64url");
-  const storeIncarnation = digest("store", cwd);
-  const authorizationEpoch = digest("authorization", cwd, authToken);
+  const epoch = recoveryEpoch ? [recoveryEpoch] : [];
+  const storeIncarnation = digest("store", cwd, ...epoch);
+  const authorizationEpoch = digest("authorization", cwd, authToken, ...epoch);
   const eventId = (workspaceId: string, seq: number) => `${workspaceId}:${storeIncarnation}:${seq}`;
   return {
     storeIncarnation,

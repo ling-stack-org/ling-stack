@@ -6,6 +6,7 @@ import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snap
 import { trimOversizedEvent } from "../features/control-plane/events.js";
 import { observeGitHubDelivery } from "./app-server-github-ci.js";
 import { digest, gitHubReadClient, gitHubWorkItemTargetKey } from "./app-server-github-subject.js";
+import { appServerRecoveryFor } from "./app-server-recovery.js";
 
 export function readGitHubDelivery(store: RunStore, workItemId: string, deliveryId?: string): LingAppServerGitHubDelivery | undefined {
   const record = deliveryId
@@ -43,11 +44,12 @@ export async function reconcileGitHubDelivery(
   }
   const frozen = { workItemId, threadId, acceptanceId: acceptance.id, candidateDigest, ...observation };
   const delivery = { ...frozen, deliveryId: `github_delivery_${digest(frozen)}`, observedAt: new Date().toISOString() };
+  const recovery = appServerRecoveryFor(context.config, store);
   try {
     const result = store.commitWorkItemGitHubDelivery({
       delivery, targetKey: gitHubWorkItemTargetKey(observation.subject), expectedWorkItemRevision,
       expectedDeliveryRevision: previous?.revision ?? 0,
-    }, cwd);
+    }, cwd, recovery && (receipt => recovery.recordGitHubDelivery(receipt)));
     if (result.event) context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
     return result.delivery;
   } catch (error) {

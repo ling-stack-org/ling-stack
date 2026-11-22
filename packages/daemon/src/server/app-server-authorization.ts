@@ -8,39 +8,43 @@ import {
 import type { RunStore } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
+import type { AppServerRecoveryJournal } from "./app-server-recovery.js";
 
 interface GrantRecord {
   readonly grant: LingAppServerGrant;
   readonly credentialSha256: string;
+  readonly recoveryEpoch?: string;
 }
 
 export const appServerGrantBearerPrefix = "Bearer las1.";
 const grantCredential = /^Bearer las1\.([a-f0-9-]{36})\.([a-f0-9]{64})$/u;
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-export function authenticateAppServerGrant(store: RunStore, authorization: string): LingAppServerGrant | undefined {
+export function authenticateAppServerGrant(store: RunStore, authorization: string, recovery?: AppServerRecoveryJournal): LingAppServerGrant | undefined {
   const match = grantCredential.exec(authorization);
   if (!match) return undefined;
   const record = readGrant(store, match[1]);
-  if (!record || !grantActive(record.grant)) return undefined;
+  if (!record || !grantActive(record, recovery)) return undefined;
   return timingSafeEqual(Buffer.from(sha256(match[2]), "hex"), Buffer.from(record.credentialSha256, "hex"))
     ? record.grant : undefined;
 }
 
-export function appServerGrantStillActive(store: RunStore, grant: LingAppServerGrant): boolean {
-  const current = readGrant(store, grant.grantId)?.grant;
-  return current?.revision === grant.revision && grantActive(current);
+export function appServerGrantStillActive(store: RunStore, grant: LingAppServerGrant, recovery?: AppServerRecoveryJournal): boolean {
+  const current = readGrant(store, grant.grantId);
+  return current?.grant.revision === grant.revision && grantActive(current, recovery);
 }
 
-function grantActive(grant: LingAppServerGrant): boolean {
-  return !grant.revokedAt && Date.parse(grant.expiresAt) > Date.now();
+function grantActive(record: GrantRecord, recovery?: AppServerRecoveryJournal): boolean {
+  const { grant } = record;
+  return !grant.revokedAt && Date.parse(grant.expiresAt) > Date.now()
+    && (recovery?.allowsGrant(grant.grantId, record.recoveryEpoch) ?? (record.recoveryEpoch === undefined));
 }
 
 function readGrant(store: RunStore, grantId: string): GrantRecord | undefined {
   return store.getAppServerState("authorization_grant", grantId)?.payload as GrantRecord | undefined;
 }
 
-export function createAppServerGrant(store: RunStore, input: Record<string, unknown>): LingAppServerGrant {
+export function createAppServerGrant(store: RunStore, input: Record<string, unknown>, recovery?: AppServerRecoveryJournal): LingAppServerGrant {
   const { label, subject, scopes, expiresAt, credentialSha256, idempotencyKey } = input;
   const expires = typeof expiresAt === "string" ? Date.parse(expiresAt) : Number.NaN;
   if (typeof label !== "string" || !label.trim() || label.length > 160
@@ -59,7 +63,8 @@ export function createAppServerGrant(store: RunStore, input: Record<string, unkn
     grantId: randomUUID(), label: label.trim(), subject: validatedSubject,
     scopes: [...scopes].sort(), revision: 1, createdAt: new Date().toISOString(), expiresAt: new Date(expires).toISOString(),
   };
-  const record: GrantRecord = { grant, credentialSha256 };
+  const recoveryEpoch = recovery?.grantIssuanceEpoch();
+  const record: GrantRecord = { grant, credentialSha256, ...(recoveryEpoch ? { recoveryEpoch } : {}) };
   const retained = store.putAppServerState({
     kind: "authorization_grant", recordId: grant.grantId, expectedRevision: 0, idempotencyKey,
     replayByIdempotencyKey: true, payload: record,
@@ -67,7 +72,8 @@ export function createAppServerGrant(store: RunStore, input: Record<string, unkn
   if (!retained) throw new HttpError(409, "grant_conflict", "The App Server grant could not be committed.");
   const saved = retained.record.payload as GrantRecord;
   if (saved.credentialSha256 !== credentialSha256 || saved.grant.label !== grant.label || saved.grant.expiresAt !== grant.expiresAt
-    || JSON.stringify(saved.grant.scopes) !== JSON.stringify(grant.scopes) || JSON.stringify(saved.grant.subject) !== JSON.stringify(grant.subject)) {
+    || saved.recoveryEpoch !== recoveryEpoch || JSON.stringify(saved.grant.scopes) !== JSON.stringify(grant.scopes)
+    || JSON.stringify(saved.grant.subject) !== JSON.stringify(grant.subject)) {
     throw new HttpError(409, "idempotency_conflict", "The grant key belongs to a different request.");
   }
   return saved.grant;
@@ -86,13 +92,15 @@ export function listAppServerGrants(store: RunStore): readonly LingAppServerGran
   return store.listAppServerState("authorization_grant").map(record => (record.payload as GrantRecord).grant);
 }
 
-export function revokeAppServerGrant(store: RunStore, grantId: string, expectedRevision: number): LingAppServerGrant {
+export function revokeAppServerGrant(store: RunStore, grantId: string, expectedRevision: number, recovery?: AppServerRecoveryJournal): LingAppServerGrant {
   const saved = store.getAppServerState("authorization_grant", grantId);
   if (!saved) throw new HttpError(404, "grant_not_found", "The App Server grant was not found.");
   const record = saved.payload as GrantRecord;
   if (record.grant.revokedAt && expectedRevision === saved.revision - 1) return record.grant;
   if (saved.revision !== expectedRevision || record.grant.revokedAt) throw new HttpError(409, "stale_revision", "The App Server grant revision changed.");
-  const revokedAt = new Date().toISOString();
+  const now = new Date().toISOString();
+  // A lost workspace commit must never revive a revoked credential on snapshot restore.
+  const revokedAt = recovery?.recordGrantRevocation(grantId, now) ?? now;
   const grant: LingAppServerGrant = { ...record.grant, revision: saved.revision + 1, revokedAt };
   if (!store.putAppServerState({ kind: "authorization_grant", recordId: grantId, expectedRevision,
     payload: { ...record, grant } }, revokedAt)) throw new HttpError(409, "stale_revision", "The App Server grant revision changed.");

@@ -2693,7 +2693,8 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   ): ExternalWorkSchedulerState | undefined;
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem;
   createWorkItem(input: import("./work-item-types.js").CreateWorkItemInput, now: string, eventCwd?: string): import("./work-item-types.js").CreateWorkItemResult;
-  commitWorkItemGitHubDelivery(input: import("./work-item-types.js").CommitWorkItemGitHubDeliveryInput, eventCwd?: string): import("./work-item-types.js").CommitWorkItemGitHubDeliveryResult;
+  commitWorkItemGitHubDelivery(input: import("./work-item-types.js").CommitWorkItemGitHubDeliveryInput, eventCwd?: string,
+    retainReceipt?: (delivery: import("@ling-stack/contracts").LingAppServerGitHubDelivery) => void): import("./work-item-types.js").CommitWorkItemGitHubDeliveryResult;
   getWorkItem(id: string): WorkItem | undefined;
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;

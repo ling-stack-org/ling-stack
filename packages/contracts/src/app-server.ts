@@ -74,6 +74,9 @@ export const LING_APP_SERVER_METHODS = [
   "server/grants/create",
   "server/grants/list",
   "server/grants/revoke",
+  "server/recovery/read",
+  "server/recovery/prepare",
+  "server/recovery/reconcile",
   "workspace/list",
   "workspace/read",
   "worktree/list",
@@ -214,6 +217,39 @@ export interface LingAppServerGrant {
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly revokedAt?: string;
+}
+
+export type LingAppServerRecoveryJournalEntry = {
+  readonly id: string;
+  readonly recordedAt: string;
+  readonly pending: boolean;
+} & (
+  | { readonly kind: "external_agent_dispatch"; readonly workItemId: string; readonly taskId: string; readonly completedAt?: string }
+  | { readonly kind: "github_queue_enqueue"; readonly workItemId: string; readonly repositoryId: string;
+      readonly pullRequestNumber: number; readonly headSha: string; readonly completedAt?: string }
+  | { readonly kind: "github_delivery"; readonly workItemId: string; readonly mergedCommit: string }
+  | { readonly kind: "grant_revocation" }
+);
+
+export interface LingAppServerRecoveryResult {
+  readonly cwd: string;
+  readonly revision: number;
+  readonly status: "ready" | "reconciliation_required";
+  readonly preparedAt?: string;
+  readonly reconciledAt?: string;
+  readonly pendingCount: number;
+  readonly entries: readonly LingAppServerRecoveryJournalEntry[];
+}
+
+export interface LingAppServerRecoveryPrepareParams {
+  readonly cwd?: string;
+  readonly expectedRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerRecoveryReconcileParams {
+  readonly cwd?: string;
+  readonly expectedRevision: number;
 }
 
 export interface LingAppServerGrantCreateParams {

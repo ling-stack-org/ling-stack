@@ -201,6 +201,7 @@ export class SqliteWorkItemStore {
     { delivery, targetKey, expectedWorkItemRevision, expectedDeliveryRevision }: CommitWorkItemGitHubDeliveryInput,
     state: SqliteAppServerStateStore,
     events: { readonly store: SqliteControlPlaneStore; readonly cwd: string },
+    retainReceipt?: (delivery: LingAppServerGitHubDelivery) => void,
   ): CommitWorkItemGitHubDeliveryResult {
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
@@ -220,6 +221,7 @@ export class SqliteWorkItemStore {
         throw new Error("github_delivery_stale");
       }
       if (prior?.deliveryId === deliveryId) {
+        retainReceipt?.(prior);
         database.exec("COMMIT");
         return { delivery: prior };
       }
@@ -240,6 +242,7 @@ export class SqliteWorkItemStore {
         action: "work_item.delivery.reconciled",
         data: { workItemId, deliveryId, status: delivery.status, revision: workItem.revision },
       }, observedAt);
+      retainReceipt?.(committed);
       database.exec("COMMIT");
       return { delivery: committed, event };
     } catch (error) {

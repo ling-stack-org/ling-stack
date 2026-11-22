@@ -1,4 +1,4 @@
-import { resolve as resolvePath } from "node:path";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import { delegationBudget, resolveDelegationPriceForBudget,
   type LingSandboxPolicyProfileId, type DelegationTokenPriceSnapshot } from "@ling-stack/core";
 import type { DelegationBudgetV1 } from "@ling-stack/contracts";
@@ -28,6 +28,8 @@ export interface DaemonConfig {
   readonly transports?: TransportFeatureConfig;
   readonly appServerVerificationRecipes?: readonly AppServerVerificationRecipeConfig[];
   readonly appServerGitHubSources?: readonly AppServerGitHubSourceConfig[];
+  /** Private Host storage retained independently of the workspace SQLite backup. */
+  readonly appServerRecoveryDirectory?: string;
   readonly appServerWss?: AppServerWssConfig;
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
@@ -195,6 +197,7 @@ export interface ResolvedDaemonConfig {
   readonly transports: Required<TransportFeatureConfig>;
   readonly appServerVerificationRecipes: readonly AppServerVerificationRecipeConfig[];
   readonly appServerGitHubSources: readonly AppServerGitHubSourceConfig[];
+  readonly appServerRecoveryDirectory?: string;
   readonly appServerWss?: AppServerWssConfig;
   readonly channels: ChannelFeatureConfig;
   readonly cuaDriver: {
@@ -239,6 +242,10 @@ export const defaultDaemonConfig: DaemonConfig = {
 
 export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
   const port = config.port ?? 17891;
+  const appServerRecoveryDirectory = config.appServerRecoveryDirectory ?? process.env.LING_STACK_APP_SERVER_RECOVERY_DIRECTORY;
+  if (appServerRecoveryDirectory !== undefined && !isAbsolute(appServerRecoveryDirectory)) {
+    throw new Error("The App Server recovery directory must be an absolute Host path.");
+  }
   return {
     host: config.host ?? "127.0.0.1",
     port,
@@ -259,6 +266,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     concurrency: resolveRuntimeConcurrencyPolicy(config.concurrency),
     appServerVerificationRecipes: resolveVerificationRecipes(config.appServerVerificationRecipes),
     appServerGitHubSources: resolveAppServerGitHubSources(config.appServerGitHubSources),
+    appServerRecoveryDirectory,
     appServerWss: resolveAppServerWssConfig(config.appServerWss),
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
