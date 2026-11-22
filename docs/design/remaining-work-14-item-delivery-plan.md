@@ -1,13 +1,12 @@
 # Remaining Work 14-Item Delivery Plan
 
-Status: active execution plan; integration evidence recorded in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)
+Status: November 2026 delivery ledger. The integration batch merged in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732).
 Owner: Ling maintainers; each delivery batch needs an integration owner and a platform contact
 Last verified: 2026-11-18
 Initial branch-cut baseline (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
 Execution branch: `codex/automations-p2-completion`
 Integration baseline for PR #732: `origin/main@acf448a9c7e825ad362d5e4adaf5096100e1e8b5`
-Execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732); exact head is re-read from GitHub
-at each hosted gate.
+Batch merge: `bba53def8` on `main` ([PR #732](https://github.com/ling-stack-org/ling-stack/pull/732))
 Target worktree: `<isolated-worktree>`
 Release-candidate target: 2027-03-15, subject to platform resources and external acceptance
 
@@ -15,14 +14,12 @@ This plan turns the 14-item status review into an execution queue. It distinguis
 local verification, hosted review/merge, and platform or paid-provider acceptance. A local source
 implementation never closes a platform gate by itself.
 
-## Current baseline
+## Integration baseline
 
-- The protected root worktree `<workspace-root>` remains on `codex/ling-companion`
-  with uncommitted WIP. Batch integration and verification use an isolated worktree.
+- Batch integration and verification ran in an isolated worktree.
 - PR #732 includes the F5, External Work, context processing, restart recovery, policy preview
-  and Automations slices. GitHub records hosted checks, review and merge state for the current head.
+  and Automations slices. GitHub records the batch's hosted checks and review.
 - PR #717 merged the Companion character delivery into `main` as `9ba748f12`.
-  The root worktree's `codex/ling-companion` branch is independent and contains separate WIP.
 - Remaining cross-feature PRs and platform gates stay with their owning plans.
 
 ## Four completion classes
@@ -51,7 +48,7 @@ implementation never closes a platform gate by itself.
 | 11 | Multi-Agent Requirement Shaping | Code + verification | Implement specialist contribution packet, collection/fan-in validation and detail route | Existing safe-concurrency and packet ownership rules remain mandatory; ordinary write parallelism stays closed |
 | 12 | Native Skill Recording | Code + verification | Complete message-overflow source refs, draft entry and Web/accessibility regression | Settings remains the existing Skill Library entry; no parallel authority surface |
 | 13 | SQLite Modularization | Integration + verification | Verify persistence, CAS, heartbeat, stale recovery, reopen and stable public `RunStore` API | Further mechanical splitting is excluded without ownership design |
-| 14 | Automations | Integration + verification | The [P2 slice](automations-p2-completion-plan-2026-11-18.md) implements monitor snapshots, admitted Run links, finding artifacts, notification history and the Web projection. Hosted status is tracked in PR #732; P3 destinations and approval-backed actions have their own scope. | Desktop notification permission, live messaging and real Provider acceptance need separate evidence. |
+| 14 | Automations | Integration + verification | The [P2 slice](automations-p2-completion-plan-2026-11-18.md) implements monitor snapshots, admitted Run links, finding artifacts, notification history and the Web projection. The P2 source merged in PR #732. P3 destinations and approval-backed actions have their own scope. | Desktop notification permission, live messaging and real Provider acceptance need separate evidence. |
 
 The ledger is a plan, not a claim that all source bodies are currently complete. The owning design
 documents and tests remain authoritative for each row.

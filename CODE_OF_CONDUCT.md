@@ -59,7 +59,7 @@ privately to the repository maintainers. If no other private maintainer channel 
 available, use the repository's private reporting link and prefix the report title with
 `Code of Conduct`:
 
-<https://github.com/tianxiaochannel-oss88/ling-stack/security/advisories/new>
+<https://github.com/ling-stack-org/ling-stack/security/advisories/new>
 
 All complaints will be reviewed and investigated promptly and fairly. Community leaders
 are obligated to respect the privacy and security of the reporter of any incident.

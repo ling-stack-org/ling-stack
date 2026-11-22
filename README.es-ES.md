@@ -10,6 +10,7 @@
     Español · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="docs/getting-started.md">Primeros pasos</a> ·
     <a href="#hoja-de-ruta-multidispositivo">Hoja de ruta multidispositivo</a>
   </p>
   <p>
@@ -40,7 +41,7 @@ Ilustra la distribución del espacio, no una tarea terminada. Sigue la guía ant
 
 ## Hoja de ruta multidispositivo
 
-La hoja de ruta lleva las tareas de dispositivos a una conversación de Ling. Un PC, un teléfono o un host perimetral puede coordinar la tarea, mientras que el host con una conexión autorizada al dispositivo se encarga de ejecutarla y verificarla.
+**Fase de diseño.** La hoja de ruta lleva las tareas de dispositivos a una conversación de Ling. Un PC, un teléfono o un host perimetral puede coordinar la tarea, mientras que el host con una conexión autorizada al dispositivo se encarga de ejecutarla y verificarla.
 
 ![Escena conceptual azul y violeta con un portátil, un teléfono, una unidad principal, un sensor doméstico y una placa de desarrollo](docs/assets/ling-device-roadmap.jpg)
 
@@ -52,7 +53,7 @@ La hoja de ruta lleva las tareas de dispositivos a una conversación de Ling. Un
 - En una **unidad principal Android** compatible, instala y valida aplicaciones con el vehículo estacionado.
 - En un **banco de hardware**, captura y decodifica datos de protocolo y verifica la respuesta del dispositivo.
 
-**Fase de diseño.** Consulta el [diseño multidispositivo](docs/design/ling-device-fabric.md) y el [plan de implementación y aceptación de dispositivos](docs/design/ling-device-support-platform-implementation-plan.md).
+Consulta el [diseño multidispositivo](docs/design/ling-device-fabric.md) y el [plan de implementación y aceptación de dispositivos](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## ¿Para quién es Ling Stack?
 

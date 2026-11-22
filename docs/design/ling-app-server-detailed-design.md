@@ -1,8 +1,8 @@
 # Ling App Server 详细设计
 
-- **状态** 目标态详细设计，待实施
+- **状态** 主线已接入本机传输、Turn 恢复、Verify 和 Federation 的部分能力。 [实施计划](ling-app-server-implementation-plan.md#尚待完成的发布条件)记录剩余发布条件。
 - **维护者** Contracts、Daemon、API Client、Runner 与开发工具维护者
-- **核对基线** 2026-11-21，`origin/main@50f73b852`
+- **实现状态核对基线** 2026-11-22，`origin/main@469a557ee`
 - **类型** 协议、执行、存储与恢复合同
 - **上位合同** [Ling App Server 与开发工作流](ling-app-server.md)
 - **交付计划** [实施计划与验收](ling-app-server-implementation-plan.md)

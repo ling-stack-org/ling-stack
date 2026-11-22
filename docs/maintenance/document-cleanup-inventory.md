@@ -1,6 +1,6 @@
 # Documentation Governance And Cleanup Record
 
-Status: current classified documentation manifest; historical cleanup batches retained below
+Status: historical classification and cleanup record through 2026-10-08
 Historical cleanup baseline: `ea8c40e3a1f6a083df64c0a69e252805bc96a320`
 Source baseline for this refresh: `958fe499100cc4874e938eee45f6f92a9caa23d0`
 Last cleanup refresh: 2026-10-08
@@ -20,7 +20,7 @@ links, and classified ten current documents that had been added since the previo
 update. The 2026-09-03 cleanup removed 38 test screenshots, removed three completed or
 superseded documents from the default branch, and classified five still-current documents
 plus the CI maintenance guide. The classified tree at that checkpoint contained 233
-Markdown files, a net reduction of 316 files. The current count is calculated in Retained Classification below.
+Markdown files, a net reduction of 316 files. Retained Classification records the October 2026 inventory.
 The governance record, canonical design index, implementation-status index, publication
 checklist, and release policy are the long-lived navigation documents.
 
@@ -36,7 +36,7 @@ index and consolidates five dated checkpoints into
 [Development Handoffs](development-handoffs.md), preserving their safety rules and
 unfinished gates. The old branch-specific instructions are explicitly historical;
 current delivery status remains owned by the active contracts and plans. Public guides,
-development-package instructions and governance material are included in the current manifest.
+development-package instructions and governance material are included in that inventory.
 
 No runtime code, daemon API, database schema, migration, approval behavior, or release
 state was changed by this documentation cleanup.

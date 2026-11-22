@@ -10,6 +10,7 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="docs/getting-started.md">Premiers pas</a> ·
     <a href="#feuille-de-route-multi-appareil">Feuille de route multi-appareil</a>
   </p>
   <p>
@@ -40,7 +41,7 @@ Elle illustre l'organisation de l'espace, pas une tâche achevée. Suivez le gui
 
 ## Feuille de route multi-appareil
 
-La feuille de route fait entrer les tâches liées aux appareils dans une conversation Ling. Un PC, un téléphone ou un hôte périphérique peut coordonner la tâche, tandis que l'hôte disposant d'une connexion autorisée à l'appareil l'exécute et la vérifie.
+**Phase de conception.** La feuille de route fait entrer les tâches liées aux appareils dans une conversation Ling. Un PC, un téléphone ou un hôte périphérique peut coordonner la tâche, tandis que l'hôte disposant d'une connexion autorisée à l'appareil l'exécute et la vérifie.
 
 ![Scène conceptuelle bleu-violet avec un ordinateur portable, un téléphone, une unité principale, un capteur domestique et une carte de développement](docs/assets/ling-device-roadmap.jpg)
 
@@ -52,7 +53,7 @@ La feuille de route fait entrer les tâches liées aux appareils dans une conver
 - Pour une **unité principale Android** compatible, installez et validez des applications lorsque le véhicule est à l'arrêt.
 - Sur un **banc matériel**, capturez et décodez les données de protocole et vérifiez la réponse de l'appareil.
 
-**Phase de conception.** Consultez la [conception multi-appareil](docs/design/ling-device-fabric.md) et le [plan d'implémentation et d'acceptation des appareils](docs/design/ling-device-support-platform-implementation-plan.md).
+Consultez la [conception multi-appareil](docs/design/ling-device-fabric.md) et le [plan d'implémentation et d'acceptation des appareils](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## À qui s'adresse Ling Stack ?
 

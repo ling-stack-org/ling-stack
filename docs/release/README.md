@@ -2,7 +2,7 @@
 
 Status: active release boundary
 Owner: repository maintainers
-Last verified: 2026-10-13
+Release workflow and repository references verified: 2026-11-22
 Document type: release policy
 Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 `.github/workflows/ci.yml`
@@ -67,15 +67,15 @@ changes may occur in minor releases but must still be documented.
 ## Source Release Checklist
 
 1. Start from a clean, reviewed `main` commit.
-2. Run the generic CI workflow without repository secrets when Actions capacity is
-   available. During the current quota-related pause, record local checks and their
-   scope; do not claim an online CI pass.
+2. Run the repository's [CI workflow](../../.github/workflows/ci.yml) on the candidate.
+   If Actions capacity is unavailable, record which checks ran locally and which
+   hosted checks are still pending.
 3. Run documentation, license, public-repository safety, typecheck, unit, and build gates.
 4. Complete a current-tree and Git-history secret scan.
 5. Confirm the changelog and implementation-status index are current.
 6. Confirm Security, Support, Contributing, and Code of Conduct links work publicly.
-   The current maintainer preparation scope defers branch-protection and private
-   vulnerability-reporting verification; record their status separately from local checks.
+   Verify branch protection and private vulnerability reporting in GitHub settings
+   and record their status alongside the local checks.
 7. Review third-party source licensing and trademark/name/logo authority.
 8. After applicable gates pass, create the reviewed tag and GitHub Release with verified assets; a Draft alone is not publication.
 9. Verify the published tag and source archive checksums from a clean checkout.
@@ -87,17 +87,16 @@ Release remains an explicit maintainer action. A product Release eligible for Gi
 with `draft=false` and `prerelease=false` after the applicable gates; numeric naming and
 an unsigned Draft do not establish release readiness.
 
-## Current Preparation Evidence
+## October 2026 Source Preparation
 
 On 2026-10-08, a clean checkout of the reviewed source baseline was installed with the
 frozen lockfile. The CLI dependency build (including daemon and Web) and the Desktop
 source build passed. A fresh local workspace reached the homepage and Model Workbench.
 No provider key or real model task was used in that check.
 
-Documentation links, source dependency licenses, current-tree public-repository safety,
-and a redacted Git-history scan are checked separately in the
-[open-source readiness checklist](../maintenance/open-source-readiness.md). These local
-results do not establish Windows execution, signed installation, or public binary readiness.
+The [October 2026 readiness record](../maintenance/open-source-readiness.md) captures
+the documentation, license, repository safety, and history scans for that baseline.
+Platform execution, signed installation, and binary distribution have their own gates.
 
 Windows development packaging and manual acceptance are assigned to a Windows host;
 the [colleague checklist](development-packages.md#windows-x64同事执行清单) records the
@@ -121,10 +120,11 @@ authorize a public release.
 
 ## Native Release Boundary
 
-Native Cua Driver builds, signing, and Desktop artifact publication are not hosted in
-this source repository. They require interactive platform hosts and private credentials,
-so the release lane must live in a separately reviewed private repository or protected
-runner boundary. The public repository intentionally retains only generic hosted CI.
+The public repository hosts [Desktop development candidate builds](github-actions.md)
+and can create a Draft Release containing unsigned development artifacts. Official
+Desktop signing, notarization, and platform acceptance use reviewed platform hosts
+and protected credentials where required. Production publication is an explicit
+maintainer action after the [Desktop release gates](desktop.md) pass.
 
 ## Release Notes
 

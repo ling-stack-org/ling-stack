@@ -5,6 +5,7 @@
   <p>
     <a href="docs/community/first-project-review.md"><strong>Try a project review</strong></a> ·
     <a href="#quick-start-from-source">Run from source</a> ·
+    <a href="docs/getting-started.md">Getting started</a> ·
     <a href="#cross-device-roadmap">Device roadmap</a> ·
     <a href="CONTRIBUTING.md">Contribute</a>
   </p>
@@ -35,7 +36,7 @@ discussion-only trial using your own model configuration and API key. Provider c
 
 ## Cross-Device Roadmap
 
-The roadmap brings device work into a Ling conversation. A PC, phone, or edge
+**Design stage.** The roadmap brings device work into a Ling conversation. A PC, phone, or edge
 host can coordinate the task, with execution and verification handled by the
 host that has an authorized connection to the device.
 
@@ -49,7 +50,7 @@ host that has an authorized connection to the device.
 - For a compatible **Android head unit**, install and validate apps while the vehicle is parked.
 - At a **hardware bench**, capture and decode protocol data and verify the device response.
 
-**Design stage.** See the [cross-device design](docs/design/ling-device-fabric.md)
+See the [cross-device design](docs/design/ling-device-fabric.md)
 and the [implementation and device acceptance plan](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## Meet Yui
