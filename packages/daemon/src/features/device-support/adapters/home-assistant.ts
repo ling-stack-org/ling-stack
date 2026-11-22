@@ -30,6 +30,11 @@ export interface HomeAssistantEntityRead {
   readonly availability: "available" | "unavailable" | "absent";
   readonly quality: DeviceObservationQualityV1;
   readonly observedAt: string;
+  readonly lastReportedAt?: string;
+  readonly lastUpdatedAt?: string;
+  readonly lastChangedAt?: string;
+  readonly reportTimestampStatus: "valid" | "missing" | "invalid" | "future";
+  readonly reportFreshness: "fresh" | "stale" | "unknown";
 }
 
 export interface HomeAssistantAdapterOptions {
@@ -177,18 +182,27 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     if (profile.device.id !== this.deviceId) throw new DeviceBrokerError("target_changed", "Home Assistant instance changed");
   }
 
-  async readEntity(entityId: string, signal?: AbortSignal): Promise<HomeAssistantEntityRead> {
+  async readEntity(entityId: string, signal?: AbortSignal, maxReportAgeMs?: number): Promise<HomeAssistantEntityRead> {
     if (!/^([a-z0-9_]+)\.([a-z0-9_]+)$/u.test(entityId)) throw new Error("Invalid Home Assistant entity id");
     const observedAt = this.#now();
     const response = await this.request(`/api/states/${encodeURIComponent(entityId)}`, { method: "GET", signal, allowNotFound: true });
     if (response.status === 404) {
       await response.body?.cancel();
-      return { entityId, availability: "absent", quality: "unknown", observedAt };
+      return { entityId, availability: "absent", quality: "unknown", observedAt, reportTimestampStatus: "missing", reportFreshness: "unknown" };
     }
     const body = await readJson(response);
     if (body.entity_id !== entityId) throw new DeviceBrokerError("target_changed", "Home Assistant returned another entity");
     const availability = homeAssistantEntityAvailability(body.state);
-    return { entityId, availability, quality: availability === "available" ? "good" : "degraded", observedAt };
+    const reported = normalizeHomeAssistantTimestamp(body.last_reported, observedAt);
+    const updated = normalizeHomeAssistantTimestamp(body.last_updated, observedAt);
+    const changed = normalizeHomeAssistantTimestamp(body.last_changed, observedAt);
+    const reportTimestampStatus = reported.status;
+    const reportFreshness = reportTimestampStatus === "valid" && maxReportAgeMs !== undefined
+      ? Date.parse(observedAt) - Date.parse(reported.value!) > maxReportAgeMs ? "stale" : "fresh"
+      : "unknown";
+    return { entityId, availability, quality: availability === "available" ? "good" : "degraded", observedAt,
+      ...(reported.value ? { lastReportedAt: reported.value } : {}), ...(updated.value ? { lastUpdatedAt: updated.value } : {}),
+      ...(changed.value ? { lastChangedAt: changed.value } : {}), reportTimestampStatus, reportFreshness };
   }
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
@@ -223,7 +237,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     if (input.capability.id === "home_assistant.read_entity") {
       let entity: HomeAssistantEntityRead;
       try {
-        entity = await this.readEntity(requireString(args.entityId, "entityId"), input.signal);
+        entity = await this.readEntity(requireString(args.entityId, "entityId"), input.signal, readMaxReportAge(args.maxReportAgeMs));
       } catch (error) {
         if (!(error instanceof DeviceBrokerError)) throw error;
         return { actionId: input.request.actionId, status: "rejected", errorCode: error.code,
@@ -268,7 +282,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
         checkedAt: this.#now(), reason: "an entity and its expected availability are required",
       } };
     }
-    const entity = await this.readEntity(entityId, input.signal);
+    const entity = await this.readEntity(entityId, input.signal, readMaxReportAge(args.maxReportAgeMs));
     const observation = this.entityObservation(input.evidenceId, entity, input.profile.device.id);
     return {
       verification: {
@@ -284,7 +298,11 @@ export class HomeAssistantAdapter implements DeviceAdapter {
       id,
       subjectId,
       source: "home_assistant",
-      value: { entityId: entity.entityId, availability: entity.availability },
+      value: { entityId: entity.entityId, availability: entity.availability,
+        ...(entity.lastReportedAt ? { lastReportedAt: entity.lastReportedAt } : {}),
+        ...(entity.lastUpdatedAt ? { lastUpdatedAt: entity.lastUpdatedAt } : {}),
+        ...(entity.lastChangedAt ? { lastChangedAt: entity.lastChangedAt } : {}),
+        reportTimestampStatus: entity.reportTimestampStatus, reportFreshness: entity.reportFreshness },
       observedAt: entity.observedAt,
       receivedAt: this.#now(),
       freshnessUntil: new Date(Date.parse(entity.observedAt) + 30_000).toISOString(),
@@ -349,6 +367,26 @@ export function parseHomeAssistantOrigin(value: string): string {
   if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.username || url.password
     || url.pathname !== "/" || url.search || url.hash || url.origin.length > 480) throw failure;
   return url.origin;
+}
+
+function readMaxReportAge(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 30 * 24 * 60 * 60 * 1000) {
+    throw new DeviceBrokerError("invalid_request", "Home Assistant max report age is invalid");
+  }
+  return value;
+}
+
+function normalizeHomeAssistantTimestamp(value: unknown, observedAt: string): {
+  readonly status: HomeAssistantEntityRead["reportTimestampStatus"];
+  readonly value?: string;
+} {
+  if (value === undefined) return { status: "missing" };
+  if (typeof value !== "string") return { status: "invalid" };
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return { status: "invalid" };
+  if (parsed > Date.parse(observedAt)) return { status: "future" };
+  return { status: "valid", value: new Date(parsed).toISOString() };
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {

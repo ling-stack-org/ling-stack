@@ -14,6 +14,7 @@ export interface DeviceDiagnosisRequest {
   readonly providerPresetId?: string;
   readonly fallbackProviderPresetId?: string;
   readonly symptom?: string;
+  readonly maxReportAgeMs?: number;
 }
 
 export type DeviceDiagnosisPlanner = (request: Required<Pick<DeviceDiagnosisRequest, "providerPresetId">> & DeviceDiagnosisRequest,

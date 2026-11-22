@@ -349,7 +349,7 @@ export function createDeviceSupportRuntime(options: {
       return await localDiagnosis.pending;
     },
     async diagnoseHomeAssistant(entityId, request = {}) {
-      return withHomeAssistant(target => runDiagnosis(target, target.device.id, createHomeAssistantOfflinePlaybook(entityId), request));
+      return withHomeAssistant(target => runDiagnosis(target, target.device.id, createHomeAssistantOfflinePlaybook(entityId, { maxReportAgeMs: request.maxReportAgeMs }), request));
     },
     async readHomeAssistantCatalog(query) {
       assertHomeAssistantCatalogQuery(query);

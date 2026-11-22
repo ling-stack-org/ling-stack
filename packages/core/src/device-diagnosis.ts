@@ -117,7 +117,20 @@ export function projectDeviceDiagnosticEvidence(
     const availability = fields.availability;
     if (observation.subjectId !== input?.entityId || fields.entityId !== observation.subjectId
       || (availability !== "available" && availability !== "unavailable" && availability !== "absent")) return undefined;
-    return { value: { availability }, hypotheses: availability === "unavailable" ? ["integration_or_device_issue"] : [] };
+    const reportFreshness = fields.reportFreshness === "fresh" || fields.reportFreshness === "stale" || fields.reportFreshness === "unknown"
+      ? fields.reportFreshness : undefined;
+    const reportTimestampStatus = fields.reportTimestampStatus === "valid" || fields.reportTimestampStatus === "missing"
+      || fields.reportTimestampStatus === "invalid" || fields.reportTimestampStatus === "future" ? fields.reportTimestampStatus : undefined;
+    const hypotheses: DeviceDiagnosisHypothesisV1["code"][] = availability === "unavailable" ? ["integration_or_device_issue"] : [];
+    if (reportFreshness === "stale") hypotheses.push("stale_entity_report");
+    return { value: {
+      availability,
+      ...(typeof fields.lastReportedAt === "string" ? { lastReportedAt: fields.lastReportedAt } : {}),
+      ...(typeof fields.lastUpdatedAt === "string" ? { lastUpdatedAt: fields.lastUpdatedAt } : {}),
+      ...(typeof fields.lastChangedAt === "string" ? { lastChangedAt: fields.lastChangedAt } : {}),
+      ...(reportTimestampStatus === undefined || reportTimestampStatus === "missing" ? {} : { reportTimestampStatus }),
+      ...(reportFreshness === undefined || reportFreshness === "unknown" ? {} : { reportFreshness }),
+    }, hypotheses };
   }
   if (observation.subjectId !== request.targetDeviceId) return undefined;
   const pcNetwork = request.capabilityId === "pc.inspect.network" && observation.source === "pc.network";

@@ -9,7 +9,7 @@ export interface DeviceDiagnosisFactV1 {
 }
 
 export interface DeviceDiagnosisHypothesisV1 {
-  readonly code: "link_or_address_issue" | "route_issue" | "gateway_issue" | "dns_issue" | "service_issue" | "integration_or_device_issue";
+  readonly code: "link_or_address_issue" | "route_issue" | "gateway_issue" | "dns_issue" | "service_issue" | "integration_or_device_issue" | "stale_entity_report";
   readonly observationId: string;
 }
 

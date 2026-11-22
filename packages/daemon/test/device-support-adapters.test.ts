@@ -110,6 +110,51 @@ test("Home Assistant adapter keeps credentials out of the profile and distinguis
   assert.equal(calls.every(call => call.authorization === "Bearer secret-token"), true);
 });
 
+test("Home Assistant diagnosis normalizes report timestamps and distinguishes stale, legacy, invalid, and future reports", async t => {
+  const reports: Record<string, Record<string, unknown>> = {
+    "sensor.fresh": { entity_id: "sensor.fresh", state: "on", attributes: { secret: "omit" }, last_reported: "2026-11-20T23:59:00Z", last_updated: "2026-11-20T23:58:00Z", last_changed: "2026-11-20T23:57:00Z" },
+    "sensor.stale": { entity_id: "sensor.stale", state: "on", last_reported: "2026-11-20T00:00:00Z" },
+    "sensor.invalid": { entity_id: "sensor.invalid", state: "on", last_reported: "not-a-timestamp" },
+    "sensor.future": { entity_id: "sensor.future", state: "on", last_reported: "2026-11-22T00:00:00Z" },
+    "sensor.legacy": { entity_id: "sensor.legacy", state: "on" },
+  };
+  const adapter = new HomeAssistantAdapter({
+    baseUrl: "https://ha.example.test/", token: "secret-token", now: () => now,
+    fetchImpl: async input => {
+      const entityId = new URL(String(input)).pathname.split("/").at(-1)!;
+      return entityId === "config" ? new Response(JSON.stringify({ version: "2026.11" }))
+        : new Response(JSON.stringify(reports[entityId] ?? {}), { status: reports[entityId] ? 200 : 404 });
+    },
+  });
+  const fresh = await adapter.readEntity("sensor.fresh", undefined, 5 * 60 * 1000);
+  assert.deepEqual(fresh, {
+    entityId: "sensor.fresh", availability: "available", quality: "good", observedAt: now,
+    lastReportedAt: "2026-11-20T23:59:00.000Z", lastUpdatedAt: "2026-11-20T23:58:00.000Z", lastChangedAt: "2026-11-20T23:57:00.000Z",
+    reportTimestampStatus: "valid", reportFreshness: "fresh",
+  });
+  const stale = await adapter.readEntity("sensor.stale", undefined, 5 * 60 * 1000);
+  assert.equal(stale.reportFreshness, "stale");
+  const invalid = await adapter.readEntity("sensor.invalid", undefined, 5 * 60 * 1000);
+  assert.deepEqual({ status: invalid.reportTimestampStatus, freshness: invalid.reportFreshness }, { status: "invalid", freshness: "unknown" });
+  const future = await adapter.readEntity("sensor.future", undefined, 5 * 60 * 1000);
+  assert.deepEqual({ status: future.reportTimestampStatus, freshness: future.reportFreshness }, { status: "future", freshness: "unknown" });
+  const legacy = await adapter.readEntity("sensor.legacy", undefined, 5 * 60 * 1000);
+  assert.deepEqual({ status: legacy.reportTimestampStatus, freshness: legacy.reportFreshness }, { status: "missing", freshness: "unknown" });
+  assert.equal(Object.hasOwn(fresh, "attributes"), false);
+
+  const store = new SqliteDeviceSupportStore();
+  t.after(() => store.close());
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  broker.registerAdapter(adapter);
+  const target = await broker.discover(adapter.manifest.adapterId, { connectionRef: "https://ha.example.test", ownerId: "workspace" });
+  const snapshot = store.getCurrentCapabilitySnapshot(target.device.id)!;
+  const task = broker.createTask({ id: "stale-report-diagnosis", ownerKind: "daemon", ownerId: "workspace", targetDeviceIds: [target.device.id], status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now });
+  const run = await runDeviceReadOnlyPlaybook({ broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
+    playbook: createHomeAssistantOfflinePlaybook("sensor.stale", { maxReportAgeMs: 5 * 60 * 1000 }) });
+  assert.deepEqual(run.report.facts[0]?.value, { availability: "available", lastReportedAt: "2026-11-20T00:00:00.000Z", reportTimestampStatus: "valid", reportFreshness: "stale" });
+  assert.deepEqual(run.report.hypotheses.map(item => item.code), ["stale_entity_report"]);
+});
+
 test("PC adapter uses typed executor operations for diagnosis and repair", async () => {
   const operations: string[] = [];
   const adapter = new PcAdapter({
