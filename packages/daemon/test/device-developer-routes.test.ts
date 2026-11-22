@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import type { DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceProfileV1 } from "@ling-stack/contracts";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, HardwareProtocolWorkbench, SqliteDeviceSupportStore } from "@ling-stack/core";
@@ -22,6 +23,11 @@ test("local developer sessions authorize the current target and expose durable w
   };
   let daemon: ReturnType<typeof createDaemonServer> | undefined;
   let databasePath: string;
+  let signalDispatch!: () => void;
+  let finishExecution!: () => void;
+  const dispatched = new Promise<void>(resolve => { signalDispatch = resolve; });
+  const running = new Promise<void>(resolve => { finishExecution = resolve; });
+  let dispatchCount = 0;
   async function start(seed = false) {
     const workspace = createSqliteRunStore(cwd);
     databasePath = workspace.paths.databasePath;
@@ -35,7 +41,11 @@ test("local developer sessions authorize the current target and expose durable w
     daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
       storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
       developerExecutor: {
-        async execute({ job }) {
+        async execute({ job, signal }) {
+          dispatchCount += 1;
+          signalDispatch();
+          await running;
+          signal.throwIfAborted();
           return { status: "completed", outputRef: "fixture-output:" + job.kind, outputDigest: "a".repeat(64), taskStatus: "succeeded" };
         },
       },
@@ -46,6 +56,7 @@ test("local developer sessions authorize the current target and expose durable w
     return `http://127.0.0.1:${address.port}/v1/device-support`;
   }
   t.after(async () => {
+    finishExecution();
     await daemon?.stop();
     rmSync(cwd, { recursive: true, force: true });
   });
@@ -76,14 +87,31 @@ test("local developer sessions authorize the current target and expose durable w
   assert.equal(authorized.revision, 2);
   assert.notEqual(authorized.authorizationRevision, created.authorizationRevision);
   assert.equal((await post(sessionUrl + "/authorize", { expectedRevision: 2 })).status, 409);
-  const developerJobResponse = await post(sessionUrl + "/jobs", {
-    jobId: "developer-test-1", kind: "test", authorizationRevision: authorized.authorizationRevision,
+  const jobInput = { jobId: "developer-test-1", kind: "test", authorizationRevision: authorized.authorizationRevision };
+  const client = new AbortController();
+  const firstSubmission = fetch(sessionUrl + "/jobs", {
+    method: "POST", headers, body: JSON.stringify(jobInput), signal: client.signal,
   });
-  assert.equal(developerJobResponse.status, 201);
-  const developerJob = (await developerJobResponse.json() as { job: DeviceDeveloperJobV1 }).job;
+  const disconnected = assert.rejects(firstSubmission, { name: "AbortError" });
+  await dispatched;
+  client.abort();
+  await disconnected;
+  const retry = await post(sessionUrl + "/jobs", jobInput);
+  assert.equal(retry.status, 200);
+  const readJob = async (response: Response) => (await response.json() as { job: DeviceDeveloperJobV1 }).job;
+  let developerJob = await readJob(retry);
+  assert.equal(developerJob.status, "running");
+  assert.equal((await post(sessionUrl + "/jobs", { ...jobInput, kind: "launch" })).status, 409);
+  finishExecution();
+  const developerJobPath = `/developer/sessions/${created.sessionId}/jobs/${jobInput.jobId}`;
+  for (let attempt = 0; developerJob.status === "running" && attempt < 20; attempt += 1) {
+    await delay(10);
+    developerJob = await readJob(await get(base + developerJobPath));
+  }
   assert.equal(developerJob.status, "completed");
   assert.equal(developerJob.outputRef, "fixture-output:test");
   assert.equal(developerJob.outputDigest, "a".repeat(64));
+  assert.equal(dispatchCount, 1);
 
   const stale = await readSession(await post(sessions, { ...input, mode: "standard" }));
   assert.equal(stale.mode, "standard");
@@ -118,5 +146,8 @@ test("local developer sessions authorize the current target and expose durable w
   const resumed = await readSession(await get(`${reopened}/developer/sessions/${created.sessionId}`));
   assert.equal(resumed.status, "completed");
   assert.equal(resumed.revision, authorized.revision + 2);
+  assert.deepEqual(await readJob(await get(reopened + developerJobPath)), developerJob);
+  assert.deepEqual(await readJob(await post(`${reopened}/developer/sessions/${created.sessionId}/jobs`, jobInput)), developerJob);
+  assert.equal(dispatchCount, 1);
   assert.deepEqual(await (await get(reopened + jobPath)).json(), { job });
 });

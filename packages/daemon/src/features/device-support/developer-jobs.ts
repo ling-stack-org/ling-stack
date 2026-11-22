@@ -46,14 +46,14 @@ export function createDeviceDeveloperJobs(options: {
       if (!admitted) return { job, admitted };
 
       const signal = AbortSignal.timeout(60_000);
-      let result: DeviceDeveloperExecutorResultV1;
+      let result: DeviceDeveloperExecutorResultV1 | undefined;
       try {
         result = executor ? await executor.execute({ session, job, signal })
           : await capturePcLogs(broker, session, job, signal);
         signal.throwIfAborted();
         requireCurrentDeveloperTarget(store, session);
       } catch {
-        result = { status: "unknown", taskStatus: "unknown" };
+        result = { status: "unknown", taskStatus: "unknown", outputRef: result?.outputRef };
       }
       const settled = sessions.settleJob(job.jobId, result.status, result.outputRef, now(), result.taskStatus, result.outputDigest);
       return { job: settled, admitted };
@@ -99,7 +99,7 @@ async function capturePcLogs(
       actionId: `${taskId}:capture`, taskId, targetDeviceId: target.deviceId, capabilityId: capability.id,
       capabilitySchemaVersion: capability.schemaVersion, capabilitySnapshotId: snapshot.snapshotId,
       normalizedInput: {}, idempotencyKey: taskId,
-    }, signal);
+    }, signal, { onlyUnattendedReads: true });
   } catch {
     broker.cancelTask(taskId);
   }

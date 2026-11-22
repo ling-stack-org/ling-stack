@@ -106,21 +106,19 @@ export class LingServerRelayCredentialIssuer {
       throw new DeviceFabricError("safety_denied", "relay credential will expire before the requested configuration");
     }
     const scope = createHash("sha256").update(JSON.stringify([binding.installationId, binding.bindingId, binding.epoch, route.routeAttemptId, role])).digest("hex");
-    const username = `${expiresAtSeconds}:${scope}:${role}`;
+    const relayLabel = `${expiresAtSeconds}:${scope}:${role}`;
     let activeCount = 0;
     for (const [key, issued] of this.#issued) {
       if (issued.expiresAtMs <= nowMs) this.#issued.delete(key);
       else if (issued.bindingId === binding.bindingId) activeCount += 1;
     }
-    if (!this.#issued.has(username) && activeCount >= this.#maxActiveCredentialsPerBinding) {
+    if (!this.#issued.has(relayLabel) && activeCount >= this.#maxActiveCredentialsPerBinding) {
       throw new DeviceFabricError("lease_busy", "relay credential quota is exhausted for this binding");
     }
-    // The coturn REST password format uses HMAC-SHA1 over the public, expiring username.
-    // Coturn's REST API specifies HMAC-SHA1 for this short-lived public username.
-    // lgtm[js/weak-cryptographic-algorithm]
-    const credential = createHmac("sha1", this.#sharedSecret).update(username, "utf8").digest("base64");
-    this.#issued.set(username, { bindingId: binding.bindingId, expiresAtMs });
-    return { url: this.#turnUrls[0]!, username, credential, expiresAt: new Date(expiresAtMs).toISOString() };
+    // Coturn's REST protocol uses HMAC-SHA1 over the generated, public relay label.
+    const credential = createHmac("sha1", this.#sharedSecret).update(relayLabel, "utf8").digest("base64");
+    this.#issued.set(relayLabel, { bindingId: binding.bindingId, expiresAtMs });
+    return { url: this.#turnUrls[0]!, username: relayLabel, credential, expiresAt: new Date(expiresAtMs).toISOString() };
   }
 }
 

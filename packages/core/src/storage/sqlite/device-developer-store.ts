@@ -79,16 +79,18 @@ export class SqliteDeviceDeveloperStore {
   }
 
   listInterruptedJobIds(owner: Pick<DeviceDeveloperSessionV1, "ownerKind" | "ownerId">): readonly string[] {
-    // Protocol workbench captures are read-only. Their durable capture write is the
-    // commit point, so an interrupted import can be retried without repeating a
-    // mutating device action.
+    // Offline replay can retry its digest-bound import without another device call.
     return this.database.prepare(`
       SELECT job_id
       FROM device_developer_jobs JOIN device_developer_sessions USING (session_id)
       WHERE json_extract(session_json, '$.ownerKind') = ?
         AND json_extract(session_json, '$.ownerId') = ?
         AND json_extract(job_json, '$.status') IN ('queued', 'running')
-        AND json_extract(job_json, '$.kind') <> 'workbench'
+        AND NOT (
+          json_extract(job_json, '$.kind') = 'workbench'
+          AND json_type(session_json, '$.protocolReplay') IS 'object'
+          AND json_type(session_json, '$.protocolReplay.liveTransport') IS NULL
+        )
     `).all(owner.ownerKind, owner.ownerId).map(row => String(row.job_id));
   }
 

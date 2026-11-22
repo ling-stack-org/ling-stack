@@ -10,7 +10,7 @@ import test from "node:test";
 import { WebSocketServer } from "ws";
 
 import type {
-  ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
+  ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
   DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
@@ -964,6 +964,35 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
 
   const deviceId = adapterSpans[0]?.lineage?.deviceId;
   assert.ok(deviceId);
+  const sessionRoot = new URL("../developer/sessions", url).href;
+  const postDeveloper = (endpoint: string, body: object) => fetch(endpoint, {
+    method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const createdSession = await postDeveloper(sessionRoot, { mode: "developer", targetDeviceId: deviceId });
+  assert.equal(createdSession.status, 201);
+  const { session: pending } = await createdSession.json() as { session: DeviceDeveloperSessionV1 };
+  const sessionUrl = `${sessionRoot}/${pending.sessionId}`;
+  const approval = await postDeveloper(`${sessionUrl}/authorize`, { expectedRevision: pending.revision });
+  assert.equal(approval.status, 200);
+  const { session: authorized } = await approval.json() as { session: DeviceDeveloperSessionV1 };
+  const logInput = { jobId: "pc-dev-log-test", kind: "logs", authorizationRevision: authorized.authorizationRevision };
+  const submitted = await postDeveloper(`${sessionUrl}/jobs`, logInput);
+  assert.equal(submitted.status, 201);
+  const { job: logJob } = await submitted.json() as { job: DeviceDeveloperJobV1 };
+  assert.equal(logJob.status, "completed");
+  assert.ok(logJob.outputRef);
+  const replay = await postDeveloper(`${sessionUrl}/jobs`, logInput);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), { job: logJob });
+  const logStore = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const attempts = logStore.listAttempts(logJob.outputRef);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0]?.request.capabilityId, "pc.inspect.logs");
+    assert.equal(attempts[0]?.attempt.targetDeviceId, deviceId);
+  } finally {
+    logStore.close();
+  }
   const stopUrl = `http://127.0.0.1:${address.port}/v1/device-support/devices/${encodeURIComponent(deviceId)}/dispatch-stop`;
   const setStop = (active: boolean, expectedRevision: number, extraHeaders: Record<string, string> = {}) => fetch(stopUrl, {
     method: "PUT", headers: { ...headers, ...extraHeaders, "Content-Type": "application/json" },
@@ -979,9 +1008,10 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     const tasks = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10);
-    assert.deepEqual(tasks.map(task => task.id), [report.taskId]);
-    assert.equal(tasks[0]?.status, "succeeded");
-    assert.equal(tasks[0]?.ownerId, tasks[0]?.targetDeviceIds[0]);
+    const diagnosisTask = tasks.find(task => task.id === report.taskId);
+    assert.ok(diagnosisTask);
+    assert.equal(diagnosisTask.status, "succeeded");
+    assert.equal(diagnosisTask.ownerId, diagnosisTask.targetDeviceIds[0]);
     const observations = journal.listObservations(report.taskId);
     assert.equal(observations.length, 5);
     const processes = observations.find(observation => observation.source === "pc.processes");
@@ -1028,12 +1058,12 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.deepEqual(readOwnedDeviceAttemptConformance({ ...traceScope, attemptId }), conformance);
     assert.throws(() => readOwnedDeviceTaskTrace({ ...traceScope, workspaceId: "elsewhere" }), /unavailable in this workspace/);
     const input = {
-      store: journal, taskId: report.taskId, ownerId: tasks[0]!.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
+      store: journal, taskId: report.taskId, ownerId: diagnosisTask.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
       contextId: "fixture-context", maxBytes: 4096, now: new Date().toISOString(),
     };
     const planned = buildOwnedDevicePlanningInput(input);
     assert.deepEqual(planned.context.facts, report.facts.map(fact => fact.value));
-    assert.deepEqual(planned.targets.map(target => target.snapshot.deviceId), tasks[0]?.targetDeviceIds);
+    assert.deepEqual(planned.targets.map(target => target.snapshot.deviceId), diagnosisTask.targetDeviceIds);
     assert.throws(() => buildOwnedDevicePlanningInput({ ...input, workspaceId: "elsewhere" }), /outside the workspace/);
   } finally {
     journal.close();
