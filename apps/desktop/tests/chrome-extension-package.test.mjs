@@ -5,7 +5,7 @@ import { test } from "node:test";
 test("Desktop package carries the deterministic Chrome extension and Native Host", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   const installer = await readFile(new URL("../build/installer.nsh", import.meta.url), "utf8");
-  const resources = packageJson.build.extraResources;
+  const resources = packageJson.lingBundledPluginResources;
   assert.equal(resources.some((entry) => entry.from === "../chrome-extension/ling-for-chrome.zip" && entry.to === "browser-extension/ling-for-chrome.zip"), true);
   assert.equal(resources.some((entry) => entry.from === "../chrome-extension/dist/build-metadata.json"), true);
   assert.equal(resources.some((entry) => entry.from === "../chrome-extension/STORE_SUBMISSION.md"), true);

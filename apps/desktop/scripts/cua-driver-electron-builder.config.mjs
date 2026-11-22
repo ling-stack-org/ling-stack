@@ -117,11 +117,13 @@ export default {
       : {}),
   },
   extraResources: [
-    ...filterPluginResources(baseBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(gstackBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(lockedUseBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(lockedUseValidationBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(lockedUseLocalBuild.extraResources ?? [], externalPluginsOnly),
+    ...(baseBuild.extraResources ?? []),
+    // Builder merges package.json arrays with the in-process macOS config.
+    ...(!externalPluginsOnly ? packageJson.lingBundledPluginResources : []),
+    ...(gstackBuild.extraResources ?? []),
+    ...(lockedUseBuild.extraResources ?? []),
+    ...(lockedUseValidationBuild.extraResources ?? []),
+    ...(lockedUseLocalBuild.extraResources ?? []),
     ...(!externalPluginsOnly && packageProvider
       ? [{ from: resolve(packageResourcesRoot), to: "providers/cua-driver" }]
       : []),
@@ -176,12 +178,6 @@ export default {
     preCompressedFileExtensions: [],
   },
 };
-
-function filterPluginResources(resources, externalOnly) {
-  if (!externalOnly) return resources;
-  const pluginRoots = new Set(["bundled", "browser-extension", "office-driver", "browser-host"]);
-  return resources.filter((entry) => !pluginRoots.has(entry.to?.split("/")[0]));
-}
 
 function parsePackageHostAuthority(value) {
   if (typeof value !== "string" || value.length === 0 || value.length > 16 * 1024) {

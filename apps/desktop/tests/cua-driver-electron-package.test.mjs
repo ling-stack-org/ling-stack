@@ -60,7 +60,10 @@ test("Electron Builder config keeps external-only provider authority unchanged b
   const config = await inspectConfig({
     LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
   });
-  assert.deepEqual(config.extraResources, desktopPackage.build.extraResources);
+  assert.deepEqual(config.extraResources, [
+    ...desktopPackage.build.extraResources,
+    ...desktopPackage.lingBundledPluginResources,
+  ]);
   assert.equal(config.extraResources.some((resource) => resource.to === "providers/cua-driver"), false);
   assert.equal(config.extraResources.some((resource) => resource.from === "dist/distribution" && resource.to === "distribution"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-extension/ling-for-chrome.zip"), true);
@@ -88,6 +91,7 @@ test("Electron Builder config appends one private provider root and governed sig
   });
   assert.deepEqual(config.extraResources, [
     ...desktopPackage.build.extraResources,
+    ...desktopPackage.lingBundledPluginResources,
     { from: packageRoot, to: "providers/cua-driver" },
   ]);
   assert.equal(config.macSign, "./scripts/cua-driver-signing/electron-builder-mac-sign.mjs");
