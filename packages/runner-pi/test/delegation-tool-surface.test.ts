@@ -3,11 +3,11 @@ import test from "node:test";
 import { createLingStackDelegationExtension, DELEGATION_TOOL_NAMES } from "../dist/extensions/delegation.js";
 import { createPiTaskBoundary } from "../dist/task-boundary.js";
 
-const base = extra => ({ cwd: process.cwd(), task: { id: "task", title: "Task", prompt: "Delegate" },
+const base = (extra: Record<string, unknown> = {}): any => ({ cwd: process.cwd(), task: { id: "task", title: "Task", prompt: "Delegate" },
   provider: { provider: "fixture", model: "fixture" }, ...extra });
-function toolsFor(options) {
-  const tools = [];
-  createLingStackDelegationExtension(options)({ registerTool: tool => tools.push(tool) });
+function toolsFor(options: any): any[] {
+  const tools: any[] = [];
+  createLingStackDelegationExtension(options)({ registerTool: (tool: any) => tools.push(tool) } as any);
   return tools;
 }
 const surface = { mediaGeneration: false, toolHydration: false, delegation: true };
@@ -20,7 +20,7 @@ test("delegation is absent by default and requires an explicit prepared schema s
 
 test("schema-only delegation execution cannot run without a live Host handler", async () => {
   const tools = toolsFor(base({ initialToolSurface: surface }));
-  for (const tool of tools) {
+  for (const tool of tools as any[]) {
     assert.equal(tool.executionMode, "sequential");
     assert.equal(tool.parameters.additionalProperties, false);
     await assert.rejects(tool.execute("call", {}), /delegation_host_handler_missing/);
@@ -36,10 +36,11 @@ test("model parameters cannot declare parent, fence, provider or permission iden
 });
 
 test("delegation forwards untrusted arguments and SDK call identity, not a second identity supplied by model", async () => {
-  const calls = [];
+  const calls: any[] = [];
   const boundary = createPiTaskBoundary(base({ initialToolSurface: surface,
-    onDelegationToolCall: request => { calls.push(request); return { status: "queued", reservationId: "reservation-1" }; } }));
+    onDelegationToolCall: (request: any) => { calls.push(request); return { status: "queued", reservationId: "reservation-1" }; } }));
   const [spawn] = toolsFor(boundary.options);
+  assert.ok(spawn);
   const input = { objective: "Read the dedicated QA file", required: true, requestedBudget: { tokenBudget: 5000 } };
   const result = await spawn.execute("sdk-call-1", input);
   assert.deepEqual(calls, [{ toolName: "spawn_agent", toolCallId: "sdk-call-1", input }]);
@@ -51,6 +52,7 @@ test("a newly spawning child exposes its production zero-based step revision", a
   const receipt = { status: "accepted", reservationId: "reservation-1", childRunId: "child-1",
     stepId: "step-1", state: "spawning", stepRevision: 0 };
   const [spawn] = toolsFor(base({ initialToolSurface: surface, onDelegationToolCall: () => receipt }));
+  assert.ok(spawn);
   const result = await spawn.execute("sdk-spawn-1", {
     objective: "Read the dedicated QA file", required: true, requestedBudget: { tokenBudget: 5000 },
   });
@@ -97,7 +99,7 @@ test("cancellation and a required question close delegation dispatch before any 
   const paused = createPiTaskBoundary(base({ initialToolSurface: surface,
     onUserInputRequest: () => ({ kind: "user_input_required", requestId: "question", requestVersion: 1 }),
     onDelegationToolCall: () => { calls++; return { status: "queued" }; } }));
-  await paused.options.onUserInputRequest({ toolCallId: "ask", input: { schemaVersion: 1, waitMode: "required", questions: [] } });
+  await (paused.options.onUserInputRequest as any)?.({ toolCallId: "ask", input: { schemaVersion: 1, waitMode: "required", questions: [] } });
   await assert.rejects(toolsFor(paused.options)[0].execute("paused-call", {}), /Required user input/);
   assert.equal(calls, 0);
 });

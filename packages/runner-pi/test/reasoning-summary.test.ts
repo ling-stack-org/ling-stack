@@ -3,9 +3,9 @@ import test from "node:test";
 import { translatePiEvents } from "../dist/events.js";
 import { createPiTaskBoundary } from "../dist/task-boundary.js";
 
-function assistantMessage({ signature, api = "openai-responses", thinking = "PRIVATE RAW REASONING" }) {
+function assistantMessage({ signature, api = "openai-responses", thinking = "PRIVATE RAW REASONING" }: { signature?: string; api?: string; thinking?: string }): any {
   return {
-    type: "message_end",
+    type: "message_end" as const,
     message: {
       role: "assistant",
       api,
@@ -14,11 +14,11 @@ function assistantMessage({ signature, api = "openai-responses", thinking = "PRI
   };
 }
 
-function reasoningSignature({ summary, content = "PRIVATE RAW REASONING" }) {
+function reasoningSignature({ summary, content = "PRIVATE RAW REASONING" }: { summary?: string[]; content?: string }): any {
   return JSON.stringify({
     type: "reasoning",
     id: "rs_fixture",
-    summary: summary.map((text) => ({ type: "summary_text", text })),
+    summary: (summary ?? []).map((text) => ({ type: "summary_text", text })),
     content: [{ type: "reasoning_text", text: content }],
     encrypted_content: "opaque-provider-value",
   });
@@ -39,7 +39,7 @@ test("message_end emits only the provider-safe Responses summary before terminal
       truncated: false,
     },
     {
-      type: "message_end",
+      type: "message_end" as const,
       role: "assistant",
       contentKinds: ["thinking"],
     },
@@ -57,7 +57,7 @@ test("reasoning summary extraction fails closed for other providers and malforme
     assistantMessage({ signature: JSON.stringify({ type: "other", summary: [{ type: "summary_text", text: "forged" }] }) }),
   ]) {
     assert.deepEqual(translatePiEvents(event), [{
-      type: "message_end",
+      type: "message_end" as const,
       role: "assistant",
       contentKinds: ["thinking"],
     }]);
@@ -68,7 +68,7 @@ test("reasoning summary is bounded without exposing omitted text", () => {
   const events = translatePiEvents(assistantMessage({
     signature: reasoningSignature({ summary: ["a".repeat(30_000), "must-not-appear"] }),
   }));
-  const summary = events[0];
+  const summary: any = events[0];
   assert.equal(summary.type, "assistant_reasoning_summary");
   assert.equal(summary.truncated, true);
   assert.ok(summary.text.length <= 24_001);
@@ -76,15 +76,15 @@ test("reasoning summary is bounded without exposing omitted text", () => {
   assert.equal(summary.parts.length, 1);
 });
 
-async function transformPayload({ mode, api = "openai-responses", payload, upstream }) {
-  let requestOptions;
+async function transformPayload({ mode, api = "openai-responses", payload, upstream }: { mode: any; api?: string; payload: any; upstream?: any }): Promise<any> {
+  let requestOptions: any;
   const runtime = {
-    streamSimple(_model, _context, options) {
+    streamSimple(_model: any, _context: any, options: any) {
       requestOptions = options;
       return { fixture: true };
     },
   };
-  const boundary = createPiTaskBoundary({
+  const boundary = (createPiTaskBoundary as any)({
     cwd: "/workspace",
     task: { id: "reasoning_fixture", title: "Reasoning fixture", prompt: "Test." },
     provider: { provider: "fixture", model: "fixture", api },
@@ -92,6 +92,7 @@ async function transformPayload({ mode, api = "openai-responses", payload, upstr
   });
   boundary.bindModelRuntime(runtime);
   runtime.streamSimple({ api, contextWindow: 128_000, maxTokens: 16_384 }, { messages: [] }, upstream ? { onPayload: upstream } : undefined);
+  assert.equal(typeof requestOptions?.onPayload, "function");
   return requestOptions.onPayload(payload, { api });
 }
 

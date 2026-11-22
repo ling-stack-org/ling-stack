@@ -6,25 +6,25 @@ import {
   readDelegationInstructionDirective,
 } from "../dist/delegation-instruction.js";
 
-const message = (id, content = `Instruction ${id}`, digest = "a".repeat(64)) => ({
+const message = (id: string, content = `Instruction ${id}`, digest = "a".repeat(64)) => ({
   role: "user", content, timestamp: 1,
   delegationInstruction: { messageId: id, digest },
 });
-const directive = (insertAfterMessageCount, messages) => ({
+const directive = (insertAfterMessageCount: number, messages: any[]): any => ({
   kind: "delegation_instructions", schemaVersion: 1, insertAfterMessageCount, messages,
 });
 
 test("task continuation extension gates agent, provider, and tool boundaries", async () => {
-  const handlers = new Map();
-  const observed = [];
-  createLingStackTaskContinuationExtension({
+  const handlers = new Map<string, any>();
+  const observed: any[] = [];
+  (createLingStackTaskContinuationExtension as any)({
     cwd: process.cwd(),
     task: { id: "task", title: "Task", prompt: "Continue safely" },
     provider: { provider: "test", model: "test" },
-    onTaskContinuationBoundary: async (boundary) => {
+    onTaskContinuationBoundary: async (boundary: any) => {
       observed.push(boundary);
     },
-  })({ on: (event, handler) => handlers.set(event, handler) });
+  })({ on: (event: string, handler: any) => { handlers.set(event, handler); return () => handlers.delete(event); } });
 
   await handlers.get("before_agent_start")({ type: "before_agent_start" });
   const context = await handlers.get("context")({ type: "context", messages: [] });
@@ -40,15 +40,15 @@ test("task continuation extension gates agent, provider, and tool boundaries", a
 });
 
 test("task continuation extension waits instead of blocking a tool result", async () => {
-  const handlers = new Map();
-  let release;
-  const waiting = new Promise((resolve) => { release = resolve; });
-  createLingStackTaskContinuationExtension({
+  const handlers = new Map<string, any>();
+  let release: (() => void) | undefined;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  (createLingStackTaskContinuationExtension as any)({
     cwd: process.cwd(),
     task: { id: "task", title: "Task", prompt: "Wait" },
     provider: { provider: "test", model: "test" },
     onTaskContinuationBoundary: () => waiting,
-  })({ on: (event, handler) => handlers.set(event, handler) });
+  })({ on: (event: string, handler: any) => { handlers.set(event, handler); return () => handlers.delete(event); } });
 
   let settled = false;
   const pending = handlers.get("tool_call")({
@@ -56,13 +56,13 @@ test("task continuation extension waits instead of blocking a tool result", asyn
     toolName: "bash",
     toolCallId: "tool-bash",
     input: { command: "echo safe" },
-  }).then((result) => {
+  }).then((result: any) => {
     settled = true;
     return result;
   });
   await Promise.resolve();
   assert.equal(settled, false);
-  release();
+  release?.();
   assert.equal(await pending, undefined);
 });
 
@@ -105,14 +105,14 @@ test("delegation instruction projector inserts multiple batches at stable transc
 });
 
 test("context projection failures latch execution instead of being swallowed by the SDK", async () => {
-  const handlers = new Map();
-  const failures = [];
-  createLingStackTaskContinuationExtension({
+  const handlers = new Map<string, any>();
+  const failures: any[] = [];
+  (createLingStackTaskContinuationExtension as any)({
     cwd: process.cwd(), task: { id: "task", title: "Task", prompt: "Continue safely" },
     provider: { provider: "test", model: "test" },
     onTaskContinuationBoundary: async () => directive(3, [message("missing-anchor")]),
-    onTaskContinuationDirectiveFailure: error => { failures.push(error); throw error; },
-  })({ on: (event, handler) => handlers.set(event, handler) });
+    onTaskContinuationDirectiveFailure: (error: any) => { failures.push(error); throw error; },
+  })({ on: (event: string, handler: any) => { handlers.set(event, handler); return () => handlers.delete(event); } });
   await assert.rejects(handlers.get("context")({ type: "context", messages: [{ role: "user", content: "task" }] }),
     /anchor is unavailable/u);
   assert.equal(failures.length, 1);

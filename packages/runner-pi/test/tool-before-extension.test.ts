@@ -4,18 +4,18 @@ import { createLingStackToolBeforeExtension } from "../dist/extensions/tool-befo
 import { createWriteToolDefinition } from "@earendil-works/pi-coding-agent";
 import { resolve } from "node:path";
 
-function handler(onToolBefore) {
-  const handlers = new Map();
-  createLingStackToolBeforeExtension({ cwd: "/workspace", onToolBefore })({
-    on: (event, callback) => handlers.set(event, callback),
+function handler(onToolBefore: any): any {
+  const handlers = new Map<string, any>();
+  (createLingStackToolBeforeExtension as any)({ cwd: "/workspace", onToolBefore } as any)({
+    on: (event: string, callback: any) => { handlers.set(event, callback); return () => handlers.delete(event); },
   });
   return handlers.get("tool_call");
 }
 
 for (const toolName of ["read", "write", "edit", "bash", "mcp__external", "image_generate", "request_permissions", "tool_hydration_load", "future_unknown"]) {
   test("tool-before gate blocks " + toolName + " without invoking a tool implementation", async () => {
-    const seen = [];
-    const call = handler(async (request) => {
+    const seen: any[] = [];
+    const call = handler(async (request: any) => {
       seen.push(request);
       return { allowed: false, code: "operation_binding_tool_out_of_scope", reason: "Denied" };
     });
@@ -38,10 +38,10 @@ test("tool-before is transparent for approved and legacy calls, but rejects call
 
 test("native path semantics expose tilde, at-prefix and Unicode-space reinterpretation without filesystem effects", async () => {
   const cwd = "/workspace";
-  const writtenPaths = [];
-  const tool = createWriteToolDefinition(cwd, { operations: {
+  const writtenPaths: any[] = [];
+  const tool = (createWriteToolDefinition as any)(cwd, { operations: {
     mkdir: async () => {},
-    writeFile: async (path) => { writtenPaths.push(path); },
+    writeFile: async (path: string) => { writtenPaths.push(path); },
   } });
   for (const path of ["~/output.txt", "@output.txt", "narrow\u202fspace.txt", "no\u00a0break.txt"]) {
     await tool.execute("probe", { path, content: "not written" });
