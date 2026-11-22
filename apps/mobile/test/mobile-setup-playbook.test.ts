@@ -109,4 +109,3 @@ test("missing Wi-Fi readback evidence leaves setup unknown and retry does not di
   assert.equal((await runMobileSetupPlaybook(input)).status, "unknown");
   assert.equal(t.writes(), 1);
 });
-

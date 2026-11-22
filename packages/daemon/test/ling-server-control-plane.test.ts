@@ -25,6 +25,11 @@ test("self-hosted Ling Server control plane requires auth and preserves route fa
     const unauthorized = await fetch(`http://${address.host}:${address.port}/v1/installations`, { method: "POST", body: "{}" });
     assert.equal(unauthorized.status, 401);
     const headers = { authorization: "Bearer server-token", "content-type": "application/json" };
+    const malformed = await fetch(`http://${address.host}:${address.port}/v1/installations`, {
+      method: "POST", headers, body: "private-fixture-value",
+    });
+    assert.equal(malformed.status, 400);
+    assert.deepEqual(await malformed.json(), { error: "bad_request" });
     const installation = await fetch(`http://${address.host}:${address.port}/v1/installations`, { method: "POST", headers, body: JSON.stringify({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" }) });
     assert.equal(installation.status, 200);
     const binding = await fetch(`http://${address.host}:${address.port}/v1/bindings`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" }) });

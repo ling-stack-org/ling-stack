@@ -269,8 +269,8 @@ export class LingServerControlPlane {
         return;
       }
       writeJson(response, 404, { error: "not_found" });
-    } catch (error) {
-      writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    } catch {
+      writeJson(response, 400, { error: "bad_request" });
     }
   }
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -197,8 +196,9 @@ test("Ling Server relay credentials use a route-bound coturn username and replay
   const credential = issuer.issue(request);
   assert.equal(credential.url, "turns:turn.ling.example:443");
   assert.equal(credential.expiresAt, "2026-11-21T00:01:00.000Z");
-  assert.match(credential.username, new RegExp(`^${Date.parse(credential.expiresAt) / 1_000}:[0-9a-f]{64}:mobile$`, "u"));
-  assert.equal(credential.credential, createHmac("sha1", sharedSecret).update(credential.username).digest("base64"));
+  assert.equal(credential.username, "1795219260:b74b800c1965655fcb97925e0218753e29b6fe00fe86d83f1ccd6cafb410c2d0:mobile");
+  const expectedMac = "Us50+KivLA9jXrGaEbrFgeLqCHA=";
+  assert.equal(credential.credential, expectedMac);
   assert.deepEqual(issuer.issue(request), credential);
   assert.throws(() => issuer.issue({ ...request, role: "gateway" }), /quota/);
   assert.throws(() => issuer.issue({ ...request, binding: { ...binding, status: "revoked" } }), /active peer binding/);
