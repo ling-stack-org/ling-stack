@@ -191,14 +191,13 @@ test("edge runtime registry can resume enrollment and revocation from durable fa
 test("edge placement keeps offline reads local, queues declared recovery, and blocks revoked runtimes", () => {
   const policy = new EdgeRuntimePlacementPolicy();
   const offline = { runtimeId: "edge-offline", displayName: "Edge", publicKeyFingerprint: "fp", contractMajor: 1, supportedTransports: ["ssh"], status: "offline", revision: 2 } as const;
-  assert.deepEqual(policy.decide({
+  const read = policy.decide({
     runtime: offline, ownerTaskId: "task-read", targetDeviceId: "device-1", capabilityId: "inspect.network",
     sideEffect: "read_only", hasLocalExecutor: true, offlineRecoverySupported: false, evaluatedAt: now,
-  }), {
-    decisionId: "edge-offline:task-read:inspect.network:2", runtimeId: "edge-offline", ownerTaskId: "task-read",
-    targetDeviceId: "device-1", capabilityId: "inspect.network", sideEffect: "read_only", mode: "local",
-    reason: "offline_read_fallback", evaluatedAt: now,
   });
+  assert.equal(read.mode, "local");
+  assert.equal(read.reason, "offline_read_fallback");
+  assert.equal(read.runtimeRevision, 2);
   assert.equal(policy.decide({
     runtime: offline, ownerTaskId: "task-write", targetDeviceId: "device-1", capabilityId: "repair.network",
     sideEffect: "reversible", hasLocalExecutor: false, offlineRecoverySupported: true, evaluatedAt: now,
@@ -207,6 +206,10 @@ test("edge placement keeps offline reads local, queues declared recovery, and bl
     runtime: { ...offline, status: "revoked" }, ownerTaskId: "task-critical", targetDeviceId: "device-1",
     capabilityId: "flash.firmware", sideEffect: "critical", hasLocalExecutor: true, offlineRecoverySupported: true, evaluatedAt: now,
   }).reason, "runtime_revoked");
+  assert.equal(policy.decide({
+    runtime: { ...offline, status: "pending" }, ownerTaskId: "task-read", targetDeviceId: "device-1",
+    capabilityId: "inspect.network", sideEffect: "read_only", hasLocalExecutor: true, offlineRecoverySupported: true, evaluatedAt: now,
+  }).reason, "runtime_pending");
 });
 
 test("context packs and trace reports preserve bounded model input and cross-layer identity", () => {

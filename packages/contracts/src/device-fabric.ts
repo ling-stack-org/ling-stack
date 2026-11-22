@@ -130,12 +130,15 @@ export type EdgeRuntimePlacementModeV1 = "local" | "queued" | "blocked";
 export interface EdgeRuntimePlacementDecisionV1 {
   readonly decisionId: string;
   readonly runtimeId: string;
+  /** Enrollment revision that was evaluated for this placement. */
+  readonly runtimeRevision: number;
   readonly ownerTaskId: string;
   readonly targetDeviceId: string;
   readonly capabilityId: string;
   readonly sideEffect: CapabilitySideEffectV1;
   readonly mode: EdgeRuntimePlacementModeV1;
-  readonly reason: "runtime_available" | "offline_read_fallback" | "offline_recovery_queued" | "runtime_revoked" | "offline_write_unsupported";
+  readonly reason: "runtime_available" | "offline_read_fallback" | "offline_recovery_queued"
+    | "runtime_revoked" | "runtime_pending" | "offline_write_unsupported";
   readonly evaluatedAt: string;
 }
 

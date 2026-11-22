@@ -22,10 +22,14 @@ import {
   type DeviceTwinV1,
   type EdgeRuntimeEnrollmentV1,
   type EdgeRuntimeJournalEntryV1,
+  type EdgeRuntimePlacementDecisionV1,
   type JsonValue,
 } from "@ling-stack/contracts";
 
-import { assertEdgeRuntimeJournalEntry, assertIdentityChange, assertIdentitySplitDestination, DeviceFabricError, isAllowedDeviceLifecycleTransition } from "../../device-fabric.js";
+import {
+  assertEdgeRuntimeJournalEntry, assertIdentityChange, assertIdentitySplitDestination,
+  DeviceFabricError, EdgeRuntimePlacementPolicy, isAllowedDeviceLifecycleTransition,
+} from "../../device-fabric.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
@@ -491,13 +495,16 @@ export class SqliteDeviceFabricStore {
   }
 
   saveEdgeRuntime(runtime: EdgeRuntimeEnrollmentV1): EdgeRuntimeEnrollmentV1 {
-    if (!runtime.runtimeId.trim() || !runtime.publicKeyFingerprint.trim() || runtime.revision < 1) {
+    if (!runtime.runtimeId.trim() || !runtime.publicKeyFingerprint.trim()
+      || !Number.isSafeInteger(runtime.revision) || runtime.revision < 1) {
       throw new DeviceFabricError("revision_conflict", "edge runtime identity is invalid");
     }
-    const current = this.getEdgeRuntime(runtime.runtimeId);
-    if (current && runtime.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "edge runtime revision must advance");
-    this.database.prepare("INSERT INTO device_edge_runtimes(runtime_id,revision,runtime_json) VALUES(?,?,?) ON CONFLICT(runtime_id) DO UPDATE SET revision=excluded.revision,runtime_json=excluded.runtime_json")
-      .run(runtime.runtimeId, runtime.revision, JSON.stringify(runtime));
+    const result = this.database.prepare(`
+      INSERT INTO device_edge_runtimes(runtime_id,revision,runtime_json) VALUES(?,?,?)
+      ON CONFLICT(runtime_id) DO UPDATE SET revision=excluded.revision,runtime_json=excluded.runtime_json
+      WHERE excluded.revision > device_edge_runtimes.revision
+    `).run(runtime.runtimeId, runtime.revision, JSON.stringify(runtime));
+    if (result.changes === 0) throw new DeviceFabricError("revision_conflict", "edge runtime revision must advance");
     return runtime;
   }
 
@@ -509,6 +516,31 @@ export class SqliteDeviceFabricStore {
   listEdgeRuntimes(): readonly EdgeRuntimeEnrollmentV1[] {
     return (this.database.prepare("SELECT runtime_json FROM device_edge_runtimes ORDER BY runtime_id").all() as Row[])
       .map(row => parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment"));
+  }
+
+  recordEdgeRuntimePlacement(input: Omit<Parameters<EdgeRuntimePlacementPolicy["decide"]>[0], "runtime"> & {
+    readonly runtimeId: string;
+  }): { readonly decision: EdgeRuntimePlacementDecisionV1; readonly replayed: boolean } {
+    return this.withWriteTransaction(() => {
+      const runtime = this.getEdgeRuntime(input.runtimeId);
+      if (!runtime) throw new DeviceFabricError("target_missing", "edge runtime is missing");
+      const decision = new EdgeRuntimePlacementPolicy().decide({ ...input, runtime });
+      const existing = this.getEdgeRuntimePlacementDecision(decision.decisionId);
+      if (existing) {
+        if (!isDeepStrictEqual(existing, { ...decision, evaluatedAt: existing.evaluatedAt })) {
+          throw new DeviceFabricError("revision_conflict", "edge placement decision id is bound to another decision");
+        }
+        return { decision: existing, replayed: true };
+      }
+      this.database.prepare("INSERT INTO device_edge_runtime_placements(decision_id,runtime_id,decision_json) VALUES(?,?,?)")
+        .run(decision.decisionId, decision.runtimeId, JSON.stringify(decision));
+      return { decision, replayed: false };
+    });
+  }
+
+  getEdgeRuntimePlacementDecision(decisionId: string): EdgeRuntimePlacementDecisionV1 | undefined {
+    const row = this.database.prepare("SELECT decision_json FROM device_edge_runtime_placements WHERE decision_id=?").get(decisionId) as Row | undefined;
+    return row ? parseJson<EdgeRuntimePlacementDecisionV1>(row.decision_json, "edge placement decision") : undefined;
   }
 
   appendEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean } {
@@ -802,6 +834,11 @@ export class SqliteDeviceFabricStore {
         runtime_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
         runtime_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_edge_runtime_placements (
+        decision_id TEXT PRIMARY KEY NOT NULL,
+        runtime_id TEXT NOT NULL REFERENCES device_edge_runtimes(runtime_id),
+        decision_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS device_edge_runtime_journal (
         runtime_id TEXT NOT NULL,

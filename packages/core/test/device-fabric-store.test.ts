@@ -311,6 +311,48 @@ test("edge runtime journal resumes ordered unknown outcomes without redispatch",
   }
 });
 
+test("edge placement replays the recorded decision and evaluates changed runtime revisions independently", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-edge-placement-"));
+  let reopened: SqliteDeviceFabricStore | undefined;
+  t.after(() => {
+    reopened?.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const databasePath = join(root, "fabric.sqlite");
+  const runtime = { runtimeId: "edge-1", displayName: "Edge", publicKeyFingerprint: "fp", contractMajor: 1,
+    supportedTransports: ["ssh"], status: "offline", revision: 4 } as const;
+  const request = {
+    runtimeId: runtime.runtimeId, ownerTaskId: "task-1", targetDeviceId: "linux-1", capabilityId: "repair.network",
+    sideEffect: "reversible", hasLocalExecutor: false, offlineRecoverySupported: true, evaluatedAt: now,
+  } as const;
+  const first = new SqliteDeviceFabricStore({ databasePath });
+  const queued = (() => {
+    try {
+      assert.throws(() => first.recordEdgeRuntimePlacement(request), /runtime is missing/u);
+      first.saveEdgeRuntime(runtime);
+      const { decision, replayed } = first.recordEdgeRuntimePlacement(request);
+      assert.equal(replayed, false);
+      assert.equal(decision.mode, "queued");
+      assert.equal(decision.runtimeRevision, 4);
+      return decision;
+    } finally {
+      first.close();
+    }
+  })();
+  const store = reopened = new SqliteDeviceFabricStore({ databasePath });
+  const later = "2026-11-21T00:00:01.000Z";
+  assert.deepEqual(store.recordEdgeRuntimePlacement({ ...request, evaluatedAt: later }), { decision: queued, replayed: true });
+  assert.throws(() => store.recordEdgeRuntimePlacement({ ...request, offlineRecoverySupported: false }), /bound to another decision/u);
+  const otherTarget = store.recordEdgeRuntimePlacement({ ...request, targetDeviceId: "linux-2" }).decision;
+  assert.notEqual(otherTarget.decisionId, queued.decisionId);
+  store.saveEdgeRuntime({ ...runtime, status: "revoked", revision: 5 });
+  assert.throws(() => store.saveEdgeRuntime(runtime), /revision must advance/u);
+  const blocked = store.recordEdgeRuntimePlacement({ ...request, evaluatedAt: later }).decision;
+  assert.equal(blocked.runtimeRevision, 5);
+  assert.equal(blocked.reason, "runtime_revoked");
+  assert.deepEqual(store.getEdgeRuntimePlacementDecision(queued.decisionId), queued);
+});
+
 test("target-scoped secret broker resolves only authorized references and records redacted use metadata", async () => {
   const store = new SqliteDeviceFabricStore();
   const broker = new DeviceSecretBroker({

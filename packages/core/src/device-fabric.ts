@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { CAPABILITY_SIDE_EFFECTS_V1 } from "@ling-stack/contracts";
 import type {
   DeviceCapabilitySnapshotV1,
   CapabilitySideEffectV1,
@@ -311,15 +312,14 @@ export class EdgeRuntimePlacementPolicy {
     readonly offlineRecoverySupported: boolean;
     readonly evaluatedAt: string;
   }): EdgeRuntimePlacementDecisionV1 {
-    if (!input.ownerTaskId.trim() || !input.targetDeviceId.trim() || !input.capabilityId.trim()
-      || !Number.isFinite(Date.parse(input.evaluatedAt))) {
-      throw new DeviceFabricError("revision_conflict", "edge placement identity or timestamp is invalid");
-    }
     let mode: EdgeRuntimePlacementModeV1;
     let reason: EdgeRuntimePlacementDecisionV1["reason"];
     if (input.runtime.status === "revoked") {
       mode = "blocked";
       reason = "runtime_revoked";
+    } else if (input.runtime.status === "pending") {
+      mode = "blocked";
+      reason = "runtime_pending";
     } else if (input.runtime.status === "enrolled") {
       mode = "local";
       reason = "runtime_available";
@@ -333,17 +333,23 @@ export class EdgeRuntimePlacementPolicy {
       mode = "blocked";
       reason = "offline_write_unsupported";
     }
-    return {
-      decisionId: `${input.runtime.runtimeId}:${input.ownerTaskId}:${input.capabilityId}:${input.runtime.revision}`,
+    const binding = {
       runtimeId: input.runtime.runtimeId,
+      runtimeRevision: input.runtime.revision,
       ownerTaskId: input.ownerTaskId,
       targetDeviceId: input.targetDeviceId,
       capabilityId: input.capabilityId,
+    };
+    const decision = {
+      decisionId: edgePlacementId(binding),
+      ...binding,
       sideEffect: input.sideEffect,
       mode,
       reason,
       evaluatedAt: input.evaluatedAt,
     };
+    assertEdgeRuntimePlacementDecision(decision);
+    return decision;
   }
 }
 
@@ -755,6 +761,22 @@ const edgeJournalOutcomes = {
   task_started: "pending", frame_sent: "sent", frame_received: "received",
   task_completed: "completed", task_unknown: "unknown", task_cancelled: "cancelled",
 } as const;
+
+function assertEdgeRuntimePlacementDecision(decision: EdgeRuntimePlacementDecisionV1): void {
+  const bounded = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 512;
+  if (![decision.runtimeId, decision.ownerTaskId, decision.targetDeviceId, decision.capabilityId].every(bounded)
+    || !Number.isSafeInteger(decision.runtimeRevision) || decision.runtimeRevision < 1
+    || !CAPABILITY_SIDE_EFFECTS_V1.includes(decision.sideEffect)
+    || !Number.isFinite(Date.parse(decision.evaluatedAt))) {
+    throw new DeviceFabricError("revision_conflict", "edge placement decision is invalid");
+  }
+}
+
+function edgePlacementId(binding: Pick<EdgeRuntimePlacementDecisionV1,
+  "runtimeId" | "runtimeRevision" | "ownerTaskId" | "targetDeviceId" | "capabilityId">): string {
+  const identity = [binding.runtimeId, binding.runtimeRevision, binding.ownerTaskId, binding.targetDeviceId, binding.capabilityId];
+  return `edge_placement_${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;
+}
 
 export function assertEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): void {
   const fields = ["entryId", "runtimeId", "ownerTaskId", "operationId", "sequence", "recordedAt", "kind", "outcome", "payloadDigest"];
