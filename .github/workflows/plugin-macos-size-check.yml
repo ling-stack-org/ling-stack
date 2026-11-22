@@ -1,0 +1,102 @@
+name: macOS plugin size measurement
+
+on:
+  push:
+    branches: [codex/plugin-macos-size-check]
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: macos-26
+    timeout-minutes: 55
+    env:
+      RUSTUP_TOOLCHAIN: 1.97.1
+      LING_CUA_SIGNING_TIER: unsigned_dev
+      LING_CUA_DISTRIBUTION_CHANNEL: development
+      LING_CUA_DRIVER_PACKAGE_PROVIDER: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: a6e142b220c79b2319bff85a18c8a33f43e1ff9b
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 10.0.0
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+      - name: Install locked inputs
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm --filter @ling-stack/localization catalog:compile
+          corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/desktop...' build
+          rustup run 1.97.1 cargo fetch --locked --manifest-path native/sandbox/Cargo.toml
+      - name: Build both development packages from the pinned source
+        run: |
+          set -euo pipefail
+          export LING_OFFICE_NODE_HEADERS="$(node -p 'require("fs").realpathSync(require("path").resolve(require("path").dirname(process.execPath), "../include/node"))')"
+          LING_PLUGIN_EXTERNAL_ONLY=0 LING_CUA_PACKAGE_OUTPUT_ROOT="$RUNNER_TEMP/bundled" \
+            corepack pnpm --filter @ling-stack/desktop package:mac
+          LING_PLUGIN_EXTERNAL_ONLY=1 LING_CUA_PACKAGE_OUTPUT_ROOT="$RUNNER_TEMP/on-demand" \
+            node apps/desktop/scripts/package-macos-with-office.mjs
+      - name: Verify package structure and measure both modes
+        run: |
+          set -euo pipefail
+          export MEASURED_DESKTOP_SOURCE_SHA="$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          import hashlib, json, os, stat, subprocess
+          from pathlib import Path
+
+          def one(values):
+              items = list(values)
+              assert len(items) == 1, items
+              return items[0]
+
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          report = {
+              'sourceSha': os.environ['MEASURED_DESKTOP_SOURCE_SHA'],
+              'target': 'macos-arm64',
+              'signingTier': 'unsigned_dev',
+              'scope': 'local-development-packaging',
+              'officialReleaseAcceptance': False,
+              'packageOwnedGstackIncluded': False,
+              'modes': {},
+          }
+          for mode in ('bundled', 'on-demand'):
+              root = temporary / mode
+              app = one(root.glob('mac-arm64/*.app'))
+              dmg = one(root.glob('*.dmg'))
+              archive = one(root.glob('*.zip'))
+              subprocess.run(['/usr/bin/codesign', '--verify', '--deep', '--strict', app], check=True)
+              subprocess.run(['/usr/bin/hdiutil', 'verify', dmg], check=True)
+              subprocess.run(['/usr/bin/unzip', '-tq', archive], check=True)
+              resources = app / 'Contents/Resources'
+              plugin_paths = ['office-driver', 'browser-host', 'browser-extension', 'bundled/cua-driver']
+              observed = {path: (resources / path).exists() for path in plugin_paths}
+              assert all(present == (mode == 'bundled') for present in observed.values()), observed
+              assert (resources / 'office-local/office-local.node').is_file()
+              assert not (resources / 'providers/cua-driver').exists()
+              files = [item.lstat() for item in app.rglob('*')]
+              archives = []
+              for item in (dmg, archive):
+                  with item.open('rb') as stream:
+                      digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+                  archives.append({'name': item.name, 'sizeBytes': item.stat().st_size, 'sha256': digest})
+              report['modes'][mode] = {'archives': archives, 'pluginResources': observed,
+                                      'installedPayloadBytes': sum(s.st_size for s in files if stat.S_ISREG(s.st_mode))}
+          result = json.dumps(report, indent=2) + '\n'
+          (temporary / 'macos-plugin-size-measurement.json').write_text(result)
+          print(result)
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: macos-plugin-size-measurement
+          path: ${{ runner.temp }}/macos-plugin-size-measurement.json
+          if-no-files-found: error
