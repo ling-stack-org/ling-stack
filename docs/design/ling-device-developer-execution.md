@@ -505,6 +505,21 @@ and projects the OS version and package count. The snapshot advertises the
 operations supported by the selected executor.
 [Daemon ADB target binding](../../packages/daemon/src/features/device-support/android-adb-targets.ts)
 
+### PC-owned Android developer logs
+
+Set an enrolled target's optional `logTag` to the tag emitted by the app under
+test. Create and authorize a developer session for that target through
+`/v1/device-support/developer/sessions`. Submit a job of kind `logs` with its
+authorization revision. The PC captures a bounded main and crash buffer dump
+filtered to the tag. The capture checks the hardware serial and build fingerprint
+on the selected ADB transport. Another submission of the same job ID returns the
+retained job.
+
+An authenticated local client can read the retained text using
+`GET /v1/device-support/developer/sessions/{sessionId}/jobs/{jobId}/logcat`.
+The trace and journal projections carry the attempt and device lineage. The log
+text is sensitive evidence scoped to the local developer session.
+
 ## 6. Acceptance and delivery evidence
 
 Record host OS and app build, target model and firmware, transport, adapter and contract
