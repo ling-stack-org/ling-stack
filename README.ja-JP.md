@@ -10,6 +10,7 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="docs/getting-started.md">はじめに</a> ·
     <a href="#クロスデバイスロードマップ">クロスデバイスロードマップ</a>
   </p>
   <p>
@@ -41,7 +42,7 @@ Ling Stack はそれらをプロジェクトチャンネルにまとめます。
 
 ## クロスデバイスロードマップ
 
-このロードマップでは、デバイスに関する作業を Ling の会話に持ち込みます。PC、スマートフォン、エッジホストがタスクを調整し、デバイスへの認証済み接続を持つホストが実行と検証を担当します。
+**設計段階です。** このロードマップでは、デバイスに関する作業を Ling の会話に持ち込みます。PC、スマートフォン、エッジホストがタスクを調整し、デバイスへの認証済み接続を持つホストが実行と検証を担当します。
 
 ![ノートパソコン、スマートフォン、車載機、スマートホームセンサー、開発ボードを配置した青紫色のコンセプトシーン](docs/assets/ling-device-roadmap.jpg)
 
@@ -53,7 +54,7 @@ Ling Stack はそれらをプロジェクトチャンネルにまとめます。
 - 対応する **Android 車載機** に、車両を停車した状態でアプリをインストールして検証できます。
 - **ハードウェアベンチ** でプロトコルデータを取得・デコードし、デバイスの応答を検証できます。
 
-**設計段階です。** [クロスデバイス設計](docs/design/ling-device-fabric.md)と[実装・デバイス受け入れ計画](docs/design/ling-device-support-platform-implementation-plan.md)をご覧ください。
+[クロスデバイス設計](docs/design/ling-device-fabric.md)と[実装・デバイス受け入れ計画](docs/design/ling-device-support-platform-implementation-plan.md)をご覧ください。
 
 ## どのような人向けか
 

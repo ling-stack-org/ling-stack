@@ -5,7 +5,7 @@
 ## 结论速览
 
 - **自动化调度**：已有主干能力，支持持久化定义、草稿、运行记录、调度器、手动运行和审批；仍需补齐桌面通知、丰富监控源、外部投递与外部动作提案。
-- **版本号与更新提示**：`VERSION`、根 `package.json`、Desktop、Web、daemon health 与 CLI 当前统一为 `0.4.0`；daemon 协议版本为 `1`。已有 GitHub Releases 稳定版本检查、设置页手动检查、发布页跳转、tag 触发的 Desktop Draft 构建，以及 Desktop 对 daemon 产品/协议不匹配的更新提示；自动下载/安装尚未启用。
+- **版本号与更新提示**：Desktop、Web、daemon health 与 CLI 使用统一的产品版本，当前值见 [VERSION](../../VERSION)；daemon 协议版本为 `1`。已有 GitHub Releases 稳定版本检查、设置页手动检查、发布页跳转、tag 触发的 Desktop Draft 构建，以及 Desktop 对 daemon 产品/协议不匹配的更新提示；自动下载/安装尚未启用。
 - **插件与 MCP**：已有内部/内置插件管理、MCP preset、状态与健康检查；社区插件市场和用户一键安装仍是后续阶段。
 - **dsh-purge**：当前应作为独立实现/兼容层评估，先做能力拆解和授权、发行、运行时耦合核查，再决定集成方式。
 - **语音交谈**：协议层已有 audio 内容类型与音频模型目录，但端到端录音、语音识别、语音合成、连续对话 UI 尚未形成完整产品闭环。

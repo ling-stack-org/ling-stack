@@ -10,6 +10,7 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="docs/getting-started.md">시작하기</a> ·
     <a href="#크로스-디바이스-로드맵">크로스 디바이스 로드맵</a>
   </p>
   <p>
@@ -40,7 +41,7 @@ Ling Stack은 이를 프로젝트 채널에 모읍니다. 팀원에게 모델과
 
 ## 크로스 디바이스 로드맵
 
-이 로드맵은 디바이스 작업을 Ling 대화로 가져옵니다. PC, 휴대폰 또는 엣지 호스트가 작업을 조정하고, 디바이스에 인증된 연결을 가진 호스트가 실행과 검증을 담당합니다.
+**설계 단계입니다.** 이 로드맵은 디바이스 작업을 Ling 대화로 가져옵니다. PC, 휴대폰 또는 엣지 호스트가 작업을 조정하고, 디바이스에 인증된 연결을 가진 호스트가 실행과 검증을 담당합니다.
 
 ![노트북, 휴대폰, 헤드 유닛, 스마트 홈 센서와 개발 보드가 있는 청보라색 콘셉트 장면](docs/assets/ling-device-roadmap.jpg)
 
@@ -52,7 +53,7 @@ Ling Stack은 이를 프로젝트 채널에 모읍니다. 팀원에게 모델과
 - 호환되는 **Android 헤드 유닛**에 차량을 정차한 상태에서 앱을 설치하고 검증합니다.
 - **하드웨어 벤치**에서 프로토콜 데이터를 캡처하고 디코딩하여 디바이스 응답을 검증합니다.
 
-**설계 단계입니다.** [크로스 디바이스 설계](docs/design/ling-device-fabric.md)와 [구현 및 디바이스 인수 계획](docs/design/ling-device-support-platform-implementation-plan.md)을 확인하세요.
+[크로스 디바이스 설계](docs/design/ling-device-fabric.md)와 [구현 및 디바이스 인수 계획](docs/design/ling-device-support-platform-implementation-plan.md)을 확인하세요.
 
 ## 누구를 위한 도구인가요?
 

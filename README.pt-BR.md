@@ -10,6 +10,7 @@
     <a href="README.es-ES.md">Español</a> · Português (Brasil)
   </p>
   <p>
+    <a href="docs/getting-started.md">Primeiros passos</a> ·
     <a href="#roteiro-entre-dispositivos">Roteiro entre dispositivos</a>
   </p>
   <p>
@@ -40,7 +41,7 @@ Ela ilustra o layout, não uma tarefa concluída. Siga o guia acima para experim
 
 ## Roteiro entre dispositivos
 
-O roteiro leva as tarefas de dispositivos para uma conversa do Ling. Um PC, telefone ou host de borda pode coordenar a tarefa, enquanto o host com uma conexão autorizada ao dispositivo executa e verifica o trabalho.
+**Fase de design.** O roteiro leva as tarefas de dispositivos para uma conversa do Ling. Um PC, telefone ou host de borda pode coordenar a tarefa, enquanto o host com uma conexão autorizada ao dispositivo executa e verifica o trabalho.
 
 ![Cena conceitual azul-violeta com notebook, telefone, unidade principal, sensor doméstico e placa de desenvolvimento](docs/assets/ling-device-roadmap.jpg)
 
@@ -52,7 +53,7 @@ O roteiro leva as tarefas de dispositivos para uma conversa do Ling. Um PC, tele
 - Em uma **unidade principal Android** compatível, instale e valide aplicativos com o veículo estacionado.
 - Em uma **bancada de hardware**, capture e decodifique dados de protocolo e verifique a resposta do dispositivo.
 
-**Fase de design.** Consulte o [design entre dispositivos](docs/design/ling-device-fabric.md) e o [plano de implementação e aceitação de dispositivos](docs/design/ling-device-support-platform-implementation-plan.md).
+Consulte o [design entre dispositivos](docs/design/ling-device-fabric.md) e o [plano de implementação e aceitação de dispositivos](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## Para quem é o Ling Stack?
 

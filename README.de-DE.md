@@ -10,6 +10,7 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="docs/getting-started.md">Erste Schritte</a> ·
     <a href="#geräte-roadmap">Geräte-Roadmap</a>
   </p>
   <p>
@@ -40,7 +41,7 @@ Sie veranschaulicht das Layout, nicht eine abgeschlossene Aufgabe. Der oben verl
 
 ## Geräte-Roadmap
 
-Die Roadmap bringt Geräteaufgaben in eine Ling-Konversation. Ein PC, ein Telefon oder ein Edge-Host kann die Aufgabe koordinieren. Ausführung und Verifizierung übernimmt der Host mit autorisierter Verbindung zum Gerät.
+**Designphase.** Die Roadmap bringt Geräteaufgaben in eine Ling-Konversation. Ein PC, ein Telefon oder ein Edge-Host kann die Aufgabe koordinieren. Ausführung und Verifizierung übernimmt der Host mit autorisierter Verbindung zum Gerät.
 
 ![Blau-violettes Konzeptbild mit Laptop, Telefon, Headunit, Smart-Home-Sensor und Entwicklungsboard](docs/assets/ling-device-roadmap.jpg)
 
@@ -52,7 +53,7 @@ Die Roadmap bringt Geräteaufgaben in eine Ling-Konversation. Ein PC, ein Telefo
 - Für eine kompatible **Android-Headunit** Apps installieren und prüfen, während das Fahrzeug steht.
 - An einer **Hardware-Teststation** Protokolldaten erfassen und decodieren sowie die Geräterückmeldung prüfen.
 
-**Designphase.** Siehe den [Geräteentwurf](docs/design/ling-device-fabric.md) und den [Implementierungs- und Geräteabnahmeplan](docs/design/ling-device-support-platform-implementation-plan.md).
+Siehe den [Geräteentwurf](docs/design/ling-device-fabric.md) und den [Implementierungs- und Geräteabnahmeplan](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## Für wen ist Ling Stack gedacht?
 

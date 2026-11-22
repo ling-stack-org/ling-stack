@@ -42,7 +42,7 @@
 
 第一次试用建议做一个小任务：让两个队友分别检查一份项目说明的需求边界和验收条件，再检查 Ling Agent 汇总是否有用。这里有[项目文档评审步骤](https://github.com/ling-stack-org/ling-stack/blob/main/docs/community/first-project-review.md)，欢迎照着跑，也欢迎指出哪一步没有跑通。
 
-先说明使用边界：当前默认从源码启动 Web UI + 本地 daemon + CLI，需要 Git、Node.js 22.22.1+、pnpm 10 和自己的模型 API key，费用由自己的 provider 账号承担。工作区状态和历史保存在本机，但请求及其上下文会发给你选择的模型或工具 provider。桌面包仍是开发预览。
+先说明使用边界：当前默认从源码启动 Web UI + 本地 daemon + CLI，需要 Git、Node.js 22.22.1+、Corepack 与 pnpm 10、Rust 1.89+ 与 Cargo，以及自己的模型 API key，费用由自己的 provider 账号承担。工作区状态和历史保存在本机，但请求及其上下文会发给你选择的模型或工具 provider。桌面包仍是开发预览。
 
 我希望先找一些正在使用多个模型或 Agent 的开发者试用，最想知道两件事：第一次任务在哪一步卡住，以及这个频道是否比你现在的工作方式更方便。遇到问题可以通过仓库的 Issue 表单反馈；请勿上传密钥和私人项目数据。
 
@@ -75,7 +75,7 @@ Ling Stack 尝试把这段工作过程放进一个本地工作台。你可以从
 
 ### 怎么试用
 
-项目使用 MIT 许可，目前是 source-first Alpha。建议按[入门指南](https://github.com/ling-stack-org/ling-stack/blob/main/docs/getting-started.md)从源码启动 Web UI、本地 daemon 和 CLI，再配置一个聊天模型。需要 Git、Node.js 22.22.1+ 和 pnpm 10。
+项目使用 MIT 许可，目前是 source-first Alpha。建议按[入门指南](https://github.com/ling-stack-org/ling-stack/blob/main/docs/getting-started.md)从源码启动 Web UI、本地 daemon 和 CLI，再配置一个聊天模型。需要 Git、Node.js 22.22.1+、Corepack 与 pnpm 10，以及 Rust 1.89+ 与 Cargo。
 
 模型配置、API key 和费用来自你自己的 provider 账号；检查模型也会发出请求，可能产生费用。工作区状态和历史保存在本地，但请求和上下文会发送给你选择的模型或工具 provider。“本地工作台”不等于离线推理。桌面包属于开发预览，稳定安装包和部分原生功能仍有独立验收门槛。
 
@@ -101,7 +101,7 @@ You can start with a regular model conversation, or create a project channel and
 
 For an initial trial, I suggest a small document review: ask two teammates to inspect a sample project brief from different perspectives, then ask the Ling Agent to summarize their reviews and check whether the summary is useful. The [walkthrough](https://github.com/ling-stack-org/ling-stack/blob/main/docs/community/first-project-review.md) is intended as a reproducible trial, rather than a promise of identical model output.
 
-The recommended starting path is the Web UI, local daemon, and CLI from source. It requires Git, Node.js 22.22.1+, pnpm 10, and your own provider configuration and API key. Your provider account handles model charges; readiness checks may also incur charges. Workspace state, conversation history, and run evidence stay local, but requests and their context go to the model or tool providers you choose. This is not an offline inference claim.
+The recommended starting path is the Web UI, local daemon, and CLI from source. It requires Git, Node.js 22.22.1+, Corepack with pnpm 10, Rust 1.89+ with Cargo, and your own provider configuration and API key. Your provider account handles model charges; readiness checks may also incur charges. Workspace state, conversation history, and run evidence stay local, but requests and their context go to the model or tool providers you choose. This is not an offline inference claim.
 
 Desktop packages are development previews. Stable signed installers, production support, and some native integrations still have separate release and acceptance gates. A teammate role or skill does not automatically grant tool or filesystem access.
 
