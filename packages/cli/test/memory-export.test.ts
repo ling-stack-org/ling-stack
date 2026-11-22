@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID } from "../../core/dist/index.js";
+import type { CliResult } from "./fixtures/cli-result.js";
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 
@@ -120,8 +121,8 @@ test("memory import command creates review candidates only", async () => {
   }
 });
 
-function runCli(cwd, args) {
-  return new Promise((resolveResult) => {
+function runCli(cwd: string, args: readonly string[]) {
+  return new Promise<CliResult>((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", "http://127.0.0.1:9", "--cwd", cwd, ...args], (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,

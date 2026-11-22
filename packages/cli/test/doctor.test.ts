@@ -1,12 +1,41 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
+import type { MemoryReviewPolicy } from "@ling-stack/contracts";
+import type { DoctorCheck, DoctorReport } from "../dist/doctor/checks.js";
+import type { CliResult } from "./fixtures/cli-result.js";
+
+type WorkspaceCheck = Pick<DoctorCheck, "id" | "status" | "summary">;
+
+interface RegistryRepairReport {
+  checks: readonly WorkspaceCheck[];
+  changed: boolean;
+  dryRun: boolean;
+  mismatches: readonly string[];
+  registry: { stateRoot: string };
+  resolved: { stateRoot: string };
+}
+
+interface WorkspaceMigrationPreview {
+  ok: boolean;
+  dryRun: boolean;
+  canMigrate: boolean;
+  source: { stateLocation: string };
+  target: { stateLocation: string; rootDir: string };
+  plan: {
+    sourceWillRemain: boolean;
+    targetWillBeBackedUp: boolean;
+    repoPointerWillBeWritten: boolean;
+    previewManifestPath: string;
+  };
+  checks: readonly WorkspaceCheck[];
+}
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 
@@ -111,7 +140,7 @@ test("doctor json exposes readiness counters", async () => {
   try {
     await prepareDoctorWorkspace(cwd);
     const result = await runCli(daemon.url, cwd, ["doctor", "--json"]);
-    const body = JSON.parse(result.stdout);
+    const body: DoctorReport = JSON.parse(result.stdout);
 
     assert.equal(result.code, 0, result.stderr);
     assert.equal(body.schemaVersion, 1);
@@ -119,18 +148,18 @@ test("doctor json exposes readiness counters", async () => {
     assert.equal(body.daemonUrl, daemon.url);
     assert.ok(["ok", "warning"].includes(body.overallStatus));
     const checks = new Map(body.checks.map((check) => [check.id, check]));
-    assert.equal(checks.get("providers.configured").details.total, 1);
-    assert.equal(checks.get("providers.configured").details.runnable, 1);
-    assert.equal(checks.get("providers.preflight").details.preflightReady, 1);
-    assert.equal(checks.get("channels.configured").details.total, 1);
-    assert.equal(checks.get("skills.registry").details.total, 2);
-    assert.equal(checks.get("skills.registry").details.builtin, 1);
-    assert.equal(checks.get("skills.registry").details.published, 1);
-    assert.equal(checks.get("memory.review_policy").details.mode, "manual-review");
-    assert.equal(checks.get("runtime.leases").details.activeLeases, 0);
-    assert.equal(checks.get("runtime.shell_snapshots").details.capabilityAdvertised, true);
-    assert.equal(checks.get("runtime.shell_snapshots").details.snapshots, 2);
-    assert.equal(checks.get("runtime.shell_snapshots").details.unreadableJsonArtifacts, 0);
+    assert.equal(checks.get("providers.configured")!.details.total, 1);
+    assert.equal(checks.get("providers.configured")!.details.runnable, 1);
+    assert.equal(checks.get("providers.preflight")!.details.preflightReady, 1);
+    assert.equal(checks.get("channels.configured")!.details.total, 1);
+    assert.equal(checks.get("skills.registry")!.details.total, 2);
+    assert.equal(checks.get("skills.registry")!.details.builtin, 1);
+    assert.equal(checks.get("skills.registry")!.details.published, 1);
+    assert.equal(checks.get("memory.review_policy")!.details.mode, "manual-review");
+    assert.equal(checks.get("runtime.leases")!.details.activeLeases, 0);
+    assert.equal(checks.get("runtime.shell_snapshots")!.details.capabilityAdvertised, true);
+    assert.equal(checks.get("runtime.shell_snapshots")!.details.snapshots, 2);
+    assert.equal(checks.get("runtime.shell_snapshots")!.details.unreadableJsonArtifacts, 0);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -142,16 +171,16 @@ test("doctor json continues when daemon is down", async () => {
   try {
     await prepareDoctorWorkspace(cwd);
     const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "--json"]);
-    const body = JSON.parse(result.stdout);
+    const body: DoctorReport = JSON.parse(result.stdout);
 
     assert.equal(result.code, 4);
     assert.equal(body.schemaVersion, 1);
     assert.equal(body.overallStatus, "fail");
     const checks = new Map(body.checks.map((check) => [check.id, check]));
-    assert.equal(checks.get("daemon.health").status, "fail");
-    assert.equal(checks.get("daemon.process_state").status, "ok");
-    assert.equal(checks.get("workspace.paths").status, "ok");
-    assert.equal(checks.get("workspace.sqlite").status, "ok");
+    assert.equal(checks.get("daemon.health")!.status, "fail");
+    assert.equal(checks.get("daemon.process_state")!.status, "ok");
+    assert.equal(checks.get("workspace.paths")!.status, "ok");
+    assert.equal(checks.get("workspace.sqlite")!.status, "ok");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
@@ -165,15 +194,15 @@ test("doctor flags missing skills and memory routes without refreshing or repair
   try {
     await prepareDoctorWorkspace(cwd);
     const result = await runCli(daemon.url, cwd, ["doctor", "--json"]);
-    const body = JSON.parse(result.stdout);
+    const body: DoctorReport = JSON.parse(result.stdout);
 
     assert.equal(result.code, 4);
     assert.equal(body.overallStatus, "fail");
     const checks = new Map(body.checks.map((check) => [check.id, check]));
-    assert.equal(checks.get("skills.registry").status, "fail");
-    assert.equal(checks.get("skills.registry").details.error.status, 404);
-    assert.equal(checks.get("memory.review_policy").status, "fail");
-    assert.equal(checks.get("memory.review_policy").details.error.status, 404);
+    assert.equal(checks.get("skills.registry")!.status, "fail");
+    assert.equal((checks.get("skills.registry")!.details.error as { status: number }).status, 404);
+    assert.equal(checks.get("memory.review_policy")!.status, "fail");
+    assert.equal((checks.get("memory.review_policy")!.details.error as { status: number }).status, 404);
     assert.ok(daemon.requests.includes("GET /skills"));
     assert.ok(daemon.requests.includes("GET /memory/review-policy"));
     assert.ok(daemon.requests.includes("GET /control-plane/snapshot"));
@@ -190,7 +219,7 @@ test("doctor json redacts secret-like daemon URL fields", async () => {
     await prepareDoctorWorkspace(cwd);
     const result = await runCli("http://user:supersecret@127.0.0.1:9?api_key=sk-test-secret", cwd, ["doctor", "--json"]);
     const text = result.stdout + result.stderr;
-    const body = JSON.parse(result.stdout);
+    const body: DoctorReport = JSON.parse(result.stdout);
 
     assert.equal(result.code, 4);
     assert.match(body.daemonUrl, /<redacted>/);
@@ -207,13 +236,13 @@ test("doctor warns when shell snapshot diagnostics cannot read a route and does 
   try {
     await prepareDoctorWorkspace(cwd);
     const result = await runCli(daemon.url, cwd, ["doctor", "--json"]);
-    const body = JSON.parse(result.stdout);
+    const body: DoctorReport = JSON.parse(result.stdout);
 
     assert.equal(result.code, 0, result.stderr);
     const checks = new Map(body.checks.map((check) => [check.id, check]));
-    const check = checks.get("runtime.shell_snapshots");
+    const check = checks.get("runtime.shell_snapshots")!;
     assert.equal(check.status, "warning");
-    assert.equal(check.details.routeFailures.length, 1);
+    assert.equal((check.details.routeFailures as readonly unknown[]).length, 1);
     assert.ok(daemon.requests.includes("GET /runs/run_shell/shell-snapshots"));
     assert.ok(daemon.requests.every((request) => request.startsWith("GET ")));
   } finally {
@@ -243,21 +272,21 @@ test("doctor config audits .ling-stack state and flags root logs", async () => {
     const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
       env: { LING_STACK_HOME: userRoot },
     });
-    const body = JSON.parse(result.stdout);
+    const body: DoctorReport = JSON.parse(result.stdout);
     const checks = new Map(body.checks.map((check) => [check.id, check]));
 
     assert.equal(result.code, 0, result.stderr);
     assert.equal(body.overallStatus, "warning");
-    assert.equal(checks.get("config.user_root").status, "ok");
-    assert.equal(checks.get("config.user_root").details.path, userRoot);
-    assert.equal(checks.get("config.user_config").details.path, resolve(userRoot, "config.json"));
-    assert.equal(checks.get("config.user_settings").details.path, resolve(userRoot, "settings.json"));
-    assert.equal(checks.get("config.user_provider_profiles").details.path, resolve(userRoot, "providers", "profiles.json"));
-    assert.equal(checks.get("config.workspace_config").status, "ok");
-    assert.equal(checks.get("workspace.sqlite").status, "ok");
-    assert.equal(checks.get("config.plugins_cache").status, "ok");
-    assert.equal(checks.get("config.root_logs").status, "warning");
-    assert.match(checks.get("config.root_logs").summary, /root \.logs/);
+    assert.equal(checks.get("config.user_root")!.status, "ok");
+    assert.equal(checks.get("config.user_root")!.details.path, userRoot);
+    assert.equal(checks.get("config.user_config")!.details.path, resolve(userRoot, "config.json"));
+    assert.equal(checks.get("config.user_settings")!.details.path, resolve(userRoot, "settings.json"));
+    assert.equal(checks.get("config.user_provider_profiles")!.details.path, resolve(userRoot, "providers", "profiles.json"));
+    assert.equal(checks.get("config.workspace_config")!.status, "ok");
+    assert.equal(checks.get("workspace.sqlite")!.status, "ok");
+    assert.equal(checks.get("config.plugins_cache")!.status, "ok");
+    assert.equal(checks.get("config.root_logs")!.status, "warning");
+    assert.match(checks.get("config.root_logs")!.summary, /root \.logs/);
     assert.doesNotMatch(result.stdout + result.stderr, /sk-/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -281,17 +310,17 @@ test("doctor config treats missing user layer as built-in defaults", async () =>
     const result = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
       env: { LING_STACK_HOME: userRoot },
     });
-    const body = JSON.parse(result.stdout);
+    const body: DoctorReport = JSON.parse(result.stdout);
     const checks = new Map(body.checks.map((check) => [check.id, check]));
 
     assert.equal(result.code, 0, result.stderr);
     assert.equal(body.overallStatus, "ok");
-    assert.equal(checks.get("config.user_root").status, "ok");
-    assert.equal(checks.get("config.user_root").details.exists, false);
-    assert.equal(checks.get("config.user_config").status, "ok");
-    assert.equal(checks.get("config.user_config").details.exists, false);
-    assert.equal(checks.get("config.user_settings").status, "ok");
-    assert.equal(checks.get("config.user_provider_profiles").status, "ok");
+    assert.equal(checks.get("config.user_root")!.status, "ok");
+    assert.equal(checks.get("config.user_root")!.details.exists, false);
+    assert.equal(checks.get("config.user_config")!.status, "ok");
+    assert.equal(checks.get("config.user_config")!.details.exists, false);
+    assert.equal(checks.get("config.user_settings")!.status, "ok");
+    assert.equal(checks.get("config.user_provider_profiles")!.status, "ok");
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(dirname(userRoot), { recursive: true, force: true });
@@ -326,16 +355,16 @@ test("init can opt a workspace into user-data-dir state and doctor resolves it",
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(doctor.code, 0, doctor.stderr);
-    const doctorBody = JSON.parse(doctor.stdout);
+    const doctorBody: DoctorReport = JSON.parse(doctor.stdout);
     const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
 
     assert.equal(doctorBody.overallStatus, "ok");
-    assert.equal(checks.get("workspace.identity").details.stateLocation, "user-data-dir");
-    assert.equal(checks.get("workspace.identity").details.stateRoot, initBody.rootDir);
-    assert.equal(checks.get("workspace.repo_local_state").status, "ok");
-    assert.equal(checks.get("workspace.repo_local_state").details.authoritativeDatabasePath, initBody.databasePath);
-    assert.equal(checks.get("config.workspace_config").details.path, initBody.configPath);
-    assert.equal(checks.get("workspace.sqlite").details.databasePath, initBody.databasePath);
+    assert.equal(checks.get("workspace.identity")!.details.stateLocation, "user-data-dir");
+    assert.equal(checks.get("workspace.identity")!.details.stateRoot, initBody.rootDir);
+    assert.equal(checks.get("workspace.repo_local_state")!.status, "ok");
+    assert.equal(checks.get("workspace.repo_local_state")!.details.authoritativeDatabasePath, initBody.databasePath);
+    assert.equal(checks.get("config.workspace_config")!.details.path, initBody.configPath);
+    assert.equal(checks.get("workspace.sqlite")!.details.databasePath, initBody.databasePath);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
@@ -367,13 +396,13 @@ test("doctor config warns when the workspace registry row is stale", async () =>
     const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
       env: { LING_STACK_HOME: userRoot },
     });
-    const body = JSON.parse(doctor.stdout);
+    const body: DoctorReport = JSON.parse(doctor.stdout);
     const checks = new Map(body.checks.map((check) => [check.id, check]));
 
     assert.equal(doctor.code, 0, doctor.stderr);
     assert.equal(body.overallStatus, "warning");
-    assert.equal(checks.get("workspace.registry").status, "warning");
-    assert.deepEqual(checks.get("workspace.registry").details.mismatches, ["state_root"]);
+    assert.equal(checks.get("workspace.registry")!.status, "warning");
+    assert.deepEqual(checks.get("workspace.registry")!.details.mismatches, ["state_root"]);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
@@ -414,7 +443,7 @@ test("workspace repair-registry previews and repairs a stale registry row", asyn
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(dryRun.code, 0, dryRun.stderr);
-    const dryRunBody = JSON.parse(dryRun.stdout);
+    const dryRunBody: RegistryRepairReport = JSON.parse(dryRun.stdout);
 
     assert.equal(dryRunBody.dryRun, true);
     assert.equal(dryRunBody.changed, true);
@@ -426,9 +455,9 @@ test("workspace repair-registry previews and repairs a stale registry row", asyn
     const staleDoctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
       env: { LING_STACK_HOME: userRoot },
     });
-    const staleDoctorBody = JSON.parse(staleDoctor.stdout);
+    const staleDoctorBody: DoctorReport = JSON.parse(staleDoctor.stdout);
     const staleChecks = new Map(staleDoctorBody.checks.map((check) => [check.id, check]));
-    assert.equal(staleChecks.get("workspace.registry").status, "warning");
+    assert.equal(staleChecks.get("workspace.registry")!.status, "warning");
 
     const repair = await runCli("http://127.0.0.1:9", cwd, [
       "workspace",
@@ -438,7 +467,7 @@ test("workspace repair-registry previews and repairs a stale registry row", asyn
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(repair.code, 0, repair.stderr);
-    const repairBody = JSON.parse(repair.stdout);
+    const repairBody: RegistryRepairReport = JSON.parse(repair.stdout);
     assert.equal(repairBody.dryRun, false);
     assert.equal(repairBody.changed, true);
     assert.ok(repairBody.checks.some((check) => check.id === "registry_written" && check.status === "ok"));
@@ -447,11 +476,11 @@ test("workspace repair-registry previews and repairs a stale registry row", asyn
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(doctor.code, 0, doctor.stderr);
-    const doctorBody = JSON.parse(doctor.stdout);
+    const doctorBody: DoctorReport = JSON.parse(doctor.stdout);
     const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
     assert.equal(doctorBody.overallStatus, "ok");
-    assert.equal(checks.get("workspace.registry").status, "ok");
-    assert.equal(checks.get("workspace.registry").details.registry.stateRoot, initBody.rootDir);
+    assert.equal(checks.get("workspace.registry")!.status, "ok");
+    assert.equal((checks.get("workspace.registry")!.details.registry as { stateRoot: string }).stateRoot, initBody.rootDir);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
@@ -477,14 +506,14 @@ test("doctor config treats read-only cwd as ok when user-data-dir state is selec
     const doctor = await runCli("http://127.0.0.1:9", cwd, ["doctor", "config", "--json"], {
       env: { LING_STACK_HOME: userRoot },
     });
-    const body = JSON.parse(doctor.stdout);
+    const body: DoctorReport = JSON.parse(doctor.stdout);
     const checks = new Map(body.checks.map((check) => [check.id, check]));
 
     assert.equal(doctor.code, 0, doctor.stderr);
     assert.equal(body.overallStatus, "ok");
-    assert.equal(checks.get("workspace.cwd_writable").status, "ok");
-    assert.equal(checks.get("workspace.cwd_writable").details.writable, false);
-    assert.equal(checks.get("workspace.cwd_writable").details.stateLocation, "user-data-dir");
+    assert.equal(checks.get("workspace.cwd_writable")!.status, "ok");
+    assert.equal(checks.get("workspace.cwd_writable")!.details.writable, false);
+    assert.equal(checks.get("workspace.cwd_writable")!.details.stateLocation, "user-data-dir");
   } finally {
     await chmod(cwd, 0o755).catch(() => undefined);
     await rm(cwd, { recursive: true, force: true });
@@ -517,7 +546,7 @@ test("workspace migrate-state dry-run reports a migration plan without copying s
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(dryRun.code, 0, dryRun.stderr);
-    const body = JSON.parse(dryRun.stdout);
+    const body: WorkspaceMigrationPreview = JSON.parse(dryRun.stdout);
 
     assert.equal(body.ok, true);
     assert.equal(body.dryRun, true);
@@ -563,13 +592,13 @@ test("workspace migrate-state dry-run reports blockers without mutating", async 
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(dryRun.code, 4);
-    const body = JSON.parse(dryRun.stdout);
+    const body: WorkspaceMigrationPreview = JSON.parse(dryRun.stdout);
     const checks = new Map(body.checks.map((check) => [check.id, check]));
 
     assert.equal(body.ok, false);
     assert.equal(body.canMigrate, false);
-    assert.equal(checks.get("direction").status, "fail");
-    assert.match(checks.get("direction").summary, /already repo-local/);
+    assert.equal(checks.get("direction")!.status, "fail");
+    assert.match(checks.get("direction")!.summary, /already repo-local/);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
@@ -626,12 +655,12 @@ test("workspace migrate-state moves repo-local state to user-data-dir", async ()
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(doctor.code, 0, doctor.stderr);
-    const doctorBody = JSON.parse(doctor.stdout);
+    const doctorBody: DoctorReport = JSON.parse(doctor.stdout);
     const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
     assert.equal(doctorBody.overallStatus, "warning");
-    assert.equal(checks.get("workspace.identity").details.stateLocation, "user-data-dir");
-    assert.equal(checks.get("workspace.identity").details.stateRoot, body.target.rootDir);
-    assert.equal(checks.get("workspace.repo_local_state").status, "warning");
+    assert.equal(checks.get("workspace.identity")!.details.stateLocation, "user-data-dir");
+    assert.equal(checks.get("workspace.identity")!.details.stateRoot, body.target.rootDir);
+    assert.equal(checks.get("workspace.repo_local_state")!.status, "warning");
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
@@ -688,11 +717,11 @@ test("workspace migrate-state moves user-data-dir state back to repo-local", asy
       env: { LING_STACK_HOME: userRoot },
     });
     assert.equal(doctor.code, 0, doctor.stderr);
-    const doctorBody = JSON.parse(doctor.stdout);
+    const doctorBody: DoctorReport = JSON.parse(doctor.stdout);
     const checks = new Map(doctorBody.checks.map((check) => [check.id, check]));
     assert.equal(doctorBody.overallStatus, "ok");
-    assert.equal(checks.get("workspace.identity").details.stateLocation, "repo-local");
-    assert.equal(checks.get("workspace.identity").details.stateRoot, resolve(cwd, ".ling-stack"));
+    assert.equal(checks.get("workspace.identity")!.details.stateLocation, "repo-local");
+    assert.equal(checks.get("workspace.identity")!.details.stateRoot, resolve(cwd, ".ling-stack"));
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
@@ -715,8 +744,8 @@ test("daemon status remains a thin health check", async () => {
   }
 });
 
-function runCli(daemonUrl, cwd, args, options = {}) {
-  return new Promise((resolveResult) => {
+function runCli(daemonUrl: string, cwd: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv } = {}) {
+  return new Promise<CliResult>((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], {
       env: {
         ...process.env,
@@ -732,13 +761,42 @@ function runCli(daemonUrl, cwd, args, options = {}) {
   });
 }
 
-async function prepareDoctorWorkspace(cwd) {
+async function prepareDoctorWorkspace(cwd: string) {
   await mkdir(resolve(cwd, ".ling-stack"), { recursive: true });
   await writeFile(resolve(cwd, ".ling-stack", "ling-stack.sqlite"), "", "utf8");
 }
 
-async function startDoctorDaemon(overrides = {}) {
-  const requests = [];
+type ProviderFixture = Omit<ReturnType<typeof readyProvider>, "lastCheck"> & {
+  lastCheck?: ReturnType<typeof readyProvider>["lastCheck"];
+};
+
+type ReviewPolicyFixture = Omit<MemoryReviewPolicy, "mode"> & {
+  mode: MemoryReviewPolicy["mode"] | "manual-review";
+};
+
+interface DoctorDaemonOverrides {
+  providers?: ProviderFixture[];
+  channels?: ReturnType<typeof readyChannel>[];
+  tasks?: ReturnType<typeof readyTask>[];
+  skills?: ReturnType<typeof readySkill>[];
+  runners?: ReturnType<typeof readyRunner>[];
+  runs?: ReturnType<typeof readyRun>[];
+  artifactsByRun?: Record<string, ReturnType<typeof readyShellSnapshotArtifacts>>;
+  snapshotsByRun?: Record<string, ReturnType<typeof readyShellSnapshots>>;
+  missingRoutes?: string[];
+  policy?: {
+    workspaceId: string;
+    toolDecisions: Record<string, string>;
+    allowedWritePaths: string[];
+    createdAt: string;
+    updatedAt: string;
+  };
+  reviewPolicy?: ReviewPolicyFixture;
+  shellSnapshotStatus?: number;
+}
+
+async function startDoctorDaemon(overrides: DoctorDaemonOverrides = {}) {
+  const requests: string[] = [];
   const providers = overrides.providers ?? [readyProvider()];
   const channels = overrides.channels ?? [readyChannel()];
   const tasks = overrides.tasks ?? [readyTask()];
@@ -763,7 +821,7 @@ async function startDoctorDaemon(overrides = {}) {
     createdAt: "2026-05-21T00:00:00.000Z",
     updatedAt: "2026-05-21T00:00:00.000Z",
   };
-  const reviewPolicy = overrides.reviewPolicy ?? {
+  const reviewPolicy: ReviewPolicyFixture = overrides.reviewPolicy ?? {
     workspaceId: "workspace_default",
     mode: "manual-review",
     autoActiveSameScope: false,
@@ -881,7 +939,7 @@ async function startDoctorDaemon(overrides = {}) {
     writeJson(response, 404, { error: "not_found" });
   });
 
-  await new Promise((resolveListen) => {
+  await new Promise<void>((resolveListen) => {
     server.listen(0, "127.0.0.1", resolveListen);
   });
   const address = server.address();
@@ -889,7 +947,7 @@ async function startDoctorDaemon(overrides = {}) {
   return {
     requests,
     url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise((resolveClose, rejectClose) => {
+    close: () => new Promise<void>((resolveClose, rejectClose) => {
       server.close((error) => {
         if (error) {
           rejectClose(error);
@@ -953,7 +1011,7 @@ function readyRun() {
   };
 }
 
-function readyShellSnapshots(runId) {
+function readyShellSnapshots(runId: string) {
   return [
     {
       id: `shell_snapshot:${runId}:tool_call_shell:000001`,
@@ -985,7 +1043,7 @@ function readyShellSnapshots(runId) {
   ];
 }
 
-function readyShellSnapshotArtifacts(runId) {
+function readyShellSnapshotArtifacts(runId: string) {
   return [
     readyArtifact("artifact_shell_snapshot_1_json", runId, `${runId}/shell-snapshots/tool_call_shell/000001.json`, "json"),
     readyArtifact("artifact_shell_snapshot_1_text", runId, `${runId}/shell-snapshots/tool_call_shell/000001.txt`, "log"),
@@ -994,7 +1052,7 @@ function readyShellSnapshotArtifacts(runId) {
   ];
 }
 
-function readyArtifact(id, runId, path, type) {
+function readyArtifact(id: string, runId: string, path: string, type: "json" | "log") {
   return {
     id,
     runId,
@@ -1007,7 +1065,13 @@ function readyArtifact(id, runId, path, type) {
   };
 }
 
-function controlPlaneSnapshot({ cwd, providers, skills, reviewPolicy, runners }) {
+function controlPlaneSnapshot({ cwd, providers, skills, reviewPolicy, runners }: {
+  cwd: string | null;
+  providers: readonly ProviderFixture[];
+  skills: readonly ReturnType<typeof readySkill>[];
+  reviewPolicy: ReviewPolicyFixture;
+  runners: readonly ReturnType<typeof readyRunner>[];
+}) {
   return {
     cwd,
     workspaceId: "workspace_default",
@@ -1120,7 +1184,7 @@ function readyPublishedSkill() {
   return readySkill("workspace-code-review", "published");
 }
 
-function readySkill(id, reviewStatus) {
+function readySkill(id: string, reviewStatus: "builtin" | "published") {
   return {
     id,
     workspaceId: "workspace_default",
@@ -1171,7 +1235,7 @@ function readyTask() {
   };
 }
 
-function writeJson(response, statusCode, body) {
+function writeJson(response: ServerResponse, statusCode: number, body: unknown) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }

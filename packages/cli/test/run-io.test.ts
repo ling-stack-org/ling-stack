@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import type { CliResult } from "./fixtures/cli-result.js";
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 
@@ -15,33 +16,33 @@ test("run reads prompt from flags, positionals, stdin, and appended stdin contex
   try {
     const flag = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight", "--prompt", "hello"], "");
     assert.equal(flag.code, 0, flag.stderr);
-    assert.equal(daemon.runRequests.at(-1).task.prompt, "hello");
+    assert.equal(daemon.runRequests.at(-1)!.task.prompt, "hello");
 
     const positional = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight", "hello", "world"], "");
     assert.equal(positional.code, 0, positional.stderr);
-    assert.equal(daemon.runRequests.at(-1).task.prompt, "hello world");
+    assert.equal(daemon.runRequests.at(-1)!.task.prompt, "hello world");
 
     const stdinDash = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight", "-"], "stdin prompt\n");
     assert.equal(stdinDash.code, 0, stdinDash.stderr);
-    assert.equal(daemon.runRequests.at(-1).task.prompt, "stdin prompt");
+    assert.equal(daemon.runRequests.at(-1)!.task.prompt, "stdin prompt");
 
     const stdinPromptFile = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight", "--prompt-file", "-"], "file stdin\n");
     assert.equal(stdinPromptFile.code, 0, stdinPromptFile.stderr);
-    assert.equal(daemon.runRequests.at(-1).task.prompt, "file stdin");
+    assert.equal(daemon.runRequests.at(-1)!.task.prompt, "file stdin");
 
     const promptFilePath = resolve(cwd, "prompt.md");
     await writeFile(promptFilePath, "file prompt\n", "utf8");
     const promptFile = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight", "--prompt-file", promptFilePath], "");
     assert.equal(promptFile.code, 0, promptFile.stderr);
-    assert.equal(daemon.runRequests.at(-1).task.prompt, "file prompt");
+    assert.equal(daemon.runRequests.at(-1)!.task.prompt, "file prompt");
 
     const pipedOnly = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight"], "pipe prompt\n");
     assert.equal(pipedOnly.code, 0, pipedOnly.stderr);
-    assert.equal(daemon.runRequests.at(-1).task.prompt, "pipe prompt");
+    assert.equal(daemon.runRequests.at(-1)!.task.prompt, "pipe prompt");
 
     const appended = await runCli(daemon.url, cwd, ["run", "--provider", "provider_test", "--skip-preflight", "Review"], "diff");
     assert.equal(appended.code, 0, appended.stderr);
-    assert.equal(daemon.runRequests.at(-1).task.prompt, "Review\n\n<stdin>\ndiff\n</stdin>");
+    assert.equal(daemon.runRequests.at(-1)!.task.prompt, "Review\n\n<stdin>\ndiff\n</stdin>");
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -309,13 +310,13 @@ test("run --output-last-message validates parent and requires a completed messag
   }
 });
 
-function runCli(daemonUrl, cwd, args, input) {
-  return new Promise((resolveResult) => {
+function runCli(daemonUrl: string, cwd: string, args: readonly string[], input: string | Buffer) {
+  return new Promise<CliResult>((resolveResult) => {
     const child = spawn(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const stdout = [];
-    const stderr = [];
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk) => stdout.push(chunk));
     child.stderr.on("data", (chunk) => stderr.push(chunk));
     child.on("close", (code) => {
@@ -329,8 +330,12 @@ function runCli(daemonUrl, cwd, args, input) {
   });
 }
 
-async function startRunDaemon(options = {}) {
-  const runRequests = [];
+interface RunRequest {
+  task: { prompt: string };
+}
+
+async function startRunDaemon(options: { events?: ReturnType<typeof event>[] } = {}) {
+  const runRequests: RunRequest[] = [];
   const events = options.events ?? [
     event(1, "assistant_text_delta", { text: "ok" }),
     event(2, "message_end", {}),
@@ -346,7 +351,7 @@ async function startRunDaemon(options = {}) {
     writeJson(response, 404, { error: "not_found" });
   });
 
-  await new Promise((resolveListen) => {
+  await new Promise<void>((resolveListen) => {
     server.listen(0, "127.0.0.1", resolveListen);
   });
   const address = server.address();
@@ -354,7 +359,7 @@ async function startRunDaemon(options = {}) {
   return {
     runRequests,
     url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise((resolveClose, rejectClose) => {
+    close: () => new Promise<void>((resolveClose, rejectClose) => {
       server.close((error) => {
         if (error) {
           rejectClose(error);
@@ -366,7 +371,7 @@ async function startRunDaemon(options = {}) {
   };
 }
 
-function event(seq, type, data) {
+function event(seq: number, type: string, data: Record<string, unknown>) {
   return {
     id: `evt_${seq}`,
     runId: "run_1",
@@ -377,7 +382,7 @@ function event(seq, type, data) {
   };
 }
 
-function writeSse(response, runId, events) {
+function writeSse(response: ServerResponse, runId: string, events: readonly ReturnType<typeof event>[]) {
   response.writeHead(200, { "content-type": "text/event-stream" });
   response.write(`event: ready\ndata: ${JSON.stringify({ runId })}\n\n`);
   for (const envelope of events) {
@@ -386,9 +391,9 @@ function writeSse(response, runId, events) {
   response.end();
 }
 
-function readJsonBody(request) {
+function readJsonBody(request: IncomingMessage): Promise<RunRequest> {
   return new Promise((resolveBody, rejectBody) => {
-    const chunks = [];
+    const chunks: Buffer[] = [];
     request.on("data", (chunk) => chunks.push(chunk));
     request.on("error", rejectBody);
     request.on("end", () => {
@@ -397,7 +402,7 @@ function readJsonBody(request) {
   });
 }
 
-function writeJson(response, statusCode, body) {
+function writeJson(response: ServerResponse, statusCode: number, body: unknown) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }
