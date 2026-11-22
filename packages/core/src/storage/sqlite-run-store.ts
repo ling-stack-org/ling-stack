@@ -24,7 +24,7 @@ import { SqliteCodeAssessmentCommentsStore } from "./sqlite/code-assessment-comm
 import type { CodeAssessmentCommentsStore } from "../code-assessment-comments.js";
 import { applyCodeAssessmentCommentsMigration } from "./sqlite/code-assessment-comments-migration.js";
 import { applyCodeAssessmentMigration } from "./sqlite/code-assessment-migration.js";
-import { applyAppServerMigrations } from "./sqlite/app-server-migration.js";
+import { APP_SERVER_STATE_MIGRATION_VERSION, applyAppServerMigrations } from "./sqlite/app-server-migration.js";
 import type { CodeAssessmentStore } from "../code-assessment-store.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
@@ -6154,6 +6154,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   getWorkItemWorkflowAdmissionBlocker(workflowId: string): string | undefined {
+    if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
     return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState);
   }
 

@@ -5,7 +5,7 @@ const WORK_ITEM_CONTROL_MIGRATION_VERSION = 235;
 const WORK_ITEM_CONTROL_MIGRATION_NAME = "add_work_item_control_projection";
 const WORK_ITEM_EVIDENCE_MIGRATION_VERSION = 236;
 const WORK_ITEM_EVIDENCE_MIGRATION_NAME = "create_work_item_evidence";
-const APP_SERVER_STATE_MIGRATION_VERSION = 237;
+export const APP_SERVER_STATE_MIGRATION_VERSION = 237;
 const APP_SERVER_STATE_MIGRATION_NAME = "create_app_server_state";
 
 const controlColumns = [
