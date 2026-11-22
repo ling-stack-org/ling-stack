@@ -280,6 +280,7 @@ find("steer-input").addEventListener("submit", perform(async () => {
   const result = await command("codex/steer", { expectedTurnId: codexTurnId, eventId: eventPicker.value });
   if (result.status === "accepted") return "Event delivered to Codex.";
   if (result.status === "rejected") return "Codex rejected the event.";
+  if (result.status === "retryable") return "Delivery can be retried after the Codex host reconnects.";
   return "Delivery could not be confirmed. Check the Codex turn.";
 }));
 void observe();

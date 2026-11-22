@@ -1153,6 +1153,9 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
   });
   t.after(async () => { release(); await provider.close(); });
   const statePath = join(fixture.root, "codex-host.sqlite");
+  const existingState = new DatabaseSync(statePath);
+  existingState.exec("CREATE TABLE deliveries (id TEXT PRIMARY KEY, status TEXT NOT NULL, remote_code INTEGER)");
+  existingState.close();
   const codexFixture = join(fixture.root, "fixture-codex.cjs");
   const writes = join(fixture.root, "steer-written.txt");
   await writeFile(codexFixture, [
@@ -1170,7 +1173,8 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
     "  else if (method === 'turn/start') result = { turn: { id: 'codex-live-turn' } };",
     "  else if (method === 'turn/steer') {",
     `    appendFileSync(${JSON.stringify(writes)}, JSON.stringify(params) + '\\n');`,
-    "    result = { turnId: params.expectedTurnId };",
+    "    if (params.expectedTurnId === 'disconnecting-turn') process.exit(0);",
+    "    result = { turnId: params.expectedTurnId === 'malformed-reply-turn' ? 'a-different-turn' : params.expectedTurnId };",
     "  } else throw new Error('unexpected method: ' + method);",
     "  send({ id, result });",
     "});",
@@ -1222,6 +1226,14 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
   assert.ok(!second.notices.some(notice => notice.params?.eventId === steer.eventId));
   assert.deepEqual(await second.call("codex/steer", steer), { status: "accepted", replayed: true });
   assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 1);
+  const completedEventId = finished.params.eventId;
+  const unexpected = { eventId: completedEventId, expectedTurnId: "malformed-reply-turn" };
+  assert.deepEqual(await second.call("codex/steer", unexpected), { status: "unknown", failureCode: "unexpected_reply" });
+  const lostReply = { eventId: completedEventId, expectedTurnId: "disconnecting-turn" };
+  assert.deepEqual(await second.call("codex/steer", lostReply), { status: "unknown", failureCode: "transport_failed" });
+  const unsent = { eventId: completedEventId, expectedTurnId: "codex-live-turn" };
+  assert.deepEqual(await second.call("codex/steer", unsent), { status: "retryable", failureCode: "transport_failed" });
+  assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 3);
   await second.stop();
 
   const view = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
@@ -1259,7 +1271,18 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
     body: JSON.stringify({ method: "codex/steer", params: steer }) });
   assert.equal(replayedView.status, 200);
   assert.deepEqual((await replayedView.json() as { result: unknown }).result, { status: "accepted", replayed: true });
-  assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 1);
+  const steerInView = async (params: object) => {
+    const response = await fetch(`${viewOrigin}/command`, { method: "POST",
+      headers: { ...viewAuth, Origin: viewOrigin, "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "codex/steer", params }) });
+    assert.equal(response.status, 200);
+    return (await response.json() as { result: unknown }).result;
+  };
+  assert.deepEqual(await steerInView(unexpected), { status: "unknown", failureCode: "unexpected_reply", replayed: true });
+  assert.deepEqual(await steerInView(lostReply), { status: "unknown", failureCode: "transport_failed", replayed: true });
+  assert.deepEqual(await steerInView(unsent), { status: "accepted" });
+  assert.deepEqual(await steerInView(unsent), { status: "accepted", replayed: true });
+  assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 4);
   view.kill("SIGINT");
   assert.deepEqual(await closed, [0, null]);
 });

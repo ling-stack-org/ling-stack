@@ -233,17 +233,24 @@ export async function runLingCodexHost(
         if (!state.observed(eventId)) throw new Error("Select a durable Ling event observed in this host.");
         const key = JSON.stringify([threadId, expectedTurnId, eventId]);
         const existing = state.delivery(key);
-        if (existing) return { ...existing, replayed: true };
+        if (existing && existing.status !== "retryable") return { ...existing, replayed: true };
         if (!state.reserveDelivery(key)) return { ...state.delivery(key), replayed: true };
+        let status: "accepted" | "rejected" | "retryable" | "unknown" = "unknown";
+        let remoteCode: number | undefined;
+        let failureCode: string | undefined;
         try {
           const response = await codex.request("turn/steer", { threadId, expectedTurnId,
             input: [{ type: "text", text: `Ling event reference: ${eventId}`, text_elements: [] }] });
-          if (record(response)?.turnId === expectedTurnId) state.finishDelivery(key, "accepted");
+          if (record(response)?.turnId === expectedTurnId) status = "accepted";
+          else failureCode = "unexpected_reply";
         } catch (error) {
-          if (error instanceof CodexRpcError && error.code === "remote_error" && [-32601, -32602].includes(error.remoteCode ?? 0)) {
-            state.finishDelivery(key, "rejected", error.remoteCode);
-          }
+          const failure = error instanceof CodexRpcError ? error : undefined;
+          remoteCode = failure?.remoteCode;
+          if (failure?.requestWrite === "not_written") status = "retryable";
+          else if (failure?.code === "remote_error" && [-32601, -32602].includes(remoteCode ?? 0)) status = "rejected";
+          if (status !== "rejected") failureCode = failure?.code ?? "delivery_unconfirmed";
         }
+        state.finishDelivery(key, status, remoteCode, failureCode);
         return state.delivery(key);
       }
       default:
@@ -265,10 +272,13 @@ function openHostState(path: string, binding: string) {
       CREATE TABLE IF NOT EXISTS host_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ling_replay (id INTEGER PRIMARY KEY, cursor TEXT NOT NULL, position INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS observed_events (id TEXT PRIMARY KEY, method TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, status TEXT NOT NULL, remote_code INTEGER);`);
+      CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, status TEXT NOT NULL, remote_code INTEGER, failure_code TEXT);`);
     db.prepare("INSERT OR IGNORE INTO host_state(key,value) VALUES ('binding', ?)").run(binding);
     const read = (key: string) => db.prepare("SELECT value FROM host_state WHERE key=?").get(key)?.value as string | undefined;
     if (read("binding") !== binding) throw new Error("The control host state belongs to a different Ling workspace or Thread.");
+    if (!db.prepare("PRAGMA table_info(deliveries)").all().some(column => column.name === "failure_code")) {
+      db.exec("ALTER TABLE deliveries ADD COLUMN failure_code TEXT");
+    }
     return {
       read,
       write: (key: string, value: string) => db.prepare("INSERT OR REPLACE INTO host_state(key,value) VALUES (?, ?)").run(key, value),
@@ -296,12 +306,15 @@ function openHostState(path: string, binding: string) {
       observed: (eventId: string) => Boolean(db.prepare("SELECT 1 FROM observed_events WHERE id=?").get(eventId)),
       remember: (eventId: string, method: string) => db.prepare("INSERT OR IGNORE INTO observed_events(id,method) VALUES (?, ?)").run(eventId, method),
       delivery: (key: string) => {
-        const row = db.prepare("SELECT status, remote_code FROM deliveries WHERE id=?").get(key);
-        return row ? { status: row.status, ...(row.remote_code === null ? {} : { remoteCode: row.remote_code }) } : undefined;
+        const row = db.prepare("SELECT status, remote_code, failure_code FROM deliveries WHERE id=?").get(key);
+        return row ? { status: row.status, ...(row.remote_code === null ? {} : { remoteCode: row.remote_code }),
+          ...(row.failure_code === null ? {} : { failureCode: row.failure_code }) } : undefined;
       },
-      reserveDelivery: (key: string) => db.prepare("INSERT OR IGNORE INTO deliveries(id,status) VALUES (?, 'unknown')").run(key).changes === 1,
-      finishDelivery: (key: string, status: "accepted" | "rejected", remoteCode?: number) =>
-        db.prepare("UPDATE deliveries SET status=?, remote_code=? WHERE id=? AND status='unknown'").run(status, remoteCode ?? null, key),
+      reserveDelivery: (key: string) => db.prepare(`INSERT INTO deliveries(id,status) VALUES (?, 'unknown')
+        ON CONFLICT(id) DO UPDATE SET status='unknown', remote_code=NULL, failure_code=NULL WHERE deliveries.status='retryable'`).run(key).changes === 1,
+      finishDelivery: (key: string, status: "accepted" | "rejected" | "retryable" | "unknown", remoteCode?: number, failureCode?: string) =>
+        db.prepare("UPDATE deliveries SET status=?, remote_code=?, failure_code=? WHERE id=? AND status='unknown'")
+          .run(status, remoteCode ?? null, failureCode ?? null, key),
       close: () => { try { db.close(); } finally { unlock(); } },
     };
   } catch (error) {
