@@ -1,6 +1,6 @@
 # Ling Agent Operating Model
 
-- **Status** 目标态整合设计，待实施
+- **Status** 目标态整合合同，运行时实现状态见 App Server 实施计划
 - **Owner** Conversation、Teammate、Workflow、External Agent、GitHub Automation 与开发工具维护者
 - **Last verified** 2026-11-22 against `origin/main@a9dd29921`
 - **Document type** 产品整合合同
