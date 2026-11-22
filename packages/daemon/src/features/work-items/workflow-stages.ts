@@ -2,6 +2,20 @@ import { createHash } from "node:crypto";
 import type { LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
 import type { ChannelWorkflowStep, RunStore, WorkItem } from "@ling-stack/core";
 import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
+import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
+import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
+
+export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRegistry, workflowId: string): boolean {
+  return store.listChannelWorkflowSteps({ workflowId, complete: true }).every(step => {
+    if (["claimed", "running", "waiting_for_approval", "waiting_for_input"].includes(step.status)
+      || store.getBlockingResourceLease("workflow_step", step.id)) return false;
+    return store.listRuns({ workflowStepId: step.id, complete: true }).every(run => {
+      const unit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+      return Boolean(unit?.linkedRunId === run.id
+        && continuationSourceReady(store, unit, activeRuns, "work-item-replan", () => undefined));
+    });
+  });
+}
 
 /** Work Board and App Server project the actual Workflow owner and its retained evidence. */
 export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, includeEvidence: boolean, offset = 0): LingAppServerWorkItemWorkflowStages | undefined {
@@ -46,13 +60,14 @@ export function publishWorkItemWorkflowStep(store: RunStore, events: ControlPlan
     binding: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBinding;
   } | undefined;
   if (!link) return;
-  const { workItemId, threadId } = link.binding;
+  const { workItemId, threadId, planId, planRevision } = link.binding;
   const revision = createHash("sha256").update(JSON.stringify([step.id, step.updatedAt, step.status, step.runId])).digest("hex");
   const idempotencyKey = `work-item-stage:${revision}`;
   if (store.getControlPlaneEventByIdempotency(step.workspaceId, idempotencyKey)) return;
   appendControlPlaneEvent(store, events, {
     workspaceId: step.workspaceId, cwd: store.paths.cwd, domain: "work_items",
     entityType: "work_item", entityId: workItemId, action: "work_item.stage.updated",
-    data: { workItemId, threadId, stepId, status: step.status, revision }, idempotencyKey,
+    data: { workItemId, threadId, workflowId: step.workflowId, planRevision: `${planId}:${planRevision}`,
+      stepId, status: step.status, revision }, idempotencyKey,
   });
 }

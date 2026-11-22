@@ -31,6 +31,7 @@
 - CLI 和 TypeScript client 可以直接进入上述流程。Daemon 重启、重复请求、取消未确认和未知配方仍保持已有的持久回执语义。
 - MCP bridge 暴露 Work Item 阶段、协作记录、受限 artifact range、模型清单和 Skill 读取。artifact 元数据去除内容摘要，正文只能按授权的 Thread/Work Item/Run 归属读取，并受单次范围上限约束。
 - Plan 转 Workflow 时可指定稳定的 `stageId`、`dependsOnStageIds`、`requiredDecision` 和 `requiredTools`。接受事务将阶段依赖映射到真实步骤。循环、缺失的前置阶段、无效选项和未知工具会拒绝转换。Runner 准入仍按频道和当前参与者权限检查工具。
+- 接受绑定计划的后继 Workflow 后，旧 Workflow 停止新阶段和工具准入，后继 Workflow 等待重新绑定。操作方暂停工作项并核对旧 Run、Host 效果和租约收敛后，用 `workItem/workflow/bind` 的 `previousWorkflowId` 提交绑定。重启和并发重发复用绑定回执，原计划和阶段记录保留 Workflow ID。恢复工作项后，新 Workflow 使用自己的派发记录。
 - Work Board 与 App Server 使用同一套阶段、简报、阻塞和运行证据投影。阶段简报的来源是已提交的步骤状态迁移。看板支持分页与重试，并随 `work_items` 事件刷新。
 - 声明了裁决条件的步骤等待该 Work Item、已接受 Plan 和步骤的裁决回执。授权的操作方可通过 `workItem/deliberation/start` 打开该阶段的审议，再从封存选项中裁决。回执恢复后，原 Workflow 放行该步骤，独立 QA 继续使用自己的依赖。自动提案、质疑及投票工作流仍待接入。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。
@@ -58,8 +59,8 @@
 | --- | --- |
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入，审批和用户答复仍需按不同真实宿主与远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
-| F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。CLI `app-server codex-host` 同时连接 Ling 和 Codex，保存连接游标和干预回执。本机安装的 Codex 验证了实际连接和 Ling 事件，受控对端覆盖干预与重连。可编程宿主的会话界面、真实 Codex 在途干预及跨 Agent 预算承接仍待验收。 |
-| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。还需 Channel、设备和已有 AutomationRun 的统一自治接入、经验与设备反馈、在途改计划、Workflow 交接、自动审议投票、跨 Run 预算与完整 O9 联合验收。 |
+| F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。CLI `app-server codex-host` 同时连接 Ling 和 Codex，保存连接游标和干预回执。本机安装的 Codex 联调覆盖 Ling 的在途排队、事件补齐和原干预回执。可编程宿主的会话界面、向正在运行的 Codex Turn 发送指导及跨 Agent 预算承接仍待验收。 |
+| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。还需 Channel、设备和已有 AutomationRun 的统一自治接入、设备反馈、改计划时按受影响阶段暂停并承接独立成果、Workflow 交接、自动审议投票、跨 Run 预算与完整 O9 联合验收。 |
 | G | 独立恢复日志已验证 SQLite 快照恢复、撤权、旧游标失效和 GitHub 对账后派发。上一版源码通过同一套本地兼容验收。签名安装产物、实际远程 WSS、受保护 GitHub 仓库及三个真实 Provider 自研试点仍需对应环境的证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
 
 ## 目标与开工顺序

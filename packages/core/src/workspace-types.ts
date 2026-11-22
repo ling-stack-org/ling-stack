@@ -2467,6 +2467,7 @@ export interface ChannelWorkflowStepMetadata {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly sourceProposedPlanId?: string;
   readonly templateCompilation?: import("@ling-stack/contracts").WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;

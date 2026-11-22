@@ -980,6 +980,7 @@ export interface WorkflowGraph {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly sourceProposedPlanId?: string;
   readonly templateCompilation?: WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;

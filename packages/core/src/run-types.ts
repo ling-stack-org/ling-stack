@@ -1486,6 +1486,7 @@ export interface ListRunsOptions {
   readonly threadId?: string;
   readonly providerPresetId?: string;
   readonly limit?: number;
+  readonly complete?: boolean;
 }
 
 export interface RunSummary {
@@ -2699,7 +2700,8 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
   acceptWorkItem(id: string, input: import("./work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemAcceptanceResult | undefined;
-  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string): {
+  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string,
+    previousWorkflowSettled?: (workflowId: string) => boolean): {
     readonly binding: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBinding;
     readonly workItem: WorkItem;
     readonly replayed: boolean;

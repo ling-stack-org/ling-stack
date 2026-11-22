@@ -12,7 +12,8 @@ type ActionPatch = Partial<Pick<ProposedPlanArtifact, "status" | "savedAt" | "ar
 
 /** One synchronous, same-database transaction owns each complete proposed-plan action. */
 export class SqliteProposedPlanActionStore {
-  constructor(private readonly context: SqliteStoreContext, private readonly ports: Ports) {}
+  constructor(private readonly context: SqliteStoreContext, private readonly ports: Ports,
+    private readonly hasWorkItemWorkflowBinding: (workflowId: string) => boolean) {}
 
   applyProposedPlanArtifactAction(planId: string, input: ApplyProposedPlanArtifactActionInput, now: string): ProposedPlanArtifactActionResult {
     if (!["accept", "refine", "save", "archive", "convert-workflow"].includes(input.action)) {
@@ -46,6 +47,12 @@ export class SqliteProposedPlanActionStore {
         throw new ProposedPlanMutationError("proposed_plan_channel_required", "Accepting or converting a plan requires its owning channel thread.");
       }
       if (input.action === "accept") {
+        const parent = plan.parentPlanId && this.ports.getProposedPlanArtifact(plan.parentPlanId);
+        if (parent && parent.supersededByPlanId === plan.id && parent.acceptedWorkflowId
+          && this.hasWorkItemWorkflowBinding(parent.acceptedWorkflowId)) {
+          throw new ProposedPlanMutationError("work_item_workflow_replan_required",
+            "Accept this successor as a Workflow and bind it to the predecessor Work Item.");
+        }
         const task = this.ports.createTask({ channelId: thread.channelId, title: `Implement accepted plan: ${plan.title}`,
           prompt: [`Implement accepted plan: ${plan.title}`, "", plan.bodyMarkdown, "", `Source proposed plan: ${plan.id}`,
             plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : ""].filter(Boolean).join("\n"),
@@ -63,7 +70,7 @@ export class SqliteProposedPlanActionStore {
       const order = orderWorkflowStages(steps, input.workflowStepPreviews ?? []);
       const workflow = this.ports.createChannelWorkflow({ channelId: thread.channelId, title: workflowTitle,
         objective: steps.join("\n"), status: "draft", createdBy: input.createdBy || "local-user",
-        metadata: { sourceMessageId: plan.sourceMessageId } }, now);
+        metadata: { sourceMessageId: plan.sourceMessageId, sourceProposedPlanId: plan.id } }, now);
       const stepIds = new Map<string, string>();
       let firstStepId: string | undefined;
       for (const index of order) {

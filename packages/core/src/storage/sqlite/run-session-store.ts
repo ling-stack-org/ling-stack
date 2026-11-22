@@ -261,7 +261,6 @@ export class SqliteRunSessionStore {
   }
 
   listRuns(options: ListRunsOptions = {}): RunSession[] {
-    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (options.status) {
@@ -285,9 +284,10 @@ export class SqliteRunSessionStore {
       params.push(options.providerPresetId);
     }
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    params.push(limit);
+    const complete = options.complete === true && Boolean(options.workflowStepId);
+    if (!complete) params.push(Math.min(Math.max(options.limit ?? 50, 1), 200));
     return this.context.database
-      .prepare(`${runSessionSelectSql(whereClause)} ORDER BY created_at DESC LIMIT ?`)
+      .prepare(`${runSessionSelectSql(whereClause)} ORDER BY created_at DESC${complete ? "" : " LIMIT ?"}`)
       .all(...params)
       .map((row) => mapRunSession(row as Record<string, SQLOutputValue>));
   }

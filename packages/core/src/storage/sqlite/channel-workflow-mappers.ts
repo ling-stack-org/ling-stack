@@ -382,6 +382,7 @@ function parseOptionalChannelWorkflowMetadata(value: string | undefined): Channe
   const record = parsed as Record<string, unknown>;
   return omitUndefined({
     templateCompilation: record.templateCompilation === undefined ? undefined : parseWorkflowTemplateCompilation(record.templateCompilation),
+    sourceProposedPlanId: readOptionalStringValue(record.sourceProposedPlanId),
     workflowGraphId: readOptionalStringValue(record.workflowGraphId),
     workflowGraphSchemaVersion: readOptionalPositiveIntegerValue(record.workflowGraphSchemaVersion),
     workflowGraphArtifactId: readOptionalStringValue(record.workflowGraphArtifactId),

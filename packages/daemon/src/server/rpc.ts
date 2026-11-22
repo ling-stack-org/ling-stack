@@ -109,7 +109,7 @@ import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
-import { readWorkItemWorkflowStages } from "../features/work-items/workflow-stages.js";
+import { readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
 import { enqueueWorkItemFeedback } from "../features/learning/work-item-feedback.js";
 import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
 import { isPrivateHostRecoveryArtifact, toPublicArtifactMetadata } from "../features/runs/public-artifacts.js";
@@ -1144,12 +1144,15 @@ class RpcConnection {
       expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
       expectedPlanRevision: readIntegerField(record, "expectedPlanRevision", "expectedPlanRevision"),
       idempotencyKey: readStringField(record, "idempotencyKey"),
+      previousWorkflowId: readOptionalStringField(record, "previousWorkflowId"),
     };
     if (input.idempotencyKey.length > 200 || /[\r\n\0]/u.test(input.idempotencyKey)) {
       throw rpcError(-32602, "invalid_params", "Supply a Work Item binding key of up to 200 characters.");
     }
     try {
-      const { binding, workItem, replayed, event } = this.context.storeRegistry.getStore(cwd).bindWorkItemWorkflow(input, new Date().toISOString());
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { binding, workItem, replayed, event } = store.bindWorkItemWorkflow(input, new Date().toISOString(),
+        workflowId => workItemWorkflowSettled(store, this.context.activeRuns, workflowId));
       if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
       return { cwd, binding, workItem: projectWorkItemSnapshot(workItem), replayed };
     } catch (error) {
@@ -1157,6 +1160,9 @@ class RpcConnection {
       if (code === "work_item_workflow_idempotency_conflict") throw rpcError(-32031, "idempotency_conflict", "The binding key was reused with different input.");
       if (code === "work_item_workflow_stale") throw rpcError(-32030, "stale_revision", "The Work Item or accepted Plan revision changed.");
       if (code === "work_item_workflow_held") throw rpcError(-32061, "resume_blocked", "The Work Item or Workflow cannot accept a new binding.");
+      if (code === "work_item_workflow_predecessor_unsettled") {
+        throw rpcError(-32061, "resume_blocked", "The predecessor Workflow has unsettled Runs or effects.");
+      }
       if (code === "work_item_workflow_not_found") throw rpcError(-32040, "workspace_binding_invalid", "An accepted Work Item and converted Plan in this workspace are required.");
       throw error;
     }

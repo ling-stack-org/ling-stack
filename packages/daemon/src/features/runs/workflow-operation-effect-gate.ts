@@ -48,6 +48,9 @@ export function workflowOperationAuthorityRejection(input: {
 }): WorkflowOperationBlock | undefined {
   const safety = workflowSafetyEffectRejection(input);
   if (safety) return safety;
+  const step = input.run.workflowStepId && input.store.getChannelWorkflowStep(input.run.workflowStepId);
+  const workItemBlocker = step && input.store.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step);
+  if (workItemBlocker) return blocked(workItemBlocker, "The Work Item has suspended admission for this Workflow.");
   const context = validateWorkflowOperationRunContext(input);
   if (context.status === "legacy") return undefined;
   if (context.status === "blocked") return context;

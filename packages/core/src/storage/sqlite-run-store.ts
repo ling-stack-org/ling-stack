@@ -1269,7 +1269,8 @@ export class SqliteRunStore implements RunStore {
         getUserInputWait: (threadId, requestId) => this.getUserInputWait(threadId, requestId),
       },
     );
-    this.proposedPlanActions = new SqliteProposedPlanActionStore({ database: this.database }, this);
+    this.proposedPlanActions = new SqliteProposedPlanActionStore({ database: this.database }, this,
+      workflowId => this.hasTable("app_server_state") && Boolean(this.appServerState.get("work_item_workflow", workflowId)));
     this.conversationThreadTopology = new SqliteConversationThreadTopologyStore(
       { database: this.database },
       {
@@ -6151,8 +6152,9 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.acceptWorkItem(id, input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
   }
 
-  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string) {
-    return this.workItems.bindWorkflow(input, now, this.appServerState, { store: this.controlPlane, cwd: this.paths.cwd });
+  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string,
+    previousWorkflowSettled?: (workflowId: string) => boolean) {
+    return this.workItems.bindWorkflow(input, now, this.appServerState, { store: this.controlPlane, cwd: this.paths.cwd }, previousWorkflowSettled);
   }
 
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep): string | undefined {

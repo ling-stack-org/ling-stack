@@ -47,6 +47,7 @@ import type {
   LingAppServerWorkItemReadResult,
   LingAppServerWorkItemFeedbackResult,
   LingAppServerWorkItemResult,
+  LingAppServerWorkItemWorkflowBindResult,
   LingAppServerWorkItemSnapshot,
   ProposedPlanActionResponse,
   LingAppServerWorktreeCleanupPreview,
@@ -1196,29 +1197,69 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
   await second.stop();
 });
 
-test("the reference control host negotiates installed Codex and streams an actual Ling Turn", {
+test("the reference control host negotiates installed Codex, queues a Ling intervention and replays after reconnect", {
   skip: !codexExecutable, timeout: 30_000,
 }, async t => {
+  let releaseSource: () => void = () => undefined;
+  const sourceGate = new Promise<void>(resolve => { releaseSource = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, count: number) => {
+    if (count === 1) await sourceGate;
+    return { text: count === 1 ? "Source complete" : "Follow-up complete" };
+  });
+  t.after(async () => { releaseSource(); await provider.close(); });
   const fixture = await releaseFixture(t);
   const ling = await fixture.connect();
   const { thread } = await ling.call<ThreadRead>("thread/start", { title: "Native Codex observation" });
   const { daemonUrl, authToken } = fixture.transportOptions();
   const cli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
-  const running = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
-    "app-server", "codex-host", "--thread", thread.id, "--state", join(fixture.root, "codex-host.sqlite"),
-    "--codex", codexExecutable!], { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, stdio: "pipe" });
-  const peer = jsonLines(running.stdin, running.stdout);
-  const stopped = once(running, "close");
-  let diagnostics = "";
-  running.stderr.setEncoding("utf8").on("data", chunk => { diagnostics = (diagnostics + chunk).slice(-4000); });
-  t.after(async () => { running.stdin.end(); await stopped; });
-  const ready = await Promise.race([waitFor(() => peer.notices.find(notice => notice.method === "ready")), stopped.then(() => {
-    throw new Error(diagnostics.replaceAll(authToken, "[redacted]"));
-  })]);
-  assert.ok(ready.params?.codexUserAgent);
-  const { turn } = await ling.call<{ turn: { id: string } }>("turn/start", { threadId: thread.id, message: "Observe the committed Turn." });
-  await waitFor(() => peer.notices.find(notice => notice.method === "turn/started" && notice.params?.event?.entityId === turn.id));
-  assert.equal((await peer.call<LingAppServerThreadSnapshotResult>("ling/snapshot")).turn?.id, turn.id);
+  const statePath = join(fixture.root, "codex-host.sqlite");
+  const codexHome = join(fixture.root, "codex-config");
+  await mkdir(codexHome, { mode: 0o700 });
+  const start = async () => {
+    const running = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
+      "app-server", "codex-host", "--thread", thread.id, "--state", statePath, "--codex", codexExecutable!],
+    { env: { ...process.env, CODEX_HOME: codexHome, LING_STACK_AUTH_TOKEN: authToken }, stdio: "pipe" });
+    const peer = jsonLines(running.stdin, running.stdout);
+    const stopped = once(running, "close");
+    let diagnostics = "";
+    running.stderr.setEncoding("utf8").on("data", chunk => { diagnostics = (diagnostics + chunk).slice(-4000); });
+    const stop = async () => {
+      running.stdin.end();
+      assert.equal((await stopped)[0], 0, diagnostics.replaceAll(authToken, "[redacted]"));
+    };
+    t.after(async () => { if (running.exitCode === null && running.signalCode === null) running.kill(); await stopped; });
+    const ready = await Promise.race([waitFor(() => peer.notices.find(notice => notice.method === "ready")), stopped.then(() => {
+      throw new Error(diagnostics.replaceAll(authToken, "[redacted]"));
+    })]);
+    assert.ok(ready.params?.codexUserAgent);
+    return { ...peer, stop };
+  };
+  const first = await start();
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const { turn } = await ling.call<{ turn: { id: string } }>("turn/start", {
+    threadId: thread.id, providerPresetId: preset.id, idempotencyKey: "codex-host-source", message: "Observe the committed Turn.",
+  });
+  const started = await waitFor(() => first.notices.find(notice => notice.method === "turn/started" && notice.params?.event?.entityId === turn.id));
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const snapshot = await first.call<LingAppServerThreadSnapshotResult>("ling/snapshot");
+  assert.equal(snapshot.turn?.id, turn.id);
+  const intervention = { expectedTurnId: turn.id, expectedTurnRevision: snapshot.turn?.updatedAt,
+    idempotencyKey: "native-codex-follow-up", message: "Verify the precise follow-up from the control host." };
+  const queued = await first.call<{ intervention: RunIntervention }>("ling/queue", intervention);
+  assert.equal(queued.intervention.status, "queued");
+  await first.stop();
+  releaseSource();
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  const second = await start();
+  const finished = await waitFor(() => second.notices.find(notice => notice.method === "turn/completed"
+    && notice.params?.event?.data?.turnId === turn.id));
+  assert.ok(finished.params?.eventId);
+  assert.ok(!second.notices.some(notice => notice.params?.eventId === started.params?.eventId));
+  const replayed = await second.call<{ intervention: RunIntervention; replayed: boolean }>("ling/queue", intervention);
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.intervention.id, queued.intervention.id);
+  assert.equal(provider.requests.length, 2);
+  await second.stop();
 });
 
 test("installed Codex calls the CLI MCP bridge while a Ling subscription receives the same Turn", {
@@ -2467,6 +2508,137 @@ test("a staged Work Item recovers its original Workflow, runs independent QA and
   await fixture.restart();
   const finalClient = await fixture.connect();
   assert.equal((await finalClient.call<LingAppServerWorkItemFeedbackResult>("workItem/feedback/add", feedbackInput)).job.id, feedback.job.id);
+});
+
+test("a paused Work Item replaces its accepted Workflow after the old Run settles", { timeout: 35_000 }, async t => {
+  let finishPredecessor: () => void = () => undefined;
+  const predecessorGate = new Promise<void>(resolve => { finishPredecessor = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, request: number) => {
+    if (request === 1) {
+      await predecessorGate;
+      return { tool: "read", input: { path: "old-contract.txt" } };
+    }
+    return { text: "Stage completed" };
+  });
+  t.after(async () => { finishPredecessor(); await provider.close(); });
+  const fixture = await releaseFixture(t);
+  await writeFile(join(fixture.cwd, "old-contract.txt"), "Superseded contract contents\n");
+  const store = fixture.getStore();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const now = new Date().toISOString();
+  const channel = store.createChannel({ name: "Compatibility work", boundPath: fixture.cwd,
+    allowedTools: ["read"], defaultProviderPresetId: preset.id }, now);
+  const thread = store.createLingThread({ kind: "channel_discussion", channelId: channel.id,
+    title: "Compatibility plan", objective: "Revise the accepted contract during execution" }, now);
+  const plan = store.upsertProposedPlanArtifact({ id: "plan_replacement", threadId: thread.id,
+    channelId: channel.id, title: "Compatibility plan", bodyMarkdown: "Preserve the original contract", status: "draft" }, now);
+  const post = async (path: string, body: object, method: "POST" | "PATCH" = "POST") => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const url = new URL(path, daemonUrl);
+    url.searchParams.set("cwd", fixture.cwd);
+    return fetch(url, { method, body: JSON.stringify(body),
+      headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` } });
+  };
+  const planPath = (id: string, action: string) => `/threads/${thread.id}/proposed-plans/${id}/${action}`;
+  const step = (stageId: string, title: string) => ({
+    stageId, title, ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer",
+  });
+  const conversion = await post(planPath(plan.id, "convert-workflow"), {
+    expectedRevision: plan.revision,
+    workflowStepPreviews: [{ ...step("P01", "Read the old contract"), requiredTools: ["read"] }, {
+      ...step("P02", "Implement the old contract"), dependsOnStageIds: ["P01"],
+    }],
+  });
+  assert.equal(conversion.status, 200);
+  const original = await conversion.json() as ProposedPlanActionResponse;
+  assert.ok(original.workflowId);
+  const [p01, p02] = store.listChannelWorkflowSteps({ workflowId: original.workflowId, complete: true });
+  assert.ok(p01 && p02);
+  const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "workflow-replacement", title: "Compatibility work",
+    channelId: channel.id, initialStatus: "ready" }, now);
+  const client = await fixture.connect();
+  const accept = await client.call<LingAppServerWorkItemAcceptResult>("workItem/accept", {
+    workItemId: item.id, expectedWorkItemRevision: item.revision, idempotencyKey: "accept-compatibility",
+  });
+  const bind = {
+    workItemId: item.id, planId: original.plan.id, expectedPlanRevision: original.plan.revision,
+    expectedWorkItemRevision: Number(accept.workItem.revision), idempotencyKey: "bind-compatibility",
+  };
+  const bound = await client.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", bind);
+  const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
+  const runWorkflow = (workflowId: string) => post(`/workflows/${workflowId}/orchestrate`, {});
+  const started = await runWorkflow(original.workflowId);
+  assert.equal((await started.json()).status, "started");
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+
+  const refinement = await post(planPath(original.plan.id, "refine"), { expectedRevision: original.plan.revision });
+  assert.equal(refinement.status, 200);
+  const { plan: draft } = await refinement.json() as ProposedPlanActionResponse;
+  assert.equal(draft.parentPlanId, original.plan.id);
+  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(original.workflowId), undefined);
+  const revision = await post(`/threads/${thread.id}/proposed-plans/${draft.id}`, {
+    expectedRevision: draft.revision, bodyMarkdown: "Adopt the revised compatibility contract.",
+  }, "PATCH");
+  assert.equal(revision.status, 200);
+  const { plan: edited } = await revision.json() as ProposedPlanActionResponse;
+  const taskBypass = await post(planPath(draft.id, "accept"), { expectedRevision: edited.revision });
+  assert.equal(taskBypass.status, 409);
+  assert.equal((await taskBypass.json()).error, "work_item_workflow_replan_required");
+  const replacement = await post(planPath(draft.id, "convert-workflow"), {
+    expectedRevision: edited.revision, workflowStepPreviews: [step("P02", "Implement the accepted successor contract")],
+  });
+  assert.equal(replacement.status, 200);
+  const successor = await replacement.json() as ProposedPlanActionResponse;
+  assert.ok(successor.workflowId);
+  const [newStep] = store.listChannelWorkflowSteps({ workflowId: successor.workflowId, complete: true });
+  assert.ok(newStep);
+  const startStep = (stepId: string) => post(`/workflow-steps/${stepId}/start`, { mode: "create_and_run_task" });
+  const unbound = await startStep(newStep.id);
+  assert.equal(unbound.status, 409);
+  assert.equal((await unbound.json()).error, "work_item_workflow_unbound");
+  const superseding = await startStep(p02.id);
+  assert.equal(superseding.status, 409);
+  assert.equal((await superseding.json()).error, "work_item_workflow_replan_pending");
+  const control = (action: "pause" | "resume", expectedWorkItemRevision: number, expectedControlGeneration: number, connection = client) =>
+    connection.call<LingAppServerWorkItemControlResult>(`workItem/${action}`, {
+      workItemId: item.id, actorId: "local-user", expectedWorkItemRevision, expectedControlGeneration,
+      idempotencyKey: `compatibility-${action}`, reason: "Accept the revised compatibility contract",
+    });
+  const held = await control("pause", Number(bound.workItem.revision), 0);
+  const rebind = {
+    ...bind, planId: successor.plan.id, expectedPlanRevision: successor.plan.revision,
+    previousWorkflowId: original.workflowId, expectedWorkItemRevision: Number(held.workItem.revision), idempotencyKey: "bind-successor",
+  };
+  await assert.rejects(client.call("workItem/workflow/bind", rebind), { code: "resume_blocked" });
+  finishPredecessor();
+  await waitFor(() => store.getChannelWorkflowStep(p01.id)?.status === "succeeded" ? true : undefined);
+  assert.match(JSON.stringify(provider.requests[1]), /work_item_workflow_held/u);
+  assert.doesNotMatch(JSON.stringify(provider.requests[1]), /Superseded contract contents/u);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const [boundSuccessor, replay] = await Promise.all([restored, await fixture.connect()].map(connection =>
+    connection.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", rebind)));
+  assert.ok(boundSuccessor && replay);
+  assert.deepEqual([boundSuccessor.replayed, replay.replayed].sort(), [false, true]);
+  assert.deepEqual(boundSuccessor.binding, replay.binding);
+  assert.equal(boundSuccessor.binding.previousWorkflowId, original.workflowId);
+  assert.equal(boundSuccessor.binding.workflowId, successor.workflowId);
+  assert.equal(boundSuccessor.workItem.control.state, "paused");
+  await restored.call("workItem/subscribe", { workItemId: item.id, cursor: before.cursor });
+  await waitFor(() => restored.notices.find(notice => notice.params?.event?.action === "work_item.workflow.linked"
+    && notice.params.event.data?.previousWorkflowId === original.workflowId));
+  await control("resume", Number(boundSuccessor.workItem.revision), 1, restored);
+  const stale = await startStep(p02.id);
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).error, "work_item_workflow_stale");
+  const newStart = await runWorkflow(successor.workflowId);
+  assert.equal((await newStart.json()).status, "started");
+  const restoredStore = fixture.getStore();
+  await waitFor(() => restoredStore.getChannelWorkflowStep(newStep.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(restoredStore.listRuns({ workflowStepId: p01.id }).length, 1);
+  assert.equal(restoredStore.listRuns({ workflowStepId: p02.id }).length, 0);
+  assert.equal(restoredStore.listRuns({ workflowStepId: newStep.id }).length, 1);
+  assert.equal(provider.requests.length, 3);
 });
 
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {

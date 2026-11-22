@@ -120,9 +120,10 @@ export async function runLingAppServerMcp(
       annotations: { idempotentHint: true },
     }, async params => describe(await client.acceptWorkItem(params)));
     if (methods.has("workItem/workflow/bind")) server.registerTool("ling_work_item_workflow_bind", {
-      description: "Bind an accepted Plan to its converted Workflow before staged execution. Retry with the same key.",
+      description: "Bind an accepted Plan to its converted Workflow. To replace a paused, settled Workflow, supply its ID and the accepted successor Plan. Retry with the same key.",
       inputSchema: z.strictObject({ workItemId: objectId, planId: objectId,
-        expectedPlanRevision: z.number().int().nonnegative(), expectedWorkItemRevision: z.number().int().nonnegative(), idempotencyKey: requestKey }),
+        expectedPlanRevision: z.number().int().nonnegative(), expectedWorkItemRevision: z.number().int().nonnegative(), idempotencyKey: requestKey,
+        previousWorkflowId: objectId.optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.bindWorkItemWorkflow(params)));
     if (methods.has("changes/capture")) server.registerTool("ling_changes_capture", {

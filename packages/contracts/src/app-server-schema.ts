@@ -234,8 +234,12 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         idempotencyKey: stringSchema }, ["sourceId", "title"]), result };
     case "workItem/workflow/bind":
       return { params: objectWith({ ...workItemTarget, planId: stringSchema, expectedWorkItemRevision: integerSchema,
-        expectedPlanRevision: integerSchema, idempotencyKey: stringSchema },
-      ["workItemId", "planId", "expectedWorkItemRevision", "expectedPlanRevision", "idempotencyKey"]), result };
+        expectedPlanRevision: integerSchema, idempotencyKey: stringSchema, previousWorkflowId: stringSchema },
+      ["workItemId", "planId", "expectedWorkItemRevision", "expectedPlanRevision", "idempotencyKey"]),
+      result: objectWith({ cwd: stringSchema, workItem: objectSchema, replayed: booleanSchema,
+        binding: objectWith({ ...workItemTarget, ...threadTarget, workflowId: stringSchema, planId: stringSchema,
+          planRevision: integerSchema, linkedAt: stringSchema, previousWorkflowId: stringSchema },
+        ["workItemId", "threadId", "workflowId", "planId", "planRevision", "linkedAt"]) }, ["cwd", "workItem", "binding", "replayed"]) };
     case "workItem/evidence/append":
       return { params: objectWith({ ...workItemTarget, actorId: stringSchema, kind: stringSchema, subjectRevision: stringSchema,
         content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arraySchema },

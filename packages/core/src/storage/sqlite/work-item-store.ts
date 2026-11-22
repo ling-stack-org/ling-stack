@@ -42,6 +42,7 @@ import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision } from "../../work-item-workflow-decision.js";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
+import { readSqliteWithinTransaction } from "./read-snapshot.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -539,9 +540,10 @@ export class SqliteWorkItemStore {
   }
 
   bindWorkflow(input: LingAppServerWorkItemWorkflowBindParams, now: string, state: SqliteAppServerStateStore,
-    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string }) {
-    const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey } = input;
-    const fingerprint = createHash("sha256").update(JSON.stringify([workItemId, planId, expectedPlanRevision, expectedWorkItemRevision])).digest("hex");
+    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string }, previousWorkflowSettled?: (workflowId: string) => boolean) {
+    const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey, previousWorkflowId } = input;
+    const fingerprint = createHash("sha256").update(JSON.stringify([workItemId, planId, expectedPlanRevision, expectedWorkItemRevision,
+      ...(previousWorkflowId === undefined ? [] : [previousWorkflowId])])).digest("hex");
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
     try {
@@ -560,14 +562,26 @@ export class SqliteWorkItemStore {
         || plan.status !== "accepted" || item.channelId && workflow.channelId !== item.channelId
         || !acceptance) throw new Error("work_item_workflow_not_found");
       if (item.revision !== expectedWorkItemRevision || plan.revision !== expectedPlanRevision
-        || item.workflowId || state.get("work_item_workflow", workflow.id)) throw new Error("work_item_workflow_stale");
-      if (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission)
+        || item.workflowId !== previousWorkflowId || state.get("work_item_workflow", workflow.id)) throw new Error("work_item_workflow_stale");
+      if (previousWorkflowId) {
+        const prior = state.get("work_item_workflow", previousWorkflowId)?.payload as WorkItemWorkflowLink | undefined;
+        const parent = prior && this.ports.getProposedPlanArtifact(prior.binding.planId);
+        if (!prior || prior.binding.workItemId !== item.id || !parent || parent.supersededByPlanId !== plan.id
+          || plan.parentPlanId !== parent.id || parent.acceptedWorkflowId !== previousWorkflowId
+          || plan.threadId !== parent.threadId || item.planRevision !== `${parent.id}:${prior.binding.planRevision}`) {
+          throw new Error("work_item_workflow_stale");
+        }
+      }
+      if (item.control.state !== (previousWorkflowId ? "paused" : "active") || item.holds.some(hold => hold.blocksNewAdmission)
         || item.control.unresolvedEffectIds.length || item.taskId || item.claim && item.claim.expiresAt > now
         || acceptance.dispatch && !this.conversationDispatchSettled(acceptance, item)
         || !["ready", "running", "waiting", "review"].includes(item.status)
         || !["draft", "ready"].includes(workflow.status)) throw new Error("work_item_workflow_held");
+      if (previousWorkflowId && !readSqliteWithinTransaction(database, () => previousWorkflowSettled?.(previousWorkflowId))) {
+        throw new Error("work_item_workflow_predecessor_unsettled");
+      }
       const binding = { workItemId, workflowId: workflow.id, threadId: plan.threadId,
-        planId, planRevision: plan.revision, linkedAt: now };
+        planId, planRevision: plan.revision, linkedAt: now, ...(previousWorkflowId ? { previousWorkflowId } : {}) };
       state.putWithinTransaction({ kind: "work_item_workflow", recordId: workflow.id, idempotencyKey, expectedRevision: 0,
         payload: { binding, fingerprint } satisfies WorkItemWorkflowLink }, now);
       database.prepare(`UPDATE work_items SET workflow_id=?, plan_revision=?, channel_id=?, revision=revision+1, updated_at=?,
@@ -575,7 +589,8 @@ export class SqliteWorkItemStore {
         WHERE workspace_id=? AND id=?`).run(workflow.id, `${planId}:${plan.revision}`, workflow.channelId, now, item.workspaceId, item.id);
       const event = events.store.appendControlPlaneEventWithinTransaction({
         workspaceId: item.workspaceId, cwd: events.cwd, domain: "work_items", entityType: "work_item", entityId: item.id,
-        action: "work_item.workflow.linked", data: { workItemId, workflowId: workflow.id, threadId: plan.threadId, revision: item.revision + 1 },
+        action: "work_item.workflow.linked", data: { workItemId, workflowId: workflow.id, threadId: plan.threadId,
+          revision: item.revision + 1, ...(previousWorkflowId ? { previousWorkflowId } : {}) },
       }, now);
       const workItem = this.getWorkItem(workItemId)!;
       database.exec("COMMIT");
@@ -596,7 +611,13 @@ export class SqliteWorkItemStore {
 
   getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore, step?: ChannelWorkflowStep): string | undefined {
     const link = state.get("work_item_workflow", workflowId)?.payload as WorkItemWorkflowLink | undefined;
-    if (!link) return step?.metadata?.requiredPlanDecision ? "work_item_workflow_unbound" : undefined;
+    if (!link) {
+      const planId = this.ports.getChannelWorkflow(workflowId)?.metadata?.sourceProposedPlanId;
+      const parentId = planId ? this.ports.getProposedPlanArtifact(planId)?.parentPlanId : undefined;
+      const previousWorkflowId = parentId ? this.ports.getProposedPlanArtifact(parentId)?.acceptedWorkflowId : undefined;
+      return step?.metadata?.requiredPlanDecision || previousWorkflowId && state.get("work_item_workflow", previousWorkflowId)
+        ? "work_item_workflow_unbound" : undefined;
+    }
     const binding = link.binding;
     const item = this.getWorkItem(binding.workItemId);
     const plan = this.ports.getProposedPlanArtifact(binding.planId);
@@ -606,6 +627,8 @@ export class SqliteWorkItemStore {
       || item.control.unresolvedEffectIds.length || ["done", "cancelled", "archived", "superseded"].includes(item.status)) {
       return "work_item_workflow_held";
     }
+    const successor = plan.supersededByPlanId ? this.ports.getProposedPlanArtifact(plan.supersededByPlanId) : undefined;
+    if (successor?.status === "accepted" && successor.acceptedWorkflowId) return "work_item_workflow_replan_pending";
     if (this.incompleteWorkItemDependencyIds(item).length) return "work_item_workflow_dependency_blocked";
     if (step?.metadata?.requiredPlanDecision && !this.getWorkflowStepDecision(step, state)) return "work_item_decision_pending";
     return undefined;
@@ -632,6 +655,11 @@ export class SqliteWorkItemStore {
         AND plan.workspace_id=workflow.workspace_id AND plan.accepted_workflow_id=workflow.id
       WHERE workflow.workspace_id=? AND workflow.status IN ('ready','running','waiting_for_approval')
         AND plan.status='accepted' AND item.control_state='active'
+        AND NOT EXISTS (
+          SELECT 1 FROM ling_thread_proposed_plans successor
+          WHERE successor.id=plan.superseded_by_plan_id AND successor.workspace_id=plan.workspace_id
+            AND successor.status='accepted' AND successor.accepted_workflow_id IS NOT NULL
+        )
         AND item.status NOT IN ('done','cancelled','archived','superseded')
         AND json_array_length(item.control_unresolved_effect_ids_json)=0
         AND NOT EXISTS (SELECT 1 FROM json_each(item.holds_json) WHERE json_extract(value,'$.blocksNewAdmission')=1)

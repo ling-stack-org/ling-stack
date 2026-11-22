@@ -659,6 +659,7 @@ export interface LingAppServerWorkItemWorkflowBindParams {
   readonly expectedPlanRevision: number;
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
+  readonly previousWorkflowId?: string;
 }
 
 export interface LingAppServerWorkItemWorkflowBinding {
@@ -668,6 +669,7 @@ export interface LingAppServerWorkItemWorkflowBinding {
   readonly planId: string;
   readonly planRevision: number;
   readonly linkedAt: string;
+  readonly previousWorkflowId?: string;
 }
 
 export interface LingAppServerWorkItemWorkflowBindResult extends LingAppServerWorkItemResult {
