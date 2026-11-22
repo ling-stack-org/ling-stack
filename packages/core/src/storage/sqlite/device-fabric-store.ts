@@ -21,6 +21,7 @@ import {
   type DeviceTaskGraphV1,
   type DeviceTraceSpanV1,
   type DeviceTwinV1,
+  type EdgeRuntimeEnrollmentGrantV1,
   type EdgeRuntimeEnrollmentV1,
   type EdgeRuntimeJournalEntryV1,
   type EdgeRuntimePlacementDecisionV1,
@@ -531,6 +532,72 @@ export class SqliteDeviceFabricStore {
       .map(row => parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment"));
   }
 
+  issueEdgeRuntimeGrant(grant: EdgeRuntimeEnrollmentGrantV1, publicKeySpki: string, now: string): void {
+    this.withWriteTransaction(() => {
+      const current = this.getEdgeRuntime(grant.runtimeId);
+      if ((current?.revision ?? 0) !== grant.expectedRevision) {
+        throw new DeviceFabricError("revision_conflict", "edge runtime enrollment revision changed");
+      }
+      this.database.prepare("DELETE FROM device_edge_enrollment_grants WHERE expires_at<=? AND confirmed_revision IS NULL").run(now);
+      this.database.prepare(`
+        INSERT INTO device_edge_enrollment_grants(runtime_id,grant_id,grant_json,public_key_spki,expires_at)
+        VALUES(?,?,?,?,?) ON CONFLICT(runtime_id) DO UPDATE SET grant_id=excluded.grant_id,
+          grant_json=excluded.grant_json,public_key_spki=excluded.public_key_spki,
+          expires_at=excluded.expires_at,confirmed_revision=NULL
+      `).run(grant.runtimeId, grant.grantId, JSON.stringify(grant), publicKeySpki, grant.expiresAt);
+    });
+  }
+
+  confirmEdgeRuntimeGrant(
+    runtimeId: string, grantId: string, now: string,
+    verifyProof: (grant: EdgeRuntimeEnrollmentGrantV1, publicKeySpki: string) => boolean,
+  ): { readonly runtime: EdgeRuntimeEnrollmentV1; readonly replayed: boolean } {
+    return this.withWriteTransaction(() => {
+      const row = this.database.prepare(`
+        SELECT grant_json,public_key_spki,confirmed_revision FROM device_edge_enrollment_grants
+        WHERE runtime_id=? AND grant_id=?
+      `).get(runtimeId, grantId) as Row | undefined;
+      if (!row) throw new DeviceFabricError("target_missing", "edge runtime enrollment grant is missing");
+      const grant = parseJson<EdgeRuntimeEnrollmentGrantV1>(row.grant_json, "edge runtime enrollment grant");
+      const current = this.getEdgeRuntime(runtimeId);
+      if (!verifyProof(grant, readString(row, "public_key_spki"))) {
+        throw new DeviceFabricError("safety_denied", "edge runtime key proof is invalid");
+      }
+      if (current?.status === "enrolled" && current.revision === row.confirmed_revision) {
+        return { runtime: current, replayed: true };
+      }
+      if ((current?.revision ?? 0) !== grant.expectedRevision || grant.expiresAt <= now || row.confirmed_revision !== null) {
+        throw new DeviceFabricError("revision_conflict", "edge runtime enrollment grant is stale");
+      }
+      const runtime = this.saveEdgeRuntime({
+        runtimeId, displayName: grant.displayName, publicKeyFingerprint: grant.publicKeyFingerprint,
+        contractMajor: grant.contractMajor, supportedTransports: grant.supportedTransports,
+        status: "enrolled", revision: grant.expectedRevision + 1, lastSeenAt: now,
+      });
+      this.database.prepare("UPDATE device_edge_enrollment_grants SET confirmed_revision=? WHERE grant_id=?")
+        .run(runtime.revision, grantId);
+      return { runtime, replayed: false };
+    });
+  }
+
+  revokeEdgeRuntimeEnrollment(runtimeId: string, expectedRevision: number): EdgeRuntimeEnrollmentV1 | undefined {
+    return this.withWriteTransaction(() => {
+      const current = this.getEdgeRuntime(runtimeId);
+      if (!current) {
+        if (expectedRevision !== 0) throw new DeviceFabricError("target_missing", "edge runtime is missing");
+        this.database.prepare("DELETE FROM device_edge_enrollment_grants WHERE runtime_id=?").run(runtimeId);
+        return undefined;
+      }
+      if (current.status === "revoked" && current.revision === expectedRevision + 1) return current;
+      if (current.revision !== expectedRevision) {
+        throw new DeviceFabricError("revision_conflict", "edge runtime enrollment revision changed");
+      }
+      const revoked = this.saveEdgeRuntime({ ...current, status: "revoked", revision: expectedRevision + 1 });
+      this.database.prepare("DELETE FROM device_edge_enrollment_grants WHERE runtime_id=?").run(runtimeId);
+      return revoked;
+    });
+  }
+
   recordEdgeRuntimePlacement(input: Omit<Parameters<EdgeRuntimePlacementPolicy["decide"]>[0], "runtime"> & {
     readonly runtimeId: string;
   }): { readonly decision: EdgeRuntimePlacementDecisionV1; readonly replayed: boolean } {
@@ -872,6 +939,14 @@ export class SqliteDeviceFabricStore {
         runtime_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
         runtime_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_edge_enrollment_grants (
+        runtime_id TEXT PRIMARY KEY NOT NULL,
+        grant_id TEXT UNIQUE NOT NULL,
+        grant_json TEXT NOT NULL,
+        public_key_spki TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        confirmed_revision INTEGER
       );
       CREATE TABLE IF NOT EXISTS device_edge_runtime_placements (
         decision_id TEXT PRIMARY KEY NOT NULL,

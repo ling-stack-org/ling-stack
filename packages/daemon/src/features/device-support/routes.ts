@@ -14,6 +14,7 @@ import { isHomeAssistantCatalogKind } from "./adapters/home-assistant-catalog.js
 import { handleDeviceProtocolRoute } from "./protocol-routes.js";
 import { handleDeviceResourceRoute } from "./resource-routes.js";
 import { handleDeviceDeveloperRoute } from "./developer-routes.js";
+import { handleEdgeRuntimeRoute } from "./edge-routes.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 export async function handleDeviceSupportRoute(
@@ -26,6 +27,7 @@ export async function handleDeviceSupportRoute(
   if (url.pathname.startsWith("/v1/device-support/developer/")) return await handleDeviceDeveloperRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/protocol/")) return await handleDeviceProtocolRoute(url, request, response, runtime);
+  if (url.pathname.startsWith("/v1/device-support/fabric/edge-runtimes")) return await handleEdgeRuntimeRoute(url, request, response, runtime);
   const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace|conformance)$/u.exec(url.pathname);
   const deviceOperation = /^\/v1\/device-support\/devices\/([^/]+)\/(dispatch-stop|retirement)$/u.exec(url.pathname);
   const accessGrantOperation = /^\/v1\/device-support\/devices\/([^/]+)\/access-grants\/([^/]+)$/u.exec(url.pathname);
@@ -37,10 +39,9 @@ export async function handleDeviceSupportRoute(
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
   const fabricGraph = url.pathname === "/v1/device-support/fabric/graph";
-  const edgeRuntimes = url.pathname === "/v1/device-support/fabric/edge-runtimes";
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
     && !configuredTargetRoute && !modbusDiagnosis && !homeAssistant && !homeAssistantProposal && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
-    && !fabricGraph && !edgeRuntimes) return false;
+    && !fabricGraph) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
@@ -81,10 +82,6 @@ export async function handleDeviceSupportRoute(
   }
   if (fabricGraph) {
     writeFabricGraph(request, response, runtime);
-    return true;
-  }
-  if (edgeRuntimes) {
-    writeEdgeRuntimeProjection(request, response, runtime);
     return true;
   }
   if (fleetHealth) {
@@ -176,22 +173,6 @@ function writeFabricGraph(request: IncomingMessage, response: ServerResponse, ru
       })),
       twins,
     });
-  } catch (error) {
-    writeDeviceOperationError(response, error);
-  }
-}
-
-function writeEdgeRuntimeProjection(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): void {
-  if (request.method !== "GET") {
-    response.setHeader("Allow", "GET");
-    writePrivateJson(response, 405, { error: "method_not_allowed" });
-    return;
-  }
-  try {
-    const runtimes = runtime.edgeRuntimes.list().map((
-      { runtimeId, displayName, contractMajor, supportedTransports, status, revision, lastSeenAt },
-    ) => ({ runtimeId, displayName, contractMajor, supportedTransports, status, revision, lastSeenAt }));
-    writePrivateJson(response, 200, { generatedAt: new Date().toISOString(), runtimes });
   } catch (error) {
     writeDeviceOperationError(response, error);
   }

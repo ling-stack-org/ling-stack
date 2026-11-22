@@ -2,6 +2,39 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { LocalPcTargetExecutor } from "../dist/features/device-support/adapters/local-pc-executor.js";
+import { PcAdapter } from "../dist/features/device-support/adapters/pc.js";
+
+test("a macOS Wi-Fi restart that fails after disabling the service records an uncertain effect", async () => {
+  const calls: string[] = [];
+  const adapter = new PcAdapter({
+    executor: new LocalPcTargetExecutor({
+      platform: "darwin",
+      runner: {
+        async run(file, args) {
+          if (file === "hostname") return { stdout: "fixture", stderr: "", exitCode: 0 };
+          if (file === "uname") return { stdout: "Darwin", stderr: "", exitCode: 0 };
+          assert.equal(file, "networksetup");
+          assert.deepEqual(args.slice(0, 2), ["-setnetworkserviceenabled", "Wi-Fi"]);
+          calls.push(args[2]!);
+          return { stdout: "", stderr: "", exitCode: args[2] === "off" ? 0 : 1 };
+        },
+      },
+    }),
+  });
+  const profile = await adapter.discover({ connectionRef: "local_process", ownerId: "workspace" });
+  const snapshot = await adapter.getCapabilities({ profile, connectionRevision: profile.profileRevision });
+  const capability = snapshot.capabilities.find(candidate => candidate.id === "pc.repair.network");
+  assert.ok(capability);
+  const result = await adapter.execute({ profile, capability, request: {
+    taskId: "task", actionId: "restart", targetDeviceId: profile.device.id,
+    capabilityId: capability.id, capabilitySchemaVersion: capability.schemaVersion, capabilitySnapshotId: snapshot.snapshotId,
+    idempotencyKey: "restart", normalizedInput: { mode: "restart_network" },
+  } });
+  const action = "action" in result ? result.action : result;
+  assert.deepEqual(calls, ["off", "on"]);
+  assert.equal(action.status, "uncertain");
+  assert.equal(action.errorCode, "unknown_outcome");
+});
 
 test("local PC executor uses fixed typed commands and normalizes Linux observations", async () => {
   const calls: string[] = [];

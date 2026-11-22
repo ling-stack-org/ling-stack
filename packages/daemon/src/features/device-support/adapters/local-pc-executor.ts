@@ -250,7 +250,7 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
       const off = await this.#runner.run("networksetup", ["-setnetworkserviceenabled", "Wi-Fi", "off"], input.signal);
       if (off.exitCode !== 0) return { accepted: false, changed: false };
       const on = await this.#runner.run("networksetup", ["-setnetworkserviceenabled", "Wi-Fi", "on"], input.signal);
-      return { accepted: on.exitCode === 0, changed: on.exitCode === 0 };
+      return { accepted: on.exitCode === 0, changed: true };
     }
     return { accepted: false, changed: false };
   }

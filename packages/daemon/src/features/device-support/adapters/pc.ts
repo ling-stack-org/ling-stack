@@ -269,7 +269,14 @@ export class PcAdapter implements DeviceAdapter {
     if (input.capability.id === "pc.repair.network") {
       const mode = isNetworkRepairMode(input.request.normalizedInput);
       const result = await this.#executor.repairNetwork({ mode, signal: input.signal });
-      if (!result.accepted) return { actionId: input.request.actionId, status: "rejected", errorCode: "permission_denied", startedAt, finishedAt: this.#now(), observationIds: [] };
+      if (!result.accepted) {
+        return {
+          actionId: input.request.actionId,
+          status: result.changed ? "uncertain" : "rejected",
+          errorCode: result.changed ? "unknown_outcome" : "permission_denied",
+          startedAt, finishedAt: this.#now(), observationIds: [],
+        };
+      }
     } else return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
     return { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [] };
   }

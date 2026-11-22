@@ -11,17 +11,96 @@ import { WebSocketServer } from "ws";
 
 import type {
   ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
-  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
+  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1, EdgeRuntimeEnrollmentGrantV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
   HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceAttemptConformance, readOwnedDeviceTaskTrace,
   SqliteDeviceFabricStore, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
-import { canonicalJsonBytes } from "@ling-stack/remote-protocol";
+import { canonicalJsonBytes, edgeRuntimeEnrollmentProofBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
+
+test("the Daemon enrolls an Edge runtime with the approved key and fences proofs across restart and revocation", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-edge-enrollment-"));
+  const authToken = "edge-enrollment-test-fixture";
+  const key = generateKeyPairSync("ed25519");
+  const otherKey = generateKeyPairSync("ed25519");
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const input = {
+    displayName: "Bench Edge", contractMajor: 1, supportedTransports: ["usb", "serial"], expectedRevision: 0,
+    publicKeySpki: key.publicKey.export({ type: "spki", format: "der" }).toString("base64url"),
+  };
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  let origin: string;
+  t.after(async () => {
+    await daemon?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const start = async () => {
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return `http://127.0.0.1:${address.port}/v1/device-support/fabric/edge-runtimes`;
+  };
+  const send = (path: string, payload: object, method = "POST", requestHeaders: HeadersInit = headers) =>
+    fetch(origin + path, { method, headers: requestHeaders, body: JSON.stringify(payload) });
+  const issue = "/bench-edge/enrollment";
+  const proof = issue + "/proof";
+  const revoke = "/bench-edge/revocation";
+  origin = await start();
+  assert.equal((await send(issue, input, "POST", { "Content-Type": "application/json" })).status, 401);
+  assert.equal((await send(issue, input, "POST", { ...headers, Origin: "https://example.invalid" })).status, 403);
+  assert.equal((await send(issue, { ...input, supportedTransports: ["serial", "serial"] })).status, 400);
+  assert.equal((await send(issue, { ...input, expectedRevision: 1 })).status, 409);
+  const challenge = await send(issue, input);
+  assert.equal(challenge.status, 201);
+  const { grant } = await challenge.json() as { grant: EdgeRuntimeEnrollmentGrantV1 };
+  assert.equal(grant.runtimeId, "bench-edge");
+  assert.equal(grant.publicKeyFingerprint, `sha256:${createHash("sha256").update(Buffer.from(input.publicKeySpki, "base64url")).digest("hex")}`);
+  const before = await fetch(origin, { headers });
+  assert.deepEqual((await before.json() as { runtimes: unknown[] }).runtimes, []);
+  const signed = (value: EdgeRuntimeEnrollmentGrantV1, signingKey = key) => ({
+    grantId: value.grantId, signature: sign(null, edgeRuntimeEnrollmentProofBytes(value), signingKey.privateKey).toString("base64url"),
+  });
+  const valid = signed(grant);
+  assert.equal((await send(proof, signed(grant, otherKey))).status, 403);
+  assert.equal((await send(proof, signed({ ...grant, expectedRevision: 1 }))).status, 403);
+  assert.equal((await send("/other-edge/enrollment/proof", valid)).status, 404);
+  assert.equal((await send(revoke, { expectedRevision: 0 }, "PUT")).status, 204);
+  const replacement = await send(issue, input);
+  assert.equal(replacement.status, 201);
+  const replacementGrant = (await replacement.json() as { grant: EdgeRuntimeEnrollmentGrantV1 }).grant;
+
+  await daemon!.stop();
+  daemon = undefined;
+  origin = await start();
+  const enrolled = await send(proof, signed(replacementGrant));
+  assert.equal(enrolled.status, 201);
+  const enrollment = await enrolled.json() as { runtime: { status: string; revision: number }; replayed: boolean };
+  assert.equal(enrollment.runtime.status, "enrolled");
+  assert.equal(enrollment.runtime.revision, 1);
+  assert.equal(enrollment.replayed, false);
+  assert.doesNotMatch(JSON.stringify(enrollment), /publicKey|signature/i);
+  await daemon!.stop();
+  daemon = undefined;
+  origin = await start();
+  const replay = await send(proof, signed(replacementGrant));
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), { ...enrollment, replayed: true });
+  assert.equal((await send(revoke, { expectedRevision: 2 }, "PUT")).status, 409);
+  const revoked = await send(revoke, { expectedRevision: 1 }, "PUT");
+  assert.equal(revoked.status, 200);
+  const revokedRecord = { runtime: { ...enrollment.runtime, status: "revoked", revision: 2 } };
+  assert.deepEqual(await revoked.json(), revokedRecord);
+  assert.deepEqual(await (await send(revoke, { expectedRevision: 1 }, "PUT")).json(), revokedRecord);
+  assert.equal((await send(proof, signed(replacementGrant))).status, 404);
+});
 
 test("the Daemon registers configured Android ADB and OBD bridges as device targets", async t => {
   const root = mkdtempSync(join(tmpdir(), "ling-device-bridges-"));

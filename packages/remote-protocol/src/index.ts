@@ -1,4 +1,5 @@
 export * from "./canonical.js";
+export * from "./edge-runtime-enrollment.js";
 export * from "./envelopes.js";
 export * from "./es256.js";
 export * from "./errors.js";

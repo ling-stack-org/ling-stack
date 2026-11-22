@@ -141,6 +141,17 @@ export interface EdgeRuntimeEnrollmentV1 {
   readonly lastSeenAt?: string;
 }
 
+export interface EdgeRuntimeEnrollmentGrantV1 {
+  readonly grantId: string;
+  readonly runtimeId: string;
+  readonly displayName: string;
+  readonly publicKeyFingerprint: string;
+  readonly contractMajor: number;
+  readonly supportedTransports: readonly string[];
+  readonly expectedRevision: number;
+  readonly expiresAt: string;
+}
+
 export type EdgeRuntimePlacementModeV1 = "local" | "queued" | "blocked";
 
 export interface EdgeRuntimePlacementDecisionV1 {
