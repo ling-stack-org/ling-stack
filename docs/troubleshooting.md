@@ -57,8 +57,10 @@ LING_STACK_HOME=/path/to/disposable/ling-home corepack pnpm ling --cwd /path/to/
 ```
 
 Use the same `LING_STACK_HOME`, `--cwd`, and `--daemon-url` for diagnostics against
-that session too. The source CLI injects the selected daemon URL and workspace into
-the Web process. Run one full daemon per workspace.
+that session too. Use `status --web-url http://127.0.0.1:5174` to check the Web
+process on the alternate port. The Web check in `doctor` uses port 5173.
+The source CLI injects the selected daemon URL and workspace into the Web process.
+Run one full daemon per workspace.
 
 ## Doctor Reports A Provider Failure
 

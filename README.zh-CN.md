@@ -5,6 +5,7 @@
   <p>
     <a href="docs/community/first-project-review.md#中文快速说明"><strong>试一次项目评审</strong></a> ·
     <a href="#从源码启动">从源码启动</a> ·
+    <a href="docs/getting-started.md">入门指南</a> ·
     <a href="#跨设备路线图">设备路线图</a> ·
     <a href="CONTRIBUTING.md">参与贡献</a>
   </p>
@@ -34,7 +35,7 @@
 
 ## 跨设备路线图
 
-路线图计划把设备任务带进 Ling 的对话。PC、手机或边缘主机可以协调任务，由持有授权连接的主机执行操作和验证结果。
+**当前处于设计阶段。** 路线图计划把设备任务带进 Ling 的对话。PC、手机或边缘主机可以协调任务，由持有授权连接的主机执行操作和验证结果。
 
 ![蓝紫色概念场景中的笔记本、手机、车机、家居传感器和开发板](docs/assets/ling-device-roadmap.jpg)
 
@@ -46,7 +47,7 @@
 - 在停车状态下，为兼容的 **Android 车机**安装和验证应用。
 - 在**硬件工作台**采集和解码协议数据，并验证设备响应。
 
-**当前处于设计阶段。** [跨设备设计](docs/design/ling-device-fabric.md) · [实现与实机验收计划](docs/design/ling-device-support-platform-implementation-plan.md)
+[跨设备设计](docs/design/ling-device-fabric.md) · [实现与实机验收计划](docs/design/ling-device-support-platform-implementation-plan.md)
 
 ## 智能伙伴 Yui
 
