@@ -133,7 +133,12 @@ test("snapshot rejects missing, invalid or unsafe authority instead of defaultin
     for (const configRevision of [undefined, null, 0, -1, 1.5, BigInt(Number.MAX_SAFE_INTEGER) + 1n]) {
       const statement: Pick<StatementSync, "setReadBigInts" | "get"> = {
         setReadBigInts() {},
-        get: () => configRevision === undefined ? row : { ...row, config_revision: configRevision },
+        get: () => {
+          const result = { ...row };
+          if (configRevision === undefined) delete result.config_revision;
+          else result.config_revision = configRevision;
+          return result;
+        },
       };
       const connection: Pick<DatabaseSync, "prepare"> = { prepare: () => statement as StatementSync };
       const reader = new SqliteProviderCheckPublicationStore(connection as DatabaseSync,
