@@ -156,6 +156,14 @@ and reply. A timeout or disconnect preserves the received bytes as incomplete
 evidence. A completed capture describes the observed traffic, including a device
 exception or a checksum error when the decoder sees one.
 
+For a standard diagnosis, send `POST /v1/device-support/modbus/diagnose` with
+the configured `deviceId`. The broker runs the configured read and reports
+register values only when the reply passes the checksum and matches the request's
+unit, function and register count. Partial, mismatched and exception replies
+produce failed diagnoses with distinct protocol facts. The task journal links
+the observation to a durable capture without placing frame bytes in the diagnosis
+report.
+
 The OS driver must report the USB identity of the adapter. That pins the host
 interface. The Modbus unit address identifies the responding device on the
 configured bus. The operator records the bus wiring and device identity for

@@ -146,8 +146,8 @@ export function createDeviceSupportRuntime(options: {
   let homeAssistant: HomeAssistantAdapter | undefined;
   let androidAdb: AndroidAdbAdapter | undefined;
   let obd: ObdVehicleAdapter | undefined;
-  let modbus: ModbusSerialAdapter | undefined;
   const linuxTargets = new Map<string, BoundLinuxSshTarget>();
+  const configuredModbusIds = new Set<string>();
   try {
     developerSessions.recoverInterruptedJobs({ ownerKind: "daemon", ownerId: DEFAULT_WORKSPACE_ID }, now());
     protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
@@ -164,12 +164,14 @@ export function createDeviceSupportRuntime(options: {
     protocolStore.registerProfile(modbusProfile);
     for (const transport of options.protocolTransports ?? []) protocolTransports.register(transport);
     const configuredModbus = (options.modbusSerialTargets ?? []).map(target => bindModbusSerialTarget(target));
-    for (const { transport } of configuredModbus) protocolTransports.register(transport);
-    const configuredModbusIds = new Set(configuredModbus.map(({ profile }) => profile.device.id));
-    modbus = new ModbusSerialAdapter({ targets: configuredModbus, transports: protocolTransports,
-      workbench: protocolWorkbench, protocolStore, now });
+    for (const { profile, transport } of configuredModbus) {
+      protocolTransports.register(transport);
+      configuredModbusIds.add(profile.device.id);
+    }
     broker.registerAdapter(adapter);
-    broker.registerAdapter(modbus);
+    if (configuredModbus.length > 0) broker.registerAdapter(new ModbusSerialAdapter({
+      targets: configuredModbus, transports: protocolTransports, workbench: protocolWorkbench, protocolStore, now,
+    }));
     ssh = bindLinuxSshTargets(options.linuxSshTargets ?? [], options.linuxSshRunner);
     linuxAdapter = new LinuxSshAdapter({ now, connections: ssh.targets });
     broker.registerAdapter(linuxAdapter);
@@ -511,15 +513,14 @@ export function createDeviceSupportRuntime(options: {
     },
     async diagnoseModbusTarget(deviceId, request = {}) {
       const profile = store.getDevice(deviceId);
-      if (!profile || profile.device.ownerScope !== DEFAULT_WORKSPACE_ID || profile.adapterId !== modbusSerialAdapterId) {
+      if (!profile || !configuredModbusIds.has(deviceId) || profile.device.ownerScope !== DEFAULT_WORKSPACE_ID
+        || profile.adapterId !== modbusSerialAdapterId) {
         throw new DeviceBrokerError("missing_target", "Modbus target is not configured on this host");
       }
-      return withDeviceTarget(deviceId, async () => {
-        const target = profile.device.lifecycleStatus === "healthy" || profile.device.lifecycleStatus === "enrolled"
-          ? profile : store.getDevice(deviceId);
-        if (!target) throw new DeviceBrokerError("missing_target", "Modbus target is unavailable");
-        return runDiagnosis(target, DEFAULT_WORKSPACE_ID, modbusRegisterDiagnosis, request);
-      });
+      if (profile.device.lifecycleStatus === "revoked" || profile.device.lifecycleStatus === "retired") {
+        throw new DeviceBrokerError("permission_denied", "Modbus target registration is no longer active");
+      }
+      return withDeviceTarget(deviceId, () => runDiagnosis(profile, deviceId, modbusRegisterDiagnosis, request));
     },
     async discoverAndroidAdb(connectionRef) {
       if (!androidAdb) throw new DeviceBrokerError("missing_target", "Android ADB is not configured on this host");

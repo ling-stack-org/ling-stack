@@ -88,16 +88,22 @@ export class ModbusSerialAdapter implements DeviceAdapter {
     }));
     const [requestFrame, reply] = workbench.decode(capture, modbusRtuRegisterCodec.manifest.codecId);
     const outcome = readResult(requestFrame, reply, capture.loss !== undefined);
+    const { status } = outcome;
+    const value: JsonValue = status === "read" ? {
+      captureId, status, unitAddress: outcome.unitAddress, table: outcome.table,
+      startAddress: outcome.startAddress, registers: outcome.registers,
+    } : { captureId, status };
     const observedAt = now();
     const observation: DeviceObservationV1 = {
       id: `${request.actionId}:result`, subjectId: profile.device.id, source: captureSource,
-      value: { captureId, ...outcome } as unknown as JsonValue, quality: outcome.status === "read" ? "good" : "degraded",
+      value, quality: status === "read" ? "good" : "degraded",
       observedAt, receivedAt: observedAt, freshnessUntil: new Date(Date.parse(observedAt) + 30_000).toISOString(),
       provenance: [captureSource, profile.device.id, captureId], redactionClass: "public",
     };
     return {
       action: { actionId: request.actionId, startedAt, finishedAt: observedAt, observationIds: [observation.id],
-        ...(outcome.status === "read" ? { status: "completed" as const } : { status: "rejected" as const, errorCode: "connection_failed" as const }) },
+        ...(status === "read" ? { status: "completed" as const } : { status: "rejected" as const }),
+        ...(status === "incomplete_capture" ? { errorCode: "connection_failed" as const } : {}) },
       observations: [observation],
     };
   }

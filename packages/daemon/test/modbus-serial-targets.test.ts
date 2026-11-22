@@ -56,34 +56,52 @@ test("the serial transport captures a request and fragmented register response w
   }
 });
 
-test("standard device diagnosis reads the configured Modbus register through the broker", async () => {
-  const fixture = serialFixture(["01", "0302", "000a", "3843"]);
-  const deviceStore = new SqliteDeviceSupportStore();
-  const protocolStore = new SqliteDeviceProtocolStore();
-  const adapter = new ModbusSerialAdapter({ targets: [{ profile: fixture.profile, transport: fixture.bound }], transports: fixture.registry,
-    workbench: fixture.workbench, protocolStore, now: () => "2026-11-21T00:00:00.000Z" });
-  const broker = new DeviceCapabilityBroker({ store: deviceStore, now: () => "2026-11-21T00:00:00.000Z" });
-  broker.registerAdapter(adapter);
-  try {
-    broker.registerDevice(adapter.manifest.adapterId, fixture.profile);
-    const snapshot = await broker.refreshCapabilities(fixture.profile.device.id, fixture.profile.connectionRefs[0]!);
-    const task = broker.createTask({ id: "modbus-diagnosis-task", ownerKind: "daemon", ownerId: DEFAULT_WORKSPACE_ID,
-      targetDeviceIds: [fixture.profile.device.id], status: "planning", capabilitySnapshotIds: [snapshot.snapshotId],
-      createdAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21T00:00:00.000Z" });
-    const result = await runDeviceReadOnlyPlaybook({ broker, task, targetDeviceId: fixture.profile.device.id,
-      capabilitySnapshotId: snapshot.snapshotId, playbook: modbusRegisterDiagnosis });
-    assert.equal(result.status, "succeeded");
-    const fact = result.report.facts[0]?.value as { captureId?: unknown; status?: unknown; unitAddress?: unknown; table?: unknown; startAddress?: unknown; registers?: unknown };
-    const rawObservation = deviceStore.getObservation(task.id, result.report.facts[0]!.observationId);
-    assert.match(String((rawObservation?.value as { captureId?: unknown }).captureId), /^modbus:/u);
-    assert.deepEqual({ status: fact.status, unitAddress: fact.unitAddress, table: fact.table,
-      startAddress: fact.startAddress, registers: fact.registers }, { status: "read", unitAddress: 1,
-      table: "holding", startAddress: 0, registers: [10] });
-    assert.equal(fixture.events.filter(event => typeof event === "string" && event.startsWith("write:")).length, 1);
-  } finally {
-    await fixture.registry.close();
-    protocolStore.close();
-    deviceStore.close();
+test("the broker reports only complete, matching Modbus readings and retains capture evidence", async t => {
+  const cases = [
+    { chunks: ["010302", "000a3843"], status: "read" },
+    { chunks: ["010302", "000a3842"], status: "invalid_checksum" },
+    { chunks: ["020302", "000a7c43"], status: "mismatched_response" },
+    { chunks: ["018302", "c0f1"], status: "device_exception" },
+    { chunks: ["010302", "00"], status: "incomplete_capture" },
+  ];
+  const at = "2026-11-21T00:00:00.000Z";
+  for (const { chunks, status } of cases) {
+    await t.test(status, async () => {
+      const { bound, profile, registry, workbench, events } = serialFixture(chunks);
+      const deviceStore = new SqliteDeviceSupportStore();
+      const protocolStore = new SqliteDeviceProtocolStore();
+      const adapter = new ModbusSerialAdapter({ targets: [{ profile, transport: bound }], transports: registry,
+        workbench, protocolStore, now: () => at });
+      const broker = new DeviceCapabilityBroker({ store: deviceStore, now: () => at });
+      try {
+        broker.registerAdapter(adapter);
+        const enrolled = await broker.discover(adapter.manifest.adapterId, { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: profile.connectionRefs[0]! });
+        const snapshot = deviceStore.getCurrentCapabilitySnapshot(enrolled.device.id);
+        assert.ok(snapshot);
+        const task = broker.createTask({ id: "modbus-diagnosis-task", ownerKind: "daemon", ownerId: enrolled.device.id,
+          targetDeviceIds: [enrolled.device.id], status: "planning", capabilitySnapshotIds: [snapshot.snapshotId],
+          createdAt: at, updatedAt: at });
+        const request = { broker, task, targetDeviceId: enrolled.device.id, capabilitySnapshotId: snapshot.snapshotId,
+          playbook: modbusRegisterDiagnosis };
+        const result = await runDeviceReadOnlyPlaybook(request);
+        assert.equal(result.status, status === "read" ? "succeeded" : "failed");
+        const fact = result.report.facts[0];
+        assert.ok(fact);
+        assert.deepEqual(fact.value, status === "read"
+          ? { status, unitAddress: 1, table: "holding", startAddress: 0, registers: [10] }
+          : { status });
+        const rawObservation = deviceStore.getObservation(task.id, fact.observationId);
+        assert.ok(rawObservation);
+        const { captureId } = rawObservation.value as { captureId: string };
+        assert.equal(protocolStore.getCapture(captureId)?.targetDeviceId, enrolled.device.id);
+        assert.deepEqual((await runDeviceReadOnlyPlaybook(request)).report, result.report);
+        assert.equal(events.filter(event => typeof event === "string" && event.startsWith("write:")).length, 1);
+      } finally {
+        await registry.close();
+        protocolStore.close();
+        deviceStore.close();
+      }
+    });
   }
 });
 
@@ -138,6 +156,14 @@ test("the configured Daemon exposes a target without port details and rejects ca
   }
   const initial = await start([target]);
   const { targetDeviceId } = bindModbusSerialTarget(target).transport;
+  const diagnosis = new URL("../modbus/diagnose", `${initial}/`).href;
+  const diagnose = (input: object) => fetch(diagnosis, { method: "POST", headers, body: JSON.stringify(input) });
+  assert.equal((await diagnose({ deviceId: targetDeviceId, startAddress: 99 })).status, 400);
+  const unavailable = await diagnose({ deviceId: targetDeviceId });
+  assert.equal(unavailable.status, 200);
+  const unavailableBody = await unavailable.json();
+  assert.equal(unavailableBody.status, "failed");
+  assert.deepEqual(unavailableBody.report.facts[0]?.value, { status: "incomplete_capture" });
   const listed = await fetch(initial + "/transports", { headers });
   assert.equal(listed.status, 200);
   assert.deepEqual(await listed.json(), { transports: [{ transportId: "bench-sensor", targetDeviceId, transport: "rs485", displayName: "Bench sensor" }] });

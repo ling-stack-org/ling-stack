@@ -214,13 +214,21 @@ export function projectDeviceDiagnosticEvidence(
     }
     return { value: { count: fields.software.length, sources, truncated: fields.truncated }, hypotheses: [] };
   }
-  if (request.capabilityId === "protocol.read_registers" && observation.source === "modbus.rtu.read_registers"
-    && typeof fields.status === "string") {
-    const value: Record<string, JsonValue> = { status: fields.status };
-    for (const key of ["unitAddress", "table", "startAddress", "registers"] as const) {
-      if (fields[key] !== undefined) value[key] = fields[key]!;
+  if (request.capabilityId === "protocol.read_registers" && observation.source === "modbus.rtu.read_registers") {
+    const { status, unitAddress, table, startAddress, registers } = fields;
+    if (status === "incomplete_capture" || status === "invalid_checksum" || status === "mismatched_response" || status === "device_exception") {
+      return { value: { status }, hypotheses: [] };
     }
-    return { value, hypotheses: [] };
+    if (status === "read" && deviceRegisterInteger(unitAddress, 1, 247) && (table === "holding" || table === "input")
+      && deviceRegisterInteger(startAddress, 0, 65_535) && Array.isArray(registers)
+      && registers.length >= 1 && registers.length <= 125 && startAddress + registers.length <= 65_536
+      && registers.every(value => deviceRegisterInteger(value, 0, 65_535))) {
+      return { value: { status, unitAddress, table, startAddress, registers }, hypotheses: [] };
+    }
   }
   return undefined;
+}
+
+function deviceRegisterInteger(value: JsonValue | undefined, minimum: number, maximum: number): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= minimum && value <= maximum;
 }
