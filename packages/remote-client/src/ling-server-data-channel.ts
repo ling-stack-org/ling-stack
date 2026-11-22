@@ -1,4 +1,8 @@
-import { LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, LING_SERVER_SIGNAL_LANE_LIMIT_V1, type LingServerGatewayRouteV1, type LingServerSignalingResponseV1 } from "@ling-stack/contracts";
+import {
+  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, LING_SERVER_SIGNAL_LANE_LIMIT_V1,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  type LingServerGatewayRouteV1, type LingServerSignalingResponseV1,
+} from "@ling-stack/contracts";
 import { encodeBase64Url, encodeUtf8, sha256, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
 import { lingServerMessageChannel } from "./ling-server-message-channel.js";
 import { LingServerSignalingClient, type LingServerSignalingClientOptions } from "./ling-server-signaling.js";
@@ -6,6 +10,12 @@ import { LingServerSignalingClient, type LingServerSignalingClientOptions } from
 const channelLabel = "ling-peer";
 const channelProtocol = "ling-peer.v1";
 const pollIntervalMs = 350;
+
+export const lingServerNativeGatewayFeatures = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1,
+] as const;
 
 export interface LingServerDataChannelOptions extends LingServerSignalingClientOptions {
   readonly createPeerConnection?: (configuration: RTCConfiguration) => RTCPeerConnection;

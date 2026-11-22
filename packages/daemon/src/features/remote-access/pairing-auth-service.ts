@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { createFetchRemoteHttpClient, type LingServerRendezvousOptions } from "@ling-stack/remote-client";
 import {
   createPublicKey,
   generateKeyPairSync,
@@ -13,6 +15,7 @@ import {
   REMOTE_PROTOCOL_VERSION,
   REMOTE_SIGNING_ALGORITHM,
   REMOTE_SUPPORTED_PROTOCOL_VERSIONS,
+  type LingServerConfirmedPairingMigrationV1,
   type LingServerGatewayRouteV1,
   type LingServerPairingIdentityV1,
   type LingServerPairingMigrationV1,
@@ -158,6 +161,7 @@ export class RemotePairingAuthService {
       deviceEpoch: current.deviceEpoch + 1,
       policyVersion: current.policyVersion + 1,
       pairedDevice: undefined,
+      lingServerMigrationId: undefined,
       updatedAt: this.now(),
     }));
     this.options.onSecurityStateChanged?.("revoked");
@@ -329,8 +333,44 @@ export class RemotePairingAuthService {
   }
 
   confirmLingServerPairingMigration(journal: LingServerPairingMigrationJournal, value: unknown): LingServerPairingMigrationV1 {
-    return journal.confirm(value, this.requirePairedIdentity(), DEFAULT_WORKSPACE_ID, confirmation =>
+    const migration = journal.confirm(value, this.requirePairedIdentity(), DEFAULT_WORKSPACE_ID, confirmation =>
       this.sign(lingServerPairingMigrationSigningBytes(confirmation)));
+    this.options.stateStore.updateState(current => ({
+      ...current, lingServerMigrationId: migration.migrationId, updatedAt: this.now(),
+    }));
+    return migration;
+  }
+
+  lingServerRendezvousOptions(migration: LingServerConfirmedPairingMigrationV1): LingServerRendezvousOptions | undefined {
+    if (!isDeepStrictEqual(migration.oldPairing, this.requirePairedIdentity())
+      || this.state().lingServerMigrationId !== migration.migrationId) return undefined;
+    const { routingProfile, oldPairing } = migration;
+    return {
+      installation: {
+        installationId: routingProfile.installationId, serverOrigin: routingProfile.serverOrigin,
+        applicationKeyFingerprint: routingProfile.applicationKeyFingerprint, revision: routingProfile.installationRevision, status: "active",
+      },
+      binding: {
+        bindingId: routingProfile.bindingId, installationId: routingProfile.installationId,
+        gatewayId: oldPairing.gatewayId, mobileDeviceId: oldPairing.mobileDeviceId,
+        gatewayKeyFingerprint: oldPairing.gatewayKeyFingerprint, mobileKeyFingerprint: oldPairing.mobileKeyFingerprint,
+        epoch: oldPairing.deviceEpoch, revision: 1, status: "active",
+      },
+      key: { keyId: this.identity.gatewayId, publicJwk: this.identity.publicKeyJwk },
+      keys: {
+        sign: async (id, message) => {
+          if (id !== this.identity.gatewayId || this.state().lingServerMigrationId !== migration.migrationId
+            || !isDeepStrictEqual(migration.oldPairing, this.requirePairedIdentity())) {
+            throw new RemoteAccessError("device_epoch_mismatch", "The peer route no longer matches the active pairing.");
+          }
+          return this.sign(message);
+        },
+        verify: async (jwk, bytes, signature) => this.verifyDevice(jwk, bytes, signature),
+      },
+      http: createFetchRemoteHttpClient(),
+      entropy: { randomBytes },
+      clock: { now: this.now },
+    };
   }
 
   private requirePairedIdentity(): LingServerPairingIdentityV1 {

@@ -453,6 +453,9 @@ importers:
       '@ling-stack/providers':
         specifier: workspace:*
         version: link:../providers
+      '@ling-stack/remote-client':
+        specifier: workspace:^
+        version: link:../remote-client
       '@ling-stack/remote-protocol':
         specifier: workspace:*
         version: link:../remote-protocol

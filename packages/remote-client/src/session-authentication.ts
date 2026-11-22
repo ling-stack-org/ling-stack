@@ -31,14 +31,14 @@ type GatewayConnection = {
 export type RemoteSessionConnectionOptions =
   | (GatewayConnection & { readonly connectPeer?: never; readonly peerFallback?: never })
   | {
-      readonly connectPeer: (signal: AbortSignal) => Promise<RemotePeerConnection>;
+      readonly connectPeer: (signal: AbortSignal, binding: RemoteBindingV1) => Promise<RemotePeerConnection>;
       readonly http?: never;
       readonly webSocketFactory?: never;
       readonly peerFallback?: never;
     }
   | (GatewayConnection & {
       /** Return undefined when peer transport is unavailable. Errors remain terminal for this attempt. */
-      readonly connectPeer: (signal: AbortSignal) => Promise<RemotePeerConnection | undefined>;
+      readonly connectPeer: (signal: AbortSignal, binding: RemoteBindingV1) => Promise<RemotePeerConnection | undefined>;
       readonly peerFallback: true;
     });
 
@@ -62,12 +62,15 @@ export async function openRemoteSessionChannel(
 ): Promise<{ readonly channel: RemoteMessageChannel; readonly authentication: RemoteSessionAuthentication }> {
   const { binding, clock } = context;
   if (options.connectPeer) {
-    const peer = await options.connectPeer(signal);
+    const peer = await options.connectPeer(signal, binding);
     if (peer !== undefined) {
       const { route, transport } = peer;
       try {
         context.assertCurrent();
-        if (transport.readyState !== 1 || route.gatewayId !== binding.gatewayId
+        const profile = binding.lingServerRoutingProfile;
+        if ((profile && (profile.bindingId !== route.bindingId || profile.installationId !== route.installationId
+          || profile.applicationKeyFingerprint !== route.applicationKeyFingerprint || profile.serverOrigin !== route.serverOrigin))
+          || transport.readyState !== 1 || route.gatewayId !== binding.gatewayId
           || route.gatewayKeyFingerprint !== binding.gatewayIdentityFingerprint || route.mobileDeviceId !== binding.deviceId
           || route.peerEpoch !== binding.deviceEpoch || !(Date.parse(route.expiresAt) > Date.parse(clock.now()))) {
           throw new Error("remote_peer_binding_mismatch");

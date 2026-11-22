@@ -126,7 +126,7 @@ test("local Gateway management confirms a server profile against the current pai
   store = createSqliteRunStore(root);
   controller = makeController();
   assert.deepEqual(await (await post(confirmPath, confirmation)).json(), record);
-  assert.deepEqual(state.readState(), oldState);
+  assert.deepEqual(state.readState(), { ...oldState, lingServerMigrationId: record.migrationId });
   assert.deepEqual(store.getRemoteCommandReceipt(message.commandId), original.receipt);
   const replay = store.commitRemoteConversationSend(message, now);
   assert.equal(replay.idempotentReplay, true);

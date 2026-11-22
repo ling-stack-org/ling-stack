@@ -20,6 +20,8 @@ import {
   nativeSecureDeviceKeyAdapter,
   nativeSecureEntropy,
 } from "../platform/secure-device-key/native-adapter";
+import { connectMobileLingServerPeer } from "./mobile-ling-server-peer";
+import { createMobilePeerConnectionFactory } from "./mobile-webrtc";
 import { pollForPairingAcceptance } from "./pairing-polling";
 
 export type MobilePairingPhase =
@@ -111,6 +113,11 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
       entropy: nativeSecureEntropy,
       clock: systemRemoteClock,
       webSocketFactory: (url, subprotocol) => new WebSocket(url, subprotocol) as unknown as RemoteWebSocketLike,
+      peerFallback: true,
+      connectPeer: (signal, activeBinding) => connectMobileLingServerPeer(activeBinding, signal, {
+        clock: systemRemoteClock, entropy: nativeSecureEntropy, http, keys: nativeSecureDeviceKeyAdapter,
+        createPeerConnection: createMobilePeerConnectionFactory,
+      }),
     });
     let observedWorkspaceBindingId = nextBinding.workspaceBindingId;
     unsubscribeClient.current = nextClient.subscribe((nextState) => {
@@ -197,6 +204,10 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
       const nextBinding = await client.confirmLingServerPairingPin(confirmation, { signal });
       if (generation !== pairingGeneration.current || userUnpairing.current) throw new Error("remote_pairing_changed");
       setBinding(nextBinding);
+      client.disconnect();
+      void client.connect().catch((connectError) => {
+        if (generation === pairingGeneration.current && !userUnpairing.current) setError(userFacingError(connectError));
+      });
     },
     retryConnection: async () => {
       setError(undefined);

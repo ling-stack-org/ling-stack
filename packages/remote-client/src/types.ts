@@ -42,6 +42,13 @@ export interface RemoteHttpClient {
 
 type RemoteHttpRequestOptions = Pick<RequestInit, "signal" | "redirect">;
 
+export class RemoteHttpStatusError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "RemoteHttpStatusError";
+  }
+}
+
 export type RemoteWebSocketFactory = (url: string, subprotocols?: string | string[]) => RemoteWebSocketLike;
 
 export interface RemoteBindingV1 {
@@ -109,7 +116,7 @@ async function requestJson<T>(
   const body = await response.json() as T;
   if (!response.ok) {
     const record = body && typeof body === "object" ? body as Record<string, unknown> : undefined;
-    throw new Error(typeof record?.message === "string" ? record.message : `remote_http_${response.status}`);
+    throw new RemoteHttpStatusError(response.status, typeof record?.message === "string" ? record.message : `remote_http_${response.status}`);
   }
   return { status: response.status, body };
 }

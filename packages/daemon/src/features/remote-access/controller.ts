@@ -34,6 +34,8 @@ import { RemoteProjectionOutboxWorker } from "./projection-outbox-worker.js";
 import { RemoteGatewaySession } from "./session.js";
 import { RemoteAccessStateStore } from "./state-store.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
+import { LingServerGatewayPeer } from "./ling-server-gateway-peer.js";
+import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "./pion-peer-worker.js";
 
 const deviceTaskProtocols = [
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
@@ -80,6 +82,7 @@ export class RemoteAccessController {
   private readonly stateStore: RemoteAccessStateStore;
   private readonly auth: RemotePairingAuthService;
   private pairingMigrationStore?: SqliteLingServerStore;
+  private lingServerPeer?: LingServerGatewayPeer;
   private remoteServer?: Server;
   private webSocketServer?: WebSocketServer;
   private activeSession?: RemoteGatewaySession;
@@ -108,6 +111,8 @@ export class RemoteAccessController {
       now: this.now,
       onSecurityStateChanged: (reason) => {
         if (reason !== "paired") {
+          this.lingServerPeer?.stop();
+          this.lingServerPeer = undefined;
           this.cancelPendingAuthentication();
           this.activeSession?.revoke(reason);
         }
@@ -124,6 +129,8 @@ export class RemoteAccessController {
   async stop(): Promise<void> {
     this.stopped = true;
     this.stopPolling();
+    this.lingServerPeer?.stop();
+    this.lingServerPeer = undefined;
     this.cancelPendingAuthentication();
     this.activeSession?.disconnect();
     this.activeSession = undefined;
@@ -254,6 +261,7 @@ export class RemoteAccessController {
       if (url.pathname === `${MANAGEMENT_PREFIX}/pairing-migration/confirm` && request.method === "POST") {
         const input = await readJson(request);
         const migration = this.auth.confirmLingServerPairingMigration(this.pairingMigrationJournal(), input);
+        this.refreshLingServerPeer();
         writeManagementJson(response, 200, migration, origin);
         return true;
       }
@@ -278,10 +286,32 @@ export class RemoteAccessController {
     }
   }
 
-  private pairingMigrationJournal(): LingServerPairingMigrationJournal {
+  private migrationStore(): SqliteLingServerStore {
     this.pairingMigrationStore ??= new SqliteLingServerStore({ databasePath: join(this.options.stateDir, "ling-server-pairing-migrations.sqlite") });
+    return this.pairingMigrationStore;
+  }
+
+  private refreshLingServerPeer(): void {
+    const { enabled, lingServerMigrationId } = this.auth.state();
+    const selected = this.remoteServer?.listening && enabled && lingServerMigrationId;
+    if (selected && selected === this.lingServerPeer?.migrationId) return;
+    this.lingServerPeer?.stop();
+    this.lingServerPeer = undefined;
+    if (!selected) return;
+    const executable = resolvePionPeerWorker();
+    if (!executable) return;
+    const confirmed = this.migrationStore().getPairingMigration(selected);
+    if (confirmed?.status !== "confirmed") return;
+    const options = this.auth.lingServerRendezvousOptions(confirmed);
+    if (options) {
+      this.lingServerPeer = new LingServerGatewayPeer(selected, options, createPionPeerConnectionFactory(executable), (route, channel) =>
+        this.attachLingServerPeer({ route, channel }));
+    }
+  }
+
+  private pairingMigrationJournal(): LingServerPairingMigrationJournal {
     return new LingServerPairingMigrationJournal({
-      store: this.pairingMigrationStore,
+      store: this.migrationStore(),
       readReceipt: commandId => this.options.store.getRemoteCommandReceipt(commandId),
       now: this.now,
     });
@@ -330,6 +360,7 @@ export class RemoteAccessController {
     this.webSocketServer = webSocketServer;
     this.stopped = false;
     this.startPolling();
+    this.refreshLingServerPeer();
   }
 
   private acceptSessionChannel(

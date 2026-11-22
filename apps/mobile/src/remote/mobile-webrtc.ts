@@ -8,8 +8,8 @@ export interface MobileWebRtcRuntime {
 }
 
 export async function loadMobileWebRtcRuntime(): Promise<MobileWebRtcRuntime> {
-  const module = await import("react-native-webrtc") as unknown as Partial<MobileWebRtcRuntime>;
-  if (typeof module.RTCPeerConnection !== "function") {
+  const module = await import("react-native-webrtc").catch(() => undefined) as unknown as Partial<MobileWebRtcRuntime> | undefined;
+  if (typeof module?.RTCPeerConnection !== "function") {
     throw new Error("mobile_webrtc_native_module_unavailable");
   }
   return module as MobileWebRtcRuntime;
@@ -21,7 +21,7 @@ export function createMobilePeerConnectionFactoryFromRuntime(
   if (typeof runtime.RTCPeerConnection !== "function") {
     throw new Error("mobile_webrtc_native_module_unavailable");
   }
-  return configuration => new runtime.RTCPeerConnection(configuration) as unknown as RTCPeerConnection;
+  return configuration => new runtime.RTCPeerConnection(configuration);
 }
 
 export async function createMobilePeerConnectionFactory(): Promise<
