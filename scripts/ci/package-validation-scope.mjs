@@ -1,5 +1,5 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, matchesGlob } from "node:path";
+import { basename, dirname, isAbsolute, join, matchesGlob, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 const requiredValidationScripts = ["test", "test:ci", "typecheck", "typecheck:ci"];
@@ -9,11 +9,16 @@ const typecheckCommand = /^(?:tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?|t
 const testConfigName = /^tsconfig\.tests?\.json$/u;
 const testTypecheckCall = /^corepack pnpm (?:run )?typecheck:tests$/u;
 const syntaxCheckCommand = /^node --check src\/(?:[\w-]+\/)*[\w-]+(?:\.[\w-]+)*\.(?:js|mjs|cjs)$/u;
+const testCompilerOptions = ["allowImportingTsExtensions", "lib", "target"];
 const workspacePackageName = /^@ling-stack\/[a-z0-9-]+$/u;
 const browserHostTestRunner = "node scripts/test.mjs";
 const browserHostTestPatterns = ["test/*.test.mjs", "test/*.test.ts"];
-// Browser Host tests use the Daemon broker built for the A01 fixture.
-export const VALIDATION_BUILD_DEPENDENCIES = new Map([["@ling-stack/browser-host", ["@ling-stack/daemon"]]]);
+export const VALIDATION_BUILD_DEPENDENCIES = new Map([
+  // The A01 fixture uses the built Daemon broker.
+  ["@ling-stack/browser-host", ["@ling-stack/daemon"]],
+  // The suspension activation suite uses the Daemon replay package and the Pi prompt formatter.
+  ["@ling-stack/core", ["@ling-stack/daemon", "@ling-stack/runner-pi"]],
+]);
 const localizationTestDeclarations = [
   "scripts/catalog-locales.d.mts",
   "scripts/catalog-utils.d.mts",
@@ -25,7 +30,8 @@ const localizationTestDeclarations = [
  * metadata, build commands, hooks and CI entrypoint presence must stay fixed.
  * Opaque shell commands retain the full-regression fallback.
  */
-export function packageValidationScope({ current, previous, directory, root, repositoryFiles, previousFiles = [], changedFiles }) {
+export function packageValidationScope({ current, previous, directory, root, repositoryFiles, previousFiles = [], changedFiles,
+  previousTestConfigs = new Map() }) {
   if (!current || !Array.isArray(previousFiles) || !Array.isArray(changedFiles)
     || [...previousFiles, ...changedFiles].some(file => typeof file !== "string")) return undefined;
   const { scripts, ...metadata } = current;
@@ -91,24 +97,25 @@ export function packageValidationScope({ current, previous, directory, root, rep
       if (!match || (wrapped && !testConfigName.test(match[1]))) return undefined;
       const name = match[1] ?? "tsconfig.json";
       const configPath = `${directory}/${name}`;
-      // Reading the checkout can verify a baseline config only when its tracked
-      // contents are unchanged across the complete PR diff.
       const noEmitFlag = Boolean(match[2] || match[3]);
       const isTestConfig = testConfigName.test(name);
-      if ((isTestConfig || !noEmitFlag) && previousPaths.has(configPath) && changedFiles.includes(configPath)) return undefined;
       if (isTestConfig || !noEmitFlag) {
         if (previous && candidate === oldScripts && !previousPaths.has(configPath)) return undefined;
+        const changed = previousPaths.has(configPath) && changedFiles.includes(configPath);
+        const baseline = changed && isTestConfig ? previousTestConfigs.get(configPath) : undefined;
+        if (changed && baseline === undefined) return undefined;
         let config;
-        try { config = JSON.parse(readFileSync(join(packageRoot, name), "utf8")); }
-        catch { return undefined; }
-        if ((!noEmitFlag && config.compilerOptions?.noEmit !== true) || config.compilerOptions?.noCheck === true) return undefined;
+        try {
+          config = JSON.parse(previous && candidate === oldScripts && changed
+            ? baseline : readFileSync(join(packageRoot, name), "utf8"));
+          if (changed && candidate === scripts && !isSafeTestConfigChange(JSON.parse(baseline), config)) return undefined;
+        } catch { return undefined; }
+        if ((!noEmitFlag && config?.compilerOptions?.noEmit !== true) || config?.compilerOptions?.noCheck === true) return undefined;
         // A config shared with source/build inputs remains a source change.
-        if (isTestConfig && Array.isArray(config.include) && config.include.length > 0
-          && config.include.every(path => typeof path === "string" && /^(?:test|tests)\//u.test(path) && !path.split("/").includes(".."))
-          && !config.files && !config.references && !config.exclude
+        if (candidate === scripts && isTestConfig && hasTestConfigInputs(config)
           && !production.some(command => typeof command !== "string" || command.includes(name))
-          && isolatedConfig(packageRoot, name, repositoryFiles.filter(file => file.startsWith(`${directory}/`))
-            .map(file => file.slice(directory.length + 1))) && candidate === scripts) {
+          && isolatedConfig(root, configPath, changed ? repositoryFiles
+            : repositoryFiles.filter(file => file.startsWith(`${directory}/`)))) {
           testConfigs.add(configPath);
           for (const pattern of config.include) typedTestIncludes.add(pattern);
         }
@@ -190,6 +197,23 @@ export function packageValidationScope({ current, previous, directory, root, rep
   return { testInputs };
 }
 
+function isSafeTestConfigChange(previous, current) {
+  if (![previous, current].every(config => hasTestConfigInputs(config) && config.compilerOptions?.noEmit === true)) return false;
+  const { compilerOptions: before, ...previousStructure } = previous;
+  const { compilerOptions: after, ...currentStructure } = current;
+  // TypeScript can derive module defaults from target.
+  if (before.target !== after.target && (typeof before.module !== "string" || typeof before.moduleResolution !== "string")) return false;
+  const otherOptions = options => Object.fromEntries(Object.entries(options).filter(([name]) => !testCompilerOptions.includes(name)));
+  return isDeepStrictEqual(previousStructure, currentStructure)
+    && isDeepStrictEqual(otherOptions(before), otherOptions(after));
+}
+
+function hasTestConfigInputs(config) {
+  return Array.isArray(config?.include) && config.include.length > 0
+    && config.include.every(path => typeof path === "string" && /^(?:test|tests)\//u.test(path) && !path.split("/").includes(".."))
+    && !config.files && !config.references && !config.exclude;
+}
+
 function matchesValidationCommand(command, validation, workspaceBuilds) {
   if (command === validation) return true;
   const suffix = ` && ${validation}`;
@@ -197,15 +221,22 @@ function matchesValidationCommand(command, validation, workspaceBuilds) {
     && command.slice(0, -suffix.length).split(" && ").every(step => workspaceBuilds.has(step));
 }
 
-function isolatedConfig(packageRoot, name, files) {
-  const referencesConfig = path => typeof path !== "string" || path.split("/").at(-1).replace(/\.json$/u, "") === name.replace(/\.json$/u, "");
-  for (const file of files.filter(file => /(?:^|\/)tsconfig(?:\.[\w.-]+)?\.json$/u.test(file) && file !== name)) {
+function isolatedConfig(root, configPath, files) {
+  const target = resolve(root, configPath);
+  const name = basename(target, ".json");
+  for (const file of files.filter(file => file !== configPath && /(?:^|\/)tsconfig(?:\.[\w.-]+)?\.json$/u.test(file))) {
+    const referencesConfig = path => {
+      if (typeof path !== "string") return true;
+      if (!isAbsolute(path) && !/^\.{1,2}(?:\/|$)/u.test(path) && basename(path, ".json") === name) return true;
+      const reference = resolve(root, dirname(file), path);
+      return reference === target || reference + ".json" === target;
+    };
     let config;
-    try { config = JSON.parse(readFileSync(join(packageRoot, file), "utf8")); }
+    try { config = JSON.parse(readFileSync(join(root, file), "utf8")); }
     catch { return false; }
-    const parents = typeof config.extends === "string" ? [config.extends] : config.extends ?? [];
+    const parents = typeof config?.extends === "string" ? [config.extends] : config?.extends ?? [];
     if (!Array.isArray(parents) || parents.some(referencesConfig)
-      || (config.references && (!Array.isArray(config.references)
+      || (config?.references && (!Array.isArray(config.references)
         || config.references.some(reference => referencesConfig(reference?.path))))) return false;
   }
   return true;
