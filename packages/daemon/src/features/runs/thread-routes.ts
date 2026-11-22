@@ -2248,6 +2248,9 @@ export async function bindGoalAcceptanceEvidence(
   if (snapshot.coverage !== "complete") {
     throw new HttpError(409, "goal_verification_candidate_incomplete", "Goal verification requires complete coverage of the current candidate.");
   }
+  if (deliveryCriteria.length && snapshot.totalFileCount !== 0) {
+    throw new HttpError(409, "goal_completion_evidence_invalid", "Goal delivery evidence requires a clean, committed candidate.");
+  }
   const reconciledGitHubDeliveryIds = new Set<string>();
   for (const criterion of deliveryCriteria) {
     const requirement = criterion.githubDelivery!;

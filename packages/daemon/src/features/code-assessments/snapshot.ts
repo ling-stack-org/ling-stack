@@ -100,7 +100,7 @@ function workingFile(cwd: string, path: string): { readonly content?: string; re
   } finally { closeSync(fd); }
 }
 
-async function capture(cwd: string, target: CodeAssessmentTarget): Promise<Omit<CodeAssessmentSnapshot, "id" | "capturedAt">> {
+async function capture(cwd: string, target: CodeAssessmentTarget, committedHeadOnly: boolean): Promise<Omit<CodeAssessmentSnapshot, "id" | "capturedAt">> {
   const prefix = await assessmentGitPrefix(cwd);
   const readGit = async (root: string, args: readonly string[]) => (await git(root, [...prefix, ...args])).stdout;
   const root = realpathSync((await readGit(cwd, ["rev-parse", "--show-toplevel"])).trim());
@@ -120,8 +120,8 @@ async function capture(cwd: string, target: CodeAssessmentTarget): Promise<Omit<
     }
   }
   const revisions = baseSha ? [baseSha, headSha] : [headSha];
-  const tracked = parseNames(await readGit(cwd, ["diff", ...diffFlags, "--name-status", "-z", "--find-renames", ...revisions, "--"]));
-  const untracked = target.type === "working_tree"
+  const tracked = committedHeadOnly ? [] : parseNames(await readGit(cwd, ["diff", ...diffFlags, "--name-status", "-z", "--find-renames", ...revisions, "--"]));
+  const untracked = !committedHeadOnly && target.type === "working_tree"
     ? (await readGit(cwd, ["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter(Boolean) : [];
   if (untracked.some(path => !isCodeAssessmentPath(path))) throw new Error("Git returned an unsupported file path.");
   const paths = new Map(tracked.map(file => [file.path, file]));
@@ -173,9 +173,17 @@ async function capture(cwd: string, target: CodeAssessmentTarget): Promise<Omit<
 
 /** Two equal captures reject edits during collection; excluded content cannot certify freshness. */
 export async function captureCodeAssessmentSnapshot(cwd: string, input: CodeAssessmentTarget, capturedAt = new Date().toISOString()): Promise<CodeAssessmentSnapshot> {
-  const target = parseCodeAssessmentTarget(input);
-  const first = await capture(cwd, target);
-  const second = await capture(cwd, target);
+  return captureConsistent(cwd, parseCodeAssessmentTarget(input), capturedAt, false);
+}
+
+/** Identify the committed candidate the same way a clean checkout identifies that HEAD. */
+export async function captureCommittedHeadSnapshot(cwd: string): Promise<CodeAssessmentSnapshot> {
+  return captureConsistent(cwd, { type: "working_tree" }, new Date().toISOString(), true);
+}
+
+async function captureConsistent(cwd: string, target: CodeAssessmentTarget, capturedAt: string, committedHeadOnly: boolean): Promise<CodeAssessmentSnapshot> {
+  const first = await capture(cwd, target, committedHeadOnly);
+  const second = await capture(cwd, target, committedHeadOnly);
   if (first.digest !== second.digest) throw new Error("The repository changed during capture. Try again after edits finish.");
   return { ...second, id: `snapshot_${randomUUID()}`, capturedAt };
 }

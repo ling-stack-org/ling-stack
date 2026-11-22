@@ -2,7 +2,7 @@ import type { LingAppServerGitHubDelivery, LingAppServerReconcileGitHubDeliveryP
 import type { RunStore, WorkItemAcceptanceReceipt } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
-import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
+import { captureCodeAssessmentSnapshot, captureCommittedHeadSnapshot } from "../features/code-assessments/snapshot.js";
 import { trimOversizedEvent } from "../features/control-plane/events.js";
 import { observeGitHubDelivery } from "./app-server-github-ci.js";
 import { digest, gitHubReadClient, gitHubWorkItemTargetKey } from "./app-server-github-subject.js";
@@ -19,6 +19,7 @@ export function readGitHubDelivery(store: RunStore, workItemId: string, delivery
 export async function reconcileGitHubDelivery(
   context: Pick<DaemonContext, "storeRegistry" | "config" | "externalWorkFetch" | "secretResolver" | "controlPlaneEvents">,
   params: LingAppServerReconcileGitHubDeliveryParams & { readonly cwd: string },
+  scope: "head" | "working_tree" = "head",
 ): Promise<LingAppServerGitHubDelivery> {
   const { cwd, threadId, workItemId, expectedWorkItemRevision, candidateDigest, repository, pullRequestNumber } = params;
   const store = context.storeRegistry.getStore(cwd);
@@ -33,9 +34,10 @@ export async function reconcileGitHubDelivery(
   }
   const client = gitHubReadClient(context, cwd, repository);
   const previous = store.getAppServerState("github_delivery_current", workItemId);
-  const capture = () => captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+  const capture = () => scope === "head"
+    ? captureCommittedHeadSnapshot(cwd) : captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
   const candidate = await capture();
-  if (candidate.coverage !== "complete" || candidate.totalFileCount !== 0 || candidate.digest !== candidateDigest) {
+  if (candidate.coverage !== "complete" || (scope === "working_tree" && candidate.totalFileCount !== 0) || candidate.digest !== candidateDigest) {
     throw new HttpError(409, "candidate_stale", "Delivery requires the current committed candidate with full capture coverage.");
   }
   const observation = await observeGitHubDelivery(client, pullRequestNumber, previous?.payload as LingAppServerGitHubDelivery | undefined);

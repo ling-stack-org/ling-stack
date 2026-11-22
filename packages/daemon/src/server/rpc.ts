@@ -723,9 +723,10 @@ class RpcConnection {
         return await this.development.planVerification(this.workspaceParams(params) as never);
       case "changes/capture": {
         const record = this.workspaceParams(params);
-        if (record.sourceWorktree === undefined) return await captureAppServerChanges(record.cwd);
+        const scope = record.scope === "head" ? "head" : "working_tree";
+        if (record.sourceWorktree === undefined) return await captureAppServerChanges(record.cwd, scope);
         const { cwd } = this.workspaceParams(params, true);
-        return await captureAppServerWorktreeChanges(this.context.storeRegistry.getStore(cwd), record.sourceWorktree);
+        return await captureAppServerWorktreeChanges(this.context.storeRegistry.getStore(cwd), record.sourceWorktree, scope);
       }
       case "changes/read": {
         const record = this.workspaceParams(params, true);
@@ -2084,7 +2085,7 @@ class RpcConnection {
       evidenceRefs: record.evidenceRefs ?? record.completionEvidenceRefs,
       completionVerificationSummary: record.completionVerificationSummary ?? record.verificationSummary,
     });
-    const prepared = await bindGoalAcceptanceEvidence(store, goal, input, params => reconcileGitHubDelivery(this.context, params));
+    const prepared = await bindGoalAcceptanceEvidence(store, goal, input, params => reconcileGitHubDelivery(this.context, params, "working_tree"));
     const updated = store.updateLingThreadGoal(goal.id, prepared, new Date().toISOString());
     if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
     this.publishThreadGoal(store, cwd, updated);

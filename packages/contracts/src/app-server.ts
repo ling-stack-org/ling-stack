@@ -1073,9 +1073,10 @@ export type LingAppServerChangeWorktree = Pick<LingAppServerWorktreeTarget, "own
 export interface LingAppServerCaptureChangesParams {
   readonly cwd?: string;
   readonly sourceWorktree?: LingAppServerChangeWorktree;
+  readonly scope?: "working_tree" | "head";
 }
 
-export interface LingAppServerReadChangesParams extends LingAppServerCaptureChangesParams {
+export interface LingAppServerReadChangesParams extends Omit<LingAppServerCaptureChangesParams, "scope"> {
   readonly candidateDigest: string;
   readonly offset?: number;
   readonly limit?: number;

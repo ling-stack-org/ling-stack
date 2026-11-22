@@ -347,7 +347,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "externalAgent/capabilities/read":
       return { params: objectWith({ registrationId: stringSchema }, ["registrationId"]), result };
     case "changes/capture":
-      return { params: objectWith(changeSource), result: objectWith(candidateResult, candidateResultFields) };
+      return { params: objectWith({ ...changeSource, scope: { enum: ["working_tree", "head"] } }),
+        result: objectWith(candidateResult, candidateResultFields) };
     case "changes/read":
       return { params: objectWith({ ...changeSource, candidateDigest: stringSchema, offset: integerSchema, limit: integerSchema }, ["candidateDigest"]),
         result: objectWith({ ...candidateResult, files: arraySchema, exclusions: arraySchema, exclusionCount: integerSchema,

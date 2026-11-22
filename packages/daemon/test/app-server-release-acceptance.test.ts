@@ -2006,8 +2006,11 @@ test("GitHub delivery keeps head checks across base changes and completes a Goal
   });
   const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
   await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
-  await writeFile(join(fixture.cwd, "replay.txt"), "accepted replay\n");
   git("init", "-q", "-b", "main");
+  git("add", ".gitignore");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Baseline");
+  const replayFile = join(fixture.cwd, "replay.txt");
+  await writeFile(replayFile, "accepted replay\n");
   git("add", ".");
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
   head = git("rev-parse", "HEAD");
@@ -2064,9 +2067,19 @@ test("GitHub delivery keeps head checks across base changes and completes a Goal
   };
   await assert.rejects(complete(client, current.deliveryId), { code: "goal_completion_evidence_invalid" });
   merged = true;
+  await writeFile(replayFile, "subsequent local changes\n");
+  const { candidate: dirty } = await client.call<LingAppServerCaptureChangesResult>("changes/capture");
+  assert.notEqual(dirty.candidateDigest, candidate.candidateDigest);
+  const committed = await client.call<LingAppServerCaptureChangesResult>("changes/capture", { scope: "head" });
+  assert.equal(committed.headCommit, head);
+  assert.equal(committed.candidate.candidateDigest, candidate.candidateDigest);
+  await assert.rejects(client.call("github/delivery/reconcile", { ...input, candidateDigest: dirty.candidateDigest }), { code: "candidate_stale" });
   const delivered = await reconcile();
   assert.equal(delivered.status, "delivered");
   assert.equal(delivered.mergedCommit, newIntegration);
+  await assert.rejects(complete(client, delivered.deliveryId), { code: "goal_completion_evidence_invalid" });
+  assert.equal(await readFile(replayFile, "utf8"), "subsequent local changes\n");
+  await writeFile(replayFile, "accepted replay\n");
   await fixture.restart();
   const restored = await fixture.connect();
   assert.deepEqual((await restored.call<LingAppServerGitHubDeliveryResult>("workItem/delivery/read", { workItemId })).delivery, delivered);
@@ -2197,6 +2210,11 @@ test("GitHub delivery requires current queue membership and a provider-attested 
   await assert.rejects(client.call("github/delivery/enqueue", enqueue), { code: "github_queue_guard_unavailable" });
   assert.equal(queueStarts, 0);
   guardPresent = true;
+  const uncommitted = join(fixture.cwd, "local-only.txt");
+  await writeFile(uncommitted, "Uncommitted queue input\n");
+  await assert.rejects(client.call("github/delivery/enqueue", enqueue), { code: "candidate_stale" });
+  assert.equal(queueStarts, 0);
+  await unlink(uncommitted);
   const first = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
   assert.equal(first.receipt.status, "unknown");
   const queued = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
@@ -3048,7 +3066,7 @@ test("a scheduled coordination occurrence commits with its round, restores its d
     outputPolicy: { artifactFormat: "markdown", destinations: [{ type: "automation_thread" }] },
     nextRunAt: due,
   }, now);
-  const policy = { automationId: automation.id, workItemId, expectedRevision: 0, enabled: true, kind: "checkpoint", durationMs: 2200 };
+  const policy = { automationId: automation.id, workItemId, expectedRevision: 0, enabled: true, kind: "checkpoint", durationMs: 3500 };
   const configured = await client.call<{ schedule: LingAppServerCoordinationSchedule }>("workItem/coordination/schedule/set", policy);
   assert.equal(configured.schedule.revision, 1);
   await assert.rejects(client.call("workItem/coordination/schedule/set", { ...policy, enabled: false }), { code: "stale_revision" });
@@ -3105,6 +3123,17 @@ test("a scheduled coordination occurrence commits with its round, restores its d
   const observer = await fixture.connect();
   const afterRestart = fixture.getStore().readScheduledCoordinationRound(round.recordId);
   assert.equal(afterRestart?.deadlineAt, round.deadlineAt);
+  const controlScheduler = (action: "start" | "stop") => {
+    const { daemonUrl, cwd, authToken } = fixture.transportOptions();
+    return fetch(`${daemonUrl}/automations/scheduler/${action}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST", headers: { Authorization: `Bearer ${authToken}` },
+    });
+  };
+  assert.equal((await controlScheduler("start")).status, 200);
+  assert.equal((await controlScheduler("stop")).status, 200);
+  await delay(Math.max(0, Date.parse(round.deadlineAt) - Date.now()) + 100);
+  assert.equal(fixture.getStore().readScheduledCoordinationRound(round.recordId)?.closedRecordId, undefined);
+  assert.equal((await controlScheduler("start")).status, 200);
   const closed = await waitFor(() => fixture.getStore().readScheduledCoordinationRound(round.recordId)?.closedRecordId);
   const records = await observer.call<LingAppServerWorkItemCollaborationReadResult>("workItem/collaboration/read", { workItemId });
   assert.deepEqual(records.records.map(record => record.kind), ["coordination", "brief", "coordination"]);

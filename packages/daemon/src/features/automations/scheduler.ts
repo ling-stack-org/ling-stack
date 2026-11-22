@@ -72,6 +72,7 @@ export class AutomationSchedulerRegistry {
   private readonly entriesByCwd = new Map<string, AutomationSchedulerEntry>();
   private readonly inFlightTasks = new Set<Promise<void>>();
   private readonly coordinationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly stoppedWorkspaces = new Set<string>();
   private coordinationStopping = false;
 
   constructor(
@@ -123,6 +124,7 @@ export class AutomationSchedulerRegistry {
         this.scheduleAutomation(entry, automation, new Date());
       }
       this.refreshStateSummary(entry);
+      this.stoppedWorkspaces.delete(cwd);
       this.restoreCoordinationDeadlines(cwd);
       this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
       return { scheduler: entry.state, duplicate: false };
@@ -193,6 +195,8 @@ export class AutomationSchedulerRegistry {
 
   stop(cwd: string): AutomationSchedulerState | undefined {
     const entry = this.entriesByCwd.get(cwd);
+    this.stoppedWorkspaces.add(cwd);
+    this.clearCoordinationTimer(cwd);
     if (!entry) {
       return undefined;
     }
@@ -224,13 +228,17 @@ export class AutomationSchedulerRegistry {
   }
 
   restoreCoordinationDeadlines(cwd: string): void {
-    if (this.coordinationStopping) return;
-    const prior = this.coordinationTimers.get(cwd);
-    if (prior) clearTimeout(prior);
-    this.coordinationTimers.delete(cwd);
+    if (this.coordinationStopping || this.stoppedWorkspaces.has(cwd)) return;
+    this.clearCoordinationTimer(cwd);
     const open = this.storeRegistry.getStore(cwd).listOpenScheduledCoordinationRounds();
     const next = open.map(round => round.deadlineAt).sort()[0];
     if (next) this.armCoordinationDeadline(cwd, Math.max(1, Date.parse(next) - Date.now()));
+  }
+
+  private clearCoordinationTimer(cwd: string): void {
+    const timer = this.coordinationTimers.get(cwd);
+    if (timer) clearTimeout(timer);
+    this.coordinationTimers.delete(cwd);
   }
 
   private armCoordinationDeadline(cwd: string, delayMs: number): void {

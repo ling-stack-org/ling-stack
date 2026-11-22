@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import type {
   LingAppServerApplyChangesResult,
+  LingAppServerCaptureChangesParams,
   LingAppServerCaptureChangesResult,
   LingAppServerChangeRecoveryPreview,
   LingAppServerPreviewChangeRecoveryParams,
@@ -9,7 +10,7 @@ import type {
 } from "@ling-stack/contracts";
 import type { LingTurn, RunStore } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
-import { captureCodeAssessmentSnapshot, isSensitiveAssessmentPath } from "../features/code-assessments/snapshot.js";
+import { captureCodeAssessmentSnapshot, captureCommittedHeadSnapshot, isSensitiveAssessmentPath } from "../features/code-assessments/snapshot.js";
 import {
   buildTurnWorkspaceChangesResponse,
   recoverTurnWorkspaceChanges,
@@ -28,14 +29,20 @@ const digestPattern = /^[a-f0-9]{64}$/u;
 const maxResultBytes = 112 * 1024;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-export async function captureAppServerChanges(cwd: string): Promise<LingAppServerCaptureChangesResult> {
-  return summarizeAppServerCandidate(cwd, await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" }));
+type CaptureScope = LingAppServerCaptureChangesParams["scope"];
+
+export async function captureAppServerChanges(cwd: string, scope?: CaptureScope): Promise<LingAppServerCaptureChangesResult> {
+  return summarizeAppServerCandidate(cwd, await captureCandidate(cwd, scope));
 }
 
-export async function captureAppServerWorktreeChanges(store: RunStore, target: unknown): Promise<LingAppServerCaptureChangesResult> {
+export async function captureAppServerWorktreeChanges(store: RunStore, target: unknown, scope?: CaptureScope): Promise<LingAppServerCaptureChangesResult> {
   const worktree = readChangeWorktree(target);
   const path = await resolveChangeWorktree(store, worktree);
-  return summarizeAppServerCandidate(store.paths.cwd, await captureCodeAssessmentSnapshot(path, { type: "working_tree" }), worktree);
+  return summarizeAppServerCandidate(store.paths.cwd, await captureCandidate(path, scope), worktree);
+}
+
+function captureCandidate(cwd: string, scope: CaptureScope) {
+  return scope === "head" ? captureCommittedHeadSnapshot(cwd) : captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
 }
 
 export async function readAppServerChanges(store: RunStore, input: Record<string, unknown>): Promise<LingAppServerReadChangesResult> {
