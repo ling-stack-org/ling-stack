@@ -4,12 +4,13 @@ import type {
 } from "@ling-stack/contracts";
 import {
   isDeviceActionRequestV1,
+  isDeviceCapabilitySnapshotV1,
   isDeviceObservationV1,
   isDeviceTaskAttemptV1,
   isDeviceTaskReconciliationV1,
   isDeviceTaskV1,
 } from "@ling-stack/contracts";
-import type { MobileAttemptRecord, MobileDeviceJournal } from "./execution.js";
+import type { MobileAttemptRecord, MobileDeviceJournal, MobileRecordedSnapshot } from "./execution.js";
 
 export interface MobileStorageLike {
   getItem(key: string): Promise<string | null>;
@@ -80,7 +81,8 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
     saveAttempt(record) {
       return enqueue(async () => {
         if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)
-          || record.reconciliations?.some(item => !isDeviceTaskReconciliationV1(item))) {
+          || record.reconciliations?.some(item => !isDeviceTaskReconciliationV1(item))
+          || record.capabilitySnapshots?.some(item => !isRecordedSnapshot(item))) {
           throw new Error("Invalid mobile device attempt");
         }
         const key = attemptsKey(record.request.taskId);
@@ -141,8 +143,20 @@ function parseObservationArray(value: string | null): readonly DeviceObservation
 
 function parseAttemptRecord(value: unknown): MobileAttemptRecord | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  const { attempt, request, requestDigest, reconciliations } = value as Record<string, unknown>;
+  const { attempt, request, requestDigest, reconciliations, capabilitySnapshots } = value as Record<string, unknown>;
   if (!isDeviceTaskAttemptV1(attempt) || !isDeviceActionRequestV1(request) || typeof requestDigest !== "string") return undefined;
   const records = Array.isArray(reconciliations) ? reconciliations.filter(isDeviceTaskReconciliationV1) : [];
-  return { attempt, request, requestDigest, ...(records.length ? { reconciliations: records } : {}) };
+  const snapshots = Array.isArray(capabilitySnapshots) ? capabilitySnapshots.filter(isRecordedSnapshot) : [];
+  return {
+    attempt, request, requestDigest,
+    ...(records.length ? { reconciliations: records } : {}),
+    ...(snapshots.length ? { capabilitySnapshots: snapshots } : {}),
+  };
+}
+
+function isRecordedSnapshot(value: unknown): value is MobileRecordedSnapshot {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const { snapshot, profileRevision } = value as Record<string, unknown>;
+  return typeof profileRevision === "string" && profileRevision.length > 0 && profileRevision.length <= 512
+    && isDeviceCapabilitySnapshotV1(snapshot);
 }

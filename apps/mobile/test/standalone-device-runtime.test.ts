@@ -132,6 +132,10 @@ test("a phone-owned write checks its alternate route and journals a fresh target
       const trace = projectMobileDeviceTaskTrace(journalEvidence, task.ownerId);
       assert.deepEqual(trace, projectMobileDeviceTaskTrace(await journal.readTaskEvidence(task.id), task.ownerId));
       assert.equal(projectMobileDeviceTaskTrace(journalEvidence, "foreign-owner"), undefined);
+      const legacy = projectMobileDeviceTaskTrace({
+        ...journalEvidence, attempts: journalEvidence.attempts.map(record => ({ ...record, capabilitySnapshots: undefined })),
+      }, task.ownerId);
+      assert.deepEqual(legacy?.capabilitySnapshots, [{ state: "unavailable", deviceId, snapshotId: snapshot.snapshotId }]);
       const readback = trace?.spans.find(item => item.kind === "verification");
       assert.equal(readback?.lineage?.attemptId, result.attempt.attemptId);
       assert.equal(readback?.lineage?.connectionRevision, snapshot.connectionRevision);
@@ -185,6 +189,11 @@ test("a phone-only Home Assistant diagnosis records scoped facts and restores th
   assert.equal(adapter?.status, "ok");
   assert.match(adapter?.lineage?.connectionRevision ?? "", /^ha_connection_/u);
   assert.equal(adapter?.lineage?.runtimeId, trace?.spans[0]?.lineage?.runtimeId);
+  assert.deepEqual(trace?.capabilitySnapshots?.map(snapshot => snapshot.state === "recorded" && [
+    snapshot.connectionRevision, snapshot.capabilities,
+  ]), [[adapter?.lineage?.connectionRevision, [
+    { id: "home_assistant.read_entity", schemaVersion: "1.0", sideEffect: "read_only", approvalClass: "allow" },
+  ]]]);
   assert.deepEqual(adapter?.metadata, {
     attemptStatus: "completed", capabilityId: "home_assistant.read_entity",
     capabilitySnapshotId: trace?.capabilitySnapshots?.[0]?.snapshotId,
@@ -410,7 +419,11 @@ test("phone readback settles a lost recovery receipt and survives interruption w
   assert.equal(checks[1]?.parentSpanId, original.spanId);
   assert.equal(checks[1]?.lineage?.attemptId, original.lineage?.attemptId);
   assert.notEqual(checks[1]?.lineage?.connectionRevision, original.lineage?.connectionRevision);
+  assert.deepEqual(trace?.capabilitySnapshots?.map(snapshot => snapshot.state === "recorded" && snapshot.connectionRevision), [
+    original.lineage?.connectionRevision, checks[0]?.lineage?.connectionRevision, checks[1]?.lineage?.connectionRevision,
+  ]);
   assert.doesNotMatch(JSON.stringify(trace), /selected-automation|fixture-credential|automation\.night/u);
+  assert.doesNotMatch(JSON.stringify(trace), /inputSchema|outputSchema|permissions/u);
 });
 
 test("phone diagnosis distinguishes missing entities and denied credentials and rejects misbound or oversized results", async () => {

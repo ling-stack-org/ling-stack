@@ -9,6 +9,7 @@ import type {
   DeviceVerificationResultV1,
   JsonValue,
 } from "@ling-stack/contracts";
+import { projectDeviceCapabilitySnapshotForTrace } from "@ling-stack/contracts";
 
 import type { MobileTaskEvidence } from "./journal.js";
 
@@ -29,7 +30,7 @@ export function projectMobileDeviceTaskTrace({ task, attempts, observations }: M
   }];
   const publicObservations = new Map(observations.filter(item => item.redactionClass === "public").map(item => [item.id, item]));
   const capabilitySnapshots = new Map<string, DeviceTaskTraceCapabilitySnapshotV1>();
-  for (const { attempt, request, reconciliations } of attempts) {
+  for (const { attempt, request, reconciliations, capabilitySnapshots: retainedSnapshots } of attempts) {
     if (attempt.ownerKind !== "mobile" || attempt.ownerId !== ownerId || attempt.taskId !== task.id || request.taskId !== task.id
       || attempt.actionId !== request.actionId || attempt.targetDeviceId !== request.targetDeviceId
       || !task.targetDeviceIds.includes(attempt.targetDeviceId) || !task.capabilitySnapshotIds.includes(request.capabilitySnapshotId)) continue;
@@ -42,7 +43,17 @@ export function projectMobileDeviceTaskTrace({ task, attempts, observations }: M
       ...(adapterBinding ? { adapterId: adapterBinding.adapterId } : {}),
     };
     const snapshotId = request.capabilitySnapshotId;
-    capabilitySnapshots.set(JSON.stringify([targetDeviceId, snapshotId]), { state: "unavailable", snapshotId, deviceId: targetDeviceId });
+    function referenceSnapshot(id: string, connection: string | undefined, original = false): void {
+      const key = JSON.stringify([targetDeviceId, id]);
+      const retained = retainedSnapshots?.find(({ snapshot, profileRevision }) =>
+        snapshot.deviceId === targetDeviceId && snapshot.snapshotId === id && snapshot.connectionRevision === connection
+        && snapshot.adapterId === adapterBinding?.adapterId
+        && (!original || (snapshot.adapterVersion === adapterBinding.adapterVersion && profileRevision === adapterBinding.profileRevision
+          && snapshot.capabilities.some(capability => capability.id === request.capabilityId && capability.schemaVersion === request.capabilitySchemaVersion))));
+      if (retained) capabilitySnapshots.set(key, projectDeviceCapabilitySnapshotForTrace(retained.snapshot, retained.profileRevision));
+      else if (!capabilitySnapshots.has(key)) capabilitySnapshots.set(key, { state: "unavailable", snapshotId: id, deviceId: targetDeviceId });
+    }
+    referenceSnapshot(snapshotId, connectionRevision, true);
     spans.push({
       spanId, traceId, parentSpanId: rootSpanId, kind: "adapter", sourceId: adapterBinding?.adapterId ?? attemptId,
       startedAt: dispatchIntentAt, ...(receipt?.finishedAt ? { finishedAt: receipt.finishedAt } : {}),
@@ -82,9 +93,7 @@ export function projectMobileDeviceTaskTrace({ task, attempts, observations }: M
     for (const readback of reconciliations ?? []) {
       if (readback.taskId !== task.id || readback.attemptId !== attemptId || readback.verification.actionId !== attempt.actionId
         || !task.capabilitySnapshotIds.includes(readback.capabilitySnapshotId)) continue;
-      capabilitySnapshots.set(JSON.stringify([targetDeviceId, readback.capabilitySnapshotId]), {
-        state: "unavailable", snapshotId: readback.capabilitySnapshotId, deviceId: targetDeviceId,
-      });
+      referenceSnapshot(readback.capabilitySnapshotId, readback.connectionRevision);
       recordReadback(readback.verification, readback.reconciliationId,
         task.status === "succeeded" && task.lastVerificationId === readback.reconciliationId && readback.status === "verified",
         { ...lineage, connectionRevision: readback.connectionRevision }, {

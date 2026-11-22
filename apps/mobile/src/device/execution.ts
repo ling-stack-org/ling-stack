@@ -65,6 +65,12 @@ export interface MobileAttemptRecord {
   readonly request: DeviceActionRequestV1;
   readonly requestDigest: string;
   readonly reconciliations?: readonly DeviceTaskReconciliationV1[];
+  readonly capabilitySnapshots?: readonly MobileRecordedSnapshot[];
+}
+
+export interface MobileRecordedSnapshot {
+  readonly snapshot: DeviceCapabilitySnapshotV1;
+  readonly profileRevision: string;
 }
 
 export interface MobileDeviceExecutionOptions {
@@ -198,6 +204,7 @@ export class MobileDeviceExecution {
     const plan = request.recoveryPlan;
     const recoveryExpired = () => plan !== undefined && Date.parse(plan.verifyBy) <= Date.parse(this.#now());
     const assertDispatchAllowed = () => {
+      const at = this.#now();
       if (signal.aborted || recoveryExpired() || (needsApproval && !this.#foreground)) {
         throw new MobileDeviceExecutionError("permission_denied", "device operation authorization has ended");
       }
@@ -205,7 +212,7 @@ export class MobileDeviceExecution {
         || snapshot.deviceId !== profile.device.id || snapshot.snapshotId !== request.capabilitySnapshotId
         || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion
         || snapshot.connectionRevision !== transport.connectionRevision
-        || Date.parse(snapshot.freshnessUntil) <= Date.parse(this.#now())) {
+        || !snapshotIsFresh(snapshot, at)) {
         throw new MobileDeviceExecutionError("stale_snapshot", "capability snapshot does not match the active connection");
       }
       if (!capability.requiredPermissions.every(permission => transport.permissions.includes(permission))) {
@@ -215,7 +222,7 @@ export class MobileDeviceExecution {
         if (task.policyRevision && task.policyRevision !== this.#policyRevision) {
           throw new MobileDeviceExecutionError("permission_denied", "device task policy has changed");
         }
-        assertApproval(request, approval, snapshot.connectionRevision, this.#policyRevision, requestDigest, this.#now());
+        assertApproval(request, approval, snapshot.connectionRevision, this.#policyRevision, requestDigest, at);
       }
     };
     assertDispatchAllowed();
@@ -279,7 +286,7 @@ export class MobileDeviceExecution {
       ...(recoveryPathVerifiedAt ? { recoveryPathVerifiedAt } : {}),
       status: "dispatched",
     };
-    const record: MobileAttemptRecord = { attempt, request, requestDigest };
+    const record: MobileAttemptRecord = { attempt, request, requestDigest, capabilitySnapshots: [{ snapshot, profileRevision: profile.profileRevision }] };
     const saveStatus = async (status: DeviceTaskStatusV1, lastVerificationId?: string) => this.#journal.saveTask({
       ...task, status, currentActionId: request.actionId,
       ...(lastVerificationId ? { lastVerificationId } : {}),
@@ -377,7 +384,7 @@ export class MobileDeviceExecution {
       || record.reconciliations?.some(item => item.reconciliationId === reconciliationId)) {
       throw new MobileDeviceExecutionError("invalid_request", "phone task has no unknown approved outcome to verify");
     }
-    const snapshotIsCurrent = () => Date.parse(snapshot.freshnessUntil) > Date.parse(this.#now())
+    const snapshotIsCurrent = () => snapshotIsFresh(snapshot, this.#now())
       && snapshot.connectionRevision === transport.connectionRevision;
     if (snapshot.deviceId !== targetId || profile.adapterId !== snapshot.adapterId || profile.adapterVersion !== snapshot.adapterVersion
       || ["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus) || !snapshotIsCurrent()) {
@@ -389,6 +396,11 @@ export class MobileDeviceExecution {
     if (!reader || !transport.verify || reader.sideEffect !== "read_only" || reader.approvalClass !== "allow"
       || !reader.requiredPermissions.every(permission => transport.permissions.includes(permission))) {
       throw new MobileDeviceExecutionError("unsupported_capability", "target readback capability is unavailable");
+    }
+    const retainedSnapshot = record.capabilitySnapshots?.find(item => item.snapshot.snapshotId === snapshot.snapshotId);
+    if (retainedSnapshot && (retainedSnapshot.profileRevision !== profile.profileRevision
+      || encodeBase64Url(canonicalJsonBytes(retainedSnapshot.snapshot)) !== encodeBase64Url(canonicalJsonBytes(snapshot)))) {
+      throw new MobileDeviceExecutionError("stale_snapshot", "readback reuses a snapshot ID for different capability evidence");
     }
     if (controller.signal.aborted) throw new MobileDeviceExecutionError("permission_denied", "phone readback authorization ended");
     const timeout = setTimeout(() => controller.abort(), reader.timeoutMs);
@@ -408,7 +420,11 @@ export class MobileDeviceExecution {
           ? { ...verification, status: "not_evaluable", checkedAt: at, observationIds: [] }
           : verification,
       };
-      await this.#journal.saveAttempt({ ...record, reconciliations: [...(record.reconciliations ?? []), reconciliation] });
+      await this.#journal.saveAttempt({
+        ...record, reconciliations: [...(record.reconciliations ?? []), reconciliation],
+        capabilitySnapshots: retainedSnapshot ? record.capabilitySnapshots
+          : [...(record.capabilitySnapshots ?? []), { snapshot, profileRevision: profile.profileRevision }],
+      });
       await this.#journal.saveTask(applyReconciliation(task, reconciliation));
       return reconciliation;
     } finally {
@@ -538,6 +554,11 @@ function isCurrentTargetObservation(observation: DeviceObservationV1, targetDevi
   return observation.subjectId === targetDeviceId && observation.redactionClass === "public"
     && (observation.quality === "good" || observation.quality === "degraded") && observation.provenance.includes(targetDeviceId)
     && Date.parse(observation.observedAt) <= Date.parse(now) && Date.parse(observation.freshnessUntil) > Date.parse(now);
+}
+
+function snapshotIsFresh(snapshot: DeviceCapabilitySnapshotV1, at: string): boolean {
+  const atMs = Date.parse(at);
+  return Date.parse(snapshot.observedAt) <= atMs && atMs < Date.parse(snapshot.freshnessUntil);
 }
 
 export function digestDeviceRequest(request: DeviceActionRequestV1): string {

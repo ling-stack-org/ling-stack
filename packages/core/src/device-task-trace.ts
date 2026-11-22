@@ -1,6 +1,7 @@
-import type {
-  DeviceActionAuthorityV1, DeviceApprovalBindingV1, DeviceTaskTraceCapabilitySnapshotV1,
-  DeviceTaskTraceV1, DeviceTraceLineageV1, DeviceTraceSpanV1, DeviceVerificationResultV1, JsonValue,
+import {
+  projectDeviceCapabilitySnapshotForTrace,
+  type DeviceActionAuthorityV1, type DeviceApprovalBindingV1, type DeviceTaskTraceCapabilitySnapshotV1,
+  type DeviceTaskTraceV1, type DeviceTraceLineageV1, type DeviceTraceSpanV1, type DeviceVerificationResultV1, type JsonValue,
 } from "@ling-stack/contracts";
 
 import { requireWorkspaceDeviceTask } from "./device-task-event-projector.js";
@@ -128,15 +129,7 @@ function projectSnapshot(
 ): DeviceTaskTraceCapabilitySnapshotV1 {
   const record = store.getRecordedCapabilitySnapshot(deviceId, snapshotId);
   if (!record || record.workspaceId !== workspaceId) return { state: "unavailable", deviceId, snapshotId };
-  const { adapterId, adapterVersion, contractMajor, connectionRevision, observedAt, freshnessUntil, capabilities } = record.snapshot;
-  return {
-    state: "recorded", deviceId, snapshotId, profileRevision: record.profileRevision,
-    adapterId, adapterVersion, contractMajor, connectionRevision, observedAt, freshnessUntil,
-    capabilities: capabilities.map(capability => ({
-      id: capability.id, schemaVersion: capability.schemaVersion, sideEffect: capability.sideEffect, approvalClass: capability.approvalClass,
-      ...(capability.verificationCapabilityId ? { verificationCapabilityId: capability.verificationCapabilityId } : {}),
-    })),
-  };
+  return projectDeviceCapabilitySnapshotForTrace(record.snapshot, record.profileRevision);
 }
 
 function projectAuthority(workspaceId: string, authority: DeviceActionAuthorityV1 | undefined, approval?: DeviceApprovalBindingV1): JsonValue {

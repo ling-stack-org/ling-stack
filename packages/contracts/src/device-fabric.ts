@@ -2,6 +2,7 @@ import {
   DEVICE_KINDS_V1,
   type CapabilityDescriptorV1,
   type CapabilitySideEffectV1,
+  type DeviceCapabilitySnapshotV1,
   type DeviceKindV1,
   type DeviceLifecycleStatusV1,
   type DeviceTaskStatusV1,
@@ -502,6 +503,19 @@ export type DeviceTaskTraceCapabilitySnapshotV1 = {
         "id" | "schemaVersion" | "sideEffect" | "approvalClass" | "verificationCapabilityId">[];
     }
 );
+
+export function projectDeviceCapabilitySnapshotForTrace(
+  snapshot: DeviceCapabilitySnapshotV1, profileRevision: string,
+): Extract<DeviceTaskTraceCapabilitySnapshotV1, { state: "recorded" }> {
+  const { deviceId, snapshotId, adapterId, adapterVersion, contractMajor, connectionRevision, observedAt, freshnessUntil } = snapshot;
+  return {
+    state: "recorded", deviceId, snapshotId, profileRevision, adapterId, adapterVersion, contractMajor, connectionRevision, observedAt, freshnessUntil,
+    capabilities: snapshot.capabilities.map(capability => ({
+      id: capability.id, schemaVersion: capability.schemaVersion, sideEffect: capability.sideEffect, approvalClass: capability.approvalClass,
+      ...(capability.verificationCapabilityId ? { verificationCapabilityId: capability.verificationCapabilityId } : {}),
+    })),
+  };
+}
 
 export interface DeviceConformanceReportV1 {
   readonly reportId: string;
