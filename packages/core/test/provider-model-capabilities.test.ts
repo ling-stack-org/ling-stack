@@ -6,7 +6,9 @@ import {
   resolveProviderModelCapabilitySnapshot,
 } from "../dist/index.js";
 
-function provider(overrides = {}) {
+type CapabilityPreset = NonNullable<Parameters<typeof resolveProviderModelCapabilitySnapshot>[0]>;
+
+function provider(overrides: Partial<CapabilityPreset> = {}): CapabilityPreset {
   return {
     id: "provider_test",
     kind: "openai-compatible",
