@@ -333,6 +333,10 @@ test("a queued Turn reaches Pi once after the source Run finishes and keeps its 
   assert.ok(turn);
   const request = { threadId: thread.id, expectedTurnId: turn.id, expectedTurnRevision: turn.updatedAt,
     message: "Check the follow-up candidate", idempotencyKey: "queue-next" };
+  for (const method of ["turn/queue", "turn/interrupt"]) {
+    await assert.rejects(client.call(method, { ...request, idempotencyKey: " \t " }), { code: "invalid_params" });
+  }
+  assert.deepEqual(fixture.getStore().listRunInterventions({ sourceRunId: started.run.id }), []);
   await assert.rejects(client.call("turn/queue", { ...request, expectedTurnRevision: "stale" }), { code: "stale_revision" });
   const current = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
   request.expectedTurnRevision = current.turn!.updatedAt;

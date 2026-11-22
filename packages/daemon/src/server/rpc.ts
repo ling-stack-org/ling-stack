@@ -1733,8 +1733,9 @@ class RpcConnection {
     const expectedRevision = readStringField(record, "expectedTurnRevision");
     const instruction = (readOptionalStringField(record, "message") ?? readStringField(record, "userInstruction")).trim();
     const idempotencyKey = readStringField(record, "idempotencyKey");
-    if (!instruction || instruction.length > 16_384 || idempotencyKey.length > 200 || /[\r\n]/u.test(idempotencyKey)) {
-      throw rpcError(-32602, "invalid_params", "Supply a message of up to 16384 characters and an idempotency key of up to 200 characters.");
+    if (!instruction || instruction.length > 16_384 || !idempotencyKey.trim()
+      || idempotencyKey.length > 200 || /[\r\n]/u.test(idempotencyKey)) {
+      throw rpcError(-32602, "invalid_params", "Supply a message of up to 16384 characters and a non-blank idempotency key of up to 200 characters.");
     }
     const store = this.context.storeRegistry.getStore(cwd);
     const thread = store.getLingThread(threadId);
