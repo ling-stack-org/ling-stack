@@ -152,3 +152,91 @@ test("PC process inspection distinguishes empty, malformed, unavailable and canc
   } });
   await assert.rejects(() => cancelled.readProcesses(stop.signal), stopped);
 });
+
+test("Linux log inspection requests only severity, source and native timestamps", async () => {
+  const executor = new LocalPcTargetExecutor({
+    platform: "linux",
+    runner: {
+      async run(file, args) {
+        assert.equal(file, "/usr/bin/journalctl");
+        assert.ok(args.includes("--priority=warning"));
+        assert.ok(args.includes("--lines=200"));
+        assert.ok(args.includes("--output-fields=PRIORITY,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_COMM"));
+        return { stdout: [
+          { PRIORITY: "3", __REALTIME_TIMESTAMP: "1795305600123456", _SYSTEMD_UNIT: "network.service", MESSAGE: "untrusted text" },
+          { PRIORITY: "4", SYSLOG_IDENTIFIER: "kernel", MESSAGE: "untrusted trace" },
+        ].map(entry => JSON.stringify(entry)).join("\n"), stderr: "", exitCode: 0 };
+      },
+    },
+  });
+  assert.deepEqual(await executor.readLogs(), [
+    { timestamp: "2026-11-22T00:00:00.123Z", level: "error", source: "network.service" },
+    { level: "warning", source: "kernel" },
+  ]);
+});
+
+test("macOS log inspection keeps the latest 200 metadata rows from a completed native stream", async () => {
+  const executor = new LocalPcTargetExecutor({
+    platform: "darwin",
+    runner: {
+      async run() { throw new Error("unnecessary buffered query"); },
+      async scanLines(file, args, consume) {
+        assert.equal(file, "/usr/bin/log");
+        assert.deepEqual(args, [
+          "show", "--last", "30s", "--style", "ndjson", "--no-backtrace", "--no-loss", "--no-signpost",
+          "--predicate", "logType == error OR logType == fault",
+        ]);
+        for (let index = 0; index < 203; index += 1) {
+          assert.equal(consume(JSON.stringify({
+            eventType: "logEvent", messageType: index === 202 ? "Fault" : "Error", subsystem: index === 202 ? "system.network" : "",
+            processImagePath: `/private/raw-path/worker-${index}`,
+            timestamp: "2026-11-22 07:15:30.123456+0800", source: null, eventMessage: "untrusted text",
+          })), true);
+        }
+        return consume('{"finished":1,"count":203}');
+      },
+    },
+  });
+  const entries = await executor.readLogs();
+  assert.equal(entries?.length, 200);
+  const expected = { timestamp: "2026-11-21T23:15:30.123Z", level: "error" };
+  assert.deepEqual(entries?.at(0), { ...expected, source: "worker-3" });
+  assert.deepEqual(entries?.at(-1), { ...expected, source: "system.network" });
+  assert.doesNotMatch(JSON.stringify(entries), /raw-path|untrusted text/u);
+});
+
+test("Windows system events use native numeric levels and return only provider metadata", async () => {
+  const executor = new LocalPcTargetExecutor({
+    platform: "win32",
+    runner: {
+      async run(file, args) {
+        assert.match(file, /powershell\.exe$/u);
+        assert.deepEqual(args.slice(0, 4), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
+        assert.match(args[4] ?? "", /Get-WinEvent -FilterHashtable .*Level = 1, 2, 3.*-MaxEvents 200/u);
+        assert.doesNotMatch(args[4] ?? "", /LevelDisplayName|\.Message\b/u);
+        return { stdout: JSON.stringify([
+          { time: "2026-11-22T00:00:01.5670000Z", level: 1, source: "Windows Provider", Message: "untrusted text" },
+          { time: "2026-11-22T00:00:00.1234567Z", level: 3, source: "设备提供程序" },
+        ]), stderr: "", exitCode: 0 };
+      },
+    },
+  });
+  assert.deepEqual(await executor.readLogs(), [
+    { timestamp: "2026-11-22T00:00:00.123Z", level: "warning", source: "设备提供程序" },
+    { timestamp: "2026-11-22T00:00:01.567Z", level: "error", source: "Windows Provider" },
+  ]);
+});
+
+test("native log inspection distinguishes a complete empty stream from a malformed or failed observation", async () => {
+  const inspect = (platform: NodeJS.Platform, stdout: string, exitCode: number) =>
+    new LocalPcTargetExecutor({ platform, runner: { async run() { return { stdout, stderr: "", exitCode }; } } });
+  assert.deepEqual(await inspect("darwin", '{"finished":1,"count":0}\n', 0).readLogs(), []);
+  assert.deepEqual(await inspect("linux", "", 0).readLogs(), []);
+  assert.deepEqual(await inspect("win32", "[]", 0).readLogs(), []);
+  assert.equal(await inspect("darwin", '{"finished":1,"count":0}\n', 1).readLogs(), undefined);
+  assert.equal(await inspect("darwin", '{"eventType":"logEvent","messageType":"Error"}\n', 0).readLogs(), undefined);
+  assert.equal(await inspect("darwin", '{"finished":1,"count":1}\n', 0).readLogs(), undefined);
+  assert.equal(await inspect("linux", "Native non-JSON output\n", 0).readLogs(), undefined);
+  assert.equal(await inspect("win32", "[null]", 0).readLogs(), undefined);
+  assert.equal(await inspect("freebsd", "", 0).readLogs(), undefined);
+});

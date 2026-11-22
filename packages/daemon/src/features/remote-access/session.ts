@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  REMOTE_PROTOCOL_LIMITS,
   REMOTE_PROTOCOL_VERSION,
   isDeviceRecoveryPlanV1,
   type RemoteAccessPolicySummaryV1,
@@ -8,6 +9,8 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteConversationDeltaV1,
+  type RemoteDeviceTaskJournalCommandV1,
+  type RemoteDeviceTaskJournalV1,
   type RemoteDeviceTaskSnapshotV1,
   type RemoteLifecycleCommandTypeV1,
   type RemoteServerEventPayloadMapV1,
@@ -33,6 +36,7 @@ import type { AuthenticatedRemoteSession } from "./pairing-auth-service.js";
 
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const MAX_COMMANDS_PER_MINUTE = 120;
+const MAX_JOURNAL_WATCHES = 4;
 
 interface RemoteStreamState {
   readonly id: string;
@@ -40,6 +44,11 @@ interface RemoteStreamState {
   snapshotId: string;
   serverSeq: number;
   ackServerSeq: number;
+}
+
+interface DeviceJournalWatch {
+  readonly request: RemoteDeviceTaskJournalCommandV1;
+  readonly ownerId: string;
 }
 
 export interface RemoteGatewaySessionOptions {
@@ -64,6 +73,8 @@ export class RemoteGatewaySession {
   private readonly now: () => string;
   private readonly controlStream: RemoteStreamState;
   private readonly streams = new Map<string, RemoteStreamState>();
+  private readonly journalWatches = new Map<string, DeviceJournalWatch>();
+  private journalPageServerSeq = 0;
   private readonly detach: () => void;
   private readonly routeExpiryMs?: number;
   private readonly routeTimer?: NodeJS.Timeout;
@@ -139,6 +150,30 @@ export class RemoteGatewaySession {
     }
   }
 
+  pushDeviceJournalPage(): void {
+    if (this.journalWatches.size === 0 || !this.checkAuthority()) return;
+    try {
+      this.assertCurrentJournalPrincipal();
+      if (this.controlStream.ackServerSeq < this.journalPageServerSeq
+        || this.options.channel.bufferedAmount > MAX_BUFFERED_BYTES - REMOTE_PROTOCOL_LIMITS.maxFrameBytes) return;
+      for (const [watchId, watch] of this.journalWatches) {
+        const journal = this.requireDeviceFacade(watch.request.workspaceId).taskJournal(watch.request);
+        if (journal.task.ownerId !== watch.ownerId) {
+          throw new RemoteAccessError("binding_changed", "The device journal owner changed.", true);
+        }
+        if (!journal.requiresSnapshot && journal.events.length === 0) continue;
+        if (this.sendEvent("device.task.journal_page", { watchId, journal }, this.controlStream)) {
+          this.journalPageServerSeq = this.controlStream.serverSeq;
+          this.journalWatches.delete(watchId);
+          this.journalWatches.set(watchId, this.nextJournalWatch(watch.request, journal));
+        }
+        return;
+      }
+    } catch {
+      this.close(1013, "Device journal unavailable; reconnect to resume.");
+    }
+  }
+
   revoke(reason: "revoked" | "replaced" | "disabled" | "identity_reset"): void {
     if (this.closed) {
       return;
@@ -155,7 +190,6 @@ export class RemoteGatewaySession {
     if (!this.checkAuthority()) {
       return;
     }
-    this.consumeRateLimit();
     let frame: RemoteClientFrameV1;
     try {
       frame = parseRemoteClientFrameV1(raw, { nowMs: Date.parse(this.now()) });
@@ -174,9 +208,16 @@ export class RemoteGatewaySession {
     }
     this.lastClientSeq = sequenceDecision.next;
     if (frame.type === "stream.ack") {
+      const { streamId, ackServerSeq } = frame.payload;
+      // Acknowledging one bounded journal page releases the next page even during a long catch-up.
+      const acknowledgesJournalPage = streamId === this.controlStream.id
+        && this.controlStream.ackServerSeq < this.journalPageServerSeq
+        && ackServerSeq >= this.journalPageServerSeq && ackServerSeq <= this.controlStream.serverSeq;
+      if (!acknowledgesJournalPage) this.consumeRateLimit();
       this.handleAck(frame.payload.streamId, frame.payload.ackServerSeq);
       return;
     }
+    this.consumeRateLimit();
     const commandType = frame.type as RemoteLifecycleCommandTypeV1;
     this.sendEvent("command.accepted", {
       commandId: frame.payload.commandId,
@@ -298,6 +339,34 @@ export class RemoteGatewaySession {
         this.complete(frame, { kind: "device_task_journal_read", journal });
         return;
       }
+      case "device.task.journal.watch": {
+        this.assertCurrentJournalPrincipal();
+        const request = frame.payload;
+        const facade = this.requireDeviceFacade(request.workspaceId);
+        if (this.journalWatches.has(request.commandId)) {
+          throw new RemoteAccessError("idempotency_conflict", "The device journal watch ID is already active.");
+        }
+        if (this.journalWatches.size >= MAX_JOURNAL_WATCHES) {
+          throw new RemoteAccessError("rate_limited", "Too many active device journal watches.", true);
+        }
+        const journal = facade.taskJournal(request);
+        this.journalWatches.set(request.commandId, this.nextJournalWatch(request, journal));
+        this.complete(frame, { kind: "device_task_journal_watching", journal });
+        this.journalPageServerSeq = this.controlStream.serverSeq;
+        return;
+      }
+      case "device.task.journal.unwatch": {
+        this.assertCurrentJournalPrincipal();
+        const { workspaceId, taskId, watchId } = frame.payload;
+        this.requireDeviceFacade(workspaceId);
+        const watch = this.journalWatches.get(watchId);
+        if (watch && watch.request.taskId !== taskId) {
+          throw new RemoteAccessError("binding_changed", "The device journal watch belongs to another task.");
+        }
+        this.journalWatches.delete(watchId);
+        this.complete(frame, { kind: "device_task_journal_unwatched" });
+        return;
+      }
       case "device.task.approve": {
         if (isDeviceRecoveryPlanV1(frame.payload.approval.recoveryScope) && !this.options.recoveryApprovals) {
           throw new RemoteAccessError("protocol_incompatible", "The client does not support recovery approvals.");
@@ -327,6 +396,22 @@ export class RemoteGatewaySession {
       default:
         throw new RemoteAccessError("protocol_incompatible", `Unsupported command: ${(payload as { commandId: string }).commandId}`);
     }
+  }
+
+  private assertCurrentJournalPrincipal(): void {
+    if (this.options.isPairedDeviceCurrent?.() === false) {
+      throw new RemoteAccessError("binding_changed", "The device journal pairing is no longer current.", true);
+    }
+  }
+
+  private nextJournalWatch(request: RemoteDeviceTaskJournalCommandV1, journal: RemoteDeviceTaskJournalV1): DeviceJournalWatch {
+    return {
+      ownerId: journal.task.ownerId,
+      request: {
+        ...request, generation: journal.generation,
+        afterSequence: journal.requiresSnapshot ? 0 : journal.afterSequence + journal.events.length,
+      },
+    };
   }
 
   private sendDeviceTaskSnapshot(snapshot: RemoteDeviceTaskSnapshotV1, requestId: string): void {
@@ -406,13 +491,13 @@ export class RemoteGatewaySession {
     payload: RemoteServerEventPayloadMapV1[TType],
     stream: RemoteStreamState,
     requestId?: string,
-  ): void {
+  ): boolean {
     if (!this.checkAuthority() || this.options.channel.readyState !== 1) {
-      return;
+      return false;
     }
     if (this.options.channel.bufferedAmount > MAX_BUFFERED_BYTES) {
       this.close(1013, "Remote client is too slow; resync required.");
-      return;
+      return false;
     }
     const occurredAt = this.now();
     stream.serverSeq += 1;
@@ -432,8 +517,10 @@ export class RemoteGatewaySession {
     } as RemoteServerFrameV1;
     try {
       this.options.channel.send(JSON.stringify(frame));
+      return true;
     } catch {
       this.close(1011, "Remote session transport failed.");
+      return false;
     }
   }
 
@@ -526,6 +613,7 @@ export class RemoteGatewaySession {
       return false;
     }
     this.closed = true;
+    this.journalWatches.clear();
     clearTimeout(this.routeTimer);
     this.detach();
     this.options.onClosed?.(this);
@@ -559,6 +647,9 @@ function commandCapability(
   }
   if (commandType === "device.task.journal") {
     return "device.journal";
+  }
+  if (commandType === "device.task.journal.watch" || commandType === "device.task.journal.unwatch") {
+    return "device.journal.watch";
   }
   if (commandType === "device.task.approve") {
     return "device.approve";

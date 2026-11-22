@@ -14,6 +14,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_PROTOCOL_LIMITS,
   type LingServerGatewayRouteV1,
   type RemoteAuthChallengeV1,
@@ -35,6 +36,7 @@ import { RemoteAccessStateStore } from "./state-store.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
 
 const deviceTaskProtocols = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
 ];
@@ -411,7 +413,7 @@ export class RemoteAccessController {
       gatewayId: this.auth.identity.gatewayId,
       facade,
       deviceFacade,
-      recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+      recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
       isPairedDeviceCurrent: () => {
         const state = this.auth.state();
         const device = state.pairedDevice;
@@ -484,7 +486,8 @@ export class RemoteAccessController {
   }
 
   private capabilities(deviceTaskProtocol: string): readonly RemoteCapabilityV1[] {
-    const supportsJournal = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3
+    const supportsJournalWatch = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5;
+    const supportsJournal = supportsJournalWatch || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3
       || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4;
     return [
       "conversation.read",
@@ -496,6 +499,7 @@ export class RemoteAccessController {
       ...(deviceTaskProtocol ? ["device.read" as const, "device.approve" as const, "device.revoke" as const] : []),
       ...(supportsJournal || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 ? ["device.reconcile" as const] : []),
       ...(supportsJournal ? ["device.journal" as const] : []),
+      ...(supportsJournalWatch ? ["device.journal.watch" as const] : []),
     ];
   }
 
@@ -503,7 +507,10 @@ export class RemoteAccessController {
     if (this.pollTimer) {
       return;
     }
-    this.pollTimer = setInterval(() => this.scheduleDrain(), 250);
+    this.pollTimer = setInterval(() => {
+      this.activeSession?.pushDeviceJournalPage();
+      this.scheduleDrain();
+    }, 250);
     this.pollTimer.unref();
   }
 

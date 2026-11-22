@@ -55,6 +55,8 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "device_list_requested",
     "device_task_status_requested",
     "device_task_journal_read",
+    "device_task_journal_watching",
+    "device_task_journal_unwatched",
     "device_task_approved",
     "device_task_revoked",
     "device_task_rechecked",
@@ -71,6 +73,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "conversation_list_requested":
     case "profile_read_requested":
     case "device_unpaired":
+    case "device_task_journal_unwatched":
       assertStrictKeys(record, ["kind"], [], path);
       return { kind };
     case "conversation_opened":
@@ -100,6 +103,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
       assertStrictKeys(record, ["kind", "taskId"], [], path);
       return { kind, taskId: expectIdentifier(record.taskId, `${path}.taskId`) };
     case "device_task_journal_read":
+    case "device_task_journal_watching":
       assertStrictKeys(record, ["kind", "journal"], [], path);
       return { kind, journal: validateDeviceTaskJournal(record.journal, `${path}.journal`) };
     case "device_task_approved":
@@ -165,6 +169,8 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "device.list": "device_list_requested",
   "device.task.status": "device_task_status_requested",
   "device.task.journal": "device_task_journal_read",
+  "device.task.journal.watch": "device_task_journal_watching",
+  "device.task.journal.unwatch": "device_task_journal_unwatched",
   "device.task.approve": "device_task_approved",
   "device.task.revoke": "device_task_revoked",
   "device.task.reconcile": "device_task_rechecked",
@@ -282,6 +288,15 @@ export function validateServerPayload<TType extends RemoteServerEventTypeV1>(
     case "device.task.snapshot":
       payload = validateDeviceTaskSnapshot(value, path);
       break;
+    case "device.task.journal_page": {
+      const record = expectRecord(value, path);
+      assertStrictKeys(record, ["watchId", "journal"], [], path);
+      payload = {
+        watchId: expectIdentifier(record.watchId, `${path}.watchId`),
+        journal: validateDeviceTaskJournal(record.journal, `${path}.journal`),
+      };
+      break;
+    }
   }
   return payload as RemoteServerEventPayloadMapV1[TType];
 }

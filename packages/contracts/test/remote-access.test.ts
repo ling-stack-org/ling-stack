@@ -30,6 +30,7 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "security.unpair",
     "device.read",
     "device.journal",
+    "device.journal.watch",
     "device.approve",
     "device.revoke",
     "device.reconcile",
@@ -51,6 +52,8 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "device.list",
     "device.task.status",
     "device.task.journal",
+    "device.task.journal.watch",
+    "device.task.journal.unwatch",
     "device.task.approve",
     "device.task.revoke",
     "device.task.reconcile",
@@ -61,9 +64,12 @@ test("remote V1 allowlists contain only the designed communication surface", () 
   assert.equal(clientCommands.has("file.read"), false);
   assert.equal(new Set<string>(REMOTE_LIFECYCLE_COMMAND_TYPES_V1).has("stream.ack"), false);
   assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("security.unpair"), true);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.task.journal.watch"), true);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.task.journal.unwatch"), true);
   assert.equal(new Set<string>(REMOTE_SERVER_EVENT_TYPES_V1).has("approval.summary"), false);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("conversation.delta"), true);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("profile.snapshot"), true);
+  assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("device.task.journal_page"), true);
 });
 
 test("remote V1 message execution policy cannot start tools or workflows", () => {

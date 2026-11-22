@@ -164,5 +164,15 @@ export function projectDeviceDiagnosticEvidence(
   if (request.capabilityId === "pc.inspect.processes" && observation.source === "pc.processes" && Array.isArray(fields.processes)) {
     return { value: { count: fields.processes.length }, hypotheses: [] };
   }
+  if (request.capabilityId === "pc.inspect.logs" && observation.source === "pc.logs" && Array.isArray(fields.entries)) {
+    const counts = { count: fields.entries.length, error: 0, warning: 0, unknown: 0 };
+    for (const entry of fields.entries) {
+      const level = entry && typeof entry === "object" && !Array.isArray(entry)
+        ? (entry as Record<string, JsonValue>).level
+        : undefined;
+      counts[level === "error" || level === "warning" ? level : "unknown"] += 1;
+    }
+    return { value: counts, hypotheses: [] };
+  }
   return undefined;
 }

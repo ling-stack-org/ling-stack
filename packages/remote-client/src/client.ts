@@ -8,6 +8,7 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteDeviceApprovalPreviewV1,
+  type RemoteDeviceTaskJournalCommandV1,
   type RemoteDeviceTaskJournalV1,
   type RemoteDeviceReconciliationPreviewV1,
   type RemoteConversationOpenCommandV1,
@@ -52,9 +53,18 @@ export interface RemoteCommandHandle<TResult> {
 }
 
 export interface RemoteDeviceTaskJournalWatchOptions {
-  readonly intervalMs?: number;
   readonly onUpdate: (journal: RemoteDeviceTaskJournalV1) => void;
   readonly onError?: (error: unknown) => void;
+}
+
+type DeviceJournalCursor = Pick<RemoteDeviceTaskJournalCommandV1, "generation" | "afterSequence" | "limit">;
+
+interface DeviceJournalWatch extends RemoteDeviceTaskJournalWatchOptions {
+  readonly taskId: string;
+  readonly workspaceId: string;
+  readonly assertCurrent: () => void;
+  cursor: DeviceJournalCursor;
+  ownerId?: string;
 }
 
 interface PendingCommand<TResult = unknown> {
@@ -86,6 +96,7 @@ export class RemoteSessionClient {
   private readonly outboundByMessage = new Map<string, PendingCommand>();
   private readonly streamSequences = new Map<string, number>();
   private readonly streamSnapshots = new Map<string, string>();
+  private readonly deviceJournalWatches = new Map<string, DeviceJournalWatch>();
   private socket?: RemoteMessageChannel;
   private detachSocket?: () => void;
   private authenticationAttempt?: AbortController;
@@ -261,74 +272,79 @@ export class RemoteSessionClient {
     });
   }
 
-  async readDeviceTaskJournal(taskId: string, cursor: {
-    readonly generation: number;
-    readonly afterSequence: number;
-    readonly limit?: number;
-  }): Promise<RemoteDeviceTaskJournalV1> {
+  async readDeviceTaskJournal(taskId: string, cursor: Omit<DeviceJournalCursor, "limit"> & { readonly limit?: number }): Promise<RemoteDeviceTaskJournalV1> {
     const { workspaceId, assertCurrent } = this.deviceTaskAuthority("device.journal");
-    const { generation, afterSequence, limit = REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 } = cursor;
-    if (!Number.isSafeInteger(generation) || generation < 1 || !Number.isSafeInteger(afterSequence) || afterSequence < 0
-      || !Number.isSafeInteger(limit) || limit < 1 || limit > REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1) {
-      throw new Error("remote_device_journal_invalid_cursor");
-    }
+    const normalized = normalizeDeviceJournalCursor(cursor);
     const handle = await this.sendCommand("device.task.journal", {
       commandId: await this.options.entropy.randomId("device_task_journal"),
-      workspaceId, taskId, generation, afterSequence, limit,
+      workspaceId, taskId, ...normalized,
     }, assertCurrent);
     const result = await handle.completion;
     assertCurrent();
-    if (result.kind !== "device_task_journal_read"
-      || result.journal.workspaceId !== workspaceId || result.journal.task.taskId !== taskId
-      || result.journal.afterSequence !== afterSequence || result.journal.events.length > limit
-      || result.journal.requiresSnapshot !== (result.journal.generation !== generation || afterSequence > result.journal.latestSequence)) {
-      throw new Error("remote_device_journal_binding_mismatch");
-    }
+    if (result.kind !== "device_task_journal_read") throw new Error("remote_device_journal_binding_mismatch");
+    assertDeviceJournalPage(result.journal, workspaceId, taskId, normalized);
     return result.journal;
   }
 
-  watchDeviceTaskJournal(taskId: string, options: RemoteDeviceTaskJournalWatchOptions): () => void {
-    const intervalMs = options.intervalMs ?? 3_000;
-    if (!Number.isSafeInteger(intervalMs) || intervalMs < 1_000 || intervalMs > 60_000) {
-      throw new Error("remote_device_journal_watch_interval_invalid");
-    }
+  watchDeviceTaskJournal(
+    taskId: string,
+    cursor: Omit<DeviceJournalCursor, "limit"> & { readonly limit?: number },
+    options: RemoteDeviceTaskJournalWatchOptions,
+  ): () => void {
+    const { workspaceId, assertCurrent } = this.deviceTaskAuthority("device.journal.watch");
+    const watch: DeviceJournalWatch = { ...options, taskId, workspaceId, assertCurrent, cursor: normalizeDeviceJournalCursor(cursor) };
     let active = true;
-    let inFlight = false;
-    let generation = 1;
-    let afterSequence = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-
-    const schedule = () => {
+    let watchId: string | undefined;
+    let sent = false;
+    const open = async () => {
+      const commandId = await this.options.entropy.randomId("device_journal_watch");
       if (!active) return;
-      timer = setTimeout(() => { void poll(); }, intervalMs);
+      watchId = commandId;
+      this.deviceJournalWatches.set(commandId, watch);
+      const handle = await this.sendCommand("device.task.journal.watch", { commandId, workspaceId, taskId, ...watch.cursor }, () => {
+        assertCurrent();
+        if (!active) throw new Error("remote_device_journal_watch_closed");
+        sent = true;
+      });
+      const result = await handle.completion;
+      if (result.kind !== "device_task_journal_watching") throw new Error("remote_device_journal_binding_mismatch");
     };
-    const poll = async (): Promise<void> => {
-      if (!active || inFlight) return;
-      inFlight = true;
-      try {
-        let page = await this.readDeviceTaskJournal(taskId, { generation, afterSequence });
-        if (page.requiresSnapshot) {
-          generation = page.generation;
-          afterSequence = 0;
-          page = await this.readDeviceTaskJournal(taskId, { generation, afterSequence });
-          if (page.requiresSnapshot) throw new Error("remote_device_journal_snapshot_unavailable");
-        }
-        if (!active) return;
-        generation = page.generation;
-        afterSequence = page.latestSequence;
-        options.onUpdate(page);
-      } catch (error) {
-        if (active) options.onError?.(error);
-      } finally {
-        inFlight = false;
-        schedule();
-      }
-    };
-    void poll();
+    void open().catch(error => {
+      if (watchId && !this.deviceJournalWatches.delete(watchId)) return;
+      if (active) options.onError?.(error);
+    });
     return () => {
+      if (!active) return;
       active = false;
-      if (timer) clearTimeout(timer);
+      if (!watchId || !this.deviceJournalWatches.delete(watchId) || !sent) return;
+      void this.stopDeviceJournalWatch(watchId, watch).catch(() => undefined);
     };
+  }
+
+  private async stopDeviceJournalWatch(watchId: string, watch: DeviceJournalWatch): Promise<void> {
+    watch.assertCurrent();
+    const handle = await this.sendCommand("device.task.journal.unwatch", {
+      commandId: await this.options.entropy.randomId("device_journal_unwatch"),
+      workspaceId: watch.workspaceId, taskId: watch.taskId, watchId,
+    }, watch.assertCurrent);
+    await handle.completion;
+  }
+
+  private applyDeviceJournalWatchPage(watchId: string, page: RemoteDeviceTaskJournalV1, initial: boolean): void {
+    const watch = this.deviceJournalWatches.get(watchId);
+    if (!watch) return;
+    watch.assertCurrent();
+    if (initial !== (watch.ownerId === undefined) || (watch.ownerId !== undefined && page.task.ownerId !== watch.ownerId)) {
+      throw new Error("remote_device_journal_binding_mismatch");
+    }
+    assertDeviceJournalPage(page, watch.workspaceId, watch.taskId, watch.cursor);
+    watch.ownerId = page.task.ownerId;
+    watch.cursor = {
+      ...watch.cursor,
+      generation: page.generation,
+      afterSequence: page.requiresSnapshot ? 0 : page.afterSequence + page.events.length,
+    };
+    watch.onUpdate(page);
   }
 
   async approveDeviceTask(taskId: string, preview: RemoteDeviceApprovalPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.approve"]>> {
@@ -518,6 +534,7 @@ export class RemoteSessionClient {
     this.clientSeq = 0;
     this.streamSequences.clear();
     this.streamSnapshots.clear();
+    this.controlStreamId = undefined;
     this.socket = socket;
     this.expectedSessionId = "proof" in authentication ? authentication.proof.candidateSessionId : undefined;
     let challengeRoute = "route" in authentication ? authentication.route : undefined;
@@ -600,11 +617,14 @@ export class RemoteSessionClient {
     }
     const previousSeq = this.streamSequences.get(frame.streamId) ?? 0;
     if (frame.serverSeq <= previousSeq) {
-      await this.sendAck(frame.streamId, previousSeq);
+      await this.sendAck(frame.streamId, previousSeq, generation, socket);
       this.assertCurrentSocket(generation, socket);
       return;
     }
     if (frame.serverSeq !== previousSeq + 1) {
+      if (this.deviceJournalWatches.size > 0 && frame.streamId === this.controlStreamId) {
+        throw new Error("remote_device_journal_stream_gap");
+      }
       this.streamSequences.set(frame.streamId, frame.serverSeq);
       await this.requestFullResync();
       this.assertCurrentSocket(generation, socket);
@@ -613,7 +633,7 @@ export class RemoteSessionClient {
     this.streamSequences.set(frame.streamId, frame.serverSeq);
     await this.applyFrame(frame, generation, socket);
     this.assertCurrentSocket(generation, socket);
-    await this.sendAck(frame.streamId, frame.serverSeq);
+    await this.sendAck(frame.streamId, frame.serverSeq, generation, socket);
     this.assertCurrentSocket(generation, socket);
     await this.persistCache();
     this.assertCurrentSocket(generation, socket);
@@ -625,6 +645,7 @@ export class RemoteSessionClient {
         if (frame.sessionId === "" || frame.payload.deviceId !== this.binding.deviceId) {
           throw new Error("remote_session_identity_mismatch");
         }
+        this.controlStreamId = frame.streamId;
         await this.activateWorkspaceBinding(frame.payload.policy.workspaceBindingId, generation, socket);
         this.dispatch({ type: "session_ready", policy: frame.payload.policy });
         this.readyResolve?.();
@@ -666,12 +687,23 @@ export class RemoteSessionClient {
         this.assertDeviceWorkspace(frame.payload.workspaceId);
         this.dispatch({ type: "device_task", snapshot: frame.payload });
         return;
+      case "device.task.journal_page":
+        if (frame.streamId !== this.controlStreamId) throw new Error("remote_device_journal_stream_mismatch");
+        this.applyDeviceJournalWatchPage(frame.payload.watchId, frame.payload.journal, false);
+        return;
       case "command.accepted":
         if (frame.payload.commandType === "conversation.send_text") {
           this.dispatch({ type: "send_accepted", commandId: frame.payload.commandId });
         }
         return;
       case "command.completed":
+        if (frame.payload.commandType === "device.task.journal.watch" && frame.payload.result.kind === "device_task_journal_watching") {
+          const pending = this.commands.get(frame.payload.commandId);
+          if (frame.streamId !== this.controlStreamId || (pending && pending.type !== frame.payload.commandType)) {
+            throw new Error("remote_device_journal_stream_mismatch");
+          }
+          this.applyDeviceJournalWatchPage(frame.payload.commandId, frame.payload.result.journal, true);
+        }
         this.completeCommand(frame.payload.commandId, frame.payload.result);
         if (frame.payload.commandType === "conversation.send_text") {
           this.dispatch({
@@ -723,8 +755,10 @@ export class RemoteSessionClient {
     return { commandId: payload.commandId, completion };
   }
 
-  private async sendAck(streamId: string, ackServerSeq: number): Promise<void> {
-    this.sendFrame("stream.ack", { streamId, ackServerSeq }, await this.options.entropy.randomId("ack"));
+  private async sendAck(streamId: string, ackServerSeq: number, generation: number, socket: RemoteMessageChannel): Promise<void> {
+    const messageId = await this.options.entropy.randomId("ack");
+    this.assertCurrentSocket(generation, socket);
+    this.sendFrame("stream.ack", { streamId, ackServerSeq }, messageId);
   }
 
   private sendFrame<T extends RemoteClientCommandTypeV1>(
@@ -864,13 +898,13 @@ export class RemoteSessionClient {
     if (workspaceId !== this.requireDeviceWorkspaceId()) throw new Error("remote_device_workspace_mismatch");
   }
 
-  private deviceTaskAuthority(capability: "device.approve" | "device.revoke" | "device.reconcile" | "device.journal") {
+  private deviceTaskAuthority(capability: "device.approve" | "device.revoke" | "device.reconcile" | "device.journal" | "device.journal.watch") {
     const sessionId = this.requireSessionId();
     const workspaceId = this.requireDeviceWorkspaceId();
     const assertCurrent = () => {
       if (this.requireSessionId() !== sessionId || this.requireDeviceWorkspaceId() !== workspaceId
         || !this.stateValue.policy?.capabilities.includes(capability)) {
-        throw new Error(capability === "device.journal" ? "remote_device_journal_unavailable" : "remote_device_mutation_unavailable");
+        throw new Error(capability.startsWith("device.journal") ? "remote_device_journal_unavailable" : "remote_device_mutation_unavailable");
       }
     };
     assertCurrent();
@@ -886,6 +920,7 @@ export class RemoteSessionClient {
   }
 
   private currentSessionId?: string;
+  private controlStreamId?: string;
 
   private requireConnectedSocket(): RemoteMessageChannel {
     if (!this.socket || this.socket.readyState !== 1) {
@@ -924,6 +959,9 @@ export class RemoteSessionClient {
   }
 
   private rejectPendingCommands(message: string): void {
+    const watches = [...this.deviceJournalWatches.values()];
+    this.deviceJournalWatches.clear();
+    for (const watch of watches) watch.onError?.(new Error(message));
     for (const pending of this.commands.values()) {
       pending.reject(new Error(message));
       if (pending.type === "conversation.send_text") {
@@ -1009,6 +1047,23 @@ export class RemoteSessionClient {
     if (!this.isConnectionActive(generation)) {
       throw new Error("remote_connection_invalidated");
     }
+  }
+}
+
+function normalizeDeviceJournalCursor(cursor: Omit<DeviceJournalCursor, "limit"> & { readonly limit?: number }): DeviceJournalCursor {
+  const { generation, afterSequence, limit = REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 } = cursor;
+  if (!Number.isSafeInteger(generation) || generation < 1 || !Number.isSafeInteger(afterSequence) || afterSequence < 0
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1) {
+    throw new Error("remote_device_journal_invalid_cursor");
+  }
+  return { generation, afterSequence, limit };
+}
+
+function assertDeviceJournalPage(page: RemoteDeviceTaskJournalV1, workspaceId: string, taskId: string, cursor: DeviceJournalCursor): void {
+  if (page.workspaceId !== workspaceId || page.task.taskId !== taskId || page.afterSequence !== cursor.afterSequence
+    || page.events.length > cursor.limit
+    || page.requiresSnapshot !== (page.generation !== cursor.generation || cursor.afterSequence > page.latestSequence)) {
+    throw new Error("remote_device_journal_binding_mismatch");
   }
 }
 

@@ -52,7 +52,7 @@ export function createHomeAssistantOfflinePlaybook(entityId: string): DevicePlay
 export function createPcSoftwareDiagnosisPlaybook(): DevicePlaybookV1 {
   return {
     id: "pc-software-diagnosis",
-    version: "1.1.0",
+    version: "1.2.0",
     displayName: "PC software and network diagnosis",
     supportedDeviceKinds: ["pc", "linux"],
     riskClass: "read_only",
@@ -61,6 +61,7 @@ export function createPcSoftwareDiagnosisPlaybook(): DevicePlaybookV1 {
       { id: "inspect-network", capabilityId: "pc.inspect.network", input: {} },
       { id: "inspect-services", capabilityId: "pc.inspect.services", input: {} },
       { id: "inspect-processes", capabilityId: "pc.inspect.processes", input: {} },
+      { id: "inspect-logs", capabilityId: "pc.inspect.logs", input: {} },
     ],
   };
 }

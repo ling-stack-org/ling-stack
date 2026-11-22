@@ -3,6 +3,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_PROTOCOL_VERSION,
   type LingServerGatewayRouteV1,
   type RemoteAuthProofV1,
@@ -67,6 +68,7 @@ export async function openRemoteSessionChannel(
   const proof = await createRemoteSessionProof(context, response.body);
   context.assertCurrent();
   const socket = options.webSocketFactory(remoteWebSocketUrl(binding.gatewayOrigin), [
+    REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
     REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
     REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
     REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,

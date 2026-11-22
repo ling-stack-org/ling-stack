@@ -37,6 +37,12 @@ export interface PcProcessInfo {
   readonly name: string;
 }
 
+export interface PcLogEntry {
+  readonly timestamp?: string;
+  readonly level: "warning" | "error" | "unknown";
+  readonly source: string;
+}
+
 export const PC_INSPECTION_TIMEOUT_MS = 10_000;
 const PC_INVENTORY_RESPONSE_BYTES_LIMIT = 256 * 1024;
 
@@ -45,6 +51,7 @@ export interface PcTargetExecutor {
   readNetwork(signal?: AbortSignal): Promise<PcNetworkStatus>;
   readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[] | undefined>;
   readProcesses(signal?: AbortSignal): Promise<readonly PcProcessInfo[] | undefined>;
+  readLogs(signal?: AbortSignal): Promise<readonly PcLogEntry[] | undefined>;
   repairNetwork(input: { readonly mode: "refresh_dhcp" | "restart_network"; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly changed: boolean }>;
 }
 
@@ -55,7 +62,7 @@ export interface PcAdapterOptions {
 
 const pcManifest: AdapterManifestV1 = {
   adapterId: "pc-target-executor",
-  adapterVersion: "1.1.0",
+  adapterVersion: "1.2.0",
   contractMajor: 1,
   supportedDeviceKinds: ["pc"],
   supportedTransports: ["local_process", "ssh", "winrm"],
@@ -117,6 +124,23 @@ const pcManifest: AdapterManifestV1 = {
       supportedDeviceKinds: ["pc"],
       supportedTransports: ["local_process"],
       displayMetadata: { label: "Inspect processes", category: "diagnostics" },
+    },
+    {
+      id: "pc.inspect.logs",
+      schemaVersion: "1.0",
+      semanticVerb: "inspect.logs",
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      sideEffect: "read_only",
+      approvalClass: "allow",
+      requiredPermissions: ["pc.logs.read"],
+      prerequisites: [],
+      timeoutMs: PC_INSPECTION_TIMEOUT_MS,
+      responseBytesLimit: PC_INVENTORY_RESPONSE_BYTES_LIMIT,
+      idempotency: "request",
+      supportedDeviceKinds: ["pc"],
+      supportedTransports: ["local_process"],
+      displayMetadata: { label: "Inspect system log diagnostics", category: "diagnostics" },
     },
     {
       id: "pc.repair.network",
@@ -196,6 +220,15 @@ export class PcAdapter implements DeviceAdapter {
       const evidence = processes && { processes: processes.map(({ pid, name }) => ({ pid, name })) };
       return completedInventory(input, startedAt, evidence, "pc.processes");
     }
+    if (input.capability.id === "pc.inspect.logs") {
+      const logs = await this.#executor.readLogs(input.signal);
+      const evidence = logs && {
+        entries: logs.map(({ timestamp, level, source }) => ({
+          ...(timestamp === undefined ? {} : { timestamp }), level, source,
+        })),
+      };
+      return completedInventory(input, startedAt, evidence, "pc.logs");
+    }
     if (input.capability.id === "pc.repair.network") {
       const mode = isNetworkRepairMode(input.request.normalizedInput);
       const result = await this.#executor.repairNetwork({ mode, signal: input.signal });
@@ -230,7 +263,7 @@ function completedInventory(
   input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1 },
   startedAt: string,
   evidence: JsonValue | undefined,
-  source: "pc.services" | "pc.processes",
+  source: "pc.services" | "pc.processes" | "pc.logs",
 ): DeviceAdapterExecutionResult {
   if (!evidence || Buffer.byteLength(JSON.stringify(evidence)) > PC_INVENTORY_RESPONSE_BYTES_LIMIT) {
     return completedObservation(input, startedAt, { status: "unavailable" }, source, "unknown");

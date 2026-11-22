@@ -96,6 +96,52 @@ test("device journal frames bind cursor ranges to public events from the task ow
   ]) {
     assert.throws(() => parseRemoteServerFrameV1(JSON.stringify(completed({ ...page, events: [altered] }))));
   }
+
+  const watch = { ...command, type: "device.task.journal.watch", payload: { ...command.payload, commandId: "watch-journal" } };
+  const stop = {
+    ...command, type: "device.task.journal.unwatch",
+    payload: { commandId: "stop-watch", workspaceId: "workspace-1", taskId: "task-1", watchId: watch.payload.commandId },
+  };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(watch), { nowMs }), watch);
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(stop), { nowMs }), stop);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...watch, payload: { ...watch.payload, watchId: "extra-watch-id" },
+  }), { nowMs }), /unknown field/u);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...stop, payload: { ...stop.payload, watchId: "" },
+  }), { nowMs }), /allowed range/u);
+
+  const watchResult = {
+    ...completed(page),
+    payload: {
+      commandId: watch.payload.commandId, commandType: watch.type, completedAt: now,
+      result: { kind: "device_task_journal_watching", journal: page },
+    },
+  };
+  const unwatchResult = {
+    ...completed(page),
+    payload: {
+      commandId: stop.payload.commandId, commandType: stop.type, completedAt: now,
+      result: { kind: "device_task_journal_unwatched" },
+    },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(watchResult)), watchResult);
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(unwatchResult)), unwatchResult);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...watchResult, payload: { ...watchResult.payload, result: completed(page).payload.result },
+  })), /does not match command type/u);
+
+  const update = {
+    ...completed(page), type: "device.task.journal_page",
+    payload: { watchId: watch.payload.commandId, journal: page },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(update)), update);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...update, payload: { ...update.payload, journal: { ...page, streamId: "device-task:foreign-task" } },
+  })), /protocol literal/u);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...update, payload: { ...update.payload, journal: { ...page, requiresSnapshot: true } },
+  })), /projection is invalid/u);
 });
 
 test("pairing QR round-trips canonical wire encoding and rejects extra fields", () => {

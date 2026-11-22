@@ -14,6 +14,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   type DeviceActionRequestV1,
   type DeviceTaskV1,
   type LingServerGatewayRouteV1,
@@ -43,6 +44,7 @@ import { RemoteAccessStateStore } from "../dist/features/remote-access/state-sto
 import { PcAdapter } from "../dist/features/device-support/adapters/pc.js";
 
 const now = "2026-11-21T00:00:00.000Z";
+type JournalSessionCommand = "device.task.journal" | "device.task.journal.watch" | "device.task.journal.unwatch" | "stream.ack";
 const profile = {
   device: {
     id: "linux:workspace-1:board",
@@ -136,6 +138,7 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
       async readNetwork() { networkReads += 1; return { connected: networkConnected, gatewayReachable: true, dnsReachable: true }; },
       async readServices() { throw new Error("unexpected service read"); },
       async readProcesses() { throw new Error("unexpected process read"); },
+      async readLogs() { throw new Error("unexpected log read"); },
       async repairNetwork({ signal }) {
         repairCalls += 1;
         repairSignal = signal;
@@ -175,7 +178,7 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
     return {
       ready: ready.payload,
       sessionId: ready.sessionId,
-      async send<T extends "device.list" | "device.task.status" | "device.task.approve" | "device.task.revoke" | "device.task.reconcile" | "device.task.journal" | "stream.subscribe">(type: T, payload: RemoteClientCommandPayloadMapV1[T]) {
+      async send<T extends "device.list" | "device.task.status" | "device.task.approve" | "device.task.revoke" | "device.task.reconcile" | JournalSessionCommand | "stream.subscribe">(type: T, payload: RemoteClientCommandPayloadMapV1[T]) {
         clientSeq += 1;
         const messageId = `message-${clientSeq}`;
         socket.send(JSON.stringify({
@@ -395,6 +398,9 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
 
   const v3 = await connect([REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2]);
   assert.ok(v3.ready.policy.capabilities.includes("device.journal"));
+  assert.equal(v3.ready.policy.capabilities.includes("device.journal.watch"), false);
+  const legacyWatch = await v3.send("device.task.journal.watch", { ...cursor, commandId: "unsupported-watch" });
+  assert.equal((await waitForFrame(v3.frames, "command.failed", legacyWatch)).payload.error.code, "capability_not_allowed");
   const firstJournal = await readJournal(v3, { ...cursor, commandId: "journal-first" });
   assert.equal(firstJournal.events[0]?.kind, "task_created");
   assert.equal(firstJournal.events[0]?.sequence, 1);
@@ -440,10 +446,10 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
       key: createPublicKey({ format: "jwk", key: identity.publicKeyJwk }), dsaEncoding: "ieee-p1363",
     }, Buffer.from(gatewaySignature, "base64url")));
     let clientSeq = 0;
-    function send<T extends "device.task.journal" | "device.task.status" | "device.task.approve" | "stream.subscribe">(
+    function send<T extends JournalSessionCommand | "device.task.status" | "device.task.approve" | "stream.subscribe">(
       type: T, payload: RemoteClientCommandPayloadMapV1[T],
     ): string {
-      const messageId = payload.commandId;
+      const messageId = "commandId" in payload ? payload.commandId : `ack-${clientSeq + 1}`;
       transport.receive(JSON.stringify({
         version: 1, type, gatewayId: challenge.gatewayId, sessionId: challenge.candidateSessionId,
         messageId, clientSeq: ++clientSeq, sentAt: clock, expiresAt: new Date(Date.parse(clock) + 10_000).toISOString(),
@@ -570,6 +576,7 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
 
   const recoveryClient = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4);
   assert.ok(recoveryClient.ready.policy.capabilities.includes("device.journal"));
+  assert.equal(recoveryClient.ready.policy.capabilities.includes("device.journal.watch"), false);
   await recoveryClient.send("stream.subscribe", { commandId: "subscribe-v4-recovery", scope });
   const v4Status = await recoveryClient.send("device.task.status", { ...recoveryTaskScope, commandId: "status-v4-recovery" });
   assert.deepEqual((await waitForFrame(recoveryClient.frames, "device.task.snapshot", v4Status)).payload.task.pendingApproval?.recoveryPlan, recoveryPlan);
@@ -609,6 +616,79 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
   });
   const authority = metadata as { authority?: { approval?: { principal?: unknown } } };
   assert.deepEqual(authority.authority?.approval?.principal, { kind: "paired_mobile", deviceId, deviceEpoch: 1, sessionId: peerReady.sessionId });
+
+  const taskId = "journal-watch-task";
+  deviceStore.createTask(deviceTask(taskId, [target.device.id], { status: "planning" }), clock);
+  function appendJournalEvidence(observationId: string, redactionClass: "public" | "sensitive" = "public") {
+    deviceStore.appendObservation(taskId, {
+      id: observationId, subjectId: target.device.id, source: "pc.watch.fixture", value: { text: "private fixture detail" },
+      observedAt: clock, receivedAt: clock, freshnessUntil: clock,
+      quality: "good", provenance: [target.device.id], redactionClass,
+    }, clock);
+  }
+  appendJournalEvidence("watch-public-initial");
+  appendJournalEvidence("watch-sensitive", "sensitive");
+  const watchCursor = { ...cursor, taskId };
+  const watchClient = await connect([REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5]);
+  assert.ok(watchClient.ready.policy.capabilities.includes("device.journal.watch"));
+  const deniedWatch = await watchClient.send("device.task.journal.watch", { ...watchCursor, taskId: "other-workspace-task", commandId: "watch-foreign" });
+  assert.equal((await waitForFrame(watchClient.frames, "command.failed", deniedWatch)).payload.error.code, "workspace_not_allowed");
+  const watchStart = await watchClient.send("device.task.journal.watch", { ...watchCursor, commandId: "watch-ws" });
+  const initialWatch = await waitForFrame(watchClient.frames, "command.completed", watchStart);
+  assert.equal(initialWatch.payload.commandType, "device.task.journal.watch");
+  const initialWatchPage = initialWatch.payload.result.journal;
+  assert.equal(initialWatchPage.latestSequence, 3);
+  assert.deepEqual(initialWatchPage.events.map(event => event.sequence), [1]);
+  await delay(275);
+  assert.equal(watchClient.frames.some(frame => frame.type === "device.task.journal_page"), false);
+  await watchClient.send("stream.ack", { streamId: initialWatch.streamId, ackServerSeq: initialWatch.serverSeq });
+  const firstWatchPush = await waitForFrame(watchClient.frames, "device.task.journal_page");
+  assert.equal(firstWatchPush.streamId, initialWatch.streamId);
+  assert.equal(firstWatchPush.payload.watchId, "watch-ws");
+  assert.equal(firstWatchPush.payload.journal.hasMore, true);
+  assert.deepEqual(firstWatchPush.payload.journal.events.map(event => event.sequence), [2]);
+  await delay(275);
+  assert.equal(watchClient.frames.filter(frame => frame.type === "device.task.journal_page").length, 1);
+
+  const watchRoute = { ...recoveryRoute, routeAttemptId: "route-routed-journal-v5", features: [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5] };
+  const watchPeer = attach(watchRoute);
+  watchPeer.receive(await watchPeer.proof(watchRoute));
+  const routedWatchReady = await waitForFrame(watchPeer.events, "session.ready");
+  assert.ok(routedWatchReady.payload.policy.capabilities.includes("device.journal.watch"));
+  const resumedWatchId = watchPeer.send("device.task.journal.watch", { ...watchCursor, afterSequence: 2, commandId: "watch-peer" });
+  const resumedWatch = await waitForFrame(watchPeer.events, "command.completed", resumedWatchId);
+  assert.equal(resumedWatch.payload.commandType, "device.task.journal.watch");
+  const resumedWatchPage = resumedWatch.payload.result.journal;
+  assert.deepEqual(resumedWatchPage.events.map(event => [event.sequence, event.kind]), [[3, "journal_changed"]]);
+  assert.doesNotMatch(JSON.stringify(resumedWatchPage), /watch-sensitive|private fixture detail/u);
+  watchPeer.send("stream.ack", { streamId: resumedWatch.streamId, ackServerSeq: resumedWatch.serverSeq });
+  appendJournalEvidence("watch-live-public");
+  const routedWatchPush = await waitForFrame(watchPeer.events, "device.task.journal_page");
+  assert.equal(routedWatchPush.payload.watchId, "watch-peer");
+  assert.deepEqual(routedWatchPush.payload.journal.events.map(event => [event.sequence, event.evidenceRefs]), [[4, ["watch-live-public"]]]);
+  const unwatch = { workspaceId: DEFAULT_WORKSPACE_ID, taskId, watchId: "watch-peer" };
+  const wrongUnwatch = watchPeer.send("device.task.journal.unwatch", { ...unwatch, taskId: active.taskId, commandId: "unwatch-wrong-task" });
+  assert.equal((await waitForFrame(watchPeer.events, "command.failed", wrongUnwatch)).payload.error.code, "binding_changed");
+  const unwatchId = watchPeer.send("device.task.journal.unwatch", { ...unwatch, commandId: "unwatch-peer" });
+  const unwatched = await waitForFrame(watchPeer.events, "command.completed", unwatchId);
+  assert.deepEqual(unwatched.payload.result, { kind: "device_task_journal_unwatched" });
+  watchPeer.send("stream.ack", { streamId: routedWatchPush.streamId, ackServerSeq: routedWatchPush.serverSeq });
+  const repeatUnwatch = watchPeer.send("device.task.journal.unwatch", { ...unwatch, commandId: "unwatch-peer-again" });
+  assert.deepEqual((await waitForFrame(watchPeer.events, "command.completed", repeatUnwatch)).payload.result, { kind: "device_task_journal_unwatched" });
+  appendJournalEvidence("watch-after-unsubscribe");
+  await delay(275);
+  assert.equal(watchPeer.events.filter(frame => frame.type === "device.task.journal_page").length, 1);
+
+  const resetId = watchPeer.send("device.task.journal.watch", { ...watchCursor, commandId: "watch-reset", generation: 2, afterSequence: 4 });
+  const reset = await waitForFrame(watchPeer.events, "command.completed", resetId);
+  assert.equal(reset.payload.commandType, "device.task.journal.watch");
+  assert.equal(reset.payload.result.journal.requiresSnapshot, true);
+  assert.equal(reset.payload.result.journal.generation, 1);
+  assert.deepEqual(reset.payload.result.journal.events, []);
+  watchPeer.send("stream.ack", { streamId: reset.streamId, ackServerSeq: reset.serverSeq });
+  const resetPage = await waitForFrame(watchPeer.events, "device.task.journal_page", undefined, frame => frame.payload.watchId === "watch-reset");
+  assert.equal(resetPage.payload.journal.afterSequence, 0);
+  assert.deepEqual(resetPage.payload.journal.events.map(event => event.sequence), [1]);
 });
 
 function peerFixture() {
@@ -644,11 +724,15 @@ function peerFixture() {
   };
 }
 
-async function waitForFrame<T extends RemoteServerFrameV1["type"]>(frames: readonly RemoteServerFrameV1[], type: T, requestId?: string) {
+async function waitForFrame<T extends RemoteServerFrameV1["type"]>(
+  frames: readonly RemoteServerFrameV1[], type: T, requestId?: string,
+  predicate?: (frame: Extract<RemoteServerFrameV1, { type: T }>) => boolean,
+) {
   const deadline = Date.now() + 3_000;
   while (Date.now() < deadline) {
     const frame = frames.find((frame): frame is Extract<RemoteServerFrameV1, { type: T }> =>
-      frame.type === type && (requestId === undefined || frame.requestId === requestId));
+      frame.type === type && (requestId === undefined || frame.requestId === requestId)
+      && (predicate === undefined || predicate(frame as Extract<RemoteServerFrameV1, { type: T }>)));
     if (frame) return frame;
     await delay(10);
   }

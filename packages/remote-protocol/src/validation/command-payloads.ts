@@ -183,7 +183,17 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
       payload = validateDeviceTaskStatusCommand(value, path);
       break;
     case "device.task.journal":
+    case "device.task.journal.watch":
       payload = validateDeviceTaskJournalCommand(value, path);
+      break;
+    case "device.task.journal.unwatch":
+      assertStrictKeys(record, ["commandId", "workspaceId", "taskId", "watchId"], [], path);
+      payload = {
+        commandId: expectIdentifier(record.commandId, `${path}.commandId`),
+        workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+        taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+        watchId: expectIdentifier(record.watchId, `${path}.watchId`),
+      };
       break;
     case "device.task.approve":
       payload = validateDeviceTaskApproveCommand(value, path);

@@ -12,6 +12,7 @@ export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1 = "ling.device-tasks.v1";
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 = "ling.device-tasks.v2";
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3 = "ling.device-tasks.v3";
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 = "ling.device-tasks.v4";
+export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5 = "ling.device-tasks.v5";
 export const REMOTE_DEVICE_RECENT_TASK_LIMIT_V1 = 20;
 export const REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 = 25;
 
@@ -96,6 +97,10 @@ export interface RemoteDeviceTaskJournalCommandV1 extends RemoteDeviceTaskStatus
   readonly limit: number;
 }
 
+export interface RemoteDeviceTaskJournalUnwatchCommandV1 extends RemoteDeviceTaskStatusCommandV1 {
+  readonly watchId: string;
+}
+
 export interface RemoteDeviceTaskJournalV1 {
   readonly workspaceId: string;
   readonly task: Pick<RemoteDeviceTaskSummaryV1, "taskId" | "ownerId" | "status" | "updatedAt" | "lastVerificationId">;
@@ -110,6 +115,20 @@ export interface RemoteDeviceTaskJournalV1 {
 
 export interface RemoteDeviceTaskJournalReadV1 {
   readonly kind: "device_task_journal_read";
+  readonly journal: RemoteDeviceTaskJournalV1;
+}
+
+export interface RemoteDeviceTaskJournalWatchingV1 {
+  readonly kind: "device_task_journal_watching";
+  readonly journal: RemoteDeviceTaskJournalV1;
+}
+
+export interface RemoteDeviceTaskJournalUnwatchedV1 {
+  readonly kind: "device_task_journal_unwatched";
+}
+
+export interface RemoteDeviceTaskJournalPageV1 {
+  readonly watchId: string;
   readonly journal: RemoteDeviceTaskJournalV1;
 }
 
@@ -160,6 +179,8 @@ export type RemoteDeviceCommandResultV1 =
   | RemoteDeviceTaskListRequestedV1
   | RemoteDeviceTaskStatusRequestedV1
   | RemoteDeviceTaskJournalReadV1
+  | RemoteDeviceTaskJournalWatchingV1
+  | RemoteDeviceTaskJournalUnwatchedV1
   | RemoteDeviceTaskApprovedV1
   | RemoteDeviceTaskRevokedV1
   | RemoteDeviceTaskRecheckedV1;

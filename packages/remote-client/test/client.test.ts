@@ -8,6 +8,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   type RemoteAuthProofV1,
   type RemoteCapabilityV1,
   type RemoteClientFrameV1,
@@ -65,7 +66,7 @@ class FakeSocket implements RemoteWebSocketLike {
   }
 }
 
-function createHarness() {
+function createHarness(beforeRandomId?: (prefix: string) => Promise<void> | undefined) {
   let binding: RemoteBindingV1 | undefined = {
     version: 1, status: "active", gatewayId, gatewayOrigin: "https://ling-pc.example.ts.net",
     gatewayIdentityPublicKeyJwk: fixture.gatewayIdentity.publicKeyJwk,
@@ -84,7 +85,13 @@ function createHarness() {
         binding,
         autoReconnect: false,
         clock: { now: () => now },
-        entropy: { randomBytes: length => new Uint8Array(length).fill(2), randomId: prefix => `${prefix}_${++sequence}` },
+        entropy: {
+          randomBytes: length => new Uint8Array(length).fill(2),
+          randomId: prefix => {
+            const id = `${prefix}_${++sequence}`;
+            return beforeRandomId?.(prefix)?.then(() => id) ?? id;
+          },
+        },
         keys: {
           generateOrLoad: async () => { throw new Error("not_used"); },
           sign: async () => fixture.authProof.signatureBase64Url,
@@ -120,6 +127,7 @@ function createHarness() {
         webSocketFactory: (url, subprotocol) => {
           assert.equal(url, "wss://ling-pc.example.ts.net/v1/session");
           assert.deepEqual(subprotocol, [
+            REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
             REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
             REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
           ]);
@@ -129,12 +137,13 @@ function createHarness() {
         },
       });
     },
-    async connect(client: RemoteSessionClient, capabilities: readonly RemoteCapabilityV1[] = legacyCapabilities) {
+    async connect(client: RemoteSessionClient, capabilities: readonly RemoteCapabilityV1[] = legacyCapabilities, beforeReady?: () => void) {
       const previous = sockets.length;
       const connecting = client.connect();
       await waitFor(() => sockets.length > previous && sockets[previous]!.events.listenerCount("open") > 0);
       const socket = sockets[previous]!;
       socket.open();
+      beforeReady?.();
       socket.message("session.ready", {
         deviceId, protocolVersion: 1, connectedAt: now,
         policy: {
@@ -365,40 +374,100 @@ test("device journal pages resume after reconnect and must match the requested t
   client.disconnect();
 });
 
-test("device journal watch resumes its cursor and stops polling when unsubscribed", async () => {
+test("device journal watch receives contiguous pages, restores a stale cursor and stops delivering after unsubscribe", async t => {
   const harness = createHarness();
   const client = harness.createClient();
-  const socket = await harness.connect(client, [...legacyCapabilities, "device.read", "device.journal"]);
-  const page = (sequence: number): RemoteDeviceTaskJournalV1 => ({
+  t.after(() => client.disconnect());
+  const legacy = [...legacyCapabilities, "device.read", "device.journal"] as const;
+  await harness.connect(client, legacy);
+  assert.throws(() => client.watchDeviceTaskJournal("task-1", { generation: 1, afterSequence: 0 }, { onUpdate: () => {} }), /journal_unavailable/u);
+  client.disconnect();
+
+  const capabilities = [...legacy, "device.journal.watch"] as const;
+  const socket = await harness.connect(client, capabilities);
+  const page = (sequence: number, latestSequence = 3): RemoteDeviceTaskJournalV1 => ({
     workspaceId: "default", task: { taskId: "task-1", ownerId: "pc-runtime", status: "succeeded", updatedAt: now },
-    streamId: "device-task:task-1", generation: 1, afterSequence: sequence - 1, latestSequence: sequence,
-    events: sequence === 0 ? [] : [{
+    streamId: "device-task:task-1", generation: 1, afterSequence: sequence - 1, latestSequence,
+    events: [{
       eventId: `device-task:task-1:${sequence}`, traceId: "device-task:task-1", streamId: "device-task:task-1",
       generation: 1, sourceId: "pc-runtime", sourceKind: "runtime", sequence, occurredAt: now,
       kind: "task_transition", payload: { from: "executing", to: "succeeded" }, redactionClass: "public", retentionClass: "durable",
-    }], hasMore: false, requiresSnapshot: false,
+    }], hasMore: sequence < latestSequence, requiresSnapshot: false,
   });
-  const updates: number[] = [];
+  const updates: RemoteDeviceTaskJournalV1[] = [];
   const errors: unknown[] = [];
-  const stop = client.watchDeviceTaskJournal("task-1", {
-    intervalMs: 1_000,
-    onUpdate: value => updates.push(value.latestSequence),
+  const watchOptions = {
+    onUpdate: (value: RemoteDeviceTaskJournalV1) => updates.push(value),
     onError: error => errors.push(error),
-  });
-  await waitFor(() => socket.frames().filter(frame => frame.type === "device.task.journal").length >= 1);
-  const firstFrame = socket.frames().find(frame => frame.type === "device.task.journal")!;
+  } satisfies Parameters<RemoteSessionClient["watchDeviceTaskJournal"]>[2];
+  const stop = client.watchDeviceTaskJournal("task-1", { generation: 2, afterSequence: 9, limit: 1 }, watchOptions);
+  await waitFor(() => socket.frames().some(frame => frame.type === "device.task.journal.watch"));
+  const firstFrame = socket.frames().find(frame => frame.type === "device.task.journal.watch")!;
+  const watchId = firstFrame.payload.commandId;
+  const stale = { ...page(1), afterSequence: 9, events: [], hasMore: false, requiresSnapshot: true };
   socket.message("command.completed", {
-    commandId: firstFrame.payload.commandId, commandType: "device.task.journal", completedAt: now,
-    result: { kind: "device_task_journal_read", journal: page(1) },
+    commandId: watchId, commandType: "device.task.journal.watch", completedAt: now,
+    result: { kind: "device_task_journal_watching", journal: stale },
   }, 2);
-  await waitFor(() => updates.length === 1 || errors.length > 0);
+  socket.message("device.task.journal_page", { watchId, journal: page(1) }, 3);
+  socket.message("device.task.journal_page", { watchId, journal: page(1) }, 3);
+  socket.message("device.task.journal_page", { watchId, journal: page(2) }, 4);
+  await waitFor(() => updates.length === 3 || errors.length > 0);
   assert.deepEqual(errors, []);
-  assert.deepEqual(updates, [1]);
+  assert.deepEqual(updates, [stale, page(1), page(2)]);
+  assert.equal(socket.frames().filter(frame => frame.type === "device.task.journal").length, 0);
+
   stop();
-  const frameCount = socket.frames().filter(frame => frame.type === "device.task.journal").length;
-  await delay(1_050);
-  assert.equal(socket.frames().filter(frame => frame.type === "device.task.journal").length, frameCount);
+  await waitFor(() => socket.frames().some(frame => frame.type === "device.task.journal.unwatch"));
+  const unwatch = socket.frames().find(frame => frame.type === "device.task.journal.unwatch")!;
+  assert.equal(unwatch.payload.watchId, watchId);
+  socket.message("device.task.journal_page", { watchId, journal: page(3) }, 5);
+  socket.message("command.completed", {
+    commandId: unwatch.payload.commandId, commandType: "device.task.journal.unwatch", completedAt: now,
+    result: { kind: "device_task_journal_unwatched" },
+  }, 6);
+  await waitFor(() => socket.frames().some(frame => frame.type === "stream.ack" && frame.payload.ackServerSeq === 6));
+  assert.equal(updates.length, 3);
+
   client.disconnect();
+  const reconnected = await harness.connect(client, capabilities);
+  const resume = client.watchDeviceTaskJournal("task-1", { generation: 1, afterSequence: 2, limit: 1 }, watchOptions);
+  await waitFor(() => reconnected.frames().some(frame => frame.type === "device.task.journal.watch"));
+  const resumed = reconnected.frames().find(frame => frame.type === "device.task.journal.watch")!;
+  assert.equal(resumed.payload.afterSequence, 2);
+  reconnected.message("command.completed", {
+    commandId: resumed.payload.commandId, commandType: "device.task.journal.watch", completedAt: now,
+    result: { kind: "device_task_journal_watching", journal: page(3) },
+  }, 2);
+  await waitFor(() => updates.length === 4 || errors.length > 0);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(updates.at(-1), page(3));
+  const foreign = { ...page(4, 4), workspaceId: "other-workspace" };
+  reconnected.message("device.task.journal_page", { watchId: resumed.payload.commandId, journal: foreign }, 3);
+  await waitFor(() => errors.length === 1);
+  assert.match(String(errors[0]), /journal_binding_mismatch/u);
+  assert.equal(updates.length, 4);
+  resume();
+});
+
+test("an ACK waiting for entropy cannot advance the sequence of a replacement session", async t => {
+  let holdNextAck = false;
+  let releaseAck: (() => void) | undefined;
+  const harness = createHarness(prefix => {
+    if (prefix !== "ack" || !holdNextAck) return undefined;
+    holdNextAck = false;
+    return new Promise(resolve => { releaseAck = resolve; });
+  });
+  const client = harness.createClient();
+  t.after(() => { releaseAck?.(); client.disconnect(); });
+  const first = await harness.connect(client);
+  holdNextAck = true;
+  first.message("profile.snapshot", { workspaceId: "default", displayName: "PC", revision: 0, updatedAt: now }, 2);
+  await waitFor(() => releaseAck !== undefined);
+  client.disconnect();
+  const replacement = await harness.connect(client, legacyCapabilities, () => releaseAck?.());
+  assert.deepEqual(replacement.frames().map(frame => frame.clientSeq), [1, 2]);
+  assert.equal(replacement.frames().some(frame => frame.type === "stream.ack" && frame.payload.ackServerSeq === 2), false);
 });
 
 async function waitFor(predicate: () => boolean) {

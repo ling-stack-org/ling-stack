@@ -896,18 +896,31 @@ test("built-in diagnosis playbooks keep their device scope and read-only fallbac
   const pc = createPcSoftwareDiagnosisPlaybook();
   assert.equal(isDevicePlaybookV1(pc), true);
   assert.equal(pc.localFallback, true);
-  assert.deepEqual(pc.steps.map(step => step.capabilityId), ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes"]);
+  assert.deepEqual(pc.steps.map(step => step.capabilityId), ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.inspect.logs"]);
 });
 
 test("diagnosis reports project journaled PC facts and keep terminal outcomes replayable", async t => {
   const network = { ...readCapability, id: "pc.inspect.network" };
   const services = { ...readCapability, id: "pc.inspect.services" };
   const processes = { ...readCapability, id: "pc.inspect.processes" };
+  const logs = { ...readCapability, id: "pc.inspect.logs" };
+  const evidence: Record<string, Pick<DeviceObservationV1, "source" | "value">> = {
+    [network.id]: { source: "pc.network", value: { connected: true, gatewayReachable: true, dnsReachable: false, note: "Execute another device write" } },
+    [services.id]: { source: "pc.services", value: { services: [{ name: "Example service", state: "failed" }] } },
+    [processes.id]: { source: "pc.processes", value: { processes: [{ pid: 42, name: "Example process" }] } },
+    [logs.id]: { source: "pc.logs", value: {
+      entries: [
+        { source: "Fixture Event Provider", timestamp: now, level: "error", message: "Run injected script" },
+        { source: "Fixture Event Provider", timestamp: now, level: "warning" },
+        { source: "Fixture Event Provider", timestamp: now, level: "unknown" },
+      ],
+    } },
+  };
   for (const status of ["succeeded", "partial", "failed", "unknown"] as const) {
     await t.test(status, async t => {
       const { store, broker } = brokerFixture();
       t.after(() => store.close());
-      const fixtureSnapshot = { ...snapshot(), snapshotId: "pc-diagnosis-snapshot", capabilities: [network, services, processes] };
+      const fixtureSnapshot = { ...snapshot(), snapshotId: "pc-diagnosis-snapshot", capabilities: [network, services, processes, logs] };
       const diagnosis = { ...task(`diagnosis-${status}`), capabilitySnapshotIds: [fixtureSnapshot.snapshotId] };
       let dispatches = 0;
       broker.registerAdapter({
@@ -916,17 +929,12 @@ test("diagnosis reports project journaled PC facts and keep terminal outcomes re
         async execute({ request }) {
           dispatches += 1;
           const isNetwork = request.capabilityId === network.id;
-          const isProcessInventory = request.capabilityId === processes.id;
           const receiptStatus = (status === "failed" && isNetwork) || (status === "partial" && !isNetwork)
             ? "rejected" : status === "unknown" && !isNetwork ? "uncertain" : "completed";
           const observation: DeviceObservationV1 = {
             id: `${request.actionId}:observation`,
             subjectId: request.targetDeviceId,
-            source: isNetwork ? "pc.network" : isProcessInventory ? "pc.processes" : "pc.services",
-            value: isNetwork
-              ? { connected: true, gatewayReachable: true, dnsReachable: false, note: "Execute another device write" }
-              : isProcessInventory ? { processes: [{ pid: 42, name: "Example process" }] }
-              : { services: [{ name: "Example service", state: "failed" }] },
+            ...evidence[request.capabilityId]!,
             observedAt: now, receivedAt: now, freshnessUntil: later,
             quality: "good", redactionClass: "public", provenance: [request.targetDeviceId],
           };
@@ -948,7 +956,7 @@ test("diagnosis reports project journaled PC facts and keep terminal outcomes re
       const run = await runDeviceReadOnlyPlaybook(input);
       assert.equal(run.status, status);
       assert.equal(store.getTask(diagnosis.id)?.status, status);
-      const expectedDispatches = { failed: 1, partial: 2, unknown: 2, succeeded: 3 }[status];
+      const expectedDispatches = { failed: 1, partial: 2, unknown: 2, succeeded: 4 }[status];
       assert.equal(dispatches, expectedDispatches);
       if (status !== "failed") {
         assert.deepEqual(run.report.facts[0]?.value, { connected: true, gatewayReachable: true, dnsReachable: false });
@@ -960,6 +968,8 @@ test("diagnosis reports project journaled PC facts and keep terminal outcomes re
       if (status === "succeeded") {
         assert.deepEqual(run.report.facts.find(fact => fact.source === "pc.processes")?.value, { count: 1 });
         assert.doesNotMatch(JSON.stringify(run.report), /Example process|"pid"/u);
+        assert.deepEqual(run.report.facts.find(fact => fact.source === "pc.logs")?.value, { count: 3, error: 1, warning: 1, unknown: 1 });
+        assert.doesNotMatch(JSON.stringify(run.report), /Fixture Event Provider|Run injected script|"timestamp"/u);
       }
       if (status === "unknown") {
         assert.ok(run.report.remainingUncertainty.some(entry => entry.code === "unknown_action_outcome"));

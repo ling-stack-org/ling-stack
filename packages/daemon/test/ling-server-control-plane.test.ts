@@ -9,12 +9,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerSignalingInputV1, type LingServerSignedSignalingV1 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, type LingServerSignalingInputV1, type LingServerSignedSignalingV1 } from "@ling-stack/contracts";
 import { fingerprintPublicJwkSync, lingServerPairingPinChallengeBytes, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 
 test("self-hosted Ling Server control plane requires auth and preserves route fallback", async () => {
-  const control = new LingServerControlPlane({ authToken: "server-token", now: () => "2026-11-21T00:00:00.000Z", transport: { stunUrls: ["stun:stun.ling.example:3478"], turnUrls: ["turns:turn.ling.example:443"], relaySharedSecret: "0123456789abcdef" } });
+  const control = new LingServerControlPlane({ authToken: "server-token", now: () => "2026-11-21T00:00:00.000Z", transport: {
+    features: ["ordered-channel", REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, "ordered-channel"],
+    stunUrls: ["stun:stun.ling.example:3478"], turnUrls: ["turns:turn.ling.example:443"], relaySharedSecret: "0123456789abcdef",
+  } });
   const address = await control.start();
   try {
     const health = await fetch(`http://${address.host}:${address.port}/healthz`);
@@ -34,7 +37,9 @@ test("self-hosted Ling Server control plane requires auth and preserves route fa
     const configInput = { bindingId: "binding-1", routeAttemptId: "route-1", role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:04:00.000Z" };
     const config = await fetch(configUrl, { method: "POST", headers, body: JSON.stringify(configInput) });
     assert.equal(config.status, 200);
-    assert.equal((await config.json()).route, "direct");
+    const configBody = await config.json() as { readonly route: string; readonly features: readonly string[] };
+    assert.equal(configBody.route, "direct");
+    assert.deepEqual(configBody.features, [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, "ordered-channel"]);
     const wrongKey = await fetch(configUrl, { method: "POST", headers, body: JSON.stringify({ ...configInput, localKeyFingerprint: "different-fingerprint" }) });
     assert.equal(wrongKey.status, 400);
     const diagnostics = await fetch(`http://${address.host}:${address.port}/v1/routes/diagnostics`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", routeAttemptId: "route-1", diagnosticId: "diag-1", checks: [{ id: "control_reachability", status: "pass", code: "reachable" }] }) });

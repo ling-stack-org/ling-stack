@@ -36,6 +36,7 @@ export function PcDeviceTasksScreen() {
   const { connection, deviceOverview, deviceOverviewCurrent, deviceTask, deviceTaskCurrent } = remoteState;
   const canRead = remoteState.policy?.capabilities.includes("device.read") === true;
   const canReadJournal = remoteState.policy?.capabilities.includes("device.journal") === true;
+  const canWatchJournal = remoteState.policy?.capabilities.includes("device.journal.watch") === true;
   const canApprove = remoteState.policy?.capabilities.includes("device.approve") === true;
   const canRevoke = remoteState.policy?.capabilities.includes("device.revoke") === true;
   const canReconcile = remoteState.policy?.capabilities.includes("device.reconcile") === true;
@@ -229,6 +230,7 @@ export function PcDeviceTasksScreen() {
                           <PcDeviceTaskJournal
                             key={remoteState.workspaceBindingId}
                             client={client} taskId={task.taskId} connected={connected && deviceOverviewCurrent === true}
+                            canWatch={canWatchJournal}
                             updatedAt={currentDetail?.updatedAt ?? task.updatedAt} theme={theme}
                           />
                         ) : null}

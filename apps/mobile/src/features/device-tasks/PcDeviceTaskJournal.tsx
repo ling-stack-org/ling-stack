@@ -19,11 +19,13 @@ const eventLabels: Readonly<Record<string, string>> = {
   attempt_reconciled: "已记录复测结果",
   observation_recorded: "已记录设备观察",
 };
+const LEGACY_JOURNAL_REFRESH_MS = 3_000;
 
-export function PcDeviceTaskJournal({ client, taskId, connected, updatedAt, theme }: {
+export function PcDeviceTaskJournal({ client, taskId, connected, canWatch, updatedAt, theme }: {
   readonly client: RemoteSessionClient;
   readonly taskId: string;
   readonly connected: boolean;
+  readonly canWatch: boolean;
   readonly updatedAt?: string;
   readonly theme: MobileThemeTokens;
 }) {
@@ -34,6 +36,9 @@ export function PcDeviceTaskJournal({ client, taskId, connected, updatedAt, them
   const [failed, setFailed] = useState(false);
   const retained = useRef<{ readonly view: RemoteDeviceTaskJournalV1; readonly navigation: typeof navigation }>(undefined);
   const styles = createStyles(theme);
+  const followLatest = navigation === undefined;
+  const following = canWatch && followLatest;
+  const legacyRevision = !canWatch && followLatest ? updatedAt : undefined;
 
   useEffect(() => {
     if (!connected) {
@@ -41,46 +46,66 @@ export function PcDeviceTaskJournal({ client, taskId, connected, updatedAt, them
       return;
     }
     let active = true;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const previous = retained.current?.view;
     const hasNavigation = navigation !== retained.current?.navigation;
-    const isResuming = previous !== undefined && !previous.hasMore && !hasNavigation;
-    const afterSequence = hasNavigation ? navigation?.afterSequence ?? 0
-      : isResuming ? previous.events.at(-1)?.sequence ?? previous.afterSequence
-      : previous?.afterSequence ?? 0;
+    const isResuming = previous !== undefined && (followLatest || (!previous.hasMore && !hasNavigation));
+    const afterSequence = isResuming ? previous.events.at(-1)?.sequence ?? previous.afterSequence
+      : hasNavigation ? navigation?.afterSequence ?? 0 : previous?.afterSequence ?? 0;
+    const cursor = { generation: previous?.generation ?? 1, afterSequence };
     setLoading(true);
     setFailed(false);
 
-    async function load() {
-      let page = await client.readDeviceTaskJournal(taskId, { generation: previous?.generation ?? 1, afterSequence });
-      if (!active) return;
+    function retainPage(page: RemoteDeviceTaskJournalV1, append: boolean) {
+      const before = retained.current?.view;
       if (page.requiresSnapshot) {
-        page = await client.readDeviceTaskJournal(taskId, { generation: page.generation, afterSequence: 0 });
-        if (!active) return;
-        if (page.requiresSnapshot) throw new Error("device journal generation changed");
-      } else if (isResuming) {
-        const events = [...previous.events, ...page.events].slice(-REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1);
+        page = { ...page, afterSequence: 0 };
+      } else if (append && before && before.generation === page.generation
+        && (before.events.at(-1)?.sequence ?? before.afterSequence) === page.afterSequence) {
+        const events = [...before.events, ...page.events].slice(-REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1);
         page = { ...page, events, afterSequence: events[0] ? events[0].sequence - 1 : page.afterSequence };
       }
       retained.current = { view: page, navigation };
       setView(page);
+      setLoading(page.requiresSnapshot && page.latestSequence > 0);
+    }
+
+    if (following) {
+      try {
+        return client.watchDeviceTaskJournal(taskId, cursor, {
+          onUpdate: page => retainPage(page, true),
+          onError: () => { setFailed(true); setLoading(false); },
+        });
+      } catch {
+        setFailed(true);
+        setLoading(false);
+        return;
+      }
+    }
+
+    async function load() {
+      let page = await client.readDeviceTaskJournal(taskId, cursor);
+      if (!active) return;
+      const append = isResuming && !page.requiresSnapshot;
+      if (page.requiresSnapshot) {
+        page = await client.readDeviceTaskJournal(taskId, { generation: page.generation, afterSequence: 0 });
+        if (!active) return;
+        if (page.requiresSnapshot) throw new Error("device journal generation changed");
+      }
+      retainPage(page, append);
     }
 
     void load().catch(() => { if (active) setFailed(true); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [client, connected, navigation, refresh, taskId, updatedAt]);
-
-  useEffect(() => {
-    if (!connected) return;
-    return client.watchDeviceTaskJournal(taskId, {
-      onUpdate: page => {
-        retained.current = { view: page, navigation: undefined };
-        setView(page);
-        setFailed(false);
-      },
-      onError: () => setFailed(true),
-    });
-  }, [client, connected, taskId]);
+      .finally(() => {
+        if (!active) return;
+        setLoading(false);
+        if (followLatest) refreshTimer = setTimeout(() => setRefresh(value => value + 1), LEGACY_JOURNAL_REFRESH_MS);
+      });
+    return () => {
+      active = false;
+      if (refreshTimer !== undefined) clearTimeout(refreshTimer);
+    };
+  }, [client, connected, followLatest, following, navigation, refresh, taskId, legacyRevision]);
 
   const button = (label: string, onPress: () => void) => (
     <Pressable accessibilityRole="button" accessibilityState={{ disabled: !connected || loading }}
@@ -105,6 +130,7 @@ export function PcDeviceTaskJournal({ client, taskId, connected, updatedAt, them
         {view?.hasMore && view.events.length > 0
           ? button("下一页", () => setNavigation({ afterSequence: view.events.at(-1)!.sequence }))
           : button("刷新日志", () => setRefresh(value => value + 1))}
+        {navigation ? button("跟随最新", () => setNavigation(undefined)) : null}
       </View> : null}
     </View>
   );

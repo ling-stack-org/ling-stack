@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
 import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import {
-  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
   type LingServerPairingPinProofV1, type LingServerPeerBindingV1, type LingServerRouteAttemptV1, type RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
 import {
@@ -107,7 +107,7 @@ export class LingServerControlPlane {
     this.#adminServer = adminServer;
     this.#signaling = new LingServerSignaling({
       registry: this.registry, protocolMajor: this.#transportOptions.protocolMajor ?? 1,
-      features: [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, ...(this.#transportOptions.features ?? [])],
+      features: this.transportFeatures(),
       now: this.#now, relayIssuer: this.#relayIssuer,
       stunUrls: this.#transportOptions.stunUrls ?? [], turnUrls: this.#transportOptions.turnUrls ?? [],
     });
@@ -138,6 +138,14 @@ export class LingServerControlPlane {
   adminAddress(): { readonly host: string; readonly port: number } | undefined {
     const bound = this.#adminServer?.address();
     return typeof bound === "object" && bound ? { host: bound.address, port: bound.port } : undefined;
+  }
+
+  private transportFeatures(): readonly string[] {
+    return [...new Set([
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+      ...(this.#transportOptions.features ?? []),
+    ])];
   }
 
   async handleRequest(request: IncomingMessage, response: ServerResponse, admin = true): Promise<void> {
@@ -211,7 +219,9 @@ export class LingServerControlPlane {
         const route = this.registry.requireRoute(input.routeAttemptId);
         const installation = this.registry.getInstallation(binding.installationId);
         if (!installation) throw new Error("installation is missing");
-        const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now, relayIssuer: this.#relayIssuer });
+        const planner = new LingServerTransportPlanner({
+          installation, ...this.#transportOptions, features: this.transportFeatures(), now: this.#now, relayIssuer: this.#relayIssuer,
+        });
         writeJson(response, 200, planner.createConfig({ binding, route, role: input.role, localKeyFingerprint: input.localKeyFingerprint, remoteKeyFingerprint: input.remoteKeyFingerprint, expiresAt: input.expiresAt }));
         return;
       }
