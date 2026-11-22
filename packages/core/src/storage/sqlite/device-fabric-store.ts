@@ -155,12 +155,24 @@ export class SqliteDeviceFabricStore {
 
   saveSnapshot(input: Omit<DeviceSnapshotRecord, "createdAt"> & { readonly createdAt?: string }): DeviceSnapshotRecord {
     if (!input.streamId.trim()) throw new Error("streamId is required");
-    if (!Number.isInteger(input.generation) || input.generation < 1) throw new Error("generation must be a positive integer");
-    if (!Number.isInteger(input.sequence) || input.sequence < 0) throw new Error("snapshot sequence must be a non-negative integer");
+    if (!Number.isSafeInteger(input.generation) || input.generation < 1) throw new Error("generation must be a positive integer");
+    if (!Number.isSafeInteger(input.sequence) || input.sequence < 0) throw new Error("snapshot sequence must be a non-negative integer");
     const record: DeviceSnapshotRecord = { ...input, createdAt: input.createdAt ?? new Date().toISOString() };
-    this.database.prepare("INSERT INTO device_fabric_snapshots(stream_id,generation,sequence,snapshot_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT(stream_id,generation) DO UPDATE SET sequence=excluded.sequence,snapshot_json=excluded.snapshot_json,created_at=excluded.created_at")
-      .run(record.streamId, record.generation, record.sequence, JSON.stringify(record.snapshot), record.createdAt);
-    return record;
+    if (!Number.isFinite(Date.parse(record.createdAt))) throw new Error("snapshot creation time is invalid");
+    return this.withWriteTransaction(() => {
+      const current = this.getSnapshot(record.streamId, record.generation);
+      if (current && current.sequence >= record.sequence) {
+        if (current.sequence === record.sequence && !isDeepStrictEqual(current.snapshot, record.snapshot)) {
+          throw new DeviceFabricError("revision_conflict", "snapshot sequence already has different evidence");
+        }
+        return current;
+      }
+      this.database.prepare(`
+        INSERT INTO device_fabric_snapshots(stream_id,generation,sequence,snapshot_json,created_at) VALUES(?,?,?,?,?)
+        ON CONFLICT(stream_id,generation) DO UPDATE SET sequence=excluded.sequence,snapshot_json=excluded.snapshot_json,created_at=excluded.created_at
+      `).run(record.streamId, record.generation, record.sequence, JSON.stringify(record.snapshot), record.createdAt);
+      return record;
+    });
   }
 
   getSnapshot(streamId: string, generation = 1): DeviceSnapshotRecord | undefined {

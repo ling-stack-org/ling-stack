@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { DeviceEventEnvelopeV1, JsonValue, LingServerPeerFrameV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "./device-fabric.js";
 import type { DeviceEventReadResult, DeviceSnapshotRecord } from "./storage/sqlite/device-fabric-store.js";
@@ -30,19 +32,33 @@ export interface DevicePeerSnapshotReceiveResult {
   readonly replayed: boolean;
 }
 
+interface DevicePeerStreamScope {
+  readonly sessionId: string;
+  readonly streamId: string;
+  readonly generation: number;
+}
+
 /** Binds owner-stream events to the authenticated peer session without exposing transport internals to projections. */
 export class DevicePeerEventSynchronizer {
   readonly #sessions: LingServerPeerSessionCoordinator;
-  readonly #store: DeviceEventAppendStore & DeviceEventProjectionStore;
+  readonly #store: DeviceEventAppendStore & Pick<DeviceEventProjectionStore, "getSnapshot" | "saveSnapshot">;
+  readonly #scope: DevicePeerStreamScope;
   readonly #now: () => string;
 
-  constructor(input: { readonly sessions: LingServerPeerSessionCoordinator; readonly store: DeviceEventAppendStore & DeviceEventProjectionStore; readonly now?: () => string }) {
+  constructor(input: {
+    readonly sessions: LingServerPeerSessionCoordinator;
+    readonly store: DeviceEventAppendStore & Pick<DeviceEventProjectionStore, "getSnapshot" | "saveSnapshot">;
+    readonly scope: DevicePeerStreamScope;
+    readonly now?: () => string;
+  }) {
     this.#sessions = input.sessions;
     this.#store = input.store;
+    this.#scope = { ...input.scope };
     this.#now = input.now ?? (() => new Date().toISOString());
   }
 
   publish(sessionId: string, event: DeviceEventEnvelopeV1, direction: LingServerPeerFrameV1["direction"] = "to_mobile"): DevicePeerEventPublishResult {
+    this.requireScope(sessionId, event.streamId ?? `${event.sourceKind}:${event.sourceId}`, event.generation ?? 1);
     const result = this.#sessions.sendFrame(sessionId, {
       frameId: `event:${event.eventId}`,
       direction,
@@ -54,28 +70,44 @@ export class DevicePeerEventSynchronizer {
   }
 
   publishSnapshot(sessionId: string, snapshot: DeviceSnapshotRecord, direction: LingServerPeerFrameV1["direction"] = "to_mobile"): DevicePeerEventPublishResult {
-    assertSnapshot(snapshot);
+    this.requireScope(sessionId, snapshot.streamId, snapshot.generation);
+    const payload: JsonValue = { type: "device_snapshot", snapshot: { ...snapshot } };
+    readPeerSnapshot(payload);
     return this.#sessions.sendFrame(sessionId, {
-      frameId: "snapshot:" + snapshot.streamId + ":" + snapshot.generation + ":" + snapshot.sequence,
+      frameId: `snapshot:${randomUUID()}`,
       direction,
       kind: "device_task",
-      payload: { type: "device_snapshot", snapshot: snapshot as unknown as JsonValue } as unknown as JsonValue,
+      payload,
       sentAt: this.#now(),
     });
   }
 
   receive(frame: LingServerPeerFrameV1): DevicePeerEventReceiveResult {
-    const accepted = this.#sessions.acceptFrame(frame);
+    if (frame.kind !== "device_task") throw new DeviceFabricError("invalid_graph", "peer frame must carry device task evidence");
     const event = readPeerEvent(frame.payload);
+    this.requireScope(frame.sessionId, event.streamId ?? `${event.sourceKind}:${event.sourceId}`, event.generation ?? 1);
+    const accepted = this.#sessions.acceptFrame(frame);
     const stored = this.#store.appendEvent(event, this.#now());
     return { frame: accepted.frame, event: stored.event, replayed: accepted.replayed || stored.replayed };
   }
 
   receiveSnapshot(frame: LingServerPeerFrameV1): DevicePeerSnapshotReceiveResult {
-    const accepted = this.#sessions.acceptFrame(frame);
+    if (frame.kind !== "device_task") throw new DeviceFabricError("invalid_graph", "peer frame must carry device task evidence");
     const snapshot = readPeerSnapshot(frame.payload);
+    this.requireScope(frame.sessionId, snapshot.streamId, snapshot.generation);
+    const accepted = this.#sessions.acceptFrame(frame);
+    const previous = this.#store.getSnapshot(snapshot.streamId, snapshot.generation);
     const saved = this.#store.saveSnapshot(snapshot);
-    return { frame: accepted.frame, snapshot: saved, replayed: accepted.replayed };
+    return {
+      frame: accepted.frame, snapshot: saved,
+      replayed: saved.sequence > snapshot.sequence || (previous !== undefined && previous.sequence === snapshot.sequence),
+    };
+  }
+
+  private requireScope(sessionId: string, streamId: string, generation: number): void {
+    if (sessionId !== this.#scope.sessionId || streamId !== this.#scope.streamId || generation !== this.#scope.generation) {
+      throw new DeviceFabricError("safety_denied", "device stream does not match the authorized peer session");
+    }
   }
 }
 
@@ -122,7 +154,7 @@ export class DeviceEventProjector {
     } catch (error) {
       if (error instanceof DeviceFabricError && error.code === "revision_conflict") {
         return {
-          status: stored ? "resync_required" : "resync_required",
+          status: "resync_required",
           streamId: this.#streamId,
           generation: this.#generation,
           sequence,
@@ -134,7 +166,7 @@ export class DeviceEventProjector {
       }
       throw error;
     }
-    if (result.hasGap) {
+    if (result.hasGap || result.events.some((event, index) => event.sequence !== sequence + index + 1)) {
       return {
         status: "resync_required",
         streamId: this.#streamId,
@@ -147,29 +179,23 @@ export class DeviceEventProjector {
       };
     }
     for (const event of result.events) {
-      if (event.sequence !== sequence + 1) {
-        return {
-          status: "resync_required",
-          streamId: this.#streamId,
-          generation: this.#generation,
-          sequence,
-          snapshot,
-          eventsApplied: 0,
-          hasMore: false,
-          reason: "sequence_gap",
-        };
-      }
       snapshot = this.#apply(snapshot, event);
       sequence = event.sequence;
     }
-    if (result.events.length > 0) this.#store.saveSnapshot({ streamId: this.#streamId, generation: this.#generation, sequence, snapshot, createdAt: this.#now() });
+    let eventsApplied = result.events.length;
+    if (eventsApplied > 0) {
+      const saved = this.#store.saveSnapshot({ streamId: this.#streamId, generation: this.#generation, sequence, snapshot, createdAt: this.#now() });
+      if (saved.sequence > sequence) eventsApplied = 0;
+      sequence = saved.sequence;
+      snapshot = saved.snapshot;
+    }
     return {
       status: "applied",
       streamId: this.#streamId,
       generation: this.#generation,
       sequence,
       snapshot,
-      eventsApplied: result.events.length,
+      eventsApplied,
       hasMore: result.latestSequence !== undefined && result.latestSequence > sequence,
     };
   }
@@ -188,22 +214,15 @@ function readPeerSnapshot(value: JsonValue): DeviceSnapshotRecord {
   if (!isRecord(value) || value.type !== "device_snapshot" || !isRecord(value.snapshot)) {
     throw new DeviceFabricError("revision_conflict", "peer frame does not contain a device snapshot");
   }
-  const snapshot = value.snapshot;
-  if (typeof snapshot.streamId !== "string" || !snapshot.streamId.trim()
-    || typeof snapshot.generation !== "number" || !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 1
-    || typeof snapshot.sequence !== "number" || !Number.isSafeInteger(snapshot.sequence) || snapshot.sequence < 0
-    || typeof snapshot.createdAt !== "string" || !Number.isFinite(Date.parse(snapshot.createdAt))
-    || !Object.hasOwn(snapshot, "snapshot")) {
+  const { streamId, generation, sequence, createdAt, snapshot } = value.snapshot;
+  if (typeof streamId !== "string" || !streamId.trim() || streamId.length > 512
+    || typeof generation !== "number" || !Number.isSafeInteger(generation) || generation < 1
+    || typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence < 0
+    || typeof createdAt !== "string" || !Number.isFinite(Date.parse(createdAt))
+    || snapshot === undefined || Object.keys(value.snapshot).length !== 5) {
     throw new DeviceFabricError("revision_conflict", "peer device snapshot is malformed");
   }
-  return snapshot as unknown as DeviceSnapshotRecord;
-}
-
-function assertSnapshot(snapshot: DeviceSnapshotRecord): void {
-  if (!snapshot.streamId.trim() || !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 1
-    || !Number.isSafeInteger(snapshot.sequence) || snapshot.sequence < 0 || !Number.isFinite(Date.parse(snapshot.createdAt))) {
-    throw new DeviceFabricError("revision_conflict", "device snapshot is invalid");
-  }
+  return { streamId, generation, sequence, createdAt, snapshot };
 }
 
 function isRecord(value: JsonValue): value is { readonly [key: string]: JsonValue } {

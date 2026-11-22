@@ -82,7 +82,7 @@ test("fabric store retains bounded event streams and resumes from a durable snap
   }
 });
 
-test("peer event synchronization preserves owner stream identity and idempotent replay", () => {
+test("peer snapshots recover the authorized event stream without rewinding its projection", t => {
   const registry = new LingServerPeerRegistry();
   registry.registerInstallation({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" });
   registry.bindPeers({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" });
@@ -95,19 +95,40 @@ test("peer event synchronization preserves owner stream identity and idempotent 
   receiver.openSession(session);
   const store = new SqliteDeviceFabricStore();
   const senderStore = new SqliteDeviceFabricStore();
-  const sync = new DevicePeerEventSynchronizer({ sessions: receiver, store, now: () => now });
-  const eventValue = event(1, { eventId: "peer-event-1", streamId: "task:peer", sourceId: "mobile-1" });
-  const outbound = new DevicePeerEventSynchronizer({ sessions: sender, store: senderStore, now: () => now }).publish("session-1", eventValue);
+  t.after(() => { senderStore.close(); store.close(); });
+  const scope = { sessionId: "session-1", streamId: "task:peer", generation: 1 };
+  const sync = new DevicePeerEventSynchronizer({ sessions: receiver, store, scope, now: () => now });
+  const publisher = new DevicePeerEventSynchronizer({ sessions: sender, store: senderStore, scope, now: () => now });
+  const eventValue = event(1, { eventId: "peer-event-1", streamId: scope.streamId, sourceId: "gateway-1" });
+  const outbound = publisher.publish(scope.sessionId, eventValue);
   assert.equal(sync.receive(outbound.frame).replayed, false);
   assert.equal(sync.receive(outbound.frame).replayed, true);
   assert.deepEqual(store.readEvents("task:peer", 1, 0).events.map(item => item.eventId), ["peer-event-1"]);
-  const snapshot = { streamId: "task:peer", generation: 1, sequence: 1, snapshot: { status: "succeeded" }, createdAt: now };
-  const snapshotOutbound = new DevicePeerEventSynchronizer({ sessions: sender, store: senderStore, now: () => now }).publishSnapshot("session-1", snapshot);
+  const snapshot = { streamId: scope.streamId, generation: 1, sequence: 3, snapshot: { count: 3 }, createdAt: now };
+  assert.throws(() => publisher.publishSnapshot(scope.sessionId, { ...snapshot, generation: 2 }), /authorized peer session/u);
+  const snapshotOutbound = publisher.publishSnapshot(scope.sessionId, snapshot);
+  assert.throws(() => sync.receiveSnapshot({
+    ...snapshotOutbound.frame, payload: { type: "device_snapshot", snapshot: { ...snapshot, streamId: "task:other" } },
+  }), /authorized peer session/u);
+  assert.equal(store.getSnapshot("task:other", 1), undefined);
   assert.equal(sync.receiveSnapshot(snapshotOutbound.frame).replayed, false);
   assert.equal(sync.receiveSnapshot(snapshotOutbound.frame).replayed, true);
   assert.deepEqual(store.getSnapshot("task:peer", 1)?.snapshot, snapshot.snapshot);
-  senderStore.close();
-  store.close();
+  const next = publisher.publish(scope.sessionId, { ...eventValue, eventId: "peer-event-4", sequence: 4 });
+  assert.equal(sync.receive(next.frame).event.sequence, 4);
+  const projector = new DeviceEventProjector({
+    store, streamId: scope.streamId, now: () => now,
+    apply: value => ({ count: (value as { count: number }).count + 1 }),
+  });
+  const projected = projector.sync({ count: 0 });
+  assert.equal(projected.eventsApplied, 1);
+  assert.deepEqual(projected.snapshot, { count: 4 });
+  assert.equal(sync.receiveSnapshot(snapshotOutbound.frame).snapshot.sequence, 4);
+  const resent = publisher.publishSnapshot(scope.sessionId, snapshot);
+  assert.equal(sync.receiveSnapshot(resent.frame).replayed, true);
+  const conflicting = publisher.publishSnapshot(scope.sessionId, { ...snapshot, sequence: 4, snapshot: { count: 100 } });
+  assert.throws(() => sync.receiveSnapshot(conflicting.frame), /different evidence/u);
+  assert.deepEqual(store.getSnapshot(scope.streamId, 1)?.snapshot, { count: 4 });
 });
 
 test("fabric store installs signed resources, preserves the previous revision, and rolls back", () => {
