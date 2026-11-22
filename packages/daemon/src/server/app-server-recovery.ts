@@ -15,7 +15,10 @@ type RecoveryConfig = Pick<ResolvedDaemonConfig, "appServerRecoveryDirectory">;
 type JournalFact =
   | { readonly kind: "grant_revocation"; readonly id: string }
   | { readonly kind: "external_agent_dispatch"; readonly id: string; readonly workItemId: string; readonly taskId: string; readonly submissionId: string }
-  | { readonly kind: "github_queue_enqueue"; readonly id: string; readonly workItemId: string; readonly repositoryId: string; readonly pullRequestNumber: number; readonly headSha: string }
+  | { readonly kind: "github_queue_enqueue"; readonly id: string; readonly workItemId: string; readonly repositoryId: string;
+      readonly pullRequestNumber: number; readonly headSha: string; readonly repository: string; readonly baseRef: string;
+      readonly deliveryId: string; readonly acceptanceId: string; readonly fingerprint: string; readonly idempotencyKey: string;
+      readonly createdAt: string }
   | { readonly kind: "github_delivery"; readonly id: string; readonly workItemId: string; readonly mergedCommit: string;
       readonly repositoryId: string; readonly number: number; readonly headSha?: string; readonly acceptanceId: string };
 
@@ -183,6 +186,14 @@ export class AppServerRecoveryJournal {
     return this.transaction(db => {
       assertReady(readEpoch(db));
       return insertFact(db, { kind: "github_queue_enqueue", ...fact }, now());
+    });
+  }
+
+  getGitHubQueueEnqueue(id: string): QueueFact | undefined {
+    return this.access(db => {
+      const row = db.prepare("SELECT id, kind, fact_json FROM recovery_journal WHERE kind='github_queue_enqueue' AND id=?").get(id);
+      const fact = row && readFact(row);
+      return fact?.kind === "github_queue_enqueue" ? fact : undefined;
     });
   }
 

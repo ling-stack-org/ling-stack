@@ -107,7 +107,7 @@ import {
 import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
 import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
-import { enqueueGitHubDelivery, readGitHubQueue } from "./app-server-github-enqueue.js";
+import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import { readWorkItemWorkflowStages } from "../features/work-items/workflow-stages.js";
 import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
@@ -196,6 +196,7 @@ const operatorMethods = new Set([
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
 const recoveryGuardedMethods = new Set([
+  "github/delivery/enqueue",
   "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
   "plan/accept", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
   "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/handoff/accept",
@@ -588,7 +589,7 @@ class RpcConnection {
             return task?.submissionId === fact.submissionId && task.workItemId === fact.workItemId
               && (task.status === "completed" || task.status === "cancelled");
           }
-          if (fact.kind === "github_queue_enqueue") return false;
+          if (fact.kind === "github_queue_enqueue") return gitHubQueueReceiptConfirmed(store, fact);
           const observed = readGitHubDelivery(store, fact.workItemId);
           return observed?.status === "delivered" && observed.mergedCommit === fact.mergedCommit
             && observed.subject.repositoryId === fact.repositoryId && observed.subject.number === fact.number
@@ -843,7 +844,12 @@ class RpcConnection {
       }
       case "github/delivery/enqueue": {
         const record = this.workspaceParams(params, true);
-        return enqueueGitHubDelivery(this.context, this.context.storeRegistry.getStore(record.cwd), record as never);
+        if (record.confirmed !== true) throw rpcError(-32602, "invalid_params", "Confirm queue admission with a request key.");
+        return enqueueGitHubDelivery(this.context, this.context.storeRegistry.getStore(record.cwd), {
+          workItemId: readStringField(record, "workItemId"), deliveryId: readStringField(record, "deliveryId"),
+          expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
+          idempotencyKey: readStringField(record, "idempotencyKey"), confirmed: true,
+        });
       }
       case "github/delivery/queue/read": {
         const record = this.workspaceParams(params, true);

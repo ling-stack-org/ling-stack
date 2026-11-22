@@ -27,6 +27,7 @@ import type {
   LingAppServerGitHubIntakePollResult,
   LingAppServerGitHubIntakeReceipt,
   LingAppServerGitHubDeliveryResult,
+  LingAppServerGitHubQueueResult,
   LingAppServerRecoveryResult,
   LingAppServerCoordinationSchedule,
   LingAppServerDeliberationDecideParams,
@@ -41,7 +42,6 @@ import type {
   LingAppServerVerifyOperation,
   LingAppServerVerifyPlanResult,
   LingAppServerVerifyStatusResult,
-  LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemAcceptResult,
   LingAppServerWorkItemControlResult,
   LingAppServerWorkItemReadResult,
@@ -1915,6 +1915,8 @@ test("GitHub delivery requires current queue membership and a provider-attested 
   const check = { name: "queue-verification", appId: 19, workflowId: 5, workflowPath,
     workflowSha256: createHash("sha256").update(workflow).digest("hex"), basis: "merge_group" as const, coverageRefs: ["queue-integration"] };
   const repository = "example/ling";
+  const credential = randomUUID();
+  const requiredGate = { name: "trusted-queue-gate", appId: 71 };
   const originalBase = "b".repeat(40);
   const advancedBase = "c".repeat(40);
   const firstGroup = "d".repeat(40);
@@ -1930,27 +1932,41 @@ test("GitHub delivery requires current queue membership and a provider-attested 
   let checkedEvent = "push";
   let merged = false;
   let finalTree = "2".repeat(40);
+  let guardPresent = false;
+  let queuePresent = false;
+  let queueStarts = 0;
   const fixture = await releaseFixture(t, {
-    secretResolver: createEnvSecretResolver({ LING_QUEUE_FIXTURE_AUTH: "test-provider-credential" }),
+    recoveryJournal: true,
+    secretResolver: createEnvSecretResolver({ LING_QUEUE_FIXTURE_AUTH: credential }),
     githubSources: cwd => [{
       workspaceRoot: cwd, repository, repositoryId: "73", secretRef: "env:LING_QUEUE_FIXTURE_AUTH",
-      deliveryPolicies: [{ baseRef: "main", requiredChecks: [check] }],
+      deliveryPolicies: [{ baseRef: "main", requiredChecks: [check], mergeQueue: { requiredGate } }],
     }],
     externalWorkFetch: async (input, init) => {
       const url = new URL(String(input));
       assert.equal(url.origin, "https://api.github.com");
       if (url.pathname === "/graphql") {
         assert.equal(init?.method, "POST");
-        assert.equal(new Headers(init.headers).get("Authorization"), "Bearer test-provider-credential");
+        assert.equal(new Headers(init.headers).get("Authorization"), "Bearer " + credential);
         const request = JSON.parse(String(init.body));
+        if (request.query.startsWith("mutation LingEnqueue")) {
+          assert.equal(request.variables.id, "pr-13");
+          assert.equal(request.variables.head, head);
+          assert.equal(queuePresent, false);
+          queuePresent = true;
+          queueStarts++;
+          throw new Error("The fixture loses the response after the provider accepts.");
+        }
         assert.deepEqual(request.variables, { owner: "example", name: "ling", number: 13 });
         assert.match(request.query, /mergeQueueEntry/);
         const pullRequest = { number: 13, headRefOid: head, baseRefName: "main" };
         const attributed = { ...pullRequest, headRefOid: unrelatedHead ? "9".repeat(40) : head };
+        const observeEntry = request.query.startsWith("query LingQueueSubject") ? pullRequest : attributed;
         return Response.json({ data: { repository: { fullDatabaseId: "73", nameWithOwner: repository,
-          pullRequest: { ...pullRequest, isInMergeQueue: true, mergeQueueEntry: {
-            id: "entry-13", baseCommit: { oid: entryBase }, headCommit: { oid: group, tree: { oid: tree } }, pullRequest: attributed,
-          } } } } });
+          pullRequest: { ...pullRequest, id: "pr-13", isInMergeQueue: queuePresent, closed: merged, merged, isDraft: false,
+            isMergeQueueEnabled: true, stackEntry: null, mergeQueueEntry: queuePresent ? {
+              id: "entry-13", baseCommit: { oid: entryBase }, headCommit: { oid: group, tree: { oid: tree } }, pullRequest: observeEntry,
+            } : null } } } });
       }
       const prefix = "/repos/" + repository;
       assert.ok(url.pathname.startsWith(prefix));
@@ -1962,6 +1978,11 @@ test("GitHub delivery requires current queue membership and a provider-attested 
         ...(merged ? { merge_commit_sha: finalCommit } : {}),
       });
       if (path === "/git/ref/heads/main") return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha: base } });
+      if (path === "/rules/branches/main") return Response.json(guardPresent ? [
+        { type: "merge_queue" }, { type: "required_status_checks", parameters: { required_status_checks: [
+          { context: check.name, integration_id: check.appId }, { context: requiredGate.name, integration_id: requiredGate.appId },
+        ] } },
+      ] : []);
       if (path === `/git/commits/${finalCommit}`) return Response.json({ sha: finalCommit, parents: [{ sha: base }], tree: { sha: finalTree } });
       if (path === "/actions/workflows/5/runs") {
         const tested = url.searchParams.get("head_sha");
@@ -2002,6 +2023,25 @@ test("GitHub delivery requires current queue membership and a provider-attested 
     workItemId: workItem.workItemId, threadId: thread.id, expectedWorkItemRevision: Number(accepted.workItem.revision),
     candidateDigest: candidate.candidateDigest, repository, pullRequestNumber: 13,
   })).delivery;
+  const beforeQueue = await reconcile();
+  assert.equal(beforeQueue.checks[0]?.reason, "merge_group_membership_unavailable");
+  const enqueue = { workItemId: workItem.workItemId, deliveryId: beforeQueue.deliveryId,
+    expectedWorkItemRevision: Number(accepted.workItem.revision), idempotencyKey: "enqueue-once", confirmed: true };
+  await assert.rejects(client.call("github/delivery/enqueue", enqueue), { code: "github_queue_guard_unavailable" });
+  assert.equal(queueStarts, 0);
+  guardPresent = true;
+  const first = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
+  assert.equal(first.receipt.status, "unknown");
+  const queued = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
+  assert.equal(queued.receipt.status, "enqueued");
+  assert.equal(queued.receipt.queueEntryId, "entry-13");
+  assert.equal(queueStarts, 1);
+  const { queueReceiptId } = queued.receipt;
+  assert.ok(fixture.getStore().deleteAppServerState("github_queue_intent", queueReceiptId));
+  assert.deepEqual(await client.call<LingAppServerGitHubQueueResult>("github/delivery/queue/read", {
+    workItemId: workItem.workItemId, queueReceiptId,
+  }), queued);
+  assert.equal(queueStarts, 1);
   assert.equal((await reconcile()).checks[0]?.reason, "merge_group_membership_unavailable");
   unrelatedHead = false;
   assert.equal((await reconcile()).checks[0]?.reason, "applicable_check_missing");
