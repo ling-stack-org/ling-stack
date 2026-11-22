@@ -445,6 +445,16 @@ An interrupted dispatch keeps its status when a later readback verifies the
 target. Each readback records its own connection revision.
 [Trace projection](../../packages/core/src/device-task-trace.ts)
 
+Use `GET /v1/device-support/tasks/:taskId/conformance?attemptId=...` on the same
+authenticated loopback API to capture a report from the owner journal. The report
+retains the journal sequence, target, adapter and profile revisions, declared
+transport when it is unambiguous, and the model turn when the attempt has one.
+Each check cites its snapshot, trace span or public observation. A readback needs
+same-target evidence. Checks with missing evidence have status `skip`. A later
+readback creates a report for the new journal sequence. Supply
+`?reportId=...` to retrieve a previously captured report from the same task.
+[Report projection](../../packages/core/src/device-task-conformance.ts)
+
 | Test layer | Evidence |
 | --- | --- |
 | Contract and state | Identity aliases, allowed exposure, profile/schema compatibility, revision changes, ordered journal replay and stale evidence. |

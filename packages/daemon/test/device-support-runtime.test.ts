@@ -10,12 +10,13 @@ import test from "node:test";
 import { WebSocketServer } from "ws";
 
 import type {
-  DeviceActionRequestV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
+  DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
   DeviceProfileV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
-  HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore,
+  HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceAttemptConformance, readOwnedDeviceTaskTrace,
+  SqliteDeviceFabricStore, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
 import { canonicalJsonBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
@@ -550,6 +551,33 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   assert.ok(snapshotEvidence.capabilities.some(capability => capability.id === "pc.inspect.network" && capability.sideEffect === "read_only"));
   assert.ok(adapterSpans.every(span => (span.metadata as { authority?: { state?: string } }).authority?.state === "recorded"));
 
+  const conformanceUrl = new URL("conformance", eventsUrl).href;
+  const attemptId = report.actions[0]!.attemptId;
+  const captureUrl = `${conformanceUrl}?attemptId=${encodeURIComponent(attemptId)}`;
+  assert.equal((await fetch(captureUrl)).status, 401);
+  assert.equal((await fetch(captureUrl, { headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  assert.equal((await fetch(`${captureUrl}&reportId=other`, { headers })).status, 400);
+  assert.equal((await fetch(`${conformanceUrl}?attemptId=foreign`, { headers })).status, 404);
+  const conformanceResponse = await fetch(captureUrl, { headers });
+  assert.equal(conformanceResponse.status, 200);
+  const conformance = await conformanceResponse.json() as DeviceAttemptConformanceReportV1;
+  assert.equal(conformance.source.attemptId, attemptId);
+  assert.equal(conformance.source.taskId, report.taskId);
+  assert.equal(conformance.source.traceId, trace.traceId);
+  assert.equal(conformance.source.journalSequence, remainder.latestSequence);
+  assert.equal(conformance.transport, "local_process");
+  assert.equal(conformance.source.capabilitySnapshotId, snapshotEvidence.snapshotId);
+  assert.equal(conformance.checks.find(check => check.id === "capability_binding")?.status, "pass");
+  assert.equal(conformance.checks.find(check => check.id === "adapter_receipt")?.status, "pass");
+  assert.deepEqual(await (await fetch(captureUrl, { headers })).json(), conformance);
+  assert.deepEqual(await (await fetch(`${conformanceUrl}?reportId=${conformance.reportId}`, { headers })).json(), conformance);
+  const reports = new SqliteDeviceFabricStore({ databasePath: workspace.paths.databasePath });
+  try {
+    assert.deepEqual(reports.getConformanceReport(conformance.reportId), conformance);
+  } finally {
+    reports.close();
+  }
+
   const deviceId = adapterSpans[0]?.lineage?.deviceId;
   assert.ok(deviceId);
   const stopUrl = `http://127.0.0.1:${address.port}/v1/device-support/devices/${encodeURIComponent(deviceId)}/dispatch-stop`;
@@ -579,6 +607,7 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.equal(events[planIndex]?.body.taskId, report.taskId);
     const traceScope = { store: journal, taskId: report.taskId, workspaceId: DEFAULT_WORKSPACE_ID };
     assert.deepEqual(readOwnedDeviceTaskTrace(traceScope), trace);
+    assert.deepEqual(readOwnedDeviceAttemptConformance({ ...traceScope, attemptId }), conformance);
     assert.throws(() => readOwnedDeviceTaskTrace({ ...traceScope, workspaceId: "elsewhere" }), /unavailable in this workspace/);
     const input = {
       store: journal, taskId: report.taskId, ownerId: tasks[0]!.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,

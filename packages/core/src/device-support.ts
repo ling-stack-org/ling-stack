@@ -614,6 +614,7 @@ export class DeviceCapabilityBroker {
     }
 
     const approvalPrincipal = approval ? options.approvalPrincipal : undefined;
+    const supportedTransports = profile.transports.filter(transport => capability.supportedTransports.includes(transport));
     const attempt: DeviceTaskAttemptV1 = {
       attemptId: `${request.taskId}:${request.actionId}`,
       taskId: request.taskId,
@@ -629,7 +630,11 @@ export class DeviceCapabilityBroker {
       ...(accessGrant ? { accessGrantRevision: accessGrant.revision } : {}),
       connectionRevision: snapshot.connectionRevision,
       requestDigest,
-      adapterBinding: { adapterId: snapshot.adapterId, adapterVersion: snapshot.adapterVersion, profileRevision: profile.profileRevision },
+      adapterBinding: {
+        adapterId: snapshot.adapterId, adapterVersion: snapshot.adapterVersion, profileRevision: profile.profileRevision,
+        ...(profile.device.firmwareVersion ? { firmwareVersion: profile.device.firmwareVersion } : {}),
+        ...(supportedTransports.length === 1 ? { transport: supportedTransports[0] } : {}),
+      },
       ...(planningNode ? { planningNode } : {}),
       ...(approval ? { approvalId: approval.approvalId } : {}),
       ...(recovery ? { recoveryPathVerifiedAt: recovery.checkedAt } : {}),

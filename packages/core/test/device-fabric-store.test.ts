@@ -403,6 +403,9 @@ test("conformance reports are validated, persisted, and replayable by report ide
   };
   store.saveConformanceReport(report);
   assert.deepEqual(store.getConformanceReport("report-1"), report);
+  assert.deepEqual(store.saveConformanceReport(report), report);
+  assert.throws(() => store.saveConformanceReport({ ...report, targetProfile: "another-profile" }), /bound to different evidence/u);
+  assert.deepEqual(store.getConformanceReport("report-1"), report);
   assert.throws(() => store.saveConformanceReport({ ...report, checks: [{ id: "duplicate", status: "pass" }, { id: "duplicate", status: "skip" }] }), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
   store.close();
 });

@@ -464,6 +464,23 @@ export interface DeviceConformanceReportV1 {
   readonly generatedAt: string;
 }
 
+export interface DeviceAttemptConformanceReportV1 extends DeviceConformanceReportV1 {
+  readonly source: {
+    readonly workspaceId: string;
+    readonly taskId: string;
+    readonly attemptId: string;
+    readonly deviceId: string;
+    readonly capabilityId: string;
+    readonly capabilitySnapshotId: string;
+    readonly traceId: string;
+    readonly journalSequence: number;
+    readonly connectionRevision?: string;
+    readonly firmwareVersion?: string;
+    readonly providerId?: string;
+    readonly modelTurnId?: string;
+  };
+}
+
 export interface DevicePlannerProposalV1 {
   readonly proposalId: string;
   readonly taskId: string;

@@ -31,6 +31,7 @@ are not published here. The relay URL and temporary development checkout are exa
 - [Device Support Platform adapter isolation, 2026-11-22](#device-support-platform-adapter-isolation-2026-11-22)
 - [Device Support Platform Home Assistant and verification, 2026-11-22](#device-support-platform-home-assistant-and-verification-2026-11-22)
 - [Device Support Platform live capture, collaboration and semantic context, 2026-11-22](#device-support-platform-live-capture-collaboration-and-semantic-context-2026-11-22)
+- [Device Support Platform recovery, catalogs and conformance, 2026-11-22](#device-support-platform-recovery-catalogs-and-conformance-2026-11-22)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
@@ -213,6 +214,27 @@ dispatch-stop revisions. Stale and unprojectable observations stay out of model 
 
 The focused Core and Daemon checks passed. Native transport drivers, packaged
 developer clients and physical hardware or vehicle acceptance remain open.
+
+## Device Support Platform recovery, catalogs and conformance 2026-11-22
+
+- D3 binds the recovery path and baseline to approval. The target lease protects
+  preflight. A task stop releases it and a late result creates no write. Paired
+  WebSocket clients use the v4 approval preview. Commits `a8c56cb0f` and `fef748002`.
+- D4 exercises the REST entities and services and WebSocket devices against Home
+  Assistant Core 2026.11.2 on macOS arm64. Four API pages matched the typed
+  observations after SQLite reopen. Commits `de0f2b111`, `85f9ab758` and `ca51da0fd`.
+- D5 uses native service queries on Linux, macOS and Windows. Fixtures cover the
+  three query paths. The local Daemon counted 549 macOS launchd jobs and recovered
+  their observation from SQLite. Commit `5c4987eb5`.
+- D12 gives ICE all configured TURN URLs in the selected credential scope. Local
+  Chromium peers connected through TURN/TLS when the UDP listener discarded requests.
+  Commit `09e2494a8`.
+- D14 preserves accepted graph identity evidence and replays the original node
+  revision after a split. Commit `ca51da0fd`.
+- D22 captures a report from the daemon-owned attempt and makes it available by ID.
+  The earlier report persists when readback adds new evidence to the journal.
+
+[Current evidence and open acceptance by slice](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
 ## Typed Transcript Handoff
 

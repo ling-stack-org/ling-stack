@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace,
-  resolveDeviceSemanticTargets } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceAttemptConformance,
+  readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace, requireWorkspaceDeviceTask, resolveDeviceSemanticTargets } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
@@ -21,7 +21,7 @@ export async function handleDeviceSupportRoute(
 ): Promise<boolean> {
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/protocol/")) return await handleDeviceProtocolRoute(url, request, response, runtime);
-  const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace)$/u.exec(url.pathname);
+  const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace|conformance)$/u.exec(url.pathname);
   const dispatchStop = /^\/v1\/device-support\/devices\/([^/]+)\/dispatch-stop$/u.exec(url.pathname)?.[1];
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
@@ -32,7 +32,7 @@ export async function handleDeviceSupportRoute(
     && !homeAssistant && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
-    writeTaskProjection(url, taskPath[1]!, taskPath[2] === "trace", request, response, runtime);
+    writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
     return true;
   }
   if (dispatchStop) {
@@ -254,7 +254,7 @@ function writeDeviceOperationError(response: ServerResponse, error: unknown): vo
 }
 
 function writeTaskProjection(
-  url: URL, encodedTaskId: string, trace: boolean, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
+  url: URL, encodedTaskId: string, projection: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): void {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
@@ -267,7 +267,11 @@ function writeTaskProjection(
       throw new DeviceBrokerError("invalid_request", "device task id is invalid");
     }
     const scope = { store: runtime.store, workspaceId: DEFAULT_WORKSPACE_ID, taskId };
-    writePrivateJson(response, 200, trace ? readOwnedDeviceTaskTrace(scope) : readOwnedDeviceTaskJournal({
+    if (projection === "conformance") {
+      writePrivateJson(response, 200, taskConformance(url.searchParams, taskId, runtime));
+      return;
+    }
+    writePrivateJson(response, 200, projection === "trace" ? readOwnedDeviceTaskTrace(scope) : readOwnedDeviceTaskJournal({
       ...scope, afterSequence: optionalCursorNumber(url, "afterSequence"),
       generation: optionalCursorNumber(url, "generation"), limit: optionalCursorNumber(url, "limit"),
     }));
@@ -280,6 +284,28 @@ function writeTaskProjection(
       writePrivateJson(response, 503, { error: "service_unavailable" });
     }
   }
+}
+
+function taskConformance(params: URLSearchParams, taskId: string, runtime: DeviceSupportRuntime) {
+  const keys = [...params.keys()];
+  const attemptId = params.get("attemptId");
+  const reportId = params.get("reportId");
+  if (keys.length !== 1 || !validBoundedText(attemptId ?? reportId, 512)) {
+    throw new DeviceBrokerError("invalid_request", "device conformance requires one attempt or report ID");
+  }
+  const scope = { store: runtime.store, workspaceId: DEFAULT_WORKSPACE_ID, taskId };
+  if (attemptId !== null) {
+    const report = readOwnedDeviceAttemptConformance({ ...scope, attemptId });
+    runtime.fabricStore.saveConformanceReport(report);
+    return report;
+  }
+  requireWorkspaceDeviceTask(runtime.store, taskId, scope.workspaceId);
+  const report = reportId === null ? undefined : runtime.fabricStore.getConformanceReport(reportId);
+  const source = report && "source" in report ? report.source : undefined;
+  if (!report || !isRecord(source) || source.workspaceId !== scope.workspaceId || source.taskId !== taskId) {
+    throw new DeviceBrokerError("missing_target", "device conformance report is unavailable in this task");
+  }
+  return report;
 }
 
 function optionalCursorNumber(url: URL, key: string): number | undefined {

@@ -24,6 +24,7 @@ import { DeviceAccessManager } from "../dist/device-access.js";
 import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
 import { readOwnedDeviceTaskJournal } from "../dist/device-task-event-projector.js";
 import { readOwnedDeviceTaskTrace } from "../dist/device-task-trace.js";
+import { readOwnedDeviceAttemptConformance } from "../dist/device-task-conformance.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
@@ -744,6 +745,17 @@ test("reconciliation requires a current capability and fresh readback evidence",
   assert.equal(noObservation.status, "unresolved");
   assert.equal(noObservation.verification.status, "not_evaluable");
   assert.equal(store.getTask(action.taskId)?.status, "unknown");
+  const scope = { store, workspaceId: profile.device.ownerScope, taskId: action.taskId, attemptId: original.attempt.attemptId };
+  const unresolved = readOwnedDeviceAttemptConformance(scope);
+  assert.deepEqual(unresolved.checks.find(check => check.id === "device_readback"), { id: "device_readback", status: "skip" });
+  broker.registerAdapter(adapter);
+  const verified = await broker.reconcileTask(binding);
+  assert.equal(verified.status, "verified");
+  const observed = readOwnedDeviceAttemptConformance(scope);
+  assert.notEqual(observed.reportId, unresolved.reportId);
+  assert.deepEqual(observed.checks.find(check => check.id === "device_readback"), {
+    id: "device_readback", status: "pass", evidenceRef: verified.reconciliationId,
+  });
   assert.deepEqual(await broker.execute(action), original);
   assert.equal(dispatches, 1);
 });

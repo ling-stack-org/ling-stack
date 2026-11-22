@@ -623,8 +623,12 @@ export class SqliteDeviceFabricStore {
 
   saveConformanceReport(report: DeviceConformanceReportV1): DeviceConformanceReportV1 {
     validateConformanceReport(report);
-    this.database.prepare("INSERT INTO device_conformance_reports(report_id,runtime_id,adapter_id,adapter_version,target_profile,transport,report_json,generated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(report_id) DO UPDATE SET report_json=excluded.report_json,generated_at=excluded.generated_at")
-      .run(report.reportId, report.runtimeId, report.adapterId, report.adapterVersion, report.targetProfile, report.transport, JSON.stringify(report), report.generatedAt);
+    const json = JSON.stringify(report);
+    const { changes } = this.database.prepare("INSERT INTO device_conformance_reports(report_id,runtime_id,adapter_id,adapter_version,target_profile,transport,report_json,generated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(report_id) DO NOTHING")
+      .run(report.reportId, report.runtimeId, report.adapterId, report.adapterVersion, report.targetProfile, report.transport, json, report.generatedAt);
+    if (changes === 0 && !isDeepStrictEqual(this.getConformanceReport(report.reportId), JSON.parse(json))) {
+      throw new DeviceFabricError("revision_conflict", "conformance report id is bound to different evidence");
+    }
     return report;
   }
 

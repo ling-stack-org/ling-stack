@@ -378,6 +378,8 @@ export interface DeviceTaskAttemptV1 {
     readonly adapterId: string;
     readonly adapterVersion: string;
     readonly profileRevision: string;
+    readonly firmwareVersion?: string;
+    readonly transport?: DeviceTransportV1;
   };
   readonly planningNode?: DevicePlanningNodeRefV1;
   readonly recoveryPathVerifiedAt?: string;
@@ -689,9 +691,11 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && (value.requestDigest === undefined || isNonEmptyString(value.requestDigest))
     && (value.approvalId === undefined || isNonEmptyString(value.approvalId))
     && (value.adapterBinding === undefined || (isRecord(value.adapterBinding)
-      && hasOnlyKeys(value.adapterBinding, ["adapterId", "adapterVersion", "profileRevision"])
+      && hasOnlyKeys(value.adapterBinding, ["adapterId", "adapterVersion", "profileRevision", "firmwareVersion", "transport"])
       && isNonEmptyString(value.adapterBinding.adapterId) && isNonEmptyString(value.adapterBinding.adapterVersion)
-      && isNonEmptyString(value.adapterBinding.profileRevision)))
+      && isNonEmptyString(value.adapterBinding.profileRevision)
+      && (value.adapterBinding.firmwareVersion === undefined || isNonEmptyString(value.adapterBinding.firmwareVersion))
+      && (value.adapterBinding.transport === undefined || isEnum(value.adapterBinding.transport, DEVICE_TRANSPORTS_V1))))
     && (value.planningNode === undefined || (isRecord(value.planningNode)
       && hasOnlyKeys(value.planningNode, ["proposalId", "nodeId"])
       && isNonEmptyString(value.planningNode.proposalId) && isNonEmptyString(value.planningNode.nodeId)))
