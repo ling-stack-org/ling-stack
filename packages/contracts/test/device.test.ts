@@ -11,6 +11,27 @@ import {
   isDeviceRecoveryPlanV1,
   negotiateDeviceContractMajor,
 } from "../dist/device.js";
+import { isDeviceCapabilitySchemaV1, matchesDeviceCapabilitySchemaV1 } from "../dist/device-capability-schema.js";
+
+test("device capability schemas validate nested inputs and reject undeclared schema keywords", () => {
+  const schema = {
+    type: "object", required: ["ports"], additionalProperties: false,
+    properties: { ports: {
+      type: "array", items: {
+        type: "object", required: ["port", "mode"], additionalProperties: false,
+        properties: { port: { type: "integer", minimum: 1, maximum: 65535 }, mode: { enum: ["observe", "configure"] } },
+      },
+    } },
+  } as const;
+  assert.ok(isDeviceCapabilitySchemaV1(schema));
+  assert.ok(matchesDeviceCapabilitySchemaV1({ ports: [{ port: 443, mode: "observe" }] }, schema));
+  assert.equal(matchesDeviceCapabilitySchemaV1({}, schema), false);
+  assert.equal(matchesDeviceCapabilitySchemaV1({ ports: [{ port: 0, mode: "observe" }] }, schema), false);
+  assert.equal(matchesDeviceCapabilitySchemaV1({ ports: [{ port: 443, mode: "unknown" }] }, schema), false);
+  assert.equal(matchesDeviceCapabilitySchemaV1({ ports: [], extra: true }, schema), false);
+  assert.equal(isDeviceCapabilitySchemaV1({ type: "object", required: ["port", "port"] }), false);
+  assert.equal(isDeviceCapabilitySchemaV1({ type: "array", items: { type: "string", pattern: "^example" } }), false);
+});
 
 const identity = {
   id: "device-linux-1",

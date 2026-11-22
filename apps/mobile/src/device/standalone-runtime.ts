@@ -12,6 +12,7 @@ import {
 } from "./linux-ssh.ts";
 import { createMobilePlaybookAction, runMobileReadOnlyPlaybook, runMobileSetupPlaybook } from "./playbook.ts";
 import { projectMobileDeviceTaskTrace } from "./trace.ts";
+import { projectMobileTaskEvidenceExport } from "./conformance.ts";
 
 const ownerKey = "ling:standalone-device-owner:v1";
 const homeAssistantPlaybookId = "home-assistant-offline-diagnosis@1.0.0";
@@ -180,6 +181,11 @@ export async function createStandaloneDeviceRuntime(options: {
     async readTaskTrace(taskId: string) {
       await recovery;
       return projectMobileDeviceTaskTrace(await journal.readTaskEvidence(taskId), ownerId);
+    },
+
+    async readTaskEvidenceExport(taskId: string) {
+      await recovery;
+      return projectMobileTaskEvidenceExport(await journal.readTaskEvidence(taskId), ownerId);
     },
 
     async diagnoseLinuxSsh(input: {

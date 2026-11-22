@@ -375,8 +375,10 @@ test("phone readback settles a lost recovery receipt and survives interruption w
   assert.equal(uncertain.errorCode, "unknown_outcome");
   assert.deepEqual(methods, ["GET", "GET", "POST"]);
   const originalTrace = await phone.readTaskTrace(uncertain.taskId);
+  const originalExport = await phone.readTaskEvidenceExport(uncertain.taskId);
   const original = originalTrace?.spans.find(span => span.kind === "adapter");
   assert.ok(original);
+  assert.deepEqual(originalExport?.conformanceReports[0]?.checks.map(({ status }) => status), ["pass", "skip", "skip"]);
 
   currentTime += 31_000;
   const reopened = await createStandaloneDeviceRuntime(runtime);
@@ -424,6 +426,21 @@ test("phone readback settles a lost recovery receipt and survives interruption w
   ]);
   assert.doesNotMatch(JSON.stringify(trace), /selected-automation|fixture-credential|automation\.night/u);
   assert.doesNotMatch(JSON.stringify(trace), /inputSchema|outputSchema|permissions/u);
+  const exported = await restarted.readTaskEvidenceExport(uncertain.taskId);
+  assert.ok(exported);
+  const { conformanceReports, ...exportedTrace } = exported;
+  assert.deepEqual(exportedTrace, trace);
+  assert.equal(conformanceReports.length, 1);
+  assert.equal(conformanceReports[0]?.source.attemptId, original.lineage?.attemptId);
+  assert.equal(conformanceReports[0]?.source.connectionRevision, original.lineage?.connectionRevision);
+  assert.equal(conformanceReports[0]?.source.ownerKind, "mobile");
+  assert.match(conformanceReports[0]?.source.traceDigest ?? "", /^[0-9a-f]{64}$/u);
+  assert.notEqual(conformanceReports[0]?.reportId, originalExport?.conformanceReports[0]?.reportId);
+  assert.deepEqual(conformanceReports[0]?.checks.map(({ status }) => status), ["pass", "skip", "pass"]);
+  assert.ok(JSON.stringify(checks[1]?.metadata).includes(conformanceReports[0]?.checks[2]?.evidenceRef ?? "missing"));
+  assert.doesNotMatch(JSON.stringify(exported), /selected-automation|fixture-credential|automation\.night/u);
+  const reopenedExport = await createStandaloneDeviceRuntime(runtime);
+  assert.deepEqual(await reopenedExport.readTaskEvidenceExport(uncertain.taskId), exported);
 });
 
 test("phone diagnosis distinguishes missing entities and denied credentials and rejects misbound or oversized results", async () => {

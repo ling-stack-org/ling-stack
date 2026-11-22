@@ -72,10 +72,11 @@ test("the Daemon enrolls an Edge runtime with the approved key and fences proofs
   assert.equal((await send(proof, signed(grant, otherKey))).status, 403);
   assert.equal((await send(proof, signed({ ...grant, expectedRevision: 1 }))).status, 403);
   assert.equal((await send("/other-edge/enrollment/proof", valid)).status, 404);
-  assert.equal((await send(revoke, { expectedRevision: 0 }, "PUT")).status, 204);
+  assert.equal((await send(revoke, { grantId: grant.grantId }, "PUT")).status, 204);
   const replacement = await send(issue, input);
   assert.equal(replacement.status, 201);
   const replacementGrant = (await replacement.json() as { grant: EdgeRuntimeEnrollmentGrantV1 }).grant;
+  assert.equal((await send(revoke, { grantId: grant.grantId }, "PUT")).status, 204);
 
   await daemon!.stop();
   daemon = undefined;
@@ -86,6 +87,7 @@ test("the Daemon enrolls an Edge runtime with the approved key and fences proofs
   assert.equal(enrollment.runtime.status, "enrolled");
   assert.equal(enrollment.runtime.revision, 1);
   assert.equal(enrollment.replayed, false);
+  assert.equal((await send(revoke, { grantId: replacementGrant.grantId }, "PUT")).status, 409);
   assert.doesNotMatch(JSON.stringify(enrollment), /publicKey|signature/i);
   await daemon!.stop();
   daemon = undefined;
@@ -447,7 +449,9 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
     assert.doesNotMatch(JSON.stringify(edge), /fixture-edge-fingerprint/u);
     assert.equal((await fetch(base + "/fabric/graph", { headers: { ...headers, Origin: "https://foreign.example" } })).status, 403);
     assert.equal(store.getTask(report.taskId)?.ownerKind, "daemon");
-    assert.equal(store.getObservation(freshness.taskId, freshness.facts[0]!.observationId)?.subjectId, "sensor.reporting");
+    const reportingEvidence = store.getObservation(freshness.taskId, freshness.facts[0]!.observationId);
+    assert.equal(reportingEvidence?.subjectId, deviceId);
+    assert.ok(reportingEvidence?.provenance.includes("sensor.reporting"));
     assert.equal(store.listDevices().find(profile => profile.device.kind === "home_assistant")?.device.firmwareVersion, "2026.11.4");
     assert.doesNotMatch(JSON.stringify([report, store.listEvents(report.taskId), store.listObservations(report.taskId)]),
       /private device output|fixture-ha-access-token/u);

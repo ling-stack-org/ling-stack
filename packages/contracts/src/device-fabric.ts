@@ -556,6 +556,13 @@ export interface DeviceAttemptConformanceReportV1 extends DeviceConformanceRepor
   };
 }
 
+export interface MobileDeviceAttemptConformanceReportV1 extends DeviceConformanceReportV1 {
+  readonly source: Omit<DeviceAttemptConformanceReportV1["source"], "journalSequence"> & {
+    readonly ownerKind: "mobile";
+    readonly traceDigest: string;
+  };
+}
+
 export interface DevicePlannerProposalV1 {
   readonly proposalId: string;
   readonly taskId: string;

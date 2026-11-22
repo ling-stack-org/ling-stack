@@ -3,6 +3,7 @@ import {
   isDeviceActionResultV1,
   isDeviceApprovalBindingV1,
   isDeviceCapabilitySnapshotV1,
+  matchesDeviceCapabilitySchemaV1,
   isDeviceObservationV1,
   isDeviceProfileV1,
   isDeviceTaskV1,
@@ -151,6 +152,9 @@ export class MobileDeviceExecution {
     if (!capability || !capability.supportedDeviceKinds.includes(profile.device.kind)
       || !capability.supportedTransports.some(kind => profile.transports.includes(kind))) {
       throw new MobileDeviceExecutionError("unsupported_capability", "the device snapshot does not advertise this operation");
+    }
+    if (!matchesDeviceCapabilitySchemaV1(request.normalizedInput, capability.inputSchema)) {
+      throw new MobileDeviceExecutionError("invalid_request", "device action input does not match the capability schema");
     }
     if (input.capabilitySideEffect !== undefined && capability.sideEffect !== input.capabilitySideEffect) {
       throw new MobileDeviceExecutionError("permission_denied", "requested operation class does not match the device snapshot");

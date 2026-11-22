@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { DeviceAttemptConformanceReportV1 } from "@ling-stack/contracts";
+import { projectDeviceAttemptChecks, projectDeviceCapabilitySnapshotForTrace, type DeviceAttemptConformanceReportV1 } from "@ling-stack/contracts";
 
 import { isCurrentDeviceObservation } from "./device-diagnosis.js";
 import { DeviceBrokerError } from "./device-support.js";
@@ -29,36 +29,18 @@ export function readOwnedDeviceAttemptConformance(input: {
     const adapter = attempt.adapterBinding;
     const traceId = `device-task:${task.id}`;
     const attemptSpanId = `${traceId}:attempt:${attemptId}`;
-    const checks: DeviceAttemptConformanceReportV1["checks"][number][] = [];
     const snapshot = capabilityRecord?.snapshot;
-    if (!snapshot || !adapter || !attempt.connectionRevision) {
-      checks.push({ id: "capability_binding", status: "skip" });
-    } else {
-      const atDispatch = Date.parse(attempt.dispatchIntentAt);
-      const matched = snapshot.connectionRevision === attempt.connectionRevision
-        && snapshot.adapterId === adapter.adapterId && snapshot.adapterVersion === adapter.adapterVersion
-        && capabilityRecord.profileRevision === adapter.profileRevision
-        && Date.parse(snapshot.observedAt) <= atDispatch && atDispatch < Date.parse(snapshot.freshnessUntil)
-        && snapshot.capabilities.some(capability => capability.id === request.capabilityId && capability.schemaVersion === request.capabilitySchemaVersion);
-      checks.push({ id: "capability_binding", status: matched ? "pass" : "fail", evidenceRef: snapshot.snapshotId });
-    }
-    const receipt = attempt.receipt?.status;
-    checks.push({
-      id: "adapter_receipt",
-      status: receipt === "completed" ? "pass" : receipt === "rejected" ? "fail" : "skip",
-      evidenceRef: attemptSpanId,
-    });
     const reconciled = store.listReconciliations(taskId).filter(entry => entry.attemptId === attemptId && entry.status === "verified").at(-1);
     const verification = reconciled?.verification ?? (attempt.status === "completed" ? attempt.verification : undefined);
     const evidenceRef = verification?.observationIds.find(id => {
       const observation = store.getObservation(taskId, id);
       return observation?.subjectId === deviceId && isCurrentDeviceObservation(observation, verification.checkedAt);
     });
-    if (!evidenceRef || !verification || verification.status === "not_evaluable") {
-      checks.push({ id: "device_readback", status: "skip" });
-    } else {
-      checks.push({ id: "device_readback", status: verification.status === "verified" ? "pass" : "fail", evidenceRef });
-    }
+    const checks = projectDeviceAttemptChecks({
+      attempt, request, attemptSpanId,
+      snapshot: capabilityRecord && projectDeviceCapabilitySnapshotForTrace(capabilityRecord.snapshot, capabilityRecord.profileRevision),
+      readback: evidenceRef && verification ? { status: verification.status, evidenceRef } : undefined,
+    });
     const plan = attempt.planningNode && store.listPlanningAcceptances(taskId)
       .find(entry => entry.proposalId === attempt.planningNode?.proposalId);
     const report: Omit<DeviceAttemptConformanceReportV1, "reportId"> = {

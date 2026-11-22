@@ -19,6 +19,7 @@ import {
   type DeviceSecretUseV1,
   type DeviceSafetyControllerEvidenceV1,
   type DeviceTaskGraphV1,
+  type DeviceTaskGraphNodeReceiptV1,
   type DeviceTraceSpanV1,
   type DeviceTwinV1,
   type EdgeRuntimeEnrollmentGrantV1,
@@ -33,7 +34,7 @@ import {
   DeviceFabricError, EdgeRuntimePlacementPolicy, isAllowedDeviceLifecycleTransition,
 } from "../../device-fabric.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
-import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
+import { readSqliteSnapshot, withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
 export interface DeviceFabricStoreOptions {
   readonly databasePath?: string;
@@ -105,32 +106,34 @@ export class SqliteDeviceFabricStore {
     validateEvent(event, streamId, generation);
     const normalized = { ...event, streamId, generation, retentionClass: event.retentionClass ?? "bounded" } satisfies DeviceEventEnvelopeV1;
 
-    const byId = this.database.prepare("SELECT stream_id,generation,sequence,envelope_json FROM device_fabric_events WHERE event_id=?").get(event.eventId) as Row | undefined;
-    if (byId) {
-      const existing = parseJson<DeviceEventEnvelopeV1>(byId.envelope_json, "device event");
-      if (JSON.stringify(existing) !== JSON.stringify(normalized)) {
-        throw new DeviceFabricError("revision_conflict", "event id is already bound to a different envelope");
+    return this.withWriteTransaction(() => {
+      const byId = this.database.prepare("SELECT stream_id,generation,sequence,envelope_json FROM device_fabric_events WHERE event_id=?").get(event.eventId) as Row | undefined;
+      if (byId) {
+        const existing = parseJson<DeviceEventEnvelopeV1>(byId.envelope_json, "device event");
+        if (JSON.stringify(existing) !== JSON.stringify(normalized)) {
+          throw new DeviceFabricError("revision_conflict", "event id is already bound to a different envelope");
+        }
+        return { event: existing, replayed: true };
       }
-      return { event: existing, replayed: true };
-    }
 
-    const existingSequence = this.database.prepare("SELECT event_id,envelope_json FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence=?")
-      .get(streamId, generation, event.sequence) as Row | undefined;
-    if (existingSequence) {
-      const existing = parseJson<DeviceEventEnvelopeV1>(existingSequence.envelope_json, "device event");
-      if (existing.eventId === normalized.eventId && JSON.stringify(existing) === JSON.stringify(normalized)) return { event: existing, replayed: true };
-      throw new DeviceFabricError("revision_conflict", "event sequence is already occupied");
-    }
+      const existingSequence = this.database.prepare("SELECT event_id,envelope_json FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence=?")
+        .get(streamId, generation, event.sequence) as Row | undefined;
+      if (existingSequence) {
+        const existing = parseJson<DeviceEventEnvelopeV1>(existingSequence.envelope_json, "device event");
+        if (existing.eventId === normalized.eventId && JSON.stringify(existing) === JSON.stringify(normalized)) return { event: existing, replayed: true };
+        throw new DeviceFabricError("revision_conflict", "event sequence is already occupied");
+      }
 
-    const latest = this.database.prepare("SELECT MAX(sequence) AS sequence FROM device_fabric_events WHERE stream_id=? AND generation=?").get(streamId, generation) as Row | undefined;
-    const latestSequence = latest?.sequence === null || latest?.sequence === undefined ? 0 : Number(latest.sequence);
-    if (event.sequence <= latestSequence) throw new DeviceFabricError("revision_conflict", "event sequence must advance within its stream");
+      const latest = this.database.prepare("SELECT MAX(sequence) AS sequence FROM device_fabric_events WHERE stream_id=? AND generation=?").get(streamId, generation) as Row | undefined;
+      const latestSequence = latest?.sequence === null || latest?.sequence === undefined ? 0 : Number(latest.sequence);
+      if (event.sequence <= latestSequence) throw new DeviceFabricError("revision_conflict", "event sequence must advance within its stream");
 
-    this.database.prepare("INSERT INTO device_fabric_events(stream_id,generation,sequence,event_id,envelope_json,occurred_at,created_at) VALUES(?,?,?,?,?,?,?)")
-      .run(streamId, generation, event.sequence, event.eventId, JSON.stringify(normalized), event.occurredAt, now);
-    this.database.prepare("DELETE FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence <= ? AND COALESCE(json_extract(envelope_json,'$.retentionClass'),'bounded') <> 'durable'")
-      .run(streamId, generation, event.sequence - this.#maxEventsPerStream);
-    return { event: normalized, replayed: false };
+      this.database.prepare("INSERT INTO device_fabric_events(stream_id,generation,sequence,event_id,envelope_json,occurred_at,created_at) VALUES(?,?,?,?,?,?,?)")
+        .run(streamId, generation, event.sequence, event.eventId, JSON.stringify(normalized), event.occurredAt, now);
+      this.database.prepare("DELETE FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence <= ? AND COALESCE(json_extract(envelope_json,'$.retentionClass'),'bounded') <> 'durable'")
+        .run(streamId, generation, event.sequence - this.#maxEventsPerStream);
+      return { event: normalized, replayed: false };
+    });
   }
 
   readEvents(streamId: string, generation = 1, afterSequence = 0, limit = 100): DeviceEventReadResult {
@@ -139,20 +142,22 @@ export class SqliteDeviceFabricStore {
     if (!Number.isInteger(afterSequence) || afterSequence < 0) throw new Error("afterSequence must be a non-negative integer");
     if (!Number.isInteger(limit) || limit < 1 || limit > 10_000) throw new Error("limit must be between 1 and 10000");
 
-    const bounds = this.database.prepare("SELECT MIN(sequence) AS oldest,MAX(sequence) AS latest FROM device_fabric_events WHERE stream_id=? AND generation=?")
-      .get(streamId, generation) as Row | undefined;
-    const oldestSequence = bounds?.oldest === null || bounds?.oldest === undefined ? undefined : Number(bounds.oldest);
-    const latestSequence = bounds?.latest === null || bounds?.latest === undefined ? undefined : Number(bounds.latest);
-    if (oldestSequence !== undefined && afterSequence < oldestSequence - 1) {
-      throw new DeviceFabricError("revision_conflict", "event cursor is older than the retained range");
-    }
-    const rows = this.database.prepare("SELECT envelope_json FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence>? ORDER BY sequence LIMIT ?")
-      .all(streamId, generation, afterSequence, limit) as Row[];
-    const events = rows.map(row => parseJson<DeviceEventEnvelopeV1>(row.envelope_json, "device event"));
-    const hasGap = events.length > 0
-      ? events[0]!.sequence > afterSequence + 1
-      : latestSequence !== undefined && latestSequence > afterSequence;
-    return { streamId, generation, events, oldestSequence, latestSequence, hasGap };
+    return readSqliteSnapshot(this.database, () => {
+      const bounds = this.database.prepare("SELECT MIN(sequence) AS oldest,MAX(sequence) AS latest FROM device_fabric_events WHERE stream_id=? AND generation=?")
+        .get(streamId, generation) as Row | undefined;
+      const oldestSequence = bounds?.oldest === null || bounds?.oldest === undefined ? undefined : Number(bounds.oldest);
+      const latestSequence = bounds?.latest === null || bounds?.latest === undefined ? undefined : Number(bounds.latest);
+      if (oldestSequence !== undefined && afterSequence < oldestSequence - 1) {
+        throw new DeviceFabricError("revision_conflict", "event cursor is older than the retained range");
+      }
+      const rows = this.database.prepare("SELECT envelope_json FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence>? ORDER BY sequence LIMIT ?")
+        .all(streamId, generation, afterSequence, limit) as Row[];
+      const events = rows.map(row => parseJson<DeviceEventEnvelopeV1>(row.envelope_json, "device event"));
+      const hasGap = events.length > 0
+        ? events.some((event, index) => event.sequence !== afterSequence + index + 1)
+        : latestSequence !== undefined && latestSequence > afterSequence;
+      return { streamId, generation, events, oldestSequence, latestSequence, hasGap };
+    });
   }
 
   saveSnapshot(input: Omit<DeviceSnapshotRecord, "createdAt"> & { readonly createdAt?: string }): DeviceSnapshotRecord {
@@ -196,7 +201,7 @@ export class SqliteDeviceFabricStore {
     const payloadDigest = createHash("sha256").update(bytes).digest("hex");
     if (payloadDigest !== manifest.digest) throw new DeviceFabricError("resource_conflict", "resource digest does not match manifest");
     return this.withWriteTransaction(() => {
-      this.assertResourceDependencies(manifest);
+      this.assertResourceDependencies(manifest, compatibility);
       const current = this.getResource(manifest.resourceId);
       if (current?.manifest.version === manifest.version && (current.payloadDigest !== payloadDigest
         || (this.#verifyResourceSignature !== undefined && current.manifest.signature !== manifest.signature))) {
@@ -235,7 +240,7 @@ export class SqliteDeviceFabricStore {
         throw new DeviceFabricError("resource_conflict", "resource rollback manifest does not match its payload");
       }
       this.assertResourcePolicy(record.manifest, compatibility);
-      this.assertResourceDependencies(record.manifest);
+      this.assertResourceDependencies(record.manifest, compatibility);
       if (!this.readResourcePayload(resourceId, record.payloadDigest)) {
         throw new DeviceFabricError("resource_conflict", "resource rollback payload is missing");
       }
@@ -254,21 +259,15 @@ export class SqliteDeviceFabricStore {
   }
 
   readActiveResourcePayload(resourceId: string, compatibility: DeviceResourceCompatibility = {}): Uint8Array | undefined {
-    const row = this.database.prepare(`
-      SELECT p.payload_bytes,a.payload_digest,a.manifest_json FROM device_resource_active a
-      JOIN device_resource_payloads p ON p.resource_id=a.resource_id AND p.payload_digest=a.payload_digest
-      LEFT JOIN device_resource_state s ON s.resource_id=a.resource_id
-      WHERE a.resource_id=? AND COALESCE(s.status,'active')='active'
-    `).get(resourceId) as Row | undefined;
-    if (!row) return undefined;
-    const digest = readString(row, "payload_digest");
-    const manifest = parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest");
-    if (manifest.resourceId !== resourceId || manifest.digest !== digest) {
-      throw new DeviceFabricError("resource_conflict", "active resource manifest does not match its payload");
-    }
-    this.assertResourcePolicy(manifest, compatibility);
-    this.assertResourceDependencies(manifest);
-    return verifyResourcePayload(row.payload_bytes, digest);
+    return readSqliteSnapshot(this.database, () => {
+      const record = this.getResource(resourceId);
+      if (!record || record.status !== "active") return undefined;
+      const payload = this.readResourcePayload(resourceId, record.payloadDigest);
+      if (!payload) return undefined;
+      this.assertResourceRecord(resourceId, record, compatibility);
+      this.assertResourceDependencies(record.manifest, compatibility);
+      return payload;
+    });
   }
 
   private assertResourcePolicy(manifest: DeviceResourceManifestV1, compatibility: DeviceResourceCompatibility): void {
@@ -279,12 +278,33 @@ export class SqliteDeviceFabricStore {
     }
   }
 
-  private assertResourceDependencies(manifest: DeviceResourceManifestV1): void {
-    for (const dependency of manifest.dependencies) {
-      if (this.getResource(dependency)?.status !== "active") {
-        throw new DeviceFabricError("resource_conflict", `resource dependency is not active: ${dependency}`);
-      }
+  private assertResourceRecord(resourceId: string, record: DeviceResourceRecord, compatibility: DeviceResourceCompatibility): void {
+    if (record.manifest.resourceId !== resourceId || record.manifest.digest !== record.payloadDigest) {
+      throw new DeviceFabricError("resource_conflict", "active resource manifest does not match its payload");
     }
+    this.assertResourcePolicy(record.manifest, compatibility);
+  }
+
+  private assertResourceDependencies(manifest: DeviceResourceManifestV1, compatibility: DeviceResourceCompatibility): void {
+    const verified = new Set<string>();
+    const visiting = new Set([manifest.resourceId]);
+    const validate = (resourceId: string): void => {
+      if (verified.has(resourceId)) return;
+      if (visiting.has(resourceId)) throw new DeviceFabricError("resource_conflict", "resource dependencies contain a cycle");
+      const dependency = this.getResource(resourceId);
+      if (!dependency || dependency.status !== "active") {
+        throw new DeviceFabricError("resource_conflict", `resource dependency is not active: ${resourceId}`);
+      }
+      this.assertResourceRecord(resourceId, dependency, compatibility);
+      if (!this.readResourcePayload(resourceId, dependency.payloadDigest)) {
+        throw new DeviceFabricError("resource_conflict", `resource dependency payload is missing: ${resourceId}`);
+      }
+      visiting.add(resourceId);
+      for (const child of dependency.manifest.dependencies) validate(child);
+      visiting.delete(resourceId);
+      verified.add(resourceId);
+    };
+    for (const dependency of manifest.dependencies) validate(dependency);
   }
 
   private readResourcePayload(resourceId: string, digest: string): Uint8Array | undefined {
@@ -491,6 +511,30 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<DeviceTaskGraphV1>(row.graph_json, "task graph") : undefined;
   }
 
+  recordTaskGraphReceipt(
+    receipt: DeviceTaskGraphNodeReceiptV1, advance: (current: DeviceTaskGraphV1) => DeviceTaskGraphV1,
+  ): DeviceTaskGraphV1 {
+    return this.withWriteTransaction(() => {
+      const current = this.getTaskGraph(receipt.graphId);
+      if (!current) throw new DeviceFabricError("target_missing", "task graph is missing");
+      const serialized = JSON.stringify(receipt);
+      const saved = this.database.prepare(`
+        SELECT receipt_json FROM device_task_graph_receipts WHERE graph_id=? AND graph_revision=?
+      `).get(receipt.graphId, receipt.graphRevision) as Row | undefined;
+      if (saved) {
+        if (!isDeepStrictEqual(parseJson(saved.receipt_json, "task graph receipt"), JSON.parse(serialized))) {
+          throw new DeviceFabricError("revision_conflict", "graph revision is already bound to a different receipt");
+        }
+        return current;
+      }
+      const next = advance(current);
+      this.saveTaskGraph(next);
+      this.database.prepare("INSERT INTO device_task_graph_receipts(graph_id,graph_revision,receipt_json) VALUES(?,?,?)")
+        .run(receipt.graphId, receipt.graphRevision, serialized);
+      return next;
+    });
+  }
+
   acquireTaskGraphLease(targetDeviceId: string, ownerId: string, now: string, leaseMs: number): boolean {
     const nowMs = Date.parse(now);
     if (!targetDeviceId.trim() || !ownerId.trim() || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || !Number.isFinite(nowMs)) {
@@ -580,14 +624,23 @@ export class SqliteDeviceFabricStore {
     });
   }
 
-  revokeEdgeRuntimeEnrollment(runtimeId: string, expectedRevision: number): EdgeRuntimeEnrollmentV1 | undefined {
+  cancelEdgeRuntimeGrant(runtimeId: string, grantId: string): void {
+    this.withWriteTransaction(() => {
+      const pending = this.database.prepare(`
+        SELECT confirmed_revision FROM device_edge_enrollment_grants WHERE runtime_id=? AND grant_id=?
+      `).get(runtimeId, grantId) as Row | undefined;
+      if (!pending) return;
+      if (pending.confirmed_revision !== null) {
+        throw new DeviceFabricError("revision_conflict", "edge runtime enrollment grant is already confirmed");
+      }
+      this.database.prepare("DELETE FROM device_edge_enrollment_grants WHERE runtime_id=? AND grant_id=?").run(runtimeId, grantId);
+    });
+  }
+
+  revokeEdgeRuntimeEnrollment(runtimeId: string, expectedRevision: number): EdgeRuntimeEnrollmentV1 {
     return this.withWriteTransaction(() => {
       const current = this.getEdgeRuntime(runtimeId);
-      if (!current) {
-        if (expectedRevision !== 0) throw new DeviceFabricError("target_missing", "edge runtime is missing");
-        this.database.prepare("DELETE FROM device_edge_enrollment_grants WHERE runtime_id=?").run(runtimeId);
-        return undefined;
-      }
+      if (!current) throw new DeviceFabricError("target_missing", "edge runtime is missing");
       if (current.status === "revoked" && current.revision === expectedRevision + 1) return current;
       if (current.revision !== expectedRevision) {
         throw new DeviceFabricError("revision_conflict", "edge runtime enrollment revision changed");
@@ -928,6 +981,12 @@ export class SqliteDeviceFabricStore {
         graph_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
         graph_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_task_graph_receipts (
+        graph_id TEXT NOT NULL REFERENCES device_fabric_task_graphs(graph_id),
+        graph_revision INTEGER NOT NULL,
+        receipt_json TEXT NOT NULL,
+        PRIMARY KEY(graph_id,graph_revision)
       );
       CREATE TABLE IF NOT EXISTS device_task_graph_leases (
         target_device_id TEXT PRIMARY KEY NOT NULL,

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -79,8 +82,10 @@ test("cross-device task graph exposes ready nodes, leases owners, and aggregates
 });
 
 test("cross-runtime receipts match the current route and persisted node attempt", t => {
-  const store = new SqliteDeviceFabricStore();
-  t.after(() => store.close());
+  const root = mkdtempSync(join(tmpdir(), "ling-graph-receipt-"));
+  const databasePath = join(root, "fabric.sqlite");
+  let store = new SqliteDeviceFabricStore({ databasePath });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
   const coordinator = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
   const graph = {
     graphId: "receipt-graph", revision: 1, status: "executing", createdAt: now, updatedAt: now,
@@ -102,11 +107,27 @@ test("cross-runtime receipts match the current route and persisted node attempt"
   assert.throws(() => coordinator.recordNodeReceipt(graph, receipt, { ...authority, ownerKind: "mobile" }), /does not match/u);
   assert.throws(() => coordinator.recordNodeReceipt(graph, { ...receipt, attemptId: "other-attempt" }, authority), /does not match/u);
   assert.deepEqual(store.getTaskGraph(graph.graphId), graph);
+  store.database.exec(`
+    CREATE TEMP TRIGGER fail_receipt_write BEFORE INSERT ON device_task_graph_receipts
+    BEGIN SELECT RAISE(ABORT, 'fixture receipt write failure'); END;
+  `);
+  assert.throws(() => coordinator.recordNodeReceipt(graph, receipt, authority), /receipt write failure/u);
+  assert.deepEqual(store.getTaskGraph(graph.graphId), graph);
+  store.database.exec("DROP TRIGGER fail_receipt_write");
   const settled = coordinator.recordNodeReceipt(graph, receipt, authority);
   assert.equal(settled.status, "succeeded");
   assert.equal(settled.nodes[0]?.resultRef, "result-1");
   assert.deepEqual(store.getTaskGraph(graph.graphId), settled);
-  assert.throws(() => coordinator.recordNodeReceipt(graph, receipt, authority), /stale/u);
+  store.close();
+  store = new SqliteDeviceFabricStore({ databasePath });
+  const reopened = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
+  assert.deepEqual(reopened.recordNodeReceipt(graph, receipt, authority), settled);
+  const advanced = store.saveTaskGraph({ ...settled, revision: settled.revision + 1 });
+  assert.deepEqual(reopened.recordNodeReceipt(graph, receipt, authority), advanced);
+  assert.throws(() => reopened.recordNodeReceipt(graph, { ...receipt, resultRef: "changed-result" }, authority), /different receipt/u);
+  assert.throws(() => reopened.recordNodeReceipt(graph, receipt, { ...authority, routeGeneration: 3 }), /stale/u);
+  assert.throws(() => reopened.recordNodeReceipt(graph, receipt, { ...authority, ownerId: "other-owner" }), /does not match/u);
+  assert.deepEqual(store.getTaskGraph(graph.graphId), advanced);
 });
 
 test("expired in-memory task graph leases can be acquired by a new owner", () => {

@@ -113,9 +113,11 @@ export function projectDeviceDiagnosticEvidence(
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const fields = value as Record<string, JsonValue>;
   if (request.capabilityId === "home_assistant.read_entity" && observation.source === "home_assistant") {
-    const input = request.normalizedInput as Record<string, JsonValue> | null;
+    const entityId = (request.normalizedInput as Record<string, JsonValue> | null)?.entityId;
     const availability = fields.availability;
-    if (observation.subjectId !== input?.entityId || fields.entityId !== observation.subjectId
+    if (typeof entityId !== "string" || fields.entityId !== entityId
+      || (observation.subjectId !== request.targetDeviceId
+        && (observation.subjectId !== entityId || !observation.provenance.includes(request.targetDeviceId)))
       || (availability !== "available" && availability !== "unavailable" && availability !== "absent")) return undefined;
     const reportFreshness = fields.reportFreshness === "fresh" || fields.reportFreshness === "stale" || fields.reportFreshness === "unknown"
       ? fields.reportFreshness : undefined;
@@ -123,7 +125,7 @@ export function projectDeviceDiagnosticEvidence(
       || fields.reportTimestampStatus === "invalid" || fields.reportTimestampStatus === "future" ? fields.reportTimestampStatus : undefined;
     const hypotheses: DeviceDiagnosisHypothesisV1["code"][] = availability === "unavailable" ? ["integration_or_device_issue"] : [];
     if (reportFreshness === "stale") hypotheses.push("stale_entity_report");
-    const automation = observation.subjectId.startsWith("automation.");
+    const automation = entityId.startsWith("automation.");
     return { value: {
       availability,
       ...(automation && typeof fields.automationEnabled === "boolean" ? { automationEnabled: fields.automationEnabled } : {}),

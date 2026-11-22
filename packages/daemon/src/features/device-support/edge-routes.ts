@@ -51,8 +51,7 @@ export async function handleEdgeRuntimeRoute(
         return true;
       }
     } else if (operation === "enrollment/proof") {
-      if (isRecord(body) && Object.keys(body).length === 2 && typeof body.grantId === "string"
-        && /^[0-9a-f-]{36}$/u.test(body.grantId) && typeof body.signature === "string"
+      if (isRecord(body) && Object.keys(body).length === 2 && isGrantId(body.grantId) && typeof body.signature === "string"
         && /^[A-Za-z0-9_-]{86}$/u.test(body.signature)) {
         const signature = Buffer.from(body.signature, "base64url");
         if (signature.toString("base64url") === body.signature) {
@@ -64,11 +63,17 @@ export async function handleEdgeRuntimeRoute(
           return true;
         }
       }
-    } else if (isRecord(body) && Object.keys(body).length === 1 && isRevision(body.expectedRevision)) {
-      const revoked = store.revokeEdgeRuntimeEnrollment(runtimeId, body.expectedRevision);
-      if (revoked) writePrivateJson(response, 200, { runtime: publicRuntime(revoked) });
-      else response.writeHead(204, { "Cache-Control": "no-store" }).end();
-      return true;
+    } else if (isRecord(body) && Object.keys(body).length === 1) {
+      if (isGrantId(body.grantId)) {
+        store.cancelEdgeRuntimeGrant(runtimeId, body.grantId);
+        response.writeHead(204, { "Cache-Control": "no-store" }).end();
+        return true;
+      }
+      if (isRevision(body.expectedRevision) && body.expectedRevision > 0) {
+        const revoked = store.revokeEdgeRuntimeEnrollment(runtimeId, body.expectedRevision);
+        writePrivateJson(response, 200, { runtime: publicRuntime(revoked) });
+        return true;
+      }
     }
     writePrivateJson(response, 400, { error: "invalid_request" });
   } catch (error) {
@@ -108,6 +113,10 @@ function readPublicKey(encoded: string): KeyObject | undefined {
 
 function isRevision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value < Number.MAX_SAFE_INTEGER;
+}
+
+function isGrantId(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value);
 }
 
 function publicRuntime({ runtimeId, displayName, contractMajor, supportedTransports, status, revision, lastSeenAt }: EdgeRuntimeEnrollmentV1) {

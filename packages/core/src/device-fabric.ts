@@ -198,8 +198,14 @@ export class DeviceTaskGraphCoordinator {
 
   recordNodeResult(graph: DeviceTaskGraphV1, nodeId: string, status: DeviceTaskGraphNodeV1["status"], resultRef?: string): DeviceTaskGraphV1 {
     const currentGraph = this.#persistence?.getTaskGraph(graph.graphId) ?? graph;
-    this.validateGraph(currentGraph);
     if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
+    const next = this.advanceNodeResult(currentGraph, nodeId, status, resultRef);
+    this.#persistence?.saveTaskGraph(next);
+    return next;
+  }
+
+  private advanceNodeResult(currentGraph: DeviceTaskGraphV1, nodeId: string, status: DeviceTaskGraphNodeV1["status"], resultRef?: string): DeviceTaskGraphV1 {
+    this.validateGraph(currentGraph);
     const node = currentGraph.nodes.find(item => item.nodeId === nodeId);
     if (!node) throw new DeviceFabricError("target_missing", "task graph node is missing");
     if (currentGraph.cancellationRequestedAt && (node.status !== "unknown"
@@ -212,9 +218,7 @@ export class DeviceTaskGraphCoordinator {
       : nodes.some(item => item.status === "failed") ? "failed"
       : nodes.every(item => item.status === "succeeded") ? "succeeded"
       : nodes.some(item => ["executing", "verifying"].includes(item.status)) ? "executing" : "partial";
-    const next = { ...currentGraph, revision: currentGraph.revision + 1, status: graphStatus, nodes, updatedAt: this.#now() };
-    this.#persistence?.saveTaskGraph(next);
-    return next;
+    return { ...currentGraph, revision: currentGraph.revision + 1, status: graphStatus, nodes, updatedAt: this.#now() };
   }
 
   recordNodeReceipt(
@@ -222,24 +226,35 @@ export class DeviceTaskGraphCoordinator {
     receipt: DeviceTaskGraphNodeReceiptV1,
     authenticatedOwner: Pick<DeviceTaskGraphNodeReceiptV1, "ownerKind" | "ownerId" | "routeGeneration">,
   ): DeviceTaskGraphV1 {
-    const currentGraph = this.#persistence ? this.#persistence.getTaskGraph(graph.graphId) : graph;
-    if (!currentGraph) throw new DeviceFabricError("target_missing", "task graph is missing");
-    if (receipt.graphId !== currentGraph.graphId || receipt.graphRevision !== graph.revision || graph.revision !== currentGraph.revision
+    if (receipt.graphId !== graph.graphId || receipt.graphRevision !== graph.revision
       || receipt.routeGeneration !== authenticatedOwner.routeGeneration || receipt.routeGeneration < 1
       || !Number.isSafeInteger(receipt.routeGeneration) || !Number.isFinite(Date.parse(receipt.receivedAt))) {
       throw new DeviceFabricError("revision_conflict", "task graph node receipt is stale or malformed");
     }
-    const node = currentGraph.nodes.find(item => item.nodeId === receipt.nodeId);
-    if (!node || !["executing", "verifying", "unknown"].includes(node.status)
-      || receipt.ownerKind !== authenticatedOwner.ownerKind || receipt.ownerId !== authenticatedOwner.ownerId
-      || node.ownerKind !== authenticatedOwner.ownerKind || node.ownerId !== authenticatedOwner.ownerId
-      || node.targetDeviceId !== receipt.targetDeviceId || node.capabilitySnapshotId !== receipt.capabilitySnapshotId
-      || !node.attemptId || receipt.attemptId !== node.attemptId
+    if (receipt.ownerKind !== authenticatedOwner.ownerKind || receipt.ownerId !== authenticatedOwner.ownerId
       || !["succeeded", "failed", "cancelled", "unknown"].includes(receipt.status)
       || typeof receipt.resultRef !== "string" || !receipt.resultRef.trim() || receipt.resultRef.length > 512) {
       throw new DeviceFabricError("safety_denied", "task graph node receipt does not match its owner and attempt");
     }
-    return this.recordNodeResult(currentGraph, receipt.nodeId, receipt.status, receipt.resultRef);
+    const advance = (current: DeviceTaskGraphV1) => {
+      if (current.revision !== receipt.graphRevision) {
+        throw new DeviceFabricError("revision_conflict", "task graph node receipt is stale");
+      }
+      const node = current.nodes.find(item => item.nodeId === receipt.nodeId);
+      if (!node || !["executing", "verifying", "unknown"].includes(node.status)
+        || node.ownerKind !== receipt.ownerKind || node.ownerId !== receipt.ownerId
+        || node.targetDeviceId !== receipt.targetDeviceId || node.capabilitySnapshotId !== receipt.capabilitySnapshotId
+        || !node.attemptId || receipt.attemptId !== node.attemptId) {
+        throw new DeviceFabricError("safety_denied", "task graph node receipt does not match its owner and attempt");
+      }
+      return this.advanceNodeResult(current, receipt.nodeId, receipt.status, receipt.resultRef);
+    };
+    if (this.#persistence?.recordTaskGraphReceipt) return this.#persistence.recordTaskGraphReceipt(receipt, advance);
+    const current = this.#persistence ? this.#persistence.getTaskGraph(graph.graphId) : graph;
+    if (!current) throw new DeviceFabricError("target_missing", "task graph is missing");
+    const next = advance(current);
+    this.#persistence?.saveTaskGraph(next);
+    return next;
   }
 
   cancelGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1 {
@@ -289,6 +304,10 @@ export class DeviceTaskGraphCoordinator {
 export interface DeviceTaskGraphPersistence {
   getTaskGraph(graphId: string): DeviceTaskGraphV1 | undefined;
   saveTaskGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1;
+  recordTaskGraphReceipt?(
+    receipt: DeviceTaskGraphNodeReceiptV1,
+    advance: (current: DeviceTaskGraphV1) => DeviceTaskGraphV1,
+  ): DeviceTaskGraphV1;
   acquireTaskGraphLease(targetDeviceId: string, ownerId: string, now: string, leaseMs: number): boolean;
   releaseTaskGraphLease(targetDeviceId: string, ownerId: string): void;
 }

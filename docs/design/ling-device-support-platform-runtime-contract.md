@@ -52,6 +52,15 @@ their selected schemas. Incompatible versions give an explicit error. Unsupporte
 negotiation can preserve a known compatible status view where one exists. Approval
 requires a client that understands and displays the required confirmation fields.
 
+V1 capability schemas use `type`, `properties`, `required`, `additionalProperties`
+as a boolean, `items` as a single schema, numeric `minimum` and `maximum`, and
+scalar `enum` values. `title` and `description` are annotations. The Daemon
+rejects unsupported schema keywords and repeated IDs at adapter registration.
+Discovery can omit capabilities, narrow the supported device kinds and transports,
+and supply display metadata. The other fields match the registered descriptor.
+The owner validates the normalized action input before admitting it. Historical
+snapshots retain the schema and identifier originally recorded.
+
 ### 2.2 What discovery establishes
 
 | Question | Source and meaning |
@@ -97,6 +106,12 @@ reconnect, verification, and any retry share a bounded task budget. Read-only
 operations may retry within this budget under the adapter's retry policy. Verification
 has its own deadline within the budget, allowing the UI to identify a failed
 observation separately from an action failure.
+
+The Daemon applies the action deadline to dispatch and its immediate readback.
+It accepts a bounded receipt and the associated observations for the selected
+target. A late valid receipt remains in the journal with an unknown outcome.
+The broker signals the adapter to stop work and holds its target lease until the
+adapter settles.
 
 ## 3. Approval and dispatch
 

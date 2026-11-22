@@ -284,6 +284,28 @@ reopens its local journal, restores its installation identity and reconciles liv
 devices. Treat an old blocked or disconnected write as unresolved until there is
 evidence. [Ling Server enrollment](ling-server-connectivity.md#3-server-enrollment-and-peer-trust)
 
+### Local Edge enrollment
+
+The authenticated Daemon operator endpoint uses the prefix
+`/v1/device-support/fabric/edge-runtimes`.
+Send `POST /:runtimeId/enrollment` with the display name, contract major,
+supported transports, expected enrollment revision, and the runtime's Ed25519
+SPKI public key as base64url. The JSON fields are `displayName`, `contractMajor`,
+`supportedTransports`, `expectedRevision`, and `publicKeySpki`. A new runtime
+uses revision zero. The response contains a five-minute grant bound to the
+hostname-independent runtime ID, expected revision, and SHA-256 public-key
+fingerprint. Issuing another grant for that runtime replaces its pending grant.
+
+The runtime signs the canonical JSON bytes of
+`{ purpose: "ling.edge-runtime-enrollment.v1", grant }` with its private key.
+Submit `grantId` and the base64url `signature` to
+`POST /:runtimeId/enrollment/proof` through the local operator endpoint.
+Confirmation commits the new runtime revision and consumes the grant together.
+A proof replay returns the same enrollment while its revision is current.
+`PUT /:runtimeId/revocation` accepts a `grantId` to cancel that pending grant,
+or `expectedRevision` to revoke the current runtime. The list projection omits
+the key fingerprint and grant. [Daemon routes](../../packages/daemon/src/features/device-support/edge-routes.ts)
+
 ## 7. Event and telemetry plane
 
 Every event identifies its owner stream, generation, sequence, subject and schema
@@ -376,8 +398,10 @@ The local operator imports a manifest and its base64url-encoded bytes through
 registry exposes the active record through `GET /v1/device-support/resources/:resourceId`.
 Append `/disable` or `/rollback` and use POST to change its active state.
 The daemon checks publisher trust, license, digest, dependencies and host
-compatibility before activation. Active payload reads and rollbacks recheck the
-current trust policy. An unavailable rollback leaves the current revision active.
+compatibility before activation. Install, active payload reads and rollbacks
+also validate the complete dependency graph against the current trust policy and
+available compatibility facts. Each dependency needs valid stored bytes and an
+active record. Cycles and unavailable dependencies leave the current revision intact.
 Adapter installation and applying a profile to a particular device remain
 separate operations owned by the relevant runtime.
 [Resource routes](../../packages/daemon/src/features/device-support/resource-routes.ts)

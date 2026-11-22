@@ -82,6 +82,28 @@ test("fabric store retains bounded event streams and resumes from a durable snap
   }
 });
 
+test("event retention commits with the append and reports gaps after durable entries", t => {
+  const store = new SqliteDeviceFabricStore({ maxEventsPerStream: 1 });
+  t.after(() => store.close());
+  const durable = event(1, { retentionClass: "durable" });
+  store.appendEvent(durable, now);
+  store.appendEvent(event(2, { retentionClass: "telemetry" }), now);
+  store.database.exec(`
+    CREATE TEMP TRIGGER fail_event_prune BEFORE DELETE ON device_fabric_events
+    BEGIN SELECT RAISE(ABORT, 'fixture prune failure'); END;
+  `);
+  const next = event(3, { retentionClass: "telemetry" });
+  assert.throws(() => store.appendEvent(next, now), /prune failure/u);
+  assert.deepEqual(store.readEvents("task:task-1").events.map(item => item.sequence), [1, 2]);
+  store.database.exec("DROP TRIGGER fail_event_prune");
+  assert.equal(store.appendEvent(next, now).replayed, false);
+  const page = store.readEvents("task:task-1");
+  assert.deepEqual(page.events.map(item => item.sequence), [1, 3]);
+  assert.equal(page.hasGap, true);
+  assert.equal(store.appendEvent(durable, now).replayed, true);
+  assert.equal(store.readEvents("task:task-1", 1, 2).hasGap, false);
+});
+
 test("peer snapshots recover the authorized event stream without rewinding its projection", t => {
   const registry = new LingServerPeerRegistry();
   registry.registerInstallation({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" });
@@ -211,6 +233,31 @@ test("resource activation retains verified bytes across restart and rolls back p
   } finally {
     reopened.close();
   }
+});
+
+test("resource activation and reads require trusted, compatible dependency bytes through the full graph", t => {
+  const revoked = new Set<string>();
+  const store = new SqliteDeviceFabricStore({ verifyResourceSignature: value => !revoked.has(value.resourceId) });
+  t.after(() => store.close());
+  const payload = new TextEncoder().encode("profile");
+  const digest = createHash("sha256").update(payload).digest("hex");
+  const leaf = { ...manifest("1.0.0", digest), resourceId: "device-schema", supportedPlatforms: ["linux"] } as const;
+  const intermediate = { ...manifest("1.0.0", digest), resourceId: "device-transport", dependencies: [leaf.resourceId] };
+  const root = { ...manifest("1.0.0", digest), dependencies: [intermediate.resourceId] };
+  store.installResource(leaf, payload, now, { platform: "linux" });
+  store.installResource(intermediate, payload, now, { platform: "linux" });
+  assert.throws(() => store.installResource(root, payload, now, { platform: "macos" }), /platform is not supported/u);
+  store.installResource(root, payload, now, { platform: "linux" });
+  assert.deepEqual(store.readActiveResourcePayload(root.resourceId, { platform: "linux" }), payload);
+  assert.throws(() => store.installResource({ ...leaf, version: "2.0.0", dependencies: [root.resourceId] }, payload, now), /contain a cycle/u);
+  assert.equal(store.getResource(leaf.resourceId)?.manifest.version, "1.0.0");
+  revoked.add(leaf.resourceId);
+  assert.throws(() => store.readActiveResourcePayload(root.resourceId), /signature is not valid/u);
+  assert.throws(() => store.installResource({ ...root, version: "2.0.0" }, payload, now), /signature is not valid/u);
+  revoked.clear();
+  store.database.prepare("DELETE FROM device_resource_payloads WHERE resource_id=?").run(leaf.resourceId);
+  assert.throws(() => store.readActiveResourcePayload(root.resourceId), /dependency payload is missing/u);
+  assert.equal(store.getResource(root.resourceId)?.manifest.version, "1.0.0");
 });
 
 test("fabric store persists lifecycle revisions and rejects invalid transitions", () => {
@@ -401,6 +448,18 @@ test("edge placement replays the recorded decision and evaluates changed runtime
   assert.equal(blocked.runtimeRevision, 5);
   assert.equal(blocked.reason, "runtime_revoked");
   assert.deepEqual(store.getEdgeRuntimePlacementDecision(queued.decisionId), queued);
+});
+
+test("an expired Edge grant cannot create an enrollment even with accepted proof", t => {
+  const store = new SqliteDeviceFabricStore();
+  t.after(() => store.close());
+  const grant = {
+    grantId: "fixture-grant", runtimeId: "edge-1", displayName: "Edge", publicKeyFingerprint: "device-fingerprint",
+    contractMajor: 1, supportedTransports: ["ssh"], expectedRevision: 0, expiresAt: "2026-11-21T00:05:00.000Z",
+  };
+  store.issueEdgeRuntimeGrant(grant, "fixture-key", now);
+  assert.throws(() => store.confirmEdgeRuntimeGrant(grant.runtimeId, grant.grantId, grant.expiresAt, () => true), /grant is stale/u);
+  assert.deepEqual(store.listEdgeRuntimes(), []);
 });
 
 test("target-scoped secret broker resolves only authorized references and records redacted use metadata", async () => {

@@ -266,9 +266,9 @@ function DeviceTraceShareButton({ runtime, taskId, styles }: {
     if (active.current) return;
     active.current = true;
     try {
-      const trace = await runtime.readTaskTrace(taskId);
-      if (!trace) throw new Error("mobile_device_task_unavailable");
-      await Share.share({ message: JSON.stringify(trace, null, 2) });
+      const evidence = await runtime.readTaskEvidenceExport(taskId);
+      if (!evidence) throw new Error("mobile_device_task_unavailable");
+      await Share.share({ message: JSON.stringify(evidence, null, 2) });
     } catch {
       Alert.alert("无法分享诊断记录");
     } finally {

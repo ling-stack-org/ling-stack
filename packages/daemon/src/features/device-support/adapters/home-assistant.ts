@@ -464,7 +464,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
       await this.assertReloadTarget(input.profile, { entryId: args.entryId, entityId }, input.signal);
     }
     const entity = await this.readEntity(entityId, input.signal);
-    const observation = this.entityObservation(input.evidenceId, entity, input.profile.device.id);
+    const observation = this.entityObservation(input.evidenceId, entity);
     return {
       verification: {
         actionId: request.actionId,
@@ -475,10 +475,10 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     };
   }
 
-  private entityObservation(id: string, entity: HomeAssistantEntityRead, subjectId = entity.entityId): DeviceObservationV1 {
+  private entityObservation(id: string, entity: HomeAssistantEntityRead): DeviceObservationV1 {
     return {
       id,
-      subjectId,
+      subjectId: this.deviceId,
       source: "home_assistant",
       value: { entityId: entity.entityId, availability: entity.availability,
         ...(entity.lastReportedAt ? { lastReportedAt: entity.lastReportedAt } : {}),

@@ -204,6 +204,58 @@ function brokerFixture() {
   return { store, broker };
 }
 
+test("the broker binds discovery and dispatch to the registered capability contract", async t => {
+  const store = new SqliteDeviceSupportStore();
+  t.after(() => store.close());
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  const typedRead = {
+    ...readCapability,
+    inputSchema: {
+      type: "object", required: ["includeDns"], additionalProperties: false,
+      properties: { includeDns: { type: "boolean" } },
+    },
+  };
+  const registered = { ...manifest, capabilities: [typedRead, writeCapability] };
+  const known = { ...snapshot(), capabilities: [{ ...typedRead, displayMetadata: { label: "Network" } }] };
+  let reported: DeviceCapabilitySnapshotV1 = known;
+  let calls = 0;
+  const adapter = {
+    ...createAdapter(), manifest: registered,
+    async getCapabilities() { return reported; },
+    async execute(input: Parameters<DeviceAdapter["execute"]>[0]) {
+      calls += 1;
+      return createAdapter().execute(input);
+    },
+  };
+  assert.throws(() => broker.registerAdapter({
+    ...adapter, manifest: { ...registered, capabilities: [{ ...typedRead, inputSchema: { $ref: "unknown" } }] },
+  }), /invalid capability schema/u);
+  broker.registerAdapter(adapter);
+  broker.registerDevice(manifest.adapterId, profile);
+  const accepted = await broker.refreshCapabilities(profile.device.id, known.connectionRevision);
+  assert.deepEqual(accepted, known);
+
+  const altered = { ...writeCapability, sideEffect: "read_only", approvalClass: "allow" } as const;
+  reported = { ...known, snapshotId: "unbound-snapshot", capabilities: [altered] };
+  await assert.rejects(() => broker.refreshCapabilities(profile.device.id, known.connectionRevision), /invalid capability snapshot/u);
+  assert.deepEqual(store.getCurrentCapabilitySnapshot(profile.device.id), known);
+
+  broker.createTask(task());
+  const invalid = { ...request(), normalizedInput: { includeDns: "true" } };
+  assert.throws(() => broker.proposeAction(invalid), /does not match the registered capability schema/u);
+  await assert.rejects(() => broker.execute(invalid), /does not match the registered capability schema/u);
+  assert.deepEqual(store.listAttempts("task-1"), []);
+  assert.equal(calls, 0);
+  assert.equal((await broker.execute(request())).attempt.status, "completed");
+
+  store.saveCapabilitySnapshot(reported, now);
+  broker.createTask(task("other-task"));
+  await assert.rejects(() => broker.execute({
+    ...request(writeCapability.id, "other-task"), capabilitySnapshotId: reported.snapshotId,
+  }), /differs from the current adapter manifest/u);
+  assert.equal(calls, 1);
+});
+
 test("registry discovers a device and broker executes a fresh read-only capability", async () => {
   const { store, broker } = brokerFixture();
   store.createTask(task(), now);
@@ -221,12 +273,12 @@ test("a task retains its original capability facts across refresh and restart wi
   let store = new SqliteDeviceSupportStore({ databasePath });
   t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
   const broker = new DeviceCapabilityBroker({ store, now: () => now });
-  broker.registerAdapter(createAdapter());
-  broker.registerDevice(manifest.adapterId, profile);
   const before = {
     ...snapshot(),
     capabilities: [{ ...readCapability, inputSchema: { type: "object", description: "fixture-adapter-private-schema" } }, writeCapability],
   };
+  broker.registerAdapter({ ...createAdapter(), manifest: { ...manifest, capabilities: before.capabilities } });
+  broker.registerDevice(manifest.adapterId, profile);
   store.saveCapabilitySnapshot(before, now);
   store.saveCapabilitySnapshot(structuredClone(before), now);
   assert.throws(() => store.saveCapabilitySnapshot({ ...before, capabilities: [writeCapability] }, now), (error: unknown) =>
@@ -734,6 +786,51 @@ test("invalid adapter receipts and thrown transport errors retain a redacted unk
     assert.equal(result.attempt.receipt?.actionId, action.actionId);
     assert.equal(result.attempt.receipt?.errorCode, code);
     assert.doesNotMatch(JSON.stringify(store.listAttempts(taskId)), /sensitive-transport-detail/);
+  }
+});
+
+test("dispatch uses the declared deadline and retains only bounded evidence for its target", async t => {
+  const store = new SqliteDeviceSupportStore();
+  t.after(() => store.close());
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  const capability = { ...readCapability, timeoutMs: 25, responseBytesLimit: 1024 };
+  const adapter = createAdapter();
+  broker.registerAdapter({
+    ...adapter, manifest: { ...manifest, capabilities: [capability] },
+    async getCapabilities() { return { ...snapshot(), capabilities: [capability] }; },
+    async execute(input) {
+      const { actionId, taskId } = input.request;
+      if (taskId === "deadline") {
+        const signal = input.signal!;
+        const keepAlive = setTimeout(() => {}, 1_000);
+        try {
+          if (!signal.aborted) await new Promise<void>(resolve =>
+            signal.addEventListener("abort", () => resolve(), { once: true }));
+          assert.equal(signal.reason.name, "TimeoutError");
+          return adapter.execute(input);
+        } finally {
+          clearTimeout(keepAlive);
+        }
+      }
+      const observation = {
+        id: `${actionId}:evidence`, subjectId: taskId === "foreign" ? "different-device" : input.profile.device.id,
+        source: "fixture", value: taskId === "oversized" ? "x".repeat(2_000) : "ok", observedAt: now,
+        receivedAt: now, freshnessUntil: later, quality: "good", provenance: [], redactionClass: "public",
+      } as const;
+      return {
+        action: { actionId, status: "completed", startedAt: now, observationIds: [observation.id] },
+        observations: [observation],
+      };
+    },
+  });
+  broker.registerDevice(manifest.adapterId, profile);
+  await broker.refreshCapabilities(profile.device.id, snapshot().connectionRevision);
+  for (const id of ["deadline", "foreign", "oversized", "bounded"] as const) {
+    broker.createTask(task(id));
+    const record = await broker.execute(request(capability.id, id));
+    assert.equal(store.getTask(id)?.status, id === "bounded" ? "succeeded" : "unknown");
+    assert.equal(record.attempt.receipt?.status, id === "deadline" || id === "bounded" ? "completed" : "uncertain");
+    assert.equal(store.listObservations(id).length, id === "bounded" ? 1 : 0);
   }
 });
 

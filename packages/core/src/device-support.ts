@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   DEVICE_CONTRACT_MAJOR_V1,
@@ -25,10 +26,12 @@ import {
   isAdapterManifestV1,
   isDeviceActionRequestV1,
   isDeviceActionResultV1,
+  isDeviceCapabilitySchemaV1,
   isDeviceCapabilitySnapshotV1,
   isDeviceObservationV1,
   isDeviceProfileV1,
   isDeviceVerificationResultV1,
+  matchesDeviceCapabilitySchemaV1,
 } from "@ling-stack/contracts";
 
 import type { SqliteDeviceSupportStore } from "./storage/sqlite/device-support-store.js";
@@ -156,6 +159,12 @@ export class DeviceAdapterRegistry {
     if (adapter.manifest.contractMajor !== DEVICE_CONTRACT_MAJOR_V1) {
       throw new DeviceBrokerError("unsupported_contract", "adapter contract major is unsupported");
     }
+    const capabilities = adapter.manifest.capabilities;
+    if (new Set(capabilities.map(capability => capability.id)).size !== capabilities.length
+      || capabilities.some(({ inputSchema, outputSchema }) =>
+        !isDeviceCapabilitySchemaV1(inputSchema) || !isDeviceCapabilitySchemaV1(outputSchema))) {
+      throw new DeviceBrokerError("invalid_request", "adapter declares an invalid capability schema or repeated capability ID");
+    }
     const existing = this.#adapters.get(adapter.manifest.adapterId);
     if (existing && existing.manifest.adapterVersion !== adapter.manifest.adapterVersion) {
       throw new DeviceBrokerError("target_changed", "adapter id is already registered at another version");
@@ -225,7 +234,8 @@ export class DeviceCapabilityBroker {
       || snapshot.deviceId !== deviceId
       || snapshot.adapterId !== profile.adapterId
       || snapshot.adapterVersion !== profile.adapterVersion
-      || snapshot.connectionRevision !== connectionRevision) {
+      || snapshot.connectionRevision !== connectionRevision
+      || !snapshotMatchesManifest(snapshot, adapter.manifest, profile)) {
       throw new DeviceBrokerError("invalid_request", "adapter returned an invalid capability snapshot");
     }
     this.store.withWriteTransaction(() => {
@@ -311,8 +321,9 @@ export class DeviceCapabilityBroker {
     const { attempt, adapter, profile, capability } = admission;
     const controller = new AbortController();
     const recoveryDeadline = request.recoveryPlan && Date.parse(request.recoveryPlan.verifyBy);
+    const operationDeadline = recoveryTimeout(capability.timeoutMs);
     const operationSignal = AbortSignal.any([
-      controller.signal,
+      controller.signal, operationDeadline,
       ...(signal ? [signal] : []),
       ...(recoveryDeadline === undefined ? [] : [recoveryTimeout(recoveryDeadline - Date.parse(this.now()))]),
     ]);
@@ -326,15 +337,18 @@ export class DeviceCapabilityBroker {
         }
         execution = await adapter.execute({ profile, capability, request, signal: operationSignal });
       } catch (error) {
-        execution = uncertainActionResult(request.actionId, this.now(), error);
+        execution = uncertainActionResult(request.actionId, this.now(), operationSignal.reason ?? error);
       }
       const result = execution && typeof execution === "object" && "action" in execution ? execution : undefined;
       const reported = result?.action ?? execution;
-      const valid = isDeviceActionResultV1(reported) && reported.actionId === request.actionId;
-      const action = valid ? reported : uncertainActionResult(request.actionId, this.now(), undefined);
+      const valid = isDeviceActionResultV1(reported) && reported.actionId === request.actionId
+        && hasBoundedObservationBatch(reported, result?.observations, request.targetDeviceId, capability.responseBytesLimit)
+        && (result?.observations?.length ?? 0) === reported.observationIds.length;
+      const action = valid ? reported : uncertainActionResult(request.actionId, this.now(), operationSignal.reason);
       const observations = valid ? result?.observations ?? [] : [];
       const finalize = options.finalizeTask ?? true;
-      const receipt = this.recordActionResult(attempt, request.capabilitySnapshotId, capability, action, observations, finalize, this.shouldVerify(capability, request));
+      const receipt = this.recordActionResult(attempt, request.capabilitySnapshotId, capability, action, observations,
+        operationSignal.aborted, finalize, this.shouldVerify(capability, request));
       if (!receipt.verify) return receipt.record;
 
       const evidenceId = `${attempt.attemptId}:verification`;
@@ -435,7 +449,7 @@ export class DeviceCapabilityBroker {
     });
 
     const controller = new AbortController();
-    const deadline = AbortSignal.timeout(admittedReader.timeoutMs);
+    const deadline = recoveryTimeout(admittedReader.timeoutMs);
     const signal = AbortSignal.any(input.signal ? [input.signal, controller.signal, deadline] : [controller.signal, deadline]);
     this.activeOperations.set(attempt.taskId, controller);
     const reconciliationId = `device_reconciliation_${randomUUID()}`;
@@ -726,7 +740,14 @@ export class DeviceCapabilityBroker {
     if (!capability || capability.schemaVersion !== request.capabilitySchemaVersion) {
       throw new DeviceBrokerError("unsupported_capability", "requested capability is not in the current snapshot");
     }
-    return { profile, snapshot, capability, adapter: this.requireAdapter(profile.adapterId) };
+    const adapter = this.requireAdapter(profile.adapterId);
+    if (!snapshotMatchesManifest(snapshot, adapter.manifest, profile)) {
+      throw new DeviceBrokerError("stale_snapshot", "capability snapshot differs from the current adapter manifest");
+    }
+    if (!matchesDeviceCapabilitySchemaV1(request.normalizedInput, capability.inputSchema)) {
+      throw new DeviceBrokerError("invalid_request", "device action input does not match the registered capability schema");
+    }
+    return { profile, snapshot, capability, adapter };
   }
 
   private actionAuthority(workspaceId: string, dispatchStop: DeviceDispatchStopV1, accessGrant?: DeviceAccessGrantV1): DeviceActionAuthorityV1 {
@@ -771,6 +792,7 @@ export class DeviceCapabilityBroker {
     capability: CapabilityDescriptorV1,
     action: DeviceActionResultV1,
     observations: readonly DeviceObservationV1[],
+    interrupted: boolean,
     finalize: boolean,
     requiresVerification: boolean,
   ): { readonly record: DeviceSupportStoreAttemptRecord; readonly verify: boolean } {
@@ -781,7 +803,8 @@ export class DeviceCapabilityBroker {
         return { record: this.store.updateAttempt(attempt.attemptId, { status: "unknown", receipt: action }, now), verify: false };
       }
 
-      const status = action.status === "completed" ? "completed" : action.status === "rejected" ? "failed" : "unknown";
+      const status = interrupted ? "unknown"
+        : action.status === "completed" ? "completed" : action.status === "rejected" ? "failed" : "unknown";
       const record = this.store.updateAttempt(attempt.attemptId, { status, receipt: action }, now);
       const verify = status === "completed" && requiresVerification;
       if (status === "unknown") {
@@ -878,10 +901,7 @@ export class DeviceCapabilityBroker {
         const checkedAt = Date.parse(verification?.checkedAt);
         if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId
           && (request.expectedVerification === undefined || canonicalJson(request.expectedVerification) === canonicalJson(verification.rule))
-          && (observations === undefined || (Array.isArray(observations)
-            && observations.every(item => isDeviceObservationV1(item) && item.subjectId === request.targetDeviceId
-              && verification.observationIds.includes(item.id))
-            && new Set(observations.map(item => item.id)).size === observations.length))) {
+          && hasBoundedObservationBatch(verification, observations, request.targetDeviceId, input.capability.responseBytesLimit)) {
           if (verification.status === "not_evaluable" || (checkedAt >= startedAt && checkedAt <= Date.parse(evaluatedAt)
             && observations?.some(item => item.id === input.evidenceId
               && Date.parse(item.observedAt) >= startedAt && Date.parse(item.observedAt) <= checkedAt
@@ -925,8 +945,41 @@ function isApprovalForRequest(
     && (request.recoveryPlan === undefined || canonicalJson(approval.recoveryScope) === canonicalJson(request.recoveryPlan));
 }
 
+function snapshotMatchesManifest(snapshot: DeviceCapabilitySnapshotV1, manifest: AdapterManifestV1, profile: DeviceProfileV1): boolean {
+  const declared = new Map(manifest.capabilities.map(item => [item.id, item]));
+  return snapshot.contractMajor === manifest.contractMajor
+    && snapshot.adapterVersion === manifest.adapterVersion
+    && new Set(snapshot.capabilities.map(item => item.id)).size === snapshot.capabilities.length
+    && snapshot.capabilities.every(item => {
+      const registered = declared.get(item.id);
+      if (!registered) return false;
+      const { displayMetadata: _display, supportedDeviceKinds, supportedTransports, ...contract } = item;
+      const { displayMetadata: _registeredDisplay, supportedDeviceKinds: kinds, supportedTransports: transports, ...registeredContract } = registered;
+      return supportedDeviceKinds.includes(profile.device.kind)
+        && supportedDeviceKinds.every(kind => kinds.includes(kind))
+        && supportedTransports.some(transport => profile.transports.includes(transport))
+        && supportedTransports.every(transport => transports.includes(transport))
+        && isDeepStrictEqual(JSON.parse(JSON.stringify(contract)), JSON.parse(JSON.stringify(registeredContract)));
+    });
+}
+
 function recoveryTimeout(remainingMs: number): AbortSignal {
-  return remainingMs <= 0 ? AbortSignal.abort() : AbortSignal.timeout(Math.min(remainingMs, 2_147_483_647));
+  return remainingMs <= 0
+    ? AbortSignal.abort(new DOMException("Device deadline expired", "TimeoutError"))
+    : AbortSignal.timeout(Math.min(remainingMs, 2_147_483_647));
+}
+
+function hasBoundedObservationBatch(
+  receipt: DeviceActionResultV1 | DeviceVerificationResultV1,
+  observations: readonly DeviceObservationV1[] | undefined,
+  targetDeviceId: string,
+  maxBytes: number,
+): boolean {
+  return (observations === undefined || (Array.isArray(observations)
+    && observations.every(item => isDeviceObservationV1(item) && item.subjectId === targetDeviceId
+      && receipt.observationIds.includes(item.id))
+    && new Set(observations.map(item => item.id)).size === observations.length))
+    && Buffer.byteLength(JSON.stringify({ receipt, observations })) <= maxBytes;
 }
 
 function uncertainActionResult(actionId: string, now: string, error: unknown): DeviceActionResultV1 {
