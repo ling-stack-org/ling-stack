@@ -100,14 +100,15 @@ export interface ApprovalResumeBasisV1 {
   readonly fingerprint: string;
 }
 
-export interface DeviceActionApprovalPayload {
+export type DeviceActionApprovalPayload = {
   readonly type: "device_action";
   readonly targetDeviceId: string;
   readonly capabilityId: string;
-  readonly entryId: string;
   readonly entityId: string;
-  readonly expectedAvailability: "available";
-}
+} & (
+  | { readonly entryId: string; readonly expectedAvailability: "available" }
+  | { readonly automationRegistryId: string; readonly expectedAutomationEnabled: true }
+);
 
 export interface ApprovalRequest {
   readonly id: string;

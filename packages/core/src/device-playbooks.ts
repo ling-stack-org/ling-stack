@@ -54,6 +54,18 @@ export function createHomeAssistantOfflinePlaybook(entityId: string, options: { 
   };
 }
 
+export function createHomeAssistantIntegrationDiagnosisPlaybook(entryId: string, entityId: string): DevicePlaybookV1 {
+  return {
+    id: "home-assistant-integration-diagnosis",
+    version: "1.0.0",
+    displayName: "Home Assistant integration diagnosis",
+    supportedDeviceKinds: ["home_assistant"],
+    riskClass: "read_only",
+    localFallback: true,
+    steps: [{ id: "read-integration", capabilityId: "home_assistant.read_config_entry", input: { entryId, entityId } }],
+  };
+}
+
 export function createPcSoftwareDiagnosisPlaybook(): DevicePlaybookV1 {
   return {
     id: "pc-software-diagnosis",

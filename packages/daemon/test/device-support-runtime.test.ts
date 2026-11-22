@@ -216,6 +216,104 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
   }
 });
 
+test("Home Assistant automation recovery verifies the exact registry entity and writes once", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-automation-approval-"));
+  const entityId = "automation.fixture";
+  const originalRegistryId = "a".repeat(32);
+  const lastTriggered = new Date(Date.now() - 60_000).toISOString();
+  let registryId = originalRegistryId;
+  let state = "off";
+  let applyService = true;
+  const writes: unknown[] = [];
+  const home = createServer(async (request, response) => {
+    if (request.url === "/api/config") {
+      response.end(JSON.stringify({ version: "2026.11.2" }));
+    } else if (request.url === `/api/states/${entityId}`) {
+      response.end(JSON.stringify({ entity_id: entityId, state, attributes: { last_triggered: lastTriggered, private_marker: "private-fixture-value" } }));
+    } else if (request.url === "/api/services/automation/turn_on" && request.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      writes.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      if (applyService) state = "on";
+      response.end("[]");
+    } else response.writeHead(404).end();
+  });
+  const registry = new WebSocketServer({ server: home, path: "/api/websocket" });
+  registry.on("connection", socket => {
+    socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.2" }));
+    socket.on("message", raw => {
+      const message = JSON.parse(raw.toString("utf8"));
+      if (message.type === "auth" && message.access_token === "automation-fixture-secret") {
+        socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.2" }));
+      } else if (message.type === "config/entity_registry/get") {
+        socket.send(JSON.stringify({ id: message.id, type: "result", success: true,
+          result: { entity_id: entityId, platform: "automation", id: registryId, disabled_by: null } }));
+      } else socket.close();
+    });
+  });
+  home.listen(0, "127.0.0.1");
+  await once(home, "listening");
+  const homeAddress = home.address();
+  assert.ok(homeAddress && typeof homeAddress === "object");
+  const daemon = createDaemonServer({
+    host: "127.0.0.1", port: 0, authToken: "fixture-operator", defaultWorkspaceCwd: cwd,
+    deviceSupport: { homeAssistant: { origin: `http://127.0.0.1:${homeAddress.port}`, tokenRef: "env:HA_FIXTURE" } },
+  }, { secretResolver: createEnvSecretResolver({ HA_FIXTURE: "automation-fixture-secret" }),
+    chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null });
+  t.after(async () => {
+    await daemon.stop();
+    await new Promise<void>(resolve => registry.close(() => resolve()));
+    await new Promise<void>(resolve => home.close(() => resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const post = (path: string, body: object) => fetch(`http://127.0.0.1:${address.port}${path}`, {
+    method: "POST", headers: { Authorization: "Bearer fixture-operator", "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const proposalPath = "/v1/device-support/home-assistant/automation-enable-proposals";
+  async function propose(): Promise<ApprovalRequest> {
+    const response = await post(proposalPath, { entityId });
+    assert.equal(response.status, 201);
+    return (await response.json()).approval as ApprovalRequest;
+  }
+  const approve = (approval: ApprovalRequest) => post(`/approvals/${approval.id}/approve?cwd=${encodeURIComponent(cwd)}`, {});
+  const diagnosis = await post("/v1/device-support/home-assistant/diagnose", { entityId });
+  assert.equal(diagnosis.status, 200);
+  const { report } = await diagnosis.json() as { report: DeviceDiagnosisReportV1 };
+  assert.deepEqual(report.facts[0]?.value, { availability: "available", automationEnabled: false, lastTriggeredAt: lastTriggered });
+  assert.equal((await post(proposalPath, { entityId: "switch.fixture" })).status, 400);
+  const stale = await propose();
+  registryId = "b".repeat(32);
+  assert.equal((await approve(stale)).status, 200);
+  assert.deepEqual(writes, []);
+  registryId = originalRegistryId;
+  const live = await propose();
+  assert.match(live.title, /Enable Home Assistant automation/u);
+  assert.equal((live.payload as { automationRegistryId: string }).automationRegistryId, originalRegistryId);
+  for (const response of await Promise.all([approve(live), approve(live)])) assert.equal(response.status, 200);
+  assert.deepEqual(writes, [{ entity_id: entityId }]);
+  assert.equal((await post(proposalPath, { entityId })).status, 409);
+  state = "off";
+  applyService = false;
+  const unchanged = await propose();
+  assert.equal((await approve(unchanged)).status, 200);
+  assert.equal(writes.length, 2);
+  const workspace = createSqliteRunStore(cwd);
+  const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    assert.equal(store.listAttempts(stale.deviceTaskId!)[0]?.attempt.receipt?.errorCode, "target_changed");
+    assert.equal(store.getTask(live.deviceTaskId!)?.status, "succeeded");
+    assert.deepEqual(store.listAttempts(live.deviceTaskId!).map(record => record.attempt.verification?.status), ["verified"]);
+    assert.deepEqual(store.listAttempts(unchanged.deviceTaskId!).map(record => record.attempt.verification?.status), ["failed"]);
+    assert.doesNotMatch(JSON.stringify(store.listObservations(live.deviceTaskId!)), /automation-fixture-secret|private-fixture-value/u);
+  } finally {
+    store.close();
+    workspace.close();
+  }
+});
+
 test("the local Home Assistant approval queue persists exact decisions and never repeats a reload", async t => {
   const cwd = mkdtempSync(join(tmpdir(), "ling-home-assistant-approval-"));
   const accessToken = "fixture-ha-queue-token";
@@ -249,13 +347,17 @@ test("the local Home Assistant approval queue persists exact decisions and never
     let authenticated = false;
     socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.4" }));
     socket.on("message", raw => {
-      const message = JSON.parse(raw.toString()) as { type: string; entity_id?: string; access_token?: string; id?: number };
+      const message = JSON.parse(raw.toString()) as { type: string; entity_id?: string; entry_id?: string; access_token?: string; id?: number };
       if (!authenticated && message.type === "auth" && message.access_token === accessToken) {
         authenticated = true;
         socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.4" }));
       } else if (authenticated && message.type === "config/entity_registry/get" && message.entity_id === entityId) {
         socket.send(JSON.stringify({ id: message.id, type: "result", success: true,
           result: { entity_id: entityId, config_entry_id: registryEntry, private_field: "fixture-hidden-registry-field" } }));
+      } else if (authenticated && message.type === "config_entries/get_single" && message.entry_id === entryId) {
+        socket.send(JSON.stringify({ id: message.id, type: "result", success: true,
+          result: { config_entry: { entry_id: entryId, domain: "garage", state: "setup_retry",
+            disabled_by: null, reason: "fixture-hidden-integration-reason" } } }));
       } else socket.close();
     });
   });
@@ -308,6 +410,17 @@ test("the local Home Assistant approval queue persists exact decisions and never
   const workspace = createSqliteRunStore(cwd);
   const databasePath = workspace.paths.databasePath;
   workspace.close();
+
+  const integrationDiagnosis = await fetch(base + "/v1/device-support/home-assistant/diagnose", {
+    method: "POST", headers, body: JSON.stringify({ entityId, entryId }),
+  });
+  assert.equal(integrationDiagnosis.status, 200);
+  const integration = await integrationDiagnosis.json() as { report: DeviceDiagnosisReportV1 };
+  assert.deepEqual(integration.report.facts[0]?.value, {
+    entryId, entityId, domain: "garage", state: "setup_retry", integrationDisabled: false, entityDisabled: false,
+  });
+  assert.equal(integration.report.hypotheses[0]?.code, "integration_or_device_issue");
+  assert.doesNotMatch(JSON.stringify(integration), /fixture-hidden-integration-reason|fixture-hidden-registry-field/u);
 
   assert.equal((await propose(otherEntryId)).status, 409);
   assert.equal((await propose(entryId, { Origin: "https://foreign.example" })).status, 403);

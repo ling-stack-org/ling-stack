@@ -239,7 +239,11 @@ D0 covers the design and the implementation plan.
   the Home Assistant registry. The local Review Queue records one-time approval,
   then the Daemon runs the reload and verifies fresh entity availability.
 - [~] Add further verified service actions, including bounded automation re-enable
-  where supported.
+  where supported. The configured Home Assistant adapter now reads integration
+  state and automation registry identity, queues an exact approval for a disabled
+  automation, invokes the official automation.turn_on service, and verifies
+  automationEnabled true from a fresh entity readback. Changed registry identity,
+  concurrent approval and a failed service response remain durable.
 - [x] Preserve Home Assistant entity and service identifiers in evidence without exposing
   credentials.
 
@@ -260,6 +264,11 @@ D0 covers the design and the implementation plan.
   service catalogs through the authenticated Daemon API. All four pages matched
   their public typed observations after reopening SQLite.
 - Action approval, verification, and rollback or safe-failure evidence.
+- Automation recovery fixture on Home Assistant Core 2026.11.2 observed one
+  automation.turn_on call, one verified attempt, and one retained task after
+  Daemon restart. The diagnosis report exposed only the entity ID, integration
+  state, enabled state and last-triggered timestamp. Registry and service private
+  fields were omitted.
 - Adapter fixtures cover normalized `last_reported`, `last_updated`, and
   `last_changed` values, bounded freshness windows, and invalid or future
   timestamps. Missing metadata preserves the legacy fact shape.

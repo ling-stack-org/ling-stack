@@ -123,8 +123,11 @@ export function projectDeviceDiagnosticEvidence(
       || fields.reportTimestampStatus === "invalid" || fields.reportTimestampStatus === "future" ? fields.reportTimestampStatus : undefined;
     const hypotheses: DeviceDiagnosisHypothesisV1["code"][] = availability === "unavailable" ? ["integration_or_device_issue"] : [];
     if (reportFreshness === "stale") hypotheses.push("stale_entity_report");
+    const automation = observation.subjectId.startsWith("automation.");
     return { value: {
       availability,
+      ...(automation && typeof fields.automationEnabled === "boolean" ? { automationEnabled: fields.automationEnabled } : {}),
+      ...(automation && typeof fields.lastTriggeredAt === "string" ? { lastTriggeredAt: fields.lastTriggeredAt } : {}),
       ...(typeof fields.lastReportedAt === "string" ? { lastReportedAt: fields.lastReportedAt } : {}),
       ...(typeof fields.lastUpdatedAt === "string" ? { lastUpdatedAt: fields.lastUpdatedAt } : {}),
       ...(typeof fields.lastChangedAt === "string" ? { lastChangedAt: fields.lastChangedAt } : {}),
@@ -133,6 +136,18 @@ export function projectDeviceDiagnosticEvidence(
     }, hypotheses };
   }
   if (observation.subjectId !== request.targetDeviceId) return undefined;
+  if (request.capabilityId === "home_assistant.read_config_entry" && observation.source === "home_assistant.integration") {
+    const input = request.normalizedInput as Record<string, JsonValue> | null;
+    const { entryId, entityId, domain, state, integrationDisabled, entityDisabled } = fields;
+    if (typeof entryId !== "string" || entryId !== input?.entryId || typeof entityId !== "string" || entityId !== input?.entityId
+      || typeof domain !== "string" || typeof state !== "string" || typeof integrationDisabled !== "boolean" || typeof entityDisabled !== "boolean") {
+      return undefined;
+    }
+    return {
+      value: { entryId, entityId, domain, state, integrationDisabled, entityDisabled },
+      hypotheses: state === "loaded" && !integrationDisabled && !entityDisabled ? [] : ["integration_or_device_issue"],
+    };
+  }
   const pcNetwork = request.capabilityId === "pc.inspect.network" && observation.source === "pc.network";
   const linuxNetwork = request.capabilityId === "linux.inspect.network" && observation.source === "linux.network";
   const linuxWifi = request.capabilityId === "linux.inspect.wifi" && observation.source === "linux.wifi";

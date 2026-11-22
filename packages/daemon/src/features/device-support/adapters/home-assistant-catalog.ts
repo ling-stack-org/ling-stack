@@ -82,7 +82,8 @@ export async function readHomeAssistantRegistry(input: {
   readonly version: string | undefined;
   readonly signal: AbortSignal;
   readonly command: { readonly type: "config/device_registry/list" }
-    | { readonly type: "config/entity_registry/get"; readonly entity_id: string };
+    | { readonly type: "config/entity_registry/get"; readonly entity_id: string }
+    | { readonly type: "config_entries/get_single"; readonly entry_id: string };
 }): Promise<unknown> {
   const endpoint = new URL("/api/websocket", input.origin);
   endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";

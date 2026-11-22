@@ -35,6 +35,8 @@ export interface HomeAssistantEntityRead {
   readonly lastChangedAt?: string;
   readonly reportTimestampStatus: "valid" | "missing" | "invalid" | "future";
   readonly reportFreshness: "fresh" | "stale" | "unknown";
+  readonly automationEnabled?: boolean;
+  readonly lastTriggeredAt?: string;
 }
 
 export interface HomeAssistantAdapterOptions {
@@ -45,9 +47,19 @@ export interface HomeAssistantAdapterOptions {
 }
 
 export const HOME_ASSISTANT_RELOAD_CAPABILITY_ID = "home_assistant.reload_config_entry";
+export const HOME_ASSISTANT_ENABLE_AUTOMATION = "home_assistant.enable_automation";
 const HOME_ASSISTANT_CAPABILITY_FRESHNESS_MS = 180_000;
 const entityIdPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/u;
 const integrationIdPattern = /^(?:[a-f0-9]{32}|[0-9a-hjkmnp-tv-z]{26})$/iu;
+const automationRegistryIdPattern = /^[a-f0-9]{32}$/u;
+const integrationStates = new Set([
+  "loaded", "setup_error", "migration_error", "setup_retry", "not_loaded",
+  "failed_unload", "setup_in_progress", "unload_in_progress",
+]);
+
+export function isHomeAssistantAutomationEntity(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 160 && /^automation\.[a-z0-9_]+$/u.test(value);
+}
 
 export function isHomeAssistantReloadTarget(input: { readonly entryId?: unknown; readonly entityId?: unknown }): input is {
   readonly entryId: string;
@@ -59,7 +71,7 @@ export function isHomeAssistantReloadTarget(input: { readonly entryId?: unknown;
 
 const homeAssistantManifest: AdapterManifestV1 = {
   adapterId: "home-assistant-http",
-  adapterVersion: "1.0.0",
+  adapterVersion: "1.1.0",
   contractMajor: 1,
   supportedDeviceKinds: ["home_assistant"],
   supportedTransports: ["https"],
@@ -109,6 +121,47 @@ const homeAssistantManifest: AdapterManifestV1 = {
       supportedDeviceKinds: ["home_assistant"],
       supportedTransports: ["https"],
       displayMetadata: { label: "Reload integration", category: "repair" },
+    },
+    {
+      id: "home_assistant.read_config_entry",
+      schemaVersion: "1.0",
+      semanticVerb: "read.integration_state",
+      inputSchema: {
+        type: "object", required: ["entryId", "entityId"], additionalProperties: false,
+        properties: { entryId: { type: "string" }, entityId: { type: "string" } },
+      },
+      outputSchema: { type: "object" },
+      sideEffect: "read_only",
+      approvalClass: "allow",
+      requiredPermissions: ["home_assistant.read"],
+      prerequisites: [],
+      timeoutMs: 8_000,
+      responseBytesLimit: 32 * 1024,
+      idempotency: "request",
+      supportedDeviceKinds: ["home_assistant"],
+      supportedTransports: ["https"],
+      displayMetadata: { label: "Read integration state", category: "diagnostics" },
+    },
+    {
+      id: HOME_ASSISTANT_ENABLE_AUTOMATION,
+      schemaVersion: "1.0",
+      semanticVerb: "enable.automation",
+      inputSchema: {
+        type: "object", required: ["entityId", "automationRegistryId"], additionalProperties: false,
+        properties: { entityId: { type: "string" }, automationRegistryId: { type: "string" } },
+      },
+      outputSchema: { type: "object" },
+      sideEffect: "reversible",
+      approvalClass: "ask",
+      requiredPermissions: ["home_assistant.service"],
+      prerequisites: [],
+      timeoutMs: 8_000,
+      responseBytesLimit: 64 * 1024,
+      idempotency: "request",
+      verificationCapabilityId: "home_assistant.read_entity",
+      supportedDeviceKinds: ["home_assistant"],
+      supportedTransports: ["https"],
+      displayMetadata: { label: "Enable Home Assistant automation", category: "repair" },
     },
     ...Object.entries(homeAssistantCatalogCapabilities).map(([kind, id]): CapabilityDescriptorV1 => ({
       id,
@@ -220,7 +273,12 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     const reportFreshness = reportTimestampStatus === "valid" && maxReportAgeMs !== undefined
       ? Date.parse(observedAt) - Date.parse(reported.value!) > maxReportAgeMs ? "stale" : "fresh"
       : "unknown";
+    const automation = isHomeAssistantAutomationEntity(entityId);
+    const lastTriggered = automation && isRecord(body.attributes)
+      ? normalizeHomeAssistantTimestamp(body.attributes.last_triggered, observedAt).value : undefined;
     return { entityId, availability, quality: availability === "available" ? "good" : "degraded", observedAt,
+      ...(automation && (body.state === "on" || body.state === "off") ? { automationEnabled: body.state === "on" } : {}),
+      ...(lastTriggered ? { lastTriggeredAt: lastTriggered } : {}),
       ...(reported.value ? { lastReportedAt: reported.value } : {}), ...(updated.value ? { lastUpdatedAt: updated.value } : {}),
       ...(changed.value ? { lastChangedAt: changed.value } : {}), reportTimestampStatus, reportFreshness };
   }
@@ -245,10 +303,64 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     }
   }
 
+  async readAutomationTarget(profile: DeviceProfileV1, entityId: unknown, callerSignal?: AbortSignal): Promise<string> {
+    this.assertTarget(profile);
+    if (!isHomeAssistantAutomationEntity(entityId)) throw new DeviceBrokerError("invalid_request", "an automation entity ID is required");
+    const deadline = AbortSignal.timeout(8_000);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
+    const entry = await readHomeAssistantRegistry({
+      origin: this.#baseUrl, version: profile.device.firmwareVersion, token: this.requireToken(), signal,
+      command: { type: "config/entity_registry/get", entity_id: entityId },
+    });
+    if (!isRecord(entry) || entry.entity_id !== entityId || entry.platform !== "automation" || entry.disabled_by != null
+      || typeof entry.id !== "string" || !automationRegistryIdPattern.test(entry.id)) {
+      throw new DeviceBrokerError("target_changed", "the selected automation registry entry is unavailable");
+    }
+    return entry.id;
+  }
+
+  private async readIntegration(profile: DeviceProfileV1, args: Record<string, unknown>, callerSignal?: AbortSignal) {
+    if (!isHomeAssistantReloadTarget(args)) throw new DeviceBrokerError("invalid_request", "an integration and entity are required");
+    const deadline = AbortSignal.timeout(8_000);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
+    const options = { origin: this.#baseUrl, version: profile.device.firmwareVersion, token: this.requireToken(), signal };
+    const entity = await readHomeAssistantRegistry({ ...options, command: { type: "config/entity_registry/get", entity_id: args.entityId } });
+    if (!isRecord(entity) || entity.entity_id !== args.entityId || entity.config_entry_id !== args.entryId) {
+      throw new DeviceBrokerError("target_changed", "the entity does not belong to the selected integration");
+    }
+    const result = await readHomeAssistantRegistry({ ...options, command: { type: "config_entries/get_single", entry_id: args.entryId } });
+    const entry = isRecord(result) ? result.config_entry : undefined;
+    if (!isRecord(entry) || entry.entry_id !== args.entryId || typeof entry.domain !== "string" || !/^[a-z0-9_]{1,100}$/u.test(entry.domain)) {
+      throw new DeviceBrokerError("target_changed", "the selected integration state did not match");
+    }
+    return {
+      entryId: args.entryId, entityId: args.entityId, domain: entry.domain,
+      state: typeof entry.state === "string" && integrationStates.has(entry.state) ? entry.state : "unknown",
+      integrationDisabled: entry.disabled_by != null, entityDisabled: entity.disabled_by != null,
+    };
+  }
+
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     this.assertTarget(input.profile);
     const startedAt = this.#now();
     const args = asObject(input.request.normalizedInput);
+    if (input.capability.id === "home_assistant.read_config_entry") {
+      const actionId = input.request.actionId;
+      try {
+        const value = await this.readIntegration(input.profile, args, input.signal);
+        const observedAt = this.#now();
+        const observationId = `${actionId}:integration`;
+        return {
+          action: { actionId, status: "completed", startedAt, finishedAt: observedAt, observationIds: [observationId] },
+          observations: [{ id: observationId, subjectId: this.deviceId, source: "home_assistant.integration", value,
+            observedAt, receivedAt: observedAt, freshnessUntil: new Date(Date.parse(observedAt) + 30_000).toISOString(),
+            quality: value.state === "loaded" ? "good" : "degraded", provenance: [this.deviceId, value.entryId], redactionClass: "public" }],
+        };
+      } catch (error) {
+        return { actionId, status: "rejected", errorCode: error instanceof DeviceBrokerError ? error.code : "service_unavailable",
+          startedAt, finishedAt: this.#now(), observationIds: [] };
+      }
+    }
     const catalogKind = (Object.keys(homeAssistantCatalogCapabilities) as HomeAssistantCatalogKind[])
       .find(kind => homeAssistantCatalogCapabilities[kind] === input.capability.id);
     if (catalogKind) {
@@ -296,21 +408,34 @@ export class HomeAssistantAdapter implements DeviceAdapter {
         observations: [this.entityObservation(action.observationIds[0]!, entity)],
       };
     }
-    if (input.capability.id !== HOME_ASSISTANT_RELOAD_CAPABILITY_ID) {
+    const enable = input.capability.id === HOME_ASSISTANT_ENABLE_AUTOMATION;
+    if (input.capability.id !== HOME_ASSISTANT_RELOAD_CAPABILITY_ID && !enable) {
       return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
     }
     const target = { entryId: args.entryId, entityId: args.entityId };
     try {
-      await this.assertReloadTarget(input.profile, target, input.signal);
+      if (enable) {
+        if (!isHomeAssistantAutomationEntity(args.entityId)
+          || await this.readAutomationTarget(input.profile, args.entityId, input.signal) !== args.automationRegistryId) {
+          throw new DeviceBrokerError("target_changed", "automation registry identity changed");
+        }
+        const automation = await this.readEntity(args.entityId, input.signal);
+        if (automation.automationEnabled === undefined) throw new DeviceBrokerError("target_changed", "automation state is unavailable");
+        if (automation.automationEnabled) {
+          return { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [] };
+        }
+      } else {
+        await this.assertReloadTarget(input.profile, target, input.signal);
+      }
     } catch (error) {
       return { actionId: input.request.actionId, status: "rejected",
         errorCode: error instanceof DeviceBrokerError ? error.code : "service_unavailable",
         startedAt, finishedAt: this.#now(), observationIds: [] };
     }
-    const response = await this.request("/api/services/homeassistant/reload_config_entry", {
+    const response = await this.request(enable ? "/api/services/automation/turn_on" : "/api/services/homeassistant/reload_config_entry", {
       method: "POST",
       signal: input.signal,
-      body: JSON.stringify({ entry_id: target.entryId }),
+      body: JSON.stringify(enable ? { entity_id: args.entityId } : { entry_id: target.entryId }),
     });
     await readBoundedText(response, 64 * 1024);
     return { actionId: input.request.actionId, status: response.ok ? "completed" : "rejected", errorCode: response.ok ? undefined : "service_unavailable", startedAt, finishedAt: this.#now(), observationIds: [] };
@@ -321,20 +446,29 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     const { request } = input;
     const args = asObject(request.normalizedInput);
     const entityId = typeof args.entityId === "string" ? args.entityId : undefined;
-    const rule = request.expectedVerification ?? { availability: "available" };
-    if (input.capability.id !== HOME_ASSISTANT_RELOAD_CAPABILITY_ID || !entityId || !isRecord(rule)
-      || Object.keys(rule).length !== 1 || !["available", "unavailable", "absent"].includes(String(rule.availability))) {
+    const enable = input.capability.id === HOME_ASSISTANT_ENABLE_AUTOMATION;
+    const rule = request.expectedVerification ?? (enable ? { automationEnabled: true } : { availability: "available" });
+    const matchesRule = isRecord(rule) && Object.keys(rule).length === 1 && (enable
+      ? rule.automationEnabled === true : ["available", "unavailable", "absent"].includes(String(rule.availability)));
+    if ((!enable && input.capability.id !== HOME_ASSISTANT_RELOAD_CAPABILITY_ID) || !entityId || !matchesRule) {
       return { verification: {
         actionId: request.actionId, status: "not_evaluable", rule, observationIds: [],
-        checkedAt: this.#now(), reason: "an entity and its expected availability are required",
+        checkedAt: this.#now(), reason: "an entity and a supported verification rule are required",
       } };
     }
-    await this.assertReloadTarget(input.profile, { entryId: args.entryId, entityId }, input.signal);
+    if (enable) {
+      if (await this.readAutomationTarget(input.profile, entityId, input.signal) !== args.automationRegistryId) {
+        throw new DeviceBrokerError("target_changed", "automation registry identity changed");
+      }
+    } else {
+      await this.assertReloadTarget(input.profile, { entryId: args.entryId, entityId }, input.signal);
+    }
     const entity = await this.readEntity(entityId, input.signal);
     const observation = this.entityObservation(input.evidenceId, entity, input.profile.device.id);
     return {
       verification: {
-        actionId: request.actionId, status: entity.availability === rule.availability ? "verified" : "failed",
+        actionId: request.actionId,
+        status: (enable ? entity.automationEnabled === true : entity.availability === rule.availability) ? "verified" : "failed",
         rule, observationIds: [observation.id], checkedAt: this.#now(),
       },
       observations: [observation],
@@ -350,6 +484,8 @@ export class HomeAssistantAdapter implements DeviceAdapter {
         ...(entity.lastReportedAt ? { lastReportedAt: entity.lastReportedAt } : {}),
         ...(entity.lastUpdatedAt ? { lastUpdatedAt: entity.lastUpdatedAt } : {}),
         ...(entity.lastChangedAt ? { lastChangedAt: entity.lastChangedAt } : {}),
+        ...(entity.automationEnabled === undefined ? {} : { automationEnabled: entity.automationEnabled }),
+        ...(entity.lastTriggeredAt ? { lastTriggeredAt: entity.lastTriggeredAt } : {}),
         reportTimestampStatus: entity.reportTimestampStatus, reportFreshness: entity.reportFreshness },
       observedAt: entity.observedAt,
       receivedAt: this.#now(),

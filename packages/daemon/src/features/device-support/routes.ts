@@ -8,7 +8,7 @@ import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
 import type { DeviceDiagnosisRequest } from "./diagnosis-planner.js";
-import { isHomeAssistantReloadTarget } from "./adapters/home-assistant.js";
+import { isHomeAssistantAutomationEntity, isHomeAssistantReloadTarget } from "./adapters/home-assistant.js";
 import { isHomeAssistantCatalogKind } from "./adapters/home-assistant-catalog.js";
 import { handleDeviceProtocolRoute } from "./protocol-routes.js";
 import { handleDeviceResourceRoute } from "./resource-routes.js";
@@ -30,14 +30,14 @@ export async function handleDeviceSupportRoute(
   const accessGrantOperation = /^\/v1\/device-support\/devices\/([^/]+)\/access-grants\/([^/]+)$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
-  const homeAssistantReload = url.pathname === "/v1/device-support/home-assistant/reload-proposals";
+  const homeAssistantProposal = /^\/v1\/device-support\/home-assistant\/(reload-proposals|automation-enable-proposals)$/u.exec(url.pathname)?.[1];
   const homeAssistantCatalog = url.pathname === "/v1/device-support/home-assistant/catalog";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
   const fabricGraph = url.pathname === "/v1/device-support/fabric/graph";
   const edgeRuntimes = url.pathname === "/v1/device-support/fabric/edge-runtimes";
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
-    && !linuxAction && !homeAssistant && !homeAssistantReload && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
+    && !linuxAction && !homeAssistant && !homeAssistantProposal && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
     && !fabricGraph && !edgeRuntimes) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
@@ -61,8 +61,8 @@ export async function handleDeviceSupportRoute(
     await handleHomeAssistantDiagnosis(request, response, runtime);
     return true;
   }
-  if (homeAssistantReload) {
-    await handleHomeAssistantReloadProposal(request, response, runtime, onApprovalCreated);
+  if (homeAssistantProposal) {
+    await handleHomeAssistantProposal(request, response, runtime, homeAssistantProposal === "reload-proposals", onApprovalCreated);
     return true;
   }
   if (homeAssistantCatalog) {
@@ -209,19 +209,24 @@ async function handleHomeAssistantDiagnosis(request: IncomingMessage, response: 
       || !/^[a-z0-9_]+\.[a-z0-9_]+$/u.test(body.entityId)) {
       throw new DeviceBrokerError("invalid_request", "Home Assistant diagnosis requires an entity ID");
     }
-    const { entityId, maxReportAgeMs, ...options } = body;
+    const { entityId, entryId, maxReportAgeMs, ...options } = body;
+    if (entryId !== undefined && (!isHomeAssistantReloadTarget({ entryId, entityId }) || maxReportAgeMs !== undefined)) {
+      throw new DeviceBrokerError("invalid_request", "invalid Home Assistant integration diagnosis request");
+    }
     if (maxReportAgeMs !== undefined && (typeof maxReportAgeMs !== "number" || !Number.isSafeInteger(maxReportAgeMs) || maxReportAgeMs < 1)) {
       throw new DeviceBrokerError("invalid_request", "invalid Home Assistant max report age");
     }
-    const { status, report } = await runtime.diagnoseHomeAssistant(entityId, { ...readDiagnosisOptions(options), maxReportAgeMs });
+    const { status, report } = await runtime.diagnoseHomeAssistant(entityId, {
+      ...readDiagnosisOptions(options), maxReportAgeMs, entryId: typeof entryId === "string" ? entryId : undefined,
+    });
     writePrivateJson(response, 200, { status, report });
   } catch (error) {
     writeDeviceOperationError(response, error);
   }
 }
 
-async function handleHomeAssistantReloadProposal(request: IncomingMessage, response: ServerResponse,
-  runtime: DeviceSupportRuntime, onApprovalCreated?: (approval: ApprovalRequest) => void): Promise<void> {
+async function handleHomeAssistantProposal(request: IncomingMessage, response: ServerResponse,
+  runtime: DeviceSupportRuntime, reload: boolean, onApprovalCreated?: (approval: ApprovalRequest) => void): Promise<void> {
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     writePrivateJson(response, 405, { error: "method_not_allowed" });
@@ -229,10 +234,19 @@ async function handleHomeAssistantReloadProposal(request: IncomingMessage, respo
   }
   try {
     const body = await readJsonBody(request, 4096).catch(() => undefined);
-    if (!isRecord(body) || Object.keys(body).length !== 2 || !isHomeAssistantReloadTarget(body)) {
-      throw new DeviceBrokerError("invalid_request", "Home Assistant reload proposal requires an integration and an entity");
+    if (!isRecord(body)) throw new DeviceBrokerError("invalid_request", "Home Assistant proposal requires a target");
+    let approval: ApprovalRequest;
+    if (reload) {
+      if (Object.keys(body).length !== 2 || !isHomeAssistantReloadTarget(body)) {
+        throw new DeviceBrokerError("invalid_request", "Home Assistant reload proposal requires an integration and an entity");
+      }
+      approval = await runtime.proposeHomeAssistantReload(body);
+    } else {
+      if (Object.keys(body).length !== 1 || !isHomeAssistantAutomationEntity(body.entityId)) {
+        throw new DeviceBrokerError("invalid_request", "Home Assistant enable proposal requires an automation entity");
+      }
+      approval = await runtime.proposeHomeAssistantAutomationEnable(body.entityId);
     }
-    const approval = await runtime.proposeHomeAssistantReload(body);
     onApprovalCreated?.(approval);
     writePrivateJson(response, 201, { approval });
   } catch (error) {

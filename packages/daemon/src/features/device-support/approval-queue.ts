@@ -39,13 +39,16 @@ export function createDeviceApprovalQueue(
 
 function projectApproval(item: QueuedApproval): ApprovalRequest {
   const { binding, payload, status } = item;
+  const operation = "expectedAutomationEnabled" in payload
+    ? { title: "Enable Home Assistant automation", description: `Enable and verify ${payload.entityId}.` }
+    : { title: "Reload Home Assistant integration",
+      description: `Reload integration ${payload.entryId}, then verify that ${payload.entityId} is available.` };
   return {
     id: binding.approvalId,
     deviceTaskId: binding.taskId,
     actionType: "device_action",
     risk: "medium",
-    title: "Reload Home Assistant integration",
-    description: `Reload integration ${payload.entryId}, then verify that ${payload.entityId} is available.`,
+    ...operation,
     payload,
     status,
     createdAt: item.createdAt,

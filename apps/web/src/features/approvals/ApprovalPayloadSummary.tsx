@@ -11,12 +11,14 @@ export function ApprovalPayloadSummary({ approval }: { readonly approval: Approv
     const entryId = readDataString(approval.payload, "entryId");
     const entityId = readDataString(approval.payload, "entityId");
     const expectedAvailability = readDataString(approval.payload, "expectedAvailability");
+    const expectedAutomationEnabled = readDataField(approval.payload, "expectedAutomationEnabled");
     return (
       <div className="approval-payload-summary" role="group" aria-label={t("Device action")}>
         {targetDeviceId ? <span>{t("Target device {device}", { device: targetDeviceId })}</span> : null}
         {capabilityId ? <span>{t("Capability {capability}", { capability: capabilityId })}</span> : null}
         {entryId ? <span>{t("Integration entry {entry}", { entry: entryId })}</span> : null}
         {entityId && expectedAvailability === "available" ? <span>{t("Verify that {entity} is available", { entity: entityId })}</span> : null}
+        {entityId && expectedAutomationEnabled === true ? <span>{entityId} · {t("Enabled")}</span> : null}
       </div>
     );
   }

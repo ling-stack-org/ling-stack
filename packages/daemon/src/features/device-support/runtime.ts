@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 
 import type {
-  DeviceAccessGrantV1, DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1,
+  DeviceAccessGrantV1, DeviceActionApprovalPayload, DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1,
   DevicePlannerProviderHandoffV1, DeviceProfileV1, JsonValue,
 } from "@ling-stack/contracts";
 import {
   type ApprovalRequest,
   type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
+  createHomeAssistantIntegrationDiagnosisPlaybook,
   createHomeAssistantOfflinePlaybook,
   createLinuxWifiDiagnosisPlaybook,
   createPcSoftwareDiagnosisPlaybook,
@@ -37,7 +38,7 @@ import {
 } from "@ling-stack/core";
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
 import type { ExternalDeviceAdapter } from "./adapters/external-process.js";
-import { HOME_ASSISTANT_RELOAD_CAPABILITY_ID, HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
+import { HOME_ASSISTANT_ENABLE_AUTOMATION, HOME_ASSISTANT_RELOAD_CAPABILITY_ID, HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
 import { assertHomeAssistantCatalogQuery, homeAssistantCatalogCapabilities, type HomeAssistantCatalogQuery } from "./adapters/home-assistant-catalog.js";
 import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
@@ -73,8 +74,9 @@ export interface DeviceSupportRuntime {
   readonly remoteFacade: RemoteDeviceFacade;
   readonly approvalQueue: ReturnType<typeof createDeviceApprovalQueue>;
   diagnoseLocalPc(request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
-  diagnoseHomeAssistant(entityId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
+  diagnoseHomeAssistant(entityId: string, request?: DeviceDiagnosisRequest & { readonly entryId?: string }): Promise<DevicePlaybookRunResultV1>;
   proposeHomeAssistantReload(target: { readonly entryId: string; readonly entityId: string }): Promise<ApprovalRequest>;
+  proposeHomeAssistantAutomationEnable(entityId: string): Promise<ApprovalRequest>;
   readHomeAssistantCatalog(query: HomeAssistantCatalogQuery): Promise<{ readonly taskId: string; readonly deviceId: string; readonly catalog: JsonValue }>;
   listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
@@ -324,6 +326,35 @@ export function createDeviceSupportRuntime(options: {
     });
   }
 
+  function queueHomeAssistantAction(payload: DeviceActionApprovalPayload, normalizedInput: JsonValue,
+    expectedVerification: JsonValue): ApprovalRequest {
+    const { targetDeviceId, capabilityId } = payload;
+    const snapshot = store.getCurrentCapabilitySnapshot(targetDeviceId);
+    const capability = snapshot?.capabilities.find(item => item.id === capabilityId);
+    if (!snapshot || !capability) throw new DeviceBrokerError("stale_snapshot", "Home Assistant snapshot is unavailable");
+    const taskId = `device_task_${randomUUID()}`;
+    const approvalId = `device_approval_${randomUUID()}`;
+    const timestamp = now();
+    broker.createTask({
+      id: taskId, ownerKind: "daemon", ownerId: targetDeviceId, targetDeviceIds: [targetDeviceId], status: "planning",
+      capabilitySnapshotIds: [snapshot.snapshotId], createdAt: timestamp, updatedAt: timestamp,
+    });
+    try {
+      broker.proposeAction({
+        taskId, actionId: `${taskId}:${"entryId" in payload ? "reload" : "enable"}`, targetDeviceId,
+        capabilityId: capability.id, capabilitySchemaVersion: capability.schemaVersion,
+        capabilitySnapshotId: snapshot.snapshotId, idempotencyKey: taskId,
+        normalizedInput, expectedVerification,
+      }, { approvalId, payload });
+    } catch (error) {
+      store.stopDaemonTask(taskId, now());
+      throw error;
+    }
+    const approval = approvalQueue.get(approvalId);
+    if (!approval) throw new DeviceBrokerError("missing_target", "the queued device approval is unavailable");
+    return approval;
+  }
+
   async function enrollLinuxTarget(deviceId: string, target: BoundLinuxSshTarget): Promise<DeviceProfileV1> {
     const previous = store.getDevice(deviceId);
     if (previous && (previous.device.lifecycleStatus === "revoked" || previous.device.lifecycleStatus === "retired")) {
@@ -364,39 +395,31 @@ export function createDeviceSupportRuntime(options: {
       return await localDiagnosis.pending;
     },
     async diagnoseHomeAssistant(entityId, request = {}) {
-      return withHomeAssistant(target => runDiagnosis(target, target.device.id, createHomeAssistantOfflinePlaybook(entityId, { maxReportAgeMs: request.maxReportAgeMs }), request));
+      const playbook = request.entryId === undefined
+        ? createHomeAssistantOfflinePlaybook(entityId, { maxReportAgeMs: request.maxReportAgeMs })
+        : createHomeAssistantIntegrationDiagnosisPlaybook(request.entryId, entityId);
+      return withHomeAssistant(target => runDiagnosis(target, target.device.id, playbook, request));
     },
     async proposeHomeAssistantReload({ entryId, entityId }) {
       return withHomeAssistant(async (target, adapter) => {
-        const deviceId = target.device.id;
-        const snapshot = store.getCurrentCapabilitySnapshot(deviceId);
-        const capability = snapshot?.capabilities.find(item => item.id === HOME_ASSISTANT_RELOAD_CAPABILITY_ID);
-        if (!snapshot || !capability) throw new DeviceBrokerError("stale_snapshot", "Home Assistant snapshot is unavailable");
         await adapter.assertReloadTarget(target, { entryId, entityId });
-        const taskId = `device_task_${randomUUID()}`;
-        const approvalId = `device_approval_${randomUUID()}`;
-        const timestamp = now();
-        broker.createTask({
-          id: taskId, ownerKind: "daemon", ownerId: deviceId, targetDeviceIds: [deviceId], status: "planning",
-          capabilitySnapshotIds: [snapshot.snapshotId], createdAt: timestamp, updatedAt: timestamp,
-        });
-        try {
-          broker.proposeAction({
-            taskId, actionId: `${taskId}:reload`, targetDeviceId: deviceId,
-            capabilityId: capability.id, capabilitySchemaVersion: capability.schemaVersion,
-            capabilitySnapshotId: snapshot.snapshotId, idempotencyKey: taskId,
-            normalizedInput: { entryId, entityId }, expectedVerification: { availability: "available" },
-          }, {
-            approvalId, payload: { type: "device_action", targetDeviceId: deviceId, capabilityId: capability.id,
-              entryId, entityId, expectedAvailability: "available" },
-          });
-        } catch (error) {
-          store.stopDaemonTask(taskId, now());
-          throw error;
+        return queueHomeAssistantAction({
+          type: "device_action", targetDeviceId: target.device.id, capabilityId: HOME_ASSISTANT_RELOAD_CAPABILITY_ID,
+          entryId, entityId, expectedAvailability: "available",
+        }, { entryId, entityId }, { availability: "available" });
+      });
+    },
+    async proposeHomeAssistantAutomationEnable(entityId) {
+      return withHomeAssistant(async (target, adapter) => {
+        const automationRegistryId = await adapter.readAutomationTarget(target, entityId);
+        const state = await adapter.readEntity(entityId);
+        if (state.automationEnabled !== false) {
+          throw new DeviceBrokerError("target_changed", "the selected automation must be available and disabled");
         }
-        const approval = approvalQueue.get(approvalId);
-        if (!approval) throw new DeviceBrokerError("missing_target", "the queued device approval is unavailable");
-        return approval;
+        return queueHomeAssistantAction({
+          type: "device_action", targetDeviceId: target.device.id, capabilityId: HOME_ASSISTANT_ENABLE_AUTOMATION,
+          entityId, automationRegistryId, expectedAutomationEnabled: true,
+        }, { entityId, automationRegistryId }, { automationEnabled: true });
       });
     },
     async readHomeAssistantCatalog(query) {

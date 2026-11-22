@@ -127,7 +127,7 @@ test("paired keys request and find the same route without exposing the admin lis
   const application = newKey();
   const control = new LingServerControlPlane({ authToken: "fixture-admin", adminPort: 0, now: () => clock,
     applicationIdentityPrivateKeyPem: application.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
-    transport: { turnUrls: ["turns:relay.fixture.example:443?transport=tcp"], relaySharedSecret: "0123456789abcdef" },
+    transport: { turnUrls: ["turns:relay.fixture.example:443?transport=tcp"], relaySharedSecret: Buffer.from("fixture-relay-secret", "utf8") },
   });
   t.after(() => control.stop());
   const address = await control.start();

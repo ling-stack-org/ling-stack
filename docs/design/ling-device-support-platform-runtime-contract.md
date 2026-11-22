@@ -260,7 +260,7 @@ capability snapshot, and verification rule.
 | --- | --- |
 | D1 and D2 | Contract fixtures for common and incompatible versions, optional display metadata, invalid action and manifest schemas, unsupported versus denied versus offline, and dispatch after a permission change or reconnect. |
 | D3 | Trace approval, dispatch intent, cancellation, timeout, unknown outcome, and subsequent observation. Include a revoke versus dispatch race and verification after a simulated link loss. Test recovery of the exact baseline when an adapter supports that behavior. |
-| D4 | Read one authorized Home Assistant instance and distinguish an unavailable entity, a stale observation, and an absent capability. Test action verification separately when a supported write is added. |
+| D4 | Read one authorized Home Assistant instance and distinguish unavailable, stale, and absent entities. Read a selected config entry and verify an approved automation re-enable against its registry ID and fresh entity readback. |
 | D5 and D7 | Use repeatable Windows network fault evidence for the diagnostic branch and post-action check. Include an incomplete-data case, injected instructions in observation text, and a local read-only flow with the model service unavailable. |
 | D6 | Reconnect a paired Mobile client to the same daemon task and confirm that disconnect and a duplicate command leave the owner and attempt unchanged. |
 | D9 | Verify one phone restores a supported device's network through official BLE setup with no PC or Gateway. Cover denied permission, link loss and resume, and a local playbook with the model service unavailable. Record the exact phone OS, device model, firmware, and adapter version. |
