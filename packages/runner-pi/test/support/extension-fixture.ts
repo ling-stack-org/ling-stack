@@ -1,17 +1,21 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-interface FieldSchema {
+export interface FieldSchema {
   type?: string;
   minLength?: number;
   description: string;
   maxItems?: number;
+  minItems?: number;
+  const?: unknown;
+  anyOf?: unknown[];
+  required: string[];
   items: FieldSchema;
   additionalProperties?: boolean;
   properties: Record<string, FieldSchema>;
 }
 
 export type FixtureTool = Omit<ToolDefinition, "execute" | "parameters"> & {
-  parameters: FieldSchema & { required: string[] };
+  parameters: FieldSchema;
   execute(toolCallId: string, params: unknown, signal?: AbortSignal): ReturnType<ToolDefinition["execute"]>;
 };
 

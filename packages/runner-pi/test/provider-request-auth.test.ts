@@ -1,10 +1,18 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { PiRunnerPreparedInput } from "../dist/prepared-input.js";
+import type { PiRunnerApprovedToolContinuation, PiRunnerMcpToolDefinition, PiRunnerResult } from "../dist/types.js";
 import assert from "node:assert/strict";
+import type { TranscriptContext } from "@earendil-works/pi-ai";
+import type { PiRunnerEvent, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
+import type { TestContext } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
-import { PiRunnerAdapter } from "../dist/adapter.js";
 import { resolvePiProviderRequestAuth } from "../dist/provider-request-auth.js";
 
 const fixtureKey = "fixture-provider-key-not-a-secret";
@@ -42,15 +50,15 @@ function responsesCompletion() {
 }
 
 /** Real adapter/Session/provider parser; preserve its auth wrapper and replace only fetch. */
-async function fixture(t, providerOverrides, optionOverrides = {}) {
+async function fixture(t: TestContext, providerOverrides: Partial<PiRunnerProviderConfig>, optionOverrides: Partial<PiRunnerRunOptions> = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-provider-auth-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const requests = [], contexts = [], events = [], hostCalls = [], approvalCalls = [], sdkKeys = [];
-  class TransportFixtureRunner extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  const requests: { url: string; authorization: string | null; headers: Record<string, string>; body: { model: string; input: { role: string }[]; messages: { role: string; tool_call_id?: string }[] } }[] = [], contexts: { systemPrompt: string; tools: ReturnType<typeof getCurrentTools>; messages: TranscriptContext["messages"]; hasResolvedApiKey: boolean }[] = [], events: PiRunnerEvent[] = [], hostCalls: string[] = [], approvalCalls: string[] = [], sdkKeys: (string | undefined)[] = [];
+  class TransportFixtureRunner extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       sdkKeys.push(runtime.getRegisteredProviderConfig(provider.provider)?.apiKey);
-      const registered = runtime.models.getProvider(provider.provider);
+      const registered = runtime.getProvider(provider.provider);
       assert.ok(registered?.streamSimple, "capture the production-registered real provider, including its auth policy");
       runtime.registerProvider(provider.provider, {
         api: provider.api,
@@ -61,9 +69,9 @@ async function fixture(t, providerOverrides, optionOverrides = {}) {
             hasResolvedApiKey: Boolean(options?.apiKey) });
           return registered.streamSimple(model, context, { ...options, maxRetries: 0,
             fetch: async (url, request) => {
-              const headers = new Headers(request.headers);
+              const headers = new Headers(request?.headers);
               requests.push({ url: String(url), authorization: headers.get("authorization"),
-                headers: Object.fromEntries(headers), body: JSON.parse(request.body) });
+                headers: Object.fromEntries(headers), body: JSON.parse(String(request?.body)) });
               return provider.api === "openai-responses" ? responsesCompletion() : completion();
             },
           });
@@ -72,12 +80,12 @@ async function fixture(t, providerOverrides, optionOverrides = {}) {
     }
   }
   const provider = { provider: "ling-provider-auth-fixture", model: "fixture",
-    api: "openai-completions", baseUrl: fixtureBaseUrl, reasoning: false, ...providerOverrides };
+    api: "openai-completions" as const, baseUrl: fixtureBaseUrl, reasoning: false, ...providerOverrides };
   if (provider.headers) Object.freeze(provider.headers);
   Object.freeze(provider);
   const originalProvider = structuredClone(provider);
   const runner = new TransportFixtureRunner();
-  const options = {
+  const options: PiRunnerRunOptions = {
     cwd, agentDir: join(cwd, "agent"), provider, tools: [],
     task: { id: "provider-request-auth", title: "Verify request auth", prompt: "Complete this isolated fixture once." },
     onEvent: event => events.push(event),
@@ -91,14 +99,14 @@ async function fixture(t, providerOverrides, optionOverrides = {}) {
   return { runner, options, provider, originalProvider, requests, contexts, events, hostCalls, approvalCalls, sdkKeys };
 }
 
-function assertPrivateCredentialsStayPrivate(f, preparedInput, result) {
+function assertPrivateCredentialsStayPrivate(f: Awaited<ReturnType<typeof fixture>>, preparedInput: PiRunnerPreparedInput, result?: PiRunnerResult) {
   assert.equal(f.options.provider, f.provider, "auth setup must not replace the provider on the caller's original options");
   assert.deepEqual(f.provider, f.originalProvider, "SDK-only credentials and header edits must not mutate the external provider");
   assert.equal("apiKey" in preparedInput.model, false);
   assert.equal("headers" in preparedInput.model, false);
   assert.equal(JSON.stringify([preparedInput, f.events, result?.messages]).includes(fixtureKey), false);
   assert.equal(JSON.stringify([preparedInput, f.events, result?.messages]).includes(customAuthorization), false);
-  for (const key of f.sdkKeys.filter(value => typeof value === "string" && value.length > 0)) {
+  for (const key of f.sdkKeys.filter((value): value is string => typeof value === "string" && value.length > 0)) {
     assert.equal(JSON.stringify([preparedInput, f.events, result?.messages]).includes(key), false,
       "the SDK's private registration credential must never enter prepared input or public evidence");
   }
@@ -127,7 +135,7 @@ for (const [label, provider, expectedAuthorization] of [
   ["mixed-case explicit Authorization with a key", { authHeader: false, apiKey: fixtureKey,
     headers: { aUtHoRiZaTiOn: customAuthorization, "X-Auth-Fixture": "preserved-fixture-header" } }, customAuthorization],
   ["authenticated with a key", { authHeader: true, apiKey: fixtureKey }, `Bearer ${fixtureKey}`],
-]) {
+] satisfies [string, Partial<PiRunnerProviderConfig>, string | null][]) {
   test(`Pi 1.1 ${label} preserves its configured wire-auth contract`, testOptions, async t => {
     const f = await fixture(t, provider);
     const preparedInput = await f.runner.prepareTaskInput(f.options);
@@ -139,15 +147,15 @@ for (const [label, provider, expectedAuthorization] of [
     assert.equal(f.requests[0].authorization, expectedAuthorization,
       "inspect the final OpenAI fetch headers, not an intermediate auth object");
     if (expectedAuthorization === null) assert.equal("authorization" in f.requests[0].headers, false);
-    if (provider.headers?.["X-Auth-Fixture"]) {
-      assert.equal(f.requests[0].headers["x-auth-fixture"], provider.headers["X-Auth-Fixture"],
+    if (provider!.headers?.["X-Auth-Fixture"]) {
+      assert.equal(f.requests[0].headers["x-auth-fixture"], provider!.headers["X-Auth-Fixture"],
         "rewriting Authorization must preserve unrelated provider headers");
     }
     assert.equal(f.contexts.length, 1);
     assert.equal(f.contexts[0].hasResolvedApiKey, true, "SDK auth is resolved even when the wire request is anonymous");
     assert.equal(f.contexts[0].systemPrompt, preparedInput.systemPrompt);
     assert.deepEqual(f.contexts[0].tools, preparedInput.tools);
-    assert.equal(result.messages.at(-1).stopReason, "stop");
+    assert.equal((result.messages.at(-1) as AssistantMessage).stopReason, "stop");
     assert.equal(f.events.filter(event => event.type === "run_end").length, 1);
     assert.equal(f.events.filter(event => event.type === "run_error").length, 0);
     assert.deepEqual(f.hostCalls, []);
@@ -161,7 +169,7 @@ for (const [label, headers, expectedAuthorization] of [
   ["anonymous without a key", undefined, null],
   ["explicit custom Authorization without a key", { authorization: customAuthorization,
     "X-Auth-Fixture": "responses-fixture-header" }, customAuthorization],
-]) {
+] satisfies [string, Record<string, string> | undefined, string | null][]) {
   test(`Pi 1.1 Responses ${label} preserves actual wire auth through the registered SDK parser`, testOptions, async t => {
     const f = await fixture(t, { api: "openai-responses", authHeader: false, ...(headers ? { headers } : {}) });
     const preparedInput = await f.runner.prepareTaskInput(f.options);
@@ -183,7 +191,7 @@ for (const [label, headers, expectedAuthorization] of [
     assert.equal(f.contexts[0].hasResolvedApiKey, true);
     assert.equal(f.contexts[0].systemPrompt, preparedInput.systemPrompt);
     assert.deepEqual(f.contexts[0].tools, preparedInput.tools);
-    const assistant = result.messages.at(-1);
+    const assistant = result.messages.at(-1) as AssistantMessage;
     assert.equal(assistant.api, "openai-responses");
     assert.equal(assistant.responseId, "resp_auth_fixture");
     assert.equal(assistant.stopReason, "stop");
@@ -215,12 +223,12 @@ test("Pi 1.1 authHeader true without a key fails before the wire and never repor
 });
 
 test("Pi 1.1 anonymous approval recovery sends one unauthenticated request and never replays its completed effect", testOptions, async t => {
-  const tool = { registeredName: "auth_fixture_effect", serverId: "fixture", rawName: "auth_fixture_effect",
+  const tool: PiRunnerMcpToolDefinition = { registeredName: "auth_fixture_effect", serverId: "fixture", rawName: "auth_fixture_effect",
     displayName: "Auth fixture effect", inputSchema: { type: "object", properties: {}, additionalProperties: false },
     sideEffectLevel: "write", defaultApproval: "allow" };
   const f = await fixture(t, { authHeader: false }, { mcpTools: [tool] });
   const preparedInput = await f.runner.prepareTaskInput(f.options);
-  const continuation = { schemaVersion: 1, kind: "approved_tool_result", approvalId: "approval-auth-fixture",
+  const continuation: PiRunnerApprovedToolContinuation = { schemaVersion: 1, kind: "approved_tool_result", approvalId: "approval-auth-fixture",
     sideEffectFingerprint: "auth-fixture-approved-once", toolCallId: "auth-fixture-historical-effect",
     toolName: tool.registeredName, args: {},
     result: { content: [{ type: "text", text: "Durable approved effect already completed." }],
@@ -237,6 +245,7 @@ test("Pi 1.1 anonymous approval recovery sends one unauthenticated request and n
   assert.deepEqual(history.map(message => message.role), ["user", "assistant", "toolResult"]);
   assert.deepEqual(history[1].content, [{ type: "toolCall", id: continuation.toolCallId,
     name: continuation.toolName, arguments: continuation.args }]);
+  assert.equal(history[2].role, "toolResult");
   assert.equal(history[2].toolCallId, continuation.toolCallId);
   assert.deepEqual(history[2].content, continuation.result.content);
   assert.deepEqual(history[2].details, continuation.result.details);
@@ -248,7 +257,7 @@ test("Pi 1.1 anonymous approval recovery sends one unauthenticated request and n
   assert.deepEqual(f.hostCalls, []);
   assert.deepEqual(f.approvalCalls, []);
   assert.deepEqual(continuation, originalEvidence);
-  assert.equal(result.messages.at(-1).stopReason, "stop");
+  assert.equal((result.messages.at(-1) as AssistantMessage).stopReason, "stop");
   assert.equal(f.events.filter(event => event.type === "run_end").length, 1);
   assert.equal(f.events.filter(event => event.type === "run_error").length, 0);
   assertPrivateCredentialsStayPrivate(f, preparedInput, result);
