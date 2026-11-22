@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import type { LingAppServerStageBallotTally, LingAppServerWorkItemStageDecision, LingAppServerWorkItemWorkflowBinding,
+import type { LingAppServerStageBallotTally, LingAppServerStageHandoffProgress, LingAppServerWorkItemStageDecision, LingAppServerWorkItemWorkflowBinding,
   LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
-import { readWorkItemCollaborationRecord, workItemWorkflowDecisionId } from "@ling-stack/core";
+import { readWorkItemCollaborationRecord, readWorkflowStageHandoff, stageHandoffAdmitsTarget, workItemWorkflowDecisionId } from "@ling-stack/core";
 import type { ChannelWorkflowStep, RunStore, WorkItem } from "@ling-stack/core";
 import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
@@ -43,15 +43,36 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       stepId: step.id, stageId: step.metadata?.planStageId,
       title: step.title.slice(0, 250), status: step.status, participantLabel: step.toParticipantLabel.slice(0, 160),
       dependencyIds: step.metadata?.dependsOnStepIds?.slice(0, 20) ?? [], updatedAt: step.updatedAt,
-      ...(!admissionBlocker && (step.metadata?.requiredPlanDecision || step.metadata?.planBallotKey) && step.status === "queued"
+      ...(!admissionBlocker && (step.metadata?.requiredPlanDecision || step.metadata?.planBallotKey
+        || step.metadata?.requiredPlanHandoffStepIds?.length) && step.status === "queued"
         ? { admissionBlocker: store.getWorkItemWorkflowAdmissionBlocker(workflow.id, step) } : {}),
       ...(includeEvidence ? {
         runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
         briefBasis: readStageBriefBasis(store, step),
         decision: readStageDecision(store, item.id, item.planRevision!, link.binding.planId, step),
+        handoffs: readStageHandoffs(store, item.id, item.planRevision!, step),
       } : {}),
     })),
   };
+}
+
+function readStageHandoffs(
+  store: RunStore, workItemId: string, planRevision: string, step: ChannelWorkflowStep,
+): readonly LingAppServerStageHandoffProgress[] | undefined {
+  return step.metadata?.requiredPlanHandoffStepIds?.flatMap((sourceStepId): LingAppServerStageHandoffProgress[] => {
+    const source = store.getChannelWorkflowStep(sourceStepId);
+    if (!source || source.workflowId !== step.workflowId) return [];
+    const sourceRevision = source.updatedAt;
+    const subject = { workItemId, planRevision, sourceStepId, sourceRevision, targetStepId: step.id };
+    const handoff = readWorkflowStageHandoff(store, subject);
+    if (handoff?.record.action === "returned") return [{
+      sourceStepId, sourceRevision, status: "returned", receiptId: handoff.record.id, reason: handoff.decision.reason,
+    }];
+    if (handoff && stageHandoffAdmitsTarget(store, subject, source, step)) return [{
+      sourceStepId, sourceRevision, status: "accepted", receiptId: handoff.record.id,
+    }];
+    return [{ sourceStepId, sourceRevision, status: source.status === "succeeded" ? "awaiting_acceptance" : "awaiting_source" }];
+  });
 }
 
 function readStageDecision(

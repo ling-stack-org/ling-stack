@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
-import { LING_APP_SERVER_ARTIFACT_RANGE_BYTES, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
+import { LING_APP_SERVER_ARTIFACT_RANGE_BYTES, LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -127,6 +127,22 @@ export async function runLingAppServerMcp(
         previousWorkflowId: objectId.optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.bindWorkItemWorkflow(params)));
+    const stageHandoff = {
+      workItemId: objectId, planRevision: objectId, sourceStepId: objectId, targetStepId: objectId,
+      expectedSourceRevision: objectId, expectedTargetRevision: objectId,
+      expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey,
+      detail: z.string().max(1200).optional(),
+    };
+    if (methods.has("workItem/handoff/accept")) server.registerTool("ling_stage_handoff_accept", {
+      description: "Accept the current supplying stage packet for this receiving stage. Retry with the original request key.",
+      inputSchema: z.strictObject(stageHandoff),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.settleWorkItemStageHandoff("accept", params)));
+    if (methods.has("workItem/handoff/return")) server.registerTool("ling_stage_handoff_return", {
+      description: "Return the current supplying stage packet with a reason. The receiving stage continues to wait for an accepted packet.",
+      inputSchema: z.strictObject({ ...stageHandoff, reason: z.enum(LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS) }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.settleWorkItemStageHandoff("return", params)));
     const plan = { threadId: objectId, planId: objectId, expectedRevision: z.number().int().positive() };
     if (methods.has("plan/refine")) server.registerTool("ling_plan_refine", {
       description: "Create the next draft from a Ling Plan at its current revision.",
@@ -142,6 +158,7 @@ export async function runLingAppServerMcp(
           stageId: objectId, title: z.string().min(1).max(500),
           ownerId: objectId.optional(), ownerLabel: z.string().min(1).max(160).optional(),
           dependsOnStageIds: z.array(objectId).max(50).optional(),
+          handoffFromStageIds: z.array(objectId).max(20).optional(),
           requiredTools: z.array(z.enum(["read", "grep", "find", "ls", "bash", "edit", "write"])).max(7).optional(),
           requiredDecision: z.strictObject({
             question: z.string().min(1).max(500), options: z.array(z.string().min(1).max(200)).min(2).max(12),

@@ -876,6 +876,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly planStageId?: string;
   readonly requiredPlanDecision?: import("./threads.js").ProposedPlanStageDecision;
   readonly planBallotKey?: string;
+  readonly requiredPlanHandoffStepIds?: readonly string[];
   readonly dependsOnStepIds?: readonly string[];
   readonly branchGroupId?: string;
   readonly joinGroupId?: string;

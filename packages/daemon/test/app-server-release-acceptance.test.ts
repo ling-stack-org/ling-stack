@@ -2549,6 +2549,7 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
     requiredDecision: { question: "Which compatible approach should this stage implement?", options: ["Adapter", "Migration"],
       trigger: "when_ready", ballot: { voterStageIds: ["V-ENGINEER", "V-QA"], quorum: 2 } } };
   const qaPreview = { title: "Prepare contract regression checks", stageId: "QA", dependsOnStageIds: ["P01"],
+    handoffFromStageIds: ["P01"],
     ownerId: "teammate_builtin_qa", ownerLabel: "QA" };
   const ballots = [
     { title: "Review the compatibility options", stageId: "V-ENGINEER", dependsOnStageIds: ["P01"],
@@ -2674,7 +2675,6 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
     expectedControlGeneration: 1, idempotencyKey: "workflow-owned-resume",
   });
   const resumedStore = fixture.getStore();
-  await waitFor(() => resumedStore.getChannelWorkflowStep(qa.id)?.status === "succeeded" ? true : undefined);
   assert.equal(resumedStore.listRuns({ workflowStepId: p02.id }).length, 0);
   const pending = await startImplementation();
   assert.equal(pending.status, 409);
@@ -2685,6 +2685,55 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   });
   assert.deepEqual((round.payload as { options: readonly string[] }).options, ["Adapter", "Migration"]);
   assert.equal(round.actorId, "ling_agent");
+  const qaStage = (await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id);
+  const qaHandoff = qaStage?.handoffs?.[0];
+  assert.equal(qaStage?.admissionBlocker, "work_item_handoff_pending");
+  assert.equal(qaHandoff?.status, "awaiting_acceptance");
+  assert.equal(qaHandoff.sourceStepId, p01.id);
+  assert.equal(resumedStore.listRuns({ workflowStepId: qa.id }).length, 0);
+  const qaDirectStart = await request(`/workflow-steps/${encodeURIComponent(qa.id)}/start`, { mode: "create_and_run_task" });
+  assert.equal(qaDirectStart.status, 409);
+  assert.equal((await qaDirectStart.json() as { error: string }).error, "work_item_handoff_pending");
+  const itemBeforeHandoff = await resumedClient.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  assert.ok(itemBeforeHandoff.workItem.planRevision && qaStage);
+  const offeredHandoff = { workItemId, planRevision: itemBeforeHandoff.workItem.planRevision,
+    sourceStepId: p01.id, targetStepId: qa.id, expectedSourceRevision: qaHandoff.sourceRevision, expectedTargetRevision: qaStage.updatedAt,
+    expectedWorkItemRevision: Number(itemBeforeHandoff.workItem.revision), idempotencyKey: "qa-review-contract" };
+  await assert.rejects(resumedClient.call("workItem/handoff/return", { ...offeredHandoff, expectedSourceRevision: new Date(0).toISOString(),
+    reason: "candidate_stale" }), { code: "stale_revision" });
+  const returnedHandoff = await resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>(
+    "workItem/handoff/return", { ...offeredHandoff, reason: "required_check_incomplete" });
+  const returnedStage = (await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id);
+  assert.equal(returnedStage?.handoffs?.[0]?.status, "returned");
+  assert.equal(returnedStage.handoffs[0]?.reason, "required_check_incomplete");
+  assert.equal(resumedStore.listRuns({ workflowStepId: qa.id }).length, 0);
+  await assert.rejects(resumedClient.call("workItem/handoff/accept", {
+    ...offeredHandoff, expectedWorkItemRevision: returnedHandoff.workItemRevision, idempotencyKey: "qa-accept-returned",
+  }), { code: "stale_revision" });
+  const oldSource = resumedStore.getChannelWorkflowStep(p01.id);
+  const oldPacket = oldSource?.metadata?.outputArtifactId ? resumedStore.getArtifact(oldSource.metadata.outputArtifactId) : undefined;
+  assert.ok(oldSource && oldPacket?.sealedPayload);
+  const repairedAt = new Date(Date.parse(oldSource.updatedAt) + 1).toISOString();
+  const revisedPacket = { ...(oldPacket.sealedPayload as Record<string, unknown>), resultSummary: "The current contract checks are complete." };
+  const revisedPath = oldPacket.path.replace(/\.json$/u, "-repaired.json");
+  const revisedBytes = JSON.stringify(revisedPacket);
+  await writeFile(join(resumedStore.paths.artifactsDir, revisedPath), revisedBytes);
+  const revisedArtifact = resumedStore.createArtifact({
+    runId: oldPacket.runId, type: oldPacket.type, title: oldPacket.title, contentType: oldPacket.contentType,
+    sealedPayload: revisedPacket, path: revisedPath, sizeBytes: Buffer.byteLength(revisedBytes), createdAt: repairedAt,
+  });
+  const revisedSource = resumedStore.updateChannelWorkflowStep(p01.id,
+    { metadata: { ...oldSource.metadata, outputArtifactId: revisedArtifact.id } }, repairedAt);
+  assert.ok(revisedSource);
+  const handoff = { ...offeredHandoff, expectedSourceRevision: revisedSource.updatedAt,
+    expectedWorkItemRevision: returnedHandoff.workItemRevision, idempotencyKey: "qa-accept-repaired-contract" };
+  const handoffPeer = await fixture.connect();
+  const [acceptedHandoff, repeatedHandoff] = await Promise.all([resumedClient, handoffPeer].map(connection =>
+    connection.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff)));
+  assert.deepEqual(new Set([acceptedHandoff.status, repeatedHandoff.status]), new Set(["appended", "replayed"]));
+  assert.equal(acceptedHandoff.record.id, repeatedHandoff.record.id);
+  assert.ok(acceptedHandoff.record.sourceRefs.some(source => source.id === revisedArtifact.id));
+  assert.equal((await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id)?.handoffs?.[0]?.status, "accepted");
   const readBallots = (connection: typeof client) => connection.call<LingAppServerWorkItemCollaborationReadResult>(
     "workItem/deliberation/read", { workItemId: item.id });
   assert.deepEqual((await readBallots(resumedClient)).ballots, [{ roundId: round.id, status: "waiting" }]);
@@ -2700,7 +2749,7 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   };
   await assert.rejects(resumedClient.call("workItem/deliberation/decide", decision), { code: "resume_blocked" });
   completeQaVote();
-  await waitFor(() => [engineerVote, qaVote].every(step => resumedStore.getChannelWorkflowStep(step.id)?.status === "succeeded") ? true : undefined);
+  await waitFor(() => [engineerVote, qaVote, qa].every(step => resumedStore.getChannelWorkflowStep(step.id)?.status === "succeeded") ? true : undefined);
   await fixture.restart();
   const decisionClient = await fixture.connect();
   const [readyBallot] = (await readBallots(decisionClient)).ballots ?? [];
@@ -2710,6 +2759,13 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   const readyStage = (await readBrief(decisionClient)).workflow?.steps.find(step => step.stepId === p02.id);
   assert.equal(readyStage?.decision?.status, "ready");
   assert.deepEqual(readyStage.decision.ballot, readyBallot.summary);
+  const restoredHandoff = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff);
+  assert.equal(restoredHandoff.status, "replayed");
+  assert.equal(restoredHandoff.record.id, acceptedHandoff.record.id);
+  const handoffObserver = await fixture.connect("/app-server/rpc", fixture.cwd, `las1.${grant.grantId}.${observerSecret}`);
+  const handoffHistory = await handoffObserver.call<LingAppServerWorkItemCollaborationReadResult>("workItem/handoff/read", { workItemId });
+  assert.deepEqual(handoffHistory.records.map(record => record.id), [returnedHandoff.record.id, acceptedHandoff.record.id]);
+  assert.ok(handoffHistory.records.every(record => record.sourceRefs.length === 0));
   await assert.rejects(decisionClient.call("workItem/deliberation/decide", { ...decision,
     decision: { disposition: "selected", option: "Rewrite" } }), { code: "invalid_params" });
   const selected = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", decision);

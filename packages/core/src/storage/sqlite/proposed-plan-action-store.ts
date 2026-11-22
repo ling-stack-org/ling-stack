@@ -92,6 +92,7 @@ export class SqliteProposedPlanActionStore {
               sourceMessageId: canonicalPlan.sourceMessageId,
               ...(preview?.stageId ? { planStageId: preview.stageId } : {}),
               ...(dependencies?.length ? { dependsOnStepIds: dependencies.map(id => stepIds.get(id)!) } : {}),
+              ...(preview?.handoffFromStageIds?.length ? { requiredPlanHandoffStepIds: preview.handoffFromStageIds.map(id => stepIds.get(id)!) } : {}),
               ...(preview?.requiredDecision ? { requiredPlanDecision: preview.requiredDecision } : {}),
               ...(preview?.requiredTools ? { requiredTools: preview.requiredTools } : {}),
               ...(ballot ? { planBallotKey: ballot.key, requiredTools: [], policy: {
@@ -206,7 +207,8 @@ function planStageBallots(planId: string, previews: readonly ProposedPlanWorkflo
 
 function orderWorkflowStages(titles: readonly string[], previews: readonly ProposedPlanWorkflowStepPreviewInput[]): readonly number[] {
   const positions = titles.map((_, index) => index);
-  if (!previews.some(stage => stage.stageId !== undefined || stage.dependsOnStageIds !== undefined || stage.requiredDecision !== undefined)) return positions;
+  if (!previews.some(stage => stage.stageId !== undefined || stage.dependsOnStageIds !== undefined
+    || stage.requiredDecision !== undefined || stage.handoffFromStageIds !== undefined)) return positions;
   const invalid = (message: string) => new ProposedPlanMutationError("bad_workflow_stage_dependencies", message, 400);
   if (titles.length !== previews.length || titles.length > 50) throw invalid("Provide one preview per stage, up to 50 stages.");
   const stages = new Map<string, number>();
@@ -223,8 +225,16 @@ function orderWorkflowStages(titles: readonly string[], previews: readonly Propo
     if (visiting.has(index)) throw invalid("Workflow stage dependencies must be acyclic.");
     visiting.add(index);
     const dependencies = previews[index]?.dependsOnStageIds ?? [];
+    const preview = previews[index];
     if (dependencies.length > 20 || new Set(dependencies).size !== dependencies.length) {
       throw invalid("Each stage can depend on up to 20 different stages.");
+    }
+    if (preview?.handoffFromStageIds !== undefined) {
+      const handoffs = preview.handoffFromStageIds;
+      if (!Array.isArray(handoffs) || handoffs.length > 20 || new Set(handoffs).size !== handoffs.length
+        || handoffs.some(id => !dependencies.includes(id) || preview.requiredDecision?.ballot?.voterStageIds.includes(id))) {
+        throw invalid("Handoffs require distinct prerequisite stages that produce implementation evidence.");
+      }
     }
     for (const id of dependencies) {
       const dependency = stages.get(id);

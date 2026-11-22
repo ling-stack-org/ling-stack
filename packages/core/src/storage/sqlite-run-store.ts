@@ -1764,6 +1764,7 @@ export class SqliteRunStore implements RunStore {
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
         getProposedPlanArtifact: (id) => this.getProposedPlanArtifact(id),
         getChannelWorkflow: (id) => this.getChannelWorkflow(id),
+        getChannelWorkflowStep: (id) => this.getChannelWorkflowStep(id),
         listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
         getWorkItemEvidence: (id) => this.getWorkItemEvidence(id),
         getTask: (id) => this.getTask(id),

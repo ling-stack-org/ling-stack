@@ -50,6 +50,7 @@ const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: in
 const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema, taskId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
 const planWorkflowStep = objectWith({ title: stringSchema, stageId: stringSchema, dependsOnStageIds: stringArraySchema,
+  handoffFromStageIds: stringArraySchema,
   ownerId: stringSchema, ownerLabel: stringSchema, requiredTools: stringArraySchema,
   requiredDecision: objectWith({ question: stringSchema, options: stringArraySchema, trigger: { enum: ["when_ready"] },
     ballot: objectWith({ voterStageIds: stringArraySchema, quorum: integerSchema }, ["voterStageIds", "quorum"]) }, ["question", "options"]) }, ["title"]);
@@ -271,9 +272,11 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "workItem/message/send":
     case "workItem/question/ask":
     case "workItem/question/reply":
+      return { params: objectWith(collaborationAppend, ["workItemId"]), result };
     case "workItem/handoff/accept":
     case "workItem/handoff/return":
-      return { params: objectWith(collaborationAppend, ["workItemId"]), result };
+      return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, sourceStepId: stringSchema, targetStepId: stringSchema,
+        expectedSourceRevision: stringSchema, expectedTargetRevision: stringSchema, reason: stringSchema, detail: stringSchema }, ["workItemId"]), result };
     case "workItem/feedback/add":
       return { params: objectWith({ ...collaborationAppend, sourceRunId: stringSchema, providerPresetId: stringSchema }, ["workItemId"]),
         result: { oneOf: [

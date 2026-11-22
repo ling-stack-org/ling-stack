@@ -152,6 +152,7 @@ export * from "./work-item-types.js";
 export * from "./work-item-evidence-types.js";
 export * from "./work-item-collaboration.js";
 export * from "./work-item-workflow-decision.js";
+export * from "./work-item-workflow-handoff.js";
 export * from "./work-item-deliberation-policy.js";
 export * from "./app-server-state-types.js";
 export * from "./work-item-evidence-types.js";

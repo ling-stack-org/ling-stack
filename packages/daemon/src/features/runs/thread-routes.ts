@@ -2528,6 +2528,7 @@ function readOptionalWorkflowStepPreviews(
         requiredTools,
         stageId: readOptionalString(item, "stageId"),
         dependsOnStageIds: readOptionalWorkflowStageDependencies(item),
+        handoffFromStageIds: readOptionalWorkflowStageDependencies(item, "handoffFromStageIds"),
         requiredDecision: item.requiredDecision === undefined ? undefined : parseProposedPlanStageDecision(item.requiredDecision),
         ownerId: readOptionalString(item, "ownerId")?.trim() || undefined,
         ownerLabel: readOptionalString(item, "ownerLabel")?.trim() || undefined,
@@ -2540,11 +2541,13 @@ function readOptionalWorkflowStepPreviews(
   return previews.length > 0 ? previews : undefined;
 }
 
-function readOptionalWorkflowStageDependencies(record: Record<string, unknown>): readonly string[] | undefined {
-  const ids = record.dependsOnStageIds;
+function readOptionalWorkflowStageDependencies(
+  record: Record<string, unknown>, key: "dependsOnStageIds" | "handoffFromStageIds" = "dependsOnStageIds",
+): readonly string[] | undefined {
+  const ids = record[key];
   if (ids === undefined) return undefined;
   if (!Array.isArray(ids) || !ids.every(id => typeof id === "string")) {
-    throw new HttpError(400, "bad_workflow_stage_dependencies", "dependsOnStageIds must be an array of stage identifiers.");
+    throw new HttpError(400, "bad_workflow_stage_dependencies", `${key} must be an array of stage identifiers.`);
   }
   return ids;
 }

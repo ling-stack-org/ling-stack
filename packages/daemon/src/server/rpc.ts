@@ -5,6 +5,7 @@ import { realpathSync } from "node:fs";
 import {
   DEFAULT_WORKSPACE_ID,
   WORK_ITEM_COLLABORATION_CONTENT_PREFIX,
+  WORKFLOW_STAGE_HANDOFF_ID_PREFIX,
   UserInputStoreError,
   evaluateDeliberationTrigger,
   type ControlPlaneDomain,
@@ -25,6 +26,7 @@ import {
   LING_APP_SERVER_METHODS,
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
+  LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS,
   LING_PRODUCT_VERSION,
   isLingAppServerMethod,
   parseUserInputAnswerCommandV1,
@@ -37,6 +39,7 @@ import {
   type LingAppServerGrant,
   type LingAppServerGitHubDeliveryResult,
   type LingAppServerJsonRpcId,
+  type LingAppServerStageHandoffReturnReason,
   type LingAppServerThreadEventsResult,
   type LingAppServerThreadSnapshotResult,
   type LingAppServerTurnResumeResult,
@@ -52,6 +55,7 @@ import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { loadAppServerReplayIdentity, unavailableAppServerReplayWindow, type AppServerReplayScope } from "./app-server-replay.js";
 import { appServerRecoveryFor, type AppServerRecoveryJournal } from "./app-server-recovery.js";
 import { isAllowedLocalOrigin, isDirectLoopbackRequest } from "../shared/local-workspace-access.js";
+import { isRecord } from "../shared/validation.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { expireStaleApproval } from "../features/runs/approvals.js";
@@ -132,6 +136,7 @@ import {
   settleAppServerDeliberation,
   startAppServerStageDeliberation,
 } from "./app-server-collaboration.js";
+import { settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
 
 type JsonRpcId = string | number | null;
 
@@ -925,9 +930,8 @@ class RpcConnection {
       case "workItem/question/read":
         return this.readCollaboration("question", params);
       case "workItem/handoff/accept":
-        return this.appendCollaboration("handoff", "accepted", params);
       case "workItem/handoff/return":
-        return this.appendCollaboration("handoff", "returned", params);
+        return this.settleWorkItemStageHandoff(method === "workItem/handoff/accept" ? "accepted" : "returned", params);
       case "workItem/handoff/read":
         return this.readCollaboration("handoff", params);
       case "workItem/feedback/add":
@@ -1298,7 +1302,14 @@ class RpcConnection {
         afterRevision: readOptionalIntegerField(record, "afterRevision"),
         limit: readOptionalIntegerField(record, "limit"),
       }));
-      return { cwd, ...result };
+      if (this.grant?.subject.kind !== "workItem") return { cwd, ...result };
+      const records = result.records.map(entry => {
+        if (entry.kind !== "handoff" || !entry.id.startsWith(WORKFLOW_STAGE_HANDOFF_ID_PREFIX)) return entry;
+        const payload = isRecord(entry.payload) && typeof entry.payload.reason === "string"
+          ? { reason: entry.payload.reason } : {};
+        return { ...entry, payload, sourceRefs: [] };
+      });
+      return { cwd, ...result, records };
     } catch (error) {
       throw collaborationRpcError(error);
     }
@@ -1366,6 +1377,35 @@ class RpcConnection {
     }, cwd);
     this.context.learningReviewCoordinator?.wake(store);
     return result;
+  }
+
+  private settleWorkItemStageHandoff(action: "accepted" | "returned", params: unknown): unknown {
+    const raw = readParamsRecord(params);
+    if (raw.sourceStepId === undefined && raw.targetStepId === undefined) return this.appendCollaboration("handoff", action, params);
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const reason = readOptionalStringField(record, "reason") as LingAppServerStageHandoffReturnReason | undefined;
+    const detail = readOptionalStringField(record, "detail")?.trim();
+    const idempotencyKey = readStringField(record, "idempotencyKey");
+    if (action === "returned" && (!reason || !LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS.includes(reason))
+      || action === "accepted" && reason !== undefined || (detail?.length ?? 0) > 1200 || !idempotencyKey.trim() || idempotencyKey.length > 200) {
+      throw rpcError(-32602, "invalid_params", "Supply a supported handoff return reason and a bounded request key.");
+    }
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { event, ...result } = settleAppServerStageHandoff(store, {
+        workItemId: readStringField(record, "workItemId"), planRevision: readStringField(record, "planRevision"),
+        sourceStepId: readStringField(record, "sourceStepId"), targetStepId: readStringField(record, "targetStepId"),
+        expectedSourceRevision: readStringField(record, "expectedSourceRevision"), expectedTargetRevision: readStringField(record, "expectedTargetRevision"),
+        expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"), idempotencyKey, reason, detail,
+      }, action, new Date().toISOString());
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        if (action === "accepted") this.context.taskSupervisor.poke(cwd);
+      }
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
   }
 
   private settleWorkItemDeliberation(action: "decided" | "cancelled", params: unknown): unknown {

@@ -42,6 +42,7 @@ import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, Lin
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
+import { stageHandoffAdmitsTarget } from "../../work-item-workflow-handoff.js";
 import { planStageBallotKey } from "../../proposed-plan-mutation.js";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
@@ -51,6 +52,7 @@ export interface SqliteWorkItemStorePorts {
   readonly hasAiTeammate: (id: string) => boolean;
   readonly getProposedPlanArtifact: RunStore["getProposedPlanArtifact"];
   readonly getChannelWorkflow: RunStore["getChannelWorkflow"];
+  readonly getChannelWorkflowStep: RunStore["getChannelWorkflowStep"];
   readonly listChannelWorkflowSteps: RunStore["listChannelWorkflowSteps"];
   readonly getWorkItemEvidence: RunStore["getWorkItemEvidence"];
   readonly getTask: RunStore["getTask"];
@@ -636,7 +638,8 @@ export class SqliteWorkItemStore {
       const planId = this.ports.getChannelWorkflow(workflowId)?.metadata?.sourceProposedPlanId;
       const parentId = planId ? this.ports.getProposedPlanArtifact(planId)?.parentPlanId : undefined;
       const previousWorkflowId = parentId ? this.ports.getProposedPlanArtifact(parentId)?.acceptedWorkflowId : undefined;
-      return step?.metadata?.requiredPlanDecision || step?.metadata?.planBallotKey || previousWorkflowId && state.get("work_item_workflow", previousWorkflowId)
+      return step?.metadata?.requiredPlanDecision || step?.metadata?.planBallotKey || step?.metadata?.requiredPlanHandoffStepIds?.length
+        || previousWorkflowId && state.get("work_item_workflow", previousWorkflowId)
         ? "work_item_workflow_unbound" : undefined;
     }
     const binding = link.binding;
@@ -665,6 +668,12 @@ export class SqliteWorkItemStore {
       if (!this.ports.getWorkItemEvidence(workItemWorkflowDecisionId(subject, "round"))) return "work_item_ballot_pending";
     }
     if (step?.metadata?.requiredPlanDecision && !this.getWorkflowStepDecision(step, state)) return "work_item_decision_pending";
+    for (const sourceStepId of step?.metadata?.requiredPlanHandoffStepIds ?? []) {
+      const source = this.ports.getChannelWorkflowStep(sourceStepId);
+      if (!source || !step || source.workflowId !== workflowId || !stageHandoffAdmitsTarget(this.ports, {
+        workItemId: item.id, planRevision: item.planRevision, sourceStepId, sourceRevision: source.updatedAt, targetStepId: step.id,
+      }, source, step)) return "work_item_handoff_pending";
+    }
     return undefined;
   }
 

@@ -718,6 +718,7 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly outputArtifactId?: string;
     readonly brief?: string;
     readonly decision?: LingAppServerWorkItemStageDecision;
+    readonly handoffs?: readonly LingAppServerStageHandoffProgress[];
     readonly briefBasis?: {
       readonly transitionId: string;
       readonly committedAt: string;
@@ -852,6 +853,33 @@ export interface LingAppServerWorkItemStageDecision {
   readonly ballot?: LingAppServerStageBallotTally;
   readonly selectedOption?: string;
   readonly reason?: string;
+}
+
+export const LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS = [
+  "missing_artifact", "required_check_incomplete", "candidate_stale", "scope_unavailable", "upstream_effect_unknown",
+] as const;
+export type LingAppServerStageHandoffReturnReason = (typeof LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS)[number];
+
+export interface LingAppServerStageHandoffParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly planRevision: string;
+  readonly sourceStepId: string;
+  readonly targetStepId: string;
+  readonly expectedSourceRevision: string;
+  readonly expectedTargetRevision: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+  readonly reason?: LingAppServerStageHandoffReturnReason;
+  readonly detail?: string;
+}
+
+export interface LingAppServerStageHandoffProgress {
+  readonly sourceStepId: string;
+  readonly sourceRevision: string;
+  readonly status: "awaiting_source" | "awaiting_acceptance" | "accepted" | "returned";
+  readonly receiptId?: string;
+  readonly reason?: LingAppServerStageHandoffReturnReason;
 }
 
 export type LingAppServerStageBallotProgress = { readonly roundId: string } & (
