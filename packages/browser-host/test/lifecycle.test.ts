@@ -19,7 +19,7 @@ import {
 test("development install delegates to the signed native Host build", {
   skip: !supportsNativeHostBuild(process.platform, process.arch),
 }, async () => {
-  const commands = [];
+  const commands: string[][] = [];
   const hostPath = await buildDevelopmentBrowserHost({
     runCommand: async (file, args) => { commands.push([file, ...args]); },
   });
@@ -45,15 +45,15 @@ test("macOS browser Host install is idempotent and uninstall removes only owned 
   }
   const removed = await uninstallBrowserHost({ hostPath, platform: "darwin", homeDirectory: root });
   assert.equal(removed.installed, false);
-  assert.deepEqual(removed.missing.sort(), [...first.manifestPaths].sort());
+  assert.deepEqual([...removed.missing].sort(), [...first.manifestPaths].sort());
 });
 
 test("Windows browser Host install registers HKCU and uninstall removes exact entries", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-browser-host-win-"));
   const hostPath = join(root, "ling-browser-host.exe");
   await writeFile(hostPath, "host");
-  const commands = [];
-  const registry = new Map();
+  const commands: string[][] = [];
+  const registry = new Map<string, string>();
   const previousUsername = process.env.USERNAME;
   process.env.USERNAME = "ling-test-user";
   try {
@@ -95,11 +95,11 @@ test("Windows browser Host status requires both manifest and HKCU registration",
   const hostPath = join(root, "ling-browser-host.exe");
   const localAppData = join(root, "AppData", "Local");
   await writeFile(hostPath, "host");
-  const registry = new Map();
+  const registry = new Map<string, string>();
   const previousUsername = process.env.USERNAME;
   process.env.USERNAME = "ling-test-user";
   try {
-    const runCommand = async (file, args) => {
+    const runCommand: NonNullable<Parameters<typeof installBrowserHost>[0]["runCommand"]> = async (file, args) => {
       if (file === "reg.exe" && args[0] === "ADD") registry.set(args[1], args[6]);
       if (file === "reg.exe" && args[0] === "QUERY") {
         return { stdout: registry.get(args[1]) ?? "", stderr: "" };
@@ -144,7 +144,7 @@ test("Windows runtime descriptor locks the directory, temporary file, and publis
     token: "test-token",
     generation: "generation-windows",
   });
-  const commands = [];
+  const commands: string[][] = [];
   await publishChromeBrowserRuntimeDescriptor(descriptor, path, {
     platform: "win32",
     username: "ling-test-user",

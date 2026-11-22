@@ -12,17 +12,18 @@ test("Native Host products build only on supported release platforms", () => {
 });
 
 test("generic CI keeps platform-neutral Host tests without building a Linux product", async () => {
-  const commands = [];
+  type RunCommand = NonNullable<NonNullable<Parameters<typeof runBrowserHostTests>[0]>["run"]>;
+  const commands: Parameters<RunCommand>[] = [];
   await runBrowserHostTests({
     platform: "linux",
     arch: "x64",
-    run: (command, args, options) => { commands.push({ command, args, options }); },
+    run: (command, args, options) => { commands.push([command, args, options]); },
   });
 
-  assert.equal(commands.some(({ args }) => args[0] === "scripts/build-native.mjs"), false);
-  assert.equal(commands.some(({ args }) => args[0] === "--test"), true);
-  assert.equal(commands.some(({ command }) => command === (process.env.CARGO ?? "cargo")), true);
-  for (const { options } of commands) {
+  assert.equal(commands.some(([, args]) => args[0] === "scripts/build-native.mjs"), false);
+  assert.equal(commands.some(([, args]) => args[0] === "--test"), true);
+  assert.equal(commands.some(([command]) => command === (process.env.CARGO ?? "cargo")), true);
+  for (const [, , options] of commands) {
     const home = options.env.LING_STACK_HOME;
     const workspace = options.env.LING_STACK_DEFAULT_WORKSPACE_CWD;
     for (const path of [home, workspace]) {
@@ -35,7 +36,7 @@ test("generic CI keeps platform-neutral Host tests without building a Linux prod
 });
 
 test("the Host test runner removes isolated state after a command failure", async () => {
-  let paths;
+  let paths: string[] | undefined;
   await assert.rejects(runBrowserHostTests({
     platform: "linux",
     arch: "x64",
@@ -45,6 +46,7 @@ test("the Host test runner removes isolated state after a command failure", asyn
     },
   }), /owned fixture failure/u);
 
+  assert.ok(paths);
   assert.equal(paths.length, 2);
   for (const path of paths) await assert.rejects(access(path), { code: "ENOENT" });
 });
