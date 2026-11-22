@@ -427,6 +427,10 @@ export class AutomationSchedulerRegistry {
         this.armAutomationTimer(entry, automation, scheduledFor, generation);
         return;
       }
+      if (this.storeRegistry.recoveryBlocksDispatch(entry.state.cwd)) {
+        this.armAutomationTimer(entry, automation, scheduledFor, generation, 2000);
+        return;
+      }
       if (automation.trigger.missedRunPolicy === "skip"
         && Date.now() - Date.parse(scheduledFor) > LATE_TIMER_GRACE_MS) {
         // The process woke materially after the due wall-clock. Advance from
@@ -560,6 +564,7 @@ export class AutomationSchedulerRegistry {
         this.armMonitorTimer(entry, automation, scheduledFor, generation);
         return;
       }
+      if (this.storeRegistry.recoveryBlocksDispatch(entry.state.cwd)) return;
       const snapshotBody = readAutomationMonitorSnapshot({ store, automation, now: firedAt });
       const fingerprint = automationMonitorFingerprint(automation.trigger.source, snapshotBody);
       const observation = { automationId: automation.id, fingerprint, snapshot: snapshotBody };

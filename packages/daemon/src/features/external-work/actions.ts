@@ -229,7 +229,6 @@ export async function handleExternalWorkActionExecute(
   let supervised: ExternalWorkActionRuntimeHandle | undefined;
   let executionResult: ExternalWorkActionExecutionResult | undefined;
   try {
-    appServerRecoveryFor(config, store)?.assertReady();
     const body = await readOptionalJsonBody(request, config.maxBodyBytes);
     const input = parseExternalWorkActionExecuteRequest(body);
     const action = store.getExternalWorkAction(actionId);
@@ -253,6 +252,7 @@ export async function handleExternalWorkActionExecute(
       return;
     }
 
+    appServerRecoveryFor(config, store)?.assertReady();
     supervised = hooks.startRuntimeWorkUnit({
       store,
       kind: "external_work_action",

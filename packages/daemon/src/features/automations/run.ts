@@ -13,6 +13,7 @@ import {
 } from "@ling-stack/core";
 import { parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
+import { recoveryBlocked } from "../../server/app-server-recovery.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { isPathInsideRoot } from "../../shared/path.js";
 import type { NotificationHub } from "../notifications/hub.js";
@@ -53,6 +54,7 @@ export interface RunAutomationResult {
 }
 
 export async function runAutomation(input: RunAutomationInput): Promise<RunAutomationResult> {
+  if (input.storeRegistry.recoveryBlocksDispatch(input.cwd)) throw recoveryBlocked();
   const store = input.storeRegistry.getStore(input.cwd);
   const automation = store.getAutomationDefinition(input.automationId);
   if (!automation) {
