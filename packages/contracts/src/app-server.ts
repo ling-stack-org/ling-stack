@@ -159,6 +159,8 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/coordination/start",
   "workItem/coordination/read",
   "workItem/coordination/close",
+  "workItem/coordination/schedule/read",
+  "workItem/coordination/schedule/set",
   "workItem/message/send",
   "workItem/message/read",
   "workItem/message/list",
@@ -575,6 +577,34 @@ export const LING_APP_SERVER_COLLABORATION_KINDS = [
 ] as const;
 
 export type LingAppServerCollaborationKind = (typeof LING_APP_SERVER_COLLABORATION_KINDS)[number];
+
+export interface LingAppServerCoordinationSchedule {
+  readonly automationId: string;
+  readonly workItemId: string;
+  readonly revision: number;
+  readonly enabled: boolean;
+  readonly kind: "checkpoint" | "retrospective";
+  readonly durationMs: number;
+}
+
+export interface LingAppServerCoordinationScheduleParams extends Omit<LingAppServerCoordinationSchedule, "revision"> {
+  readonly cwd?: string;
+  readonly expectedRevision: number;
+}
+
+export interface LingAppServerScheduledCoordinationRound {
+  readonly automationId: string;
+  readonly automationRunId: string;
+  readonly workItemId: string;
+  readonly recordId: string;
+  readonly policyRevision: number;
+  readonly subjectRevision: number;
+  readonly controlGeneration: number;
+  readonly kind: LingAppServerCoordinationSchedule["kind"];
+  readonly deadlineAt: string;
+  readonly scheduledFor?: string;
+  readonly closedRecordId?: string;
+}
 
 export const LING_APP_SERVER_COLLABORATION_ACTIONS = [
   "created",

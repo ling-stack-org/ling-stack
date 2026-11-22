@@ -152,6 +152,7 @@ export interface AutomationRun {
   readonly channelId?: string;
   readonly threadId: string;
   readonly runId?: string;
+  readonly coordinationRoundId?: string;
   readonly triggerType: AutomationTrigger["type"];
   readonly scheduledFor?: string;
   readonly firedAt: string;

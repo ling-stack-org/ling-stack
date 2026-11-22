@@ -591,6 +591,8 @@ Reuse the existing recurrence, time zone and missed-run calculation. The occurre
 
 This action writes a terminal occurrence directly. Agent participation, when authorized, is admitted independently through the existing Workflow and Runtime paths. A user-triggered Run now uses the same atomic action and the existing manual Automation receipt key. Schedule advancement follows the committed scheduled occurrence. If the process stops before commit, any remaining due slot follows the existing `skip` or `run_one` policy for unadmitted occurrences. If it stops after commit, a repeat tick sees the original terminal receipt and startup reopens the existing round projection and restores its deadline. An already expired open round uses the ordinary close or invalidation path. Transport replay consumes the committed event and its existing identity. [Automation scheduler](../../packages/daemon/src/features/automations/scheduler.ts) · [AutomationRun store](../../packages/core/src/storage/sqlite/automation-store.ts) · [Transactional Control Plane append](../../packages/core/src/storage/sqlite/control-plane-store.ts)
 
+The implementation stores the schedule binding, occurrence receipt, open round and close brief in the same workspace SQLite store. A timer restart reads the round deadline rather than generating a new Run. A paused Work Item commits a typed `skipped` occurrence. Closing a round appends a brief and terminal coordination record atomically, and a changed Work Item control generation produces an `inputs_changed` close reason.
+
 ## 6. External Agent Federation Protocol
 
 External Agents use the Ling App Server protocol or a runner adapter. The federation facade adds Work Item identity and capability mapping.

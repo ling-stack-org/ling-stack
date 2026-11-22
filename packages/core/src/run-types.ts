@@ -2766,6 +2766,13 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined;
   confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult;
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun;
+  getAutomationCoordinationSchedule(automationId: string): import("@ling-stack/contracts").LingAppServerCoordinationSchedule | undefined;
+  configureAutomationCoordination(input: import("@ling-stack/contracts").LingAppServerCoordinationScheduleParams, now: string): import("@ling-stack/contracts").LingAppServerCoordinationSchedule;
+  admitScheduledCoordination(input: import("./storage/sqlite/scheduled-coordination-store.js").AdmitScheduledCoordinationInput, now: string, cwd?: string): import("./storage/sqlite/scheduled-coordination-store.js").ScheduledCoordinationAdmission;
+  readScheduledCoordinationRound(recordId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
+  findScheduledCoordinationRound(automationRunId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
+  listOpenScheduledCoordinationRounds(): readonly import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound[];
+  closeScheduledCoordination(input: import("./storage/sqlite/scheduled-coordination-store.js").CloseScheduledCoordinationInput, now: string, cwd?: string): import("./storage/sqlite/scheduled-coordination-store.js").ScheduledCoordinationClose | undefined;
   getAutomationRun(automationRunId: string): AutomationRun | undefined;
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
   listAutomationRuns(options?: ListAutomationRunsOptions): AutomationRun[];

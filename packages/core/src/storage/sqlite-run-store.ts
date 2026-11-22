@@ -868,6 +868,7 @@ import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-schedul
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkItemEvidenceStore } from "./sqlite/work-item-evidence-store.js";
+import { SqliteScheduledCoordinationStore } from "./sqlite/scheduled-coordination-store.js";
 import { SqliteAppServerStateStore } from "./sqlite/app-server-state-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
@@ -1031,6 +1032,7 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
   private readonly workItemEvidence: SqliteWorkItemEvidenceStore;
+  private readonly scheduledCoordination: SqliteScheduledCoordinationStore;
   private readonly appServerState: SqliteAppServerStateStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
@@ -1763,6 +1765,8 @@ export class SqliteRunStore implements RunStore {
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
     this.appServerState = new SqliteAppServerStateStore({ database: this.database }, this.controlPlane);
+    this.scheduledCoordination = new SqliteScheduledCoordinationStore({ database: this.database }, this.appServerState,
+      this.automations, this.workItemEvidence, this.controlPlane, this);
     this.approvalResumes = new SqliteApprovalResumeStore(
       { database: this.database },
       {
@@ -6464,8 +6468,38 @@ export class SqliteRunStore implements RunStore {
     return this.automations.createAutomationRun(input, now);
   }
 
+  getAutomationCoordinationSchedule(automationId: string) {
+    return this.scheduledCoordination.schedule(automationId);
+  }
+
+  configureAutomationCoordination(input: Parameters<RunStore["configureAutomationCoordination"]>[0], now: string) {
+    return this.scheduledCoordination.configure(input, now);
+  }
+
+  admitScheduledCoordination(input: Parameters<RunStore["admitScheduledCoordination"]>[0], now: string, cwd = this.paths.cwd) {
+    return this.scheduledCoordination.admit(input, now, cwd);
+  }
+
+  readScheduledCoordinationRound(recordId: string) {
+    return this.scheduledCoordination.readRound(recordId);
+  }
+
+  findScheduledCoordinationRound(automationRunId: string) {
+    return this.scheduledCoordination.findRound(automationRunId);
+  }
+
+  listOpenScheduledCoordinationRounds() {
+    return this.scheduledCoordination.listOpenRounds();
+  }
+
+  closeScheduledCoordination(input: Parameters<RunStore["closeScheduledCoordination"]>[0], now: string, cwd = this.paths.cwd) {
+    return this.scheduledCoordination.close(input, now, cwd);
+  }
+
   getAutomationRun(automationRunId: string): AutomationRun | undefined {
-    return this.automations.getAutomationRun(automationRunId);
+    const run = this.automations.getAutomationRun(automationRunId);
+    const round = run && this.findScheduledCoordinationRound(run.id);
+    return run && round ? { ...run, coordinationRoundId: round.recordId } : run;
   }
 
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined {
@@ -6473,7 +6507,10 @@ export class SqliteRunStore implements RunStore {
   }
 
   listAutomationRuns(options: ListAutomationRunsOptions = {}): AutomationRun[] {
-    return this.automations.listAutomationRuns(options);
+    return this.automations.listAutomationRuns(options).map(run => {
+      const round = this.findScheduledCoordinationRound(run.id);
+      return round ? { ...run, coordinationRoundId: round.recordId } : run;
+    });
   }
 
   updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined {

@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 import { parseUserInputAnswerCommandV1 } from "@ling-stack/contracts";
 import type {
   LingAppServerCandidateReference,
+  AutomationRun,
   LingAppServerCaptureChangesResult,
   LingAppServerContextInspectResult,
   LingAppServerExternalAgentRegisterResult,
@@ -22,6 +23,8 @@ import type {
   LingAppServerExternalAgentTaskStartResult,
   LingAppServerGitHubSubjectResult,
   LingAppServerGitHubDeliveryResult,
+  LingAppServerCoordinationSchedule,
+  LingAppServerWorkItemCollaborationReadResult,
   LingAppServerGrant,
   LingAppServerGrantScope,
   LingAppServerHandoffResult,
@@ -1371,6 +1374,87 @@ test("Work Item creation, acceptance, evidence and collaboration retries keep on
     expectedWorkItemRevision: Number(paused.revision), expectedControlGeneration: Number(paused.control.generation) });
   assert.equal(resumed.control.state, "active");
   assert.equal((await sdk.readWorkItem(workItem.workspaceId, workItemId)).revision, resumed.revision);
+});
+
+test("a scheduled coordination occurrence commits with its round, restores its deadline and skips a paused Work Item", { timeout: 25_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const client = await fixture.connect();
+  const { workItem } = await client.call<LingAppServerWorkItemResult>("workItem/create", { sourceId: "coordination", title: "Review the stage" });
+  const { workItemId, workspaceId } = workItem;
+  const store = fixture.getStore();
+  const now = new Date().toISOString();
+  const home = store.createLingThread({ kind: "automation", title: "Daily checkpoint", objective: "Review the team progress" }, now);
+  const due = new Date(Date.now() - 100).toISOString();
+  const automation = store.createAutomationDefinition({
+    threadId: home.id, title: "Daily checkpoint", kind: "custom_prompt",
+    trigger: { type: "schedule", timezone: "UTC", missedRunPolicy: "run_one",
+      schedule: { cadence: "daily", timeOfDay: "00:00" } },
+    target: { scope: "workspace", workspaceId }, executionPolicy: {},
+    promptTemplate: { templateVersion: 1, promptMarkdown: "Review the current Work Item.", contextSelectors: [] },
+    outputPolicy: { artifactFormat: "markdown", destinations: [{ type: "automation_thread" }] },
+    nextRunAt: due,
+  }, now);
+  const policy = { automationId: automation.id, workItemId, expectedRevision: 0, enabled: true, kind: "checkpoint", durationMs: 2200 };
+  const configured = await client.call<{ schedule: LingAppServerCoordinationSchedule }>("workItem/coordination/schedule/set", policy);
+  assert.equal(configured.schedule.revision, 1);
+  await assert.rejects(client.call("workItem/coordination/schedule/set", { ...policy, enabled: false }), { code: "stale_revision" });
+  const runAutomation = (body: object) => {
+    const { daemonUrl, authToken, cwd } = fixture.transportOptions();
+    return fetch(`${daemonUrl}/automations/${automation.id}/run?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
+    });
+  };
+  const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  const occurrence = { triggerType: "schedule", scheduledFor: due, idempotencyKey: `automation:${automation.id}:schedule:${due}` };
+  const database = new DatabaseSync(store.paths.databasePath);
+  try {
+    database.exec(`CREATE TRIGGER fixture_fail_coordination BEFORE INSERT ON control_plane_events
+      WHEN NEW.action = 'work_item.collaboration.coordination.started'
+      BEGIN SELECT RAISE(ABORT, 'fixture_coordination_write_failed'); END`);
+    const failed = await runAutomation(occurrence);
+    assert.ok(!failed.ok);
+    assert.equal(store.listAutomationRuns({ automationId: automation.id }).length, 0);
+    assert.equal(store.listWorkItemEvidence({ workItemId }).length, 0);
+    database.exec("DROP TRIGGER fixture_fail_coordination");
+  } finally {
+    database.close();
+  }
+  await fixture.restart();
+  const restored = await fixture.connect();
+  await restored.call("workItem/subscribe", { workItemId, cursor: before.cursor });
+  const scheduled = await waitFor(() => fixture.getStore().listAutomationRuns({ automationId: automation.id })[0]);
+  assert.equal(scheduled.scheduledFor, due);
+  assert.equal(scheduled.status, "succeeded");
+  assert.ok(scheduled.coordinationRoundId && scheduled.completedAt);
+  assert.equal(scheduled.runId, undefined);
+  const round = fixture.getStore().readScheduledCoordinationRound(scheduled.coordinationRoundId);
+  assert.ok(round);
+  await waitFor(() => restored.notices.find(value => value.params?.event?.action === "work_item.collaboration.coordination.started"));
+  const replay = await runAutomation(occurrence);
+  assert.equal(replay.status, 202);
+  assert.deepEqual((await replay.json() as { automationRun: AutomationRun }).automationRun, scheduled);
+  assert.equal(fixture.getStore().listAutomationRuns({ automationId: automation.id }).length, 1);
+
+  await fixture.restart();
+  const observer = await fixture.connect();
+  const afterRestart = fixture.getStore().readScheduledCoordinationRound(round.recordId);
+  assert.equal(afterRestart?.deadlineAt, round.deadlineAt);
+  const closed = await waitFor(() => fixture.getStore().readScheduledCoordinationRound(round.recordId)?.closedRecordId);
+  const records = await observer.call<LingAppServerWorkItemCollaborationReadResult>("workItem/collaboration/read", { workItemId });
+  assert.deepEqual(records.records.map(record => record.kind), ["coordination", "brief", "coordination"]);
+  assert.equal(records.records[2]?.id, closed);
+  const terminal = records.records[2]?.payload as { closeReason: string; briefId: string };
+  assert.equal(terminal.closeReason, "deadline");
+  assert.equal(terminal.briefId, records.records[1]?.id);
+  const current = await observer.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  await observer.call("workItem/pause", { workItemId, expectedWorkItemRevision: Number(current.workItem.revision),
+    expectedControlGeneration: 0, actorId: "local-user", idempotencyKey: "pause-coordination" });
+  const skipped = await runAutomation({ idempotencyKey: "paused-coordination" });
+  assert.equal(skipped.status, 202);
+  const skipReceipt = (await skipped.json() as { automationRun: AutomationRun }).automationRun;
+  assert.equal(skipReceipt.status, "skipped");
+  assert.equal(skipReceipt.skipReason, "coordination_policy_denied");
+  assert.equal(fixture.getStore().listRuns().length, 0);
 });
 
 test("Work Item controls commit state, receipt and event together and replay after a later control", { timeout: 20_000 }, async t => {

@@ -349,6 +349,7 @@ export async function handleAutomationItem(
         request: parseAutomationRunRequest(body),
         startRun,
         notificationHub,
+        onCoordinationRound: (cwd, event) => schedulerRegistry.publishCoordinationRound(cwd, event),
       });
       writeJson(response, 202, { ...result, run: projectPublicRunSession(result.run, store) });
       return;

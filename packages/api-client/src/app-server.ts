@@ -25,6 +25,8 @@ import type {
   LingAppServerGitHubSubjectResult,
   LingAppServerGitHubDeliveryResult,
   LingAppServerReconcileGitHubDeliveryParams,
+  LingAppServerCoordinationSchedule,
+  LingAppServerCoordinationScheduleParams,
   LingAppServerGrant,
   LingAppServerGrantCreateParams,
   LingAppServerHandoffCreateParams,
@@ -248,6 +250,16 @@ export class LingAppServerClient {
   async readGitHubDelivery(params: { readonly workItemId: string; readonly deliveryId?: string }): Promise<LingAppServerGitHubDeliveryResult> {
     await this.connect();
     return await this.request(params.deliveryId === undefined ? "workItem/delivery/read" : "delivery/read", params);
+  }
+
+  async readCoordinationSchedule(params: { readonly automationId: string; readonly workItemId: string }): Promise<{ readonly cwd: string; readonly schedule: LingAppServerCoordinationSchedule | null }> {
+    await this.connect();
+    return await this.request("workItem/coordination/schedule/read", params);
+  }
+
+  async setCoordinationSchedule(params: LingAppServerCoordinationScheduleParams): Promise<{ readonly cwd: string; readonly schedule: LingAppServerCoordinationSchedule }> {
+    await this.connect();
+    return await this.request("workItem/coordination/schedule/set", params);
   }
 
   async acceptWorkItem(params: LingAppServerWorkItemAcceptParams): Promise<LingAppServerWorkItemAcceptResult> {

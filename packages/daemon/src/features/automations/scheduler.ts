@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type {
   AutomationDefinition,
+  ControlPlaneEvent,
   RunSession,
   SecretResolver,
 } from "@ling-stack/core";
 import {
   automationMonitorFingerprint,
+  LING_AGENT_ID,
   matchesAutomationMonitorCondition,
 } from "@ling-stack/core";
 import type { McpBroker } from "../../context.js";
@@ -14,7 +16,7 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { StartupStateRegistry } from "../../startup/state.js";
-import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { trimOversizedEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import type { NotificationHub } from "../notifications/hub.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
@@ -69,6 +71,8 @@ interface AutomationSchedulerEntry {
 export class AutomationSchedulerRegistry {
   private readonly entriesByCwd = new Map<string, AutomationSchedulerEntry>();
   private readonly inFlightTasks = new Set<Promise<void>>();
+  private readonly coordinationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private coordinationStopping = false;
 
   constructor(
     private readonly runnerRegistry: RunnerRegistry,
@@ -119,6 +123,7 @@ export class AutomationSchedulerRegistry {
         this.scheduleAutomation(entry, automation, new Date());
       }
       this.refreshStateSummary(entry);
+      this.restoreCoordinationDeadlines(cwd);
       this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
       return { scheduler: entry.state, duplicate: false };
     } catch (error) {
@@ -205,9 +210,50 @@ export class AutomationSchedulerRegistry {
   }
 
   stopAll(): void {
+    this.coordinationStopping = true;
+    for (const timer of this.coordinationTimers.values()) clearTimeout(timer);
+    this.coordinationTimers.clear();
     for (const cwd of [...this.entriesByCwd.keys()]) {
       this.stop(cwd);
     }
+  }
+
+  publishCoordinationRound(cwd: string, event: ControlPlaneEvent): void {
+    this.controlPlaneEvents.publish(trimOversizedEvent(event));
+    this.restoreCoordinationDeadlines(cwd);
+  }
+
+  restoreCoordinationDeadlines(cwd: string): void {
+    if (this.coordinationStopping) return;
+    const prior = this.coordinationTimers.get(cwd);
+    if (prior) clearTimeout(prior);
+    this.coordinationTimers.delete(cwd);
+    const open = this.storeRegistry.getStore(cwd).listOpenScheduledCoordinationRounds();
+    const next = open.map(round => round.deadlineAt).sort()[0];
+    if (next) this.armCoordinationDeadline(cwd, Math.max(1, Date.parse(next) - Date.now()));
+  }
+
+  private armCoordinationDeadline(cwd: string, delayMs: number): void {
+    const timer = setTimeout(() => {
+      if (this.coordinationStopping || this.coordinationTimers.get(cwd) !== timer) return;
+      this.coordinationTimers.delete(cwd);
+      try {
+        const store = this.storeRegistry.getStore(cwd);
+        const now = new Date().toISOString();
+        for (const round of store.listOpenScheduledCoordinationRounds().filter(round => round.deadlineAt <= now)) {
+          const closed = store.closeScheduledCoordination({
+            workItemId: round.workItemId, recordId: round.recordId, actorId: LING_AGENT_ID, cause: "deadline",
+          }, now, cwd);
+          if (closed?.briefEvent) this.controlPlaneEvents.publish(trimOversizedEvent(closed.briefEvent));
+          if (closed?.result.event) this.controlPlaneEvents.publish(trimOversizedEvent(closed.result.event));
+        }
+        this.restoreCoordinationDeadlines(cwd);
+      } catch {
+        this.armCoordinationDeadline(cwd, 1000);
+      }
+    }, Math.min(delayMs, MAX_TIMER_DELAY_MS));
+    timer.unref?.();
+    this.coordinationTimers.set(cwd, timer);
   }
 
   async waitForIdle(): Promise<void> {
@@ -308,11 +354,12 @@ export class AutomationSchedulerRegistry {
     automation: AutomationDefinition,
     scheduledFor: string,
     generation: number,
+    retryDelayMs = 0,
   ): void {
     if (!this.isCurrentEntry(entry, generation)) {
       return;
     }
-    const delayMs = Math.min(Math.max(Date.parse(scheduledFor) - Date.now(), 1), MAX_TIMER_DELAY_MS);
+    const delayMs = Math.min(Math.max(Date.parse(scheduledFor) - Date.now(), 1, retryDelayMs), MAX_TIMER_DELAY_MS);
     const existingTimer = entry.timers.get(automation.id);
     if (existingTimer) {
       clearTimeout(existingTimer);
@@ -352,6 +399,8 @@ export class AutomationSchedulerRegistry {
     entry.runningAutomationIds.add(automationId);
     const firedAt = new Date().toISOString();
     let executionEntered = false;
+    let coordination: AutomationDefinition | undefined;
+    let retryCoordination = false;
     try {
       const store = this.storeRegistry.getStore(entry.state.cwd);
       const automation = store.getAutomationDefinition(automationId);
@@ -387,6 +436,7 @@ export class AutomationSchedulerRegistry {
         return;
       }
       executionEntered = true;
+      if (store.getAutomationCoordinationSchedule(automation.id)) coordination = automation;
       const result = await this.executeAutomationRun(entry.state.cwd, automationId, {
         triggerType: "schedule",
         scheduledFor,
@@ -419,6 +469,11 @@ export class AutomationSchedulerRegistry {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
+      if (coordination) {
+        retryCoordination = true;
+        this.upsertItem(entry, { automationId, title: coordination.title, lastErrorMessage: message });
+        return;
+      }
       entry.state = {
         ...entry.state,
         status: "running",
@@ -436,6 +491,10 @@ export class AutomationSchedulerRegistry {
       store.updateAutomationDefinition(automationId, { status: "error", lastErrorMessage: message }, new Date().toISOString());
     } finally {
       entry.runningAutomationIds.delete(automationId);
+      if (retryCoordination && coordination) {
+        this.armAutomationTimer(entry, coordination, scheduledFor, generation, 1000);
+        return;
+      }
       if (executionEntered) {
         // Mark the admitted slot consumed before rearming. Otherwise a
         // run_one restart could mistake the just-fired persisted due for a
@@ -623,6 +682,7 @@ export class AutomationSchedulerRegistry {
       storeRegistry: this.storeRegistry,
       request,
       notificationHub: this.notificationHub,
+      onCoordinationRound: (cwd, event) => this.publishCoordinationRound(cwd, event),
       startRun: async (runRequest, hooks) =>
         await executeRunRequest(
           runRequest,

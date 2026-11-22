@@ -168,6 +168,7 @@ const operatorMethods = new Set([
   "server/grants/create", "server/grants/list", "server/grants/revoke",
   "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
   "workItem/accept",
+  "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
@@ -768,6 +769,9 @@ class RpcConnection {
         return this.appendCollaboration("coordination", "closed", params);
       case "workItem/coordination/read":
         return this.readCollaboration("coordination", params);
+      case "workItem/coordination/schedule/read":
+      case "workItem/coordination/schedule/set":
+        return this.coordinationSchedule(method, params);
       case "workItem/message/send":
         return this.appendCollaboration("message", "created", params);
       case "workItem/message/read":
@@ -1040,6 +1044,27 @@ class RpcConnection {
     return { cwd, workItemId, evidence, nextAfterSequence: evidence.at(-1)?.sequence ?? afterSequence };
   }
 
+  private coordinationSchedule(method: "workItem/coordination/schedule/read" | "workItem/coordination/schedule/set", params: unknown): unknown {
+    const record = this.workspaceParams(params, true);
+    const automationId = readStringField(record, "automationId");
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    if (method === "workItem/coordination/schedule/read") {
+      const schedule = store.getAutomationCoordinationSchedule(automationId);
+      return { cwd: record.cwd, schedule: schedule?.workItemId === workItemId ? schedule : null };
+    }
+    const { enabled, kind } = record;
+    const expectedRevision = readOptionalIntegerField(record, "expectedRevision");
+    const durationMs = readOptionalIntegerField(record, "durationMs");
+    if (typeof enabled !== "boolean" || kind !== "checkpoint" && kind !== "retrospective"
+      || expectedRevision === undefined || expectedRevision < 0 || durationMs === undefined || durationMs < 1000 || durationMs > 24 * 60 * 60_000) {
+      throw rpcError(-32602, "invalid_params", "Supply the schedule kind, enabled state, revision and a duration between one second and one day.");
+    }
+    const schedule = store.configureAutomationCoordination({ automationId, workItemId, enabled, kind, expectedRevision, durationMs },
+      new Date().toISOString());
+    return { cwd: record.cwd, schedule };
+  }
+
   private appendWorkItemEvidence(params: unknown): unknown {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
@@ -1109,6 +1134,20 @@ class RpcConnection {
       }
       const store = this.context.storeRegistry.getStore(cwd);
       const scope = this.replayIdentity(cwd, store).scope("workItem", workItemId);
+      const parentRecordId = readOptionalStringField(record, "parentRecordId");
+      if (kind === "coordination" && action === "closed" && parentRecordId && store.readScheduledCoordinationRound(parentRecordId)) {
+        this.workspaceParams(params, true);
+        const closed = store.closeScheduledCoordination({
+          workItemId, recordId: parentRecordId, actorId: readStringField(record, "actorId"), cause: "owner_closed",
+          expectedWorkItemRevision: readOptionalIntegerField(record, "expectedWorkItemRevision"),
+          expectedCollaborationRevision: readOptionalIntegerField(record, "expectedCollaborationRevision"),
+        }, new Date().toISOString(), cwd);
+        if (!closed) throw rpcError(-32040, "coordination_subject_unavailable", "The coordination round is unavailable.");
+        const { event, ...result } = closed.result;
+        if (closed.briefEvent) this.context.controlPlaneEvents.publish(trimOversizedEvent(closed.briefEvent));
+        if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        return { cwd, ...result };
+      }
       const { event, ...result } = appendAppServerWorkItemCollaboration(store, {
         ...record,
         cwd,
@@ -2831,6 +2870,9 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   }
   if (error instanceof Error && error.message === "thread_work_item_dependency") {
     return { jsonRpcCode: -32061, code: "resume_blocked", message: "The Thread has a current Work Item dependency." };
+  }
+  if (error instanceof Error && /^(?:coordination_schedule_stale|coordination_round_stale)$/u.test(error.message)) {
+    return { jsonRpcCode: -32030, code: "stale_revision", message: "The coordination definition or Work Item revision changed." };
   }
   if (error instanceof Error && /^goal_(acceptance|completion|supervision)_/u.test(error.message)) {
     return { jsonRpcCode: -32061, code: error.message, message: error.message };

@@ -22,103 +22,108 @@ export class SqliteWorkItemEvidenceStore {
     input: AppendWorkItemEvidenceInput, now: string,
     events?: WorkItemEvidenceEventOptions & { readonly store: SqliteControlPlaneStore },
   ): AppendWorkItemEvidenceResult | undefined {
-    validateEvidenceInput(input);
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
-      const workItem = this.context.database
-        .prepare("SELECT revision FROM work_items WHERE workspace_id = ? AND id = ?")
-        .get(DEFAULT_WORKSPACE_ID, input.workItemId) as Record<string, SQLOutputValue> | undefined;
-      if (!workItem) {
-        this.context.database.exec("ROLLBACK");
-        return undefined;
-      }
-      const existingRow = this.context.database
-        .prepare("SELECT * FROM work_item_evidence WHERE workspace_id = ? AND work_item_id = ? AND idempotency_key = ?")
-        .get(DEFAULT_WORKSPACE_ID, input.workItemId, input.idempotencyKey) as Record<string, SQLOutputValue> | undefined;
-      if (existingRow) {
-        const existing = mapWorkItemEvidence(existingRow);
-        if (!sameEvidenceInput(existing, input)) {
-          throw new Error("work_item_evidence_idempotency_conflict");
-        }
-        const currentRevision = readNumber(workItem, "revision");
-        this.context.database.exec("COMMIT");
-        return { status: "replayed", entry: existing, workItemRevision: currentRevision };
-      }
-
-      const workItemRevision = readNumber(workItem, "revision");
-      if (input.expectedWorkItemRevision !== undefined && input.expectedWorkItemRevision !== workItemRevision) {
-        this.context.database.exec("ROLLBACK");
-        return undefined;
-      }
-      const currentEvidenceRevision = Number((this.context.database
-        .prepare("SELECT COALESCE(MAX(sequence), 0) AS revision FROM work_item_evidence WHERE workspace_id = ? AND work_item_id = ?")
-        .get(DEFAULT_WORKSPACE_ID, input.workItemId) as Record<string, SQLOutputValue>).revision ?? 0);
-      if (input.expectedEvidenceRevision !== undefined && input.expectedEvidenceRevision !== currentEvidenceRevision) {
-        this.context.database.exec("ROLLBACK");
-        return undefined;
-      }
-      const sequence = currentEvidenceRevision + 1;
-      const entry: WorkItemEvidenceEntry = {
-        id: input.id ?? createWorkItemEvidenceId(),
-        workspaceId: DEFAULT_WORKSPACE_ID,
-        workItemId: input.workItemId,
-        revision: sequence,
-        sequence,
-        subjectRevision: input.subjectRevision,
-        kind: input.kind,
-        actorId: input.actorId,
-        content: input.content,
-        optionId: input.optionId,
-        sourceRefs: input.sourceRefs ?? [],
-        visibility: input.visibility ?? "work_item",
-        idempotencyKey: input.idempotencyKey,
-        createdAt: now,
-        updatedAt: now,
-      };
-      this.context.database.prepare(`
-        INSERT INTO work_item_evidence (
-          id, workspace_id, work_item_id, revision, sequence, subject_revision, kind, actor_id,
-          content, option_id, source_refs_json, visibility, idempotency_key, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        entry.id,
-        entry.workspaceId,
-        entry.workItemId,
-        entry.revision,
-        entry.sequence,
-        entry.subjectRevision,
-        entry.kind,
-        entry.actorId,
-        entry.content,
-        entry.optionId ?? null,
-        stringifyJson(entry.sourceRefs),
-        entry.visibility,
-        entry.idempotencyKey,
-        entry.createdAt,
-        entry.updatedAt,
-      );
-      const updated = this.context.database
-        .prepare("UPDATE work_items SET revision = revision + 1, updated_at = ? WHERE workspace_id = ? AND id = ? AND revision = ?")
-        .run(now, DEFAULT_WORKSPACE_ID, input.workItemId, workItemRevision);
-      if (updated.changes !== 1) {
-        throw new Error("work_item_evidence_work_item_revision_conflict");
-      }
-      const committedRevision = workItemRevision + 1;
-      const event = events?.store.appendControlPlaneEventWithinTransaction({
-        workspaceId: entry.workspaceId, cwd: events.cwd, domain: "work_items",
-        entityType: "work_item", entityId: entry.workItemId,
-        idempotencyKey: `work-item-evidence:${entry.id}`,
-        ...(events.project?.(entry, committedRevision) ?? {
-          action: "work_item.evidence.updated",
-          data: { workItemId: entry.workItemId, evidenceId: entry.id, sequence, workItemRevision: committedRevision },
-        }),
-      }, now);
+      const result = this.appendWithinTransaction(input, now, events);
       this.context.database.exec("COMMIT");
-      return { status: "appended", entry, workItemRevision: committedRevision, ...(event ? { event } : {}) };
+      return result;
     } catch (error) {
       try { this.context.database.exec("ROLLBACK"); } catch { /* Preserve the original error. */ }
       throw error;
     }
+  }
+
+  appendWithinTransaction(
+    input: AppendWorkItemEvidenceInput, now: string,
+    events?: WorkItemEvidenceEventOptions & { readonly store: SqliteControlPlaneStore },
+  ): AppendWorkItemEvidenceResult | undefined {
+    if (!this.context.database.isTransaction) throw new Error("work_item_evidence_requires_transaction");
+    validateEvidenceInput(input);
+    const workItem = this.context.database
+      .prepare("SELECT revision FROM work_items WHERE workspace_id = ? AND id = ?")
+      .get(DEFAULT_WORKSPACE_ID, input.workItemId) as Record<string, SQLOutputValue> | undefined;
+    if (!workItem) {
+      return undefined;
+    }
+    const existingRow = this.context.database
+      .prepare("SELECT * FROM work_item_evidence WHERE workspace_id = ? AND work_item_id = ? AND idempotency_key = ?")
+      .get(DEFAULT_WORKSPACE_ID, input.workItemId, input.idempotencyKey) as Record<string, SQLOutputValue> | undefined;
+    if (existingRow) {
+      const existing = mapWorkItemEvidence(existingRow);
+      if (!sameEvidenceInput(existing, input)) {
+        throw new Error("work_item_evidence_idempotency_conflict");
+      }
+      const currentRevision = readNumber(workItem, "revision");
+      return { status: "replayed", entry: existing, workItemRevision: currentRevision };
+    }
+
+    const workItemRevision = readNumber(workItem, "revision");
+    if (input.expectedWorkItemRevision !== undefined && input.expectedWorkItemRevision !== workItemRevision) {
+      return undefined;
+    }
+    const currentEvidenceRevision = Number((this.context.database
+      .prepare("SELECT COALESCE(MAX(sequence), 0) AS revision FROM work_item_evidence WHERE workspace_id = ? AND work_item_id = ?")
+      .get(DEFAULT_WORKSPACE_ID, input.workItemId) as Record<string, SQLOutputValue>).revision ?? 0);
+    if (input.expectedEvidenceRevision !== undefined && input.expectedEvidenceRevision !== currentEvidenceRevision) {
+      return undefined;
+    }
+    const sequence = currentEvidenceRevision + 1;
+    const entry: WorkItemEvidenceEntry = {
+      id: input.id ?? createWorkItemEvidenceId(),
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      workItemId: input.workItemId,
+      revision: sequence,
+      sequence,
+      subjectRevision: input.subjectRevision,
+      kind: input.kind,
+      actorId: input.actorId,
+      content: input.content,
+      optionId: input.optionId,
+      sourceRefs: input.sourceRefs ?? [],
+      visibility: input.visibility ?? "work_item",
+      idempotencyKey: input.idempotencyKey,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.context.database.prepare(`
+      INSERT INTO work_item_evidence (
+        id, workspace_id, work_item_id, revision, sequence, subject_revision, kind, actor_id,
+        content, option_id, source_refs_json, visibility, idempotency_key, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.id,
+      entry.workspaceId,
+      entry.workItemId,
+      entry.revision,
+      entry.sequence,
+      entry.subjectRevision,
+      entry.kind,
+      entry.actorId,
+      entry.content,
+      entry.optionId ?? null,
+      stringifyJson(entry.sourceRefs),
+      entry.visibility,
+      entry.idempotencyKey,
+      entry.createdAt,
+      entry.updatedAt,
+    );
+    const updated = this.context.database
+      .prepare("UPDATE work_items SET revision = revision + 1, updated_at = ? WHERE workspace_id = ? AND id = ? AND revision = ?")
+      .run(now, DEFAULT_WORKSPACE_ID, input.workItemId, workItemRevision);
+    if (updated.changes !== 1) {
+      throw new Error("work_item_evidence_work_item_revision_conflict");
+    }
+    const committedRevision = workItemRevision + 1;
+    const event = events?.store.appendControlPlaneEventWithinTransaction({
+      workspaceId: entry.workspaceId, cwd: events.cwd, domain: "work_items",
+      entityType: "work_item", entityId: entry.workItemId,
+      idempotencyKey: `work-item-evidence:${entry.id}`,
+      ...(events.project?.(entry, committedRevision) ?? {
+        action: "work_item.evidence.updated",
+        data: { workItemId: entry.workItemId, evidenceId: entry.id, sequence, workItemRevision: committedRevision },
+      }),
+    }, now);
+    return { status: "appended", entry, workItemRevision: committedRevision, ...(event ? { event } : {}) };
   }
 
   getWorkItemEvidence(id: string): WorkItemEvidenceEntry | undefined {
