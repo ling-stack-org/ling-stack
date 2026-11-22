@@ -16,7 +16,7 @@ const metroRequire = createRequire(nativeCliRequire.resolve("metro/package.json"
 const daemonRequire = createRequire(new URL("../../../packages/daemon/package.json", import.meta.url));
 const pptxRequire = createRequire(daemonRequire.resolve("pptxgenjs"));
 const imageSizeRequire = createRequire(pptxRequire.resolve("image-size"));
-const imageSizeManifest = imageSizeRequire("../../package.json");
+const imageSizeManifest: { version: string } = imageSizeRequire("../../package.json");
 const heifModulePath = imageSizeRequire.resolve("image-size/types/heif");
 const icnsModulePath = imageSizeRequire.resolve("image-size/types/icns");
 const jxlModulePath = imageSizeRequire.resolve("image-size/types/jxl");
@@ -24,7 +24,7 @@ const utilsModulePath = imageSizeRequire.resolve("image-size/types/utils");
 
 assert.equal(imageSizeManifest.version, "2.0.4");
 
-async function runBoundedProof(source, label) {
+async function runBoundedProof(source: string, label: string): Promise<void> {
   const child = spawn(process.execPath, ["-e", source], {
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
@@ -40,9 +40,9 @@ async function runBoundedProof(source, label) {
     stderr += chunk;
   });
 
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     let settled = false;
-    const finish = (callback) => {
+    const finish = (callback: () => void) => {
       if (settled) {
         return;
       }
