@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type {
+  ChromeFixture,
+  ChromeFixtureGlobals,
+  IntervalHandle,
+  MessageListener,
+  PopupListener,
+  PopupMessage,
+  PopupResponse,
+  RuntimeListeners,
+  SocketEvent,
+  StoredValues,
+  WireMessage,
+} from "./background-fixture-types.ts";
 
 test("stale Chrome sockets cannot clear the current heartbeat or execute commands", async () => {
   const original = {
-    chrome: globalThis.chrome,
+    chrome: (globalThis as ChromeFixtureGlobals).chrome,
     clearInterval: globalThis.clearInterval,
     clearTimeout: globalThis.clearTimeout,
     navigator: globalThis.navigator,
@@ -11,9 +24,9 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     setTimeout: globalThis.setTimeout,
     WebSocket: globalThis.WebSocket,
   };
-  const sockets = [];
-  const activeIntervals = new Set();
-  const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
+  const sockets: FakeWebSocket[] = [];
+  const activeIntervals = new Set<IntervalHandle>();
+  const runtimeListeners: RuntimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
   let tabQueries = 0;
 
   class FakeWebSocket {
@@ -22,7 +35,13 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     static CLOSING = 2;
     static CLOSED = 3;
 
-    constructor(url) {
+    declare url: string;
+    declare readyState: number;
+    declare listeners: Map<string, Array<(event: SocketEvent) => void>>;
+    declare sent: string[];
+    declare closeRequest?: { code?: number; reason?: string };
+
+    constructor(url: string) {
       this.url = url;
       this.readyState = FakeWebSocket.CONNECTING;
       this.listeners = new Map();
@@ -30,18 +49,18 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
       sockets.push(this);
     }
 
-    addEventListener(type, listener) {
+    addEventListener(type: string, listener: (event: SocketEvent) => void) {
       const listeners = this.listeners.get(type) ?? [];
       listeners.push(listener);
       this.listeners.set(type, listeners);
     }
 
-    close(code, reason) {
+    close(code?: number, reason?: string) {
       this.closeRequest = { code, reason };
       this.readyState = FakeWebSocket.CLOSING;
     }
 
-    emit(type, event = {}) {
+    emit(type: string, event: SocketEvent = {}) {
       for (const listener of this.listeners.get(type) ?? []) listener(event);
     }
 
@@ -50,12 +69,12 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
       this.emit("open");
     }
 
-    send(value) {
+    send(value: string) {
       this.sent.push(value);
     }
   }
 
-  const stored = {
+  const stored: StoredValues = {
     "ling.chrome.credential": "credential",
     "ling.chrome.cwd": "/tmp/ling-chrome-background-test",
     "ling.chrome.daemonBaseUrl": "http://127.0.0.1:17891",
@@ -93,20 +112,20 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
       tabs: {
         query: async () => { tabQueries += 1; return []; },
       },
-    },
+    } satisfies ChromeFixture,
   });
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
     value: { userAgent: "Ling background test" },
   });
   Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: FakeWebSocket });
-  globalThis.setInterval = (callback) => {
+  globalThis.setInterval = ((callback: () => void) => {
     const handle = { callback };
     activeIntervals.add(handle);
     return handle;
-  };
-  globalThis.clearInterval = (handle) => { activeIntervals.delete(handle); };
-  globalThis.setTimeout = () => ({ type: "timeout" });
+  }) as unknown as typeof globalThis.setInterval;
+  globalThis.clearInterval = ((handle: IntervalHandle) => { activeIntervals.delete(handle); }) as unknown as typeof globalThis.clearInterval;
+  globalThis.setTimeout = (() => ({ type: "timeout" })) as unknown as typeof globalThis.setTimeout;
   globalThis.clearTimeout = () => undefined;
 
   try {
@@ -117,6 +136,7 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
     first.open();
     assert.equal(activeIntervals.size, 1);
 
+    assert.ok(runtimeListeners.startup, "expected the startup listener to be registered");
     runtimeListeners.startup();
     runtimeListeners.startup();
     await settle();
@@ -164,7 +184,7 @@ test("stale Chrome sockets cannot clear the current heartbeat or execute command
 
 test("Native connection owns commands and removes legacy workspace credentials after migration", async () => {
   const original = {
-    chrome: globalThis.chrome,
+    chrome: (globalThis as ChromeFixtureGlobals).chrome,
     clearInterval: globalThis.clearInterval,
     clearTimeout: globalThis.clearTimeout,
     navigator: globalThis.navigator,
@@ -172,27 +192,32 @@ test("Native connection owns commands and removes legacy workspace credentials a
     setTimeout: globalThis.setTimeout,
     WebSocket: globalThis.WebSocket,
   };
-  const ports = [];
-  const screenshotCalls = [];
-  const activeIntervals = new Set();
-  const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
-  const stored = {
+  const ports: FakeNativePort[] = [];
+  const screenshotCalls: Array<[string, number, object]> = [];
+  const activeIntervals = new Set<IntervalHandle>();
+  const runtimeListeners: RuntimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
+  const stored: StoredValues = {
     "ling.chrome.credential": "legacy-credential",
     "ling.chrome.cwd": "/tmp/legacy-workspace",
     "ling.chrome.daemonBaseUrl": "http://127.0.0.1:17891",
   };
 
   class FakeNativePort {
+    declare messages: WireMessage[];
+    declare messageListeners: MessageListener[];
+    declare disconnectListeners: Array<() => void>;
+    declare disconnected?: boolean;
+
     constructor() {
       this.messages = [];
       this.messageListeners = [];
       this.disconnectListeners = [];
     }
 
-    onMessage = { addListener: (listener) => this.messageListeners.push(listener) };
-    onDisconnect = { addListener: (listener) => this.disconnectListeners.push(listener) };
+    onMessage = { addListener: (listener: MessageListener) => this.messageListeners.push(listener) };
+    onDisconnect = { addListener: (listener: () => void) => this.disconnectListeners.push(listener) };
 
-    postMessage(message) {
+    postMessage(message: WireMessage) {
       this.messages.push(message);
     }
 
@@ -201,7 +226,7 @@ test("Native connection owns commands and removes legacy workspace credentials a
       for (const listener of this.disconnectListeners) listener();
     }
 
-    emitMessage(message) {
+    emitMessage(message: WireMessage) {
       for (const listener of this.messageListeners) listener(message);
     }
   }
@@ -259,7 +284,7 @@ test("Native connection owns commands and removes legacy workspace credentials a
           return { id: windowId, focused: true };
         },
       },
-    },
+    } satisfies ChromeFixture,
   });
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
@@ -271,13 +296,13 @@ test("Native connection owns commands and removes legacy workspace credentials a
       constructor() { throw new Error("legacy transport must not start when Native is available"); }
     },
   });
-  globalThis.setInterval = (callback) => {
+  globalThis.setInterval = ((callback: () => void) => {
     const handle = { callback };
     activeIntervals.add(handle);
     return handle;
-  };
-  globalThis.clearInterval = (handle) => { activeIntervals.delete(handle); };
-  globalThis.setTimeout = () => ({ type: "timeout" });
+  }) as unknown as typeof globalThis.setInterval;
+  globalThis.clearInterval = ((handle: IntervalHandle) => { activeIntervals.delete(handle); }) as unknown as typeof globalThis.clearInterval;
+  globalThis.setTimeout = (() => ({ type: "timeout" })) as unknown as typeof globalThis.setTimeout;
   globalThis.clearTimeout = () => undefined;
 
   try {
@@ -304,6 +329,7 @@ test("Native connection owns commands and removes legacy workspace credentials a
     assert.equal(stored["ling.chrome.cwd"], undefined);
     assert.equal(stored["ling.chrome.daemonBaseUrl"], undefined);
 
+    assert.ok(runtimeListeners.message, "expected the popup listener to be registered");
     const connected = await sendPopupMessage(runtimeListeners.message, { type: "status" });
     assert.equal(connected.connected, true);
     assert.equal(connected.state, "connected");
@@ -355,8 +381,8 @@ test("Native connection owns commands and removes legacy workspace credentials a
   }
 });
 
-function sendPopupMessage(listener, message) {
-  return new Promise((resolve, reject) => {
+function sendPopupMessage(listener: PopupListener, message: PopupMessage): Promise<PopupResponse> {
+  return new Promise<PopupResponse>((resolve, reject) => {
     const keepAlive = listener(message, {}, (response) => {
       if (response?.ok === false) reject(new Error(response.error));
       else resolve(response);
