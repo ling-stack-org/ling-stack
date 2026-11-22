@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import type { DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DeviceProfileV1, JsonValue } from "@ling-stack/contracts";
+import type {
+  DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DevicePlannerProviderHandoffV1,
+  DeviceProfileV1, JsonValue,
+} from "@ling-stack/contracts";
 import {
   type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
@@ -179,12 +182,21 @@ export function createDeviceSupportRuntime(options: {
   async function runDiagnosis(
     target: DeviceProfileV1, ownerId: string, playbook: DevicePlaybookV1, request: DeviceDiagnosisRequest,
   ): Promise<DevicePlaybookRunResultV1> {
-    const runner = request.providerPresetId
-      ? options.createDiagnosisPlanner?.({ ...request, providerPresetId: request.providerPresetId }, playbook)
+    const { providerPresetId, fallbackProviderPresetId, symptom } = request;
+    if (fallbackProviderPresetId && (!providerPresetId || fallbackProviderPresetId === providerPresetId)) {
+      throw new DeviceBrokerError("invalid_request", "fallback diagnosis requires a different primary provider");
+    }
+    const runner = providerPresetId
+      ? options.createDiagnosisPlanner?.({ providerPresetId, symptom }, playbook)
       : undefined;
-    if (request.providerPresetId && !runner) throw new DeviceBrokerError("service_unavailable", "device diagnosis planner is unavailable");
+    const fallbackRunner = fallbackProviderPresetId
+      ? options.createDiagnosisPlanner?.({ providerPresetId: fallbackProviderPresetId, symptom }, playbook)
+      : undefined;
+    if ((providerPresetId && !runner) || (fallbackProviderPresetId && !fallbackRunner)) {
+      throw new DeviceBrokerError("service_unavailable", "device diagnosis planner is unavailable");
+    }
     const current = store.getCurrentCapabilitySnapshot(target.device.id);
-    const planningWindowMs = runner ? DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS : 0;
+    const planningWindowMs = runner ? DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS * (fallbackRunner ? 2 : 1) : 0;
     const snapshot = current && Date.parse(current.freshnessUntil) > Date.parse(now()) + planningWindowMs ? current
       : await broker.refreshCapabilities(target.device.id, target.device.profileRevision);
     const timestamp = now();
@@ -201,18 +213,32 @@ export function createDeviceSupportRuntime(options: {
     let proposalId: string;
     let selectedPlaybook = playbook;
     try {
-      const contextScope = {
-        store, taskId: task.id, ownerId: task.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
-        contextId: `device_context_${randomUUID()}`, maxBytes: 32 * 1024,
+      const planningInput = (at: string) => {
+        if (store.getTask(task.id)?.status !== "planning") {
+          throw new DeviceBrokerError("target_changed", "device diagnosis task stopped during planning");
+        }
+        return {
+          ...buildOwnedDevicePlanningInput({
+            store, taskId: task.id, ownerId: task.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
+            contextId: `device_context_${randomUUID()}`, maxBytes: 32 * 1024, now: at,
+          }),
+          localPlaybook: {
+            playbook, targetDeviceId: target.device.id, ownerKind: task.ownerKind, ownerId: task.ownerId,
+            capabilitySnapshotId: snapshot.snapshotId,
+          },
+          nowAtAcceptance: now,
+        };
       };
-      const plan = await planner.plan({
-        ...buildOwnedDevicePlanningInput({ ...contextScope, now: timestamp }),
-        localPlaybook: {
-          playbook, targetDeviceId: target.device.id, ownerKind: task.ownerKind, ownerId: task.ownerId,
-          capabilitySnapshotId: snapshot.snapshotId,
-        },
-        nowAtAcceptance: now,
-      }, runner);
+      const initialInput = planningInput(timestamp);
+      let plan = await planner.plan(initialInput, runner);
+      let providerHandoff: DevicePlannerProviderHandoffV1 | undefined;
+      if (plan.fallbackReason === "runner_unavailable" && fallbackRunner && providerPresetId && fallbackProviderPresetId) {
+        plan = await planner.plan(planningInput(now()), fallbackRunner);
+        providerHandoff = {
+          fromProviderPresetId: providerPresetId, toProviderPresetId: fallbackProviderPresetId,
+          fromContextId: initialInput.context.contextId, reason: "runner_unavailable",
+        };
+      }
       if (plan.source === "runner") {
         const stepsByNodeId = new Map(playbook.steps.map(step => [devicePlaybookNodeId(playbook.id, step.id), step]));
         const steps = plan.acceptance.graph.nodes.map(node => {
@@ -222,7 +248,7 @@ export function createDeviceSupportRuntime(options: {
         });
         selectedPlaybook = { ...playbook, steps };
       }
-      store.recordPlanningAcceptance(plan.acceptance, plan.source, plan.fallbackReason);
+      store.recordPlanningAcceptance(plan.acceptance, plan.source, plan.fallbackReason, providerHandoff);
       proposalId = plan.acceptance.proposalId;
     } catch (error) {
       store.withWriteTransaction(() => {
@@ -300,7 +326,7 @@ export function createDeviceSupportRuntime(options: {
     broker,
     remoteFacade,
     async diagnoseLocalPc(request = {}) {
-      const key = JSON.stringify([request.providerPresetId, request.symptom]);
+      const key = JSON.stringify([request.providerPresetId, request.fallbackProviderPresetId, request.symptom]);
       if (localDiagnosis && localDiagnosis.key !== key) throw new DeviceBrokerError("target_busy", "PC diagnosis is active");
       localDiagnosis ??= { key, pending: diagnosePc(request).finally(() => { localDiagnosis = undefined; }) };
       return await localDiagnosis.pending;

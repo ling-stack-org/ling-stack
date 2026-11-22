@@ -859,12 +859,17 @@ only on a successful install or a model response.
   target scope, capability catalog and dependency graph, and report nodes that need
   user approval without creating execution evidence. Check each node's owner,
   target-specific capability snapshot and supplied evidence references.
-- [~] Connect the existing runner and project executor to typed device proposals.
+- [x] Connect Pi to typed device diagnosis proposals in the owning Daemon.
   The PC and Linux diagnosis routes use Pi to select steps from the target-bound
   playbook when the operator chooses a configured provider. The owner checks the
   current snapshot before recording the proposal and dispatching. Model service
-  failure uses a recorded local fallback. Project builds and cross-runtime planning
-  remain open.
+  failure uses a recorded local fallback.
+- [x] Permit an active diagnosis request to name a different fallback provider.
+  A runner outage rebuilds the context, records the source provider, destination
+  provider and handoff reason with the accepted plan. The owning task dispatches
+  only the steps from that plan.
+- [~] Connect project builds and cross-runtime planning to the same owner and
+  graph journal.
 - [x] Record the PC diagnosis playbook plan in the task journal before its first
   device attempt. Preserve cancellation when a planning request is interrupted.
 - [x] Keep graph and node authority attached to the owning journals when PC or Mobile
@@ -884,6 +889,10 @@ only on a successful install or a model response.
 - Context budget and redaction fixtures exclude unrelated devices, credentials,
   unbounded logs, and observation instructions.
 - The model service outage runs the declared local playbook and records the source.
+- The fixture takes the selected provider offline and exercises the configured
+  fallback through the Daemon API. The fallback contributes the accepted plan to
+  the original task. Reopening SQLite reproduces both provider identities, the
+  refreshed context ID and the outage reason in the task trace.
 
 ## D22: Observability and conformance
 
@@ -946,7 +955,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D18 | Signed Daemon resource imports | Contracts, Core and Daemon builds and typechecks. Core resource and Daemon runtime tests (20 passed) | [Resource contract](../../packages/contracts/src/device-fabric.ts), [Resource store](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Daemon trust and import configuration](ling-device-fabric.md#daemon-resource-imports), [Local integration test](../../packages/daemon/test/device-support-runtime.test.ts) | The shared manifest accepts transport, codec, profile, vocabulary, playbook, simulator, capture, documentation, firmware and edge package resources. Daemon validates an Ed25519-signed manifest and its payload before committing the active revision. Local import, replay, update, rollback and disable are exercised end to end. A corrupted, incompatible or untrusted rollback leaves the active revision intact | Remote signed delivery, platform-specific runtime activation, production adapter installation and physical acceptance remain |
 | D19 | Durable Daemon dispatch stop | Contracts/Core/Daemon builds and typechecks. Core broker, Fabric and Daemon runtime suites (42 passed) | [Target dispatch and stop](../../packages/core/src/device-support.ts), [Safety evaluator](../../packages/core/src/device-fabric.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | An authenticated local operator can stop a target. SQLite retains the stop through reopen, blocks new writes, allows later diagnostics and preserves late evidence after a revision-checked clear. Physical-state evaluation rejects stale or foreign facts | Mobile and Edge stop propagation, target-controller integration and physical safety acceptance remain |
 | D20 | Daemon Fleet projection and registry retirement | Contracts, Core and Daemon builds and typechecks. Broker and Daemon runtime tests (41 passed) | [Fleet projection](../../packages/core/src/device-fabric.ts), [Retirement route](../../packages/daemon/src/features/device-support/routes.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | Fleet reports separately observed device and runtime health. The authenticated route rejects stale retirement, records an exact decision and denies new device work. SQLite keeps the original task, snapshot and attempt reports. An interrupted write retains its receipt and unknown outcome. | Client lifecycle workflows, supported firmware compatibility, upgrade, restore and field transfer/retirement acceptance remain |
-| D21 | `f9f0f8ab5` plus planner authority and observation projection | Core/Daemon builds and typechecks. Device planning and runtime fixtures pass | [Owner context](../../packages/core/src/device-task-planning-context.ts), [Planner acceptance](../../packages/core/src/device-orchestration.ts), [Diagnosis projection](../../packages/core/src/device-diagnosis.ts), [Loopback provider test](../../packages/daemon/test/device-support-runtime.test.ts) | Planning acceptance binds provider and runner revisions to the task owner, current target snapshots and context references. The context builder excludes stale, sensitive, malformed and unprojectable device output from facts while retaining bounded untrusted references. | Active-task provider handoff, live provider acceptance, project build and cross-runtime model planning remain |
+| D21 | f9f0f8ab5 plus provider handoff | Core/Daemon builds and typechecks. Device support and Daemon runtime tests (41 passed) | [Owner context](../../packages/core/src/device-task-planning-context.ts), [Planner acceptance](../../packages/core/src/device-orchestration.ts), [Handoff record](../../packages/core/src/storage/sqlite/device-support-store.ts), [Loopback provider test](../../packages/daemon/test/device-support-runtime.test.ts) | Planning acceptance binds provider and runner revisions to the task owner, current target snapshots and context references. A configured fallback provider receives a rebuilt context after runner unavailability. SQLite and task trace retain the provider handoff and the task keeps one owner and one device-attempt lineage. | Project build execution and cross-runtime model planning remain |
 | D22 | Daemon conformance reports | Contracts, Core and Daemon build and typecheck. Focused Core and Daemon suites (56 passed) | [Report projection](../../packages/core/src/device-task-conformance.ts), [Local API and SQLite fixture](../../packages/daemon/test/device-support-runtime.test.ts), [Reconciliation fixture](../../packages/core/test/device-support.test.ts) | The authenticated loopback route captures and reloads an immutable report for an attempt. Reopening SQLite reproduces its binding and receipt checks. A verified readback creates a new report, with the same attempt and a new journal sequence. The stored earlier report remains available. | Conversation, protocol capture and Mobile/Edge trace integration, cross-runtime and field network conformance remain |
 
 ## Definition of platform completion

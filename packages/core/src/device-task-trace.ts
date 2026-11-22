@@ -58,6 +58,7 @@ export function readOwnedDeviceTaskTrace(input: {
           capabilitySnapshots: plan.graph.nodes.map(node => referenceSnapshot(node.targetDeviceId, node.capabilitySnapshotId)),
           ...(plan.providerId ? { providerId: plan.providerId } : {}),
           ...(plan.fallbackReason ? { fallbackReason: plan.fallbackReason } : {}),
+          ...(plan.providerHandoff ? { providerHandoff: { ...plan.providerHandoff } } : {}),
           ...(plan.runnerId ? { runnerId: plan.runnerId } : {}),
           ...(plan.runnerCapabilityRevision ? { runnerCapabilityRevision: plan.runnerCapabilityRevision } : {}),
         },

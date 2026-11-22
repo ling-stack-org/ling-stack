@@ -259,17 +259,21 @@ async function handleLinuxSshRequest(
 
 function readDiagnosisOptions(value: unknown): DeviceDiagnosisRequest {
   if (value === undefined) return {};
-  if (!isRecord(value) || Object.keys(value).some(key => key !== "providerPresetId" && key !== "symptom")) {
+  if (!isRecord(value) || Object.keys(value).some(key => !["providerPresetId", "fallbackProviderPresetId", "symptom"].includes(key))) {
     throw new DeviceBrokerError("invalid_request", "invalid device diagnosis options");
   }
-  const { providerPresetId, symptom } = value;
+  const { providerPresetId, fallbackProviderPresetId, symptom } = value;
   if (providerPresetId !== undefined && (!validBoundedText(providerPresetId, 256) || providerPresetId.trim() !== providerPresetId)) {
     throw new DeviceBrokerError("invalid_request", "invalid diagnosis provider");
+  }
+  if (fallbackProviderPresetId !== undefined && (!providerPresetId || !validBoundedText(fallbackProviderPresetId, 256)
+    || fallbackProviderPresetId.trim() !== fallbackProviderPresetId || fallbackProviderPresetId === providerPresetId)) {
+    throw new DeviceBrokerError("invalid_request", "invalid fallback diagnosis provider");
   }
   if (symptom !== undefined && (providerPresetId === undefined || !validBoundedText(symptom, 2048))) {
     throw new DeviceBrokerError("invalid_request", "invalid diagnosis symptom");
   }
-  return { providerPresetId, symptom };
+  return { providerPresetId, fallbackProviderPresetId, symptom };
 }
 
 function validBoundedText(value: unknown, maxBytes: number): value is string {

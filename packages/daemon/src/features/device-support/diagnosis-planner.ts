@@ -12,6 +12,7 @@ import { resolveProviderForRun } from "../runs/providers.js";
 
 export interface DeviceDiagnosisRequest {
   readonly providerPresetId?: string;
+  readonly fallbackProviderPresetId?: string;
   readonly symptom?: string;
 }
 

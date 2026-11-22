@@ -528,3 +528,10 @@ export interface DevicePlannerAcceptanceV1 {
   readonly runnerId?: string;
   readonly runnerCapabilityRevision?: string;
 }
+
+export interface DevicePlannerProviderHandoffV1 {
+  readonly fromProviderPresetId: string;
+  readonly toProviderPresetId: string;
+  readonly fromContextId: string;
+  readonly reason: "runner_unavailable";
+}

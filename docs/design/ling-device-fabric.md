@@ -319,8 +319,11 @@ The local PC diagnosis route and the enrolled Linux diagnosis route accept an
 optional `providerPresetId` and `symptom`. The Daemon uses Pi to select an ordered
 set of available diagnosis steps. It validates the output, binds it to the owner
 and current capability snapshot, and records it before dispatch. The same routes
-run the local playbook when the operator leaves the preset unselected or the model call is interrupted
-by a provider outage. The task trace records the source and any fallback.
+run the local playbook when the operator leaves the preset unselected. A request
+can specify `fallbackProviderPresetId` alongside the primary preset. If the
+primary runner is unavailable, the Daemon rebuilds the context for the fallback
+preset on the same task. The local playbook covers a model outage when no runner
+is available. The task trace records the accepted source and provider handoff.
 [Diagnosis routes](../../packages/daemon/src/features/device-support/routes.ts)
 
 ## 9. Resource and adapter registry

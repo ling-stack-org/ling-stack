@@ -690,11 +690,13 @@ test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback 
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
   const origin = `http://127.0.0.1:${address.port}/v1/device-support`;
-  const diagnose = (providerPresetId: string) => fetch(origin + "/pc/diagnose", {
-    method: "POST", headers, body: JSON.stringify({ providerPresetId, symptom: "Check a local PC service" }),
+  const diagnose = (providerPresetId: string, fallbackProviderPresetId?: string) => fetch(origin + "/pc/diagnose", {
+    method: "POST", headers, body: JSON.stringify({ providerPresetId, fallbackProviderPresetId, symptom: "Check a local PC service" }),
   });
-  async function checkDiagnosis(providerPresetId: string, expectedCapabilities: readonly string[], source: "model" | "graph") {
-    const response = await diagnose(providerPresetId);
+  async function checkDiagnosis(
+    providerPresetId: string, expectedCapabilities: readonly string[], source: "model" | "graph", fallbackProviderPresetId?: string,
+  ) {
+    const response = await diagnose(providerPresetId, fallbackProviderPresetId);
     const body = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
     assert.equal(response.status, 200, JSON.stringify(body));
     assert.equal(body.status, "succeeded");
@@ -704,7 +706,7 @@ test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback 
     const trace = await traceResponse.json() as DeviceTaskTraceV1;
     const planning = trace.spans.find(span => span.kind === source);
     assert.ok(planning);
-    return { planning, adapters: trace.spans.filter(span => span.kind === "adapter") };
+    return { taskId: body.report.taskId, planning, adapters: trace.spans.filter(span => span.kind === "adapter") };
   }
   const first = await checkDiagnosis(firstPreset, ["pc.inspect.services"], "model");
   assert.match(first.planning.lineage?.modelTurnId ?? "", /^device_plan_turn_/u);
@@ -722,9 +724,11 @@ test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback 
   }
 
   secondPlan = '{"stepIds":["unknown-step"]}';
-  const invalid = await diagnose(secondPreset);
+  assert.equal((await diagnose(firstPreset, firstPreset)).status, 400);
+  const invalid = await diagnose(secondPreset, firstPreset);
   assert.equal(invalid.status, 422);
   assert.deepEqual(await invalid.json(), { error: "invalid_device_plan" });
+  assert.equal(firstProvider.requests.filter(request => request.stream).length, 1);
   const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     const rejected = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10).find(task => task.status === "failed");
@@ -738,5 +742,28 @@ test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback 
   secondOnline = false;
   const fallback = await checkDiagnosis(secondPreset, ["pc.inspect.network", "pc.inspect.services"], "graph");
   assert.match(JSON.stringify(fallback.planning.metadata), /runner_unavailable/u);
+  const switched = await checkDiagnosis(secondPreset, ["pc.inspect.services"], "model", firstPreset);
+  assert.equal(switched.adapters.length, 1);
+  assert.equal(switched.adapters[0]?.lineage?.graphId, switched.taskId);
+  assert.equal(switched.adapters[0]?.lineage?.modelTurnId, switched.planning.lineage?.modelTurnId);
+  const reopened = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const plans = reopened.listPlanningAcceptances(switched.taskId);
+    assert.equal(plans.length, 1);
+    const plan = plans[0]!;
+    assert.equal(plan.graph.graphId, switched.taskId);
+    assert.equal(plan.providerId, firstPreset);
+    const handoff = plan.providerHandoff;
+    assert.ok(handoff);
+    assert.equal(handoff.fromProviderPresetId, secondPreset);
+    assert.equal(handoff.toProviderPresetId, firstPreset);
+    assert.equal(handoff.reason, "runner_unavailable");
+    assert.notEqual(handoff.fromContextId, plan.contextId);
+    assert.deepEqual(switched.planning.metadata, readOwnedDeviceTaskTrace({
+      store: reopened, workspaceId: DEFAULT_WORKSPACE_ID, taskId: switched.taskId,
+    }).spans.find(span => span.spanId === switched.planning.spanId)?.metadata);
+  } finally {
+    reopened.close();
+  }
   assert.equal((await diagnose("missing-provider")).status, 404);
 });

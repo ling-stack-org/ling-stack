@@ -12,6 +12,7 @@ import {
   type DeviceDispatchStopV1,
   type DeviceObservationV1,
   type DevicePlannerAcceptanceV1,
+  type DevicePlannerProviderHandoffV1,
   type DeviceProfileV1,
   type DeviceRetirementStateV1,
   type DeviceRetirementV1,
@@ -55,6 +56,7 @@ export interface DeviceTaskEvent {
 export type RecordedDevicePlan = DevicePlannerAcceptanceV1 & {
   readonly source: "runner" | "local_playbook";
   readonly fallbackReason?: "runner_unavailable";
+  readonly providerHandoff?: DevicePlannerProviderHandoffV1;
 };
 
 export interface RecordedDeviceCapabilitySnapshot {
@@ -273,7 +275,10 @@ export class SqliteDeviceSupportStore {
   }
 
   recordPlanningAcceptance(
-    acceptance: DevicePlannerAcceptanceV1, source: RecordedDevicePlan["source"], fallbackReason?: RecordedDevicePlan["fallbackReason"],
+    acceptance: DevicePlannerAcceptanceV1,
+    source: RecordedDevicePlan["source"],
+    fallbackReason?: RecordedDevicePlan["fallbackReason"],
+    providerHandoff?: DevicePlannerProviderHandoffV1,
   ): void {
     this.withWriteTransaction(() => {
       const task = this.requireTask(acceptance.taskId);
@@ -293,7 +298,15 @@ export class SqliteDeviceSupportStore {
           throw new DeviceBrokerError("target_changed", "device target changed before the plan was recorded");
         }
       }
-      const record = { source, ...acceptance, ...(fallbackReason ? { fallbackReason } : {}) } satisfies RecordedDevicePlan;
+      if (providerHandoff && (providerHandoff.fromContextId === acceptance.contextId
+        || providerHandoff.fromProviderPresetId === providerHandoff.toProviderPresetId
+        || (source === "runner" && acceptance.providerId !== providerHandoff.toProviderPresetId))) {
+        throw new DeviceBrokerError("invalid_request", "device plan does not match the provider handoff");
+      }
+      const record = {
+        source, ...acceptance, ...(fallbackReason ? { fallbackReason } : {}),
+        ...(providerHandoff ? { providerHandoff } : {}),
+      } satisfies RecordedDevicePlan;
       const prior = this.listPlanningAcceptances(task.id).find(plan => plan.proposalId === acceptance.proposalId);
       if (prior) {
         if (!isDeepStrictEqual(prior, record)) throw new Error("Device plan proposal id is already bound");
