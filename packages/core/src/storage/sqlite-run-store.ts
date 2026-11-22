@@ -1761,6 +1761,9 @@ export class SqliteRunStore implements RunStore {
       {
         assertChannelExists: (channelId) => this.assertChannelExists(channelId),
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
+        getProposedPlanArtifact: (id) => this.getProposedPlanArtifact(id),
+        getChannelWorkflow: (id) => this.getChannelWorkflow(id),
+        getRun: (id) => this.getRun(id),
       },
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
@@ -6144,6 +6147,18 @@ export class SqliteRunStore implements RunStore {
 
   acceptWorkItem(id: string, input: import("../work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd = this.paths.cwd): import("../work-item-types.js").WorkItemAcceptanceResult | undefined {
     return this.workItems.acceptWorkItem(id, input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
+  }
+
+  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string) {
+    return this.workItems.bindWorkflow(input, now, this.appServerState, { store: this.controlPlane, cwd: this.paths.cwd });
+  }
+
+  getWorkItemWorkflowAdmissionBlocker(workflowId: string): string | undefined {
+    return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState);
+  }
+
+  listActiveWorkItemWorkflowIds(limit: number): readonly string[] {
+    return this.workItems.listActiveWorkflowIds(limit);
   }
 
   checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown, automaticIntakeReceiptId?: string): WorkItem | undefined {

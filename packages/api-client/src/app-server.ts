@@ -10,6 +10,11 @@ import type {
   LingAppServerCapability,
   LingAppServerCaptureChangesResult,
   LingAppServerCapabilitiesResult,
+  LingAppServerArtifactReadParams,
+  LingAppServerArtifactReadResult,
+  LingAppServerModelListResult,
+  LingAppServerSkillReadResult,
+  LingAppServerPermissionProfileListResult,
   LingAppServerContextInspectParams,
   LingAppServerContextInspectResult,
   LingAppServerThreadSnapshotParams,
@@ -187,6 +192,26 @@ export class LingAppServerClient {
     return await this.request("server/capabilities", {});
   }
 
+  async listModels(offset?: number): Promise<LingAppServerModelListResult> {
+    await this.connect();
+    return await this.request("model/list", { offset });
+  }
+
+  async readSkill(skillId: string): Promise<LingAppServerSkillReadResult> {
+    await this.connect();
+    return await this.request("skill/read", { skillId });
+  }
+
+  async listPermissionProfiles(): Promise<LingAppServerPermissionProfileListResult> {
+    await this.connect();
+    return await this.request("permissionProfile/list", {});
+  }
+
+  async readArtifact(params: LingAppServerArtifactReadParams): Promise<LingAppServerArtifactReadResult> {
+    await this.connect();
+    return await this.request("artifact/read", params);
+  }
+
   async readThread(threadId: string): Promise<unknown> {
     await this.connect();
     return await this.request("thread/read", { threadId });
@@ -275,6 +300,11 @@ export class LingAppServerClient {
   async acceptWorkItem(params: LingAppServerWorkItemAcceptParams): Promise<LingAppServerWorkItemAcceptResult> {
     await this.connect();
     return await this.request("workItem/accept", params);
+  }
+
+  async bindWorkItemWorkflow(params: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams): Promise<import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindResult> {
+    await this.connect();
+    return await this.request("workItem/workflow/bind", params);
   }
 
   async startThread(params: Record<string, unknown>): Promise<unknown> {
@@ -467,6 +497,11 @@ export class LingAppServerClient {
   async readWorkItemCollaboration(params: LingAppServerWorkItemCollaborationReadParams): Promise<LingAppServerWorkItemCollaborationReadResult> {
     await this.connect();
     return await this.request("workItem/collaboration/read", params);
+  }
+
+  async readWorkItemStages(workItemId: string, stageOffset = 0): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/stage/read", { workItemId, stageOffset });
   }
 
   async appendWorkItemCollaboration(params: LingAppServerWorkItemCollaborationAppendParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {

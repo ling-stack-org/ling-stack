@@ -99,6 +99,11 @@ import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, re
 import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
+import { readWorkItemWorkflowStages } from "../features/work-items/workflow-stages.js";
+import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
+import { isPrivateHostRecoveryArtifact, toPublicArtifactMetadata } from "../features/runs/public-artifacts.js";
+import { listEffectiveSkillRegistryEntries } from "../features/skills/registry.js";
+import { LING_APP_SERVER_ARTIFACT_RANGE_BYTES, type LingAppServerModelListResult, type LingAppServerPermissionProfileListResult, type LingAppServerSkillReadResult } from "@ling-stack/contracts";
 import {
   ExternalAgentFederationService,
   externalAgentRpcError,
@@ -154,8 +159,6 @@ const legacyRpcMethods = new Set([
 ]);
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "turn/retry", "turn/steer", "thread/compact/start", "thread/revert",
-  "artifact/read",
-  "model/list", "skill/read", "permissionProfile/list",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const appServerConnectionsByContext = new WeakMap<DaemonContext, Set<RpcConnection>>();
@@ -170,6 +173,8 @@ const operatorMethods = new Set([
   "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
+  "workItem/workflow/bind",
+  "artifact/read", "model/list", "skill/read",
   "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
   "changes/read", "changes/apply/preview", "changes/apply",
 ]);
@@ -548,8 +553,14 @@ class RpcConnection {
       }
       case "provider/list":
         return this.readControlPlaneDomain(params, "providers");
+      case "model/list":
+        return this.listModels(params);
       case "skill/list":
         return this.readControlPlaneDomain(params, "skills");
+      case "skill/read":
+        return this.readSkill(params);
+      case "permissionProfile/list":
+        return this.listPermissionProfiles(params);
       case "thread/start":
         return this.startThread(params);
       case "thread/read":
@@ -596,6 +607,8 @@ class RpcConnection {
         if (!item || item.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", "The item does not belong to this Thread.");
         return { cwd: record.cwd, item };
       }
+      case "artifact/read":
+        return this.readArtifact(params);
       case "thread/mode/get":
         return this.getThreadMode(params);
       case "thread/mode/set":
@@ -760,6 +773,8 @@ class RpcConnection {
       }
       case "workItem/accept":
         return this.acceptWorkItem(params);
+      case "workItem/workflow/bind":
+        return this.bindWorkItemWorkflow(params);
       case "workItem/clarify":
         return this.clarifyWorkItem(params);
       case "workItem/evidence/read":
@@ -787,9 +802,8 @@ class RpcConnection {
       case "workItem/deliberation/read":
         return this.readCollaboration("deliberation", params);
       case "workItem/stage/read":
-        return this.readCollaboration("stage", params);
       case "workItem/stage/brief/read":
-        return this.readCollaboration("brief", params);
+        return this.readWorkItemStages(method === "workItem/stage/read" ? "stage" : "brief", params);
       case "workItem/coordination/start":
         return this.appendCollaboration("coordination", "started", params);
       case "workItem/coordination/close":
@@ -1022,6 +1036,33 @@ class RpcConnection {
     };
   }
 
+  private bindWorkItemWorkflow(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindResult {
+    const record = this.workspaceParams(params, true);
+    const { cwd } = record;
+    const input = {
+      workItemId: readStringField(record, "workItemId"),
+      planId: readStringField(record, "planId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      expectedPlanRevision: readIntegerField(record, "expectedPlanRevision", "expectedPlanRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    if (input.idempotencyKey.length > 200 || /[\r\n\0]/u.test(input.idempotencyKey)) {
+      throw rpcError(-32602, "invalid_params", "Supply a Work Item binding key of up to 200 characters.");
+    }
+    try {
+      const { binding, workItem, replayed, event } = this.context.storeRegistry.getStore(cwd).bindWorkItemWorkflow(input, new Date().toISOString());
+      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      return { cwd, binding, workItem: projectWorkItemSnapshot(workItem), replayed };
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      if (code === "work_item_workflow_idempotency_conflict") throw rpcError(-32031, "idempotency_conflict", "The binding key was reused with different input.");
+      if (code === "work_item_workflow_stale") throw rpcError(-32030, "stale_revision", "The Work Item or accepted Plan revision changed.");
+      if (code === "work_item_workflow_held") throw rpcError(-32061, "resume_blocked", "The Work Item or Workflow cannot accept a new binding.");
+      if (code === "work_item_workflow_not_found") throw rpcError(-32040, "workspace_binding_invalid", "An accepted Work Item and converted Plan in this workspace are required.");
+      throw error;
+    }
+  }
+
   private async dispatchAcceptedWorkItem(
     store: RunStore, cwd: string, workItem: WorkItem,
     intent: LingAppServerWorkItemConversationDispatch & { readonly submissionKey: string },
@@ -1135,6 +1176,22 @@ class RpcConnection {
     } catch (error) {
       throw collaborationRpcError(error);
     }
+  }
+
+  private readWorkItemStages(kind: "stage" | "brief", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const workItemId = readStringField(record, "workItemId");
+    const offset = readOptionalIntegerField(record, "stageOffset") ?? 0;
+    if (offset < 0) throw rpcError(-32602, "invalid_params", "stageOffset must be non-negative.");
+    const store = this.context.storeRegistry.getStore(cwd);
+    return store.readSnapshot(() => {
+      const workItem = store.getWorkItem(workItemId);
+      if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", "The Work Item is unavailable.");
+      const collaboration = readAppServerWorkItemCollaboration(store, { workItemId, kind,
+        afterRevision: readOptionalIntegerField(record, "afterRevision"), limit: readOptionalIntegerField(record, "limit") });
+      return { cwd, ...collaboration, workflow: readWorkItemWorkflowStages(store, workItem,
+        this.grant?.subject.kind !== "workItem", offset) };
+    });
   }
 
   private appendCollaborationFromParams(params: unknown): unknown {
@@ -2148,6 +2205,84 @@ class RpcConnection {
     });
   }
 
+  private readArtifact(params: unknown): import("@ling-stack/contracts").LingAppServerArtifactReadResult {
+    const record = this.workspaceParams(params);
+    const artifactId = readStringField(record, "artifactId");
+    const offset = readOptionalIntegerField(record, "offset");
+    const limit = readOptionalIntegerField(record, "limit");
+    if ((offset ?? 0) < 0 || limit !== undefined && (limit < 1 || limit > LING_APP_SERVER_ARTIFACT_RANGE_BYTES)) {
+      throw rpcError(-32602, "invalid_params", `Artifact ranges must use a non-negative offset and a limit up to ${LING_APP_SERVER_ARTIFACT_RANGE_BYTES}.`);
+    }
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    const artifact = store.getArtifact(artifactId);
+    if (!artifact || isPrivateHostRecoveryArtifact(artifact)) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact is unavailable in this workspace.");
+    }
+    const requestedRunId = readOptionalStringField(record, "runId");
+    if (requestedRunId && artifact.runId !== requestedRunId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Run.");
+    }
+    const run = artifact.runId ? store.getRun(artifact.runId) : undefined;
+    const requestedThreadId = readOptionalStringField(record, "threadId");
+    const requestedWorkItemId = readOptionalStringField(record, "workItemId");
+    if (requestedThreadId && run?.threadId !== requestedThreadId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Thread.");
+    }
+    const itemForRequest = requestedWorkItemId ? store.getWorkItem(requestedWorkItemId) : undefined;
+    if (requestedWorkItemId && (!itemForRequest || !(artifact.runId && itemForRequest.runId === artifact.runId)
+      && !(run?.workflowStepId && itemForRequest.workflowId && store.getChannelWorkflowStep(run.workflowStepId)?.workflowId === itemForRequest.workflowId)
+      && !itemForRequest.artifactIds.includes(artifact.id) && !itemForRequest.proofArtifactIds.includes(artifact.id))) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Work Item.");
+    }
+    if (this.grant?.subject.kind === "thread" && run?.threadId !== this.grant.subject.id) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact is outside the granted Thread.");
+    }
+    const { path: _path, ...metadata } = toPublicArtifactMetadata(artifact);
+    if (offset === undefined && limit === undefined) return { cwd: record.cwd, artifact: metadata };
+    try {
+      const range = readArtifactContentRange(resolveArtifactContentPath(store, artifact), offset ?? 0, limit ?? LING_APP_SERVER_ARTIFACT_RANGE_BYTES);
+      return { cwd: record.cwd, artifact: metadata, contentBase64: range.content.toString("base64"),
+        offset: range.offset, endExclusive: range.endExclusive, sizeBytes: range.sizeBytes, partial: range.partial };
+    } catch {
+      throw rpcError(-32040, "workspace_binding_invalid", "The requested artifact range is unavailable.");
+    }
+  }
+
+  private listModels(params: unknown): LingAppServerModelListResult {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const offset = readOptionalIntegerField(record, "offset") ?? 0;
+    if (offset < 0) throw rpcError(-32602, "invalid_params", "offset must be non-negative.");
+    const presets = this.context.storeRegistry.getStore(cwd).listProviderPresets();
+    const end = offset + 20;
+    const models = presets.slice(offset, end).map(({ id, displayName, providerId, model, enabled, capabilities, input }) =>
+      ({ id, displayName, providerId, model, enabled, capabilities, input }));
+    return { cwd, models, ...(end < presets.length ? { nextOffset: end } : {}) };
+  }
+
+  private readSkill(params: unknown): LingAppServerSkillReadResult {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const id = readStringField(record, "skillId");
+    const entry = listEffectiveSkillRegistryEntries(this.context.storeRegistry.getStore(cwd)).find(skill => skill.id === id);
+    if (!entry?.visibility.workspaceVisible || !["builtin", "published"].includes(entry.reviewStatus)) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The requested Skill is unavailable.");
+    }
+    const { packId, source, version, reviewStatus, definition: { name, summary, requiredTools, requiredProviderCapabilities } } = entry;
+    return { cwd, skill: { id, packId, source, version, reviewStatus, definition: { name, summary, requiredTools, requiredProviderCapabilities } } };
+  }
+
+  private listPermissionProfiles(params: unknown): LingAppServerPermissionProfileListResult {
+    const { cwd } = this.workspaceParams(params);
+    return {
+      cwd,
+      profiles: [{
+        id: "ling-default",
+        authorizationModes: ["ask", "smart", "always"],
+        workspaceAccessModes: ["read_only", "workspace_write", "full_access"],
+        sessionPermissionModes: ["ask_everything", "balanced", "workspace_write", "full_access", "custom"],
+      }],
+    };
+  }
+
   private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): LingAppServerWorkItemControlResult {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
@@ -2181,6 +2316,7 @@ class RpcConnection {
             cursor: replayScope.issue(result.event.seq),
           } });
         }
+        if (result.status === "applied" && action === "resume") this.context.taskSupervisor.poke(cwd);
         return { cwd, workItem, controlReceipt: projectWorkItemControlReceipt(result.receipt), replayed: result.status === "replayed" };
       }
     }
@@ -2466,7 +2602,8 @@ class RpcConnection {
     });
   }
 
-  private enqueueControlPlaneEvent(subscription: RpcSubscription, event: ControlPlaneEvent): void {
+  private enqueueControlPlaneEvent(subscription: RpcSubscription, sourceEvent: ControlPlaneEvent): void {
+    const event = this.grant?.subject.kind === "workItem" ? projectWorkItemScopedEvent(sourceEvent) : sourceEvent;
     if (this.closed || subscription.closed || !subscriptionMatchesEvent(subscription, event)) {
       return;
     }
@@ -3024,6 +3161,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     if (event.action.startsWith("turn.")) return "turn/status/changed";
   }
   if (event.entityType === "work_item") {
+    if (event.action === "work_item.stage.updated") return "workItem/stage/updated";
     if (event.action === "work_item.created") return "workItem/created";
     if (event.action === "work_item.thread.linked") return "workItem/thread/linked";
     if (event.action.includes("evidence")) return "workItem/evidence/updated";
@@ -3039,6 +3177,11 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     return "serverRequest/resolved";
   }
   return undefined;
+}
+
+function projectWorkItemScopedEvent(event: ControlPlaneEvent): ControlPlaneEvent {
+  const { threadId: _threadId, runId: _runId, turnId: _turnId, ...data } = event.data;
+  return { ...event, data };
 }
 
 function subscriptionMatchesEvent(subscription: RpcSubscription, event: ControlPlaneEvent): boolean {

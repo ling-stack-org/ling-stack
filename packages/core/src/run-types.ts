@@ -2698,6 +2698,14 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
   acceptWorkItem(id: string, input: import("./work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemAcceptanceResult | undefined;
+  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string): {
+    readonly binding: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBinding;
+    readonly workItem: WorkItem;
+    readonly replayed: boolean;
+    readonly event?: ControlPlaneEvent;
+  };
+  getWorkItemWorkflowAdmissionBlocker(workflowId: string): string | undefined;
+  listActiveWorkItemWorkflowIds(limit: number): readonly string[];
   checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown, automaticIntakeReceiptId?: string): WorkItem | undefined;
   claimWorkItem(id: string, input: WorkItemClaimRequest, now: string): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined;
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined;

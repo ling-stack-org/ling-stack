@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
-import { LING_PRODUCT_VERSION } from "@ling-stack/contracts";
+import { LING_APP_SERVER_ARTIFACT_RANGE_BYTES, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -40,12 +40,46 @@ export async function runLingAppServerMcp(
     inputSchema: z.strictObject({ threadId: objectId, cursor: z.string().min(1).max(128).optional() }),
     annotations: { readOnlyHint: true },
   }, async ({ threadId, cursor }) => describe(await client.readThreadEvents({ threadId, cursor, limit: 1 })));
+  if (methods.has("model/list")) server.registerTool("ling_model_list", {
+    description: "Read model and Provider capabilities visible to this App Server connection.",
+    inputSchema: z.strictObject({ offset: z.number().int().nonnegative().optional() }),
+    annotations: { readOnlyHint: true },
+  }, async ({ offset }) => describe(await client.listModels(offset)));
+  if (methods.has("skill/read")) server.registerTool("ling_skill_read", {
+    description: "Read one Skill definition visible to this App Server connection.",
+    inputSchema: z.strictObject({ skillId: objectId }),
+    annotations: { readOnlyHint: true },
+  }, async ({ skillId }) => describe(await client.readSkill(skillId)));
+  if (methods.has("permissionProfile/list")) server.registerTool("ling_permission_profile_list", {
+    description: "Read the permission axes supported by this Ling App Server connection.",
+    inputSchema: z.strictObject({}),
+    annotations: { readOnlyHint: true },
+  }, async () => describe(await client.listPermissionProfiles()));
 
   if (methods.has("workItem/read")) server.registerTool("ling_work_item_read", {
     description: "Read the Work Item, its current control state and any automatic intake receipt.",
     inputSchema: z.strictObject({ workspaceId: objectId, workItemId: objectId }),
     annotations: { readOnlyHint: true },
   }, async ({ workspaceId, workItemId }) => describe(await client.readWorkItemSnapshot(workspaceId, workItemId)));
+  if (methods.has("workItem/stage/read")) server.registerTool("ling_work_item_stages", {
+    description: "Read the accepted Workflow stages, current blockers, and bounded stage evidence for a Work Item.",
+    inputSchema: z.strictObject({ workItemId: objectId, stageOffset: z.number().int().nonnegative().optional() }),
+    annotations: { readOnlyHint: true },
+  }, async ({ workItemId, stageOffset }) => describe(await client.readWorkItemStages(workItemId, stageOffset)));
+  if (methods.has("workItem/collaboration/read")) server.registerTool("ling_work_item_collaboration", {
+    description: "Read scoped Work Item messages, questions, evidence notes, or deliberation records.",
+    inputSchema: z.strictObject({ workItemId: objectId,
+      kind: z.enum(["message", "question", "deliberation", "coordination", "stage", "brief"]),
+      afterRevision: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(100).optional() }),
+    annotations: { readOnlyHint: true },
+  }, async params => describe(await client.readWorkItemCollaboration(params)));
+  if (methods.has("artifact/read")) server.registerTool("ling_artifact_read", {
+    description: "Read bounded bytes from an authorized Ling artifact. Use ranges for large files.",
+    inputSchema: z.strictObject({ artifactId: objectId, offset: z.number().int().nonnegative().optional(),
+      limit: z.number().int().min(1).max(LING_APP_SERVER_ARTIFACT_RANGE_BYTES).optional(), threadId: objectId.optional(),
+      workItemId: objectId.optional(), runId: objectId.optional() }),
+    annotations: { readOnlyHint: true },
+  }, async params => describe(await client.readArtifact(params)));
 
   if (options.authToken) {
     const followupInput = z.strictObject({ threadId: objectId, expectedTurnId: objectId, expectedTurnRevision: objectId,
@@ -78,6 +112,12 @@ export async function runLingAppServerMcp(
       }),
       annotations: { idempotentHint: true },
     }, async params => describe(await client.acceptWorkItem(params)));
+    if (methods.has("workItem/workflow/bind")) server.registerTool("ling_work_item_workflow_bind", {
+      description: "Bind an accepted Plan to its converted Workflow before staged execution. Retry with the same key.",
+      inputSchema: z.strictObject({ workItemId: objectId, planId: objectId,
+        expectedPlanRevision: z.number().int().nonnegative(), expectedWorkItemRevision: z.number().int().nonnegative(), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.bindWorkItemWorkflow(params)));
     if (methods.has("changes/capture")) server.registerTool("ling_changes_capture", {
       description: "Capture the current working-tree candidate and its coverage.",
       inputSchema: z.strictObject({}),

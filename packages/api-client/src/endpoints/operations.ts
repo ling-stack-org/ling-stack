@@ -120,8 +120,8 @@ export const operationEndpoints = {
       });
     },
 
-  async getWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string): Promise<WorkItemDetailResponse> {
-      return this._get(`/work-items/${encodeURIComponent(workItemId)}`, { cwd });
+  async getWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string, stageOffset?: number): Promise<WorkItemDetailResponse> {
+      return this._get(`/work-items/${encodeURIComponent(workItemId)}`, { cwd, stageOffset });
     },
 
   async routeWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string, input: WorkItemRouteRequest): Promise<WorkItemMutationResponse> {

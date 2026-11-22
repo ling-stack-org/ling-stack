@@ -281,6 +281,7 @@ import { handleGetWorkspaceChanges } from "../features/previews/workspace-change
 import { handleCodeAssessmentRoutes } from "../features/code-assessments/routes.js";
 import { handleWorkspaceVerificationRoute } from "./workspace-verification-routes.js";
 import { handleWorkspaceGitHubIntake } from "./workspace-github-intake-routes.js";
+import { publishWorkItemWorkflowStep } from "../features/work-items/workflow-stages.js";
 import {
   handleGetWorkspaceFileContent,
   handleGetWorkspaceFileOpenIcon,
@@ -2116,10 +2117,12 @@ export async function routeRequest(
             onRunReady: (runId) => {
               const now = new Date().toISOString();
               attachWorkflowStepContextArtifact(store, workflowStep.id, runId, runRequest);
+              publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowStep.id);
               resolveOnce(runId);
             },
             afterRunTerminal: async (terminalRun) => {
               finalizeOrchestratedWorkflowStepRun(store, workflowStep.id, taskId, terminalRun);
+              publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowStep.id);
               await maybeContinueRunInterventions(terminalRun);
               if (terminalRun.status === "succeeded") {
                 await orchestrateChannelWorkflow({
@@ -2510,6 +2513,7 @@ export async function routeRequest(
               onRunReady: (runId) => {
                 const store = storeRegistry.getStore(runRequest.workspaceCwd);
                 attachWorkflowStepContextArtifact(store, workflowRoute.workflowStepId, runId, runRequest);
+                publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowRoute.workflowStepId);
               },
               afterRunTerminal: async (terminalRun) => {
                 const store = storeRegistry.getStore(runRequest.workspaceCwd);
@@ -2519,6 +2523,7 @@ export async function routeRequest(
                   terminalRun.taskId,
                   terminalRun,
                 );
+                publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowRoute.workflowStepId);
                 await maybeContinueRunInterventions(terminalRun);
               },
               controlPlaneEvents,

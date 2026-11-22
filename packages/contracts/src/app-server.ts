@@ -1,7 +1,10 @@
 import type { CodeAssessmentFinding, CodeAssessmentReviewRules, CodeAssessmentSnapshot, CodeFindingCloseReason } from "./code-assessments.js";
+import type { RunArtifact } from "./artifacts.js";
 import type { ApprovalSummary, ControlPlaneEventsResponse, ControlPlaneReplayWindow } from "./control-plane.js";
 import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
 import type { RunSession } from "./runtime.js";
+import type { ProviderPreset } from "./providers.js";
+import type { SkillDefinition, SkillRegistryEntry } from "./skills.js";
 import type { LingThread, LingThreadGoal } from "./threads.js";
 import type { LingTurn, LingTurnRun } from "./turns.js";
 import type { ManagedWorktreeEntry, ManagedWorktreeOwnerKind, WorktreeRecoverySnapshot } from "./worktrees.js";
@@ -138,6 +141,7 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/read",
   "workItem/list",
   "workItem/accept",
+  "workItem/workflow/bind",
   "workItem/clarify",
   "workItem/pause",
   "workItem/resume",
@@ -394,6 +398,52 @@ export interface LingAppServerCapabilitiesResult {
   readonly notifications: readonly LingAppServerNotificationMethod[];
 }
 
+export interface LingAppServerArtifactReadParams {
+  readonly cwd?: string;
+  readonly artifactId: string;
+  readonly offset?: number;
+  readonly limit?: number;
+  readonly threadId?: string;
+  readonly workItemId?: string;
+  readonly runId?: string;
+}
+
+export const LING_APP_SERVER_ARTIFACT_RANGE_BYTES = 64 * 1024;
+
+export interface LingAppServerArtifactReadResult {
+  readonly cwd: string;
+  readonly artifact: Omit<RunArtifact, "path" | "sealedPayload" | "contentSha256">;
+  readonly contentBase64?: string;
+  readonly offset?: number;
+  readonly endExclusive?: number;
+  readonly sizeBytes?: number;
+  readonly partial?: boolean;
+}
+
+export interface LingAppServerModelListResult {
+  readonly cwd: string;
+  readonly models: readonly Pick<ProviderPreset,
+    "id" | "displayName" | "providerId" | "model" | "enabled" | "capabilities" | "input">[];
+  readonly nextOffset?: number;
+}
+
+export interface LingAppServerSkillReadResult {
+  readonly cwd: string;
+  readonly skill: Pick<SkillRegistryEntry, "id" | "packId" | "source" | "version" | "reviewStatus"> & {
+    readonly definition: Pick<SkillDefinition, "name" | "summary" | "requiredTools" | "requiredProviderCapabilities">;
+  };
+}
+
+export interface LingAppServerPermissionProfileListResult {
+  readonly cwd: string;
+  readonly profiles: readonly {
+    readonly id: string;
+    readonly authorizationModes: readonly string[];
+    readonly workspaceAccessModes: readonly string[];
+    readonly sessionPermissionModes: readonly string[];
+  }[];
+}
+
 export interface LingAppServerEventSubject {
   readonly kind: "thread" | "workItem";
   readonly threadId?: string;
@@ -561,6 +611,48 @@ export interface LingAppServerWorkItemReadResult extends LingAppServerWorkItemRe
   };
 }
 
+export interface LingAppServerWorkItemWorkflowBindParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly planId: string;
+  readonly expectedPlanRevision: number;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerWorkItemWorkflowBinding {
+  readonly workItemId: string;
+  readonly workflowId: string;
+  readonly threadId: string;
+  readonly planId: string;
+  readonly planRevision: number;
+  readonly linkedAt: string;
+}
+
+export interface LingAppServerWorkItemWorkflowBindResult extends LingAppServerWorkItemResult {
+  readonly binding: LingAppServerWorkItemWorkflowBinding;
+  readonly replayed: boolean;
+}
+
+export interface LingAppServerWorkItemWorkflowStages {
+  readonly workflowId: string;
+  readonly planRevision: string;
+  readonly status: import("./workflows.js").ChannelWorkflowStatus;
+  readonly admissionBlocker?: string;
+  readonly nextOffset?: number;
+  readonly steps: readonly {
+    readonly stepId: string;
+    readonly title: string;
+    readonly status: import("./workflows.js").ChannelWorkflowStepStatus;
+    readonly participantLabel: string;
+    readonly dependencyIds: readonly string[];
+    readonly updatedAt: string;
+    readonly runId?: string;
+    readonly outputArtifactId?: string;
+    readonly brief?: string;
+  }[];
+}
+
 export interface LingAppServerWorkItemControlResult extends LingAppServerWorkItemResult {
   readonly controlReceipt: LingWorkItemControlReceipt;
   readonly replayed: boolean;
@@ -669,6 +761,7 @@ export interface LingAppServerWorkItemCollaborationReadResult {
   readonly workItemId: string;
   readonly records: readonly LingAppServerWorkItemCollaborationRecord[];
   readonly nextAfterRevision: number;
+  readonly workflow?: LingAppServerWorkItemWorkflowStages;
 }
 
 export interface LingAppServerWorkItemCollaborationAppendParams {

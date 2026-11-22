@@ -9,9 +9,9 @@
 
 ## 当前实现证据
 
-当前支持回环 WebSocket、stdio JSONL、私有 Unix socket 和 TypeScript 客户端。CLI 的 `app-server probe|stdio|listen|mcp` 复用同一连接，使用 `server/capabilities` 确认当前连接的方法，支持范围随 Daemon 认证和已有能力变化。CLI 还提供 `app-server instructions-init`、`app-server verify` 和 `app-server verify-status`，用于预览项目约定、按当前候选创建验证计划和读取持久验证结果。上一版的 HTTP/SSE 与 `/rpc/stream` 沿用原入口。只有持 Daemon bearer 的客户端可提交 Run 审批和提问答案、启动 Verify 或 Review，以及触发满足 conformance 的只读外部 Runner 派发。连接按工作区绑定。未登记的检查显示 `blocked`。`thread/snapshot` 返回当前 Turn、Run、Goal、待决审批/提问和持久游标，`context/inspect` 返回已封存的上下文与项目规则清单。
+当前支持回环 WebSocket、stdio JSONL、私有 Unix socket 和 TypeScript 客户端。CLI 的 `app-server probe|stdio|listen|mcp` 复用同一连接，使用 `server/capabilities` 确认当前连接的方法，支持范围随 Daemon 认证和已有能力变化。CLI 还提供 `app-server instructions-init`、`app-server verify` 和 `app-server verify-status`，用于预览项目约定、按当前候选创建验证计划和读取持久验证结果。上一版的 HTTP/SSE 与 `/rpc/stream` 沿用原入口。只有持 Daemon bearer 的客户端可提交 Run 审批和提问答案、启动 Verify 或 Review，以及触发满足 conformance 的只读外部 Runner 派发。连接按工作区绑定。未登记的检查显示 `blocked`。`thread/snapshot` 返回当前 Turn、Run、Goal、待决审批/提问和持久游标，`context/inspect` 返回已封存的上下文与项目规则清单。App Server 还提供受工作区、Thread 或 Work Item 归属约束的 `artifact/read`，以及 `model/list` 和 `skill/read` 只读能力。
 
-实现分支已经把协议合同、WebSocket 协商、Thread/Turn 生命周期、Work Item 控制与证据、开发工作流入口、协作记录、审议触发策略、外部 Agent 注册与任务受理接入同一个 App Server RPC。协作记录复用 Work Item 证据板的持久 CAS 与幂等边界，外部 Agent 任务在派发前核对 Work Item 当前 revision 和 control state。
+实现分支已经把协议合同、WebSocket 协商、Thread/Turn 生命周期、Work Item 控制与证据、开发工作流入口、协作记录、审议触发策略、外部 Agent 注册与任务受理接入同一个 App Server RPC。协作记录复用 Work Item 证据板的持久 CAS 与幂等边界，外部 Agent 任务在派发前核对 Work Item 当前 revision 和 control state。接受的 Plan 可原子绑定到 Workflow，阶段读取和阶段事件复用 Workflow 的实际步骤与结果。绑定后旧的会话接单、人工 claim 和 Workflow 直接启动都经过同一个 Work Item 控制闸门，暂停、依赖未完成、候选或 Plan 版本变化会停止新的派发。
 
 已验证的关键回归包括 App Server WebSocket、stdio/Unix socket、MCP bridge、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation、配置的 Pi Runner 和 API Client。Verify plan/operation 和 Federation ledger 已接入工作区 SQLite 的 app_server_state，按来源工作区恢复，Daemon 重启后会把无法确认的 queued/running Verify 和外部 running task 标记为 unknown，要求原所有者重新核对。Verify 只接受默认或 Host 登记的配方，执行前后核对候选 digest。Host 登记的配方还绑定路径选择、独立 verifier source、coverage digest 和 producer refs，命令输出以有限大小保存并脱敏。重复 start/cancel 使用同一收据，取消会传递给实际检查进程。Work Item acceptance 通过同一 SQLite 事务写入 receipt、状态和 revision。外部任务在 Work Item revision/control、Runner external boundary、工具 conformance、只读工具范围和 admission fence 通过后调用已配置的真实 Adapter。注册、能力读取、任务接入、重连和取消均以请求工作区选择 federation ledger，重复提交不重复派发，Adapter 失败、取消未确认和断线重启均保留 unknown。普通 `turn/start` 通过同一会话受理、准备快照和 Run 入口，`submission/read` 与 `turn/resume` 可在重连后读取原收据，已准备但尚未派发的 Turn 通过原请求恢复同一 Turn。停止的 Turn 在实际执行和效果收敛后，可用明确的恢复键受理后继 Turn。用户提问由 Host 事务产生 `pending` 事件，认证客户端从线程快照取得短期 authority，通过 `input/respond` 复用公共解析、权限和版本 CAS，答复事件在重启后按原身份回放，已结束的问题不会再次要求应答。项目规则在准备快照时按路径读取并封存 digest，`instructions/init` 只在预览版本仍匹配且目标未被占用时原子写入。Review 先捕获候选两次，再读取基线的 `Code Review Rules` 和显式 `REVIEW.md`，规则与发现项处置由同一候选和幂等收据约束。App Server 的 operator 写操作要求认证凭据，能力与方法表只公布当前连接可用的实现。已用本机安装的 Codex App Server 通过 MCP bridge 创建 Ling Thread、提交配置 Pi Runner Turn，并从 Ling 游标恢复 Turn 事件。平台和兼容证据随 PR 检查及发行矩阵记录。
 
@@ -28,6 +28,8 @@
 - 普通会话可从最新已收敛的 Turn 封存 Handoff。记录包含候选、原 Goal 进度、接受的计划和产物引用。接手通过正常会话分支和提交受理复用原回执。候选、Goal 或计划变化时需要更新 Handoff。
 - App Server operator grant 支持 workspace、Thread 和 Work Item 范围，按 scope 分开观察、控制、审批和答复权限。grant 的 revision、过期和撤销参与握手、请求和推送路径。
 - CLI 和 TypeScript client 可以直接进入上述流程。Daemon 重启、重复请求、取消未确认和未知配方仍保持已有的持久回执语义。
+- MCP bridge 暴露 Work Item 阶段、协作记录、受限 artifact range、模型清单和 Skill 读取。artifact 元数据去除内容摘要，正文只能按授权的 Thread/Work Item/Run 归属读取，并受单次范围上限约束。
+- Work Board 的 Work Item 详情显示已接受 Workflow 的阶段状态、参与者、阻塞、结果摘要和关联 Run，支持分页与重试。`work_items` 控制面事件会触发看板刷新，绑定 Workflow 的工作项不再显示 legacy claim 入口。
 
 | 工作包 | 已验证场景与证据边界 |
 | --- | --- |

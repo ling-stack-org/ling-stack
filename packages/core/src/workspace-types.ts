@@ -2608,6 +2608,7 @@ export interface ListChannelWorkflowStepsOptions {
   readonly workflowId: string;
   readonly status?: ChannelWorkflowStepStatus;
   readonly limit?: number;
+  readonly offset?: number;
   /** Read the complete durable workflow-step history for canonical evidence paths. */
   readonly complete?: boolean;
 }

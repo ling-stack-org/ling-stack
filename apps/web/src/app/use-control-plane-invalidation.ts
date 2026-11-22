@@ -72,7 +72,7 @@ export function useControlPlaneInvalidation(input: {
     }
     const changed = new Set(domains);
     const observationEpoch = observationRef.current.epoch;
-    if (domains.some((domain) => ["runs", "work_units", "approvals", "artifacts", "channels", "teammates"].includes(domain))) {
+    if (domains.some((domain) => ["runs", "work_items", "work_units", "approvals", "artifacts", "channels", "teammates"].includes(domain))) {
       window.dispatchEvent(new CustomEvent("ling:work-summary-invalidated", { detail: { cwd: workspaceCwd } }));
     }
 

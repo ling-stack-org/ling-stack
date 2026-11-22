@@ -153,6 +153,11 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
   if (createSqliteNodeRerunStore(input.store).getBySource(workflow.id)) return { status: "blocked", workflow, blocker: "node_rerun_source_retired" };
+  const workItemBlocker = input.store.getWorkItemWorkflowAdmissionBlocker(workflow.id);
+  if (workItemBlocker) {
+    reconcileWorkflowStepRuns(input.store, workflow.id);
+    return { status: "blocked", workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow, blocker: workItemBlocker };
+  }
   assertWorkflowIsolationSelectionIntegrity(input.store, workflow.id, input.isolationHost);
   syncWorkflowSourceTurnProgress(input.store, workflow, new Date().toISOString());
   const planModeBlocker = getWorkflowPlanModeBlocker(input.store, workflow);

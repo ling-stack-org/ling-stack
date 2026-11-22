@@ -23,7 +23,7 @@ import { workflowParallelAdmissionAllowed } from "./workflow-parallel-parent-gua
 import { workflowIsolationSelectionReady } from "./workflow-isolation-selection.js";
 import type { RuntimeHostCapacityJournal } from "../../runtime-host-capacity-store-bridge.js";
 
-type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "getChannelWorkflowStepStartAdmission" | "createApprovalRequest">;
+type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "getChannelWorkflowStepStartAdmission" | "createApprovalRequest" | "getWorkItemWorkflowAdmissionBlocker">;
 
 function isNativeProfileBinding(value: unknown): boolean {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -40,6 +40,8 @@ export class SqliteChannelWorkflowStartStore {
     return this.transaction(() => {
       const step = this.ports.getChannelWorkflowStep(input.workflowStepId);
       if (!step || !sameExpected(step, input.expected)) return { status: "stale", code: "workflow_start_basis_stale" };
+      const workItemBlocker = this.ports.getWorkItemWorkflowAdmissionBlocker(step.workflowId);
+      if (workItemBlocker) return { status: "invalid", code: workItemBlocker };
       if (!workflowIsolationSelectionReady(this.context.database, step.workflowId)) {
         return { status: "invalid", code: "workflow_isolation_selection_not_ready" };
       }
@@ -165,6 +167,8 @@ export class SqliteChannelWorkflowStartStore {
         && (!hasAdmission || this.admissions.isTransferredWithinTransaction(step.id, input.owner, run.id, toRuntimeAttemptFence(attempt)))
         ? { status: "duplicate" } : { status: "stale", code: "workflow_start_run_stale" };
       if (owner?.phase !== "preparing" || step.runId) return { status: "stale", code: "workflow_start_run_stale" };
+      const workItemBlocker = this.ports.getWorkItemWorkflowAdmissionBlocker(step.workflowId);
+      if (workItemBlocker) return { status: "invalid", code: workItemBlocker };
       if (task.currentRunId || this.context.database.prepare("SELECT id FROM run_sessions WHERE task_id=? AND id<>? LIMIT 1").get(task.id, run.id)) {
         return { status: "stale", code: "workflow_start_task_run_stale" };
       }

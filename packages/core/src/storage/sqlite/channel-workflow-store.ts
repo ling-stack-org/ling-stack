@@ -1416,9 +1416,9 @@ export class SqliteChannelWorkflowStore {
         .map((row) => mapChannelWorkflowStep(row as Record<string, SQLOutputValue>));
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
+    params.push(limit, options.offset ?? 0);
     return this.context.database
-      .prepare(`${channelWorkflowStepSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY position ASC, created_at ASC LIMIT ?`)
+      .prepare(`${channelWorkflowStepSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY position ASC, created_at ASC, id ASC LIMIT ? OFFSET ?`)
       .all(...params)
       .map((row) => mapChannelWorkflowStep(row as Record<string, SQLOutputValue>));
   }

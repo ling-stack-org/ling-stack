@@ -110,11 +110,13 @@ export class SqliteLingThreadCleanupStore {
 
   listWorkItemDependencies(threadId: string, workspaceId: string): readonly string[] {
     return this.context.database.prepare(`SELECT DISTINCT w.id FROM app_server_state s JOIN work_items w
-      ON w.workspace_id=s.workspace_id AND w.id=json_extract(s.payload_json, '$.workItemId')
+      ON w.workspace_id=s.workspace_id AND w.id=coalesce(
+        json_extract(s.payload_json, '$.workItemId'), json_extract(s.payload_json, '$.binding.workItemId'))
       WHERE s.workspace_id=? AND w.status!='archived' AND (
         s.kind='work_item_thread' AND s.record_id=? OR
-        s.kind='github_delivery_current' AND json_extract(s.payload_json, '$.threadId')=?
-      ) ORDER BY w.id`).all(workspaceId, threadId, threadId).map(row => readString(row, "id"));
+        s.kind='github_delivery_current' AND json_extract(s.payload_json, '$.threadId')=? OR
+        s.kind='work_item_workflow' AND json_extract(s.payload_json, '$.binding.threadId')=?
+      ) ORDER BY w.id`).all(workspaceId, threadId, threadId, threadId).map(row => readString(row, "id"));
   }
 }
 

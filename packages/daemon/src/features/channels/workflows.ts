@@ -739,6 +739,10 @@ export async function prepareWorkflowStepStart(
   if (!workflow) {
     return { kind: "error", statusCode: 404, code: "workflow_not_found", message: `Channel workflow not found: ${step.workflowId}` };
   }
+  const workItemBlocker = store.getWorkItemWorkflowAdmissionBlocker(workflow.id);
+  if (workItemBlocker) {
+    return { kind: "error", statusCode: 409, code: workItemBlocker, message: "The Work Item cannot start a Workflow step." };
+  }
   const channel = store.getChannel(step.channelId);
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };

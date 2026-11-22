@@ -48,6 +48,7 @@ export interface WorkItem {
   readonly runId?: string;
   readonly workflowId?: string;
   readonly workflowStepId?: string;
+  readonly planRevision?: string;
   readonly externalWorkId?: string;
   readonly externalWorkActionId?: string;
   readonly approvalId?: string;
@@ -91,7 +92,7 @@ export interface WorkItemHeartbeatRequest {
 }
 
 export interface WorkItemClaimBlocker {
-  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal";
+  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal" | "control_blocked";
   readonly message: string;
   readonly dependencyIds?: readonly string[];
   readonly claimedBy?: string;
@@ -106,6 +107,7 @@ export interface WorkItemListResponse {
 export interface WorkItemDetailResponse {
   readonly cwd: string;
   readonly workItem: WorkItemView;
+  readonly workflow?: import("./app-server.js").LingAppServerWorkItemWorkflowStages;
 }
 
 export interface WorkItemMutationResponse {

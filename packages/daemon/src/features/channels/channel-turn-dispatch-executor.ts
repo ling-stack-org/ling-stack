@@ -43,6 +43,7 @@ import {
   orchestrateChannelWorkflow,
   type StartOrchestratedWorkflowStepRun,
 } from "./orchestrator.js";
+import { publishWorkItemWorkflowStep } from "../work-items/workflow-stages.js";
 import { confirmChannelExecutionProposalWorkflow } from "./proposal-workflows.js";
 
 export interface ChannelTurnDispatchExecutorOptions {
@@ -344,10 +345,12 @@ export function createStartOrchestratedRun(
         {
           enableUserInputPause: true,
           onRunReady: (runId) => {
+            publishWorkItemWorkflowStep(store, options.controlPlaneEvents, workflowStep.id);
             resolveOnce(runId);
           },
           afterRunTerminal: async (terminalRun) => {
             finalizeOrchestratedWorkflowStepRun(store, workflowStep.id, taskId, terminalRun);
+            publishWorkItemWorkflowStep(store, options.controlPlaneEvents, workflowStep.id);
             await options.afterRunTerminal?.(terminalRun);
             if (terminalRun.status === "succeeded") {
               await orchestrateChannelWorkflow({

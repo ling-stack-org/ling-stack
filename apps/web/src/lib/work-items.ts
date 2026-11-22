@@ -56,6 +56,7 @@ export interface WorkItemView {
   readonly runId?: string;
   readonly workflowId?: string;
   readonly workflowStepId?: string;
+  readonly planRevision?: string;
   readonly externalWorkId?: string;
   readonly externalWorkActionId?: string;
   readonly approvalId?: string;
@@ -536,6 +537,7 @@ function durableToWorkItemView(item: DurableWorkItemView): WorkItemView {
     runId: item.runId,
     workflowId: item.workflowId,
     workflowStepId: item.workflowStepId,
+    planRevision: item.planRevision,
     externalWorkId: item.externalWorkId,
     externalWorkActionId: item.externalWorkActionId,
     approvalId: item.approvalId,

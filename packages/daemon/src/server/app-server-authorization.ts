@@ -102,8 +102,9 @@ export function revokeAppServerGrant(store: RunStore, grantId: string, expectedR
 const serverMethods = new Set(["initialize", "server/ping", "server/capabilities"]);
 const threadReads = new Set([
   "thread/read", "thread/resume", "thread/snapshot", "thread/turns/list", "thread/items/list", "thread/events/read",
-  "thread/subscribe", "thread/unsubscribe", "thread/mode/get", "thread/goal/get", "item/read", "context/inspect",
+  "thread/subscribe", "thread/unsubscribe", "thread/mode/get", "thread/goal/get", "item/read", "context/inspect", "artifact/read",
 ]);
+const workspaceReads = new Set(["model/list", "skill/read", "permissionProfile/list"]);
 const threadControls = new Set(["turn/start", "turn/queue", "turn/interrupt", "turn/resume"]);
 const workItemReads = new Set([
   "workItem/read", "workItem/subscribe", "workItem/unsubscribe", "workItem/evidence/read", "workItem/collaboration/read",
@@ -118,6 +119,7 @@ export function grantAllowsMethod(grant: LingAppServerGrant, method: string): bo
   const hasScope = (scope: LingAppServerGrantScope) => grant.scopes.includes(scope);
   const thread = grant.subject.kind !== "workItem";
   const workItem = grant.subject.kind !== "thread";
+  if (grant.subject.kind === "workspace" && workspaceReads.has(method)) return hasScope("observe");
   if (thread && threadReads.has(method) || workItem && workItemReads.has(method)) return hasScope("observe");
   if (thread && threadControls.has(method) || workItem && workItemControls.has(method)) return hasScope("control");
   if (thread && method === "approval/respond") return hasScope("approve");

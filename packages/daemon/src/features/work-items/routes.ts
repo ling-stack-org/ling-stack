@@ -14,6 +14,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { readWorkItemWorkflowStages } from "./workflow-stages.js";
 import {
   isRecord,
   readOptionalBoolean,
@@ -114,7 +115,8 @@ export async function handleWorkItemRoute(
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for work item detail` });
         return;
       }
-      writeJson(response, 200, { cwd, workItem: existing });
+      const stageOffset = readOptionalIntegerQuery(url, "stageOffset", 0);
+      writeJson(response, 200, { cwd, workItem: existing, workflow: readWorkItemWorkflowStages(store, existing, true, stageOffset) });
       return;
     }
 

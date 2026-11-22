@@ -36,12 +36,17 @@ import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
-import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
+import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt,
+  LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding } from "@ling-stack/contracts";
+import type { RunStore } from "../../run-types.js";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
   readonly hasAiTeammate: (id: string) => boolean;
+  readonly getProposedPlanArtifact: RunStore["getProposedPlanArtifact"];
+  readonly getChannelWorkflow: RunStore["getChannelWorkflow"];
+  readonly getRun: RunStore["getRun"];
 }
 
 interface WorkItemCreationReceipt {
@@ -52,6 +57,11 @@ interface WorkItemCreationReceipt {
 interface WorkItemControlSubmission {
   readonly fingerprint: string;
   readonly receipt: WorkItemControlReceipt;
+}
+
+interface WorkItemWorkflowLink {
+  readonly binding: LingAppServerWorkItemWorkflowBinding;
+  readonly fingerprint: string;
 }
 
 export class SqliteWorkItemStore {
@@ -416,6 +426,9 @@ export class SqliteWorkItemStore {
     if (!existing) {
       return undefined;
     }
+    if (existing.workflowId && existing.planRevision && input.channelId !== undefined && input.channelId !== existing.channelId) {
+      throw new Error("Work item is assigned to a Workflow in its current channel.");
+    }
     if (input.channelId) {
       this.ports.assertChannelExists(input.channelId);
     }
@@ -457,7 +470,8 @@ export class SqliteWorkItemStore {
       const event = events.store.appendControlPlaneEventWithinTransaction({
         workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items",
         entityType: "work_item", entityId: id, action: receipt.dispatch ? "work_item.thread.linked" : "work_item.accepted", idempotencyKey: receipt.id,
-        data: { workItemId: id, revision: receipt.workItemRevision, actorId: receipt.actorId, acceptanceId: receipt.id },
+        data: { workItemId: id, revision: receipt.workItemRevision, actorId: receipt.actorId, acceptanceId: receipt.id,
+          ...(receipt.dispatch ? { threadId: receipt.dispatch.threadId } : {}) },
       }, now);
       database.exec("COMMIT");
       return { ...result, event };
@@ -518,11 +532,107 @@ export class SqliteWorkItemStore {
     return state.get("work_item_thread", threadId)?.payload as WorkItemConversationBinding | undefined;
   }
 
+  bindWorkflow(input: LingAppServerWorkItemWorkflowBindParams, now: string, state: SqliteAppServerStateStore,
+    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string }) {
+    const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey } = input;
+    const fingerprint = createHash("sha256").update(JSON.stringify([workItemId, planId, expectedPlanRevision, expectedWorkItemRevision])).digest("hex");
+    const { database } = this.context;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const retained = state.findByIdempotencyKey("work_item_workflow", idempotencyKey)?.payload as WorkItemWorkflowLink | undefined;
+      const item = this.getWorkItem(workItemId);
+      if (!item) throw new Error("work_item_workflow_not_found");
+      if (retained) {
+        if (retained.fingerprint !== fingerprint) throw new Error("work_item_workflow_idempotency_conflict");
+        database.exec("COMMIT");
+        return { binding: retained.binding, workItem: item, replayed: true };
+      }
+      const plan = this.ports.getProposedPlanArtifact(planId);
+      const workflow = plan?.acceptedWorkflowId && this.ports.getChannelWorkflow(plan.acceptedWorkflowId);
+      const acceptance = state.get("work_item_acceptance", item.id)?.payload as WorkItemAcceptanceReceipt | undefined;
+      if (!plan || !workflow || plan.workspaceId !== item.workspaceId || workflow.workspaceId !== item.workspaceId
+        || plan.status !== "accepted" || item.channelId && workflow.channelId !== item.channelId
+        || !acceptance) throw new Error("work_item_workflow_not_found");
+      if (item.revision !== expectedWorkItemRevision || plan.revision !== expectedPlanRevision
+        || item.workflowId || state.get("work_item_workflow", workflow.id)) throw new Error("work_item_workflow_stale");
+      if (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission)
+        || item.control.unresolvedEffectIds.length || item.taskId || item.claim && item.claim.expiresAt > now
+        || acceptance.dispatch && !this.conversationDispatchSettled(acceptance, item)
+        || !["ready", "running", "waiting", "review"].includes(item.status)
+        || !["draft", "ready"].includes(workflow.status)) throw new Error("work_item_workflow_held");
+      const binding = { workItemId, workflowId: workflow.id, threadId: plan.threadId,
+        planId, planRevision: plan.revision, linkedAt: now };
+      state.putWithinTransaction({ kind: "work_item_workflow", recordId: workflow.id, idempotencyKey, expectedRevision: 0,
+        payload: { binding, fingerprint } satisfies WorkItemWorkflowLink }, now);
+      database.prepare(`UPDATE work_items SET workflow_id=?, plan_revision=?, channel_id=?, revision=revision+1, updated_at=?,
+        claim_owner_id=NULL, claim_token=NULL, claimed_at=NULL, heartbeat_at=NULL, claim_expires_at=NULL
+        WHERE workspace_id=? AND id=?`).run(workflow.id, `${planId}:${plan.revision}`, workflow.channelId, now, item.workspaceId, item.id);
+      const event = events.store.appendControlPlaneEventWithinTransaction({
+        workspaceId: item.workspaceId, cwd: events.cwd, domain: "work_items", entityType: "work_item", entityId: item.id,
+        action: "work_item.workflow.linked", data: { workItemId, workflowId: workflow.id, threadId: plan.threadId, revision: item.revision + 1 },
+      }, now);
+      const workItem = this.getWorkItem(workItemId)!;
+      database.exec("COMMIT");
+      return { binding, workItem, replayed: false, event };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(database);
+      throw error;
+    }
+  }
+
+  private conversationDispatchSettled(acceptance: WorkItemAcceptanceReceipt, item: WorkItem): boolean {
+    const run = item.runId ? this.ports.getRun(item.runId) : undefined;
+    const threadId = acceptance.dispatch?.threadId;
+    return Boolean(run && threadId && run.threadId === threadId && ["succeeded", "failed", "cancelled"].includes(run.status)
+      && !this.context.database.prepare(`SELECT 1 FROM ling_turns WHERE thread_id=?
+        AND status IN ('queued','running','waiting_for_approval','waiting_for_input') LIMIT 1`).get(threadId));
+  }
+
+  getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore): string | undefined {
+    const link = state.get("work_item_workflow", workflowId)?.payload as WorkItemWorkflowLink | undefined;
+    if (!link) return undefined;
+    const binding = link.binding;
+    const item = this.getWorkItem(binding.workItemId);
+    const plan = this.ports.getProposedPlanArtifact(binding.planId);
+    if (!item || item.workflowId !== workflowId || item.planRevision !== `${binding.planId}:${binding.planRevision}`
+      || !plan?.acceptedAt || plan.status !== "accepted" || plan.acceptedWorkflowId !== workflowId) return "work_item_workflow_stale";
+    if (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission)
+      || item.control.unresolvedEffectIds.length || ["done", "cancelled", "archived", "superseded"].includes(item.status)) {
+      return "work_item_workflow_held";
+    }
+    if (this.incompleteWorkItemDependencyIds(item).length) return "work_item_workflow_dependency_blocked";
+    return undefined;
+  }
+
+  listActiveWorkflowIds(limit: number): readonly string[] {
+    return this.context.database.prepare(`
+      SELECT workflow.id FROM channel_workflows workflow
+      JOIN app_server_state binding ON binding.workspace_id=workflow.workspace_id
+        AND binding.kind='work_item_workflow' AND binding.record_id=workflow.id
+      JOIN work_items item ON item.id=json_extract(binding.payload_json, '$.binding.workItemId')
+        AND item.workspace_id=workflow.workspace_id AND item.workflow_id=workflow.id
+      JOIN ling_thread_proposed_plans plan ON plan.id=json_extract(binding.payload_json, '$.binding.planId')
+        AND plan.workspace_id=workflow.workspace_id AND plan.accepted_workflow_id=workflow.id
+      WHERE workflow.workspace_id=? AND workflow.status IN ('ready','running','waiting_for_approval')
+        AND plan.status='accepted' AND item.control_state='active'
+        AND item.status NOT IN ('done','cancelled','archived','superseded')
+        AND json_array_length(item.control_unresolved_effect_ids_json)=0
+        AND NOT EXISTS (SELECT 1 FROM json_each(item.holds_json) WHERE json_extract(value,'$.blocksNewAdmission')=1)
+        AND NOT EXISTS (
+          SELECT 1 FROM work_item_dependencies edge
+          LEFT JOIN work_items dependency ON dependency.id=edge.depends_on_work_item_id
+          WHERE edge.work_item_id=item.id AND coalesce(dependency.status,'missing')!='done'
+        )
+      ORDER BY workflow.updated_at ASC, workflow.id ASC LIMIT ?
+    `).all(DEFAULT_WORKSPACE_ID, limit).map(row => readString(row, "id"));
+  }
+
   checkConversationAdmission(threadId: string, submissionKey: unknown, state: SqliteAppServerStateStore, automaticIntakeReceiptId?: string): WorkItem | undefined {
     const binding = this.getConversationBinding(threadId, state);
     if (!binding) return undefined;
     const workItem = this.getWorkItem(binding.workItemId);
-    if (!workItem || workItem.control.state !== "active" || workItem.control.unresolvedEffectIds.length > 0
+    if (!workItem || (workItem.workflowId && state.get("work_item_workflow", workItem.workflowId))
+      || workItem.control.state !== "active" || workItem.control.unresolvedEffectIds.length > 0
       || workItem.holds.some(hold => hold.blocksNewAdmission)
       || ["done", "cancelled", "superseded", "archived"].includes(workItem.status)) throw new Error("work_item_dispatch_held");
     if (!workItem.runId && binding.submissionKey !== submissionKey
@@ -576,6 +686,9 @@ export class SqliteWorkItemStore {
     if (!existing) return undefined;
     const acceptance = state.get("work_item_acceptance", id)?.payload as WorkItemAcceptanceReceipt | undefined;
     const intake = state.get("github_intake_dispatch", id)?.payload as GitHubIntakeDispatchIntent | undefined;
+    if (existing.workflowId && state.get("work_item_workflow", existing.workflowId)) {
+      return { workItem: existing, blocker: { code: "control_blocked" as const, message: "Work item has an assigned Workflow owner." } };
+    }
     if (acceptance?.dispatch || intake?.status === "pending") {
       return { workItem: existing, blocker: { code: "control_blocked" as const, message: "Work item has an assigned conversation owner." } };
     }
@@ -818,10 +931,7 @@ export class SqliteWorkItemStore {
         claimExpiresAt: item.claim.expiresAt,
       };
     }
-    const incompleteDependencies = item.dependencyIds.filter((dependencyId) => {
-      const dependency = this.getWorkItem(dependencyId);
-      return !dependency || dependency.status !== "done";
-    });
+    const incompleteDependencies = this.incompleteWorkItemDependencyIds(item);
     if (incompleteDependencies.length > 0) {
       return {
         code: "dependency_blocked",
@@ -830,6 +940,10 @@ export class SqliteWorkItemStore {
       };
     }
     return undefined;
+  }
+
+  private incompleteWorkItemDependencyIds(item: WorkItem): readonly string[] {
+    return item.dependencyIds.filter(id => this.getWorkItem(id)?.status !== "done");
   }
 }
 
