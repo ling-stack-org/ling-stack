@@ -418,6 +418,12 @@ export class SqliteDeviceSupportStore {
     return page ? observations.reverse() : observations;
   }
 
+  getObservation(taskId: string, observationId: string): DeviceObservationV1 | undefined {
+    const row = this.database.prepare("SELECT body_json FROM device_observations WHERE task_id=? AND observation_id=?")
+      .get(taskId, observationId) as Row | undefined;
+    return row ? parseJson<DeviceObservationV1>(row.body_json, isDeviceObservationV1, "device observation") : undefined;
+  }
+
   acquireTargetLease(targetDeviceId: string, taskId: string, ownerId: string, now: string, leaseMs: number, attemptId?: string): boolean {
     const expiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
     const result = this.database.prepare(`
@@ -431,10 +437,10 @@ export class SqliteDeviceSupportStore {
     return result.changes === 1;
   }
 
-  releaseTargetLease(targetDeviceId: string, taskId: string, attemptId?: string): void {
-    if (!targetDeviceId) return;
-    this.database.prepare("DELETE FROM device_target_leases WHERE target_device_id=? AND task_id=? AND attempt_id IS ?")
-      .run(targetDeviceId, taskId, attemptId ?? null);
+  releaseTargetLease(targetDeviceId: string, taskId: string, attemptId?: string): boolean {
+    if (!targetDeviceId) return false;
+    return this.database.prepare("DELETE FROM device_target_leases WHERE target_device_id=? AND task_id=? AND attempt_id IS ?")
+      .run(targetDeviceId, taskId, attemptId ?? null).changes === 1;
   }
 
   getDispatchStop(deviceId: string): DeviceDispatchStopV1 {
@@ -731,10 +737,10 @@ function isAllowedTransition(from: DeviceTaskStatusV1, to: DeviceTaskStatusV1): 
     capabilities_loaded: ["planning", "awaiting_approval", "cancelled"],
     planning: ["awaiting_approval", "executing", "cancelled", "failed", "unknown"],
     awaiting_approval: ["executing", "cancelled", "failed"],
-    executing: ["verifying", "succeeded", "partial", "failed", "cancelled", "unknown"],
+    executing: ["awaiting_approval", "verifying", "succeeded", "partial", "failed", "cancelled", "unknown"],
     verifying: ["succeeded", "partial", "failed", "unknown"],
     succeeded: [],
-    partial: ["planning", "executing", "cancelled", "unknown"],
+    partial: ["planning", "awaiting_approval", "executing", "cancelled", "unknown"],
     failed: ["planning", "cancelled"],
     cancelled: [],
     unknown: ["planning", "executing", "cancelled", "failed"],

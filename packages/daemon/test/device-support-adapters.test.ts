@@ -167,6 +167,8 @@ test("Linux network repair reconciles with fresh observations without repeating 
   t.after(() => store.close());
   const broker = new DeviceCapabilityBroker({ store, now: () => now });
   let restartCount = 0;
+  let recoveryChecks = 0;
+  let recoveryAvailable = false;
   let dnsReachable: boolean | undefined;
   broker.registerAdapter(new LinuxSshAdapter({
     now: () => now,
@@ -174,6 +176,10 @@ test("Linux network repair reconciles with fresh observations without repeating 
       async inventory() { return { hostname: "fixture-target", kernel: "6.6" }; },
       async readNetwork() { return { connected: true, routeAvailable: true, dnsReachable }; },
       async readWifi() { return { connected: true }; },
+      async verifyNetworkRecovery({ plan, baseline }) {
+        recoveryChecks += 1;
+        return recoveryAvailable && plan.routeRevision === "fixture:usb" && baseline.subjectId === targetDeviceId;
+      },
       async restartNetwork() { restartCount += 1; throw new Error("SSH interrupted"); },
     },
   }));
@@ -185,10 +191,18 @@ test("Linux network repair reconciles with fresh observations without repeating 
     id: "linux-recover", ownerKind: "daemon", ownerId: "pc", targetDeviceIds: [targetDeviceId],
     status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now,
   });
+  const baseline = await broker.execute({
+    taskId: task.id, targetDeviceId, actionId: "network-baseline", capabilityId: "linux.inspect.network",
+    capabilitySchemaVersion: "1.0", capabilitySnapshotId: snapshot.snapshotId, idempotencyKey: "network-baseline",
+    normalizedInput: {},
+  }, undefined, { finalizeTask: false });
+  const baselineObservationId = baseline.attempt.receipt?.observationIds[0];
+  assert.ok(baselineObservationId);
   const request: DeviceActionRequestV1 = {
     taskId: task.id, targetDeviceId, actionId: "restart", capabilityId: "linux.repair.network",
     capabilitySchemaVersion: "1.0", capabilitySnapshotId: snapshot.snapshotId, idempotencyKey: "restart",
     normalizedInput: {}, expectedVerification: { connected: true, routeAvailable: true, dnsReachable: true },
+    recoveryPlan: { kind: "alternate_route", routeRevision: "fixture:usb", baselineObservationId, verifyBy: "2026-11-21T00:02:00.000Z" },
   };
   const approved: DeviceActionRequestV1 = {
     ...request, approvalId: "restart-approval",
@@ -197,9 +211,19 @@ test("Linux network repair reconciles with fresh observations without repeating 
       capabilitySnapshotId: snapshot.snapshotId, connectionRevision: snapshot.connectionRevision,
       policyRevision: broker.policyRevision, normalizedInputDigest: digestRequest(request),
       expiresAt: "2026-11-21T00:01:00.000Z",
+      recoveryScope: request.recoveryPlan,
     },
   };
+  await assert.rejects(() => broker.execute({ ...approved, approval: { ...approved.approval!, recoveryScope: { baseline: "changed" } } }), /exact approval/u);
+  assert.equal(recoveryChecks, 0);
+  await assert.rejects(() => broker.execute(approved), /recovery route could not be verified/u);
+  assert.equal(recoveryChecks, 1);
+  assert.equal(restartCount, 0);
+  assert.deepEqual(store.listAttempts(task.id).map(item => item.request.actionId), ["network-baseline"]);
+  recoveryAvailable = true;
   const { attempt } = await broker.execute(approved);
+  assert.equal(recoveryChecks, 2);
+  assert.equal(attempt.recoveryPathVerifiedAt, now);
   assert.equal(attempt.status, "unknown");
   assert.equal(attempt.receipt?.status, "uncertain");
   const readback = { taskId: task.id, attemptId: attempt.attemptId, capabilitySnapshotId: snapshot.snapshotId };
@@ -220,12 +244,14 @@ test("Linux network repair reconciles with fresh observations without repeating 
   assert.equal(store.getTask(task.id)?.status, "succeeded");
   const observations = new Map(store.listObservations(task.id).map(observation => [observation.id, observation.value]));
   assert.deepEqual(observations, new Map([
+    [baselineObservationId, { connected: true, routeAvailable: true }],
     [missing.reconciliationId, { connected: true, routeAvailable: true }],
     [mismatch.reconciliationId, { connected: true, routeAvailable: true, dnsReachable: false }],
     [recovered.reconciliationId, { connected: true, routeAvailable: true, dnsReachable: true }],
   ]));
   assert.deepEqual((await broker.execute(approved)).attempt, attempt);
   assert.equal(restartCount, 1);
+  assert.equal(recoveryChecks, 2);
 });
 
 test("Android ADB adapter exposes fixed head-unit operations and verifies artifact installation", async () => {

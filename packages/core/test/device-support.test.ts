@@ -452,6 +452,63 @@ test("mutating capability requires an exact, unexpired approval and records veri
   store.close();
 });
 
+test("a recovery check leases the target and cannot dispatch after the task stops", async t => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  let startRecovery!: () => void;
+  const recoveryStarted = new Promise<void>(resolve => { startRecovery = resolve; });
+  let releaseRecovery!: (verified: boolean) => void;
+  const recoveryProof = new Promise<boolean>(resolve => { releaseRecovery = resolve; });
+  const adapter = createAdapter();
+  const baseline: DeviceObservationV1 = {
+    id: "baseline", subjectId: profile.device.id, source: "fixture-network", value: { connected: true },
+    observedAt: now, receivedAt: now, freshnessUntil: later, quality: "good", redactionClass: "public",
+    provenance: [profile.device.id],
+  };
+  let writes = 0;
+  broker.registerAdapter({
+    ...adapter,
+    async execute(input) {
+      if (input.request.capabilityId === writeCapability.id) {
+        writes += 1;
+        return adapter.execute(input);
+      }
+      return {
+        action: { actionId: input.request.actionId, status: "completed", startedAt: now, observationIds: [baseline.id] },
+        observations: [baseline],
+      };
+    },
+    async verifyRecoveryPath(input) {
+      assert.equal(input.baseline.id, baseline.id);
+      startRecovery();
+      return recoveryProof;
+    },
+  });
+  broker.createTask(task("recovery"));
+  await broker.execute(request(readCapability.id, "recovery"), undefined, { finalizeTask: false });
+  const plan = {
+    kind: "alternate_route", routeRevision: "local-usb", baselineObservationId: baseline.id, verifyBy: later,
+  } as const;
+  const proposal = {
+    ...request(writeCapability.id, "recovery"), actionId: "repair", idempotencyKey: "repair",
+    expectedVerification: { connected: true }, recoveryPlan: plan,
+  };
+  broker.proposeAction(proposal);
+  assert.equal(store.getTask(proposal.taskId)?.status, "awaiting_approval");
+  const approved = approveNetworkRepair(proposal);
+  const pending = broker.execute({ ...approved, approval: { ...approved.approval!, recoveryScope: plan } }, undefined, { requireCurrentProposal: true });
+  await recoveryStarted;
+  broker.createTask(task("other-task"));
+  await assert.rejects(() => broker.execute(request(readCapability.id, "other-task")), /target is leased/u);
+  broker.cancelTask(proposal.taskId);
+  releaseRecovery(true);
+  await assert.rejects(pending, /not ready to dispatch/u);
+  assert.equal(writes, 0);
+  assert.equal(store.listAttempts(proposal.taskId).length, 1);
+  assert.equal(store.listEvents(proposal.taskId).some(event => event.type === "approval_recorded"), false);
+  assert.equal(store.acquireTargetLease(profile.device.id, "other-task", "daemon-1", now, 1_000), true);
+});
+
 test("dispatch leaves the journal and target lease untouched for an out-of-scope or closed task", async (t) => {
   const { store, broker } = brokerFixture();
   t.after(() => store.close());

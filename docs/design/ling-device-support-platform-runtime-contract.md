@@ -203,6 +203,17 @@ only after the expected access path works. After expiry, observe the target befo
 reporting it restored. When neither path exists, offer guidance or diagnosis within
 the supported scope.
 
+An adapter marks a write that needs recovery with `requiresRecovery`. An
+alternate-route plan binds an opaque route revision, a baseline observation from
+the same task and snapshot, and a verification deadline. The action digest and
+approval cover that exact plan. The runtime checks the route and baseline under its
+target lease and rechecks current authority before recording dispatch. The owner
+keeps the plan, path verification time, and baseline reference with the attempt.
+Missing fresh readback at the deadline leaves the write outcome unknown for later
+reconciliation. Paired Gateway WebSocket clients negotiate `ling.device-tasks.v4`
+to display the plan and include it in the approval. Versions 1–3 present approvals
+for operations without a recovery plan.
+
 An already offline device may expose a documented setup mode. For the first BLE
 recovery flow, confirm that the user can re-enter setup and that the adapter can check
 the same device after provisioning. If setup ends before the result is observed, use

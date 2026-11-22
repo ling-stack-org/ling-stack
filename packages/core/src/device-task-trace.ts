@@ -88,6 +88,11 @@ export function readOwnedDeviceTaskTrace(input: {
           capabilityId: request.capabilityId, capabilitySnapshotId: request.capabilitySnapshotId, attemptStatus: attempt.status,
           authority: projectAuthority(workspaceId, attempt.authority, attempt.approvalId === request.approval?.approvalId ? request.approval : undefined),
           ...(attempt.adapterBinding ? { adapterVersion: attempt.adapterBinding.adapterVersion, profileRevision: attempt.adapterBinding.profileRevision } : {}),
+          ...(request.recoveryPlan && attempt.recoveryPathVerifiedAt ? { recovery: {
+            kind: request.recoveryPlan.kind, routeRevision: request.recoveryPlan.routeRevision,
+            verifyBy: request.recoveryPlan.verifyBy, verifiedAt: attempt.recoveryPathVerifiedAt,
+            evidenceRefs: publicEvidence(store, taskId, [request.recoveryPlan.baselineObservationId]),
+          } } : {}),
           ...(attempt.receipt ? {
             receiptStatus: attempt.receipt.status, evidenceRefs: publicEvidence(store, taskId, attempt.receipt.observationIds),
           } : {}),

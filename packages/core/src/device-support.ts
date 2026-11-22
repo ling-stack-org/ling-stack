@@ -16,6 +16,7 @@ import {
   type DeviceObservationV1,
   type DevicePlanningNodeRefV1,
   type DeviceProfileV1,
+  type DeviceRecoveryPlanV1,
   type DeviceTaskAttemptV1,
   type DeviceTaskReconciliationV1,
   type DeviceTaskV1,
@@ -55,6 +56,14 @@ export interface DeviceAdapter {
     readonly signal?: AbortSignal;
   }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult>;
   verify?(input: DeviceAdapterVerificationInput): Promise<DeviceVerificationResultV1 | DeviceAdapterVerificationResult>;
+  /** Read-only check of the same target and baseline through an authorized recovery route. */
+  verifyRecoveryPath?(input: {
+    readonly profile: DeviceProfileV1;
+    readonly capability: CapabilityDescriptorV1;
+    readonly plan: DeviceRecoveryPlanV1;
+    readonly baseline: DeviceObservationV1;
+    readonly signal: AbortSignal;
+  }): Promise<boolean>;
 }
 
 export interface DeviceAdapterVerificationInput {
@@ -96,10 +105,12 @@ export interface DeviceExecuteOptions {
   readonly onlyUnattendedReads?: boolean;
   readonly planningNode?: DevicePlanningNodeRefV1;
   readonly approvalPrincipal?: DeviceApprovalPrincipalV1;
+  readonly isApprovalPrincipalCurrent?: () => boolean;
 }
 
 type DeviceDispatchAdmission =
   | { readonly kind: "replay"; readonly record: DeviceSupportStoreAttemptRecord }
+  | DeviceRecoveryCheck
   | (DeviceCapabilityBinding & {
       readonly kind: "dispatch";
       readonly attempt: DeviceTaskAttemptV1;
@@ -110,6 +121,17 @@ interface DeviceCapabilityBinding {
   readonly profile: DeviceProfileV1;
   readonly capability: CapabilityDescriptorV1;
   readonly snapshot: DeviceCapabilitySnapshotV1;
+}
+
+interface DeviceRecoveryCheck extends DeviceCapabilityBinding {
+  readonly kind: "verify_recovery";
+  readonly taskId: string;
+  readonly plan: DeviceRecoveryPlanV1;
+  readonly baseline: DeviceObservationV1;
+  readonly leaseId: string;
+  readonly requestDigest: string;
+  readonly stopRevision: number;
+  readonly grantRevision?: number;
 }
 
 export class DeviceBrokerError extends Error {
@@ -226,20 +248,49 @@ export class DeviceCapabilityBroker {
 
   proposeAction(request: DeviceActionRequestV1): void {
     if (!isDeviceActionRequestV1(request)) throw new DeviceBrokerError("invalid_request", "device action request is invalid");
-    this.requireTaskTarget(request);
-    this.store.saveActionProposal(request, digestRequest(request), this.now());
+    this.store.withWriteTransaction(() => {
+      const task = this.requireTaskTarget(request);
+      const { capability } = this.resolveCapability(request);
+      const now = this.now();
+      if (capability.sideEffect !== "read_only" && task.status !== "awaiting_approval") {
+        if (!["capabilities_loaded", "planning", "executing", "partial"].includes(task.status)
+          || this.store.getActiveAttempt(task.id) || this.store.getLeasedAttempt(task.id)) {
+          throw new DeviceBrokerError("invalid_request", "device task is not ready for a write proposal");
+        }
+        this.store.transitionTask(task.id, "awaiting_approval", {}, now);
+      }
+      this.store.saveActionProposal(request, digestRequest(request), now);
+    });
   }
 
   async execute(request: DeviceActionRequestV1, signal?: AbortSignal, options: DeviceExecuteOptions = {}): Promise<DeviceSupportStoreAttemptRecord> {
     if (!isDeviceActionRequestV1(request)) {
       throw new DeviceBrokerError("invalid_request", "device action request is invalid");
     }
-    const admission = this.store.withWriteTransaction(() => this.admitDispatch(request, signal, options));
+    let admission = this.store.withWriteTransaction(() => this.admitDispatch(request, signal, options));
+    if (admission.kind === "verify_recovery") {
+      const check = admission;
+      try {
+        await this.verifyRecoveryPath(check, signal);
+        const checkedAt = this.now();
+        admission = this.store.withWriteTransaction(() => this.admitDispatch(request, signal, options, { check, checkedAt }));
+      } finally {
+        this.store.releaseTargetLease(check.profile.device.id, check.taskId, check.leaseId);
+      }
+    }
+    if (admission.kind === "verify_recovery") {
+      throw new DeviceBrokerError("target_changed", "the device recovery path changed during admission");
+    }
     if (admission.kind === "replay") return admission.record;
 
     const { attempt, adapter, profile, capability } = admission;
     const controller = new AbortController();
-    const operationSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const recoveryDeadline = request.recoveryPlan && Date.parse(request.recoveryPlan.verifyBy);
+    const operationSignal = AbortSignal.any([
+      controller.signal,
+      ...(signal ? [signal] : []),
+      ...(recoveryDeadline === undefined ? [] : [recoveryTimeout(recoveryDeadline - Date.parse(this.now()))]),
+    ]);
     this.activeDispatches.set(attempt.taskId, controller);
     try {
       let execution: DeviceActionResultV1 | DeviceAdapterExecutionResult;
@@ -269,8 +320,9 @@ export class DeviceCapabilityBroker {
         const now = this.now();
         for (const observation of readback ?? []) this.store.appendObservation(attempt.taskId, observation, now);
         const retained = this.retainDispatchAuthority(attempt, request.capabilitySnapshotId, capability, now);
-        if (retained && operationSignal.aborted) this.store.transitionTask(attempt.taskId, "unknown", {}, now);
-        const current = retained && !operationSignal.aborted;
+        const interrupted = operationSignal.aborted || (recoveryDeadline !== undefined && Date.parse(now) >= recoveryDeadline);
+        if (retained && interrupted) this.store.transitionTask(attempt.taskId, "unknown", {}, now);
+        const current = retained && !interrupted;
         const record = this.store.updateAttempt(attempt.attemptId, { verification, ...(current ? {} : { status: "unknown" }) }, now);
         if (!current) return record;
         const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
@@ -437,7 +489,12 @@ export class DeviceCapabilityBroker {
     return reader;
   }
 
-  private admitDispatch(request: DeviceActionRequestV1, signal: AbortSignal | undefined, options: DeviceExecuteOptions): DeviceDispatchAdmission {
+  private admitDispatch(
+    request: DeviceActionRequestV1,
+    signal: AbortSignal | undefined,
+    options: DeviceExecuteOptions,
+    recovery?: { readonly check: DeviceRecoveryCheck; readonly checkedAt: string },
+  ): DeviceDispatchAdmission {
     const task = this.requireTaskTarget(request);
     const requestDigest = digestRequest(request);
     const replay = this.store.getAttemptByIdempotency(request.taskId, request.idempotencyKey);
@@ -501,9 +558,55 @@ export class DeviceCapabilityBroker {
     const approval = capability.sideEffect !== "read_only"
       ? this.requireApproval(request, snapshot.connectionRevision, requestDigest, now) : undefined;
     if (approval) {
-      if (task.policyRevision && task.policyRevision !== this.policyRevision) {
-        throw new DeviceBrokerError("target_changed", "device task policy has changed");
+      if (task.policyRevision && task.policyRevision !== this.policyRevision) throw new DeviceBrokerError("target_changed", "device task policy has changed");
+      if (options.isApprovalPrincipalCurrent?.() === false) throw new DeviceBrokerError("permission_denied", "device approval authority has ended");
+    }
+    const plan = request.recoveryPlan;
+    const requiresRecovery = capability.requiresRecovery || binding.adapter.manifest.capabilities.some(
+      item => item.id === capability.id && item.requiresRecovery,
+    );
+    if (requiresRecovery && !plan) {
+      throw new DeviceBrokerError("permission_denied", "device action requires an approved recovery path");
+    }
+    if (plan) {
+      if (!approval || plan.routeRevision === snapshot.connectionRevision || Date.parse(plan.verifyBy) <= Date.parse(now)) {
+        throw new DeviceBrokerError("permission_denied", "device action requires a separate current recovery route");
       }
+      if (!binding.adapter.verifyRecoveryPath) {
+        throw new DeviceBrokerError("unsupported_capability", "the adapter cannot verify an alternate recovery route");
+      }
+      const reader = this.requireReconciliationReader(binding);
+      this.taskAccessGrant(task, profile.device.id, reader);
+      const baseline = this.store.getObservation(task.id, plan.baselineObservationId);
+      if (!baseline || baseline.subjectId !== profile.device.id || !isCurrentDeviceObservation(baseline, now)
+        || !this.store.listAttempts(task.id).some(record => record.attempt.status === "completed"
+          && record.attempt.targetDeviceId === profile.device.id && record.attempt.ownerId === task.ownerId
+          && record.request.capabilitySnapshotId === snapshot.snapshotId
+          && record.request.capabilityId === reader.id && record.attempt.receipt?.observationIds.includes(baseline.id))) {
+        throw new DeviceBrokerError("permission_denied", "device action requires a fresh baseline from its verification capability");
+      }
+      if (!recovery) {
+        const leaseId = `device_recovery_${randomUUID()}`;
+        if (!this.store.acquireTargetLease(profile.device.id, task.id, task.ownerId, now, this.leaseMs, leaseId)) {
+          throw new DeviceBrokerError("target_busy", "device target is leased by another task");
+        }
+        return {
+          kind: "verify_recovery", ...binding, plan, baseline, leaseId, requestDigest, taskId: task.id,
+          stopRevision: dispatchStop.revision, grantRevision: accessGrant?.revision,
+        };
+      }
+      const { check } = recovery;
+      if (check.requestDigest !== requestDigest || check.adapter !== binding.adapter
+        || check.profile.profileRevision !== profile.profileRevision
+        || canonicalJson(check.profile.connectionRefs) !== canonicalJson(profile.connectionRefs)
+        || check.stopRevision !== dispatchStop.revision || check.grantRevision !== accessGrant?.revision) {
+        throw new DeviceBrokerError("target_changed", "device authority changed while checking the recovery path");
+      }
+      if (!this.store.releaseTargetLease(profile.device.id, task.id, check.leaseId)) {
+        throw new DeviceBrokerError("target_busy", "the recovery check no longer holds the target lease");
+      }
+    } else if (recovery) {
+      throw new DeviceBrokerError("target_changed", "device action changed while checking the recovery path");
     }
 
     const approvalPrincipal = approval ? options.approvalPrincipal : undefined;
@@ -525,6 +628,7 @@ export class DeviceCapabilityBroker {
       adapterBinding: { adapterId: snapshot.adapterId, adapterVersion: snapshot.adapterVersion, profileRevision: profile.profileRevision },
       ...(planningNode ? { planningNode } : {}),
       ...(approval ? { approvalId: approval.approvalId } : {}),
+      ...(recovery ? { recoveryPathVerifiedAt: recovery.checkedAt } : {}),
       status: "prepared",
     };
     if (!this.store.acquireTargetLease(profile.device.id, task.id, task.ownerId, now, this.leaseMs, attempt.attemptId)) {
@@ -535,6 +639,32 @@ export class DeviceCapabilityBroker {
     this.store.transitionTask(task.id, "executing", { currentActionId: request.actionId }, now);
     const dispatched = this.store.updateAttempt(attempt.attemptId, { status: "dispatched" }, now);
     return { kind: "dispatch", attempt: dispatched.attempt, ...binding };
+  }
+
+  private async verifyRecoveryPath(check: DeviceRecoveryCheck, callerSignal?: AbortSignal): Promise<void> {
+    const deadline = recoveryTimeout(Math.min(
+      check.capability.timeoutMs, Date.parse(check.plan.verifyBy) - Date.parse(this.now()),
+    ));
+    const signal = callerSignal ? AbortSignal.any([deadline, callerSignal]) : deadline;
+    let resolveAborted!: (value: boolean) => void;
+    const aborted = new Promise<boolean>(resolve => { resolveAborted = resolve; });
+    const onAbort = () => resolveAborted(false);
+    signal.addEventListener("abort", onAbort, { once: true });
+    let verified = false;
+    try {
+      signal.throwIfAborted();
+      const checkRoute = check.adapter.verifyRecoveryPath?.({
+        profile: check.profile, capability: check.capability, plan: check.plan, baseline: check.baseline, signal,
+      });
+      if (checkRoute) verified = await Promise.race([checkRoute, aborted]) === true;
+    } catch {
+      // Adapter errors can contain private endpoint information.
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+    if (!verified || signal.aborted) {
+      throw new DeviceBrokerError("permission_denied", "the alternate recovery route could not be verified");
+    }
   }
 
   private resolveCapability(request: DeviceActionRequestV1, allowExpired = false): DeviceCapabilityBinding {
@@ -749,7 +879,12 @@ function isApprovalForRequest(
     && approval.capabilitySnapshotId === request.capabilitySnapshotId
     && approval.connectionRevision === connectionRevision
     && approval.policyRevision === policyRevision
-    && approval.normalizedInputDigest === requestDigest;
+    && approval.normalizedInputDigest === requestDigest
+    && (request.recoveryPlan === undefined || canonicalJson(approval.recoveryScope) === canonicalJson(request.recoveryPlan));
+}
+
+function recoveryTimeout(remainingMs: number): AbortSignal {
+  return remainingMs <= 0 ? AbortSignal.abort() : AbortSignal.timeout(Math.min(remainingMs, 2_147_483_647));
 }
 
 function uncertainActionResult(actionId: string, now: string, error: unknown): DeviceActionResultV1 {
@@ -776,6 +911,7 @@ export function digestRequest(request: DeviceActionRequestV1): string {
     capabilitySnapshotId: request.capabilitySnapshotId,
     normalizedInput: request.normalizedInput,
     expectedVerification: request.expectedVerification ?? null,
+    ...(request.recoveryPlan ? { recoveryPlan: request.recoveryPlan } : {}),
   })).digest("hex");
 }
 

@@ -14,6 +14,7 @@ import {
   type DeviceCapabilitySnapshotV1,
   type DeviceObservationV1,
   type DeviceProfileV1,
+  type DeviceRecoveryPlanV1,
   type DeviceTaskAttemptV1,
   type DeviceTaskStatusV1,
   type DeviceTaskV1,
@@ -26,12 +27,20 @@ export interface MobileDeviceExecutionResult {
   readonly observations?: readonly DeviceObservationV1[];
 }
 
+interface MobileDeviceVerificationEvidence {
+  readonly verification: DeviceVerificationResultV1;
+  readonly observations: readonly DeviceObservationV1[];
+}
+
 export interface MobileDeviceTransport {
   readonly deviceId: string;
   readonly connectionRevision: string;
   readonly permissions: readonly string[];
   execute(input: { readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<MobileDeviceExecutionResult>;
-  verify?(input: { readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1; readonly signal?: AbortSignal }): Promise<DeviceVerificationResultV1>;
+  verify?(input: { readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1; readonly signal?: AbortSignal }): Promise<DeviceVerificationResultV1 | MobileDeviceVerificationEvidence>;
+  verifyRecoveryPath?(input: {
+    readonly plan: DeviceRecoveryPlanV1; readonly baseline: DeviceObservationV1; readonly signal: AbortSignal;
+  }): Promise<boolean>;
 }
 
 export interface MobileDeviceJournal {
@@ -134,7 +143,9 @@ export class MobileDeviceExecution {
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
-    const deadline = setTimeout(abort, capability.timeoutMs);
+    const verifyBy = request.recoveryPlan && Date.parse(request.recoveryPlan.verifyBy);
+    const timeoutMs = verifyBy === undefined ? capability.timeoutMs : Math.min(capability.timeoutMs, verifyBy - Date.parse(this.#now()));
+    const deadline = setTimeout(abort, Math.max(0, timeoutMs));
     try {
       return await this.executeOwned(input, capability, needsApproval, controller.signal);
     } finally {
@@ -169,8 +180,10 @@ export class MobileDeviceExecution {
     }
     const approval = input.request.approval ?? input.approval;
     const request = approval ? { ...input.request, approval } : input.request;
+    const plan = request.recoveryPlan;
+    const recoveryExpired = () => plan !== undefined && Date.parse(plan.verifyBy) <= Date.parse(this.#now());
     const assertDispatchAllowed = () => {
-      if (signal.aborted || (needsApproval && !this.#foreground)) {
+      if (signal.aborted || recoveryExpired() || (needsApproval && !this.#foreground)) {
         throw new MobileDeviceExecutionError("permission_denied", "device operation authorization has ended");
       }
       if (["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus)
@@ -192,6 +205,40 @@ export class MobileDeviceExecution {
     };
     assertDispatchAllowed();
 
+    if (capability.requiresRecovery && !plan) {
+      throw new MobileDeviceExecutionError("permission_denied", "device action requires an approved recovery path");
+    }
+    let recoveryPathVerifiedAt: string | undefined;
+    if (plan) {
+      if (capability.sideEffect === "read_only" || plan.routeRevision === snapshot.connectionRevision) {
+        throw new MobileDeviceExecutionError("permission_denied", "device action requires a separate current recovery route");
+      }
+      const reader = snapshot.capabilities.find(item => item.id === capability.verificationCapabilityId);
+      if (!transport.verifyRecoveryPath || !transport.verify || reader?.sideEffect !== "read_only" || reader.approvalClass !== "allow"
+        || !reader.requiredPermissions.every(permission => transport.permissions.includes(permission))) {
+        throw new MobileDeviceExecutionError("unsupported_capability", "the mobile transport cannot verify an alternate recovery route");
+      }
+      const baseline = (await this.#journal.listObservations(task.id)).find(observation => observation.id === plan.baselineObservationId);
+      if (!baseline || !isCurrentTargetObservation(baseline, request.targetDeviceId, this.#now()) || !attempts.some(record => record.attempt.status === "completed"
+        && record.attempt.targetDeviceId === request.targetDeviceId && record.attempt.ownerId === task.ownerId
+        && record.request.capabilitySnapshotId === snapshot.snapshotId && record.request.capabilityId === reader.id
+        && record.attempt.receipt?.observationIds.includes(baseline.id))) {
+        throw new MobileDeviceExecutionError("permission_denied", "device action requires a fresh baseline from its verification capability");
+      }
+      assertDispatchAllowed();
+      let verified = false;
+      try {
+        verified = await transport.verifyRecoveryPath({ plan, baseline, signal }) === true;
+      } catch {
+        // The transport can report private endpoint information.
+      }
+      assertDispatchAllowed();
+      if (!verified || !isCurrentTargetObservation(baseline, request.targetDeviceId, this.#now())) {
+        throw new MobileDeviceExecutionError("permission_denied", "the alternate recovery route could not be verified");
+      }
+      recoveryPathVerifiedAt = this.#now();
+    }
+
     const attempt: DeviceTaskAttemptV1 = {
       attemptId: `${task.id}:${request.actionId}`,
       taskId: task.id,
@@ -203,6 +250,7 @@ export class MobileDeviceExecution {
       connectionRevision: snapshot.connectionRevision,
       requestDigest,
       ...(request.approvalId ? { approvalId: request.approvalId } : {}),
+      ...(recoveryPathVerifiedAt ? { recoveryPathVerifiedAt } : {}),
       status: "dispatched",
     };
     const record: MobileAttemptRecord = { attempt, request, requestDigest };
@@ -241,7 +289,8 @@ export class MobileDeviceExecution {
       outcome = signal.aborted || (capability.sideEffect !== "read_only" && verification.status === "not_evaluable")
         ? "unknown" : verification.status === "verified" ? "succeeded" : "failed";
     }
-    if (signal.aborted && received.attempt.status !== "unknown") {
+    if ((signal.aborted || recoveryExpired() || (plan && snapshot.connectionRevision !== transport.connectionRevision))
+      && received.attempt.status !== "unknown") {
       received = { ...received, attempt: { ...received.attempt, status: "unknown" } };
       await this.#journal.saveAttempt(received);
       outcome = "unknown";
@@ -306,12 +355,30 @@ export class MobileDeviceExecution {
 
   private async readBack(input: MobileDeviceActionInput, request: DeviceActionRequestV1, action: DeviceActionResultV1, signal: AbortSignal): Promise<DeviceVerificationResultV1> {
     if (input.transport.verify && !signal.aborted) {
+      const startedAt = Date.parse(this.#now());
       try {
         const result = await input.transport.verify({ request, action, signal });
-        if (isDeviceVerificationResultV1(result) && result.actionId === request.actionId
+        const evidence = result && "verification" in result ? result : undefined;
+        const verification = evidence?.verification ?? result;
+        if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId
           && (request.expectedVerification === undefined
-            || encodeBase64Url(canonicalJsonBytes(result.rule)) === encodeBase64Url(canonicalJsonBytes(request.expectedVerification)))) {
-          return result;
+            || encodeBase64Url(canonicalJsonBytes(verification.rule)) === encodeBase64Url(canonicalJsonBytes(request.expectedVerification)))) {
+          if (!request.recoveryPlan || verification.status === "not_evaluable") return verification;
+          const now = this.#now();
+          const checkedAt = Date.parse(verification.checkedAt);
+          const observations = evidence?.observations;
+          if (!signal.aborted && checkedAt >= startedAt && checkedAt <= Date.parse(now)
+            && Array.isArray(observations) && observations.length > 0
+            && observations.every(observation => isDeviceObservationV1(observation)
+              && verification.observationIds.includes(observation.id)
+              && Date.parse(observation.observedAt) >= startedAt && Date.parse(observation.observedAt) <= checkedAt
+              && isCurrentTargetObservation(observation, request.targetDeviceId, now))) {
+            const ids = new Set(observations.map(observation => observation.id));
+            if (ids.size === observations.length && verification.observationIds.every(id => ids.has(id))) {
+              for (const observation of observations) await this.#journal.saveObservation(request.taskId, observation);
+              return verification;
+            }
+          }
         }
       } catch {
         // The action receipt remains available when verification cannot finish.
@@ -324,6 +391,12 @@ export class MobileDeviceExecution {
   }
 }
 
+function isCurrentTargetObservation(observation: DeviceObservationV1, targetDeviceId: string, now: string): boolean {
+  return observation.subjectId === targetDeviceId && observation.redactionClass === "public"
+    && (observation.quality === "good" || observation.quality === "degraded") && observation.provenance.includes(targetDeviceId)
+    && Date.parse(observation.observedAt) <= Date.parse(now) && Date.parse(observation.freshnessUntil) > Date.parse(now);
+}
+
 export function digestDeviceRequest(request: DeviceActionRequestV1): string {
   return encodeBase64Url(sha256(canonicalJsonBytes({
     taskId: request.taskId,
@@ -334,6 +407,7 @@ export function digestDeviceRequest(request: DeviceActionRequestV1): string {
     capabilitySnapshotId: request.capabilitySnapshotId,
     normalizedInput: request.normalizedInput,
     expectedVerification: request.expectedVerification ?? null,
+    ...(request.recoveryPlan ? { recoveryPlan: request.recoveryPlan } : {}),
   })));
 }
 
@@ -341,7 +415,9 @@ function assertApproval(request: DeviceActionRequestV1, approval: DeviceApproval
   if (!isDeviceApprovalBindingV1(approval) || approval.approvalId !== request.approvalId || approval.taskId !== request.taskId || approval.actionId !== request.actionId
     || approval.targetDeviceId !== request.targetDeviceId || approval.capabilitySnapshotId !== request.capabilitySnapshotId
     || approval.connectionRevision !== connectionRevision || approval.policyRevision !== policyRevision
-    || approval.normalizedInputDigest !== requestDigest || Date.parse(approval.expiresAt) <= Date.parse(now)) {
+    || approval.normalizedInputDigest !== requestDigest || Date.parse(approval.expiresAt) <= Date.parse(now)
+    || (request.recoveryPlan !== undefined && (approval.recoveryScope === undefined
+      || encodeBase64Url(canonicalJsonBytes(approval.recoveryScope)) !== encodeBase64Url(canonicalJsonBytes(request.recoveryPlan))))) {
     throw new MobileDeviceExecutionError("permission_denied", "device action lacks an exact current approval");
   }
 }

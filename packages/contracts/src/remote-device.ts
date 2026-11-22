@@ -2,6 +2,7 @@ import type {
   CapabilitySideEffectV1,
   DeviceApprovalBindingV1,
   DeviceKindV1,
+  DeviceRecoveryPlanV1,
   DeviceTaskStatusV1,
   JsonValue,
 } from "./device.js";
@@ -10,6 +11,7 @@ import type { DeviceEventEnvelopeV1 } from "./device-fabric.js";
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1 = "ling.device-tasks.v1";
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 = "ling.device-tasks.v2";
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3 = "ling.device-tasks.v3";
+export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 = "ling.device-tasks.v4";
 export const REMOTE_DEVICE_RECENT_TASK_LIMIT_V1 = 20;
 export const REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 = 25;
 
@@ -68,6 +70,7 @@ export interface RemoteDeviceApprovalPreviewV1 {
   readonly normalizedInputDigest: string;
   readonly sideEffect: CapabilitySideEffectV1;
   readonly expectedVerification?: JsonValue;
+  readonly recoveryPlan?: DeviceRecoveryPlanV1;
 }
 
 export interface RemoteDeviceTaskSnapshotV1 {

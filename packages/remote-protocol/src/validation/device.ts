@@ -5,6 +5,7 @@ import {
   DEVICE_TASK_STATUSES_V1,
   REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1,
   REMOTE_DEVICE_RECENT_TASK_LIMIT_V1,
+  isDeviceRecoveryPlanV1,
   type DeviceEventEnvelopeV1,
   type RemoteDeviceListCommandV1,
   type RemoteDeviceListSnapshotV1,
@@ -282,7 +283,10 @@ function validateDeviceTaskSummary(value: unknown, path: string): RemoteDeviceTa
 
 function validateApprovalPreview(value: unknown, path: string): RemoteDeviceApprovalPreviewV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(record, ["actionId", "targetDeviceId", "capabilityId", "capabilitySchemaVersion", "capabilitySnapshotId", "connectionRevision", "policyRevision", "normalizedInputDigest", "sideEffect"], ["expectedVerification"], path);
+  assertStrictKeys(record, ["actionId", "targetDeviceId", "capabilityId", "capabilitySchemaVersion", "capabilitySnapshotId", "connectionRevision", "policyRevision", "normalizedInputDigest", "sideEffect"], ["expectedVerification", "recoveryPlan"], path);
+  const { recoveryPlan } = record;
+  if (recoveryPlan !== undefined && (!isDeviceRecoveryPlanV1(recoveryPlan) || recoveryPlan.routeRevision === record.connectionRevision
+    || record.sideEffect === "read_only")) return invalid(`${path}.recoveryPlan`);
   return {
     actionId: expectIdentifier(record.actionId, `${path}.actionId`),
     targetDeviceId: expectIdentifier(record.targetDeviceId, `${path}.targetDeviceId`),
@@ -294,6 +298,7 @@ function validateApprovalPreview(value: unknown, path: string): RemoteDeviceAppr
     normalizedInputDigest: expectIdentifier(record.normalizedInputDigest, `${path}.normalizedInputDigest`),
     sideEffect: expectEnum(record.sideEffect, ["read_only", "reversible", "mutating", "irreversible", "critical"] as const, `${path}.sideEffect`),
     ...(record.expectedVerification === undefined ? {} : { expectedVerification: validateJsonValue(record.expectedVerification, `${path}.expectedVerification`) }),
+    ...(recoveryPlan === undefined ? {} : { recoveryPlan }),
   };
 }
 

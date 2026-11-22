@@ -19,7 +19,7 @@ export interface RemoteDeviceFacade {
   listDevices(workspaceId: string): RemoteDeviceListSnapshotV1;
   taskSnapshot(input: RemoteDeviceTaskStatusCommandV1): RemoteDeviceTaskSnapshotV1;
   taskJournal(input: RemoteDeviceTaskJournalCommandV1): RemoteDeviceTaskJournalV1;
-  approveTask(input: RemoteDeviceTaskApproveCommandV1, principal?: DeviceApprovalPrincipalV1): Promise<RemoteDeviceTaskSnapshotV1>;
+  approveTask(input: RemoteDeviceTaskApproveCommandV1, principal?: DeviceApprovalPrincipalV1, isApprovalPrincipalCurrent?: () => boolean): Promise<RemoteDeviceTaskSnapshotV1>;
   revokeTask(input: RemoteDeviceTaskRevokeCommandV1): RemoteDeviceTaskSnapshotV1;
   reconcileTask(input: RemoteDeviceTaskReconcileCommandV1): Promise<{
     readonly status: "verified" | "unresolved";
@@ -81,7 +81,7 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
       }
       return journal;
     },
-    async approveTask(input, principal) {
+    async approveTask(input, principal, isApprovalPrincipalCurrent) {
       requireDaemonTask(options.store, input.taskId, input.workspaceId);
       if (options.approve) {
         await options.approve(input, principal);
@@ -91,7 +91,7 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
         await options.broker.execute(
           { ...proposal.request, approvalId: input.approval.approvalId, approval: input.approval },
           undefined,
-          { requireCurrentProposal: true, ...(principal ? { approvalPrincipal: principal } : {}) },
+          { requireCurrentProposal: true, approvalPrincipal: principal, isApprovalPrincipalCurrent },
         );
       } else {
         throw new RemoteAccessError("pc_unavailable", "Device approval executor is not attached.", true);
@@ -149,13 +149,13 @@ function snapshotForTask(
       ...(task.lastVerificationId ? { lastVerificationId: task.lastVerificationId } : {}),
       updatedAt: task.updatedAt,
       attemptIds: store.listAttempts(task.id).map(record => record.attempt.attemptId),
-      ...pendingApprovalPreview(store, task),
+      ...pendingApprovalPreview(store, task, generatedAt),
       ...(pendingReconciliation ? { pendingReconciliation } : {}),
     },
   };
 }
 
-function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: NonNullable<ReturnType<SqliteDeviceSupportStore["getTask"]>>): { readonly pendingApproval?: import("@ling-stack/contracts").RemoteDeviceApprovalPreviewV1 } {
+function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: DeviceTaskV1, now: string): { readonly pendingApproval?: import("@ling-stack/contracts").RemoteDeviceApprovalPreviewV1 } {
   if (task.status !== "awaiting_approval") return {};
   const proposal = store.getActionProposal(task.id);
   if (!proposal) return {};
@@ -163,6 +163,10 @@ function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: NonNullab
   if (snapshot?.snapshotId !== proposal.request.capabilitySnapshotId) return {};
   const capability = snapshot?.capabilities.find(item => item.id === proposal.request.capabilityId);
   if (!capability || capability.sideEffect === "read_only") return {};
+  const plan = proposal.request.recoveryPlan;
+  if (capability.requiresRecovery && !plan) return {};
+  if (plan && (plan.routeRevision === snapshot.connectionRevision || Date.parse(plan.verifyBy) <= Date.parse(now)
+    || !store.hasPublicObservation(task.id, plan.baselineObservationId))) return {};
   return {
     pendingApproval: {
       actionId: proposal.request.actionId,
@@ -175,6 +179,7 @@ function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: NonNullab
       normalizedInputDigest: proposal.requestDigest,
       sideEffect: capability.sideEffect,
       ...(proposal.request.expectedVerification === undefined ? {} : { expectedVerification: proposal.request.expectedVerification }),
+      ...(plan ? { recoveryPlan: plan } : {}),
     },
   };
 }

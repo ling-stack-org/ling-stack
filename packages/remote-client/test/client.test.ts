@@ -7,6 +7,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   type RemoteAuthProofV1,
   type RemoteCapabilityV1,
   type RemoteClientFrameV1,
@@ -119,6 +120,7 @@ function createHarness() {
         webSocketFactory: (url, subprotocol) => {
           assert.equal(url, "wss://ling-pc.example.ts.net/v1/session");
           assert.deepEqual(subprotocol, [
+            REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
             REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
           ]);
           const socket = new FakeSocket();
@@ -246,6 +248,7 @@ test("device approval and revoke commands bind the current preview and paired se
     actionId: "action-1", targetDeviceId: "pc-1", capabilityId: "pc.repair.network", capabilitySchemaVersion: "1.0",
     capabilitySnapshotId: "snapshot-1", connectionRevision: "connection-1", policyRevision: "device-policy-v1",
     normalizedInputDigest: "digest-1", sideEffect: "reversible",
+    recoveryPlan: { kind: "alternate_route", routeRevision: "usb-1", baselineObservationId: "network-baseline", verifyBy: "2026-07-31T10:04:00.000Z" },
   } as const;
   await assert.rejects(() => client.approveDeviceTask("task-1", preview), /remote_device_approval_changed/);
   socket.message("device.task.snapshot", {
@@ -264,7 +267,8 @@ test("device approval and revoke commands bind the current preview and paired se
   assert.equal(approvalFrame.payload.taskId, "task-1");
   assert.equal(approvalFrame.payload.approval.actionId, preview.actionId);
   assert.equal(approvalFrame.payload.approval.normalizedInputDigest, preview.normalizedInputDigest);
-  assert.equal(approvalFrame.payload.approval.expiresAt, "2026-07-31T10:05:00.000Z");
+  assert.equal(approvalFrame.payload.approval.expiresAt, preview.recoveryPlan.verifyBy);
+  assert.deepEqual(approvalFrame.payload.approval.recoveryScope, preview.recoveryPlan);
   socket.message("command.completed", {
     commandId: approved.commandId, commandType: "device.task.approve",
     result: { kind: "device_task_approved", taskId: "task-1" }, completedAt: now,

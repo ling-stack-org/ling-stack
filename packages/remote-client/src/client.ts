@@ -279,13 +279,17 @@ export class RemoteSessionClient {
       authority.assertCurrent();
       const task = this.stateValue.deviceTask?.task;
       if (!this.stateValue.deviceTaskCurrent || task?.taskId !== taskId || task.status !== "awaiting_approval"
-        || task.pendingApproval !== preview) {
+        || task.pendingApproval !== preview
+        || (preview.recoveryPlan && Date.parse(preview.recoveryPlan.verifyBy) <= Date.parse(this.options.clock.now()))) {
         throw new Error("remote_device_approval_changed");
       }
     };
     assertApprovalCurrent();
     const approvalId = await this.options.entropy.randomId("device_approval");
-    const expiresAt = new Date(Date.parse(this.options.clock.now()) + 5 * 60_000).toISOString();
+    const expiresAt = new Date(Math.min(
+      Date.parse(this.options.clock.now()) + 5 * 60_000,
+      preview.recoveryPlan ? Date.parse(preview.recoveryPlan.verifyBy) : Number.POSITIVE_INFINITY,
+    )).toISOString();
     const approval: DeviceApprovalBindingV1 = {
       approvalId,
       taskId,
@@ -296,6 +300,7 @@ export class RemoteSessionClient {
       policyRevision: preview.policyRevision,
       normalizedInputDigest: preview.normalizedInputDigest,
       expiresAt,
+      ...(preview.recoveryPlan ? { recoveryScope: preview.recoveryPlan } : {}),
     };
     return await this.sendCommand("device.task.approve", {
       commandId: await this.options.entropy.randomId("device_task_approve"),

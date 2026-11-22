@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 
+import type { DeviceActionRequestV1, DeviceCapabilitySnapshotV1, DeviceObservationV1, DeviceProfileV1, DeviceTaskV1 } from "@ling-stack/contracts";
+import { digestDeviceRequest, MobileDeviceExecution, type MobileDeviceTransport } from "../src/device/execution.ts";
 import type { HomeAssistantFetch } from "../src/device/home-assistant.ts";
-import type { MobileStorageLike } from "../src/device/journal.ts";
+import { createAsyncStorageMobileDeviceJournal, type MobileStorageLike } from "../src/device/journal.ts";
 import { createStandaloneDeviceRuntime } from "../src/device/standalone-runtime.ts";
 
 class MemoryStorage implements MobileStorageLike {
@@ -25,6 +27,89 @@ class MemoryStorage implements MobileStorageLike {
 const time = "2026-11-21T10:00:00.000Z";
 const options = { randomId: async (prefix: string) => `${prefix}_${randomUUID()}`, now: () => time };
 const target = { origin: "https://ha.fixture.example", token: "fixture-credential", entityId: "light.kitchen" };
+
+test("a phone-owned write checks its alternate route and journals a fresh target readback", async t => {
+  const profile: DeviceProfileV1 = {
+    device: { id: "fixture-board", ownerScope: "owner", displayName: "Fixture board", kind: "hardware", lifecycleStatus: "healthy", profileRevision: "1" },
+    adapterId: "fixture-ble", adapterVersion: "1", transports: ["ble"], connectionRefs: ["primary"],
+    transportDeployments: [{ transport: "ble", mode: "none", pairing: "os_permission", removal: "disconnect_only" }],
+    profileRevision: "1", source: "adapter",
+  };
+  const deviceId = profile.device.id;
+  const read = {
+    id: "fixture.read", schemaVersion: "1", semanticVerb: "inspect.connectivity", inputSchema: {}, outputSchema: {},
+    sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["ble"], prerequisites: [],
+    timeoutMs: 5_000, responseBytesLimit: 1_024, idempotency: "request", supportedDeviceKinds: ["hardware"], supportedTransports: ["ble"],
+  } as const;
+  const write = { ...read, id: "fixture.write", sideEffect: "reversible", approvalClass: "ask", verificationCapabilityId: read.id, requiresRecovery: true } as const;
+  const expiresAt = "2026-11-21T10:00:20.000Z";
+  const snapshot: DeviceCapabilitySnapshotV1 = {
+    snapshotId: "snapshot", deviceId, adapterId: profile.adapterId, adapterVersion: profile.adapterVersion, contractMajor: 1,
+    connectionRevision: "primary", capabilities: [read, write], observedAt: time, freshnessUntil: expiresAt,
+  };
+  const task: DeviceTaskV1 = {
+    id: "task", ownerKind: "mobile", ownerId: "phone", targetDeviceIds: [deviceId], status: "planning",
+    capabilitySnapshotIds: [snapshot.snapshotId], createdAt: time, updatedAt: time,
+  };
+  const baseline: DeviceObservationV1 = {
+    id: "baseline", subjectId: deviceId, source: "ble", value: { online: false }, observedAt: time,
+    receivedAt: time, freshnessUntil: expiresAt, provenance: [deviceId], quality: "good", redactionClass: "public",
+  };
+  const readRequest: DeviceActionRequestV1 = {
+    taskId: task.id, actionId: "read", targetDeviceId: deviceId, capabilityId: read.id, capabilitySchemaVersion: "1",
+    capabilitySnapshotId: snapshot.snapshotId, normalizedInput: {}, idempotencyKey: "read",
+  };
+  const recoveryPlan = { kind: "alternate_route", routeRevision: "usb-fixture", baselineObservationId: baseline.id, verifyBy: expiresAt } as const;
+  const rule = { online: true };
+  const proposal = { ...readRequest, actionId: "write", capabilityId: write.id, idempotencyKey: "write", expectedVerification: rule, recoveryPlan };
+  const approval = {
+    approvalId: "approval", taskId: task.id, actionId: proposal.actionId, targetDeviceId: deviceId,
+    capabilitySnapshotId: snapshot.snapshotId, connectionRevision: snapshot.connectionRevision, policyRevision: "device-policy-v1",
+    normalizedInputDigest: digestDeviceRequest(proposal), expiresAt, recoveryScope: recoveryPlan,
+  };
+  for (const sameTarget of [false, true]) {
+    await t.test(sameTarget ? "accepts fresh evidence for this device" : "keeps a foreign readback unresolved", async () => {
+      const storage = new MemoryStorage();
+      const journal = createAsyncStorageMobileDeviceJournal(storage, task.ownerId);
+      const execution = new MobileDeviceExecution({ journal, ownerId: task.ownerId, now: options.now });
+      let writes = 0;
+      let probes = 0;
+      const transport: MobileDeviceTransport = {
+        deviceId, connectionRevision: snapshot.connectionRevision, permissions: ["ble"],
+        async execute({ request }) {
+          const reading = request.capabilityId === read.id;
+          if (!reading) writes += 1;
+          return {
+            action: { actionId: request.actionId, status: "completed", observationIds: reading ? [baseline.id] : [], startedAt: time },
+            ...(reading ? { observations: [baseline] } : {}),
+          };
+        },
+        async verifyRecoveryPath(input) {
+          probes += 1;
+          return input.plan.routeRevision === recoveryPlan.routeRevision && input.baseline.subjectId === deviceId;
+        },
+        async verify({ request }) {
+          return {
+            verification: { actionId: request.actionId, status: "verified", rule, observationIds: ["after"], checkedAt: time },
+            observations: [{ ...baseline, id: "after", subjectId: sameTarget ? deviceId : "other-device", value: rule }],
+          };
+        },
+      };
+      const context = { profile, snapshot, task, transport };
+      await execution.execute({ ...context, request: readRequest, finalizeTask: false });
+      const approved = { ...proposal, approvalId: approval.approvalId, approval };
+      await assert.rejects(() => execution.execute({ ...context, request: { ...approved, approval: { ...approval, recoveryScope: undefined } } }), /exact current approval/u);
+      assert.equal(probes, 0);
+      const result = await execution.execute({ ...context, request: approved });
+      const reopened = createAsyncStorageMobileDeviceJournal(storage, task.ownerId);
+      assert.equal((await reopened.getTask(task.id))?.status, sameTarget ? "succeeded" : "unknown");
+      assert.equal(result.attempt.recoveryPathVerifiedAt, time);
+      assert.deepEqual((await reopened.listObservations(task.id)).map(item => item.id), sameTarget ? ["baseline", "after"] : ["baseline"]);
+      assert.equal(writes, 1);
+      assert.equal(probes, 1);
+    });
+  }
+});
 
 test("a phone-only Home Assistant diagnosis records scoped facts and restores them without a PC", async () => {
   const storage = new MemoryStorage();

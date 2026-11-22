@@ -108,7 +108,12 @@ export function PcDeviceTasksScreen() {
   };
 
   const confirmApproval = (taskId: string, preview: RemoteDeviceApprovalPreviewV1) => {
-    Alert.alert("批准设备操作", `${deviceName(preview.targetDeviceId)}\n${preview.capabilityId}\n由 PC 执行 · ${sideEffectLabel(preview.sideEffect)}\n${verificationLabel(preview.expectedVerification)}`, [
+    const details = [
+      deviceName(preview.targetDeviceId), preview.capabilityId, `由 PC 执行 · ${sideEffectLabel(preview.sideEffect)}`,
+      verificationLabel(preview.expectedVerification),
+      ...(preview.recoveryPlan ? [recoveryLabel(preview.recoveryPlan)] : []),
+    ];
+    Alert.alert("批准设备操作", details.join("\n"), [
       { text: "返回", style: "cancel" },
       { text: "批准执行", onPress: () => void runTaskAction(taskId, { kind: "approve", preview }) },
     ]);
@@ -191,6 +196,7 @@ export function PcDeviceTasksScreen() {
                                   <Text style={styles.note}>待确认操作 {preview.capabilityId} · {deviceName(preview.targetDeviceId)}</Text>
                                   <Text style={styles.note}>影响级别 {sideEffectLabel(preview.sideEffect)}</Text>
                                   <Text style={styles.note}>{verificationLabel(preview.expectedVerification)}</Text>
+                                  {preview.recoveryPlan ? <Text style={styles.note}>{recoveryLabel(preview.recoveryPlan)}</Text> : null}
                                 </View> : null}
                                 <View style={styles.actions}>
                                   {preview && canApprove ? <Pressable
@@ -246,6 +252,10 @@ function formatTime(value: string): string {
 
 function sideEffectLabel(value: RemoteDeviceApprovalPreviewV1["sideEffect"]): string {
   return { read_only: "只读", reversible: "可逆操作", mutating: "设备变更", irreversible: "不可逆变更", critical: "关键操作" }[value];
+}
+
+function recoveryLabel(plan: NonNullable<RemoteDeviceApprovalPreviewV1["recoveryPlan"]>): string {
+  return `执行前核对备用连接 ${plan.routeRevision} 与已记录的设备基线 · ${formatTime(plan.verifyBy)} 前完成复测`;
 }
 
 function verificationLabel(value: RemoteDeviceApprovalPreviewV1["expectedVerification"]): string {

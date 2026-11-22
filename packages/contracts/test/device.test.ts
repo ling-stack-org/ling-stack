@@ -4,9 +4,11 @@ import test from "node:test";
 import {
   DEVICE_CONTRACT_MAJOR_V1,
   isAdapterManifestV1,
+  isCapabilityDescriptorV1,
   isDeviceActionRequestV1,
   isDeviceCapabilitySnapshotV1,
   isDeviceIdentityV1,
+  isDeviceRecoveryPlanV1,
   negotiateDeviceContractMajor,
 } from "../dist/device.js";
 
@@ -131,4 +133,16 @@ test("display metadata is additive while unknown wire fields remain rejected", (
 test("device contract negotiation selects only the supported major", () => {
   assert.equal(negotiateDeviceContractMajor([1, 2], [1]), 1);
   assert.equal(negotiateDeviceContractMajor([2], [1]), undefined);
+});
+
+test("a control-path recovery plan uses an opaque route revision and a verified-write capability", () => {
+  const plan = { kind: "alternate_route", routeRevision: "usb:rev-1", baselineObservationId: "before-1", verifyBy: "2026-11-21T00:01:00.000Z" };
+  assert.equal(isDeviceRecoveryPlanV1(plan), true);
+  assert.equal(isDeviceRecoveryPlanV1({ ...plan, routeRevision: "ssh://host" }), false);
+  assert.equal(isDeviceRecoveryPlanV1({ ...plan, credentialRef: "secret" }), false);
+  assert.equal(isDeviceRecoveryPlanV1({ ...plan, verifyBy: "2026-11-21" }), false);
+  assert.equal(isCapabilityDescriptorV1({ ...capability, requiresRecovery: true }), false);
+  assert.equal(isCapabilityDescriptorV1({
+    ...capability, sideEffect: "reversible", requiresRecovery: true, verificationCapabilityId: "linux.inspect.network",
+  }), true);
 });

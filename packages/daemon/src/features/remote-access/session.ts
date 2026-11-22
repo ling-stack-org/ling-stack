@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   REMOTE_PROTOCOL_VERSION,
+  isDeviceRecoveryPlanV1,
   type RemoteAccessPolicySummaryV1,
   type RemoteClientFrameV1,
   type RemoteCommandCompletedV1,
@@ -47,6 +48,8 @@ export interface RemoteGatewaySessionOptions {
   readonly gatewayId: string;
   readonly facade: RemoteConversationFacade;
   readonly deviceFacade?: RemoteDeviceFacade;
+  readonly recoveryApprovals?: boolean;
+  readonly isPairedDeviceCurrent?: () => boolean;
   readonly policy: RemoteAccessPolicySummaryV1;
   readonly now?: () => string;
   readonly routeExpiresAt?: string;
@@ -296,10 +299,13 @@ export class RemoteGatewaySession {
         return;
       }
       case "device.task.approve": {
+        if (isDeviceRecoveryPlanV1(frame.payload.approval.recoveryScope) && !this.options.recoveryApprovals) {
+          throw new RemoteAccessError("protocol_incompatible", "The client does not support recovery approvals.");
+        }
         const snapshot = await this.requireDeviceFacade(frame.payload.workspaceId).approveTask(frame.payload, {
           kind: "paired_mobile", deviceId: this.deviceId, deviceEpoch: this.options.authenticated.device.deviceEpoch,
           sessionId: this.sessionId,
-        });
+        }, this.options.isPairedDeviceCurrent);
         this.complete(frame, { kind: "device_task_approved", taskId: frame.payload.taskId });
         this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
         this.options.onMutation?.();
@@ -324,6 +330,10 @@ export class RemoteGatewaySession {
   }
 
   private sendDeviceTaskSnapshot(snapshot: RemoteDeviceTaskSnapshotV1, requestId: string): void {
+    if (snapshot.task.pendingApproval?.recoveryPlan && !this.options.recoveryApprovals) {
+      const { pendingApproval: _preview, ...task } = snapshot.task;
+      snapshot = { ...snapshot, task };
+    }
     if (snapshot.task.pendingReconciliation && !this.options.policy.capabilities.includes("device.reconcile")) {
       const { pendingReconciliation: _preview, ...task } = snapshot.task;
       snapshot = { ...snapshot, task };

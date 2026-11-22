@@ -203,6 +203,7 @@ export interface CapabilityDescriptorV1 {
   readonly idempotency: "none" | "request" | "target_revision";
   readonly verificationCapabilityId?: string;
   readonly rollbackCapabilityId?: string;
+  readonly requiresRecovery?: true;
   readonly supportedDeviceKinds: readonly DeviceKindV1[];
   readonly supportedTransports: readonly DeviceTransportV1[];
   readonly displayMetadata?: DeviceDisplayMetadataV1;
@@ -261,7 +262,16 @@ export interface DeviceActionRequestV1 {
   readonly approvalId?: string;
   readonly approval?: DeviceApprovalBindingV1;
   readonly expectedVerification?: JsonValue;
+  readonly recoveryPlan?: DeviceRecoveryPlanV1;
 }
+
+/** Route revisions identify verified connections and carry no endpoint or credential. */
+export type DeviceRecoveryPlanV1 = {
+  readonly kind: "alternate_route";
+  readonly routeRevision: string;
+  readonly baselineObservationId: string;
+  readonly verifyBy: string;
+};
 
 export interface DeviceApprovalBindingV1 {
   readonly approvalId: string;
@@ -370,6 +380,7 @@ export interface DeviceTaskAttemptV1 {
     readonly profileRevision: string;
   };
   readonly planningNode?: DevicePlanningNodeRefV1;
+  readonly recoveryPathVerifiedAt?: string;
   readonly status: "prepared" | "dispatched" | "completed" | "failed" | "unknown" | "cancelled";
   readonly receipt?: DeviceActionResultV1;
   readonly verification?: DeviceVerificationResultV1;
@@ -477,7 +488,7 @@ export function isCapabilityDescriptorV1(value: unknown): value is CapabilityDes
     "id", "schemaVersion", "semanticVerb", "inputSchema", "outputSchema", "sideEffect",
     "approvalClass", "requiredPermissions", "prerequisites", "timeoutMs",
     "responseBytesLimit", "idempotency", "verificationCapabilityId",
-    "rollbackCapabilityId", "supportedDeviceKinds", "supportedTransports", "displayMetadata",
+    "rollbackCapabilityId", "requiresRecovery", "supportedDeviceKinds", "supportedTransports", "displayMetadata",
   ])) return false;
   return isNonEmptyString(value.id)
     && isNonEmptyString(value.schemaVersion)
@@ -493,6 +504,8 @@ export function isCapabilityDescriptorV1(value: unknown): value is CapabilityDes
     && isEnum(value.idempotency, ["none", "request", "target_revision"] as const)
     && (value.verificationCapabilityId === undefined || isNonEmptyString(value.verificationCapabilityId))
     && (value.rollbackCapabilityId === undefined || isNonEmptyString(value.rollbackCapabilityId))
+    && (value.requiresRecovery === undefined || (value.requiresRecovery === true && value.sideEffect !== "read_only"
+      && isNonEmptyString(value.verificationCapabilityId)))
     && isKindArray(value.supportedDeviceKinds)
     && isTransportArray(value.supportedTransports)
     && (value.displayMetadata === undefined || isDeviceDisplayMetadataV1(value.displayMetadata));
@@ -560,7 +573,7 @@ export function isDeviceActionRequestV1(value: unknown): value is DeviceActionRe
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "actionId", "taskId", "targetDeviceId", "capabilityId", "capabilitySchemaVersion",
     "capabilitySnapshotId", "normalizedInput", "idempotencyKey", "approvalId",
-    "approval", "expectedVerification",
+    "approval", "expectedVerification", "recoveryPlan",
   ])) return false;
   return isNonEmptyString(value.actionId)
     && isNonEmptyString(value.taskId)
@@ -573,7 +586,17 @@ export function isDeviceActionRequestV1(value: unknown): value is DeviceActionRe
     && (value.approvalId === undefined || isNonEmptyString(value.approvalId))
     && (value.approval === undefined || isDeviceApprovalBindingV1(value.approval))
     && (value.approvalId === undefined || value.approval === undefined || value.approvalId === value.approval.approvalId)
-    && (value.expectedVerification === undefined || isJsonValue(value.expectedVerification));
+    && (value.expectedVerification === undefined || isJsonValue(value.expectedVerification))
+    && (value.recoveryPlan === undefined || isDeviceRecoveryPlanV1(value.recoveryPlan));
+}
+
+export function isDeviceRecoveryPlanV1(value: unknown): value is DeviceRecoveryPlanV1 {
+  return isRecord(value) && hasOnlyKeys(value, ["kind", "routeRevision", "baselineObservationId", "verifyBy"])
+    && value.kind === "alternate_route"
+    && typeof value.routeRevision === "string" && /^[a-zA-Z0-9_.:-]{1,192}$/u.test(value.routeRevision)
+    && isNonEmptyString(value.baselineObservationId)
+    && typeof value.verifyBy === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value.verifyBy)
+    && isIsoTimestamp(value.verifyBy);
 }
 
 export function isDeviceApprovalBindingV1(value: unknown): value is DeviceApprovalBindingV1 {
@@ -645,7 +668,7 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "attemptId", "taskId", "actionId", "ownerKind", "ownerId", "targetDeviceId",
     "dispatchIntentAt", "authority", "accessGrantRevision", "connectionRevision", "requestDigest", "approvalId", "adapterBinding",
-    "planningNode", "status", "receipt", "verification",
+    "planningNode", "recoveryPathVerifiedAt", "status", "receipt", "verification",
   ])) return false;
   return isNonEmptyString(value.attemptId)
     && isNonEmptyString(value.taskId)
@@ -672,6 +695,8 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && (value.planningNode === undefined || (isRecord(value.planningNode)
       && hasOnlyKeys(value.planningNode, ["proposalId", "nodeId"])
       && isNonEmptyString(value.planningNode.proposalId) && isNonEmptyString(value.planningNode.nodeId)))
+    && (value.recoveryPathVerifiedAt === undefined || (isIsoTimestamp(value.recoveryPathVerifiedAt)
+      && isNonEmptyString(value.approvalId) && Date.parse(value.recoveryPathVerifiedAt) <= Date.parse(value.dispatchIntentAt)))
     && isEnum(value.status, ["prepared", "dispatched", "completed", "failed", "unknown", "cancelled"] as const)
     && (value.receipt === undefined || isDeviceActionResultV1(value.receipt))
     && (value.verification === undefined || isDeviceVerificationResultV1(value.verification));

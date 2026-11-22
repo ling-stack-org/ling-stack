@@ -10,6 +10,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   REMOTE_PROTOCOL_LIMITS,
   type LingServerGatewayRouteV1,
   type RemoteAuthChallengeV1,
@@ -31,6 +32,7 @@ import { RemoteAccessStateStore } from "./state-store.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
 
 const deviceTaskProtocols = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
 ];
 
@@ -378,6 +380,13 @@ export class RemoteAccessController {
       gatewayId: this.auth.identity.gatewayId,
       facade,
       deviceFacade,
+      recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+      isPairedDeviceCurrent: () => {
+        const state = this.auth.state();
+        const device = state.pairedDevice;
+        return !this.stopped && state.enabled && device?.deviceId === authenticated.device.deviceId
+          && device.deviceEpoch === authenticated.device.deviceEpoch && state.policyVersion === current.policyVersion;
+      },
       routeExpiresAt,
       policy: facade.policySummary(capabilities),
       now: this.now,
@@ -444,7 +453,8 @@ export class RemoteAccessController {
   }
 
   private capabilities(deviceTaskProtocol: string): readonly RemoteCapabilityV1[] {
-    const supportsJournal = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3;
+    const supportsJournal = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3
+      || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4;
     return [
       "conversation.read",
       ...(this.options.dispatcher ? ["conversation.send_text" as const] : []),

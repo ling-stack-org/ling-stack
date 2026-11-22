@@ -1,11 +1,9 @@
 import type {
   CapabilityDescriptorV1,
   DeviceActionRequestV1,
-  DeviceActionResultV1,
   DeviceCapabilitySnapshotV1,
   DeviceKindV1,
   DeviceProfileV1,
-  DeviceVerificationResultV1,
   DeviceTransportV1,
 } from "@ling-stack/contracts";
 import type { MobileDeviceExecutionResult, MobileDeviceTransport } from "./execution.js";
@@ -31,7 +29,8 @@ export interface MobileNativeDeviceSession {
   readonly permissions: readonly string[];
   getCapabilities(): Promise<readonly CapabilityDescriptorV1[]>;
   execute(input: { readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<MobileDeviceExecutionResult>;
-  verify?(input: { readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1; readonly signal?: AbortSignal }): Promise<DeviceVerificationResultV1>;
+  readonly verify?: MobileDeviceTransport["verify"];
+  readonly verifyRecoveryPath?: MobileDeviceTransport["verifyRecoveryPath"];
   close?(): Promise<void>;
 }
 
@@ -93,7 +92,8 @@ export class MobileNativeTransportFactory {
       permissions: session.permissions,
       getCapabilities: () => session.getCapabilities(),
       execute: input => session.execute(input),
-      ...(session.verify ? { verify: (verifyInput: { readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1; readonly signal?: AbortSignal }) => session.verify!(verifyInput) } : {}),
+      ...(session.verify ? { verify: session.verify.bind(session) } : {}),
+      ...(session.verifyRecoveryPath ? { verifyRecoveryPath: session.verifyRecoveryPath.bind(session) } : {}),
       ...(session.close ? { close: () => session.close!() } : {}),
     };
   }

@@ -13,6 +13,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   type DeviceActionRequestV1,
   type DeviceTaskV1,
   type LingServerGatewayRouteV1,
@@ -20,7 +21,7 @@ import {
   type RemoteClientCommandPayloadMapV1,
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore, type DeviceAdapter } from "@ling-stack/core";
 import {
   authChallengeSigningBytes,
   authChallengeSigningInput,
@@ -507,6 +508,68 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
   assert.deepEqual((await restartedPeer.journal(1, "restart-journal")).events, rest.events);
   assert.equal(repairCalls, 1);
   assert.equal(networkReads, 4);
+
+  const recoverySnapshot = await broker.refreshCapabilities(target.device.id, capability.connectionRevision);
+  const recoveryTask = broker.createTask(deviceTask("task-with-recovery", [target.device.id], {
+    status: "planning", capabilitySnapshotIds: [recoverySnapshot.snapshotId],
+  }));
+  const baseline = await broker.execute({
+    taskId: recoveryTask.id, actionId: "read-recovery-baseline", targetDeviceId: target.device.id,
+    capabilityId: "pc.inspect.network", capabilitySchemaVersion: "1.0", capabilitySnapshotId: recoverySnapshot.snapshotId,
+    normalizedInput: {}, idempotencyKey: "read-recovery-baseline",
+  }, undefined, { finalizeTask: false });
+  const recoveryPlan = {
+    kind: "alternate_route", routeRevision: "usb-fixture", baselineObservationId: baseline.attempt.receipt!.observationIds[0]!,
+    verifyBy: new Date(Date.parse(clock) + 20_000).toISOString(),
+  } as const;
+  const proposal: DeviceActionRequestV1 = {
+    taskId: recoveryTask.id, actionId: "recoverable-write", targetDeviceId: target.device.id,
+    capabilityId: "pc.repair.network", capabilitySchemaVersion: "1.0", capabilitySnapshotId: recoverySnapshot.snapshotId,
+    normalizedInput: { mode: "refresh_dhcp" }, expectedVerification: { connected: true }, idempotencyKey: "recoverable-write",
+    recoveryPlan,
+  };
+  broker.proposeAction(proposal);
+  let probes = 0;
+  const verifyRecoveryPath: NonNullable<DeviceAdapter["verifyRecoveryPath"]> = async ({ plan, baseline }) => {
+    probes += 1;
+    return plan.routeRevision === recoveryPlan.routeRevision && baseline.subjectId === target.device.id;
+  };
+  broker.registerAdapter(Object.assign(adapter, { verifyRecoveryPath }));
+  const scope = { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } as const;
+  const recoveryTaskScope = { workspaceId: DEFAULT_WORKSPACE_ID, taskId: recoveryTask.id };
+  const approval = {
+    ...recoveryTaskScope, approval: {
+      approvalId: "recovery-approval", taskId: recoveryTask.id, actionId: proposal.actionId, targetDeviceId: target.device.id,
+      capabilitySnapshotId: recoverySnapshot.snapshotId, connectionRevision: recoverySnapshot.connectionRevision,
+      policyRevision: broker.policyRevision, normalizedInputDigest: digestRequest(proposal),
+      expiresAt: recoveryPlan.verifyBy, recoveryScope: recoveryPlan,
+    },
+  };
+  const journalClient = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3);
+  await journalClient.send("stream.subscribe", { commandId: "subscribe-v3-recovery", scope });
+  const v3Status = await journalClient.send("device.task.status", { ...recoveryTaskScope, commandId: "status-v3-recovery" });
+  assert.equal((await waitForFrame(journalClient.frames, "device.task.snapshot", v3Status)).payload.task.pendingApproval, undefined);
+  const v3Approve = await journalClient.send("device.task.approve", { ...approval, commandId: "approve-v3-recovery" });
+  assert.equal((await waitForFrame(journalClient.frames, "command.failed", v3Approve)).payload.error.code, "protocol_incompatible");
+  assert.equal(probes, 0);
+
+  const recoveryClient = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4);
+  assert.ok(recoveryClient.ready.policy.capabilities.includes("device.journal"));
+  await recoveryClient.send("stream.subscribe", { commandId: "subscribe-v4-recovery", scope });
+  const v4Status = await recoveryClient.send("device.task.status", { ...recoveryTaskScope, commandId: "status-v4-recovery" });
+  assert.deepEqual((await waitForFrame(recoveryClient.frames, "device.task.snapshot", v4Status)).payload.task.pendingApproval?.recoveryPlan, recoveryPlan);
+  const v4Approve = await recoveryClient.send("device.task.approve", { ...approval, commandId: "approve-v4-recovery" });
+  await waitForFrame(recoveryClient.frames, "command.completed", v4Approve);
+  assert.equal((await waitForFrame(recoveryClient.frames, "device.task.snapshot", v4Approve)).payload.task.status, "succeeded");
+  assert.equal(probes, 1);
+  assert.equal(repairCalls, 2);
+  const recoveryTrace = readOwnedDeviceTaskTrace({ store: deviceStore, ...recoveryTaskScope });
+  const metadata = recoveryTrace.spans.find(span => span.lineage?.attemptId === `${recoveryTask.id}:${proposal.actionId}` && span.kind === "adapter")?.metadata;
+  assert.ok(metadata && typeof metadata === "object" && "recovery" in metadata);
+  assert.deepEqual(metadata.recovery, {
+    kind: recoveryPlan.kind, routeRevision: recoveryPlan.routeRevision, verifyBy: recoveryPlan.verifyBy, verifiedAt: clock,
+    evidenceRefs: [recoveryPlan.baselineObservationId],
+  });
 });
 
 function peerFixture() {

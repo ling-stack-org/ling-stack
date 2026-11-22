@@ -7,6 +7,7 @@ import type {
   DeviceCapabilitySnapshotV1,
   DeviceProfileV1,
   DeviceObservationV1,
+  DeviceRecoveryPlanV1,
   JsonValue,
 } from "@ling-stack/contracts";
 import {
@@ -36,6 +37,11 @@ export interface LinuxSshExecutor {
   readNetwork(signal?: AbortSignal): Promise<LinuxNetworkObservation>;
   readWifi(signal?: AbortSignal): Promise<LinuxNetworkObservation>;
   restartNetwork(input: { readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean }>;
+  verifyNetworkRecovery?(input: {
+    readonly plan: DeviceRecoveryPlanV1;
+    readonly baseline: DeviceObservationV1;
+    readonly signal: AbortSignal;
+  }): Promise<boolean>;
 }
 
 export interface LinuxSshConnection {
@@ -107,6 +113,7 @@ const linuxManifest: AdapterManifestV1 = {
       responseBytesLimit: 64 * 1024,
       idempotency: "target_revision",
       verificationCapabilityId: "linux.inspect.network",
+      requiresRecovery: true,
       supportedDeviceKinds: ["linux", "head_unit"],
       supportedTransports: ["ssh"],
       displayMetadata: { label: "Restart Linux network", category: "repair" },
@@ -172,6 +179,11 @@ export class LinuxSshAdapter implements DeviceAdapter {
     this.executorForProfile(input.profile);
     return createAdapterCapabilitySnapshot(this.manifest, input, this.#now());
   }
+
+  readonly verifyRecoveryPath: NonNullable<DeviceAdapter["verifyRecoveryPath"]> = async ({ profile, capability, plan, baseline, signal }) => {
+    const executor = this.executorForProfile(profile);
+    return capability.id === "linux.repair.network" && await executor.verifyNetworkRecovery?.({ plan, baseline, signal }) === true;
+  };
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     const startedAt = this.#now();
