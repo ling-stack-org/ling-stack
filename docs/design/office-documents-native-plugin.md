@@ -15,6 +15,7 @@ Related documents:
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Approval Policy](approval-policy.md)
 - [Desktop Release](../release/desktop.md)
+- [Office helper development and releases](https://github.com/ling-stack-org/ling-plugin-office-documents)
 
 ## Product Contract
 
@@ -204,9 +205,10 @@ information.
 
 ## Release Gates
 
-The Desktop package must include the correct helper for its platform, signed under the same
-release authority, with deterministic identity and hash evidence. A package without a valid
-helper projects file-level capability only and cannot claim live Excel support.
+Live Excel control requires the correct helper for the platform, signed under the release
+authority with deterministic identity and hash evidence. Desktop selects a verified official
+cache entry or the packaged compatibility helper. The file-level capability remains available
+when the live helper is absent. See the [Office helper release guide](https://github.com/ling-stack-org/ling-plugin-office-documents/blob/main/docs/RELEASE.md).
 
 Release acceptance requires real Microsoft Excel on supported Windows and macOS hosts. Mocked
 adapter tests are necessary but cannot close the platform gate. WPS acceptance verifies only

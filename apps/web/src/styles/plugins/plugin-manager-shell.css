@@ -565,6 +565,7 @@
 
 .plugin-marketplace-toggle {
   display: flex;
+  gap: var(--ling-space-2);
   align-items: center;
   justify-content: flex-end;
   min-width: 40px;

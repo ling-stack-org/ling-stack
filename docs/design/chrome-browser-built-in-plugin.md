@@ -3,7 +3,7 @@
 Status: active product, security, and transport contract
 Owner: Browser integration, Desktop, daemon, and release maintainers
 Last verified: 2026-08-24
-Code and test anchors: `apps/chrome-extension`, `packages/browser-host`,
+Code and test anchors: [Ling for Chrome producer repository](https://github.com/ling-stack-org/ling-plugin-chrome-browser), `packages/browser-host`,
 `packages/daemon/src/features/browser-extension`, `apps/web/src/features/plugins`, and
 `apps/desktop/tests/chrome-extension-*.mjs`
 
@@ -255,9 +255,13 @@ closes pending commands and invalidates the descriptor generation.
 
 ## Packaging And Release
 
-The deterministic extension build records extension version, extension ID, manifest SHA-256, ZIP
-SHA-256, and source commit SHA. Desktop carries the matching platform Host and manifest templates.
-The Host is part of macOS signing verification and Windows NSIS/hash verification.
+The [Ling for Chrome release guide](https://github.com/ling-stack-org/ling-plugin-chrome-browser/blob/main/docs/RELEASE.md)
+owns the extension and Native Host build and release steps. The deterministic extension build records
+extension version, extension ID, manifest SHA-256, ZIP SHA-256 and source commit SHA.
+Desktop registers the verified platform Host through the Native Messaging templates.
+During the migration, the bundled Host participates in the Desktop macOS signing and
+Windows NSIS verification. The cache-based path uses the official plugin package and preserves
+the extension ID, manifest host name and browser credentials.
 
 Normal releases rebuild the final Web Store ZIP from the exact merged `main` commit after CI passes.
 The user-authorized `0.1.2` recovery release is a narrow exception: it may be built from a clean,

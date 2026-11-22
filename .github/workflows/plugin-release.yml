@@ -1,134 +1,33 @@
-name: Plugin release artifacts
+name: Official plugin catalog
 
 on:
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: Plugin release tag
+      sources:
+        description: Stable plugin Release tags, reviewed source commits and platform asset SHA-256 digests
         required: true
         type: string
-      source_sha:
-        description: Reviewed source SHA
+      publish:
+        description: Publish the signed snapshot after verifying all Release assets
         required: true
-        type: string
+        default: false
+        type: boolean
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: official-plugin-catalog
+  cancel-in-progress: false
 
 jobs:
-  package:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - plugin: cua-driver
-            platform: darwin
-            arch: arm64
-          - plugin: cua-driver
-            platform: darwin
-            arch: x64
-          - plugin: cua-driver
-            platform: win32
-            arch: x64
-          - plugin: chrome-browser
-            platform: darwin
-            arch: arm64
-          - plugin: chrome-browser
-            platform: win32
-            arch: x64
-          - plugin: office-documents
-            platform: darwin
-            arch: arm64
-          - plugin: office-documents
-            platform: win32
-            arch: x64
-    runs-on: ${{ matrix.platform == 'darwin' && 'macos-14' || matrix.platform == 'win32' && 'windows-2025' || 'ubuntu-latest' }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ inputs.source_sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
-        with:
-          version: 10.0.0
-          run_install: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 22.22.1
-          cache: pnpm
-      - name: Validate reviewed source ref
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        shell: bash
-        run: |
-          [[ "$RELEASE_TAG" =~ ^plugins-[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          git show-ref --verify --quiet refs/remotes/origin/main
-          git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
-          [[ "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA" ]]
-      - run: corepack pnpm install --frozen-lockfile
-      - name: Build Chrome extension
-        if: matrix.plugin == 'chrome-browser'
-        run: |
-          corepack pnpm --filter @ling-stack/chrome-extension build
-          corepack pnpm --filter @ling-stack/browser-host build:native
-      - name: Build Office helper
-        if: matrix.plugin == 'office-documents'
-        run: corepack pnpm --filter @ling-stack/desktop exec node scripts/build-office-driver.mjs --platform=${{ matrix.platform }}-${{ matrix.arch }}
-      - name: Stage plugin runtime
-        if: matrix.plugin != 'cua-driver'
-        env:
-          PLUGIN_KIND: ${{ matrix.plugin }}
-          PLUGIN_PLATFORM: ${{ matrix.platform }}
-          PLUGIN_ARCH: ${{ matrix.arch }}
-        shell: bash
-        run: |
-          host_suffix=""
-          helper_path="ling-office-driver.exe"
-          if [ "$PLUGIN_PLATFORM" = "win32" ]; then host_suffix=".exe"; fi
-          if [ "$PLUGIN_PLATFORM" = "darwin" ]; then helper_path="OfficeDriver.app/Contents/MacOS/ling-office-driver"; fi
-          node scripts/plugins/stage-runtime-plugin.mjs --kind "$PLUGIN_KIND" --platform "$PLUGIN_PLATFORM" --extension apps/chrome-extension/ling-for-chrome.zip --host "packages/browser-host/dist/native/ling-browser-host${host_suffix}" --helper "apps/desktop/dist/office-driver/${PLUGIN_PLATFORM}-${PLUGIN_ARCH}/${helper_path}" --output "plugins/staged/${PLUGIN_KIND}"
-      - name: Package plugin artifact
-        env:
-          LING_PLUGIN_ARTIFACT_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_ARTIFACT_PRIVATE_KEY }}
-          PLUGIN_ROOT: ${{ matrix.plugin == 'cua-driver' && format('packages/daemon/src/features/plugins/bundled/{0}', matrix.plugin) || format('plugins/staged/{0}', matrix.plugin) }}
-          PLUGIN_PLATFORM: ${{ matrix.platform }}
-          PLUGIN_ARCH: ${{ matrix.arch }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: node scripts/plugins/package-plugin.mjs --root "$PLUGIN_ROOT" --platform "$PLUGIN_PLATFORM" --arch "$PLUGIN_ARCH" --channel stable --releaseTag "$RELEASE_TAG" --sourceSha "$SOURCE_SHA" --output plugins/dist
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: plugin-${{ matrix.plugin }}-${{ matrix.platform }}-${{ matrix.arch }}
-          path: plugins/dist/*
-
-  publish:
-    needs: package
+  assemble:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_sha }}
-          fetch-depth: 0
           persist-credentials: false
-      - name: Validate reviewed source ref
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: |
-          [[ "$RELEASE_TAG" =~ ^plugins-[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]]
-          git show-ref --verify --quiet refs/remotes/origin/main
-          git merge-base --is-ancestor "$SOURCE_SHA" refs/remotes/origin/main
-          [[ "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA" ]]
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          path: plugins/dist
-          pattern: plugin-*
-          merge-multiple: true
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
         with:
           version: 10.0.0
@@ -138,23 +37,48 @@ jobs:
           node-version: 22.22.1
           cache: pnpm
       - run: corepack pnpm install --frozen-lockfile
-      - name: Build plugin SDK
-        run: corepack pnpm --filter @ling-stack/plugin-sdk build
-      - name: Generate catalog
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
-        run: node scripts/plugins/generate-catalog.mjs --input plugins/dist --output plugins/catalog.json --releaseTag "$RELEASE_TAG" --sourceSha "$SOURCE_SHA"
-      - run: node scripts/plugins/verify-catalog-assets.mjs --input plugins/dist --catalog plugins/catalog.json
-      - name: Sign catalog
-        env:
-          LING_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_CATALOG_PRIVATE_KEY }}
-        run: node scripts/plugins/sign-catalog.mjs --input plugins/catalog.json --output plugins/catalog.sig
-      - name: Create draft release and upload plugin assets
+      - run: corepack pnpm --filter '@ling-stack/core...' -r run build:ci
+      - name: Verify released plugin assets and sign the catalog
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          SOURCE_SHA: ${{ inputs.source_sha }}
+          LING_PLUGIN_RELEASE_SOURCES: ${{ inputs.sources }}
+          LING_PLUGIN_ARTIFACT_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_ARTIFACT_PRIVATE_KEY }}
+          LING_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_CATALOG_PRIVATE_KEY }}
         run: |
-          gh release create "$RELEASE_TAG" --draft --title "Ling plugins $RELEASE_TAG" --notes "Official Ling plugin artifacts for $SOURCE_SHA"
-          gh release upload "$RELEASE_TAG" plugins/dist/*.ling-plugin.zip plugins/dist/*.ling-plugin.zip.json plugins/catalog.json plugins/catalog.sig
+          mkdir -p "$RUNNER_TEMP/catalog"
+          node scripts/plugins/collect-official-releases.mjs "$RUNNER_TEMP/catalog/catalog.json"
+          node scripts/plugins/sign-catalog.mjs --input "$RUNNER_TEMP/catalog/catalog.json" --output "$RUNNER_TEMP/catalog/catalog.sig" --official
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: official-plugin-catalog
+          path: ${{ runner.temp }}/catalog/
+          if-no-files-found: error
+
+  publish:
+    if: inputs.publish
+    needs: assemble
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: official-plugin-catalog
+          path: ${{ runner.temp }}/catalog
+      - name: Publish a single catalog snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch=official-plugin-catalog
+          publish_root="$RUNNER_TEMP/catalog-publisher"
+          git init -b "$branch" "$publish_root"
+          git -C "$publish_root" remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          gh auth setup-git
+          if [ -n "$(git -C "$publish_root" ls-remote origin "refs/heads/$branch")" ]; then
+            git -C "$publish_root" fetch --depth 1 origin "$branch"
+            git -C "$publish_root" switch -C "$branch" FETCH_HEAD
+          fi
+          cp "$RUNNER_TEMP/catalog/catalog.json" "$RUNNER_TEMP/catalog/catalog.sig" "$publish_root/"
+          git -C "$publish_root" add catalog.json catalog.sig
+          git -C "$publish_root" -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Publish official plugin catalog from $GITHUB_SHA"
+          git -C "$publish_root" push origin "HEAD:refs/heads/$branch"

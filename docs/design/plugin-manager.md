@@ -2,8 +2,11 @@
 
 ## Status
 
-Design proposal. Stage 1 slices 1-3 are implemented in the current codebase:
-catalog/read-only UI, MCP preset apply, and plugin state/health.
+The plugin manager supports product-managed capabilities, trusted local presets,
+and an official catalog for platform packages. Catalog installation and rollback
+use verified cache entries. Desktop selects the installed native runtime at
+startup. The independent producers, signing, and migration gates are documented
+in [Independent Plugin Packaging](plugin-independent-packaging.md).
 
 This document records the next plugin-management slice after the implemented internal
 registry work. It deliberately targets Codex-like internal and bundled plugin governance
@@ -78,11 +81,9 @@ resolution, third-party install APIs, and remote marketplaces stay deferred.
 - Preserve the existing internal registry and MCP server APIs.
 - Add `cua-driver` as the first high-risk trusted local preset.
 - Add Chrome as the first user-facing product-managed built-in plugin. Chrome uses an explicitly
-  installed Ling extension and contributes a logical MCP server; it does not load arbitrary plugin
-  code inside the daemon.
-- Add Office Documents as a Ling-installed built-in plugin. Its live Excel adapter ships with
-  Desktop and never requires an Excel add-in, Office task pane, Marketplace install, or Office-side
-  Ling sign-in.
+  installed Ling extension, a platform Native Host and a daemon-owned logical MCP server.
+- Use the native Excel adapter for Office Documents live control. The Desktop host owns
+  driver requests, and the file-level tools remain available as a built-in capability.
 
 The implemented trusted-local preset remains the external fallback. Packaged macOS and
 Windows Desktop may project the same stable product id through `bundled_embedded`

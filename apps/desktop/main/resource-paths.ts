@@ -50,7 +50,7 @@ export async function resolveDesktopResourcePaths(
       access(paths.webIndexPath),
       access(paths.daemonEntryPath),
       access(paths.previewIndexPath),
-      ...(app.isPackaged ? [access(paths.browserHostPath), access(paths.imageSanitizerPath),
+      ...(app.isPackaged ? [access(paths.imageSanitizerPath),
         access(resolve(resourcesRoot, "image-sanitizer/build-metadata.json")),
         access(resolve(resourcesRoot, "image-sanitizer/THIRD_PARTY_LICENSES.txt"))] : []),
       ...(app.isPackaged && process.platform === "darwin"

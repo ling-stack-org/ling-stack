@@ -149,6 +149,10 @@ export async function runCuaDriverElectronPackageCli(
   }
   assertGovernedBuilderArgs(platform, builderArgs);
   const packageProvider = environment.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1";
+  const catalogManaged = environment.LING_CUA_DRIVER_CATALOG_MANAGED === "1";
+  if (catalogManaged && (packageProvider || environment.LING_PLUGIN_EXTERNAL_ONLY !== "1")) {
+    throw new Error("cua_driver_catalog_managed_resource_mode_invalid");
+  }
   const sourceRoot = environment.LING_CUA_DRIVER_SOURCE_BUILD_ROOT;
   if (packageProvider !== Boolean(sourceRoot)) {
     throw new Error(
@@ -163,8 +167,23 @@ export async function runCuaDriverElectronPackageCli(
   const prepared = packageProvider
     ? await prepareCuaDriverElectronPackage({ platform, sourceRoot, environment }, dependencies)
     : undefined;
+  let catalogPolicyRoot;
   let builderError;
   try {
+    let catalogAuthority;
+    if (catalogManaged) {
+      catalogPolicyRoot = await mkdtemp(join(tmpdir(), "ling-cua-driver-catalog-policy-"));
+      const authorityInput = packageAuthorityInputFromEnvironment(platform, {
+        ...environment,
+        LING_CUA_SIGNING_TIER: "production_signed",
+        LING_CUA_DISTRIBUTION_CHANNEL: "production",
+        LING_CUA_SIGNING_FIXTURE: "0",
+        LING_CUA_TEST_AUTHORITY_KIND: undefined,
+      });
+      catalogAuthority = await writeCuaDriverPackageAuthorityFiles({
+        ...authorityInput, outputRoot: catalogPolicyRoot, providerSource: "official-cache",
+      });
+    }
     const childEnvironment = {
       ...environment,
       LING_CUA_DRIVER_PACKAGE_PROVIDER: packageProvider ? "1" : "0",
@@ -182,6 +201,10 @@ export async function runCuaDriverElectronPackageCli(
             LING_CUA_SIGNING_EVIDENCE_DIR: prepared.evidenceRoot,
           }
         : {}),
+      ...(catalogAuthority ? {
+        LING_CUA_PACKAGE_RESOURCES_ROOT: catalogAuthority.outputRoot,
+        LING_CUA_PACKAGE_HOST_AUTHORITY_JSON: JSON.stringify(catalogAuthority.hostAuthority),
+      } : {}),
     };
     const runBuilder = dependencies.runBuilder ?? spawnElectronBuilder;
     const exitCode = await runBuilder({
@@ -198,6 +221,7 @@ export async function runCuaDriverElectronPackageCli(
   let cleanupError;
   try {
     await prepared?.cleanup();
+    if (catalogPolicyRoot) await rm(catalogPolicyRoot, { recursive: true, force: true });
   } catch (error) {
     cleanupError = error;
   }

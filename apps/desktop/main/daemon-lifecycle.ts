@@ -106,6 +106,7 @@ export interface DesktopDaemonLifecycleOptions {
   readonly engineSupervisorPath?: string;
   readonly imageSanitizerPath?: string;
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
+  readonly cuaDriverCatalogManaged?: boolean;
   /** Test seam for evaluating the platform-specific bundled gate. */
   readonly platform?: string;
   /** Called once when a Desktop-owned child exits outside an intentional stop. */
@@ -288,7 +289,8 @@ export class DesktopDaemonLifecycle {
           // command evidence; this only makes the bash surface available to
           // the packaged runner.
           LING_STACK_RUNTIME_UNIFIED_EXEC: "1",
-          ...(this.options.browserHostPath ? { LING_BROWSER_HOST_PATH: this.options.browserHostPath } : {}),
+          LING_BROWSER_HOST_PATH: this.options.browserHostPath,
+          LING_DESKTOP_CUA_DRIVER_CATALOG_MANAGED: this.options.cuaDriverCatalogManaged ? "1" : "0",
           LING_ENGINE_SUPERVISOR_PATH: this.options.engineSupervisorPath,
           LING_IMAGE_SANITIZER_PATH: this.options.imageSanitizerPath,
           ...(this.options.desktopBridgeToken

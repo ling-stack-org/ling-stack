@@ -5,6 +5,10 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./official-plugin-runtime": {
+      "types": "./dist/official-plugin-runtime.d.ts",
+      "default": "./dist/official-plugin-runtime.js"
+    },
     "./daemon-shutdown-observer": {
       "types": "./dist/daemon-shutdown-observer.d.ts",
       "default": "./dist/daemon-shutdown-observer.js"

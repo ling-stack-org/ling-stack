@@ -6,6 +6,7 @@ import type {
   PublicMcpServer,
   SecretResolver,
 } from "@ling-stack/core";
+import { usesHostPluginCache } from "@ling-stack/core/official-plugin-runtime";
 import { LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -61,7 +62,7 @@ import {
   listPluginSourceViews,
   toPluginPackageView,
 } from "./source-index.js";
-import { comparePluginVersions, fetchOfficialPluginCatalog, selectOfficialPluginArtifact } from "./remote-catalog.js";
+import { comparePluginVersions, fetchOfficialPluginCatalog, pluginArtifactSupportsLing, selectOfficialPluginArtifact } from "./remote-catalog.js";
 import { installRemotePluginArtifact, rollbackRemotePluginArtifact } from "./remote-package.js";
 import {
   checkInstalledPluginRuntimeDependencies,
@@ -90,6 +91,8 @@ const bundledCanonicalCuaDriverActions = new Set<NonNullable<ManagedPluginRoute[
   "disable",
   "check",
 ]);
+
+const catalogManagedCuaDriverActions = new Set(["install-remote", "check-update", "rollback"]);
 
 export async function handlePluginsCollection(
   request: IncomingMessage,
@@ -196,8 +199,11 @@ export async function handleOfficialPluginCatalog(
       ...plugin,
       artifacts: plugin.artifacts.filter((artifact) => {
         try {
-          return artifact.platform === toPluginArtifactPlatform(process.platform)
-            && artifact.arch === toPluginArtifactArchitecture(process.arch);
+          return (plugin.pluginId !== CUA_DRIVER_PLUGIN_ID
+              || !artifact.runtimeChecksumSignature || config.cuaDriver.catalogManaged)
+            && artifact.platform === toPluginArtifactPlatform(process.platform)
+            && artifact.arch === toPluginArtifactArchitecture(process.arch)
+            && pluginArtifactSupportsLing(artifact, LING_PRODUCT_VERSION);
         } catch {
           return false;
         }
@@ -318,7 +324,8 @@ export async function handlePluginItem(
       && route.action
     ) {
       assertBundledCuaDriverWorkspace(config, cwd);
-      if (!bundledCanonicalCuaDriverActions.has(route.action)) {
+      if (!bundledCanonicalCuaDriverActions.has(route.action)
+        && !(config.cuaDriver.catalogManaged && catalogManagedCuaDriverActions.has(route.action))) {
         throw new HttpError(
           409,
           "cua_driver_bundled_action_forbidden",
@@ -466,12 +473,20 @@ export async function handlePluginItem(
         arch: toPluginArtifactArchitecture(process.arch),
         channel: input.channel,
         version: input.version,
+        lingVersion: LING_PRODUCT_VERSION,
       });
+      if (route.pluginId === CUA_DRIVER_PLUGIN_ID
+        && (artifact.runtimeChecksumSignature || config.cuaDriver.catalogManaged)
+        && (!config.cuaDriver.catalogManaged || !catalogResult.signatureVerified || !artifact.runtimeChecksumSignature)) {
+        throw new HttpError(409, "cua_driver_catalog_authority_required",
+          "A catalog-managed Desktop package and signed Cua Driver runtime are required.");
+      }
       const installed = await installRemotePluginArtifact({
         paths: store.paths,
         artifact,
         catalogVersion: catalogResult.catalog.generatedAt,
         lingVersion: LING_PRODUCT_VERSION,
+        requireArtifactSignature: catalogResult.signatureVerified,
         now,
       });
       const descriptor = installed.plugin.validation.compiledDescriptor;
@@ -491,13 +506,15 @@ export async function handlePluginItem(
         catalogVersion: catalogResult.catalog.generatedAt,
         previousVersion: installed.previousVersion,
       }, now);
-      ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
-      await linkVerifiedPluginContributions({
-        store,
-        pluginPackage: installed.plugin,
-        enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
-        now,
-      });
+      if (!usesHostPluginCache(installed.cacheRef)) {
+        ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
+        await linkVerifiedPluginContributions({
+          store,
+          pluginPackage: installed.plugin,
+          enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
+          now,
+        });
+      }
       store.appendManagedPluginEvent({
         pluginId: descriptor.id,
         type: "installed",
@@ -522,6 +539,7 @@ export async function handlePluginItem(
         platform: toPluginArtifactPlatform(process.platform),
         arch: toPluginArtifactArchitecture(process.arch),
         channel: "stable",
+        lingVersion: LING_PRODUCT_VERSION,
       });
       writeJson(response, 200, {
         cwd,
@@ -538,7 +556,13 @@ export async function handlePluginItem(
 
     if (request.method === "POST" && route.action === "rollback") {
       const now = new Date().toISOString();
-      const rolledBack = await rollbackRemotePluginArtifact({ paths: store.paths, pluginId: route.pluginId, now });
+      const rolledBack = await rollbackRemotePluginArtifact({
+        paths: store.paths,
+        pluginId: route.pluginId,
+        now,
+        cacheRef: store.getManagedPluginPackage(route.pluginId)?.cacheRef,
+        lingVersion: LING_PRODUCT_VERSION,
+      });
       const descriptor = rolledBack.plugin.validation.compiledDescriptor;
       if (!descriptor) throw new HttpError(400, "plugin_package_invalid", "Previous plugin package did not produce a valid descriptor.");
       const packageRecord = store.upsertManagedPluginPackage({
@@ -556,13 +580,15 @@ export async function handlePluginItem(
         catalogVersion: rolledBack.pointer.catalogVersion,
         previousVersion: store.getManagedPluginPackage(descriptor.id)?.version,
       }, now);
-      ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
-      await linkVerifiedPluginContributions({
-        store,
-        pluginPackage: rolledBack.plugin,
-        enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
-        now,
-      });
+      if (!usesHostPluginCache(rolledBack.pointer.cacheRef)) {
+        ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
+        await linkVerifiedPluginContributions({
+          store,
+          pluginPackage: rolledBack.plugin,
+          enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
+          now,
+        });
+      }
       store.appendManagedPluginEvent({
         pluginId: descriptor.id,
         type: "package_refreshed",
@@ -962,6 +988,7 @@ async function handlePluginCheck(input: {
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
@@ -984,7 +1011,12 @@ async function handlePluginCheck(input: {
   let automaticRollback: { readonly version: string } | undefined;
   if (storedHealth.status === "failed" && input.descriptor.sourceKind === "official-remote") {
     try {
-      const rolledBack = await rollbackRemotePluginArtifact({ paths: input.store.paths, pluginId: input.pluginId, now });
+      const rolledBack = await rollbackRemotePluginArtifact({
+        paths: input.store.paths,
+        pluginId: input.pluginId,
+        now,
+        cacheRef: input.store.getManagedPluginPackage(input.pluginId)?.cacheRef,
+      });
       const rolledBackDescriptor = rolledBack.plugin.validation.compiledDescriptor;
       if (rolledBackDescriptor) {
         const enabled = input.store.getManagedPlugin(input.pluginId)?.enabled === true;
@@ -1073,6 +1105,7 @@ async function handlePluginApplyPreset(input: {
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
@@ -1250,6 +1283,7 @@ function getRequiredPluginView(input: {
   readonly includeEvents: boolean;
   readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
