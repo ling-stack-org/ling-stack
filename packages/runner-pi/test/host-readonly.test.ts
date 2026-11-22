@@ -1,26 +1,41 @@
+import type { TextContent } from "@earendil-works/pi-ai";
+import type { PiRunnerToolHandledResult } from "../dist/types.js";
+import type { PiToolBoundaryObservation, PiProviderBoundaryInventory } from "../dist/tool-boundary-observation.js";
+import { extensionAPI, type FixtureTool } from "./support/extension-fixture.ts";
 import assert from "node:assert/strict";
+import type { TranscriptContext } from "@earendil-works/pi-ai";
+import type { PiRunnerEvent, PiRunnerReadonlyToolCallRequest, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
+import type { Model } from "@earendil-works/pi-ai";
+import type { TestContext } from "node:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { PiRunnerAdapter } from "../dist/adapter.js";
 import { assertHostReadonlyToolSurface, createLingStackHostReadonlyExtension } from "../dist/extensions/host-readonly.js";
 import { createPiTaskBoundary } from "../dist/task-boundary.js";
 import { readPiCompletedBuiltinReads, readPiCompletedTools, readPiProviderBoundaryInventory,
   readPiSettledBoundaryInventory } from "../dist/tool-boundary-observation.js";
 
-const names = ["read", "grep", "find", "ls"];
-const handled = { content: [{ type: "text", text: "HOST_HANDLED_ONLY" }], details: { profile: "host_readonly_v1" } };
-function baseOptions(changes = {}) {
+const names = ["read", "grep", "find", "ls"] as const;
+const handled = { content: [{ type: "text" as const, text: "HOST_HANDLED_ONLY" }], details: { profile: "host_readonly_v1" } };
+function baseOptions(changes: Partial<PiRunnerRunOptions> = {}): PiRunnerRunOptions {
   return { cwd: process.cwd(), task: { id: "readonly", title: "Readonly", prompt: "Inspect bounded inputs." },
     provider: { provider: "fixture", model: "fixture" }, readonlyToolsProfile: "host_readonly_v1",
     onToolBefore: () => ({ allowed: true }), onReadonlyToolCall: () => handled, ...changes };
 }
-function install(changes = {}) {
-  const tools = new Map(), hooks = new Map();
+function install(changes: Partial<PiRunnerRunOptions> = {}) {
+  const registered: FixtureTool[] = [];
+  const hooks = new Map<string, (event: Record<string, unknown>) => { block?: boolean; isError?: boolean }>();
   const options = baseOptions(changes);
-  createLingStackHostReadonlyExtension(options)({ on: (event, handler) => hooks.set(event, handler), registerTool: tool => tools.set(tool.name, tool) });
+  createLingStackHostReadonlyExtension(options)(extensionAPI(registered, (event, handler) => {
+    hooks.set(event, handler as unknown as NonNullable<ReturnType<typeof hooks.get>>);
+    return () => undefined;
+  }));
+  const tools = new Map(registered.map(tool => [tool.name, tool]));
   return { tools, hooks, options };
 }
 
@@ -32,7 +47,7 @@ test("Host readonly overrides all four core definitions and advertises literal-o
     assert.equal(typeof tool.renderCall, "function");
     assert.equal(typeof tool.renderResult, "function");
   }
-  const grep = f.tools.get("grep");
+  const grep = f.tools.get("grep")!;
   assert.equal(grep.parameters.properties.literal.const, true);
   assert.ok(grep.parameters.required.includes("literal"));
   assert.match(grep.description, /regex is unsupported/i);
@@ -40,21 +55,21 @@ test("Host readonly overrides all four core definitions and advertises literal-o
 
 for (const toolName of names) {
   test(`${toolName} dispatches only the exact Host request and preserves handled error status`, async () => {
-    const requests = [], before = [];
+    const requests: PiRunnerReadonlyToolCallRequest[] = [], before: unknown[] = [];
     const f = install({ onToolBefore: request => { before.push(request); return { allowed: true }; },
       onReadonlyToolCall: request => { requests.push(request); return { ...handled, isError: true }; } });
     const input = { path: "nonexistent-no-sdk-fallback", ...(toolName === "grep" ? { pattern: "needle", literal: true } : {}),
       ...(toolName === "find" ? { pattern: "*.ts" } : {}) };
-    const result = await f.tools.get(toolName).execute("call-1", input);
+    const result = await f.tools.get(toolName)!.execute("call-1", input);
     assert.equal(requests.length, 1);
     assert.equal(before.length, 1);
     assert.equal(requests[0].toolName, toolName);
     assert.equal(requests[0].toolCallId, "call-1");
     assert.equal(requests[0].input, input);
     assert.equal(requests[0].cwd, process.cwd());
-    assert.equal(requests[0].signal.aborted, false);
-    assert.equal(result.content[0].text, "HOST_HANDLED_ONLY");
-    assert.equal(f.hooks.get("tool_result")({ ...result, toolCallId: "call-1", toolName, isError: false }).isError, true);
+    assert.equal(requests[0].signal!.aborted, false);
+    assert.equal((result.content[0] as TextContent).text, "HOST_HANDLED_ONLY");
+    assert.equal(f.hooks.get("tool_result")!({ ...result, toolCallId: "call-1", toolName, isError: false }).isError, true);
   });
 }
 
@@ -62,18 +77,18 @@ test("producer-level gate denial, cancellation and missing results never fall ba
   let calls = 0;
   const denied = install({ onToolBefore: () => ({ allowed: false, code: "fixture_denied", reason: "Blocked by Host" }),
     onReadonlyToolCall: () => { calls++; return handled; } });
-  const result = await denied.tools.get("read").execute("denied", { path: "secret" });
-  assert.equal(result.details.code, "fixture_denied");
+  const result = await denied.tools.get("read")!.execute("denied", { path: "secret" });
+  assert.equal((result.details as { code: string }).code, "fixture_denied");
   assert.equal(calls, 0);
   const aborted = new AbortController();
   aborted.abort(new Error("cancelled before dispatch"));
   const f = install({ onReadonlyToolCall: () => { calls++; return handled; } });
-  await assert.rejects(f.tools.get("read").execute("cancelled", { path: "secret" }, aborted.signal), /cancelled before dispatch/);
+  await assert.rejects(f.tools.get("read")!.execute("cancelled", { path: "secret" }, aborted.signal), /cancelled before dispatch/);
   assert.equal(calls, 0);
-  const missing = install({ onReadonlyToolCall: () => undefined });
-  await assert.rejects(missing.tools.get("find").execute("missing", { pattern: "*" }), /workflow_readonly_host_result_missing/);
+  const missing = install({ onReadonlyToolCall: () => undefined as unknown as PiRunnerToolHandledResult });
+  await assert.rejects(missing.tools.get("find")!.execute("missing", { pattern: "*" }), /workflow_readonly_host_result_missing/);
   const broken = install({ onReadonlyToolCall: () => { throw new Error("Host unavailable"); } });
-  await assert.rejects(broken.tools.get("grep").execute("broken", { pattern: "x", literal: true }), /Host unavailable/);
+  await assert.rejects(broken.tools.get("grep")!.execute("broken", { pattern: "x", literal: true }), /Host unavailable/);
 });
 
 test("profile validation rejects missing handlers, invalid profiles and builtin name impersonation", () => {
@@ -82,22 +97,24 @@ test("profile validation rejects missing handlers, invalid profiles and builtin 
     [{ onReadonlyToolCall: undefined }, "workflow_readonly_host_handler_missing"],
     [{ readonlyToolsProfile: "unverified" }, "workflow_readonly_profile_invalid"],
     [{ mcpTools: [{ registeredName: "read" }] }, "workflow_readonly_tool_name_collision"],
-  ]) assert.throws(() => assertHostReadonlyToolSurface(baseOptions(changes)), { message });
+  ]) assert.throws(() => assertHostReadonlyToolSurface(baseOptions(changes as Partial<PiRunnerRunOptions>)), { message });
   assert.doesNotThrow(() => assertHostReadonlyToolSurface(baseOptions({ readonlyToolsProfile: undefined, onToolBefore: undefined, onReadonlyToolCall: undefined })));
 });
 
 test("task boundary forwards its cancellation signal and rejects late Host results", async () => {
-  let resolveHost, request, calls = 0;
+  let resolveHost!: (result: PiRunnerToolHandledResult) => void;
+  let request!: PiRunnerReadonlyToolCallRequest;
+  let calls = 0;
   const controller = new AbortController();
   const boundary = createPiTaskBoundary(baseOptions({ signal: controller.signal, onReadonlyToolCall: next => {
     calls++; request = next; return new Promise(resolve => { resolveHost = resolve; });
   } }));
-  const promise = boundary.options.onReadonlyToolCall({ toolCallId: "late", toolName: "read", input: {}, cwd: process.cwd() });
+  const promise = boundary.options.onReadonlyToolCall!({ toolCallId: "late", toolName: "read", input: {}, cwd: process.cwd() });
   controller.abort(new Error("cancelled while waiting"));
-  assert.equal(request.signal.aborted, true);
-  resolveHost(handled);
-  await assert.rejects(promise, { name: "AbortError" });
-  await assert.rejects(boundary.options.onReadonlyToolCall({ toolCallId: "next", toolName: "ls", input: {}, cwd: process.cwd() }), { name: "AbortError" });
+  assert.equal(request!.signal!.aborted, true);
+  resolveHost!(handled);
+  await assert.rejects(promise as Promise<PiRunnerToolHandledResult>, { name: "AbortError" });
+  await assert.rejects(boundary.options.onReadonlyToolCall!({ toolCallId: "next", toolName: "ls", input: {}, cwd: process.cwd() }) as Promise<unknown>, { name: "AbortError" });
   assert.equal(calls, 1);
 });
 
@@ -105,15 +122,15 @@ test("unexpected readonly Host failure closes future model/tool admission", asyn
   let calls = 0;
   const failure = new Error("Host fence changed");
   const boundary = createPiTaskBoundary(baseOptions({ onReadonlyToolCall: () => { calls++; throw failure; } }));
-  const request = { toolCallId: "stale", toolName: "read", input: {}, cwd: process.cwd() };
-  await assert.rejects(boundary.options.onReadonlyToolCall(request), error => error === failure);
-  assert.equal(boundary.options.signal.aborted, true);
+  const request: PiRunnerReadonlyToolCallRequest = { toolCallId: "stale", toolName: "read", input: {}, cwd: process.cwd() };
+  await assert.rejects(boundary.options.onReadonlyToolCall!(request) as Promise<unknown>, error => error === failure);
+  assert.equal(boundary.options.signal!.aborted, true);
   assert.throws(boundary.assertOpen, error => error === failure);
-  await assert.rejects(boundary.options.onReadonlyToolCall(request), error => error === failure);
+  await assert.rejects(boundary.options.onReadonlyToolCall!(request) as Promise<unknown>, error => error === failure);
   assert.equal(calls, 1);
 });
 
-function response(call) {
+function response(call?: { id: string; name: string; input: unknown }) {
   const delta = call ? { tool_calls: [{ index: 0, id: call.id, type: "function",
     function: { name: call.name, arguments: JSON.stringify(call.input) } }] } : { content: "Readonly complete." };
   return new Response([
@@ -123,14 +140,14 @@ function response(call) {
 }
 
 /** Actual SDK tools/events/continuation; only this fixture's provider transport is replaced. */
-async function fixture(t, calls = [], changes = {}) {
+async function fixture(t: TestContext, calls: readonly { id: string; name: string; input: unknown }[] = [], changes: Partial<PiRunnerRunOptions> = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-host-readonly-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const requests = [], events = [], hostCalls = [], gates = [], points = [];
-  class FixtureRunner extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  const requests: TranscriptContext[] = [], events: PiRunnerEvent[] = [], hostCalls: PiRunnerReadonlyToolCallRequest[] = [], gates: Parameters<NonNullable<PiRunnerRunOptions["onToolBefore"]>>[0][] = [], points: string[] = [];
+  class FixtureRunner extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
-      runtime.registerProvider(provider.provider, { api: "openai-completions", streamSimple: (model, context, options) => stream(model, context, {
+      runtime.registerProvider(provider.provider, { api: "openai-completions", streamSimple: (model, context, options) => stream(model as Model<"openai-completions">, context, {
         ...options, fetch: async () => {
           requests.push(structuredClone(context));
           return response(calls[requests.length - 1]);
@@ -141,7 +158,7 @@ async function fixture(t, calls = [], changes = {}) {
   const options = baseOptions({ cwd, agentDir: join(cwd, "agent"), tools: names,
     runId: "readonly-run", runnerAttemptId: "readonly-attempt", hostCompactionEnabled: true,
     provider: { provider: "readonly-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1",
-      api: "openai-completions", apiKey: "fixture-not-real", reasoning: false }, ...changes,
+      api: "openai-completions" as const, apiKey: "fixture-not-real", reasoning: false }, ...changes,
     onEvent: event => { events.push(event); changes.onEvent?.(event); },
     onToolBefore: request => { gates.push(request); return changes.onToolBefore?.(request) ?? { allowed: true }; },
     onReadonlyToolCall: request => { hostCalls.push(request); return changes.onReadonlyToolCall?.(request) ?? handled; },
@@ -164,7 +181,7 @@ test("observation cannot disguise a missing Host gate as an authorized readonly 
   const f = await fixture(t);
   let observations = 0;
   for (const onToolBefore of [undefined, null, false, {}, "not-a-function"]) {
-    await assert.rejects(f.runner.runTask({ ...f.options, onToolBefore,
+    await assert.rejects(f.runner.runTask({ ...f.options, onToolBefore: onToolBefore as PiRunnerRunOptions["onToolBefore"],
       onToolBoundaryObservation() { observations++; } }),
       { message: "workflow_readonly_tool_before_missing" });
   }
@@ -178,11 +195,12 @@ test("observation cannot disguise a missing Host gate as an authorized readonly 
 test("actual SDK Host reads retain paired results, observation and continuation", { timeout: 15_000 }, async t => {
   const calls = names.map((name, index) => ({ name, id: `readonly-${index}`, input: name === "grep" ? { pattern: "x", literal: true }
     : name === "find" ? { pattern: "*.ts" } : { path: "not-read-by-sdk" } }));
-  let receipt, settled;
-  const inventories = [];
+  let receipt: PiToolBoundaryObservation | undefined;
+  let settled: PiProviderBoundaryInventory | undefined;
+  const inventories: (PiProviderBoundaryInventory | undefined)[] = [];
   const f = await fixture(t, calls, {
     onToolBoundaryObservation: value => { receipt = value; },
-    onTaskContinuationBoundary: point => {
+    onTaskContinuationBoundary: async point => {
       if (point === "before_provider_request") inventories.push(readPiProviderBoundaryInventory(receipt, "readonly-run", "readonly-attempt"));
     },
     onTaskSettledBoundary: () => { settled = readPiSettledBoundaryInventory(receipt, "readonly-run", "readonly-attempt"); },
@@ -197,16 +215,16 @@ test("actual SDK Host reads retain paired results, observation and continuation"
   assert.equal(f.points.filter(point => point === "tool_call").length, 4);
   for (const call of calls) {
     assert.equal(f.gates.filter(gate => gate.toolCallId === call.id).length, 2, "event gate and actual producer recheck");
-    assert.equal(f.events.find(event => event.type === "tool_end" && event.toolCallId === call.id).result.content[0].text, "HOST_HANDLED_ONLY");
+    assert.equal((f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end" && event.toolCallId === call.id)!.result as { content: TextContent[] }).content[0].text, "HOST_HANDLED_ONLY");
   }
-  const results = f.requests.at(-1).messages.filter(message => message.role === "toolResult");
+  const results = f.requests.at(-1)!.messages.filter(message => message.role === "toolResult");
   assert.equal(results.length, 4);
-  assert.ok(results.every(result => result.content[0].text === "HOST_HANDLED_ONLY"));
+  assert.ok(results.every(result => (result.content[0] as TextContent).text === "HOST_HANDLED_ONLY"));
   const expectedReads = calls.map(call => ({ toolCallId: call.id, toolName: call.name }));
-  assert.deepEqual(settled.settledBuiltinReads, expectedReads);
+  assert.deepEqual(settled!.settledBuiltinReads, expectedReads);
   assert.deepEqual(readPiCompletedBuiltinReads(receipt, "readonly-run", "readonly-attempt"), expectedReads);
   assert.deepEqual(readPiCompletedTools(receipt, "readonly-run", "readonly-attempt"), expectedReads);
-  assert.deepEqual(inventories.map(value => value.toolCallIds.length), [0, 1, 2, 3, 4]);
+  assert.deepEqual(inventories.map(value => value!.toolCallIds.length), [0, 1, 2, 3, 4]);
 });
 
 test("Host handled failure stays failed in the real SDK model continuation", { timeout: 15_000 }, async t => {
@@ -214,10 +232,10 @@ test("Host handled failure stays failed in the real SDK model continuation", { t
     onReadonlyToolCall: () => ({ ...handled, isError: true, details: { code: "workflow_readonly_fs_denied" } }),
   });
   await f.runner.runTask(f.options);
-  assert.equal(f.events.find(event => event.type === "tool_end").isError, true);
+  assert.equal(f.events.find(event => event.type === "tool_end")!.isError, true);
   const result = f.requests[1].messages.find(message => message.role === "toolResult");
-  assert.equal(result.isError, true);
-  assert.equal(result.details.code, "workflow_readonly_fs_denied");
+  assert.equal(result!.isError, true);
+  assert.equal((result!.details as { code: string }).code, "workflow_readonly_fs_denied");
 });
 
 test("local extensions and context cannot replace the Host readonly producers", { timeout: 15_000 }, async t => {
@@ -233,7 +251,7 @@ test("local extensions and context cannot replace the Host readonly producers", 
   assert.doesNotMatch(preparedInput.systemPrompt, /LOCAL_CONTEXT_MUST_NOT_LOAD|USER_CONTEXT_MUST_NOT_LOAD/);
   await f.runner.runTask({ ...f.options, preparedInput });
   assert.equal(f.hostCalls.length, 1);
-  assert.equal(f.events.find(event => event.type === "tool_end").result.content[0].text, "HOST_HANDLED_ONLY");
+  assert.equal((f.events.find(event => event.type === "tool_end")!.result as { content: TextContent[] }).content[0].text, "HOST_HANDLED_ONLY");
 });
 
 test("readonly Host gate blocks shell and file mutation before their actual producers", { timeout: 15_000 }, async t => {
@@ -242,7 +260,7 @@ test("readonly Host gate blocks shell and file mutation before their actual prod
     { name: "edit", id: "edit", input: { path: "notes.txt", edits: [{ oldText: "original", newText: "forbidden" }] } }];
   let mutationCalls = 0;
   const f = await fixture(t, calls, { tools: [...names, "bash", "write", "edit"],
-    onToolBefore: request => names.includes(request.toolName) ? { allowed: true }
+    onToolBefore: request => (names as readonly string[]).includes(request.toolName) ? { allowed: true }
       : { allowed: false, code: "workflow_readonly_tool_denied", reason: "Not in frozen readonly tool plan" },
     onApprovalRequired: () => { mutationCalls++; throw new Error("mutation producer must not run"); },
   });

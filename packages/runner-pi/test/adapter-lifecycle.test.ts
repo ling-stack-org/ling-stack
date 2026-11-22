@@ -1,30 +1,39 @@
+import type { PiRunnerTaskContinuationDirective } from "../dist/types.js";
+import type { PiToolBoundaryObservation } from "../dist/tool-boundary-observation.js";
+import { PiRunnerYielded } from "../dist/task-yield.js";
 import assert from "node:assert/strict";
+import type { TranscriptContext } from "@earendil-works/pi-ai";
+import type { PiRunnerEvent, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
+import type { Model } from "@earendil-works/pi-ai";
+import type { TestContext } from "node:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as nextTick } from "node:timers/promises";
 import { test } from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { PiRunnerAdapter } from "../dist/adapter.js";
 import { isPiToolFreeCompletion } from "../dist/index.js";
 import { createInitializedPiSession } from "../dist/session-factory.js";
 import { response as compactionResponse } from "./support/pi-compaction-fixture.ts";
 import { formatTaskPrompt } from "../dist/utils.js";
 
-const requiredInput = { kind: "user_input_required", requestId: "input_fixture", requestVersion: 1 };
-const acceptedTaskAnchor = options => ({ role: "user", content: [{ type: "text", text: formatTaskPrompt(options.task) }], timestamp: 0 });
-const delegationMessage = (id, content) => ({ role: "user", content, timestamp: 1,
+const requiredInput = { kind: "user_input_required" as const, requestId: "input_fixture", requestVersion: 1 };
+const acceptedTaskAnchor = (options: PiRunnerRunOptions) => ({ role: "user", content: [{ type: "text", text: formatTaskPrompt(options.task) }], timestamp: 0 });
+const delegationMessage = (id: string, content: string) => ({ role: "user" as const, content, timestamp: 1,
   delegationInstruction: { messageId: id, digest: "a".repeat(64) } });
-const delegationDirective = (insertAfterMessageCount, messages) => ({
-  kind: "delegation_instructions", schemaVersion: 1, insertAfterMessageCount, messages,
+const delegationDirective = (insertAfterMessageCount: number, messages: ReturnType<typeof delegationMessage>[]) => ({
+  kind: "delegation_instructions" as const, schemaVersion: 1 as const, insertAfterMessageCount, messages,
 });
 
 test("Host compaction opt-in enables SDK compaction only for the admitted Run", { timeout: 10000 }, async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-host-compaction-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const provider = { provider: "host-compaction-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1",
-    api: "openai-completions", apiKey: "fixture-no-network", reasoning: false };
-  const adapter = new PiRunnerAdapter();
+    api: "openai-completions" as const, apiKey: "fixture-no-network", reasoning: false };
+  const adapter = new FixtureRunnerBase();
   for (const [hostCompactionEnabled, expected] of [[undefined, false], [true, true]]) {
     const session = await createInitializedPiSession({ cwd, task: { id: "host-compaction", title: "Host", prompt: "Test" },
       provider, tools: [], hostCompactionEnabled }, (runtime) => adapter.registerCustomProviderIfNeeded(runtime, provider));
@@ -52,6 +61,7 @@ test("required input retains the captured request when a caller mutates its dire
     },
   });
   await assert.rejects(f.runner.runTask(f.options), (error) => {
+    assert.ok(error instanceof PiRunnerYielded);
     assert.equal(error.name, "PiRunnerYielded");
     assert.deepEqual(error.request, requiredInput);
     assert.ok(Object.isFrozen(error.request));
@@ -74,10 +84,10 @@ test("user cancellation while a requested yield settles takes precedence over ch
 
 test("yield directives reject extra fields and accessors without evaluating them", { timeout: 10000 }, async (t) => {
   let getterCalls = 0;
-  const accessor = { kind: "user_input_required", requestVersion: 1,
+  const accessor = { kind: "user_input_required" as const, requestVersion: 1,
     get requestId() { getterCalls += 1; return "getter_request"; } };
   for (const directive of [null, { ...requiredInput, extra: "not accepted" }, accessor]) {
-    const f = await fixture(t, { onTaskContinuationBoundary: async () => directive });
+    const f = await fixture(t, { onTaskContinuationBoundary: async () => directive as PiRunnerTaskContinuationDirective });
     await assert.rejects(f.runner.runTask(f.options), /Invalid user input yield directive/);
     assert.equal(f.requestCount(), 0);
   }
@@ -92,7 +102,8 @@ for (const boundary of ["before_agent_start", "before_provider_request", "tool_c
       onMcpToolCall: async () => { tools += 1; return { content: [] }; },
     }, boundary === "tool_call" ? ["fixture_read"] : []);
     await assert.rejects(f.runner.runTask(f.options), (error) => {
-      assert.equal(error.name, "PiRunnerYielded");
+      assert.ok(error instanceof PiRunnerYielded);
+    assert.equal(error.name, "PiRunnerYielded");
       assert.deepEqual(error.request, requiredInput);
       assert.ok(Number.isFinite(Date.parse(error.sdkStoppedAt)));
       return true;
@@ -166,12 +177,10 @@ test("yielding one run cannot stop an independent SDK session", { timeout: 10000
 });
 
 function deferred() {
-  let resolve;
-  const promise = new Promise((complete) => { resolve = complete; });
-  return { promise, resolve };
+  return Promise.withResolvers<void>();
 }
 
-function sseResponse(toolNames = [], toolInputs = {}) {
+function sseResponse(toolNames: readonly string[] = [], toolInputs: Record<string, unknown> = {}) {
   const delta = toolNames.length > 0 ? {
     tool_calls: toolNames.map((name, index) => ({
       index, id: `call_${index}`, type: "function",
@@ -187,24 +196,24 @@ function sseResponse(toolNames = [], toolInputs = {}) {
   });
 }
 
-async function fixture(t, changes = {}, toolNames = [], toolInputs = {}) {
+async function fixture(t: TestContext, changes: Partial<PiRunnerRunOptions> = {}, toolNames: readonly string[] = [], toolInputs: Record<string, unknown> = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-lifecycle-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const controller = new AbortController();
-  const events = [];
-  const contexts = [];
+  const events: PiRunnerEvent[] = [];
+  const contexts: TranscriptContext[] = [];
   let requestCount = 0;
   // Keep the actual adapter, SDK session, provider parser and Ling extensions.
   // Replace only this instance's provider transport; never read credentials or
   // send a network request, and never patch process-global fetch/SDK state.
-  class FixtureRunner extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  class FixtureRunner extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       runtime.registerProvider(provider.provider, {
-        api: "openai-completions",
+        api: "openai-completions" as const,
         streamSimple: (model, context, options) => {
           contexts.push(structuredClone(context));
-          return stream(model, context, {
+          return stream(model as Model<"openai-completions">, context, {
           ...options,
           fetch: async () => {
             requestCount += 1;
@@ -216,17 +225,17 @@ async function fixture(t, changes = {}, toolNames = [], toolInputs = {}) {
     }
   }
   const runner = new FixtureRunner();
-  const options = {
+  const options: PiRunnerRunOptions = {
     cwd, agentDir: join(cwd, "agent"),
     task: { id: "lifecycle_fixture", title: "Lifecycle fixture", prompt: "Execute the fixture." },
     provider: {
       provider: "lifecycle-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1",
-      api: "openai-completions", apiKey: "fixture-no-network", reasoning: false,
+      api: "openai-completions" as const, apiKey: "fixture-no-network", reasoning: false,
     },
     tools: [], signal: controller.signal, onEvent: (event) => events.push(event),
     mcpTools: toolNames.filter(name => name !== "request_user_input").map((name) => ({
       registeredName: name, serverId: "fixture", rawName: name, displayName: name,
-      inputSchema: { type: "object", properties: {} }, sideEffectLevel: "read", defaultApproval: "allow",
+      inputSchema: { type: "object", properties: {} }, sideEffectLevel: "read" as const, defaultApproval: "allow" as const,
     })),
     ...changes,
   };
@@ -239,7 +248,7 @@ test("adapter completes a real SDK session with an in-memory provider response",
   assert.equal(f.requestCount(), 1);
   assert.equal(f.events.filter((event) => event.type === "run_end").length, 1);
   assert.equal(f.events.filter((event) => event.type === "run_error").length, 0);
-  assert.ok(result.messages.some((message) => message.role === "assistant"));
+  assert.ok(result.messages.some(message => (message as { role?: string }).role === "assistant"));
 });
 
 test("delegation instructions reach each real provider boundary exactly once without replaying a settled tool", { timeout: 10000 }, async t => {
@@ -265,7 +274,7 @@ test("delegation instructions reach each real provider boundary exactly once wit
   assert.equal(f.requestCount(), 2);
   assert.equal(toolEffects, 1, "a later instruction must not replay the settled tool");
   assert.equal(f.contexts.length, 2);
-  const identities = context => context.messages
+  const identities = (context: TranscriptContext) => (context.messages as { delegationInstruction?: { messageId: string } }[])
     .map(entry => entry?.delegationInstruction?.messageId).filter(Boolean);
   assert.deepEqual(identities(f.contexts[0]), [first.delegationInstruction.messageId]);
   assert.deepEqual(identities(f.contexts[1]), [first.delegationInstruction.messageId, second.delegationInstruction.messageId]);
@@ -289,7 +298,7 @@ test("an invalid delegation transcript anchor prevents every real provider reque
 test("settled built-in reads require the original ended SDK session, not MCP labels or copied observations", { timeout: 10000 }, async t => {
   const { readPiCompletedBuiltinReads } = await import("../dist/index.js");
   assert.equal(typeof readPiCompletedBuiltinReads, "function");
-  let receipt;
+  let receipt!: PiToolBoundaryObservation;
   const f = await fixture(t, { runId: "read-run", runnerAttemptId: "read-attempt", tools: ["read"], mcpTools: [],
     onToolBoundaryObservation: value => { receipt = value; },
   }, ["read"], { read: { path: "evidence.txt" } });
@@ -308,7 +317,7 @@ test("settled built-in reads require the original ended SDK session, not MCP lab
 
 for (const tool of [false, true]) {
   test(`tool-free completion requires the original ended SDK observation: tool=${tool}`, { timeout: 10000 }, async t => {
-    let receipt;
+    let receipt!: PiToolBoundaryObservation;
     const f = await fixture(t, { runId: "original-run", runnerAttemptId: "original-attempt",
       onToolBoundaryObservation: observation => {
         receipt = observation;
@@ -326,7 +335,7 @@ for (const tool of [false, true]) {
   });
 }
 
-const questionToolInput = mode => ({ schemaVersion: 1, waitMode: mode, questions: [{
+const questionToolInput = (mode: "required" | "optional") => ({ schemaVersion: 1, waitMode: mode, questions: [{
   questionId: "selection", prompt: "Which path?", required: mode === "required", allowFreeText: true,
   options: [{ optionId: "a", label: "A" }],
 }] });
@@ -343,6 +352,7 @@ test("real question tool yields after SDK closes the action without another prov
     onMcpToolCall: () => { calls++; return { content: [] }; },
   }, ["request_user_input", "fixture_read"], { request_user_input: questionToolInput("required") });
   await assert.rejects(f.runner.runTask(f.options), error => {
+    assert.ok(error instanceof PiRunnerYielded);
     assert.equal(error.name, "PiRunnerYielded");
     assert.deepEqual(error.request, requiredInput);
     return true;
@@ -361,7 +371,7 @@ test("real optional question continues execution without pretending an answer ar
   let asks = 0;
   const f = await fixture(t, { onUserInputRequest: () => {
     asks++;
-    return { kind: "user_input_optional", requestId: "optional_fixture", requestVersion: 1 };
+    return { kind: "user_input_optional" as const, requestId: "optional_fixture", requestVersion: 1 };
   } }, ["request_user_input"], { request_user_input: questionToolInput("optional") });
   await f.runner.runTask(f.options);
   assert.equal(asks, 1);
@@ -392,7 +402,7 @@ test("completed compaction recovery installs the sealed assistant view without a
     },
   });
   assert.equal(f.requestCount(), 0, "an assistant-terminated sealed view must not call the provider");
-  assert.equal(result.messages.at(-1).role, "assistant");
+  assert.equal((result.messages.at(-1) as { role: string }).role, "assistant");
   assert.equal(f.events.filter((event) => event.type === "run_end").length, 1);
 });
 
@@ -412,7 +422,7 @@ test("tool-result compaction recovery continues exactly once from the sealed too
     },
   });
   assert.equal(f.requestCount(), 1, "a tool-result-terminated sealed view must continue with one provider request");
-  assert.equal(result.messages.at(-1).role, "assistant");
+  assert.equal((result.messages.at(-1) as { role: string }).role, "assistant");
   assert.equal(f.events.filter((event) => event.type === "run_end").length, 1);
 });
 
@@ -420,16 +430,16 @@ for (const [sealKind, summaryMetadata] of [
   ["minimal", {}],
   ["complete legacy metadata", { timestamp: 1, tokensBefore: 1200 }],
 ]) test(`provider admission exposes the task-constrained settled tool view after compacted recovery: ${sealKind}`, { timeout: 10000 }, async (t) => {
-  const views = [];
+  const views: (readonly unknown[])[] = [];
   const f = await fixture(t, {
     runId: "run_progress_fixture", runnerAttemptId: "attempt_progress_fixture", hostCompactionEnabled: true,
     onTaskContinuationBoundary: async (boundary, modelView) => {
-      if (boundary === "before_provider_request") views.push(modelView);
+      if (boundary === "before_provider_request") views.push(modelView!);
     },
     onMcpToolCall: async () => ({ content: [{ type: "text", text: "settled read" }] }),
   }, ["fixture_read"]);
   const initialView = [
-    { role: "compactionSummary", summary: "Continue after the completed earlier tool.", ...summaryMetadata },
+    { role: "compactionSummary", summary: "Continue after the completed earlier tool.", ...summaryMetadata as object },
     acceptedTaskAnchor(f.options),
     { role: "assistant", content: [{ type: "toolCall", id: "earlier", name: "fixture_read", arguments: {} }] },
     { role: "toolResult", toolCallId: "earlier", toolName: "fixture_read",
@@ -444,8 +454,8 @@ for (const [sealKind, summaryMetadata] of [
   for (const view of views) assert.deepEqual(view.slice(0, initialView.length), initialView,
     "each subsequent settled tool round must extend the exact original seal prefix");
   assert.deepEqual(initialView, frozenInitialView, "projection must not mutate the installed recovery evidence");
-  assert.equal(views.at(-1).at(-1).role, "toolResult");
-  assert.equal(views.at(-1).at(-1).toolCallId, "call_0");
+  assert.equal((views.at(-1)!.at(-1) as { role: string }).role, "toolResult");
+  assert.equal((views.at(-1)!.at(-1) as { toolCallId: string }).toolCallId, "call_0");
   assert.ok(f.events.some((event) => event.type === "tool_end" && event.toolCallId === "call_0"));
 });
 
@@ -471,13 +481,13 @@ test("Host-enabled Pi auto-compaction can resume a long SDK tool loop with a sea
   let compacting = false;
   let taskRequests = 0;
   let toolEffects = 0;
-  const events = [];
-  const postCompactionViews = [];
-  class LongRunFixture extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  const events: PiRunnerEvent[] = [];
+  const postCompactionViews: (readonly unknown[])[] = [];
+  class LongRunFixture extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
-      runtime.registerProvider(provider.provider, { api: "openai-completions",
-        streamSimple: (model, context, options) => stream(model, context, { ...options,
+      runtime.registerProvider(provider.provider, { api: "openai-completions" as const,
+        streamSimple: (model, context, options) => stream(model as Model<"openai-completions">, context, { ...options,
           fetch: async () => compacting
             ? compactionResponse({ text: "## Goal\nComplete every read.\n## Progress\nDo not repeat completed calls." })
             : compactionResponse(taskRequests++ < 14
@@ -491,7 +501,7 @@ test("Host-enabled Pi auto-compaction can resume a long SDK tool loop with a sea
   await runner.runTask({
     cwd, agentDir: join(cwd, "agent"), task: { id: "long-compaction", title: "Long", prompt: "Read repeatedly." },
     provider: { provider: "long-compaction-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1",
-      api: "openai-completions", apiKey: "fixture-no-network", reasoning: false, contextWindow: 128_000 },
+      api: "openai-completions" as const, apiKey: "fixture-no-network", reasoning: false, contextWindow: 128_000 },
     tools: [], runId: "run_long_compaction", runnerAttemptId: "attempt_long_compaction",
     hostCompactionEnabled: true,
     mcpTools: [{ registeredName: "fixture_effect", serverId: "fixture", rawName: "fixture_effect",
@@ -506,7 +516,7 @@ test("Host-enabled Pi auto-compaction can resume a long SDK tool loop with a sea
     onTaskContinuationBoundary: async (boundary, modelView) => {
       if (boundary === "before_provider_request" && events.some((event) =>
         event.type === "context_compaction_end" && event.outcome === "sdk_installed")) {
-        postCompactionViews.push(modelView);
+        postCompactionViews.push(modelView!);
       }
     },
   });
@@ -516,20 +526,20 @@ test("Host-enabled Pi auto-compaction can resume a long SDK tool loop with a sea
   assert.ok(events.slice(firstCompaction + 1).some((event) => event.type === "tool_end"),
     "tools must continue after SDK compaction");
   assert.equal(toolEffects, 14);
-  assert.ok(postCompactionViews.some((view) => view?.[0]?.role === "compactionSummary"));
+  assert.ok(postCompactionViews.some((view) => (view?.[0] as { role?: string } | undefined)?.role === "compactionSummary"));
 });
 
 test("cancelling a recovered compacted tool loop waits for its one in-flight effect", { timeout: 10000 }, async (t) => {
   const entered = deferred();
   const release = deferred();
-  t.after(() => release.resolve());
+  t.after(() => release.resolve!());
   let effects = 0;
   const f = await fixture(t, {
     runId: "run_compacted_cancel", runnerAttemptId: "attempt_compacted_cancel", hostCompactionEnabled: true,
     onTaskContinuationBoundary: async () => undefined,
     onMcpToolCall: async () => {
       effects += 1;
-      entered.resolve();
+      entered.resolve!();
       await release.promise;
       return { content: [{ type: "text", text: "settled once" }] };
     },
@@ -544,7 +554,7 @@ test("cancelling a recovered compacted tool loop waits for its one in-flight eff
   const rejected = assert.rejects(pending, { name: "AbortError" });
   await entered.promise;
   f.controller.abort();
-  release.resolve();
+  release.resolve!();
   await rejected;
   assert.equal(effects, 1);
   assert.equal(f.requestCount(), 1, "cancellation must close admission before a second provider request");
@@ -555,17 +565,17 @@ for (const boundary of ["before_agent_start", "before_provider_request", "tool_c
   test(`cancelling during ${boundary} prevents further model/tool admission`, { timeout: 10000 }, async (t) => {
     const entered = deferred();
     const release = deferred();
-    t.after(() => release.resolve());
+    t.after(() => release.resolve!());
     const f = await fixture(t, {
       onTaskContinuationBoundary: async (current) => {
-        if (current === boundary) { entered.resolve(); await release.promise; }
+        if (current === boundary) { entered.resolve!(); await release.promise; }
       },
     }, boundary === "tool_call" ? ["fixture_read"] : []);
     const pending = f.runner.runTask(f.options);
     const rejected = assert.rejects(pending, { name: "AbortError" });
     await entered.promise;
     f.controller.abort();
-    release.resolve();
+    release.resolve!();
     await rejected;
     assert.equal(f.requestCount(), boundary === "tool_call" ? 1 : 0);
     assert.equal(f.events.filter((event) => event.type === "run_end").length, 0);
@@ -589,13 +599,13 @@ for (const boundary of ["before_agent_start", "before_provider_request", "tool_c
 test("adapter cancellation waits for an already running tool to finish cleanup", { timeout: 10000 }, async (t) => {
   const entered = deferred();
   const release = deferred();
-  t.after(() => release.resolve());
+  t.after(() => release.resolve!());
   let cleaned = false;
   let toolSignal;
   const f = await fixture(t, {
     onMcpToolCall: async ({ signal }) => {
       toolSignal = signal;
-      entered.resolve();
+      entered.resolve!();
       await release.promise;
       cleaned = true;
       return { content: [{ type: "text", text: "fixture cleaned" }] };
@@ -607,10 +617,10 @@ test("adapter cancellation waits for an already running tool to finish cleanup",
   await entered.promise;
   f.controller.abort();
   await nextTick();
-  assert.equal(toolSignal.aborted, true);
+  assert.equal(toolSignal!.aborted, true);
   assert.equal(settled, false);
   assert.equal(cleaned, false);
-  release.resolve();
+  release.resolve!();
   await rejected;
   assert.equal(cleaned, true);
   assert.equal(f.requestCount(), 1);
@@ -620,17 +630,17 @@ test("adapter cancellation waits for an already running tool to finish cleanup",
 test("cancelling while a tool admission check is pending does not invoke the tool", { timeout: 10000 }, async (t) => {
   const entered = deferred();
   const release = deferred();
-  t.after(() => release.resolve());
+  t.after(() => release.resolve!());
   let toolCalls = 0;
   const f = await fixture(t, {
-    onToolBefore: async () => { entered.resolve(); await release.promise; return { allowed: true }; },
+    onToolBefore: async () => { entered.resolve!(); await release.promise; return { allowed: true }; },
     onMcpToolCall: async () => { toolCalls += 1; return { content: [{ type: "text", text: "unexpected" }] }; },
   }, ["fixture_read"]);
   const pending = f.runner.runTask(f.options);
   const rejected = assert.rejects(pending, { name: "AbortError" });
   await entered.promise;
   f.controller.abort();
-  release.resolve();
+  release.resolve!();
   await rejected;
   assert.equal(toolCalls, 0);
   assert.equal(f.requestCount(), 1);
@@ -639,10 +649,10 @@ test("cancelling while a tool admission check is pending does not invoke the too
 test("one rejected run cannot cancel an independent concurrent run", { timeout: 10000 }, async (t) => {
   const entered = deferred();
   const release = deferred();
-  t.after(() => release.resolve());
+  t.after(() => release.resolve!());
   const waiting = await fixture(t, {
     onTaskContinuationBoundary: async (boundary) => {
-      if (boundary === "before_agent_start") { entered.resolve(); await release.promise; }
+      if (boundary === "before_agent_start") { entered.resolve!(); await release.promise; }
     },
   });
   const running = waiting.runner.runTask(waiting.options);
@@ -653,7 +663,7 @@ test("one rejected run cannot cancel an independent concurrent run", { timeout: 
   await assert.rejects(rejected.runner.runTask(rejected.options), /only this run is rejected/);
   assert.equal(rejected.requestCount(), 0);
   assert.equal(waiting.controller.signal.aborted, false);
-  release.resolve();
+  release.resolve!();
   await running;
   assert.equal(waiting.requestCount(), 1);
   assert.equal(waiting.events.filter((event) => event.type === "run_end").length, 1);
@@ -691,13 +701,13 @@ test("user cancellation before a Host callback failure keeps cancellation semant
 test("cancellation waits for every parallel tool cleanup, not just the first", { timeout: 10000 }, async (t) => {
   const entered = deferred();
   const releases = [deferred(), deferred()];
-  t.after(() => releases.forEach((release) => release.resolve()));
+  t.after(() => releases.forEach((release) => release.resolve!()));
   let calls = 0;
   let cleaned = 0;
   const f = await fixture(t, {
     onMcpToolCall: async () => {
       const index = calls++;
-      if (calls === 2) entered.resolve();
+      if (calls === 2) entered.resolve!();
       await releases[index].promise;
       cleaned += 1;
       return { content: [] };
@@ -708,11 +718,11 @@ test("cancellation waits for every parallel tool cleanup, not just the first", {
   const rejected = assert.rejects(pending, { name: "AbortError" }).then(() => { settled = true; });
   await entered.promise;
   f.controller.abort();
-  releases[0].resolve();
+  releases[0].resolve!();
   await nextTick();
   assert.equal(cleaned, 1);
   assert.equal(settled, false);
-  releases[1].resolve();
+  releases[1].resolve!();
   await rejected;
   assert.equal(cleaned, 2);
   assert.equal(f.requestCount(), 1);

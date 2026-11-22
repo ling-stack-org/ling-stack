@@ -1,4 +1,13 @@
+import type { PiRunnerApprovedToolContinuation, PiRunnerMcpToolDefinition } from "../dist/types.js";
+import type { PiRunnerPreparedInput } from "../dist/prepared-input.js";
 import assert from "node:assert/strict";
+import type { TranscriptContext } from "@earendil-works/pi-ai";
+import type { PiRunnerEvent, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
+import type { Model } from "@earendil-works/pi-ai";
+import type { TestContext } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,19 +15,18 @@ import { setImmediate as nextTick } from "node:timers/promises";
 import test from "node:test";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { PiRunnerAdapter } from "../dist/adapter.js";
 import { createInitializedPiSession } from "../dist/session-factory.js";
 
 const historicalCallId = "historical-approved-effect";
 const privateError = "PRIVATE_110_PROVIDER_BODY sk-fixture-only";
-const fixtureTool = {
+const fixtureTool: PiRunnerMcpToolDefinition = {
   registeredName: "fixture_effect", serverId: "fixture", rawName: "fixture_effect",
   displayName: "Fixture effect", inputSchema: { type: "object", properties: {}, additionalProperties: false },
   sideEffectLevel: "write", defaultApproval: "allow",
 };
-const names = tools => tools.map(tool => typeof tool === "string" ? tool : tool.name).sort();
+const names = (tools: readonly (string | { name: string })[]) => tools.map(tool => typeof tool === "string" ? tool : tool.name).sort();
 
-function completion({ text = "Completed after recovery.", toolCallId, toolName = "fixture_effect" } = {}) {
+function completion({ text = "Completed after recovery.", toolCallId, toolName = "fixture_effect" }: { text?: string; toolCallId?: string; toolName?: string } = {}) {
   const delta = toolCallId ? {
     tool_calls: [{ index: 0, id: toolCallId, type: "function", function: { name: toolName, arguments: "{}" } }],
   } : { content: text };
@@ -38,7 +46,7 @@ function unavailable() {
   });
 }
 
-function approvedEvidence() {
+function approvedEvidence(): PiRunnerApprovedToolContinuation {
   return {
     schemaVersion: 1, kind: "approved_tool_result", approvalId: "approval-110",
     sideEffectFingerprint: "approved-fingerprint-110", toolCallId: historicalCallId,
@@ -49,21 +57,21 @@ function approvedEvidence() {
 }
 
 /** Actual adapter/session/parser; only this provider's transport is replaced. */
-async function fixture(t, overrides = {}, transport = () => completion(), onEvent) {
+async function fixture(t: TestContext, overrides: Partial<PiRunnerRunOptions> = {}, transport: (input: { index: number; context: TranscriptContext; signal?: AbortSignal }) => Response | Promise<Response> = () => completion(), onEvent?: (event: PiRunnerEvent, controller: AbortController) => void) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-110-contract-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const contexts = [], wireRequests = [], events = [], hostCalls = [], approvalCalls = [];
+  const contexts: { messages: TranscriptContext["messages"]; systemPrompt: string; tools: ReturnType<typeof getCurrentTools> }[] = [], wireRequests: { messages: { role: string; tool_call_id?: string }[] }[] = [], events: PiRunnerEvent[] = [], hostCalls: string[] = [], approvalCalls: string[] = [];
   const controller = new AbortController();
-  class FixtureRunner extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  class FixtureRunner extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
-      runtime.registerProvider(provider.provider, { api: "openai-completions",
+      runtime.registerProvider(provider.provider, { api: "openai-completions" as const,
         streamSimple: (model, context, options) => {
           contexts.push({ messages: structuredClone(context.messages),
             systemPrompt: getCurrentSystemPrompt(context.messages), tools: getCurrentTools(context.messages) });
-          return stream(model, context, { ...options, maxRetries: 0,
+          return stream(model as Model<"openai-completions">, context, { ...options, maxRetries: 0,
             fetch: async (_url, request) => {
-              wireRequests.push(JSON.parse(request.body));
+              wireRequests.push(JSON.parse(String(request?.body)));
               return transport({ index: wireRequests.length - 1, context, signal: options?.signal });
             },
           });
@@ -72,11 +80,11 @@ async function fixture(t, overrides = {}, transport = () => completion(), onEven
     }
   }
   const runner = new FixtureRunner();
-  const options = {
+  const options: PiRunnerRunOptions = {
     cwd, agentDir: join(cwd, "agent"),
     task: { id: "pi-110-recovery-contract", title: "Recover safely", prompt: "Finish without replaying the approved effect." },
     provider: { provider: "pi-110-contract", model: "fixture", baseUrl: "https://fixture.invalid/v1",
-      api: "openai-completions", apiKey: "fixture-no-network", reasoning: false },
+      api: "openai-completions" as const, apiKey: "fixture-no-network", reasoning: false },
     tools: [], signal: controller.signal,
     onApprovalRequired: async request => { approvalCalls.push(request.toolCallId); return { approved: true }; },
     onMcpToolCall: async request => {
@@ -95,7 +103,7 @@ for (const [label, selection, mcpTools, expected] of [
   ["explicit MCP", ["read"], [{ ...fixtureTool, registeredName: "mcp__authorized" }], ["mcp__authorized", "read"]],
 ]) {
   test(`Pi 1.1 ${label} surface pins cache warming off and its registered/active/callable allowlist`, async t => {
-    const f = await fixture(t, { tools: selection, mcpTools });
+    const f = await fixture(t, { tools: selection, mcpTools } as Partial<PiRunnerRunOptions>);
     const session = await createInitializedPiSession(f.options,
       runtime => f.runner.registerCustomProviderIfNeeded(runtime, f.options.provider));
     try {
@@ -143,11 +151,12 @@ for (const enabled of [false, true]) {
   });
 }
 
-function assertRecoveredContext(context, preparedInput, continuation) {
+function assertRecoveredContext(context: Awaited<ReturnType<typeof fixture>>["contexts"][number], preparedInput: PiRunnerPreparedInput, continuation: PiRunnerApprovedToolContinuation) {
   assert.equal(context.systemPrompt, preparedInput.systemPrompt);
   assert.deepEqual(names(context.tools), names(preparedInput.tools));
   for (const tool of context.tools) {
     const expected = preparedInput.tools.find(candidate => candidate.name === tool.name);
+    assert.ok(expected);
     assert.equal(tool.description, expected.description);
     assert.deepEqual(tool.parameters, expected.parameters);
     assert.deepEqual(tool.constrainedSampling, expected.constrainedSampling);
@@ -157,6 +166,7 @@ function assertRecoveredContext(context, preparedInput, continuation) {
   assert.deepEqual(history[0].content, [{ type: "text", text: preparedInput.userPrompt }]);
   assert.deepEqual(history[1].content, [{ type: "toolCall", id: continuation.toolCallId,
     name: continuation.toolName, arguments: continuation.args }]);
+  assert.equal(history[2].role, "toolResult");
   assert.equal(history[2].toolCallId, continuation.toolCallId);
   assert.equal(history[2].toolName, continuation.toolName);
   assert.deepEqual(history[2].content, continuation.result.content);
@@ -202,22 +212,22 @@ for (const outcome of ["succeeded", "failed", "cancelled"]) {
       assert.equal(f.events.filter(event => event.type === "run_error").length, outcome === "succeeded" ? 0 : 1);
       const retry = f.events.filter(event => event.type === "provider_retry");
       assert.deepEqual(retry.map(event => event.phase), ["scheduled", "settled"]);
-      assert.equal(retry.at(-1).outcome, outcome);
+      assert.equal((retry.at(-1) as { outcome: string }).outcome, outcome);
       assert.equal(JSON.stringify(f.events).includes(privateError), false);
       if (result) {
-        assert.equal(result.messages.some(message => message.role === "custom"), false,
+        assert.equal((result.messages as { role: string }[]).some(message => message.role === "custom"), false,
           "the internal driver control is omitted from the public finalized transcript");
         assert.equal(JSON.stringify(result.messages).includes("ling_host_resume"), false);
-        assert.equal(result.messages.filter(message => message.role === "toolResult" && message.toolCallId === historicalCallId).length, 1);
+        assert.equal((result.messages as { role: string; toolCallId?: string }[]).filter(message => message.role === "toolResult" && message.toolCallId === historicalCallId).length, 1);
       }
     });
 }
 
 test("Pi 1.1 approved recovery cancellation waits for its new in-flight Host effect and never reports success",
   { timeout: 15_000 }, async t => {
-    const entered = Promise.withResolvers(), release = Promise.withResolvers();
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
     t.after(() => release.resolve());
-    const effects = [];
+    const effects: string[] = [];
     let toolSignal, cleaned = false;
     const f = await fixture(t, { mcpTools: [fixtureTool], onMcpToolCall: async request => {
       effects.push(request.toolCallId);
@@ -240,7 +250,7 @@ test("Pi 1.1 approved recovery cancellation waits for its new in-flight Host eff
       })]);
       f.controller.abort();
       await nextTick();
-      assert.equal(toolSignal.aborted, true);
+      assert.equal(toolSignal!.aborted, true);
       assert.equal(settled, false, "cancellation must not publish terminal state while the effect is still running");
       assert.equal(cleaned, false);
       assert.equal(f.events.some(event => event.type === "run_end"), false);
