@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import type {
-  CodeAssessmentSnapshot,
   LingAppServerApplyChangesResult,
   LingAppServerCaptureChangesResult,
   LingAppServerChangeRecoveryPreview,
@@ -18,37 +17,40 @@ import {
   withWorkspaceRecoveryLock,
 } from "../features/runs/workspace-change-recovery.js";
 import { assertWorktreeIdle } from "../features/workspaces/worktree-mutation.js";
+import {
+  describeChangeHunks,
+  readChangeWorktree,
+  resolveChangeWorktree,
+  summarizeAppServerCandidate,
+} from "./app-server-change-transfer.js";
 
 const digestPattern = /^[a-f0-9]{64}$/u;
 const maxResultBytes = 112 * 1024;
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
-function summarizeCandidate(cwd: string, snapshot: CodeAssessmentSnapshot): LingAppServerCaptureChangesResult {
-  if (!snapshot.headSha) throw new HttpError(409, "candidate_unavailable", "The worktree has no committed candidate baseline.");
-  return {
-    cwd,
-    candidate: {
-      workspaceId: cwd,
-      candidateDigest: snapshot.digest, filePaths: snapshot.files.map(file => file.path),
-    },
-    coverage: snapshot.coverage, headCommit: snapshot.headSha,
-  };
-}
-
 export async function captureAppServerChanges(cwd: string): Promise<LingAppServerCaptureChangesResult> {
-  return summarizeCandidate(cwd, await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" }));
+  return summarizeAppServerCandidate(cwd, await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" }));
 }
 
-export async function readAppServerChanges(cwd: string, input: Record<string, unknown>): Promise<LingAppServerReadChangesResult> {
+export async function captureAppServerWorktreeChanges(store: RunStore, target: unknown): Promise<LingAppServerCaptureChangesResult> {
+  const worktree = readChangeWorktree(target);
+  const path = await resolveChangeWorktree(store, worktree);
+  return summarizeAppServerCandidate(store.paths.cwd, await captureCodeAssessmentSnapshot(path, { type: "working_tree" }), worktree);
+}
+
+export async function readAppServerChanges(store: RunStore, input: Record<string, unknown>): Promise<LingAppServerReadChangesResult> {
+  const cwd = store.paths.cwd;
   const { candidateDigest, offset = 0, limit = 20 } = input;
   if (typeof candidateDigest !== "string" || !digestPattern.test(candidateDigest)
     || typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0
     || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
     throw new HttpError(400, "invalid_params", "Supply a candidate digest and valid file pagination.");
   }
-  const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+  const sourceWorktree = input.sourceWorktree === undefined ? undefined : readChangeWorktree(input.sourceWorktree);
+  const path = sourceWorktree ? await resolveChangeWorktree(store, sourceWorktree) : cwd;
+  const snapshot = await captureCodeAssessmentSnapshot(path, { type: "working_tree" });
   if (snapshot.digest !== candidateDigest) throw stale("The worktree changed since the candidate was captured.");
-  const summary = summarizeCandidate(cwd, snapshot);
+  const summary = summarizeAppServerCandidate(cwd, snapshot, sourceWorktree);
   const files: LingAppServerReadChangesResult["files"][number][] = [];
   const result = { ...summary, candidate: { ...summary.candidate, filePaths: undefined },
     files, exclusions: snapshot.exclusions.slice(0, 20), exclusionCount: snapshot.exclusions.length,
@@ -56,7 +58,9 @@ export async function readAppServerChanges(cwd: string, input: Record<string, un
   let remaining = maxResultBytes - responseBytes(result);
   let nextOffset = offset;
   for (const file of snapshot.files.slice(offset, offset + limit)) {
-    let entry: LingAppServerReadChangesResult["files"][number] = file;
+    const hunks = describeChangeHunks(file);
+    let entry: LingAppServerReadChangesResult["files"][number] = hunks.length ? { ...file, hunks } : file;
+    if (remaining < responseBytes(entry) + 1 && remaining >= responseBytes(file) + 1) entry = file;
     if (remaining < responseBytes(entry) + 1) {
       if (files.length) break;
       const { diff: _diff, ...metadata } = file;

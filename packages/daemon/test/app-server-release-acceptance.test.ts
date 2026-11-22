@@ -16,7 +16,9 @@ import { parseUserInputAnswerCommandV1 } from "@ling-stack/contracts";
 import type {
   LingAppServerCandidateReference,
   AutomationRun,
+  LingAppServerApplyChangeTransferResult,
   LingAppServerCaptureChangesResult,
+  LingAppServerChangeTransferPreview,
   LingAppServerContextInspectResult,
   LingAppServerExternalAgentRegisterResult,
   LingAppServerExternalAgentTaskReconnectResult,
@@ -48,6 +50,7 @@ import type {
   LingAppServerReviewStartResult,
   LingAppServerReviewStatusResult,
   LingAppServerReviewFindingUpdateResult,
+  LingAppServerReadChangesResult,
   LingAppServerSimplifyStartResult,
   LingAppServerSimplifyStatusResult,
   LingAppServerThreadSnapshotResult,
@@ -58,7 +61,7 @@ import type {
   ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
 import { LingAppServerClient, type LingAppServerSocket, type LingDaemonClient } from "@ling-stack/api-client";
-import { createSqliteRunStore, resolveStoragePaths, toRuntimeAttemptFence, type LingThreadGoal, type RunIntervention, type SqliteRunStore } from "@ling-stack/core";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, resolveStoragePaths, toRuntimeAttemptFence, type LingThreadGoal, type RunIntervention, type SqliteRunStore } from "@ling-stack/core";
 import { WebSocket } from "ws";
 import { createDaemonServer, createDefaultRunnerRegistry, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio, type DaemonConfig } from "../dist/index.js";
 import { prepareConversationSubmission } from "../dist/features/conversations/conversation-submission.js";
@@ -339,6 +342,72 @@ test("App Server manages an owned worktree and archives the reviewed candidate",
     { ...target, expectedRevision: current.expectedRevision, confirmed: true });
   assert.equal(replay.snapshot.id, result.snapshot.id);
   assert.equal(replay.entry.status, "not_created");
+});
+
+test("App Server transfers reviewed hunks between owned worktrees and reconciles a lost receipt", { timeout: 30_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const baseline = ["first", ...Array.from({ length: 20 }, (_, index) => `line ${index}`), "last"].join("\n") + "\n";
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(join(fixture.cwd, "subject.txt"), baseline);
+  await writeFile(join(fixture.cwd, "obsolete.txt"), "obsolete content\n");
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Transfer baseline");
+  const store = fixture.getStore();
+  const client = await fixture.connect();
+  const makeWorktree = async (name: string) => {
+    const owner = store.createChannel({ name, boundPath: fixture.cwd }, new Date().toISOString());
+    const worktree = { ownerKind: "channel", ownerId: owner.id } as const;
+    const { entry } = await client.call<LingAppServerWorktreeResult>("worktree/create", worktree);
+    return { worktree, path: entry.path };
+  };
+  const source = await makeWorktree("Source");
+  const target = await makeWorktree("Target");
+  const changed = baseline.replace("first", "first updated").replace("last", "last updated");
+  await writeFile(join(source.path, "subject.txt"), changed);
+  await writeFile(join(source.path, "added.txt"), "a separate file\n");
+  await unlink(join(source.path, "obsolete.txt"));
+  await writeFile(join(target.path, "local.txt"), "preserve target work\n");
+  const sourceWorktree = source.worktree;
+  const { candidate } = await client.call<LingAppServerCaptureChangesResult>("changes/capture", { sourceWorktree });
+  const { files } = await client.call<LingAppServerReadChangesResult>("changes/read", { sourceWorktree, candidateDigest: candidate.candidateDigest });
+  const modified = files.find(file => file.path === "subject.txt")?.hunks;
+  assert.equal(modified?.length, 2);
+  const selected = [modified![1]!.id, ...files.filter(file => file.path !== "subject.txt").flatMap(file => file.hunks?.map(hunk => hunk.id) ?? [])];
+  assert.equal(selected.length, 3);
+  const request = { action: "apply", sourceWorktree, targetWorktree: target.worktree, candidateDigest: candidate.candidateDigest, hunkIds: selected };
+  const preview = await client.call<LingAppServerChangeTransferPreview>("changes/apply/preview", request);
+  assert.deepEqual(preview.selection.map(item => item.path).sort(), ["added.txt", "obsolete.txt", "subject.txt"]);
+  assert.equal(await readFile(join(target.path, "subject.txt"), "utf8"), baseline);
+  const apply = { ...request, expectedRevision: preview.expectedRevision, idempotencyKey: "transfer", confirmed: true };
+  await writeFile(join(target.path, "local.txt"), "newer target work\n");
+  await assert.rejects(client.call("changes/apply", apply), { code: "stale_revision" });
+  await writeFile(join(target.path, "local.txt"), "preserve target work\n");
+
+  const db = new DatabaseSync(store.paths.databasePath);
+  try {
+    db.exec(`CREATE TRIGGER fixture_lost_transfer_receipt BEFORE UPDATE ON app_server_state
+      WHEN NEW.kind='change_transfer_request' AND json_extract(NEW.payload_json, '$.state')='applied'
+      BEGIN SELECT RAISE(ABORT, 'fixture lost transfer receipt'); END`);
+    await assert.rejects(client.call("changes/apply", apply));
+    db.exec("DROP TRIGGER fixture_lost_transfer_receipt");
+  } finally {
+    db.close();
+  }
+  assert.equal(await readFile(join(target.path, "subject.txt"), "utf8"), baseline.replace("last", "last updated"));
+  assert.equal(await readFile(join(target.path, "added.txt"), "utf8"), "a separate file\n");
+  await assert.rejects(readFile(join(target.path, "obsolete.txt")), { code: "ENOENT" });
+  assert.equal(await readFile(join(target.path, "local.txt"), "utf8"), "preserve target work\n");
+  assert.equal(await readFile(join(source.path, "subject.txt"), "utf8"), changed);
+  assert.equal(await readFile(join(fixture.cwd, "subject.txt"), "utf8"), baseline);
+  await fixture.restart();
+  const resumed = await fixture.connect();
+  const settled = await resumed.call<LingAppServerApplyChangeTransferResult>("changes/apply", apply);
+  assert.equal(settled.state, "applied");
+  assert.deepEqual(await resumed.call("changes/apply", { ...apply, hunkIds: [...selected].reverse() }), settled);
+  await assert.rejects(resumed.call("changes/apply", { ...apply, hunkIds: [modified![0]!.id] }), { code: "idempotency_conflict" });
+  assert.equal(fixture.getStore().getWorkspaceSnapshotFence(DEFAULT_WORKSPACE_ID).ownerRequestId, undefined);
 });
 
 test("App Server submits a durable Turn through the configured Pi Runner and replays it after reconnect", { timeout: 30_000 }, async t => {

@@ -85,7 +85,10 @@ import { submitAuthorizedUserInputAnswer } from "../features/runs/user-input-ans
 import { publishUserInputAnswerAcceptance } from "../features/runs/user-input-events.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 import { abortAppServerVerifications, getAppServerDevelopmentService, type AppServerDevelopmentService } from "./app-server-development.js";
-import { applyAppServerChanges, captureAppServerChanges, previewAppServerChangeRecovery, readAppServerChanges } from "./app-server-changes.js";
+import {
+  applyAppServerChanges, captureAppServerChanges, captureAppServerWorktreeChanges, previewAppServerChangeRecovery, readAppServerChanges,
+} from "./app-server-changes.js";
+import { applyAppServerChangeTransfer, previewAppServerChangeTransfer } from "./app-server-change-transfer.js";
 import { RunWorkspaceRecoveryError } from "../features/runs/workspace-change-recovery.js";
 import { listManagedWorktrees, WorktreeActionError } from "../features/workspaces/worktree-management.js";
 import { cleanupAppServerWorktree, createAppServerWorktree, previewAppServerWorktreeCleanup, refreshAppServerWorktree } from "./app-server-worktrees.js";
@@ -634,17 +637,22 @@ class RpcConnection {
       case "verify/plan":
         return await this.development.planVerification(this.workspaceParams(params) as never);
       case "changes/capture": {
-        const { cwd } = this.workspaceParams(params);
-        return await captureAppServerChanges(cwd);
+        const record = this.workspaceParams(params);
+        if (record.sourceWorktree === undefined) return await captureAppServerChanges(record.cwd);
+        const { cwd } = this.workspaceParams(params, true);
+        return await captureAppServerWorktreeChanges(this.context.storeRegistry.getStore(cwd), record.sourceWorktree);
       }
       case "changes/read": {
         const record = this.workspaceParams(params, true);
-        return await readAppServerChanges(record.cwd, record);
+        return await readAppServerChanges(this.context.storeRegistry.getStore(record.cwd), record);
       }
       case "changes/apply/preview":
       case "changes/apply": {
         const record = this.workspaceParams(params, true);
         const store = this.context.storeRegistry.getStore(record.cwd);
+        if (record.action === "apply") return method === "changes/apply/preview"
+          ? await previewAppServerChangeTransfer(store, record)
+          : await applyAppServerChangeTransfer(store, record);
         return method === "changes/apply/preview"
           ? await previewAppServerChangeRecovery(store, record)
           : await applyAppServerChanges(store, record);
@@ -865,7 +873,8 @@ class RpcConnection {
     }
     return LING_APP_SERVER_IMPLEMENTED_CAPABILITIES.filter(capability =>
       this.authenticated || (capability !== "turn.control" && capability !== "approval.respond"
-        && capability !== "input.respond" && capability !== "development.simplify" && capability !== "development.changes"));
+        && capability !== "input.respond" && capability !== "development.simplify" && capability !== "development.changes"
+        && capability !== "development.changeTransfer"));
   }
 
   private replayIdentity(cwd: string, store = this.context.storeRegistry.getStore(cwd)) {

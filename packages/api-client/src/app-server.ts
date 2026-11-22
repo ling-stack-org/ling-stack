@@ -1,6 +1,11 @@
 import type {
   LingAppServerApplyChangesParams,
   LingAppServerApplyChangesResult,
+  LingAppServerApplyChangeTransferParams,
+  LingAppServerApplyChangeTransferResult,
+  LingAppServerChangeTransferPreview,
+  LingAppServerPreviewChangeTransferParams,
+  LingAppServerCaptureChangesParams,
   LingAppServerChangeRecoveryPreview,
   LingAppServerPreviewChangeRecoveryParams,
   LingAppServerReadChangesParams,
@@ -352,9 +357,9 @@ export class LingAppServerClient {
     return await this.request("input/respond", params);
   }
 
-  async captureChanges(): Promise<LingAppServerCaptureChangesResult> {
-    await this.connect();
-    return await this.request("changes/capture", {});
+  async captureChanges(params: LingAppServerCaptureChangesParams = {}): Promise<LingAppServerCaptureChangesResult> {
+    await this.connectForChanges(Boolean(params.sourceWorktree));
+    return await this.request("changes/capture", params);
   }
 
   async pollGitHubIntake(params: LingAppServerGitHubIntakePollParams): Promise<LingAppServerGitHubIntakePollResult> {
@@ -374,7 +379,7 @@ export class LingAppServerClient {
   }
 
   async readChanges(params: LingAppServerReadChangesParams): Promise<LingAppServerReadChangesResult> {
-    await this.connect();
+    await this.connectForChanges(Boolean(params.sourceWorktree));
     return await this.request("changes/read", params);
   }
 
@@ -386,6 +391,24 @@ export class LingAppServerClient {
   async applyChanges(params: LingAppServerApplyChangesParams): Promise<LingAppServerApplyChangesResult> {
     await this.connect();
     return await this.request("changes/apply", params);
+  }
+
+  async previewChangeTransfer(params: LingAppServerPreviewChangeTransferParams): Promise<LingAppServerChangeTransferPreview> {
+    await this.connectForChanges(true);
+    return await this.request("changes/apply/preview", params);
+  }
+
+  async applyChangeTransfer(params: LingAppServerApplyChangeTransferParams): Promise<LingAppServerApplyChangeTransferResult> {
+    await this.connectForChanges(true);
+    return await this.request("changes/apply", params);
+  }
+
+  private async connectForChanges(needsTransfer: boolean): Promise<void> {
+    const initialized = await this.connect();
+    if (needsTransfer && !initialized.capabilities.includes("development.changeTransfer")) {
+      throw Object.assign(new Error("This App Server connection does not support change transfer."),
+        { code: "required_capability_unavailable" });
+    }
   }
 
   async listWorktrees(): Promise<ManagedWorktreeListResponse> {

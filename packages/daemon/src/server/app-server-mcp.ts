@@ -8,6 +8,11 @@ import { connectToAppServer, type AppServerLocalTransportOptions } from "./app-s
 
 const objectId = z.string().min(1).max(256);
 const requestKey = z.string().min(1).max(128);
+const changeWorktree = z.strictObject({ ownerKind: z.enum(["channel", "teammate"]), ownerId: z.string().min(1).max(200) });
+const transferInput = {
+  sourceWorktree: changeWorktree.optional(), targetWorktree: changeWorktree, candidateDigest: z.string().length(64),
+  hunkIds: z.array(z.string().length(64)).min(1).max(128),
+};
 
 export async function runLingAppServerMcp(
   options: AppServerLocalTransportOptions,
@@ -15,10 +20,12 @@ export async function runLingAppServerMcp(
   output: Writable = process.stdout,
 ): Promise<void> {
   const client = connectToAppServer(options, "ling-mcp");
-  const methods = new Set((await client.getCapabilities().catch(error => {
+  const negotiated = await client.getCapabilities().catch(error => {
     client.close();
     throw error;
-  })).methods);
+  });
+  const methods = new Set(negotiated.methods);
+  const canTransfer = negotiated.capabilities.includes("development.changeTransfer");
   const server = new McpServer({ name: "ling-app-server", version: LING_PRODUCT_VERSION });
   const describe = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }] });
   if (methods.has("thread/read")) server.registerTool("ling_thread_read", {
@@ -120,12 +127,13 @@ export async function runLingAppServerMcp(
     }, async params => describe(await client.bindWorkItemWorkflow(params)));
     if (methods.has("changes/capture")) server.registerTool("ling_changes_capture", {
       description: "Capture the current working-tree candidate and its coverage.",
-      inputSchema: z.strictObject({}),
+      inputSchema: z.strictObject({ sourceWorktree: changeWorktree.optional() }),
       annotations: { readOnlyHint: true },
-    }, async () => describe(await client.captureChanges()));
+    }, async params => describe(await client.captureChanges(params)));
     if (methods.has("changes/read")) server.registerTool("ling_changes_read", {
       description: "Read the bounded current candidate diff for a captured candidate digest.",
-      inputSchema: z.strictObject({ candidateDigest: z.string().length(64), offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() }),
+      inputSchema: z.strictObject({ candidateDigest: z.string().length(64), offset: z.number().int().nonnegative().optional(),
+        limit: z.number().int().min(1).max(50).optional(), sourceWorktree: changeWorktree.optional() }),
       annotations: { readOnlyHint: true },
     }, async params => describe(await client.readChanges(params)));
     if (methods.has("changes/apply/preview")) server.registerTool("ling_changes_preview_recovery", {
@@ -138,6 +146,16 @@ export async function runLingAppServerMcp(
       inputSchema: z.strictObject({ threadId: objectId, turnId: objectId, action: z.enum(["undo", "reapply"]), expectedRevision: z.string().length(64), idempotencyKey: requestKey, confirmed: z.literal(true) }),
       annotations: { idempotentHint: true, destructiveHint: true },
     }, async params => describe(await client.applyChanges(params)));
+    if (canTransfer && methods.has("changes/apply/preview")) server.registerTool("ling_changes_preview_transfer", {
+      description: "Preview transferring selected hunk IDs from the captured candidate to an owned worktree.",
+      inputSchema: z.strictObject(transferInput),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.previewChangeTransfer({ ...params, action: "apply" })));
+    if (canTransfer && methods.has("changes/apply")) server.registerTool("ling_changes_apply_transfer", {
+      description: "Apply a confirmed hunk transfer with its preview revision and idempotency key.",
+      inputSchema: z.strictObject({ ...transferInput, expectedRevision: z.string().length(64), idempotencyKey: requestKey, confirmed: z.literal(true) }),
+      annotations: { idempotentHint: true, destructiveHint: true },
+    }, async params => describe(await client.applyChangeTransfer({ ...params, action: "apply" })));
     if (methods.has("github/intake/poll")) server.registerTool("ling_github_intake_poll", {
       description: "Evaluate a registered GitHub intake page under its current manual, suggestion, or automatic admission policy.",
       inputSchema: z.strictObject({ repository: z.string().min(3).max(201), page: z.number().int().min(1).max(500).optional(),

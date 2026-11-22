@@ -33,6 +33,7 @@ export const LING_APP_SERVER_CAPABILITIES = [
   "development.simplify",
   "development.instructions",
   "development.changes",
+  "development.changeTransfer",
   "workItem.read",
   "workItem.control",
   "workItem.evidence",
@@ -55,6 +56,7 @@ export const LING_APP_SERVER_IMPLEMENTED_CAPABILITIES = [
   "development.simplify",
   "development.instructions",
   "development.changes",
+  "development.changeTransfer",
   "workItem.read",
   "workItem.control",
   "workItem.evidence",
@@ -849,17 +851,32 @@ export interface LingAppServerCaptureChangesResult {
   readonly headCommit: string;
 }
 
-export interface LingAppServerReadChangesParams {
+export type LingAppServerChangeWorktree = Pick<LingAppServerWorktreeTarget, "ownerKind" | "ownerId">;
+
+export interface LingAppServerCaptureChangesParams {
   readonly cwd?: string;
+  readonly sourceWorktree?: LingAppServerChangeWorktree;
+}
+
+export interface LingAppServerReadChangesParams extends LingAppServerCaptureChangesParams {
   readonly candidateDigest: string;
   readonly offset?: number;
   readonly limit?: number;
+}
+
+export interface LingAppServerChangeHunk {
+  readonly id: string;
+  readonly oldStart: number;
+  readonly oldLines: number;
+  readonly newStart: number;
+  readonly newLines: number;
 }
 
 export interface LingAppServerReadChangesResult extends LingAppServerCaptureChangesResult {
   readonly files: readonly (Omit<CodeAssessmentSnapshot["files"][number], "diff"> & {
     readonly diff?: string;
     readonly diffOmitted?: "frame_limit";
+    readonly hunks?: readonly LingAppServerChangeHunk[];
   })[];
   readonly exclusions: CodeAssessmentSnapshot["exclusions"];
   readonly exclusionCount: number;
@@ -892,6 +909,37 @@ export interface LingAppServerApplyChangesResult {
   readonly action: LingAppServerPreviewChangeRecoveryParams["action"];
   readonly receiptId: string;
   readonly state: TurnWorkspaceChangesResponse["state"];
+}
+
+export interface LingAppServerPreviewChangeTransferParams extends LingAppServerCaptureChangesParams {
+  readonly action: "apply";
+  readonly targetWorktree: LingAppServerChangeWorktree;
+  readonly candidateDigest: string;
+  readonly hunkIds: readonly string[];
+}
+
+export interface LingAppServerChangeTransferPreview extends LingAppServerCaptureChangesResult {
+  readonly action: "apply";
+  readonly targetWorktree: LingAppServerChangeWorktree;
+  readonly targetHeadCommit: string;
+  readonly targetCandidateDigest: string;
+  readonly expectedRevision: string;
+  readonly selection: readonly { readonly path: string; readonly hunkIds: readonly string[] }[];
+}
+
+export interface LingAppServerApplyChangeTransferParams extends LingAppServerPreviewChangeTransferParams {
+  readonly expectedRevision: string;
+  readonly idempotencyKey: string;
+  readonly confirmed: true;
+}
+
+export interface LingAppServerApplyChangeTransferResult {
+  readonly cwd: string;
+  readonly action: "apply";
+  readonly targetWorktree: LingAppServerChangeWorktree;
+  readonly receiptId: string;
+  readonly state: "applied" | "not_applied" | "unknown";
+  readonly paths: readonly string[];
 }
 
 export interface LingAppServerWorktreeTarget {
