@@ -1641,9 +1641,9 @@ nested scroll owner，并能定位首尾 child；展开 p95 `<100ms` 记录为�
 
 | 测试 | 类型 | 核心断言 |
 | --- | --- | --- |
-| `packages/conversation-ui-core/test/canonical-transcript-projector.test.mjs`、`surface-policy.test.mjs` | unit | 同 fixture 五种 surface 的 kind/order/status/renderer fingerprint 相同；policy 差异不改事实 |
+| `packages/conversation-ui-core/test/canonical-transcript-projector.test.ts`、`surface-policy.test.ts` | unit | 同 fixture 五种 surface 的 kind/order/status/renderer fingerprint 相同；policy 差异不改事实 |
 | `apps/web/test/channel-timeline-renderer-contract.test.mjs`、`conversation-timeline-semantic-contract.test.mjs` | source contract | 每 surface 一次 mount；唯一 shared shell/root window；无 synthetic thread 或第二 fact-action JSX slot |
-| `packages/conversation-ui-core/test/message-body.test.mjs`、`message-presentation.test.mjs` 和 Web 内容 E2E | unit + E2E | paragraph/list/code/path/resource、copy/edit/feedback callback 不破坏 item identity |
+| `packages/conversation-ui-core/test/message-body.test.ts`、`message-presentation.test.ts` 和 Web 内容 E2E | unit + E2E | paragraph/list/code/path/resource、copy/edit/feedback callback 不破坏 item identity |
 | `apps/web/test/channel-protocol-timeline-status.test.mjs` 与 `apps/web/e2e/channel.spec.ts` protocol actions | unit + E2E | kind-specific status；enum + callback 仅 owning row 调用；真实 mutation 与 pending guard，无外部重复卡 |
 | `apps/web/test/conversation-timeline-display-model.test.mjs` | unit | collapsed/expanded flat rows、parent-isolated key、depth=2 diagnostic、collapsed child location |
 | `apps/web/e2e/app.spec.ts`、`teammates.spec.ts`、`channel.spec.ts`、`ui2-conversation-work-cell-activity.spec.ts` | E2E | normal/private/channel/topic/branch/child 的 DOM、窗口化、anchor、disclosure 和单一 feed scroll owner |

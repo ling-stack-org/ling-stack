@@ -1,7 +1,9 @@
+import type { CanonicalConversationItem, CanonicalExecutionAction, CanonicalTranscriptProjectionInput, CanonicalTranscriptScope } from "../../dist/index.js";
+
 /** Synthetic canonical inputs only. This fixture never reads persisted conversations. */
-export function transcriptScaleFixture(count, kind = "exploration") {
-  const scope = { surface: "normal", workspaceId: "performance-workspace", threadId: "performance-thread", depth: 0 };
-  const items = Array.from({ length: count }, (_, index) => ({
+export function transcriptScaleFixture(count: number, kind: "message" | "exploration" = "exploration"): CanonicalTranscriptProjectionInput {
+  const scope: CanonicalTranscriptScope = { surface: "normal", workspaceId: "performance-workspace", threadId: "performance-thread", depth: 0 };
+  const items = Array.from({ length: count }, (_, index): CanonicalConversationItem => ({
     id: `performance-item-${index}`, workspaceId: scope.workspaceId, threadId: scope.threadId,
     turnId: "performance-turn", sequence: index + 1, revision: 1, status: "committed",
     kind: kind === "message" ? "assistant_message" : "tool_call", actorType: "ling_agent",
@@ -18,7 +20,8 @@ export function transcriptScaleFixture(count, kind = "exploration") {
       { kind: "conversation_item", id: item.id },
       { kind: "file", id: `fixtures/example-${index + 1}.txt` },
     ],
-  }));
-  return { scope, items, actions, sourceSequence: count, sourceRevision: `synthetic-${kind}-${count}`,
+  } satisfies Omit<CanonicalExecutionAction, "workflowStepId">));
+  // Legacy actions can arrive without an explicit workflow step.
+  return { scope, items, actions: actions as unknown as CanonicalExecutionAction[], sourceSequence: count, sourceRevision: `synthetic-${kind}-${count}`,
     turnRuns: [{ runId: "performance-run", turnId: "performance-turn", attemptNumber: 1, role: "primary" }] };
 }

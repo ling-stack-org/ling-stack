@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type {
+  ConversationAgentActivitySpan,
+  ConversationCommandExecutionView,
+  ConversationOperationExecutionView,
+  ConversationOperationSourceRef,
+  ConversationTimelineInput,
+  ConversationTimelineProtocolEventItem,
+  ConversationTimelineSubAgentItem,
+  ConversationWorkCellRow,
+} from "../dist/index.js";
 import {
   normalizeConversationOperationCell,
   projectConversationActivity,
@@ -13,13 +23,13 @@ import {
 } from "../dist/index.js";
 
 test("work cell view models normalize legacy row aliases", () => {
-  const operationRows = [
+  const operationRows: ConversationWorkCellRow[] = [
     { id: "row-1", title: "Read workspace", tone: "success" },
   ];
   const agentBranches = [
     { id: "agent-1", label: "Designer", rows: operationRows },
   ];
-  const terminalReportRows = [
+  const terminalReportRows: ConversationWorkCellRow[] = [
     { id: "report-1", title: "Done", tone: "success" },
   ];
 
@@ -50,7 +60,7 @@ test("work cell view models normalize legacy row aliases", () => {
 });
 
 test("command batching groups three adjacent low-risk successful commands", () => {
-  const rows = [
+  const rows: ConversationWorkCellRow[] = [
     commandRow("one", "run-1", "pnpm typecheck", 1200),
     commandRow("two", "run-1", "pnpm lint", 800),
     commandRow("three", "run-1", "pnpm test", 2200),
@@ -83,6 +93,7 @@ test("work-cell exploration preserves Host output and never promotes its input o
   assert.equal(item.inputSummary, row.toolEvidence.inputSummary);
   assert.equal(item.outputTruncated, true);
   const [withoutOutput] = projectConversationTimelineItems([{ ...row, toolEvidence: undefined }]);
+  assert.equal(withoutOutput.kind, "exploration");
   assert.equal(withoutOutput.resultSummary, undefined);
 
   const [tool] = projectConversationTimelineItems([{
@@ -90,11 +101,11 @@ test("work-cell exploration preserves Host output and never promotes its input o
     operationExecution: { ...row.operationExecution, actionType: "mcp_tool" },
     toolEvidence: undefined,
   }]);
-  assert.equal(tool.resultSummary, undefined, "A status label must never become tool result evidence");
+  assert.equal("resultSummary" in tool ? tool.resultSummary : undefined, undefined, "A status label must never become tool result evidence");
 });
 
 test("command batching preserves boundaries and leaves active or consequential commands visible", () => {
-  const rows = [
+  const rows: ConversationWorkCellRow[] = [
     commandRow("one", "run-1", "pnpm typecheck", 1200),
     commandRow("two", "run-1", "pnpm lint", 800),
     { id: "note", presentation: "note", title: "Verify the changed surface" },
@@ -111,8 +122,10 @@ test("command batching preserves boundaries and leaves active or consequential c
   assert.equal(items[3].kind, "command_batch");
   assert.equal(items[3].batch.commandCount, 3);
   assert.equal(items[4].kind, "operation");
+  assert.ok(items[4].row.commandExecution);
   assert.equal(items[4].row.commandExecution.status, "executing");
   assert.equal(items[5].kind, "operation");
+  assert.ok(items[5].row.commandExecution);
   assert.equal(items[5].row.commandExecution.actionType, "git_push");
 });
 
@@ -185,7 +198,9 @@ test("command batching keeps approval-linked commands standalone", () => {
   ]);
 
   assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "command_batch"]);
-  assert.deepEqual(items[2].batch.actionIds, ["two", "three", "four"]);
+  const batch = items[2];
+  assert.equal(batch.kind, "command_batch");
+  assert.deepEqual(batch.batch.actionIds, ["two", "three", "four"]);
 });
 
 test("activity projection groups three adjacent successful read actions", () => {
@@ -196,10 +211,12 @@ test("activity projection groups three adjacent successful read actions", () => 
   ]);
 
   assert.deepEqual(items.map((item) => item.kind), ["exploration_batch"]);
-  assert.equal(items[0].batch.operationCount, 3);
-  assert.equal(items[0].batch.targetCount, 3);
-  assert.deepEqual(items[0].batch.actionIds, ["one", "two", "three"]);
-  assert.match(items[0].batch.id, /^exploration-batch:primary:run-1:one$/u);
+  const batch = items[0];
+  assert.equal(batch.kind, "exploration_batch");
+  assert.equal(batch.batch.operationCount, 3);
+  assert.equal(batch.batch.targetCount, 3);
+  assert.deepEqual(batch.batch.actionIds, ["one", "two", "three"]);
+  assert.match(batch.batch.id, /^exploration-batch:primary:run-1:one$/u);
 });
 
 test("activity projection leaves one or two reads visible", () => {
@@ -241,7 +258,9 @@ test("activity projection keeps approval-linked reads standalone", () => {
   ]);
 
   assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "exploration_batch"]);
-  assert.deepEqual(items[2].batch.actionIds, ["two", "three", "four"]);
+  const batch = items[2];
+  assert.equal(batch.kind, "exploration_batch");
+  assert.deepEqual(batch.batch.actionIds, ["two", "three", "four"]);
 });
 
 test("activity projection preserves source order when reads and commands are interleaved", () => {
@@ -253,7 +272,10 @@ test("activity projection preserves source order when reads and commands are int
   ]);
 
   assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "operation", "operation"]);
-  assert.deepEqual(items.map((item) => item.row.operationExecution?.actionId ?? item.row.commandExecution?.actionId), [
+  assert.deepEqual(items.map((item) => {
+    assert.equal(item.kind, "operation");
+    return item.row.operationExecution?.actionId ?? item.row.commandExecution?.actionId;
+  }), [
     "read-a",
     "command-b",
     "read-c",
@@ -271,9 +293,11 @@ test("activity projection keeps a logical action note with its evidence row", ()
   ]);
 
   assert.deepEqual(items.map((item) => item.kind), ["exploration_batch"]);
-  assert.equal(items[0].batch.rows.length, 4);
-  assert.equal(items[0].batch.actionIds.length, 3);
-  assert.equal(items[0].batch.actionIds[0], "one");
+  const batch = items[0];
+  assert.equal(batch.kind, "exploration_batch");
+  assert.equal(batch.batch.rows.length, 4);
+  assert.equal(batch.batch.actionIds.length, 3);
+  assert.equal(batch.batch.actionIds[0], "one");
 });
 
 test("activity projection splits reads at consequential actions and lineage boundaries", () => {
@@ -291,7 +315,10 @@ test("activity projection splits reads at consequential actions and lineage boun
 
   assert.deepEqual(items.map((item) => item.kind), ["exploration_batch", "operation", "operation", "operation", "exploration_batch"]);
   assert.deepEqual(items.filter((item) => item.kind === "exploration_batch").map((item) => item.batch.runId), ["run-1", "run-2"]);
-  assert.equal(items[1].row.operationExecution.actionId, "edit");
+  const edited = items[1];
+  assert.equal(edited.kind, "operation");
+  assert.ok(edited.row.operationExecution);
+  assert.equal(edited.row.operationExecution.actionId, "edit");
 });
 
 test("activity summary counts logical actions once and excludes notes and failures", () => {
@@ -302,7 +329,7 @@ test("activity summary counts logical actions once and excludes notes and failur
     { id: "note:read-1", presentation: "note", title: "Read scope", operationExecution: readExecution },
     { id: "read:read-1", title: "Read one", operationExecution: readExecution },
     { id: "edit:edit-1", title: "Edit files", operationExecution: editExecution },
-    { id: "command:command-1", presentation: "shell", title: "Run command", commandExecution: { risk: "low" }, operationExecution: commandExecution },
+    { id: "command:command-1", presentation: "shell", title: "Run command", commandExecution: { risk: "low" } as ConversationCommandExecutionView, operationExecution: commandExecution },
     { id: "failed", title: "Failed read", operationExecution: operationExecution("failed", "run-1", "read", "failed", [fileRef("src/failed.ts")]) },
   ]);
 
@@ -325,7 +352,9 @@ test("typed timeline keeps batch identity and maps evidence to semantic item kin
 
   assert.deepEqual(items.map((item) => item.kind), ["explorationBatch", "fileChange"]);
   assert.equal(items[0].turnId, "turn-1");
-  assert.equal(items[0].batch.actionIds.length, 3);
+  const batch = items[0];
+  assert.equal(batch.kind, "explorationBatch");
+  assert.equal(batch.batch.actionIds.length, 3);
   assert.equal(items[1].actionId, "edit");
   assert.equal(items[1].sourceRefs[0].id, "src/three.ts");
 });
@@ -346,7 +375,7 @@ test("timeline fingerprint is stable across nested and batched rendering", () =>
 });
 
 test("protocol lifecycle records use the shared factual renderer without execution credit", () => {
-  const item = {
+  const item: ConversationTimelineProtocolEventItem = {
     id: "protocol:workflow:workflow-1",
     kind: "protocolEvent",
     protocolKind: "workflow",
@@ -383,7 +412,7 @@ test("typed timeline maps agent notes to narrative without treating them as evid
 });
 
 test("nested agent projection reuses the same typed child timeline", () => {
-  const span = {
+  const span: ConversationAgentActivitySpan = {
     id: "agent-engineer",
     participantId: "engineer",
     label: "Engineer",
@@ -407,7 +436,7 @@ test("explicit participant lifecycle is not inferred from tone or localized labe
     ["started", "pending"], ["running", "running"], ["waiting", "waiting"],
     ["blocked", "blocked"], ["interrupted", "cancelled"],
     ["completed", "succeeded"], ["errored", "failed"],
-  ]) {
+  ] as const) {
     const item = projectConversationSubAgentActivity({ id: "owned-agent", label: "Engineer",
       lifecycle, stateLabel: "source label only", tone: "waiting", rows: [],
     }, [readRow("owned-read", "owned-run", "owned.txt", { participantId: "owned-agent" })]);
@@ -418,7 +447,7 @@ test("explicit participant lifecycle is not inferred from tone or localized labe
 });
 
 test("legacy child projection converts a third-level participant into a blocked diagnostic", () => {
-  const nestedAgent = {
+  const nestedAgent: ConversationTimelineSubAgentItem = {
     id: "sub-agent:researcher",
     kind: "subAgentActivity",
     revision: 1,
@@ -476,7 +505,7 @@ test("typed timeline prefers action type over legacy row kind", () => {
 });
 
 test("legacy action adapters preserve bounded runtime diagnostics as failed facts", () => {
-  const runtimeDiagnostic = {
+  const runtimeDiagnostic: NonNullable<ConversationOperationExecutionView["runtimeDiagnostic"]> = {
     code: "execution_loop_detected", loopKind: "cycle", repeatedCount: 3,
     noProgressActionCount: 8, cycleLength: 2, fingerprint: "c".repeat(64), retryable: false,
   };
@@ -497,14 +526,15 @@ test("legacy action adapters preserve bounded runtime diagnostics as failed fact
 });
 
 test("typed timeline fail-closes malformed rows without crashing the feed", () => {
-  const items = projectConversationTimelineItems([null, { id: "missing-title" }, {
+  const malformed = [null, { id: "missing-title" }, {
     id: "unsafe-source",
     title: "Read file",
     operationExecution: {
       ...operationExecution("read-unsafe", "run-1", "read", "succeeded"),
       sourceRefs: [null, { kind: "file", id: "src/safe.ts" }, { kind: 42, id: "bad" }],
     },
-  }]);
+  }];
+  const items = projectConversationTimelineItems(malformed as unknown as ConversationTimelineInput[]);
 
   assert.equal(items[0].kind, "diagnostic");
   assert.equal(items[0].status, "blocked");
@@ -566,12 +596,13 @@ test("timeline normalization ignores untyped replay payloads", () => {
   assert.deepEqual(normalized.map((item) => item.id), [projected[0].id]);
 });
 
-function commandRow(id, runId, commandText, durationMs, overrides = {}) {
+function commandRow(id: string, runId: string, commandText: string, durationMs: number | undefined,
+  overrides: Partial<ConversationCommandExecutionView> = {}) {
   const status = overrides.status ?? "succeeded";
   const exitCode = "exitCode" in overrides ? overrides.exitCode : 0;
   return {
     id: `row-${id}`,
-    presentation: "shell",
+    presentation: "shell" as const,
     title: status === "executing" ? "Running command" : "Ran command",
     commandText,
     commandExecution: {
@@ -598,15 +629,16 @@ function commandRow(id, runId, commandText, durationMs, overrides = {}) {
       resultArtifactId: overrides.resultArtifactId,
       outputTruncated: false,
       sourceRefs: overrides.sourceRefs ?? [conversationItemRef(id), { kind: "command", id: commandText, label: commandText }],
-    },
+    } satisfies ConversationCommandExecutionView,
   };
 }
 
-function readRow(id, runId, path, overrides = {}) {
-  return operationRow(id, runId, "read", "succeeded", "sourceRefs" in overrides ? overrides.sourceRefs : [fileRef(path), conversationItemRef(id)], overrides);
+function readRow(id: string, runId: string, path: string, overrides: Partial<ConversationOperationExecutionView> = {}) {
+  return operationRow(id, runId, "read", "succeeded", "sourceRefs" in overrides ? overrides.sourceRefs! : [fileRef(path), conversationItemRef(id)], overrides);
 }
 
-function operationRow(id, runId, actionType, status, sourceRefs = [], overrides = {}) {
+function operationRow(id: string, runId: string, actionType: string, status: string,
+  sourceRefs: readonly ConversationOperationSourceRef[] = [], overrides: Partial<ConversationOperationExecutionView> = {}) {
   return {
     id: `row-${id}`,
     title: `${actionType} ${id}`,
@@ -618,7 +650,8 @@ function operationRow(id, runId, actionType, status, sourceRefs = [], overrides 
   };
 }
 
-function operationExecution(actionId, runId, actionType, status, sourceRefs = [], overrides = {}) {
+function operationExecution(actionId: string, runId: string, actionType: string, status: string,
+  sourceRefs: readonly ConversationOperationSourceRef[] = [], overrides: Partial<ConversationOperationExecutionView> = {}): ConversationOperationExecutionView {
   const anchoredSourceRefs = sourceRefs.length > 0 && !sourceRefs.some((ref) => ref?.kind === "conversation_item")
     ? [...sourceRefs, conversationItemRef(actionId)]
     : sourceRefs;
@@ -637,10 +670,10 @@ function operationExecution(actionId, runId, actionType, status, sourceRefs = []
   };
 }
 
-function conversationItemRef(id) {
+function conversationItemRef(id: string): ConversationOperationSourceRef {
   return { kind: "conversation_item", id: `item-${id}` };
 }
 
-function fileRef(path) {
+function fileRef(path: string): ConversationOperationSourceRef {
   return { kind: "file", id: path, label: path };
 }

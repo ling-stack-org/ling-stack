@@ -1,5 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type {
+  CanonicalApprovalRecord,
+  CanonicalCompactionRecord,
+  CanonicalConversationItem,
+  CanonicalExecutionAction,
+  CanonicalParticipantSpan,
+  CanonicalReasoningSummaryRecord,
+  CanonicalSourceRef,
+  CanonicalTranscriptProjectionInput,
+  CanonicalTranscriptScope,
+  ConversationTimelineCommandExecutionItem,
+  ConversationTimelineExplorationItem,
+  ConversationTimelineItem,
+  ConversationTimelineSubAgentItem,
+} from "../dist/index.js";
 import {
   mergeCanonicalTranscriptInputs,
   projectCanonicalConversationTimeline,
@@ -8,7 +23,7 @@ import {
   projectDisplayBatches,
 } from "../dist/index.js";
 
-const scope = {
+const scope: CanonicalTranscriptScope = {
   surface: "normal",
   threadId: "thread-1",
   workspaceId: "workspace-1",
@@ -17,17 +32,17 @@ const scope = {
 
 test("compaction lifecycle keeps event identity and causal order without becoming terminal action evidence", () => {
   const assistant = { ...item("assistant", 3, "assistant_message", { body: "Done", deliveryStatus: "ready" }), turnId: "turn-1", domainRefs: [{ type: "run", id: "run-1" }] };
-  const record = { id: "compaction-1", revision: 10, workspaceId: scope.workspaceId, threadId: scope.threadId,
+  const record: CanonicalCompactionRecord = { id: "compaction-1", revision: 10, workspaceId: scope.workspaceId, threadId: scope.threadId,
     turnId: "turn-1", runId: "run-1", attemptId: "attempt-1", participantId: "ling", anchorItemId: assistant.id,
     eventSequence: 5, eventId: "event-5", status: "running", reason: "threshold", summary: "",
     sourceRefs: [{ kind: "conversation_item", id: assistant.id }, { kind: "run", id: "run-1" },
       { kind: "attempt", id: "attempt-1" }, { kind: "run_event", id: "event-5" }] };
-  const input = { scope, sourceSequence: 3, sourceRevision: "compaction", items: [
+  const input: CanonicalTranscriptProjectionInput = { scope, sourceSequence: 3, sourceRevision: "compaction", items: [
     item("user", 1, "user_message", { body: "Inspect" }),
     item("tool", 2, "tool_call", { toolCallId: "call", toolName: "read" }), assistant,
   ], actions: [action("read", 2, { actionType: "read", status: "succeeded", toolCallId: "call", sourceEventSequence: 8,
     sourceRefs: [conversationRef("tool")] })], turnRuns: [], compactions: [record] };
-  for (const status of ["running", "succeeded", "failed", "cancelled", "blocked"]) {
+  for (const status of ["running", "succeeded", "failed", "cancelled", "blocked"] as const) {
     const projected = projectCanonicalConversationTimeline({ ...input, compactions: [{ ...record, status }] });
     const compaction = projected.items.find(row => row.kind === "contextCompaction");
     assert.ok(compaction);
@@ -54,12 +69,12 @@ test("unhydrated user-input references never become messages, commands or termin
   assert.deepEqual(result.diagnostics, []);
 });
 
-const childScope = { ...scope, surface: "child", depth: 1, turnId: "turn-1", runId: "run-1", attemptId: "attempt-1", participantId: "qa" };
-const childMessage = () => ({
+const childScope: CanonicalTranscriptScope = { ...scope, surface: "child", depth: 1, turnId: "turn-1", runId: "run-1", attemptId: "attempt-1", participantId: "qa" };
+const childMessage = (): CanonicalConversationItem => ({
   ...item("child-message", 1, "assistant_message", { body: "Inspecting the result.", deliveryStatus: "ready", presentationRole: "narration" }),
-  turnId: "turn-1", actorType: "teammate", actorId: "qa", domainRefs: [{ type: "run", id: "run-1" }],
+  turnId: "turn-1", actorType: "teammate" as const, actorId: "qa", domainRefs: [{ type: "run", id: "run-1" }],
 });
-const childInput = (message, overrides = {}) => ({
+const childInput = (message: CanonicalConversationItem, overrides: Partial<CanonicalTranscriptProjectionInput> = {}): CanonicalTranscriptProjectionInput => ({
   scope: childScope, sourceSequence: 2, sourceRevision: "child-scope", items: [message, item("child-tool", 2, "tool_call", { toolName: "bash", toolCallId: "child-call" })],
   actions: [action("child-action", 1, { participantId: "qa", toolCallId: "child-call", sourceRefs: [conversationRef("child-tool")] })],
   turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }], ...overrides,
@@ -72,6 +87,7 @@ test("child canonical narration keeps exact run, attempt, participant and commen
   assert.equal(message.runId, "run-1");
   assert.equal(message.attemptId, "attempt-1");
   assert.equal(message.participantId, "qa");
+  assert.ok("phase" in message);
   assert.equal(message.phase, "commentary");
   assert.ok(message.sourceRefs.some((ref) => ref.kind === "run" && ref.id === "run-1"));
 });
@@ -82,7 +98,7 @@ for (const [name, overrides] of [
   ["same turn without a run owner", { domainRefs: [] }],
   ["another participant", { actorId: "engineer" }],
   ["another turn", { turnId: "turn-other" }],
-]) {
+] as const) {
   test(`child scope rejects ${name}`, () => {
     const result = projectCanonicalConversationTimeline(childInput({ ...childMessage(), ...overrides }));
     assert.equal(result.items.some((entry) => entry.kind === "agentMessage"), false);
@@ -227,7 +243,7 @@ for (const [actionType, kind] of [
   ["dynamic_tool_call", "dynamicToolCall"],
   ["host_capability", "dynamicToolCall"],
   ["collab_agent_tool_call", "collabAgentToolCall"],
-]) {
+] as const) {
   for (const status of ["succeeded", "failed"]) {
     test(`canonical ${kind} preserves Host input and ${status} output evidence`, () => {
       const outputText = status === "succeeded" ? '{"text":"实际工具输出"}\n' : "Provider error: request rejected\n";
@@ -256,7 +272,7 @@ for (const [actionType, kind] of [
       });
 
       const projected = projection.items[0];
-      assert.equal(projected.kind, kind);
+      assert.ok(projected.kind === kind);
       assert.equal(projected.status, status);
       assert.equal(projected.resultSummary, outputText);
       assert.equal(projected.inputSummary, toolEvidence.inputSummary);
@@ -289,7 +305,7 @@ for (const [actionType, kind] of [
       });
 
       const projected = projection.items[0];
-      assert.equal(projected.kind, kind);
+      assert.ok(projected.kind === kind);
       assert.equal(projected.resultSummary, toolEvidence?.outputText);
       assert.equal(projected.inputSummary, toolEvidence?.inputSummary);
     }
@@ -459,7 +475,7 @@ test("canonical projector reports missing and cross-thread anchors without fabri
 });
 
 test("typed batching folds only adjacent same-scope atomic facts and preserves maximum revision", () => {
-  const base = (kind, id, sequence, revision) => ({
+  const base = (kind: "commandExecution" | "fileChange", id: string, sequence: number, revision: number) => ({
     id,
     kind,
     revision,
@@ -476,7 +492,7 @@ test("typed batching folds only adjacent same-scope atomic facts and preserves m
     ...(kind === "commandExecution"
       ? { command: `node ${id}.js`, risk: "low", outputTail: [], outputTruncated: false, exitCode: 0 }
       : { operation: "read", targets: [{ kind: "file", id: `src/${id}.ts` }] }),
-  });
+  } as ConversationTimelineItem);
   const items = batch([
     base("commandExecution", "c1", 1, 4),
     base("commandExecution", "c2", 2, 8),
@@ -488,12 +504,14 @@ test("typed batching folds only adjacent same-scope atomic facts and preserves m
 
   assert.deepEqual(items.map((item) => item.kind), ["commandBatch", "fileChange", "commandExecution", "commandExecution"]);
   assert.equal(items[0].revision, 8);
-  assert.deepEqual(items[0].actionIds, ["c1", "c2", "c3"]);
+  const commandBatch = items[0];
+  assert.equal(commandBatch.kind, "commandBatch");
+  assert.deepEqual(commandBatch.actionIds, ["c1", "c2", "c3"]);
   assert.equal(items[1].actionId, "edit");
 });
 
 test("typed batching keeps approval-linked commands atomic even when low-risk and successful", () => {
-  const base = (id, sequence, approvalId) => ({
+  const base = (id: string, sequence: number, approvalId?: string): ConversationTimelineCommandExecutionItem => ({
     id,
     kind: "commandExecution",
     revision: sequence,
@@ -523,11 +541,13 @@ test("typed batching keeps approval-linked commands atomic even when low-risk an
   ]);
   assert.deepEqual(items.map((item) => item.kind), ["commandExecution", "commandExecution", "commandBatch"]);
   assert.equal(items[1].approvalId, "approval-1");
-  assert.deepEqual(items[2].actionIds, ["c2", "c3", "c4"]);
+  const commandBatch = items[2];
+  assert.equal(commandBatch.kind, "commandBatch");
+  assert.deepEqual(commandBatch.actionIds, ["c2", "c3", "c4"]);
 });
 
 test("typed batching does not bridge a canonical sequence gap", () => {
-  const base = (id, sequence, partIndex = 1) => ({
+  const base = (id: string, sequence: number, partIndex = 1): ConversationTimelineCommandExecutionItem => ({
     id,
     kind: "commandExecution",
     revision: sequence,
@@ -554,11 +574,13 @@ test("typed batching does not bridge a canonical sequence gap", () => {
     base("c5", 5),
   ]);
   assert.deepEqual(items.map((item) => item.kind), ["commandExecution", "commandBatch"]);
-  assert.deepEqual(items[1].actionIds, ["c3", "c4", "c5"]);
+  const commandBatch = items[1];
+  assert.equal(commandBatch.kind, "commandBatch");
+  assert.deepEqual(commandBatch.actionIds, ["c3", "c4", "c5"]);
 });
 
 test("typed batching accepts only contiguous parts on one canonical anchor", () => {
-  const base = (id, partIndex) => ({
+  const base = (id: string, partIndex: number): ConversationTimelineCommandExecutionItem => ({
     id,
     kind: "commandExecution",
     revision: partIndex,
@@ -582,11 +604,13 @@ test("typed batching accepts only contiguous parts on one canonical anchor", () 
   assert.equal(contiguous[0].kind, "commandBatch");
   const gap = batch([base("p1", 1), base("p3", 3), base("p4", 4), base("p5", 5)]);
   assert.deepEqual(gap.map((item) => item.kind), ["commandExecution", "commandBatch"]);
-  assert.deepEqual(gap[1].actionIds, ["p3", "p4", "p5"]);
+  const commandBatch = gap[1];
+  assert.equal(commandBatch.kind, "commandBatch");
+  assert.deepEqual(commandBatch.actionIds, ["p3", "p4", "p5"]);
 });
 
 test("typed batching flushes at context segment changes and unknown lookups", () => {
-  const base = (id, sequence) => ({
+  const base = (id: string, sequence: number): ConversationTimelineCommandExecutionItem => ({
     id,
     kind: "commandExecution",
     revision: sequence,
@@ -609,7 +633,9 @@ test("typed batching flushes at context segment changes and unknown lookups", ()
   const items = [base("c1", 1), base("c2", 2), base("c3", 3), base("c4", 4), base("c5", 5)];
   const split = batch(items, { c1: "segment-a", c2: "segment-a", c3: "segment-b", c4: "segment-b", c5: "segment-b" });
   assert.deepEqual(split.map((item) => item.kind), ["commandExecution", "commandExecution", "commandBatch"]);
-  assert.deepEqual(split[2].actionIds, ["c3", "c4", "c5"]);
+  const commandBatch = split[2];
+  assert.equal(commandBatch.kind, "commandBatch");
+  assert.deepEqual(commandBatch.actionIds, ["c3", "c4", "c5"]);
 
   const unknown = batchCanonicalTranscriptItems(items, {
     contextSegmentIdByItemId: new Map([["c1", "segment-a"], ["c2", "segment-a"]]),
@@ -618,7 +644,7 @@ test("typed batching flushes at context segment changes and unknown lookups", ()
 });
 
 test("typed batching exposes deterministic split reasons without changing the display projection", () => {
-  const base = (id, sequence, overrides = {}) => ({
+  const base = (id: string, sequence: number, overrides: Partial<ConversationTimelineCommandExecutionItem> = {}): ConversationTimelineCommandExecutionItem => ({
     id,
     kind: "commandExecution",
     revision: sequence,
@@ -665,7 +691,7 @@ test("typed batching exposes deterministic split reasons without changing the di
 });
 
 test("typed batching treats missing context as an explicit context boundary", () => {
-  const make = (id, sequence) => ({
+  const make = (id: string, sequence: number): ConversationTimelineExplorationItem => ({
     id,
     kind: "exploration",
     revision: sequence,
@@ -765,7 +791,7 @@ test("canonical projector deterministically orders distinct equal-revision actio
 });
 
 test("canonical action order follows immutable start events when earlier output revisions advance", () => {
-  const input = {
+  const input: CanonicalTranscriptProjectionInput = {
     scope,
     sourceSequence: 1,
     sourceRevision: "causal-action-order",
@@ -787,7 +813,7 @@ test("canonical action order follows immutable start events when earlier output 
 });
 
 test("canonical action ordering never treats different run event cursors as a shared clock", () => {
-  const input = {
+  const input: CanonicalTranscriptProjectionInput = {
     scope, sourceSequence: 1, sourceRevision: "run-local-cursors",
     items: [item("user-1", 1, "user_message", { body: "Parallel work" })],
     actions: [
@@ -843,7 +869,7 @@ test("canonical projector maps approvals, plans, compactions, artifacts, and chi
 });
 
 test("canonical projector blocks a nested child Agent instead of creating a third timeline", () => {
-  const nestedChild = {
+  const nestedChild: ConversationTimelineSubAgentItem = {
     id: "sub-agent:qa:researcher",
     kind: "subAgentActivity",
     revision: 3,
@@ -886,7 +912,8 @@ test("canonical projector blocks a nested child Agent instead of creating a thir
       label: "QA",
       runId: "run-qa",
       attemptId: "attempt-qa",
-      workflowStepId: null,
+      // Legacy spans can have an explicit null step.
+      workflowStepId: null as unknown as CanonicalParticipantSpan["workflowStepId"],
       lifecycle: "completed",
       sourceRefs: [conversationRef("tool-1"), { kind: "participant_span", id: "span-qa" }],
       childItems: [nestedChild],
@@ -920,11 +947,11 @@ test("canonical projector keeps an anchored actionless artifact blocked and out 
 });
 
 test("canonical projector is deterministic when supplemental records arrive in a different order", () => {
-  const approvals = [
+  const approvals: CanonicalApprovalRecord[] = [
     { id: "approval-b", revision: 1, workspaceId: "workspace-1", threadId: "thread-1", runId: "run-1", attemptId: "attempt-1", participantId: "ling", anchorItemId: "tool-1", title: "Allow B", status: "pending", sourceRefs: [conversationRef("tool-1")] },
     { id: "approval-a", revision: 1, workspaceId: "workspace-1", threadId: "thread-1", runId: "run-1", attemptId: "attempt-1", participantId: "ling", anchorItemId: "tool-1", title: "Allow A", status: "pending", sourceRefs: [conversationRef("tool-1")] },
   ];
-  const base = {
+  const base: CanonicalTranscriptProjectionInput = {
     scope,
     sourceSequence: 2,
     sourceRevision: "same-digest",
@@ -1016,7 +1043,7 @@ test("unknown succeeded actions become blocked evidence and never claim success"
 });
 
 test("canonical input merge is order-independent for reconnect and reordered deltas", () => {
-  const initial = {
+  const initial: CanonicalTranscriptProjectionInput = {
     scope,
     sourceSequence: 2,
     sourceRevision: "snapshot-2",
@@ -1027,7 +1054,7 @@ test("canonical input merge is order-independent for reconnect and reordered del
     actions: [action("run-1", 2, { revision: 2, sourceRefs: [conversationRef("tool-1")] })],
     turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
   };
-  const update = {
+  const update: CanonicalTranscriptProjectionInput = {
     ...initial,
     sourceRevision: "snapshot-3",
     actions: [action("run-1", 3, { revision: 3, title: "Run command", sourceRefs: [{ id: "tool-1", kind: "conversation_item" }] })],
@@ -1043,7 +1070,7 @@ test("canonical input merge is order-independent for reconnect and reordered del
 });
 
 test("canonical input merge ignores lower revisions but rejects equal-revision payload conflicts", () => {
-  const base = {
+  const base: CanonicalTranscriptProjectionInput = {
     scope,
     sourceSequence: 1,
     sourceRevision: "base",
@@ -1080,7 +1107,7 @@ test("stable payload equality does not depend on object key order", () => {
 test("reasoning summaries reconcile stale and equal revisions without entering terminal evidence", () => {
   const anchor = { ...item("assistant-summary", 3, "assistant_message", { body: "Done", format: "markdown", streaming: false, deliveryStatus: "ready" }),
     turnId: "turn-1", domainRefs: [{ type: "run", id: "run-1" }] };
-  const base = { scope, sourceSequence: 3, sourceRevision: "reasoning-v2", items: [anchor], actions: [],
+  const base: CanonicalTranscriptProjectionInput = { scope, sourceSequence: 3, sourceRevision: "reasoning-v2", items: [anchor], actions: [],
     turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
     reasoningSummaries: [reasoningSummary(2, "Newest safe summary")] };
   const stale = { ...base, sourceRevision: "reasoning-v1", reasoningSummaries: [reasoningSummary(1, "Stale safe summary")] };
@@ -1099,7 +1126,7 @@ test("reasoning summaries reconcile stale and equal revisions without entering t
 
 test("child reasoning requires exact run participant and attempt lineage", () => {
   const anchor = { ...item("child-summary", 4, "assistant_message", { body: "Child done", format: "markdown", streaming: false, deliveryStatus: "ready" }),
-    turnId: "turn-1", actorType: "teammate", actorId: "qa", domainRefs: [{ type: "run", id: "run-1" }] };
+    turnId: "turn-1", actorType: "teammate" as const, actorId: "qa", domainRefs: [{ type: "run", id: "run-1" }] };
   const valid = reasoningSummary(3, "Checked by QA", { participantId: "qa", attemptId: "attempt-1", anchorItemId: anchor.id });
   const projected = projectCanonicalConversationTimeline({ scope: childScope, sourceSequence: 4, sourceRevision: "child-reasoning",
     items: [anchor], actions: [], turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }], reasoningSummaries: [valid] });
@@ -1116,7 +1143,7 @@ test("child reasoning requires exact run participant and attempt lineage", () =>
 });
 
 test("canonical input merge is order-independent for reconnect and reordered deltas", () => {
-  const initial = {
+  const initial: CanonicalTranscriptProjectionInput = {
     scope,
     sourceSequence: 2,
     sourceRevision: "snapshot-2",
@@ -1127,7 +1154,7 @@ test("canonical input merge is order-independent for reconnect and reordered del
     actions: [action("run-1", 2, { revision: 2, sourceRefs: [conversationRef("tool-1")] })],
     turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
   };
-  const update = {
+  const update: CanonicalTranscriptProjectionInput = {
     ...initial,
     sourceRevision: "snapshot-3",
     actions: [action("run-1", 3, { revision: 3, title: "Run command", sourceRefs: [{ id: "tool-1", kind: "conversation_item" }] })],
@@ -1143,7 +1170,7 @@ test("canonical input merge is order-independent for reconnect and reordered del
 });
 
 test("canonical input merge ignores lower revisions but rejects equal-revision payload conflicts", () => {
-  const base = {
+  const base: CanonicalTranscriptProjectionInput = {
     scope,
     sourceSequence: 1,
     sourceRevision: "base",
@@ -1177,7 +1204,7 @@ test("stable payload equality does not depend on object key order", () => {
   assert.equal(projection.diagnostics.some((entry) => entry.code === "owner_conflict"), false);
 });
 
-function item(id, sequence, kind, payload) {
+function item(id: string, sequence: number, kind: CanonicalConversationItem["kind"], payload: unknown): CanonicalConversationItem {
   return {
     id,
     workspaceId: "workspace-1",
@@ -1191,7 +1218,8 @@ function item(id, sequence, kind, payload) {
   };
 }
 
-function action(id, revision, overrides = {}) {
+// The projector still accepts legacy actions that omit the workflow step.
+function action(id: string, revision: number, overrides: Partial<CanonicalExecutionAction> = {}): CanonicalExecutionAction {
   return {
     id,
     revision,
@@ -1211,14 +1239,14 @@ function action(id, revision, overrides = {}) {
     sourceRefs: [conversationRef("user-1")],
     commandEvidence: { command: "pnpm test", latestEventSeq: revision, outputTail: [], outputTruncated: false, exitCode: 0 },
     ...overrides,
-  };
+  } satisfies Omit<CanonicalExecutionAction, "workflowStepId"> as CanonicalExecutionAction;
 }
 
-function conversationRef(id) {
+function conversationRef(id: string): CanonicalSourceRef {
   return { kind: "conversation_item", id };
 }
 
-function reasoningSummary(revision, text, overrides = {}) {
+function reasoningSummary(revision: number, text: string, overrides: Partial<CanonicalReasoningSummaryRecord> = {}): CanonicalReasoningSummaryRecord {
   const runId = overrides.runId ?? "run-1";
   const anchorItemId = overrides.anchorItemId ?? "assistant-summary";
   const attemptId = overrides.attemptId ?? "attempt-1";
@@ -1233,7 +1261,7 @@ function reasoningSummary(revision, text, overrides = {}) {
   };
 }
 
-function batch(items, segments) {
+function batch(items: readonly ConversationTimelineItem[], segments?: Readonly<Record<string, string>>) {
   const contextSegmentIdByItemId = new Map(items.map((item) => [item.id, segments?.[item.id] ?? "segment-test"]));
   return batchCanonicalTranscriptItems(items, { contextSegmentIdByItemId });
 }
