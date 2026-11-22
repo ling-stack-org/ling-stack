@@ -1,8 +1,8 @@
 # Ling Agent Operating Model 详细设计
 
-- **Status** 目标态详细合同，运行时实现状态见 App Server 实施计划
+- **Status** 主线已接入工作项接单、控制、证据与协作记录。其余运行时能力见 [实施计划](ling-app-server-implementation-plan.md#当前实现证据)。
 - **Owner** Conversation、Core、Daemon、External Agent、GitHub Automation 与开发工具维护者
-- **Last verified** 2026-11-22 against `origin/main@a9dd29921`
+- **Implementation status verified** 2026-11-22 against `origin/main@e6007992a`
 - **Document type** 跨域状态、授权、事件与恢复详细设计
 - **Contract** [Ling Agent Operating Model](ling-agent-operating-model.md)
 - **Related contracts** [Ling Agent Session](ling-agent-session.md) · [Channel Team Operating System](channel-team-operating-system.md) · [Ling App Server Detailed Design](ling-app-server-detailed-design.md) · [GitHub Automation](github-automation.md) · [Ling Device Fabric](ling-device-fabric.md)

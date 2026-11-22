@@ -594,7 +594,7 @@ multi-Agent fan-in, restart recovery, and reconnect-driven refresh.
 
 ## Problem And Evidence
 
-GitHub issue [#421](https://github.com/tianxiaochannel-oss88/ling-stack/issues/421)
+GitHub issue [#421](https://github.com/ling-stack-org/ling-stack/issues/421)
 shows the immediate product failure:
 
 - a conversational continuation such as `需要，开始吧` is interpreted as
