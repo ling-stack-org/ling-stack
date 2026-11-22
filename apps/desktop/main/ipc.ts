@@ -6,6 +6,7 @@ import {
   REMOTE_PROTOCOL_VERSION,
   isRemoteDeviceAnalysisDraftInputV1,
   isRemoteDeviceAnalysisInputV1,
+  isRemoteDeviceArtifactOfferInputV1,
   type LingServerPairingMigrationConfirmationV1,
   type LingServerPairingMigrationRequestV1,
 } from "@ling-stack/contracts";
@@ -205,6 +206,26 @@ export function registerDesktopIpc(input: {
     const draft = await input.mobileAccess.draftDeviceAnalysis(request);
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
     return draft;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceArtifactsList, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!request || typeof request !== "object" || Array.isArray(request) || Object.keys(request).length !== 2
+      || !("shareId" in request) || !("expectedRevision" in request)) throw new Error("invalid_device_artifact_list");
+    const query = { shareId: request.shareId, expectedRevision: request.expectedRevision, proposalId: "list" };
+    if (!isRemoteDeviceArtifactOfferInputV1(query)) throw new Error("invalid_device_artifact_list");
+    const { shareId, expectedRevision } = query;
+    const offers = await input.mobileAccess.listDeviceArtifacts({ shareId, expectedRevision });
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return offers;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceArtifactOffer, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceArtifactOfferInputV1(request)) throw new Error("invalid_device_artifact_offer");
+    const offer = await input.mobileAccess.offerDeviceArtifact(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return offer;
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationPrepare, async (event, request: unknown) => {
     const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);

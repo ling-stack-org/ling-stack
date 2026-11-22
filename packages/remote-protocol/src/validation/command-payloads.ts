@@ -7,6 +7,7 @@ import {
 
 import { RemoteProtocolError } from "../errors.js";
 import { validateDeviceCollaborationCommand } from "./device-collaboration.js";
+import { validateDeviceArtifactCommand } from "./device-artifact.js";
 import {
   validateDeviceListCommand,
   validateDeviceTaskApproveCommand,
@@ -207,6 +208,9 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
       break;
     case "device.collaboration":
       payload = validateDeviceCollaborationCommand(value, path);
+      break;
+    case "device.artifact":
+      payload = validateDeviceArtifactCommand(value, path);
       break;
   }
   return payload as RemoteClientCommandPayloadMapV1[TType];

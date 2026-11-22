@@ -35,6 +35,7 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "device.revoke",
     "device.reconcile",
     "device.collaboration",
+    "device.artifact",
   ]);
   assert.deepEqual(REMOTE_CONVERSATION_KINDS_V1, ["channel", "conversation", "teammate_direct"]);
   assert.deepEqual(REMOTE_CLIENT_COMMAND_TYPES_V1, [
@@ -59,6 +60,7 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "device.task.revoke",
     "device.task.reconcile",
     "device.collaboration",
+    "device.artifact",
   ]);
   const clientCommands = new Set<string>(REMOTE_CLIENT_COMMAND_TYPES_V1);
   assert.equal(clientCommands.has("approval.resolve"), false);
@@ -69,6 +71,7 @@ test("remote V1 allowlists contain only the designed communication surface", () 
   assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.task.journal.watch"), true);
   assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.task.journal.unwatch"), true);
   assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.collaboration"), true);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.artifact"), true);
   assert.equal(new Set<string>(REMOTE_SERVER_EVENT_TYPES_V1).has("approval.summary"), false);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("conversation.delta"), true);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("profile.snapshot"), true);

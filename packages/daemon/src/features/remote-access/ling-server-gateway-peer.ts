@@ -65,7 +65,7 @@ export class LingServerGatewayPeer {
     const initialExpiry = Date.parse(route.expiresAt);
     void (async () => {
       const connection = await connectLingServerDataChannel({
-        ...options, route, role: "gateway", features: lingServerNativeGatewayFeatures, deviceCollaboration: true,
+        ...options, route, role: "gateway", features: lingServerNativeGatewayFeatures, deviceArtifacts: true,
         expectedInstanceId: instanceId, createPeerConnection, signal: controller.signal,
       });
       try {

@@ -7,11 +7,15 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { DesktopMobileAccessCapabilities } from "../../../../../desktop/shared/desktop-capabilities.js";
 import { useI18n } from "../../../i18n.js";
 import { Button, Field, InlineFeedback, Textarea } from "../../../shared/ui/index.js";
+import { PhoneTaskArtifactCard } from "./PhoneTaskArtifactCard.js";
 
-type Access = Pick<DesktopMobileAccessCapabilities, "listDeviceCollaboration" | "proposeDeviceAnalysis" | "draftDeviceAnalysis">;
+type Access = Pick<DesktopMobileAccessCapabilities, "listDeviceCollaboration" | "proposeDeviceAnalysis" | "draftDeviceAnalysis"
+  | "listDeviceArtifacts" | "offerDeviceArtifact">;
 type ActiveShare = Extract<RemoteDeviceCollaborationViewV1, { state: "active" }>;
 
-export function PhoneTaskCollaborationCard({ access, canDraft }: { readonly access: Access; readonly canDraft: boolean }) {
+export function PhoneTaskCollaborationCard({ access, canDraft, canShareArtifacts }: {
+  readonly access: Access; readonly canDraft: boolean; readonly canShareArtifacts: boolean;
+}) {
   const { t } = useI18n();
   const headingId = useId();
   const [shares, setShares] = useState<readonly ActiveShare[]>([]);
@@ -43,14 +47,16 @@ export function PhoneTaskCollaborationCard({ access, canDraft }: { readonly acce
     <header className="mobile-access-section-header"><h2 id={headingId}>{t("Phone device tasks")}</h2></header>
     {error ? <InlineFeedback tone="danger">{t("Shared device tasks could not be loaded.")}</InlineFeedback> : null}
     {!error && shares.length === 0 ? <p>{t("Share a device diagnosis from the paired phone to ask this PC for help.")}</p> : null}
-    {shares.map(share => <SharedPhoneTask key={share.shareId} share={share} access={access} canDraft={canDraft} refresh={refresh} />)}
+    {shares.map(share => <SharedPhoneTask key={share.shareId} share={share} access={access} canDraft={canDraft}
+      canShareArtifacts={canShareArtifacts} refresh={refresh} />)}
   </section>;
 }
 
-function SharedPhoneTask({ share, access, canDraft, refresh }: {
+function SharedPhoneTask({ share, access, canDraft, canShareArtifacts, refresh }: {
   readonly share: ActiveShare;
   readonly access: Access;
   readonly canDraft: boolean;
+  readonly canShareArtifacts: boolean;
   readonly refresh: () => Promise<void>;
 }) {
   const { locale, t } = useI18n();
@@ -153,5 +159,6 @@ function SharedPhoneTask({ share, access, canDraft, refresh }: {
           loading={working === "send"}>{t("Send analysis")}</Button>
       </div>
     </form>
+    {canShareArtifacts ? <PhoneTaskArtifactCard key={share.revision} access={access} share={share} /> : null}
   </article>;
 }

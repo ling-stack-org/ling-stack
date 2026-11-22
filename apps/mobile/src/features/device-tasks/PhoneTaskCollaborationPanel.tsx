@@ -3,8 +3,10 @@ import type { RemoteBindingV1, RemoteClientState } from "@ling-stack/remote-clie
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Pressable, Text, View, type TextStyle, type ViewStyle } from "react-native";
 import type { PhoneTaskCollaborationPeer } from "../../device/phone-task-collaboration";
+import type { PhoneTaskArtifactPeer } from "../../device/phone-task-artifacts";
 import type { StandaloneDeviceRuntime } from "../../device/standalone-runtime";
 import { useMobileRemote } from "../../remote/MobileRemoteProvider";
+import { PhoneTaskArtifactOffers, SavedPhoneTaskArtifacts } from "./PhoneTaskArtifactsPanel";
 
 type PanelProps = {
   readonly runtime: StandaloneDeviceRuntime;
@@ -22,6 +24,8 @@ type PanelProps = {
 export function PhoneTaskCollaborationPanel(props: PanelProps) {
   const { client, binding, remoteState } = useMobileRemote();
   const scope = collaborationScope(binding, remoteState);
+  const [savedRevision, setSavedRevision] = useState(0);
+  const refreshSaved = useCallback(() => setSavedRevision(previous => previous + 1), []);
   const peer = useMemo<PhoneTaskCollaborationPeer | undefined>(() => scope && client ? {
     scope,
     async update(shareId, action) {
@@ -29,7 +33,13 @@ export function PhoneTaskCollaborationPanel(props: PanelProps) {
       return await client.updateDeviceCollaboration(shareId, action);
     },
   } : undefined, [scope, client]);
-  return peer ? <ConnectedCollaborationPanel key={peer.scope} {...props} peer={peer} /> : null;
+  return <>
+    {peer ? <ConnectedCollaborationPanel key={peer.scope} {...props} peer={peer}
+      artifactPeer={remoteState.policy?.capabilities.includes("device.artifact") ? client : undefined}
+      refreshSaved={refreshSaved} /> : null}
+    {props.runtime.artifacts ? <SavedPhoneTaskArtifacts taskId={props.taskId} refresh={savedRevision}
+      artifacts={props.runtime.artifacts} styles={props.styles} /> : null}
+  </>;
 }
 
 function collaborationScope(binding: RemoteBindingV1 | undefined, { connection, policy }: RemoteClientState): string | undefined {
@@ -37,7 +47,11 @@ function collaborationScope(binding: RemoteBindingV1 | undefined, { connection, 
   return JSON.stringify([binding.gatewayId, binding.deviceId, binding.deviceEpoch, policy.workspaceId, policy.workspaceBindingId, policy.policyVersion]);
 }
 
-function ConnectedCollaborationPanel({ runtime, taskId, updatedAt, styles, peer }: PanelProps & { readonly peer: PhoneTaskCollaborationPeer }) {
+function ConnectedCollaborationPanel({ runtime, taskId, updatedAt, styles, peer, artifactPeer, refreshSaved }: PanelProps & {
+  readonly peer: PhoneTaskCollaborationPeer;
+  readonly artifactPeer?: PhoneTaskArtifactPeer;
+  readonly refreshSaved: () => void;
+}) {
   const [view, setView] = useState<RemoteDeviceCollaborationViewV1>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -86,7 +100,7 @@ function ConnectedCollaborationPanel({ runtime, taskId, updatedAt, styles, peer 
     {view?.state === "active" ? (
       <View>
         <Text style={styles.note}>共享至 {new Date(view.expiresAt).toLocaleTimeString()}</Text>
-        {button("同步记录和建议", () => void perform({ kind: "sync" }))}
+        {button(artifactPeer ? "同步记录、建议和文件" : "同步记录和建议", () => void perform({ kind: "sync" }))}
         {button("结束共享", () => void perform({ kind: "revoke" }))}
         {view.proposals.map(proposal => (
           <View key={proposal.proposalId} style={styles.row}>
@@ -97,6 +111,9 @@ function ConnectedCollaborationPanel({ runtime, taskId, updatedAt, styles, peer 
             </> : <Text style={styles.note}>{proposal.status === "accepted" ? "已接受" : "已拒绝"}</Text>}
           </View>
         ))}
+        {artifactPeer && runtime.artifacts ? <PhoneTaskArtifactOffers key={`${view.shareId}:${view.revision}`}
+          share={view} peer={artifactPeer} artifacts={runtime.artifacts}
+          styles={styles} refreshSaved={refreshSaved} /> : null}
       </View>
     ) : button(busy ? "正在同步…" : "请配对电脑协助", share)}
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}

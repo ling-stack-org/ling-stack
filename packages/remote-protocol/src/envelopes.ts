@@ -1,4 +1,4 @@
-import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7 } from "@ling-stack/contracts";
 import type {
   LingServerGatewayRouteV1,
   RemoteAuthChallengeV1,
@@ -155,6 +155,7 @@ export function pairingAcceptedSigningBytes(input: RemotePairingAcceptedSigningI
 }
 
 export function lingServerGatewayDeviceTasksProtocol(route: LingServerGatewayRouteV1) {
+  if (route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7)) return REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7;
   if (route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6)) return REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6;
   if (route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5)) return REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5;
   return route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4)

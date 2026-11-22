@@ -16,6 +16,7 @@ import { createMobilePlaybookAction, runMobileReadOnlyPlaybook, runMobileSetupPl
 import { projectMobileDeviceTaskTrace } from "./trace.ts";
 import { projectMobileTaskEvidenceExport } from "./conformance.ts";
 import { createPhoneTaskCollaboration } from "./phone-task-collaboration.ts";
+import { createPhoneTaskArtifactReceiver, type OpenPhoneTaskArtifactFile } from "./phone-task-artifacts.ts";
 
 const ownerKey = "ling:standalone-device-owner:v1";
 const homeAssistantPlaybookId = "home-assistant-offline-diagnosis@1.0.0";
@@ -49,6 +50,7 @@ export async function createStandaloneDeviceRuntime(options: {
   readonly randomId: (prefix: string) => string | Promise<string>;
   readonly fetch: HomeAssistantFetch;
   readonly openLinuxSsh?: OpenLinuxSshConnection;
+  readonly openArtifactFile?: OpenPhoneTaskArtifactFile;
   readonly now?: () => string;
 }) {
   const persistedOwner = await options.storage.getItem(ownerKey);
@@ -61,19 +63,21 @@ export async function createStandaloneDeviceRuntime(options: {
   execution.setForeground(false);
   let foreground = false;
   let recovery = Promise.resolve();
-  const collaborate = createPhoneTaskCollaboration({
-    storage: options.storage, ownerId, now, randomId: options.randomId,
-    readProjection: async taskId => {
-      await recovery;
-      return projectPhoneTask(await journal.readTaskEvidence(taskId), ownerId);
-    },
-  });
+  const readProjection = async (taskId: string) => {
+    await recovery;
+    return projectPhoneTask(await journal.readTaskEvidence(taskId), ownerId);
+  };
+  const collaborate = createPhoneTaskCollaboration({ storage: options.storage, ownerId, now, randomId: options.randomId, readProjection });
+  const artifacts = options.openArtifactFile ? createPhoneTaskArtifactReceiver({
+    storage: options.storage, ownerId, now, readProjection, openFile: options.openArtifactFile, foreground: () => foreground,
+  }) : undefined;
   let targetWrites = Promise.resolve();
   const linuxTargetsKey = "ling:standalone-linux-targets:v1:" + ownerId;
   const activeLinux = new Set<AbortController>();
 
   return {
     collaborate,
+    artifacts,
     linuxSshAvailable: options.openLinuxSsh !== undefined,
     setForeground(active: boolean): Promise<void> {
       if (active === foreground) return recovery;

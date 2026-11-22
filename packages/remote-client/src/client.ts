@@ -8,6 +8,10 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteDeviceApprovalPreviewV1,
+  type RemoteDeviceArtifactActionV1,
+  type RemoteDeviceArtifactManifestV1,
+  type RemoteDeviceArtifactOfferV1,
+  type RemoteDeviceArtifactResultV1,
   type RemoteDeviceCollaborationActionV1,
   type RemoteDeviceCollaborationViewV1,
   type RemoteDeviceTaskJournalCommandV1,
@@ -22,6 +26,11 @@ import {
 } from "@ling-stack/contracts";
 import {
   canonicalizeJson,
+  decodeBase64Url,
+  deviceArtifactChunkBytes,
+  deviceArtifactDigest,
+  deviceArtifactManifestBytes,
+  deviceArtifactReceiptBytes,
   parseRemoteAuthFrameV1,
   parseRemoteServerFrameV1,
   type RemoteMessageChannel,
@@ -301,18 +310,7 @@ export class RemoteSessionClient {
     const handle = await this.sendCommand("device.collaboration", {
       commandId: await this.options.entropy.randomId("device_collaboration"), workspaceId, shareId, action,
     }, assertCurrent);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        const pending = this.commands.get(handle.commandId);
-        if (pending) {
-          this.commands.delete(handle.commandId);
-          this.outboundByMessage.delete(pending.messageId);
-        }
-        reject(new Error("remote_device_collaboration_timed_out"));
-      }, 15_000);
-    });
-    const { share } = await Promise.race([handle.completion, deadline]).finally(() => clearTimeout(timer));
+    const { share } = await this.waitForDeviceCommand(handle);
     assertCurrent();
     if (share.shareId !== shareId || share.workspaceId !== workspaceId
       || (action.kind === "publish" && (share.state !== "active" || share.expiresAt !== action.expiresAt
@@ -324,6 +322,114 @@ export class RemoteSessionClient {
       throw new Error("remote_device_collaboration_binding_mismatch");
     }
     return share;
+  }
+
+  async listDeviceArtifacts(shareId: string, revision: number): Promise<readonly RemoteDeviceArtifactOfferV1[]> {
+    const result = await this.requestDeviceArtifact(shareId, revision, { kind: "list" });
+    if (result.operation !== "list") throw new Error("remote_device_artifact_binding_mismatch");
+    for (const offer of result.offers) await this.verifyDeviceArtifactOffer(offer);
+    return result.offers;
+  }
+
+  async decideDeviceArtifact(offer: RemoteDeviceArtifactOfferV1, decision: "accepted" | "rejected"): Promise<RemoteDeviceArtifactOfferV1> {
+    await this.verifyDeviceArtifactOffer(offer);
+    const { shareId, revision, proposalId } = offer.manifest;
+    const result = await this.requestDeviceArtifact(shareId, revision, { kind: "decide", proposalId, decision });
+    if (result.operation !== "decide" || result.offer.status !== decision || result.offer.signature !== offer.signature) {
+      throw new Error("remote_device_artifact_binding_mismatch");
+    }
+    await this.verifyDeviceArtifactOffer(result.offer);
+    return result.offer;
+  }
+
+  async readDeviceArtifactChunk(manifest: RemoteDeviceArtifactManifestV1, index: number): Promise<Uint8Array> {
+    this.assertDeviceArtifactBinding(manifest);
+    const { shareId, revision, proposalId } = manifest;
+    const expectedLength = Math.min(manifest.chunkBytes, manifest.sizeBytes - index * manifest.chunkBytes);
+    if (!Number.isSafeInteger(index) || index < 0 || expectedLength <= 0) throw new Error("remote_device_artifact_index_invalid");
+    const result = await this.requestDeviceArtifact(shareId, revision, { kind: "chunk", proposalId, index });
+    if (result.operation !== "chunk" || result.chunk.index !== index || result.proposalId !== proposalId) {
+      throw new Error("remote_device_artifact_binding_mismatch");
+    }
+    const { chunk } = result;
+    const bytes = decodeBase64Url(chunk.bytes);
+    const digest = deviceArtifactDigest(bytes);
+    if (bytes.length !== expectedLength || digest !== chunk.digest || !await this.options.keys.verify(
+      this.binding.gatewayIdentityPublicKeyJwk, deviceArtifactChunkBytes(manifest, index, digest), chunk.signature,
+    )) throw new Error("remote_device_artifact_chunk_invalid");
+    this.assertDeviceArtifactBinding(manifest);
+    return bytes;
+  }
+
+  async confirmDeviceArtifactReceived(offer: RemoteDeviceArtifactOfferV1, digest: string): Promise<RemoteDeviceArtifactOfferV1> {
+    await this.verifyDeviceArtifactOffer(offer);
+    const { manifest } = offer;
+    if (offer.status !== "accepted" || digest !== manifest.digest) throw new Error("remote_device_artifact_digest_mismatch");
+    const receipt = { digest, verifiedAt: this.options.clock.now() };
+    const signature = await this.options.keys.sign(this.binding.deviceKeyId, deviceArtifactReceiptBytes(manifest, receipt));
+    this.assertDeviceArtifactBinding(manifest);
+    const result = await this.requestDeviceArtifact(manifest.shareId, manifest.revision, {
+      kind: "receipt", proposalId: manifest.proposalId, receipt: { ...receipt, signature },
+    });
+    if (result.operation !== "receipt" || result.offer.signature !== offer.signature || result.offer.receipt?.digest !== digest) {
+      throw new Error("remote_device_artifact_binding_mismatch");
+    }
+    await this.verifyDeviceArtifactOffer(result.offer);
+    return result.offer;
+  }
+
+  private async requestDeviceArtifact(
+    shareId: string, revision: number, action: RemoteDeviceArtifactActionV1,
+  ): Promise<RemoteDeviceArtifactResultV1> {
+    const sessionId = this.requireSessionId();
+    const workspaceId = this.requireWorkspaceId();
+    const assertCurrent = () => {
+      if (sessionId !== this.requireSessionId() || workspaceId !== this.requireWorkspaceId()
+        || !this.stateValue.policy?.capabilities.includes("device.artifact")) throw new Error("remote_device_artifact_unavailable");
+    };
+    assertCurrent();
+    const handle = await this.sendCommand("device.artifact", {
+      commandId: await this.options.entropy.randomId("device_artifact"), workspaceId, shareId, expectedRevision: revision, action,
+    }, assertCurrent);
+    const result = await this.waitForDeviceCommand(handle);
+    assertCurrent();
+    if (result.shareId !== shareId || result.revision !== revision || result.operation !== action.kind) {
+      throw new Error("remote_device_artifact_binding_mismatch");
+    }
+    return result;
+  }
+
+  private async verifyDeviceArtifactOffer(offer: RemoteDeviceArtifactOfferV1): Promise<void> {
+    this.assertDeviceArtifactBinding(offer.manifest);
+    if (!await this.options.keys.verify(this.binding.gatewayIdentityPublicKeyJwk, deviceArtifactManifestBytes(offer.manifest), offer.signature)) {
+      throw new Error("remote_device_artifact_signature_invalid");
+    }
+    this.assertDeviceArtifactBinding(offer.manifest);
+  }
+
+  private assertDeviceArtifactBinding(manifest: RemoteDeviceArtifactManifestV1): void {
+    const { binding } = this;
+    const { policy } = this.stateValue;
+    if (this.stateValue.connection !== "connected" || binding.status !== "active" || manifest.gatewayId !== binding.gatewayId
+      || manifest.mobileDeviceId !== binding.deviceId || manifest.deviceEpoch !== binding.deviceEpoch
+      || !policy?.capabilities.includes("device.artifact") || manifest.workspaceId !== policy.workspaceId
+      || manifest.workspaceBindingId !== policy.workspaceBindingId || manifest.policyVersion !== policy.policyVersion
+      || manifest.expiresAt <= this.options.clock.now()) throw new Error("remote_device_artifact_binding_mismatch");
+  }
+
+  private async waitForDeviceCommand<Result>(handle: RemoteCommandHandle<Result>): Promise<Result> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const pending = this.commands.get(handle.commandId);
+        if (pending) {
+          this.commands.delete(handle.commandId);
+          this.outboundByMessage.delete(pending.messageId);
+        }
+        reject(new Error("remote_device_command_timed_out"));
+      }, 15_000);
+    });
+    return await Promise.race([handle.completion, deadline]).finally(() => clearTimeout(timer));
   }
 
   watchDeviceTaskJournal(
@@ -675,7 +781,9 @@ export class RemoteSessionClient {
     this.assertCurrentSocket(generation, socket);
     await this.sendAck(frame.streamId, frame.serverSeq, generation, socket);
     this.assertCurrentSocket(generation, socket);
-    await this.persistCache();
+    if (!(frame.type === "command.completed" && frame.payload.commandType === "device.artifact" && frame.payload.result.operation === "chunk")) {
+      await this.persistCache();
+    }
     this.assertCurrentSocket(generation, socket);
   }
 
@@ -737,7 +845,7 @@ export class RemoteSessionClient {
         }
         return;
       case "command.completed":
-        if (frame.payload.commandType === "device.collaboration") {
+        if (frame.payload.commandType === "device.collaboration" || frame.payload.commandType === "device.artifact") {
           const pending = this.commands.get(frame.payload.commandId);
           if (frame.streamId !== this.controlStreamId || (pending
             && (pending.type !== frame.payload.commandType || pending.messageId !== frame.requestId))) {

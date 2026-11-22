@@ -104,7 +104,7 @@ function validateAttempt(value: unknown, path: string): RemotePhoneTaskProjectio
   };
 }
 
-function expectJournalIdentifier(value: unknown, path: string): string {
+export function expectJournalIdentifier(value: unknown, path: string): string {
   const id = expectString(value, path, { minBytes: 1, maxBytes: REMOTE_PROTOCOL_LIMITS.maxIdentifierBytes });
   if (!/^[A-Za-z0-9][A-Za-z0-9._:@-]*$/u.test(id)) {
     throw new RemoteProtocolError("invalid_field", "Expected a device journal identifier", path);

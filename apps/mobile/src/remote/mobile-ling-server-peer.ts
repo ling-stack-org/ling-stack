@@ -49,7 +49,7 @@ export async function connectMobileLingServerPeer(binding: RemoteBindingV1, sign
       const { route, instanceId } = await requestLingServerRoute({ ...requestOptions, signal: deadline.signal }, preferred);
       return await connectLingServerDataChannel({
         ...requestOptions, route, role: "mobile", expectedInstanceId: instanceId, createPeerConnection,
-        features: lingServerNativeGatewayFeatures, deviceCollaboration: true, signal: deadline.signal,
+        features: lingServerNativeGatewayFeatures, deviceArtifacts: true, signal: deadline.signal,
       });
     } catch (error) {
       signal.throwIfAborted();

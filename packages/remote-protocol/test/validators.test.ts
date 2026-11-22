@@ -75,6 +75,21 @@ test("phone device collaboration admits typed evidence with explicit commands", 
   }
 });
 
+test("artifact requests bind the revision and one bounded index or receipt", () => {
+  const payload = { commandId: "artifact-cmd", workspaceId: "workspace-1", shareId: "share-artifact", expectedRevision: 1,
+    action: { kind: "chunk", proposalId: "artifact", index: 3 } };
+  const frame = { ...validClientFrame, type: "device.artifact", payload };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(frame), { nowMs }), frame);
+  for (const action of [
+    { ...payload.action, index: -1 },
+    { ...payload.action, index: 999_999 },
+    { ...payload.action, path: "file.zip" },
+    { kind: "receipt", proposalId: "artifact", receipt: { digest: "bad", signature, verifiedAt: now } },
+  ]) {
+    assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({ ...frame, payload: { ...payload, action } }), { nowMs }));
+  }
+});
+
 test("device journal frames bind cursor ranges to public events from the task owner", () => {
   const command = {
     ...validClientFrame,

@@ -130,6 +130,8 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
       revoke: unavailable,
       async listDeviceCollaboration() { return []; },
       async draftDeviceAnalysis(input) { calls.push(input); return analysisDraft; },
+      listDeviceArtifacts: async () => [],
+      offerDeviceArtifact: unavailable,
       async proposeDeviceAnalysis(input) { calls.push(input); return share; },
       async preparePairingMigration(input) { calls.push(input); return preview; },
       async confirmPairingMigration(input) { calls.push(input); return { confirmation, gatewayPublicKeyJwk }; },
@@ -146,6 +148,7 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   const listCollaboration = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationList;
   const draftAnalysis = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationDraft;
   const proposeAnalysis = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationPropose;
+  const offerArtifact = DESKTOP_IPC_CHANNELS.mobileAccessDeviceArtifactOffer;
   await assert.rejects(invoke(prepare, request, { ...owner, id: 9 }), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(confirm, confirmationRequest, owner, { ...frame }), /mobile_access_unauthorized/u);
   frame.url = "https://different.example";
@@ -153,11 +156,15 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   await assert.rejects(invoke(listCollaboration, undefined), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(draftAnalysis, analysisRequest), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(proposeAnalysis, analysis), /mobile_access_unauthorized/u);
+  await assert.rejects(invoke(offerArtifact, analysisRequest), /mobile_access_unauthorized/u);
   frame.url = documentUrl + "#/settings/mobile-access";
   await assert.rejects(invoke(prepare, { ...request, retainedCommandIds: ["duplicate", "duplicate"] }), /invalid_pairing_migration_request/u);
   await assert.rejects(invoke(confirm, { ...confirmationRequest, confirmationDigest: "invalid" }), /invalid_pairing_migration_confirmation/u);
   await assert.rejects(invoke(proposeAnalysis, { ...analysis, expectedRevision: 0 }), /invalid_device_analysis_proposal/u);
   await assert.rejects(invoke(draftAnalysis, { ...analysisRequest, facts: {} }), /invalid_device_analysis_draft/u);
+  await assert.rejects(invoke(offerArtifact, {
+    shareId: "s", expectedRevision: 1, proposalId: "p", path: "file-from-renderer",
+  }), /invalid_device_artifact_offer/u);
   assert.deepEqual(calls, []);
 
   assert.deepEqual(await invoke(prepare, request), preview);

@@ -731,6 +731,13 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     mobileAccess: new DesktopMobileAccessClient({
       daemonBaseUrl,
       desktopBridgeToken: bridgeToken,
+      pickDeviceArtifact: async () => {
+        const owner = mainWindow ?? loadingMainWindow;
+        if (!owner || owner.isDestroyed()) return undefined;
+        const documentUrl = owner.webContents.getURL();
+        const result = await dialog.showOpenDialog(owner, { properties: ["openFile"] });
+        return !result.canceled && !owner.isDestroyed() && owner.webContents.getURL() === documentUrl ? result.filePaths[0] : undefined;
+      },
     }),
     ...(fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId
       ? { fixedComputerUseConversationId: fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId }

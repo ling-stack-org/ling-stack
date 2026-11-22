@@ -13,7 +13,7 @@ import { DesktopBrowserPluginService } from "./features/plugins/desktop-browser.
 import { createDesktopBrowserGenerationBroker } from "./features/plugins/desktop-browser-generation-broker.js";
 import { flushSkillDefinitionRevisionNotices } from "./features/skills/revision-notices.js";
 import { randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createServer, type Server } from "node:http";
 import {
   listBuiltinSkillPackExtensions,
@@ -165,6 +165,7 @@ import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
 import { PhoneTaskCollaboration } from "./features/remote-access/phone-task-collaboration.js";
+import { PhoneTaskArtifacts } from "./features/remote-access/phone-task-artifacts.js";
 import { parseHomeAssistantOrigin } from "./features/device-support/adapters/home-assistant.js";
 import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
 import { readAndroidAdbTargets } from "./features/device-support/android-adb-targets.js";
@@ -1085,6 +1086,7 @@ export function createDaemonServer(
       computerUsePreviews,
       nativeRunDispatcher,
     });
+  const phoneTaskCollaboration = new PhoneTaskCollaboration(deviceSupport.developerStore);
   const remoteAccess = new RemoteAccessController({
     store: defaultWorkspaceStore,
     stateDir: dependencies.remoteAccessStateDir ?? defaultStoragePaths.user.stateDir,
@@ -1094,7 +1096,9 @@ export function createDaemonServer(
     managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
     dispatcher: remoteReplyDispatcher,
     deviceFacade: deviceSupport.remoteFacade,
-    phoneTaskCollaboration: new PhoneTaskCollaboration(deviceSupport.developerStore),
+    phoneTaskCollaboration,
+    phoneTaskArtifacts: new PhoneTaskArtifacts(deviceSupport.developerStore, phoneTaskCollaboration,
+      join(dirname(defaultWorkspaceStore.paths.databasePath), "phone-task-artifacts")),
     draftPhoneTaskAnalysis: createPhoneTaskAnalysisDrafter({ store: defaultWorkspaceStore, runnerRegistry, secretResolver }),
   });
   const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();

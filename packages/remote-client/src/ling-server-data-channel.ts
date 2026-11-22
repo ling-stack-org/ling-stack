@@ -1,7 +1,7 @@
 import {
   LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, LING_SERVER_SIGNAL_LANE_LIMIT_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
-  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7,
   type LingServerGatewayRouteV1, type LingServerSignalingResponseV1,
 } from "@ling-stack/contracts";
 import { encodeBase64Url, encodeUtf8, sha256, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
@@ -10,7 +10,10 @@ import { LingServerSignalingClient, type LingServerSignalingClientOptions } from
 
 const channelLabel = "ling-peer";
 const channelProtocol = "ling-peer.v1";
-const deviceCollaborationSdpAttribute = "a=ling-device-tasks:6";
+const deviceTaskSdpFeatures = [
+  { feature: REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6, attribute: "a=ling-device-tasks:6" },
+  { feature: REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7, attribute: "a=ling-device-tasks:7" },
+] as const;
 const pollIntervalMs = 350;
 
 export const lingServerNativeGatewayFeatures = [
@@ -23,6 +26,7 @@ export interface LingServerDataChannelOptions extends LingServerSignalingClientO
   readonly createPeerConnection?: (configuration: RTCConfiguration) => RTCPeerConnection;
   readonly timeoutMs?: number;
   readonly deviceCollaboration?: boolean;
+  readonly deviceArtifacts?: boolean;
 }
 
 export interface LingServerDataChannel {
@@ -57,7 +61,8 @@ export async function connectLingServerDataChannel(options: LingServerDataChanne
     const createPeer = options.createPeerConnection ?? (configuration => new RTCPeerConnection(configuration));
     peer = createPeer(iceConfiguration(config));
     const negotiatedChannel = options.features?.includes(LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1) === true;
-    return await negotiate(peer, signaling, options.role, controller, negotiatedChannel, options.deviceCollaboration === true);
+    const features = deviceTaskSdpFeatures.slice(0, options.deviceArtifacts ? 2 : options.deviceCollaboration ? 1 : 0);
+    return await negotiate(peer, signaling, options.role, controller, negotiatedChannel, features);
   };
   try {
     const connected = await Promise.race([aborted, open()]);
@@ -78,7 +83,7 @@ async function negotiate(
   role: LingServerSignalingClientOptions["role"],
   controller: AbortController,
   negotiatedChannel: boolean,
-  supportsCollaboration: boolean,
+  features: readonly (typeof deviceTaskSdpFeatures)[number][],
 ): Promise<LingServerDataChannel> {
   const signal = controller.signal;
   signal.throwIfAborted();
@@ -88,8 +93,8 @@ async function negotiate(
   let nextSequence = 1;
   let remoteSequence = 0;
   let hasRemoteDescription = false;
-  let advertisedCollaboration = false;
-  let peerAdvertisedCollaboration = false;
+  let advertisedFeatures: typeof features = [];
+  let peerAdvertisedFeatures: typeof features = [];
   let gatheredCandidates = 0;
   const descriptionDigests: Partial<Record<"offer" | "answer", string>> = {};
   const localCandidates: RTCIceCandidateInit[] = [];
@@ -129,8 +134,8 @@ async function negotiate(
       throw new Error("ling_server_local_description_invalid");
     }
     // The signed descriptions advertise features independently of the existing signaling scope.
-    const sdp = supportsCollaboration ? advertiseDeviceCollaboration(description.sdp) : description.sdp;
-    advertisedCollaboration = sdp !== description.sdp;
+    advertisedFeatures = /^m=application\s/mu.test(description.sdp) ? features : [];
+    const sdp = addSdpAttributes(description.sdp, advertisedFeatures.map(item => item.attribute));
     await publish(description.type, sdp);
     descriptionDigests[description.type] = digestDescription(sdp);
   };
@@ -160,12 +165,11 @@ async function negotiate(
         const { offer, answer } = descriptionDigests;
         if (!transport || !offer || !answer) throw new Error("ling_server_gateway_route_incomplete");
         const route = signaling.gatewayRoute({ offerDigest: offer, answerDigest: answer });
+        const agreedFeatures = advertisedFeatures.filter(item => peerAdvertisedFeatures.includes(item)).map(item => item.feature);
         return {
           channel,
           transport,
-          route: advertisedCollaboration && peerAdvertisedCollaboration && !route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6)
-            ? { ...route, features: [...route.features, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6] }
-            : route,
+          route: { ...route, features: [...new Set([...route.features, ...agreedFeatures])] },
           close: () => transport?.close(),
         };
       }
@@ -182,9 +186,9 @@ async function negotiate(
         } else {
           if (hasRemoteDescription) throw new Error("ling_server_peer_description_duplicate");
           const lines = message.payload.split(/\r?\n/u);
-          peerAdvertisedCollaboration = lines.includes(deviceCollaborationSdpAttribute);
-          const remoteSdp = peerAdvertisedCollaboration
-            ? lines.filter(line => line !== deviceCollaborationSdpAttribute).join(message.payload.includes("\r\n") ? "\r\n" : "\n")
+          peerAdvertisedFeatures = deviceTaskSdpFeatures.filter(item => lines.includes(item.attribute));
+          const remoteSdp = peerAdvertisedFeatures.length
+            ? lines.filter(line => !peerAdvertisedFeatures.some(item => item.attribute === line)).join(message.payload.includes("\r\n") ? "\r\n" : "\n")
             : message.payload;
           await peer.setRemoteDescription({ type: message.messageType, sdp: remoteSdp });
           signal.throwIfAborted();
@@ -202,10 +206,10 @@ async function negotiate(
   }
 }
 
-function advertiseDeviceCollaboration(sdp: string): string {
-  if (!/^m=application\s/mu.test(sdp)) return sdp;
+function addSdpAttributes(sdp: string, attributes: readonly string[]): string {
+  if (!attributes.length) return sdp;
   const newline = sdp.includes("\r\n") ? "\r\n" : "\n";
-  return sdp + (sdp.endsWith(newline) ? "" : newline) + deviceCollaborationSdpAttribute + newline;
+  return sdp + (sdp.endsWith(newline) ? "" : newline) + attributes.join(newline) + newline;
 }
 
 function digestDescription(sdp: string): string {

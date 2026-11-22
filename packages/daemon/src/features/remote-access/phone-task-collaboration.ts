@@ -6,7 +6,7 @@ import {
   REMOTE_DEVICE_COLLABORATION_MAX_SHARES,
   type DeviceCollaborationProposalV1,
   type RemoteDeviceAnalysisInputV1,
-  type RemoteDeviceAnalysisDraftInputV1,
+  type RemotePhoneTaskProjectionV1,
   type RemoteDeviceCollaborationCommandV1,
   type RemoteDeviceCollaborationViewV1,
 } from "@ling-stack/contracts";
@@ -45,7 +45,7 @@ export class PhoneTaskCollaboration {
       this.assertActive(share, now);
       requireRevision(share, action.expectedRevision);
       const proposal = share.proposalIds.includes(action.proposalId) && this.store.getProposal(action.proposalId);
-      if (!proposal || (proposal.status !== "proposed" && proposal.status !== action.decision)) {
+      if (!proposal || proposal.kind !== "observation" || (proposal.status !== "proposed" && proposal.status !== action.decision)) {
         throw new RemoteAccessError("idempotency_conflict", "This proposal can no longer be decided.");
       }
       if (proposal.status === "proposed") this.store.saveProposal({ ...proposal, status: action.decision });
@@ -57,11 +57,13 @@ export class PhoneTaskCollaboration {
     return this.activeShares(principal, now).map(share => this.view(share, principal.workspaceId, now));
   }
 
-  projectionForAnalysis(principal: PhoneTaskCollaborationPrincipal, input: RemoteDeviceAnalysisDraftInputV1, now: string) {
+  currentShare(
+    principal: PhoneTaskCollaborationPrincipal, input: { readonly shareId: string; readonly expectedRevision: number }, now: string,
+  ): PhoneTaskShareRecord & { readonly projection: RemotePhoneTaskProjectionV1 } {
     const share = this.requireShare(principal, input.shareId);
     const projection = this.assertActive(share, now);
     requireRevision(share, input.expectedRevision);
-    return projection;
+    return { ...share, projection };
   }
 
   proposeFromPc(principal: PhoneTaskCollaborationPrincipal, input: RemoteDeviceAnalysisInputV1, now: string): RemoteDeviceCollaborationViewV1 {

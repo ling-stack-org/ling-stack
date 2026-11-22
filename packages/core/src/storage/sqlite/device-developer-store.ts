@@ -9,6 +9,7 @@ import type {
   DeviceDeveloperArtifactV1,
   DeviceDeveloperJobV1,
   DeviceDeveloperSessionV1,
+  RemoteDeviceArtifactReceiptV1,
   RemotePhoneTaskProjectionV1,
 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "../../device-fabric.js";
@@ -48,6 +49,10 @@ export class SqliteDeviceDeveloperStore {
       );
       CREATE INDEX IF NOT EXISTS device_phone_task_shares_principal
         ON device_phone_task_shares(principal, active, expires_at);
+      CREATE TABLE IF NOT EXISTS device_phone_artifact_receipts (
+        proposal_id TEXT PRIMARY KEY NOT NULL REFERENCES device_collaboration_proposals(proposal_id),
+        receipt_json TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS device_artifact_transfers (transfer_id TEXT PRIMARY KEY NOT NULL, proposal_id TEXT NOT NULL, transfer_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS device_artifact_transfer_chunks (
         transfer_id TEXT NOT NULL REFERENCES device_artifact_transfers(transfer_id),
@@ -151,6 +156,17 @@ export class SqliteDeviceDeveloperStore {
   getPhoneTaskShare(shareId: string): PhoneTaskShareRecord | undefined {
     const row = this.database.prepare("SELECT share_json FROM device_phone_task_shares WHERE share_id=?").get(shareId) as Row | undefined;
     return row ? parseJson<PhoneTaskShareRecord>(row.share_json, "phone task share") : undefined;
+  }
+
+  getPhoneArtifactReceipt(proposalId: string): RemoteDeviceArtifactReceiptV1 | undefined {
+    const row = this.database.prepare("SELECT receipt_json FROM device_phone_artifact_receipts WHERE proposal_id=?").get(proposalId) as Row | undefined;
+    return row ? parseJson<RemoteDeviceArtifactReceiptV1>(row.receipt_json, "phone artifact receipt") : undefined;
+  }
+
+  savePhoneArtifactReceipt(proposalId: string, receipt: RemoteDeviceArtifactReceiptV1): RemoteDeviceArtifactReceiptV1 {
+    this.database.prepare("INSERT INTO device_phone_artifact_receipts(proposal_id,receipt_json) VALUES(?,?) ON CONFLICT(proposal_id) DO NOTHING")
+      .run(proposalId, JSON.stringify(receipt));
+    return this.getPhoneArtifactReceipt(proposalId)!;
   }
 
   listActivePhoneTaskShares(principal: string, now: string, limit: number): readonly PhoneTaskShareRecord[] {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createPublicKey, randomUUID, verify } from "node:crypto";
 import {
   REMOTE_PROTOCOL_LIMITS,
   REMOTE_PROTOCOL_VERSION,
@@ -32,12 +32,15 @@ import {
 import type { RemoteConversationFacade, RemoteProjectedEvent } from "./conversation-facade.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
 import type { PhoneTaskCollaboration } from "./phone-task-collaboration.js";
+import type { PhoneTaskArtifacts } from "./phone-task-artifacts.js";
 import { RemoteAccessError } from "./errors.js";
 import type { AuthenticatedRemoteSession } from "./pairing-auth-service.js";
 
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const MAX_COMMANDS_PER_MINUTE = 120;
 const MAX_JOURNAL_WATCHES = 4;
+const MAX_ARTIFACT_CHUNKS_PER_SECOND = 96;
+const MAX_UNACKNOWLEDGED_ARTIFACT_CHUNKS = 8;
 
 interface RemoteStreamState {
   readonly id: string;
@@ -59,6 +62,7 @@ export interface RemoteGatewaySessionOptions {
   readonly facade: RemoteConversationFacade;
   readonly deviceFacade?: RemoteDeviceFacade;
   readonly phoneTaskCollaboration?: PhoneTaskCollaboration;
+  readonly artifactAuthority?: { readonly service: PhoneTaskArtifacts; readonly sign: (bytes: Uint8Array) => string };
   readonly recoveryApprovals?: boolean;
   readonly isPairedDeviceCurrent?: () => boolean;
   readonly policy: RemoteAccessPolicySummaryV1;
@@ -77,6 +81,9 @@ export class RemoteGatewaySession {
   private readonly streams = new Map<string, RemoteStreamState>();
   private readonly journalWatches = new Map<string, DeviceJournalWatch>();
   private journalPageServerSeq = 0;
+  private readonly artifactChunkSequences = new Set<number>();
+  private artifactWindowStartedAt = 0;
+  private artifactChunks = 0;
   private readonly detach: () => void;
   private lastClientSeq = 0;
   private commandWindowStartedAt = 0;
@@ -208,8 +215,18 @@ export class RemoteGatewaySession {
       const acknowledgesJournalPage = streamId === this.controlStream.id
         && this.controlStream.ackServerSeq < this.journalPageServerSeq
         && ackServerSeq >= this.journalPageServerSeq && ackServerSeq <= this.controlStream.serverSeq;
-      if (!acknowledgesJournalPage) this.consumeRateLimit();
+      const acknowledgesArtifactChunk = streamId === this.controlStream.id && this.artifactChunkSequences.has(ackServerSeq);
+      if (!acknowledgesJournalPage && !acknowledgesArtifactChunk) this.consumeRateLimit();
       this.handleAck(frame.payload.streamId, frame.payload.ackServerSeq);
+      if (streamId === this.controlStream.id) {
+        for (const sequence of this.artifactChunkSequences) {
+          if (sequence <= this.controlStream.ackServerSeq) this.artifactChunkSequences.delete(sequence);
+        }
+      }
+      return;
+    }
+    if (frame.type === "device.artifact" && frame.payload.action.kind === "chunk" && this.options.artifactAuthority) {
+      await this.executeAuthorizedCommand(frame);
       return;
     }
     this.consumeRateLimit();
@@ -392,12 +409,26 @@ export class RemoteGatewaySession {
         this.assertCurrentDevicePrincipal();
         const service = this.options.phoneTaskCollaboration;
         if (!service) throw new RemoteAccessError("capability_not_allowed", "Phone task collaboration is unavailable.");
-        const { gatewayId, authenticated, policy } = this.options;
-        const share = service.fromPhone({
-          gatewayId, deviceId: this.deviceId, deviceEpoch: authenticated.device.deviceEpoch,
-          workspaceId: policy.workspaceId, workspaceBindingId: policy.workspaceBindingId, policyVersion: policy.policyVersion,
-        }, frame.payload, this.now());
+        const share = service.fromPhone(this.collaborationPrincipal(), frame.payload, this.now());
         this.complete(frame, { kind: "device_collaboration_state", share });
+        return;
+      }
+      case "device.artifact": {
+        this.assertCurrentDevicePrincipal();
+        const authority = this.options.artifactAuthority;
+        if (!authority) throw new RemoteAccessError("capability_not_allowed", "Phone artifact transfer is unavailable.");
+        if (frame.payload.action.kind === "chunk") this.consumeArtifactRateLimit();
+        const result = await authority.service.fromPhone(this.collaborationPrincipal(), frame.payload, {
+          now: this.now,
+          sign: authority.sign,
+          assertCurrent: () => this.assertCurrentDevicePrincipal(),
+          verifyReceipt: (input, signature) => verify("sha256", input, {
+            key: createPublicKey({ key: this.options.authenticated.device.publicKeyJwk, format: "jwk" }),
+            dsaEncoding: "ieee-p1363",
+          }, Buffer.from(signature, "base64url")),
+        });
+        this.assertCurrentDevicePrincipal();
+        this.complete(frame, result);
         return;
       }
       default:
@@ -409,6 +440,14 @@ export class RemoteGatewaySession {
     if (this.options.isPairedDeviceCurrent?.() === false) {
       throw new RemoteAccessError("binding_changed", "The device pairing is no longer current.", true);
     }
+  }
+
+  private collaborationPrincipal() {
+    const { gatewayId, authenticated, policy } = this.options;
+    return {
+      gatewayId, deviceId: this.deviceId, deviceEpoch: authenticated.device.deviceEpoch,
+      workspaceId: policy.workspaceId, workspaceBindingId: policy.workspaceBindingId, policyVersion: policy.policyVersion,
+    };
   }
 
   private nextJournalWatch(request: RemoteDeviceTaskJournalCommandV1, journal: RemoteDeviceTaskJournalV1): DeviceJournalWatch {
@@ -443,7 +482,10 @@ export class RemoteGatewaySession {
       result,
       completedAt: this.now(),
     } as RemoteCommandCompletedV1;
-    this.sendEvent("command.completed", completed, this.controlStream, frame.messageId);
+    const sent = this.sendEvent("command.completed", completed, this.controlStream, frame.messageId);
+    if (sent && result.kind === "device_artifact" && result.operation === "chunk") {
+      this.artifactChunkSequences.add(this.controlStream.serverSeq);
+    }
   }
 
   private sendCommandFailed(
@@ -600,6 +642,18 @@ export class RemoteGatewaySession {
     }
   }
 
+  private consumeArtifactRateLimit(): void {
+    const now = Date.now();
+    if (now - this.artifactWindowStartedAt >= 1_000) {
+      this.artifactWindowStartedAt = now;
+      this.artifactChunks = 0;
+    }
+    this.artifactChunks += 1;
+    if (this.artifactChunks > MAX_ARTIFACT_CHUNKS_PER_SECOND || this.artifactChunkSequences.size >= MAX_UNACKNOWLEDGED_ARTIFACT_CHUNKS) {
+      throw new RemoteAccessError("rate_limited", "The artifact receive window is full.", true);
+    }
+  }
+
   private closePolicyViolation(reason: string): void {
     this.close(1008, reason.slice(0, 120));
   }
@@ -668,6 +722,7 @@ function commandCapability(
     return "device.reconcile";
   }
   if (commandType === "device.collaboration") return "device.collaboration";
+  if (commandType === "device.artifact") return "device.artifact";
   return undefined;
 }
 

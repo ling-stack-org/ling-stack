@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, sign, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -16,7 +16,9 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7,
   REMOTE_PROTOCOL_LIMITS,
+  isRemoteDeviceArtifactOfferInputV1,
   isRemoteDeviceAnalysisDraftInputV1,
   isRemoteDeviceAnalysisInputV1,
   type LingServerGatewayRouteV1,
@@ -38,11 +40,13 @@ import { RemoteGatewaySession } from "./session.js";
 import { RemoteAccessStateStore } from "./state-store.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
 import type { PhoneTaskCollaboration, PhoneTaskCollaborationPrincipal } from "./phone-task-collaboration.js";
+import type { PhoneTaskArtifacts } from "./phone-task-artifacts.js";
 import type { PhoneTaskAnalysisDrafter } from "../device-support/diagnosis-planner.js";
 import { LingServerGatewayPeer } from "./ling-server-gateway-peer.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "./pion-peer-worker.js";
 
 const deviceTaskProtocols = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
@@ -62,6 +66,7 @@ export interface RemoteAccessControllerOptions {
   readonly dispatcher?: RemoteReplyDispatcher;
   readonly deviceFacade?: RemoteDeviceFacade;
   readonly phoneTaskCollaboration?: PhoneTaskCollaboration;
+  readonly phoneTaskArtifacts?: PhoneTaskArtifacts;
   readonly draftPhoneTaskAnalysis?: PhoneTaskAnalysisDrafter;
   readonly now?: () => string;
 }
@@ -84,6 +89,7 @@ export interface RemoteAccessStatus {
   readonly sendEnabled: boolean;
   readonly deviceCollaborationEnabled?: boolean;
   readonly deviceCollaborationAnalysisEnabled?: boolean;
+  readonly deviceArtifactSharingEnabled?: boolean;
 }
 
 interface RoutedSessionAuthentication {
@@ -214,6 +220,7 @@ export class RemoteAccessController {
       workspaceBindingId: state.workspaceBindingId,
       sendEnabled: Boolean(this.options.dispatcher),
       ...(this.options.phoneTaskCollaboration ? { deviceCollaborationEnabled: true } : {}),
+      ...(this.options.phoneTaskArtifacts ? { deviceArtifactSharingEnabled: true } : {}),
       ...(this.options.draftPhoneTaskAnalysis && this.options.store.getWorkspaceSettings().defaultProviderPresetId
         ? { deviceCollaborationAnalysisEnabled: true } : {}),
     };
@@ -271,7 +278,7 @@ export class RemoteAccessController {
         const principal = this.currentCollaborationPrincipal();
         if (!principal) throw new RemoteAccessError("binding_changed", "Pair a phone before generating analysis.");
         const service = this.options.phoneTaskCollaboration;
-        const projection = service.projectionForAnalysis(principal, input, this.now());
+        const { projection } = service.currentShare(principal, input, this.now());
         const cancellation = new AbortController();
         const cancel = () => cancellation.abort();
         response.once("close", cancel);
@@ -283,12 +290,41 @@ export class RemoteAccessController {
           if (!draft || response.destroyed) return true;
           const current = this.currentCollaborationPrincipal();
           if (!current) throw new RemoteAccessError("binding_changed", "The phone pairing changed while preparing the note.");
-          service.projectionForAnalysis(current, input, this.now());
+          service.currentShare(current, input, this.now());
           writeManagementJson(response, 200, { shareId: input.shareId, expectedRevision: input.expectedRevision, ...draft }, origin);
           return true;
         } finally {
           response.off("close", cancel);
         }
+      }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/device-collaboration/artifacts` && this.options.phoneTaskArtifacts) {
+        const upload = request.method === "POST";
+        if (!upload && request.method !== "GET") {
+          writeManagementJson(response, 405, { error: "method_not_allowed", message: "Use GET or POST for device artifacts." }, origin);
+          return true;
+        }
+        const artifact = {
+          shareId: url.searchParams.get("shareId"),
+          expectedRevision: Number(url.searchParams.get("expectedRevision")),
+          proposalId: upload ? url.searchParams.get("proposalId") : "list",
+        };
+        if (url.searchParams.size !== (upload ? 4 : 2) || !isRemoteDeviceArtifactOfferInputV1(artifact)) {
+          throw new Error("Invalid device artifact request.");
+        }
+        const principal = this.currentCollaborationPrincipal();
+        if (!principal) throw new RemoteAccessError("binding_changed", "Pair a phone before sharing an artifact.");
+        const service = this.options.phoneTaskArtifacts;
+        if (!upload) {
+          writeManagementJson(response, 200, { offers: service.listForPc(principal, artifact, this.now()) }, origin);
+          return true;
+        }
+        const name = url.searchParams.get("name");
+        if (!name || request.headers["content-type"] !== "application/octet-stream") throw new Error("Expected a named artifact upload.");
+        const offer = await service.offerFromPc(principal, {
+          ...artifact, name, sizeBytes: Number(request.headers["content-length"]),
+        }, request, { currentPrincipal: () => this.currentCollaborationPrincipal(), now: this.now, sign: bytes => this.signArtifact(bytes) });
+        if (!response.destroyed) writeManagementJson(response, 201, offer, origin);
+        return true;
       }
       if (url.pathname === `${MANAGEMENT_PREFIX}/enable` && request.method === "POST") {
         const body = requireRecord(await readJson(request));
@@ -344,6 +380,7 @@ export class RemoteAccessController {
       writeManagementJson(response, 404, { error: "not_found", message: "Mobile Access management route not found." }, origin);
       return true;
     } catch (error) {
+      if (response.destroyed) return true;
       const statusCode = error instanceof RemoteAccessError ? 409 : 400;
       writeManagementJson(response, statusCode, {
         error: error instanceof RemoteAccessError ? error.code : "bad_request",
@@ -366,6 +403,10 @@ export class RemoteAccessController {
       gatewayId: this.auth.identity.gatewayId, deviceId: device.deviceId, deviceEpoch: device.deviceEpoch,
       workspaceId: DEFAULT_WORKSPACE_ID, workspaceBindingId: state.workspaceBindingId, policyVersion: state.policyVersion,
     };
+  }
+
+  private signArtifact(bytes: Uint8Array): string {
+    return sign("sha256", bytes, { key: this.auth.identity.privateKeyPem, dsaEncoding: "ieee-p1363" }).toString("base64url");
   }
 
   private refreshLingServerPeer(): void {
@@ -506,8 +547,10 @@ export class RemoteAccessController {
       throw new Error("Authentication no longer current.");
     }
     const deviceFacade = deviceTaskProtocols.includes(protocol) ? this.options.deviceFacade : undefined;
-    const phoneTaskCollaboration = protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 ? this.options.phoneTaskCollaboration : undefined;
-    const capabilities = this.capabilities(deviceFacade ? protocol : "", !!phoneTaskCollaboration);
+    const supportsArtifacts = protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7;
+    const phoneTaskCollaboration = supportsArtifacts || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 ? this.options.phoneTaskCollaboration : undefined;
+    const phoneTaskArtifacts = supportsArtifacts ? this.options.phoneTaskArtifacts : undefined;
+    const capabilities = this.capabilities(deviceFacade ? protocol : "", !!phoneTaskCollaboration, !!phoneTaskArtifacts);
     const facade = new RemoteConversationFacade({
       store: this.options.store,
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -524,8 +567,9 @@ export class RemoteAccessController {
       facade,
       deviceFacade,
       phoneTaskCollaboration,
+      artifactAuthority: phoneTaskArtifacts ? { service: phoneTaskArtifacts, sign: bytes => this.signArtifact(bytes) } : undefined,
       recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5
-        || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
+        || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 || supportsArtifacts,
       isPairedDeviceCurrent: () => {
         const state = this.auth.state();
         const device = state.pairedDevice;
@@ -599,8 +643,9 @@ export class RemoteAccessController {
     }
   }
 
-  private capabilities(deviceTaskProtocol: string, supportsCollaboration: boolean): readonly RemoteCapabilityV1[] {
-    const supportsJournalWatch = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5 || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6;
+  private capabilities(deviceTaskProtocol: string, supportsCollaboration: boolean, supportsArtifacts: boolean): readonly RemoteCapabilityV1[] {
+    const supportsJournalWatch = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5
+      || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7;
     const supportsJournal = supportsJournalWatch || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3
       || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4;
     return [
@@ -615,6 +660,7 @@ export class RemoteAccessController {
       ...(supportsJournal ? ["device.journal" as const] : []),
       ...(supportsJournalWatch ? ["device.journal.watch" as const] : []),
       ...(supportsCollaboration ? ["device.collaboration" as const] : []),
+      ...(supportsArtifacts ? ["device.artifact" as const] : []),
     ];
   }
 

@@ -442,6 +442,22 @@ controls. A completed readback updates the shared task revision, and a note
 awaiting review on the earlier revision expires. Choose **结束共享** to remove
 the projection from the PC's active shares.
 
+### Receive a PC build file on the phone
+
+In **Settings → Mobile Access → Phone device tasks**, choose **Share a PC file**
+and select a file from the system picker. Ling streams the selected file to the
+local Gateway. The signed manifest binds the file name and SHA-256 to the paired
+phone, task revision, target, attempt and connection. An offer supports up to
+256 MiB.
+
+On the phone, choose **同步记录、建议和文件** and then **接受并接收** on the matching
+offer. If interrupted, reopen the same task and choose **继续接收**. The phone
+verifies each signed chunk and the final SHA-256, records the file on the task,
+and returns its signed receipt. The Desktop task shows **File verified by phone**.
+Choose **导出已校验文件** on the phone to save a verified copy to a selected folder,
+including after the share ends. Package identity, signer validation, target
+installation and device readback have their own evidence.
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with

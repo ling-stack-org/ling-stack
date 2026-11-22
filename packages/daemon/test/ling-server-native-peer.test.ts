@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,9 +11,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import type {
-  LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceCollaborationViewV1, RemoteP256PublicJwkV1,
+  LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceArtifactOfferV1, RemoteDeviceCollaborationViewV1, RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
-import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7 } from "@ling-stack/contracts";
 import { createEnvSecretResolver, createSqliteRunStore } from "@ling-stack/core";
 import {
   RemoteSessionClient, createFetchRemoteHttpClient, type RemoteBindingV1, type RemoteDeviceKeyAdapter,
@@ -23,20 +23,22 @@ import { connectMobileLingServerPeer } from "../../../apps/mobile/src/remote/mob
 import { createStandaloneDeviceRuntime } from "../../../apps/mobile/src/device/standalone-runtime.ts";
 import type { HomeAssistantFetch } from "../../../apps/mobile/src/device/home-assistant.ts";
 import type { PhoneTaskCollaborationPeer } from "../../../apps/mobile/src/device/phone-task-collaboration.ts";
+import type { OpenPhoneTaskArtifactFile } from "../../../apps/mobile/src/device/phone-task-artifacts.ts";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createPhoneTaskAnalysisDrafter } from "../dist/features/device-support/diagnosis-planner.js";
 import { createDefaultRunnerRegistry } from "../dist/index.js";
 import { RemoteAccessController } from "../dist/features/remote-access/controller.js";
 import { PhoneTaskCollaboration } from "../dist/features/remote-access/phone-task-collaboration.js";
+import { PhoneTaskArtifacts } from "../dist/features/remote-access/phone-task-artifacts.js";
 import { createRemoteGatewayIdentity } from "../dist/features/remote-access/pairing-auth-service.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "../dist/features/remote-access/pion-peer-worker.js";
 import { RemoteAccessStateStore } from "../dist/features/remote-access/state-store.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
 const worker = resolvePionPeerWorker();
-test("the native Gateway renews authenticated WebRTC authority, resumes after restart and respects server revocation",
-  { timeout: 45_000, skip: !worker && !process.env.CI && "build the Pion peer worker to run the native transport test" }, async t => {
+test("the native Gateway resumes the phone journal and signed artifact transfer after restart",
+  { timeout: 60_000, skip: !worker && !process.env.CI && "build the Pion peer worker to run the native transport test" }, async t => {
     assert.ok(worker);
     const root = await mkdtemp(join(tmpdir(), "ling-native-peer-"));
     const certificatePath = join(root, "tls.pem");
@@ -128,9 +130,14 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     const gatewayKey = state.readOrCreateIdentity();
     const managementCapability = randomUUID();
     const managementOrigin = "http://127.0.0.1";
-    const createGateway = () => new RemoteAccessController({ store: workspace, stateDir, listenerPort, workspaceDisplayName: "Native fixture",
-      managementCapability, managementAllowedOrigins: [managementOrigin], now, deviceFacade: devices.remoteFacade,
-      phoneTaskCollaboration: new PhoneTaskCollaboration(devices.developerStore), draftPhoneTaskAnalysis });
+    const createGateway = () => {
+      const phoneTaskCollaboration = new PhoneTaskCollaboration(devices.developerStore);
+      return new RemoteAccessController({ store: workspace, stateDir, listenerPort, workspaceDisplayName: "Native fixture",
+        managementCapability, managementAllowedOrigins: [managementOrigin], now, deviceFacade: devices.remoteFacade,
+        phoneTaskCollaboration, draftPhoneTaskAnalysis,
+        phoneTaskArtifacts: new PhoneTaskArtifacts(devices.developerStore, phoneTaskCollaboration, join(root, "pc-artifacts")),
+      });
+    };
     gateway = createGateway();
     await gateway.startIfEnabled();
     management = createServer(async (request, response) => {
@@ -196,7 +203,7 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
         assert.equal(activeBinding.lingServerRoutingProfile?.bindingId, publication.binding.bindingId);
         const connection = await connectMobileLingServerPeer(activeBinding, signal, peerOptions);
         assert.ok(connection);
-        assert.ok(connection.route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6));
+        assert.ok(connection.route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7));
         routes.push({ id: connection.route.routeAttemptId, expiresAt: connection.route.expiresAt });
         return connection;
       },
@@ -205,6 +212,7 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     await client.connect();
     assert.equal(client.state.workspaceBindingId, originalState.workspaceBindingId);
     assert.ok(client.state.policy?.capabilities.includes("device.collaboration"));
+    assert.ok(client.state.policy?.capabilities.includes("device.artifact"));
     await waitFor(() => Boolean(client?.state.conversations[channel.id]));
     const first = await client.openConversation(channel.id);
     assert.deepEqual(await first.completion, { kind: "conversation_opened", conversationId: channel.id });
@@ -233,8 +241,29 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
         attributes: { id: "test-automation", description: "private-fixture-data" },
       });
     };
+    const fileRoot = join(root, "phone-artifacts");
+    await mkdir(fileRoot);
+    let exported: Buffer | undefined;
+    const artifactFile: OpenPhoneTaskArtifactFile = (fileId) => {
+      const stagingPath = join(fileRoot, fileId + ".staging");
+      const verifiedPath = join(fileRoot, fileId + ".verified");
+      const current = async () => await stat(verifiedPath).then(() => verifiedPath, () => stagingPath);
+      return {
+        async size() { return await stat(await current()).then(value => value.size, () => 0); },
+        async append(offset, bytes) {
+          assert.equal(await this.size(), offset);
+          await appendFile(stagingPath, bytes);
+        },
+        async digest() { return sha256Digest(await readFile(await current())); },
+        async reset() { await Promise.all([rm(stagingPath, { force: true }), rm(verifiedPath, { force: true })]); },
+        async seal() { if (await current() === stagingPath) await rename(stagingPath, verifiedPath); },
+        async export() { exported = await readFile(verifiedPath); },
+      };
+    };
     const openPhone = async () => {
-      const runtime = await createStandaloneDeviceRuntime({ storage, now, randomId: prefix => prefix + "_" + randomUUID(), fetch: phoneFetch });
+      const runtime = await createStandaloneDeviceRuntime({
+        storage, now, randomId: prefix => prefix + "_" + randomUUID(), fetch: phoneFetch, openArtifactFile: artifactFile,
+      });
       await runtime.setForeground(true);
       return runtime;
     };
@@ -284,6 +313,29 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     assert.ok(accepted?.state === "active");
     assert.deepEqual(accepted.proposals.map(proposal => proposal.status), ["accepted", "proposed"]);
     assert.ok([...phoneStorage.values()].some(value => value.includes('"decision":"accepted"')));
+    const artifactBytes = randomBytes(REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES * 126 + 19);
+    const artifactQuery = new URLSearchParams({ shareId: share.shareId, expectedRevision: String(share.revision) });
+    const offerArtifact = () => fetch(collaborationUrl + "/artifacts?" + new URLSearchParams({
+      ...Object.fromEntries(artifactQuery), proposalId: "pc-build-artifact", name: "build-fixture.bin",
+    }), {
+      method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": gateway!.csrfToken, "Content-Type": "application/octet-stream" },
+      body: new Blob([artifactBytes]),
+    });
+    const upload = await offerArtifact();
+    assert.equal(upload.status, 201);
+    const offer = await upload.json() as RemoteDeviceArtifactOfferV1;
+    assert.equal(offer.manifest.digest, sha256Digest(artifactBytes));
+    assert.deepEqual(await (await offerArtifact()).json(), offer);
+    assert.deepEqual(await client.listDeviceArtifacts(share.shareId, share.revision), [offer]);
+    await assert.rejects(client.readDeviceArtifactChunk(offer.manifest, 0), /must accept/u);
+    assert.ok(phone.artifacts);
+    const approvedArtifact = await phone.artifacts.decide(offer, "accepted", client);
+    const interruption = new AbortController();
+    await assert.rejects(phone.artifacts.receive({
+      offer: approvedArtifact, peer: client, signal: interruption.signal,
+      onProgress: bytes => { if (bytes >= REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES * 4) interruption.abort(); },
+    }), { name: "AbortError" });
+    assert.deepEqual(await phone.artifacts.listSaved(phoneRecovery.taskId), []);
     const expiry = Date.parse(routes[0]!.expiresAt);
     const expectedReceipts = rendezvousReceipts + 2;
     clockOffset = expiry - Date.now() - 8_000;
@@ -313,6 +365,20 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     assert.equal(continued.task.ownerId, initialJournal.task.ownerId);
     assert.deepEqual(devices.store.listAttempts(taskId).map(record => record.attempt.attemptId), attemptIds);
     phone = await openPhone();
+    assert.ok(phone.artifacts);
+    const progress: number[] = [];
+    const receivedArtifact = await phone.artifacts.receive({
+      offer: approvedArtifact, peer: client, onProgress: bytes => progress.push(bytes),
+    });
+    assert.equal(progress[0], REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES * 4);
+    assert.equal(progress.at(-1), artifactBytes.length);
+    assert.equal(receivedArtifact.receipt?.digest, sha256Digest(artifactBytes));
+    const roundTrip = await fetch(collaborationUrl + "/artifacts?" + artifactQuery, { headers: collaborationHeaders });
+    assert.equal(roundTrip.status, 200);
+    assert.deepEqual(await roundTrip.json(), { offers: [receivedArtifact] });
+    assert.equal(devices.developerStore.getPhoneArtifactReceipt("pc-build-artifact")?.digest, sha256Digest(artifactBytes));
+    const savedArtifact = (await phone.artifacts.listSaved(phoneRecovery.taskId))[0];
+    assert.ok(savedArtifact);
     shared = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "sync" });
     assert.ok(shared?.state === "active");
     assert.equal(shared.shareId, share.shareId);
@@ -338,6 +404,9 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     assert.equal((await staleDraft).status, 409);
     assert.equal(revoked?.state, "revoked");
     assert.deepEqual(await listShares(), []);
+    await assert.rejects(client.readDeviceArtifactChunk(approvedArtifact.manifest, 9), /ended/u);
+    await phone.artifacts.export(phoneRecovery.taskId, savedArtifact.fileId);
+    assert.deepEqual(exported, artifactBytes);
     control.registry.revokeBinding(publication.binding.bindingId, publication.binding.revision + 1);
     await waitFor(() => client?.state.connection !== "connected", 12_000);
     await assert.rejects(client.connect(), { status: 403 });
@@ -347,6 +416,10 @@ function pairedKey() {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const jwk = validateRemoteP256PublicJwkV1(publicKey.export({ format: "jwk" }));
   return { privateKey, jwk, fingerprint: fingerprintPublicJwkSync(jwk) };
+}
+
+function sha256Digest(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
 function signWith(key: ReturnType<typeof pairedKey>, bytes: Uint8Array): string {

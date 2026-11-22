@@ -38,6 +38,7 @@ import {
 } from "./primitives.js";
 import { validateDeviceListSnapshot, validateDeviceTaskJournal, validateDeviceTaskSnapshot } from "./device.js";
 import { validateDeviceCollaborationView } from "./device-collaboration.js";
+import { validateDeviceArtifactResult } from "./device-artifact.js";
 
 function validateCommandResult(value: unknown, path: string): RemoteCommandResultV1 {
   const record = expectRecord(value, path);
@@ -62,8 +63,11 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "device_task_revoked",
     "device_task_rechecked",
     "device_collaboration_state",
+    "device_artifact",
   ] as const, `${path}.kind`);
   switch (kind) {
+    case "device_artifact":
+      return validateDeviceArtifactResult(record, path);
     case "device_collaboration_state":
       assertStrictKeys(record, ["kind", "share"], [], path);
       return { kind, share: validateDeviceCollaborationView(record.share, `${path}.share`) };
@@ -180,6 +184,7 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "device.task.revoke": "device_task_revoked",
   "device.task.reconcile": "device_task_rechecked",
   "device.collaboration": "device_collaboration_state",
+  "device.artifact": "device_artifact",
 };
 
 function validateCommandCompleted(value: unknown, path: string): RemoteCommandCompletedV1 {
