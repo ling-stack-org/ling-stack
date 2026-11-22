@@ -30,9 +30,10 @@
 - App Server operator grant 支持 workspace、Thread 和 Work Item 范围，按 scope 分开观察、控制、审批和答复权限。grant 的 revision、过期和撤销参与握手、请求和推送路径。
 - CLI 和 TypeScript client 可以直接进入上述流程。Daemon 重启、重复请求、取消未确认和未知配方仍保持已有的持久回执语义。
 - MCP bridge 暴露 Work Item 阶段、协作记录、受限 artifact range、模型清单和 Skill 读取。artifact 元数据去除内容摘要，正文只能按授权的 Thread/Work Item/Run 归属读取，并受单次范围上限约束。
-- Plan 转 Workflow 时可指定稳定的 `stageId`、`dependsOnStageIds` 和 `requiredDecision`。接受事务将阶段依赖映射到真实步骤。循环、缺失的前置阶段和无效选项会拒绝转换。
+- Plan 转 Workflow 时可指定稳定的 `stageId`、`dependsOnStageIds`、`requiredDecision` 和 `requiredTools`。接受事务将阶段依赖映射到真实步骤。循环、缺失的前置阶段、无效选项和未知工具会拒绝转换。Runner 准入仍按频道和当前参与者权限检查工具。
 - Work Board 与 App Server 使用同一套阶段、简报、阻塞和运行证据投影。阶段简报的来源是已提交的步骤状态迁移。看板支持分页与重试，并随 `work_items` 事件刷新。
 - 声明了裁决条件的步骤等待该 Work Item、已接受 Plan 和步骤的裁决回执。授权的操作方可通过 `workItem/deliberation/start` 打开该阶段的审议，再从封存选项中裁决。回执恢复后，原 Workflow 放行该步骤，独立 QA 继续使用自己的依赖。自动提案、质疑及投票工作流仍待接入。
+- 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。
 
 | 工作包 | 已验证场景与证据边界 |
 | --- | --- |

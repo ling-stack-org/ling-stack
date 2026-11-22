@@ -81,6 +81,7 @@ export class SqliteProposedPlanActionStore {
               ...(preview?.stageId ? { planStageId: preview.stageId } : {}),
               ...(preview?.dependsOnStageIds?.length ? { dependsOnStepIds: preview.dependsOnStageIds.map(id => stepIds.get(id)!) } : {}),
               ...(preview?.requiredDecision ? { requiredPlanDecision: preview.requiredDecision } : {}),
+              ...(preview?.requiredTools ? { requiredTools: preview.requiredTools } : {}),
             } }, now);
         if (preview?.stageId) stepIds.set(preview.stageId, step.id);
         if (index === 0) firstStepId = step.id;

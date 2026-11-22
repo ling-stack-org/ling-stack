@@ -5,6 +5,7 @@ import type { ExecutionAction } from "./execution-actions.js";
 import type { RetentionTombstone } from "./retention.js";
 import type { StateTransitionEvent } from "./workflows.js";
 import type { LingTurn } from "./turns.js";
+import type { RunTool } from "./shared.js";
 
 export const lingThreadKinds = [
   "task",
@@ -286,6 +287,7 @@ export interface ProposedPlanWorkflowStepPreview {
   readonly stageId?: string;
   readonly dependsOnStageIds?: readonly string[];
   readonly requiredDecision?: ProposedPlanStageDecision;
+  readonly requiredTools?: readonly RunTool[];
   readonly ownerId?: string;
   readonly ownerLabel?: string;
   readonly ownerConfidence?: "high" | "medium" | "low" | "none";

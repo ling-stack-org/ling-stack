@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { LearningEvidenceBundle, LearningReviewJob, LearningReviewPolicy, LearningReviewPolicyUpdateRequest,
   RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 export type { LearningEvidenceBundle, LearningEvidenceItem, LearningReviewJob, LearningReviewPolicy } from "@ling-stack/contracts";
@@ -18,8 +19,6 @@ export interface LearningReviewStore {
     candidateIds: readonly string[], reason: string | undefined, now: string): LearningReviewJob;
   cancelLearningReviewJob(id: string, reason: string, now: string): LearningReviewJob | undefined;
 }
-import { createHash } from "node:crypto";
-
 export function workItemLearningReviewSourceKey(workspaceId: string, workItemId: string, requestKey: string): string {
   return createHash("sha256").update(JSON.stringify([workspaceId, "work_item", workItemId, requestKey])).digest("hex");
 }

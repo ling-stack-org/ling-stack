@@ -16,6 +16,7 @@ export interface LearningReviewCoordinatorOptions {
   readonly secretResolver: SecretResolver;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly scanIntervalMs?: number;
+  readonly dispatchAllowed?: (store: RunStore) => boolean;
   /** Host-only test seam. Production always uses the isolated one-request HTTP transport. */
   readonly extract?: (input: { readonly job: LearningReviewJob; readonly prompt: string; readonly signal: AbortSignal }) => Promise<LearningDraft>;
 }
@@ -121,7 +122,7 @@ export class LearningReviewCoordinator {
   wake(store: RunStore): void {
     if (this.stopped || this.active.has(store)) return;
     if (!this.entries.has(store)) { this.registerStore(store); return; }
-    if (foregroundWorkActive(store)) return;
+    if (this.options.dispatchAllowed?.(store) === false || foregroundWorkActive(store)) return;
     this.enqueueAutomatic(store);
     const job = store.listLearningReviewJobs("queued", 1)[0];
     if (!job) return;
@@ -159,7 +160,7 @@ export class LearningReviewCoordinator {
     }
   }
   private async process(store: RunStore, selected: LearningReviewJob, controller: AbortController): Promise<void> {
-    if (this.stopped || controller.signal.aborted || foregroundWorkActive(store)) return;
+    if (this.stopped || controller.signal.aborted || this.options.dispatchAllowed?.(store) === false || foregroundWorkActive(store)) return;
     if (!learningGenerationAllowed(store, selected)) {
       store.cancelLearningReviewJob(selected.id, "learning_generation_disabled", new Date().toISOString()); return;
     }
@@ -183,6 +184,7 @@ export class LearningReviewCoordinator {
       try {
         const preset = store.getProviderPreset(selected.providerPresetId);
         if ((!this.options.extract && (!preset?.enabled || preset.updatedAt !== providerRevision)) ||
+          this.options.dispatchAllowed?.(store) === false ||
           !learningGenerationAllowed(store, selected) ||
           foregroundWorkActive(store) || store.getLearningReviewJob(selected.id)?.status !== "running" ||
           !learningEvidenceCurrent(store, selected.evidence) || this.options.runtimeSupervisor.getRuntime(store.paths.cwd, store).runtimeInstanceId !== fence.runtimeInstanceId) stop();
@@ -201,6 +203,7 @@ export class LearningReviewCoordinator {
       const prepared = prepareLearningModelRequest(job.evidence);
       let draft: LearningDraft | undefined;
       for (let requestIndex = 0; requestIndex < job.limits.maxRequests; requestIndex += 1) {
+        if (this.options.dispatchAllowed?.(store) === false) throw new Error("learning_recovery_held");
         if (foregroundWorkActive(store) || !learningEvidenceCurrent(store, job.evidence)) throw new Error("learning_source_or_foreground_changed");
         // A queued selection or retry cannot outlive the user's current recording authority.
         if (!learningGenerationAllowed(store, job)) throw new Error("learning_generation_disabled");
@@ -221,6 +224,7 @@ export class LearningReviewCoordinator {
         }
       }
       controller.signal.throwIfAborted();
+      if (this.options.dispatchAllowed?.(store) === false) throw new Error("learning_recovery_held");
       if (!draft) throw new Error("learning_extraction_failed");
       if (this.options.runtimeSupervisor.getRuntime(store.paths.cwd, store).runtimeInstanceId !== fence.runtimeInstanceId) throw new Error("learning_attempt_stale");
       if (!this.options.extract && (!store.getProviderPreset(job.providerPresetId)?.enabled ||

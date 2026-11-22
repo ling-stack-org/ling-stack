@@ -1094,7 +1094,15 @@ export function createDaemonServer(
     getStore: () => storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
     events: controlPlaneEvents,
   });
-  learningReviewCoordinator = new LearningReviewCoordinator({ runtimeSupervisor, secretResolver, controlPlaneEvents });
+  learningReviewCoordinator = new LearningReviewCoordinator({
+    runtimeSupervisor, secretResolver, controlPlaneEvents,
+    ...(resolvedConfig.appServerRecoveryDirectory ? {
+      dispatchAllowed: store => {
+        try { return appServerRecoveryFor(resolvedConfig, store)?.blocksDispatch() !== true; }
+        catch { return false; }
+      },
+    } : {}),
+  });
   for (const store of approvalRecoveryStores) learningReviewCoordinator.registerStore(store);
   const context: DaemonContext = {
     learningReviewCoordinator,

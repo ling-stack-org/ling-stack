@@ -127,6 +127,7 @@ export function workflowStepStartAuthorityBasis(store: WorkflowStepStartReadStor
       providerBinding: metadata?.providerBinding, providerPresetId: metadata?.providerPresetId,
       executionPlan: metadata?.executionPlan, operationIds: metadata?.executionOperationIds,
       requirement: metadata?.delegatedRequirement, dependsOnStepIds: metadata?.dependsOnStepIds,
+      planStageId: metadata?.planStageId, requiredPlanDecision: metadata?.requiredPlanDecision,
       dependencyMode: metadata?.dependencyMode, gates: metadata?.gates, approvalGate: metadata?.approvalGate,
       policy: metadata?.policy, requiredTools: metadata?.requiredTools, runnerId: metadata?.requestedRunnerId,
       sideEffectClass: metadata?.sideEffectClass, parallelPolicy: metadata?.parallelPolicy,

@@ -2518,8 +2518,14 @@ function readOptionalWorkflowStepPreviews(
       if (!title) {
         throw new HttpError(400, "bad_workflow_step_previews", "workflowStepPreviews items require title.");
       }
+      const requiredTools = item.requiredTools;
+      if (requiredTools !== undefined && (!Array.isArray(requiredTools) || !requiredTools.every(isRunTool)
+        || new Set(requiredTools).size !== requiredTools.length)) {
+        throw new HttpError(400, "bad_workflow_step_tools", "requiredTools must contain distinct Run tool names.");
+      }
       return {
         title,
+        requiredTools,
         stageId: readOptionalString(item, "stageId"),
         dependsOnStageIds: readOptionalWorkflowStageDependencies(item),
         requiredDecision: item.requiredDecision === undefined ? undefined : parseProposedPlanStageDecision(item.requiredDecision),

@@ -2244,12 +2244,26 @@ test("an operator resolves a deliberation round once against its current revisio
 test("a staged Work Item recovers its original Workflow, runs independent QA and releases one decision dependency", { timeout: 40_000 }, async t => {
   let completeContract: () => void = () => undefined;
   const contractGate = new Promise<void>(resolve => { completeContract = resolve; });
-  const provider = await startLoopbackPiProvider(async (_input: unknown, request: number) => {
+  let implementationReadRequested = false;
+  const provider = await startLoopbackPiProvider(async (body: unknown, request: number) => {
     if (request === 1) await contractGate;
+    const input = body as { stream: boolean; messages: readonly { content: string }[] };
+    if (input.stream === false && input.messages.at(-1)?.content?.includes('"workItem":')) {
+      const source = JSON.parse(input.messages.at(-1)!.content) as { items: readonly { id: string; text: string; verified: boolean }[] };
+      const proof = source.items.find(entry => entry.verified && entry.text.includes("Verified compatibility input"));
+      assert.ok(proof, "The Learning Review lacked the owned Run's read evidence.");
+      return { text: JSON.stringify({ kind: "memory", title: "Compatibility input", body: "Read the verified compatibility input before implementation.",
+        evidence: { evidenceId: proof.id, quote: "Verified compatibility input" } }) };
+    }
+    if (!implementationReadRequested && JSON.stringify(input.messages).includes("Accepted Plan decision:")) {
+      implementationReadRequested = true;
+      return { tool: "read", input: { path: "implementation-input.txt" } };
+    }
     return { text: "Stage completed" };
   });
   t.after(async () => { completeContract(); await provider.close(); });
   const fixture = await releaseFixture(t);
+  await writeFile(join(fixture.cwd, "implementation-input.txt"), "Verified compatibility input\n");
   const store = fixture.getStore();
   const preset = addLoopbackPreset(store, provider.baseUrl);
   const now = new Date().toISOString();
@@ -2261,7 +2275,9 @@ test("a staged Work Item recovers its original Workflow, runs independent QA and
     title: "Staged implementation", bodyMarkdown: "Implement the staged change", status: "draft" }, now);
   const request = async (path: string, body?: object) => {
     const { daemonUrl, authToken } = fixture.transportOptions();
-    return fetch(`${daemonUrl}${path}?cwd=${encodeURIComponent(fixture.cwd)}`, {
+    const url = new URL(path, daemonUrl);
+    url.searchParams.set("cwd", fixture.cwd);
+    return fetch(url, {
       ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
       headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
     });
@@ -2269,7 +2285,7 @@ test("a staged Work Item recovers its original Workflow, runs independent QA and
   const conversionPath = `/threads/${thread.id}/proposed-plans/${plan.id}/convert-workflow`;
   const p01Preview = { title: "P01 accept the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" };
   const p02Preview = { title: "P02 implement the selected approach", stageId: "P02", dependsOnStageIds: ["P01"],
-    ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer",
+    ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer", requiredTools: ["read"],
     requiredDecision: { question: "Which compatible approach should this stage implement?", options: ["Adapter", "Migration"] } };
   const qaPreview = { title: "Prepare contract regression checks", stageId: "QA", dependsOnStageIds: ["P01"],
     ownerId: "teammate_builtin_qa", ownerLabel: "QA" };
@@ -2432,6 +2448,25 @@ test("a staged Work Item recovers its original Workflow, runs independent QA and
   const feedbackReplay = await decisionClient.call<LingAppServerWorkItemFeedbackResult>("workItem/feedback/add", feedbackInput);
   assert.equal(feedbackReplay.replayed, true);
   assert.equal(feedbackReplay.job.id, feedback.job.id);
+  await assert.rejects(decisionClient.call("workItem/feedback/add", { ...feedbackInput, sourceRunId: "other-run" }),
+    { code: "idempotency_conflict" });
+  const completedReview = await waitFor(() => {
+    const job = finishedStore.getLearningReviewJob(feedback.job.id);
+    return job && ["succeeded", "failed", "cancelled"].includes(job.status) ? job : undefined;
+  });
+  assert.equal(completedReview.status, "succeeded", JSON.stringify({
+    reason: completedReview.reason, items: completedReview.evidence.items,
+  }));
+  const [memoryId] = completedReview.candidateIds;
+  assert.ok(memoryId);
+  assert.equal(finishedStore.getMemoryObject(memoryId)?.reviewState, "candidate");
+  assert.equal(completedReview.modelRequests, 1);
+  const reviews = await request(`/skills/learning-reviews?workItemId=${encodeURIComponent(item.id)}`);
+  assert.equal(reviews.status, 200);
+  assert.deepEqual((await reviews.json() as { jobs: readonly { id: string }[] }).jobs.map(job => job.id), [feedback.job.id]);
+  await fixture.restart();
+  const finalClient = await fixture.connect();
+  assert.equal((await finalClient.call<LingAppServerWorkItemFeedbackResult>("workItem/feedback/add", feedbackInput)).job.id, feedback.job.id);
 });
 
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {
