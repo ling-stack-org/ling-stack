@@ -691,6 +691,10 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly runId?: string;
     readonly outputArtifactId?: string;
     readonly brief?: string;
+    readonly briefBasis?: {
+      readonly transitionId: string;
+      readonly committedAt: string;
+    };
   }[];
 }
 
@@ -856,6 +860,21 @@ export interface LingAppServerDeliberationTriggerDecisionV1 {
   readonly requiresHumanDecision: boolean;
   readonly reason: string;
   readonly triggerKind: LingAppServerDeliberationTriggerKindV1;
+}
+
+export interface LingAppServerDeliberationSettlementParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly roundId: string;
+  readonly expectedRoundRevision: number;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+  readonly reason: string;
+}
+
+export interface LingAppServerDeliberationDecideParams extends LingAppServerDeliberationSettlementParams {
+  readonly decision: { readonly disposition: "selected"; readonly option: string }
+    | { readonly disposition: "deferred" | "replan_required" };
 }
 
 export interface LingAppServerServerRequest<Params = unknown> {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { chmod, copyFile, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
@@ -29,6 +29,8 @@ import type {
   LingAppServerGitHubDeliveryResult,
   LingAppServerRecoveryResult,
   LingAppServerCoordinationSchedule,
+  LingAppServerDeliberationDecideParams,
+  LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemCollaborationReadResult,
   LingAppServerGrant,
   LingAppServerGrantScope,
@@ -2123,6 +2125,80 @@ test("Work Item creation, acceptance, evidence and collaboration retries keep on
   assert.equal((await sdk.readWorkItem(workItem.workspaceId, workItemId)).revision, resumed.revision);
 });
 
+test("an operator resolves a deliberation round once against its current revision", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const [operator, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
+  const { workItem } = await operator.call<LingAppServerWorkItemResult>("workItem/create", {
+    sourceId: "review-choices", title: "Review compatibility options",
+  });
+  const workItemId = workItem.workItemId;
+  const start = (expectedWorkItemRevision: number, idempotencyKey: string, connection = operator) => connection.call<LingAppServerWorkItemCollaborationAppendResult>(
+    "workItem/deliberation/start", { workItemId, expectedWorkItemRevision, actorId: "coordinator", idempotencyKey,
+      payload: { decisionPoint: "Choose a compatibility approach", options: ["adapter", "migration"] } });
+  const round = await start(Number(workItem.revision), "review-start");
+  const before = await operator.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  await peer.call("workItem/subscribe", { workItemId, cursor: before.cursor });
+  const decision: LingAppServerDeliberationDecideParams = {
+    workItemId, roundId: round.record.id, expectedRoundRevision: round.record.collaborationRevision,
+    expectedWorkItemRevision: round.workItemRevision, idempotencyKey: "choose-adapter", reason: "Preserve the public interface",
+    decision: { disposition: "selected", option: "adapter" },
+  };
+  const decide = (input: LingAppServerDeliberationDecideParams, connection = operator) =>
+    connection.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", input);
+  await assert.rejects(decide({ ...decision, expectedRoundRevision: round.record.collaborationRevision + 1 }), { code: "stale_revision" });
+  await assert.rejects(decide({ ...decision, decision: { disposition: "selected", option: "unproposed" } }), { code: "invalid_params" });
+
+  const paused = await operator.call<LingAppServerWorkItemControlResult>("workItem/pause", {
+    workItemId, actorId: "local-user", expectedWorkItemRevision: Number(before.workItem.revision),
+    expectedControlGeneration: 0, idempotencyKey: "review-pause",
+  });
+  await assert.rejects(decide({ ...decision, expectedWorkItemRevision: Number(paused.workItem.revision) }), { code: "resume_blocked" });
+  const resumed = await operator.call<LingAppServerWorkItemControlResult>("workItem/resume", {
+    workItemId, actorId: "local-user", expectedWorkItemRevision: Number(paused.workItem.revision),
+    expectedControlGeneration: 1, idempotencyKey: "review-resume",
+  });
+  const first = { ...decision, expectedWorkItemRevision: Number(resumed.workItem.revision) };
+  const second: LingAppServerDeliberationDecideParams = { ...first, idempotencyKey: "choose-migration", reason: "Remove the obsolete shape",
+    decision: { disposition: "selected", option: "migration" } };
+  await assert.rejects(decide(decision), { code: "stale_revision" });
+
+  const requests = [first, second] as const;
+  const answers = await Promise.allSettled([decide(first), decide(second, peer)]);
+  const winningIndex = answers.findIndex(result => result.status === "fulfilled");
+  const winner = answers[winningIndex];
+  const loser = answers[1 - winningIndex];
+  assert.ok(winner?.status === "fulfilled");
+  assert.ok(loser?.status === "rejected");
+  assert.equal((loser.reason as { code: string }).code, "stale_revision");
+  assert.equal(winner.value.record.action, "decided");
+  assert.equal(winner.value.record.parentRecordId, round.record.id);
+  const update = await waitFor(() => peer.notices.find(notice => notice.method === "workItem/deliberation/updated"
+    && notice.params?.event?.action === "work_item.deliberation.decided"));
+  assert.ok(update.params?.eventId);
+
+  await fixture.restart();
+  const restored = await fixture.connect();
+  await restored.call("workItem/subscribe", { workItemId, cursor: before.cursor });
+  await waitFor(() => restored.notices.find(notice => notice.params?.eventId === update.params?.eventId));
+  const read = await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", { workItemId });
+  assert.deepEqual(read.records.map(record => record.id), [round.record.id, winner.value.record.id]);
+  const winningInput = requests[winningIndex]!;
+  const replay = await decide(winningInput, restored);
+  assert.equal(replay.status, "replayed");
+  assert.equal(replay.record.id, winner.value.record.id);
+  await assert.rejects(decide({ ...winningInput, reason: "Different reasoning" }, restored), { code: "idempotency_conflict" });
+  const { decision: _, ...cancel } = winningInput;
+  await assert.rejects(restored.call("workItem/deliberation/cancel", { ...cancel, idempotencyKey: "cannot-cancel-closed" }), { code: "stale_revision" });
+  const nextRound = await start(replay.workItemRevision, "second-round", restored);
+  const cancelled = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/cancel", {
+    ...cancel, roundId: nextRound.record.id, expectedRoundRevision: nextRound.record.collaborationRevision,
+    expectedWorkItemRevision: nextRound.workItemRevision, idempotencyKey: "cancel-second-round", reason: "Wait for a new compatibility requirement",
+  });
+  assert.equal(cancelled.record.action, "cancelled");
+  assert.equal(cancelled.record.parentRecordId, nextRound.record.id);
+  assert.equal(fixture.getStore().listRuns().length, 0);
+});
+
 test("an accepted Work Item resumes the original Workflow once after a paused stage and daemon restart", { timeout: 30_000 }, async t => {
   let completeContract: () => void = () => undefined;
   const contractGate = new Promise<void>(resolve => { completeContract = resolve; });
@@ -2177,6 +2253,7 @@ test("an accepted Work Item resumes the original Workflow once after a paused st
   const stages = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
   assert.equal(stages.workflow?.workflowId, converted.workflowId);
   assert.deepEqual(stages.workflow?.steps.map(step => step.status), ["queued", "queued"]);
+  assert.ok(stages.workflow?.steps.every(step => step.briefBasis === undefined));
   const request = async (path: string, body?: object) => {
     const { daemonUrl, authToken } = fixture.transportOptions();
     return fetch(`${daemonUrl}${path}?cwd=${encodeURIComponent(fixture.cwd)}`, {
@@ -2210,10 +2287,29 @@ test("an accepted Work Item resumes the original Workflow once after a paused st
   completeContract();
   await waitFor(() => store.getChannelWorkflowStep(p01.id)?.status === "succeeded" ? true : undefined);
   const stageEvent = await waitFor(() => peer.notices.find(event => event.method === "workItem/stage/updated"
-    && event.params?.event?.action === "work_item.stage.updated"));
+    && event.params?.event?.data?.stepId === p01.id && event.params?.event?.data?.status === "succeeded"));
   assert.ok(stageEvent.params?.eventId);
   await waitFor(() => client.notices.find(event => event.method === "workItem/stage/updated"
     && event.params?.eventId === stageEvent.params?.eventId));
+  const readBrief = (connection: typeof client) => connection.call<LingAppServerWorkItemCollaborationReadResult>(
+    "workItem/stage/brief/read", { workItemId: item.id });
+  const brief = (await readBrief(client)).workflow?.steps.find(step => step.stepId === p01.id);
+  assert.ok(brief?.briefBasis);
+  const [transition] = store.listStateTransitionEvents({ entityType: "workflow_step", entityId: p01.id, limit: 1 });
+  assert.deepEqual(brief.briefBasis, { transitionId: transition?.id, committedAt: transition?.createdAt });
+  assert.equal(transition?.toStatus, "succeeded");
+  assert.equal(brief.runId, store.getChannelWorkflowStep(p01.id)?.runId);
+  const observerSecret = randomBytes(32).toString("hex");
+  const { grant } = await client.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+    label: "Observe staged work", subject: { kind: "workItem", id: item.id }, scopes: ["observe"],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    credentialSha256: createHash("sha256").update(observerSecret).digest("hex"), idempotencyKey: "observe-staged-work",
+  });
+  const observer = await fixture.connect("/app-server/rpc", fixture.cwd, `las1.${grant.grantId}.${observerSecret}`);
+  const observedBrief = (await readBrief(observer)).workflow?.steps.find(step => step.stepId === p01.id);
+  assert.equal(observedBrief?.status, "succeeded");
+  assert.equal(observedBrief.briefBasis, undefined);
+  assert.equal(observedBrief.runId, undefined);
   assert.equal(provider.requests.length, 1);
   await fixture.restart();
   const resumedClient = await fixture.connect();
@@ -2224,6 +2320,7 @@ test("an accepted Work Item resumes the original Workflow once after a paused st
   const held = await resumedClient.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
   assert.equal(held.workflow?.admissionBlocker, "work_item_workflow_held");
   assert.deepEqual(held.workflow?.steps.map(step => step.status), ["succeeded", "queued"]);
+  assert.deepEqual((await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === p01.id), brief);
   assert.equal(provider.requests.length, 1);
   await resumedClient.call("workItem/resume", {
     workItemId: item.id, actorId: "local-user", expectedWorkItemRevision: Number(paused.workItem.revision),
@@ -3123,7 +3220,8 @@ type JsonLine = {
   method?: string;
   result?: unknown;
   error?: { message: string };
-  params?: { codexUserAgent?: string; eventId?: string; requestId?: string; approvalId?: string; revision?: string; event?: { entityId: string; action: string };
+  params?: { codexUserAgent?: string; eventId?: string; requestId?: string; approvalId?: string; revision?: string;
+    event?: { entityId: string; action: string; data?: Readonly<Record<string, unknown>> };
     itemId?: string; runId?: string; streamEpoch?: string; offset?: number; text?: string;
     subject?: { threadId?: string; turnId?: string; workItemId?: string } };
 };

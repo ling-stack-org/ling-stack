@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import {
   DEFAULT_WORKSPACE_ID,
+  WORK_ITEM_COLLABORATION_CONTENT_PREFIX,
   UserInputStoreError,
   evaluateDeliberationTrigger,
   type ControlPlaneDomain,
@@ -31,6 +32,7 @@ import {
   validateLingAppServerResult,
   type ControlPlaneSubscribeResult,
   type LingAppServerContextInspectResult,
+  type LingAppServerDeliberationDecideParams,
   type LingAppServerInputRespondResult,
   type LingAppServerGrant,
   type LingAppServerGitHubDeliveryResult,
@@ -123,7 +125,9 @@ import { continuationSourceReady } from "../runtime/continuation-source-barrier.
 import {
   AppServerCollaborationError,
   appendAppServerWorkItemCollaboration,
+  bindAppServerStageBriefs,
   readAppServerWorkItemCollaboration,
+  settleAppServerDeliberation,
 } from "./app-server-collaboration.js";
 
 type JsonRpcId = string | number | null;
@@ -184,6 +188,7 @@ const operatorMethods = new Set([
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
   "workItem/workflow/bind",
+  "workItem/deliberation/decide", "workItem/deliberation/cancel",
   "artifact/read", "model/list", "skill/read",
   "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
   "changes/read", "changes/apply/preview", "changes/apply",
@@ -879,9 +884,9 @@ class RpcConnection {
       case "workItem/deliberation/start":
         return this.appendCollaboration("deliberation", "started", params);
       case "workItem/deliberation/decide":
-        return this.appendCollaboration("deliberation", "decided", params);
+        return this.settleWorkItemDeliberation("decided", params);
       case "workItem/deliberation/cancel":
-        return this.appendCollaboration("deliberation", "cancelled", params);
+        return this.settleWorkItemDeliberation("cancelled", params);
       case "workItem/deliberation/read":
         return this.readCollaboration("deliberation", params);
       case "workItem/stage/read":
@@ -1228,6 +1233,9 @@ class RpcConnection {
     const subjectRevision = readStringField(record, "subjectRevision");
     const kind = readStringField(record, "kind") as import("@ling-stack/core").WorkItemEvidenceKind;
     const content = readStringField(record, "content");
+    if (content.startsWith(WORK_ITEM_COLLABORATION_CONTENT_PREFIX)) {
+      throw rpcError(-32602, "invalid_params", "Collaboration records use the collaboration methods.");
+    }
     const sourceRefs = Array.isArray(record.sourceRefs) ? record.sourceRefs : [];
     const result = store.appendWorkItemEvidence({
       workItemId,
@@ -1274,8 +1282,10 @@ class RpcConnection {
       if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", "The Work Item is unavailable.");
       const collaboration = readAppServerWorkItemCollaboration(store, { workItemId, kind,
         afterRevision: readOptionalIntegerField(record, "afterRevision"), limit: readOptionalIntegerField(record, "limit") });
-      return { cwd, ...collaboration, workflow: readWorkItemWorkflowStages(store, workItem,
-        this.grant?.subject.kind !== "workItem", offset) };
+      const includeEvidence = this.grant?.subject.kind !== "workItem";
+      const workflow = readWorkItemWorkflowStages(store, workItem, includeEvidence, offset);
+      return { cwd, ...collaboration, workflow: workflow && includeEvidence
+        ? bindAppServerStageBriefs(store, workflow) : workflow };
     });
   }
 
@@ -1283,7 +1293,35 @@ class RpcConnection {
     const record = readParamsRecord(params);
     const kind = readStringField(record, "kind") as import("@ling-stack/contracts").LingAppServerCollaborationKind;
     const action = readStringField(record, "action") as import("@ling-stack/contracts").LingAppServerCollaborationAction;
+    if (kind === "deliberation" && (action === "decided" || action === "cancelled")) {
+      return this.settleWorkItemDeliberation(action, params);
+    }
     return this.appendCollaboration(kind, action, params);
+  }
+
+  private settleWorkItemDeliberation(action: "decided" | "cancelled", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const input = {
+      workItemId: readStringField(record, "workItemId"),
+      roundId: readStringField(record, "roundId"),
+      expectedRoundRevision: readIntegerField(record, "expectedRoundRevision", "expectedRoundRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+      reason: readStringField(record, "reason").trim(),
+    };
+    if (!input.expectedRoundRevision || !input.expectedWorkItemRevision || !input.idempotencyKey.trim()
+      || input.idempotencyKey.length > 200 || !input.reason || input.reason.length > 2000) {
+      throw rpcError(-32602, "invalid_params", "Supply positive revisions, a bounded request key and a reason.");
+    }
+    const decision = action === "decided" ? readDeliberationDecision(record.decision) : undefined;
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { event, ...result } = settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
+      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
   }
 
   private appendCollaboration(
@@ -3185,6 +3223,17 @@ function collaborationRpcError(error: unknown): unknown {
   return error;
 }
 
+function readDeliberationDecision(value: unknown): LingAppServerDeliberationDecideParams["decision"] {
+  const record = readParamsRecord(value);
+  if ((record.disposition === "deferred" || record.disposition === "replan_required") && record.option === undefined) {
+    return { disposition: record.disposition };
+  }
+  if (record.disposition === "selected" && typeof record.option === "string" && record.option.trim() && record.option.length <= 200) {
+    return { disposition: "selected", option: record.option };
+  }
+  throw rpcError(-32602, "invalid_params", "Supply a selected option or a deferred or replan-required disposition.");
+}
+
 function collaborationNotificationMethod(kind: import("@ling-stack/contracts").LingAppServerCollaborationKind): string {
   switch (kind) {
     case "deliberation": return "workItem/deliberation/updated";
@@ -3296,6 +3345,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   }
   if (event.entityType === "work_item") {
     if (event.action === "work_item.stage.updated") return "workItem/stage/updated";
+    if (event.action.startsWith("work_item.deliberation.")) return "workItem/deliberation/updated";
     if (event.action === "work_item.created") return "workItem/created";
     if (event.action === "work_item.thread.linked") return "workItem/thread/linked";
     if (event.action.includes("evidence")) return "workItem/evidence/updated";

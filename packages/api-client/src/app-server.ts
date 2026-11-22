@@ -98,6 +98,8 @@ import type {
   LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemCollaborationReadParams,
   LingAppServerWorkItemCollaborationReadResult,
+  LingAppServerDeliberationDecideParams,
+  LingAppServerDeliberationSettlementParams,
   LingAppServerWorktreeTarget,
   LingAppServerWorktreeCreateParams,
   LingAppServerWorktreeResult,
@@ -570,13 +572,29 @@ export class LingAppServerClient {
     return await this.request("workItem/stage/read", { workItemId, stageOffset });
   }
 
+  async readWorkItemStageBriefs(workItemId: string, stageOffset = 0): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/stage/brief/read", { workItemId, stageOffset });
+  }
+
   async appendWorkItemCollaboration(params: LingAppServerWorkItemCollaborationAppendParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
     await this.connect();
     return await this.request("workItem/collaboration/append", params);
   }
 
   async readWorkItemDeliberation(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
-    return await this.readWorkItemCollaboration({ ...params, kind: "deliberation" });
+    await this.connect();
+    return await this.request("workItem/deliberation/read", params);
+  }
+
+  async decideWorkItemDeliberation(params: LingAppServerDeliberationDecideParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/decide", params);
+  }
+
+  async cancelWorkItemDeliberation(params: LingAppServerDeliberationSettlementParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/cancel", params);
   }
 
   async readWorkItemCoordination(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
