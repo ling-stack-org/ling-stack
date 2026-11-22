@@ -662,6 +662,25 @@ export function isDeviceVerificationResultV1(value: unknown): value is DeviceVer
     && (value.reason === undefined || (typeof value.reason === "string" && value.reason.length <= 4096));
 }
 
+export function isDeviceTaskReconciliationV1(value: unknown): value is DeviceTaskReconciliationV1 {
+  return isRecord(value) && hasOnlyKeys(value, [
+    "reconciliationId", "taskId", "attemptId", "capabilitySnapshotId", "connectionRevision", "readCapabilityId",
+    "authority", "verification", "status", "recordedAt",
+  ]) && isNonEmptyString(value.reconciliationId)
+    && isNonEmptyString(value.taskId)
+    && isNonEmptyString(value.attemptId)
+    && isNonEmptyString(value.capabilitySnapshotId)
+    && isNonEmptyString(value.connectionRevision)
+    && (value.readCapabilityId === undefined || isNonEmptyString(value.readCapabilityId))
+    && (value.authority === undefined || isDeviceActionAuthorityV1(value.authority))
+    && isDeviceVerificationResultV1(value.verification)
+    && (value.status === "verified"
+      ? value.verification.status === "verified" && value.verification.observationIds.length > 0
+      : value.status === "unresolved" && value.verification.status !== "verified")
+    && isIsoTimestamp(value.recordedAt)
+    && Date.parse(value.recordedAt) >= Date.parse(value.verification.checkedAt);
+}
+
 export function isDeviceTaskV1(value: unknown): value is DeviceTaskV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "id", "ownerKind", "ownerId", "targetDeviceIds", "status",

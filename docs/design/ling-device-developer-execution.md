@@ -414,6 +414,14 @@ diagnosis returns the saved attempt. The shared trace includes the attempt,
 adapter revision and verification references. The token lives in memory until the
 workflow ends.
 
+For a recovery marked unknown, enter the same origin, entity ID and a current
+access token and open **Verify this recovery** from the task history. The phone
+rechecks the automation through a fresh HTTPS connection and attaches the
+readback to the original attempt. A verified state settles the task. An
+unavailable response, identity change, or disabled automation leaves it
+unresolved. The original write receipt and connection revision remain in the
+journal, with the readback recorded under its own revision.
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with

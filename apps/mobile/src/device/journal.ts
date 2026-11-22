@@ -4,11 +4,13 @@ import type {
 } from "@ling-stack/contracts";
 import {
   isDeviceActionRequestV1,
+  isDeviceCapabilitySnapshotV1,
   isDeviceObservationV1,
   isDeviceTaskAttemptV1,
+  isDeviceTaskReconciliationV1,
   isDeviceTaskV1,
 } from "@ling-stack/contracts";
-import type { MobileAttemptRecord, MobileDeviceJournal } from "./execution.js";
+import type { MobileAttemptRecord, MobileDeviceJournal, MobileRecordedSnapshot } from "./execution.js";
 
 export interface MobileStorageLike {
   getItem(key: string): Promise<string | null>;
@@ -78,7 +80,11 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
     },
     saveAttempt(record) {
       return enqueue(async () => {
-        if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)) throw new Error("Invalid mobile device attempt");
+        if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)
+          || record.reconciliations?.some(item => !isDeviceTaskReconciliationV1(item))
+          || record.capabilitySnapshots?.some(item => !isRecordedSnapshot(item))) {
+          throw new Error("Invalid mobile device attempt");
+        }
         const key = attemptsKey(record.request.taskId);
         const attempts = parseAttemptArray(await storage.getItem(key));
         const next = attempts.filter(item => item.request.idempotencyKey !== record.request.idempotencyKey);
@@ -116,15 +122,17 @@ function parseStringArray(value: string | null): readonly string[] {
 function parseAttempt(value: Promise<string | null>): Promise<MobileAttemptRecord | undefined> {
   return value.then(raw => {
     if (raw === null) return undefined;
-    const parsed: unknown = JSON.parse(raw);
-    return isAttemptRecord(parsed) ? parsed : undefined;
+    return parseAttemptRecord(JSON.parse(raw));
   });
 }
 
 function parseAttemptArray(value: string | null): readonly MobileAttemptRecord[] {
   if (value === null) return [];
   const parsed: unknown = JSON.parse(value);
-  return Array.isArray(parsed) ? parsed.filter(isAttemptRecord) : [];
+  return Array.isArray(parsed) ? parsed.flatMap(value => {
+    const record = parseAttemptRecord(value);
+    return record ? [record] : [];
+  }) : [];
 }
 
 function parseObservationArray(value: string | null): readonly DeviceObservationV1[] {
@@ -133,9 +141,22 @@ function parseObservationArray(value: string | null): readonly DeviceObservation
   return Array.isArray(parsed) ? parsed.filter(isDeviceObservationV1) : [];
 }
 
-function isAttemptRecord(value: unknown): value is MobileAttemptRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    && isDeviceTaskAttemptV1((value as Record<string, unknown>).attempt)
-    && isDeviceActionRequestV1((value as Record<string, unknown>).request)
-    && typeof (value as Record<string, unknown>).requestDigest === "string";
+function parseAttemptRecord(value: unknown): MobileAttemptRecord | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { attempt, request, requestDigest, reconciliations, capabilitySnapshots } = value as Record<string, unknown>;
+  if (!isDeviceTaskAttemptV1(attempt) || !isDeviceActionRequestV1(request) || typeof requestDigest !== "string") return undefined;
+  const records = Array.isArray(reconciliations) ? reconciliations.filter(isDeviceTaskReconciliationV1) : [];
+  const snapshots = Array.isArray(capabilitySnapshots) ? capabilitySnapshots.filter(isRecordedSnapshot) : [];
+  return {
+    attempt, request, requestDigest,
+    ...(records.length ? { reconciliations: records } : {}),
+    ...(snapshots.length ? { capabilitySnapshots: snapshots } : {}),
+  };
+}
+
+function isRecordedSnapshot(value: unknown): value is MobileRecordedSnapshot {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const { snapshot, profileRevision } = value as Record<string, unknown>;
+  return typeof profileRevision === "string" && profileRevision.length > 0 && profileRevision.length <= 512
+    && isDeviceCapabilitySnapshotV1(snapshot);
 }

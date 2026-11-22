@@ -6,7 +6,10 @@ import type {
   DeviceTaskV1,
   DeviceTraceLineageV1,
   DeviceTraceSpanV1,
+  DeviceVerificationResultV1,
+  JsonValue,
 } from "@ling-stack/contracts";
+import { projectDeviceCapabilitySnapshotForTrace } from "@ling-stack/contracts";
 
 import type { MobileTaskEvidence } from "./journal.js";
 
@@ -17,6 +20,7 @@ export function projectMobileDeviceTaskTrace({ task, attempts, observations }: M
   const traceId = `device-task:${task.id}`;
   const rootSpanId = `${traceId}:task`;
   const taskLineage = { taskId: task.id, runtimeId: task.ownerId };
+  const taskUpdatedAt = Date.parse(task.updatedAt);
   const status = taskSpanStatus(task.status);
   const spans: DeviceTraceSpanV1[] = [{
     spanId: rootSpanId, traceId, kind: "runtime", sourceId: task.ownerId,
@@ -26,7 +30,7 @@ export function projectMobileDeviceTaskTrace({ task, attempts, observations }: M
   }];
   const publicObservations = new Map(observations.filter(item => item.redactionClass === "public").map(item => [item.id, item]));
   const capabilitySnapshots = new Map<string, DeviceTaskTraceCapabilitySnapshotV1>();
-  for (const { attempt, request } of attempts) {
+  for (const { attempt, request, reconciliations, capabilitySnapshots: retainedSnapshots } of attempts) {
     if (attempt.ownerKind !== "mobile" || attempt.ownerId !== ownerId || attempt.taskId !== task.id || request.taskId !== task.id
       || attempt.actionId !== request.actionId || attempt.targetDeviceId !== request.targetDeviceId
       || !task.targetDeviceIds.includes(attempt.targetDeviceId) || !task.capabilitySnapshotIds.includes(request.capabilitySnapshotId)) continue;
@@ -39,7 +43,17 @@ export function projectMobileDeviceTaskTrace({ task, attempts, observations }: M
       ...(adapterBinding ? { adapterId: adapterBinding.adapterId } : {}),
     };
     const snapshotId = request.capabilitySnapshotId;
-    capabilitySnapshots.set(JSON.stringify([targetDeviceId, snapshotId]), { state: "unavailable", snapshotId, deviceId: targetDeviceId });
+    function referenceSnapshot(id: string, connection: string | undefined, original = false): void {
+      const key = JSON.stringify([targetDeviceId, id]);
+      const retained = retainedSnapshots?.find(({ snapshot, profileRevision }) =>
+        snapshot.deviceId === targetDeviceId && snapshot.snapshotId === id && snapshot.connectionRevision === connection
+        && snapshot.adapterId === adapterBinding?.adapterId
+        && (!original || (snapshot.adapterVersion === adapterBinding.adapterVersion && profileRevision === adapterBinding.profileRevision
+          && snapshot.capabilities.some(capability => capability.id === request.capabilityId && capability.schemaVersion === request.capabilitySchemaVersion))));
+      if (retained) capabilitySnapshots.set(key, projectDeviceCapabilitySnapshotForTrace(retained.snapshot, retained.profileRevision));
+      else if (!capabilitySnapshots.has(key)) capabilitySnapshots.set(key, { state: "unavailable", snapshotId: id, deviceId: targetDeviceId });
+    }
+    referenceSnapshot(snapshotId, connectionRevision, true);
     spans.push({
       spanId, traceId, parentSpanId: rootSpanId, kind: "adapter", sourceId: adapterBinding?.adapterId ?? attemptId,
       startedAt: dispatchIntentAt, ...(receipt?.finishedAt ? { finishedAt: receipt.finishedAt } : {}),
@@ -54,23 +68,39 @@ export function projectMobileDeviceTaskTrace({ task, attempts, observations }: M
         } : {}),
       },
     });
-    if (!verification || verification.actionId !== attempt.actionId) continue;
-    const evidenceId = `${attempt.actionId}:verification`;
-    const checkedAt = Date.parse(verification.checkedAt);
     const earliestReadback = Date.parse(receipt?.finishedAt ?? dispatchIntentAt);
-    const readback = ownedEvidence(verification.observationIds, publicObservations, targetDeviceId).filter(observation =>
-      observation.subjectId === targetDeviceId && (observation.quality === "good" || observation.quality === "degraded")
-      && earliestReadback <= Date.parse(observation.observedAt) && Date.parse(observation.observedAt) <= checkedAt
-      && checkedAt < Date.parse(observation.freshnessUntil));
-    const evidenceRefs = readback.map(observation => observation.id);
-    const trustworthy = attempt.status === "completed" && evidenceRefs.length > 0
-      && evidenceRefs.length === new Set(verification.observationIds).size && checkedAt <= Date.parse(task.updatedAt);
-    spans.push({
-      spanId: `${traceId}:verification:${evidenceId}`, traceId, parentSpanId: spanId, kind: "verification", sourceId: evidenceId,
-      startedAt: verification.checkedAt, finishedAt: verification.checkedAt, lineage,
-      status: !trustworthy || verification.status === "not_evaluable" ? "unknown" : verification.status === "verified" ? "ok" : "failed",
-      metadata: { verificationStatus: verification.status, evidenceRefs },
-    });
+    function recordReadback(
+      result: DeviceVerificationResultV1, evidenceId: string, authorized: boolean, binding: DeviceTraceLineageV1,
+      metadata: Readonly<Record<string, JsonValue>> = {},
+    ): void {
+      const checkedAt = Date.parse(result.checkedAt);
+      const evidenceRefs = ownedEvidence(result.observationIds, publicObservations, targetDeviceId).flatMap(observation =>
+        observation.subjectId === targetDeviceId && (observation.quality === "good" || observation.quality === "degraded")
+        && earliestReadback <= Date.parse(observation.observedAt) && Date.parse(observation.observedAt) <= checkedAt
+        && checkedAt < Date.parse(observation.freshnessUntil) ? [observation.id] : []);
+      const trustworthy = authorized && evidenceRefs.length > 0
+        && evidenceRefs.length === new Set(result.observationIds).size && checkedAt <= taskUpdatedAt;
+      spans.push({
+        spanId: `${traceId}:verification:${evidenceId}`, traceId, parentSpanId: spanId, kind: "verification", sourceId: evidenceId,
+        startedAt: result.checkedAt, finishedAt: result.checkedAt, lineage: binding,
+        status: !trustworthy || result.status === "not_evaluable" ? "unknown" : result.status === "verified" ? "ok" : "failed",
+        metadata: { verificationStatus: result.status, evidenceRefs, ...metadata },
+      });
+    }
+    if (verification?.actionId === attempt.actionId) {
+      recordReadback(verification, `${attempt.actionId}:verification`, attempt.status === "completed", lineage);
+    }
+    for (const readback of reconciliations ?? []) {
+      if (readback.taskId !== task.id || readback.attemptId !== attemptId || readback.verification.actionId !== attempt.actionId
+        || !task.capabilitySnapshotIds.includes(readback.capabilitySnapshotId)) continue;
+      referenceSnapshot(readback.capabilitySnapshotId, readback.connectionRevision);
+      recordReadback(readback.verification, readback.reconciliationId,
+        task.status === "succeeded" && task.lastVerificationId === readback.reconciliationId && readback.status === "verified",
+        { ...lineage, connectionRevision: readback.connectionRevision }, {
+          capabilitySnapshotId: readback.capabilitySnapshotId,
+          ...(readback.readCapabilityId ? { capabilityId: readback.readCapabilityId } : {}),
+        });
+    }
   }
   return { traceId, taskId: task.id, taskStatus: task.status, spans, capabilitySnapshots: [...capabilitySnapshots.values()] };
 }

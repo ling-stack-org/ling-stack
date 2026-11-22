@@ -16,6 +16,7 @@ import {
   type DeviceProfileV1,
   type DeviceRecoveryPlanV1,
   type DeviceTaskAttemptV1,
+  type DeviceTaskReconciliationV1,
   type DeviceTaskStatusV1,
   type DeviceTaskV1,
   type DeviceVerificationResultV1,
@@ -37,7 +38,12 @@ export interface MobileDeviceTransport {
   readonly connectionRevision: string;
   readonly permissions: readonly string[];
   execute(input: { readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<MobileDeviceExecutionResult>;
-  verify?(input: { readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1; readonly signal?: AbortSignal }): Promise<DeviceVerificationResultV1 | MobileDeviceVerificationEvidence>;
+  verify?(input: {
+    readonly request: DeviceActionRequestV1;
+    readonly action: DeviceActionResultV1;
+    readonly signal?: AbortSignal;
+    readonly evidenceId?: string;
+  }): Promise<DeviceVerificationResultV1 | MobileDeviceVerificationEvidence>;
   verifyRecoveryPath?(input: {
     readonly plan: DeviceRecoveryPlanV1; readonly baseline: DeviceObservationV1; readonly signal: AbortSignal;
   }): Promise<boolean>;
@@ -58,6 +64,13 @@ export interface MobileAttemptRecord {
   readonly attempt: DeviceTaskAttemptV1;
   readonly request: DeviceActionRequestV1;
   readonly requestDigest: string;
+  readonly reconciliations?: readonly DeviceTaskReconciliationV1[];
+  readonly capabilitySnapshots?: readonly MobileRecordedSnapshot[];
+}
+
+export interface MobileRecordedSnapshot {
+  readonly snapshot: DeviceCapabilitySnapshotV1;
+  readonly profileRevision: string;
 }
 
 export interface MobileDeviceExecutionOptions {
@@ -79,6 +92,12 @@ interface MobileDeviceActionInput {
   readonly finalizeTask?: boolean;
   /** Setup writes must be verified by fresh, target-bound observations persisted in the journal. */
   readonly requireFreshVerificationEvidence?: boolean;
+}
+
+interface MobileDeviceReconciliationInput extends Pick<MobileDeviceActionInput, "profile" | "snapshot" | "transport" | "signal"> {
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly reconciliationId: string;
 }
 
 type MobileDeviceExecutionErrorCode =
@@ -185,6 +204,7 @@ export class MobileDeviceExecution {
     const plan = request.recoveryPlan;
     const recoveryExpired = () => plan !== undefined && Date.parse(plan.verifyBy) <= Date.parse(this.#now());
     const assertDispatchAllowed = () => {
+      const at = this.#now();
       if (signal.aborted || recoveryExpired() || (needsApproval && !this.#foreground)) {
         throw new MobileDeviceExecutionError("permission_denied", "device operation authorization has ended");
       }
@@ -192,7 +212,7 @@ export class MobileDeviceExecution {
         || snapshot.deviceId !== profile.device.id || snapshot.snapshotId !== request.capabilitySnapshotId
         || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion
         || snapshot.connectionRevision !== transport.connectionRevision
-        || Date.parse(snapshot.freshnessUntil) <= Date.parse(this.#now())) {
+        || !snapshotIsFresh(snapshot, at)) {
         throw new MobileDeviceExecutionError("stale_snapshot", "capability snapshot does not match the active connection");
       }
       if (!capability.requiredPermissions.every(permission => transport.permissions.includes(permission))) {
@@ -202,7 +222,7 @@ export class MobileDeviceExecution {
         if (task.policyRevision && task.policyRevision !== this.#policyRevision) {
           throw new MobileDeviceExecutionError("permission_denied", "device task policy has changed");
         }
-        assertApproval(request, approval, snapshot.connectionRevision, this.#policyRevision, requestDigest, this.#now());
+        assertApproval(request, approval, snapshot.connectionRevision, this.#policyRevision, requestDigest, at);
       }
     };
     assertDispatchAllowed();
@@ -266,7 +286,7 @@ export class MobileDeviceExecution {
       ...(recoveryPathVerifiedAt ? { recoveryPathVerifiedAt } : {}),
       status: "dispatched",
     };
-    const record: MobileAttemptRecord = { attempt, request, requestDigest };
+    const record: MobileAttemptRecord = { attempt, request, requestDigest, capabilitySnapshots: [{ snapshot, profileRevision: profile.profileRevision }] };
     const saveStatus = async (status: DeviceTaskStatusV1, lastVerificationId?: string) => this.#journal.saveTask({
       ...task, status, currentActionId: request.actionId,
       ...(lastVerificationId ? { lastVerificationId } : {}),
@@ -295,7 +315,7 @@ export class MobileDeviceExecution {
     if (outcome === "succeeded" && (capability.sideEffect !== "read_only"
       || capability.verificationCapabilityId !== undefined || request.expectedVerification !== undefined)) {
       await saveStatus("verifying");
-      const verification = await this.readBack(input, request, action, signal);
+      const verification = await this.readBack(transport, request, action, signal, input.requireFreshVerificationEvidence === true);
       received = { ...received, attempt: { ...received.attempt, verification } };
       await this.#journal.saveAttempt(received);
       lastVerificationId = `${request.actionId}:verification`;
@@ -314,6 +334,102 @@ export class MobileDeviceExecution {
       await saveStatus("executing", lastVerificationId);
     }
     return received;
+  }
+
+  async reconcile(input: MobileDeviceReconciliationInput): Promise<DeviceTaskReconciliationV1> {
+    const { taskId, profile, snapshot, transport } = input;
+    if (!isDeviceProfileV1(profile) || !isDeviceCapabilitySnapshotV1(snapshot)) {
+      throw new MobileDeviceExecutionError("invalid_request", "readback device profile or capability snapshot is invalid");
+    }
+    if (!this.#foreground || input.signal?.aborted) {
+      throw new MobileDeviceExecutionError("permission_denied", "phone readback requires the foreground");
+    }
+    if (this.#active.has(taskId) || [...this.#active.values()].some(active => active.targetDeviceId === transport.deviceId)) {
+      throw new MobileDeviceExecutionError("target_busy", "phone already has an active operation on this target");
+    }
+    const controller = new AbortController();
+    this.#active.set(taskId, { targetDeviceId: transport.deviceId, stopOnSuspend: true, controller });
+    const abort = () => controller.abort();
+    input.signal?.addEventListener("abort", abort, { once: true });
+    try {
+      return await this.reconcileOwned(input, controller);
+    } finally {
+      input.signal?.removeEventListener("abort", abort);
+      this.#active.delete(taskId);
+    }
+  }
+
+  private async reconcileOwned(input: MobileDeviceReconciliationInput, controller: AbortController): Promise<DeviceTaskReconciliationV1> {
+    const { taskId, attemptId, reconciliationId, profile, snapshot, transport } = input;
+    const task = await this.#journal.getTask(taskId);
+    const record = (await this.#journal.listAttempts(taskId)).find(item => item.attempt.attemptId === attemptId);
+    if (!task || !record || task.currentActionId !== record.attempt.actionId || record.attempt.ownerKind !== "mobile"
+      || record.attempt.ownerId !== this.#ownerId || record.attempt.taskId !== taskId
+      || record.attempt.actionId !== record.request.actionId || record.attempt.approvalId !== record.request.approvalId
+      || record.requestDigest !== digestDeviceRequest(record.request)) {
+      throw new MobileDeviceExecutionError("invalid_request", "phone task has no matching attempt");
+    }
+    this.assertTaskScope(task, record.request);
+    const targetId = record.request.targetDeviceId;
+    if (profile.device.id !== targetId || transport.deviceId !== targetId || record.attempt.targetDeviceId !== targetId
+      || record.attempt.adapterBinding?.adapterId !== profile.adapterId) {
+      throw new MobileDeviceExecutionError("target_changed", "readback target differs from the original attempt");
+    }
+    const previous = record.reconciliations?.find(item => item.reconciliationId === task.lastVerificationId && item.status === "verified");
+    if (task.status === "succeeded" && previous) return previous;
+    const approval = record.request.approval;
+    if (task.status !== "unknown" || !approval || approval.approvalId !== record.attempt.approvalId
+      || approval.normalizedInputDigest !== record.requestDigest || record.request.expectedVerification === undefined
+      || !/^device_reconciliation_[A-Za-z0-9_-]{16,64}$/u.test(reconciliationId)
+      || record.reconciliations?.some(item => item.reconciliationId === reconciliationId)) {
+      throw new MobileDeviceExecutionError("invalid_request", "phone task has no unknown approved outcome to verify");
+    }
+    const snapshotIsCurrent = () => snapshotIsFresh(snapshot, this.#now())
+      && snapshot.connectionRevision === transport.connectionRevision;
+    if (snapshot.deviceId !== targetId || profile.adapterId !== snapshot.adapterId || profile.adapterVersion !== snapshot.adapterVersion
+      || ["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus) || !snapshotIsCurrent()) {
+      throw new MobileDeviceExecutionError("stale_snapshot", "readback snapshot is no longer current");
+    }
+    const capability = snapshot.capabilities.find(item => item.id === record.request.capabilityId
+      && item.schemaVersion === record.request.capabilitySchemaVersion);
+    const reader = snapshot.capabilities.find(item => item.id === capability?.verificationCapabilityId);
+    if (!reader || !transport.verify || reader.sideEffect !== "read_only" || reader.approvalClass !== "allow"
+      || !reader.requiredPermissions.every(permission => transport.permissions.includes(permission))) {
+      throw new MobileDeviceExecutionError("unsupported_capability", "target readback capability is unavailable");
+    }
+    const retainedSnapshot = record.capabilitySnapshots?.find(item => item.snapshot.snapshotId === snapshot.snapshotId);
+    if (retainedSnapshot && (retainedSnapshot.profileRevision !== profile.profileRevision
+      || encodeBase64Url(canonicalJsonBytes(retainedSnapshot.snapshot)) !== encodeBase64Url(canonicalJsonBytes(snapshot)))) {
+      throw new MobileDeviceExecutionError("stale_snapshot", "readback reuses a snapshot ID for different capability evidence");
+    }
+    if (controller.signal.aborted) throw new MobileDeviceExecutionError("permission_denied", "phone readback authorization ended");
+    const timeout = setTimeout(() => controller.abort(), reader.timeoutMs);
+    try {
+      const request = { ...record.request, capabilitySnapshotId: snapshot.snapshotId };
+      const receipt = record.attempt.receipt ?? {
+        actionId: request.actionId, status: "uncertain" as const, startedAt: record.attempt.dispatchIntentAt, observationIds: [],
+      };
+      const verification = await this.readBack(transport, request, receipt, controller.signal, true, reconciliationId);
+      const at = this.#now();
+      const verified = verification.status === "verified" && !controller.signal.aborted && snapshotIsCurrent()
+        && Date.parse(verification.checkedAt) >= Date.parse(receipt.finishedAt ?? record.attempt.dispatchIntentAt);
+      const reconciliation: DeviceTaskReconciliationV1 = {
+        reconciliationId, taskId, attemptId, capabilitySnapshotId: snapshot.snapshotId, connectionRevision: snapshot.connectionRevision,
+        readCapabilityId: reader.id, status: verified ? "verified" : "unresolved", recordedAt: at,
+        verification: !verified && verification.status === "verified"
+          ? { ...verification, status: "not_evaluable", checkedAt: at, observationIds: [] }
+          : verification,
+      };
+      await this.#journal.saveAttempt({
+        ...record, reconciliations: [...(record.reconciliations ?? []), reconciliation],
+        capabilitySnapshots: retainedSnapshot ? record.capabilitySnapshots
+          : [...(record.capabilitySnapshots ?? []), { snapshot, profileRevision: profile.profileRevision }],
+      });
+      await this.#journal.saveTask(applyReconciliation(task, reconciliation));
+      return reconciliation;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async finishPlaybook(taskId: string, outcome: "succeeded" | "partial" | "failed"): Promise<"succeeded" | "partial" | "failed" | "unknown" | "cancelled"> {
@@ -335,7 +451,19 @@ export class MobileDeviceExecution {
     for (const task of await this.#journal.listTasks()) {
       if (task.ownerKind !== "mobile" || task.ownerId !== this.#ownerId || this.#active.has(task.id)) continue;
       let interrupted = task.status === "executing" || task.status === "verifying";
+      let reconciled: DeviceTaskReconciliationV1 | undefined;
       for (const record of await this.#journal.listAttempts(task.id)) {
+        if (task.status === "unknown" && record.attempt.actionId === task.currentActionId
+          && record.attempt.ownerKind === task.ownerKind && record.attempt.ownerId === task.ownerId
+          && task.targetDeviceIds.includes(record.attempt.targetDeviceId)) {
+          const stored = record.reconciliations?.at(-1);
+          if (stored?.taskId === task.id && stored.attemptId === record.attempt.attemptId
+            && stored.verification.actionId === record.attempt.actionId && stored.reconciliationId !== task.lastVerificationId) {
+            const observation = (await this.#journal.listObservations(task.id)).find(item => item.id === stored.reconciliationId);
+            if (stored.status === "unresolved" || (observation && stored.verification.observationIds.includes(observation.id)
+              && isCurrentTargetObservation(observation, record.attempt.targetDeviceId, stored.recordedAt))) reconciled = stored;
+          }
+        }
         if (record.attempt.status !== "prepared" && record.attempt.status !== "dispatched") continue;
         const unknown: MobileAttemptRecord = { ...record, attempt: { ...record.attempt, status: "unknown" } };
         await this.#journal.saveAttempt(unknown);
@@ -343,6 +471,7 @@ export class MobileDeviceExecution {
         interrupted = true;
       }
       if (interrupted) await this.#journal.saveTask({ ...task, status: "unknown", updatedAt: this.#now() });
+      else if (reconciled) await this.#journal.saveTask(applyReconciliation(task, reconciled));
     }
     return recovered;
   }
@@ -370,22 +499,26 @@ export class MobileDeviceExecution {
     } };
   }
 
-  private async readBack(input: MobileDeviceActionInput, request: DeviceActionRequestV1, action: DeviceActionResultV1, signal: AbortSignal): Promise<DeviceVerificationResultV1> {
-    if (input.transport.verify && !signal.aborted) {
+  private async readBack(
+    transport: MobileDeviceTransport, request: DeviceActionRequestV1, action: DeviceActionResultV1,
+    signal: AbortSignal, requireFreshEvidence: boolean, evidenceId?: string,
+  ): Promise<DeviceVerificationResultV1> {
+    if (transport.verify && !signal.aborted) {
       const startedAt = Date.parse(this.#now());
       try {
-        const result = await input.transport.verify({ request, action, signal });
+        const result = await transport.verify({ request, action, signal, evidenceId });
         const evidence = result && "verification" in result ? result : undefined;
         const verification = evidence?.verification ?? result;
         if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId
           && (request.expectedVerification === undefined
             || encodeBase64Url(canonicalJsonBytes(verification.rule)) === encodeBase64Url(canonicalJsonBytes(request.expectedVerification)))) {
-          if (!input.requireFreshVerificationEvidence && (!request.recoveryPlan || verification.status === "not_evaluable")) return verification;
+          if (!requireFreshEvidence && (!request.recoveryPlan || verification.status === "not_evaluable")) return verification;
           const now = this.#now();
           const checkedAt = Date.parse(verification.checkedAt);
           const observations = evidence?.observations;
           if (!signal.aborted && checkedAt >= startedAt && checkedAt <= Date.parse(now)
             && Array.isArray(observations) && observations.length > 0
+            && (evidenceId === undefined || (observations.length === 1 && observations[0]!.id === evidenceId))
             && observations.every(observation => isDeviceObservationV1(observation)
               && verification.observationIds.includes(observation.id)
               && Date.parse(observation.observedAt) >= startedAt && Date.parse(observation.observedAt) <= checkedAt
@@ -408,10 +541,24 @@ export class MobileDeviceExecution {
   }
 }
 
+function applyReconciliation(task: DeviceTaskV1, reconciliation: DeviceTaskReconciliationV1): DeviceTaskV1 {
+  return {
+    ...task, status: reconciliation.status === "verified" ? "succeeded" : "unknown",
+    lastVerificationId: reconciliation.reconciliationId,
+    updatedAt: Date.parse(reconciliation.recordedAt) >= Date.parse(task.updatedAt) ? reconciliation.recordedAt : task.updatedAt,
+    capabilitySnapshotIds: [...new Set([...task.capabilitySnapshotIds, reconciliation.capabilitySnapshotId])],
+  };
+}
+
 function isCurrentTargetObservation(observation: DeviceObservationV1, targetDeviceId: string, now: string): boolean {
   return observation.subjectId === targetDeviceId && observation.redactionClass === "public"
     && (observation.quality === "good" || observation.quality === "degraded") && observation.provenance.includes(targetDeviceId)
     && Date.parse(observation.observedAt) <= Date.parse(now) && Date.parse(observation.freshnessUntil) > Date.parse(now);
+}
+
+function snapshotIsFresh(snapshot: DeviceCapabilitySnapshotV1, at: string): boolean {
+  const atMs = Date.parse(at);
+  return Date.parse(snapshot.observedAt) <= atMs && atMs < Date.parse(snapshot.freshnessUntil);
 }
 
 export function digestDeviceRequest(request: DeviceActionRequestV1): string {

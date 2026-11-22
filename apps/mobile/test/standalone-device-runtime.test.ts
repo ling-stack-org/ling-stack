@@ -132,6 +132,10 @@ test("a phone-owned write checks its alternate route and journals a fresh target
       const trace = projectMobileDeviceTaskTrace(journalEvidence, task.ownerId);
       assert.deepEqual(trace, projectMobileDeviceTaskTrace(await journal.readTaskEvidence(task.id), task.ownerId));
       assert.equal(projectMobileDeviceTaskTrace(journalEvidence, "foreign-owner"), undefined);
+      const legacy = projectMobileDeviceTaskTrace({
+        ...journalEvidence, attempts: journalEvidence.attempts.map(record => ({ ...record, capabilitySnapshots: undefined })),
+      }, task.ownerId);
+      assert.deepEqual(legacy?.capabilitySnapshots, [{ state: "unavailable", deviceId, snapshotId: snapshot.snapshotId }]);
       const readback = trace?.spans.find(item => item.kind === "verification");
       assert.equal(readback?.lineage?.attemptId, result.attempt.attemptId);
       assert.equal(readback?.lineage?.connectionRevision, snapshot.connectionRevision);
@@ -185,6 +189,11 @@ test("a phone-only Home Assistant diagnosis records scoped facts and restores th
   assert.equal(adapter?.status, "ok");
   assert.match(adapter?.lineage?.connectionRevision ?? "", /^ha_connection_/u);
   assert.equal(adapter?.lineage?.runtimeId, trace?.spans[0]?.lineage?.runtimeId);
+  assert.deepEqual(trace?.capabilitySnapshots?.map(snapshot => snapshot.state === "recorded" && [
+    snapshot.connectionRevision, snapshot.capabilities,
+  ]), [[adapter?.lineage?.connectionRevision, [
+    { id: "home_assistant.read_entity", schemaVersion: "1.0", sideEffect: "read_only", approvalClass: "allow" },
+  ]]]);
   assert.deepEqual(adapter?.metadata, {
     attemptStatus: "completed", capabilityId: "home_assistant.read_entity",
     capabilitySnapshotId: trace?.capabilitySnapshots?.[0]?.snapshotId,
@@ -321,6 +330,100 @@ test("a phone recovery keeps an interrupted write or unsettled readback without 
       assert.equal(writes, 1);
     });
   }
+});
+
+test("phone readback settles a lost recovery receipt and survives interruption while saving the result", { timeout: 5_000 }, async () => {
+  let stopBeforeTaskSave = false;
+  const storage = new class extends MemoryStorage {
+    override async setItem(key: string, value: string) {
+      if (stopBeforeTaskSave && key.includes(":task:") && JSON.parse(value).status === "succeeded") {
+        throw new Error("fixture interrupted before updating task");
+      }
+      await super.setItem(key, value);
+    }
+  }();
+  const automation = { ...target, entityId: "automation.night" };
+  const methods: string[] = [];
+  let id = "selected-automation";
+  let currentTime = Date.parse(time);
+  let enabled = false;
+  const startedRead = Promise.withResolvers<void>();
+  const continueRead = Promise.withResolvers<void>();
+  let holdNextRead = false;
+  const runtime = {
+    ...options, storage, now: () => new Date(currentTime).toISOString(),
+    fetch: async (_url: string, { method }: Parameters<HomeAssistantFetch>[1]) => {
+      methods.push(method);
+      if (method === "POST") {
+        enabled = true;
+        throw new Error("fixture lost reply after write");
+      }
+      if (holdNextRead) {
+        holdNextRead = false;
+        startedRead.resolve();
+        await continueRead.promise;
+      }
+      return Response.json({ entity_id: automation.entityId, state: enabled ? "on" : "off", attributes: { id } });
+    },
+  };
+  const phone = await createStandaloneDeviceRuntime(runtime);
+  await phone.setForeground(true);
+  const diagnosis = await phone.diagnoseHomeAssistant(automation);
+  const approval = { ...automation, diagnosisTaskId: diagnosis.taskId };
+  const uncertain = await phone.enableHomeAssistantAutomation(approval);
+  assert.equal(uncertain.taskStatus, "unknown");
+  assert.equal(uncertain.errorCode, "unknown_outcome");
+  assert.deepEqual(methods, ["GET", "GET", "POST"]);
+  const originalTrace = await phone.readTaskTrace(uncertain.taskId);
+  const original = originalTrace?.spans.find(span => span.kind === "adapter");
+  assert.ok(original);
+
+  currentTime += 31_000;
+  const reopened = await createStandaloneDeviceRuntime(runtime);
+  await reopened.setForeground(true);
+  const readback = { ...automation, recoveryTaskId: uncertain.taskId };
+  await assert.rejects(() => reopened.verifyHomeAssistantRecovery({ ...readback, origin: "https://different.fixture.example" }), /原|记录/u);
+  assert.equal(methods.length, 3);
+  id = "different-automation";
+  const unresolved = await reopened.verifyHomeAssistantRecovery(readback);
+  assert.equal(unresolved.taskStatus, "unknown");
+  assert.equal(unresolved.automationEnabled, undefined);
+
+  id = "selected-automation";
+  stopBeforeTaskSave = true;
+  holdNextRead = true;
+  const read = reopened.verifyHomeAssistantRecovery(readback);
+  try {
+    await startedRead.promise;
+    await assert.rejects(() => reopened.verifyHomeAssistantRecovery(readback), { code: "target_busy" });
+  } finally {
+    continueRead.resolve();
+  }
+  await assert.rejects(read, /interrupted before updating task/u);
+  stopBeforeTaskSave = false;
+  const restarted = await createStandaloneDeviceRuntime(runtime);
+  await restarted.setForeground(true);
+  const settled = (await restarted.listHomeAssistantRuns()).find(run => run.taskId === uncertain.taskId);
+  assert.equal(settled?.taskStatus, "succeeded");
+  assert.equal(settled?.automationEnabled, true);
+  assert.equal(settled?.errorCode, undefined);
+  assert.deepEqual(await restarted.verifyHomeAssistantRecovery(readback), settled);
+  assert.deepEqual(await restarted.enableHomeAssistantAutomation(approval), settled);
+  assert.deepEqual(methods, ["GET", "GET", "POST", "GET", "GET"]);
+
+  const trace = await restarted.readTaskTrace(uncertain.taskId);
+  assert.equal(trace?.taskStatus, "succeeded");
+  assert.deepEqual(trace?.spans.filter(span => span.kind === "adapter"), [original]);
+  const checks = trace?.spans.filter(span => span.kind === "verification") ?? [];
+  assert.deepEqual(checks.map(span => span.status), ["unknown", "ok"]);
+  assert.equal(checks[1]?.parentSpanId, original.spanId);
+  assert.equal(checks[1]?.lineage?.attemptId, original.lineage?.attemptId);
+  assert.notEqual(checks[1]?.lineage?.connectionRevision, original.lineage?.connectionRevision);
+  assert.deepEqual(trace?.capabilitySnapshots?.map(snapshot => snapshot.state === "recorded" && snapshot.connectionRevision), [
+    original.lineage?.connectionRevision, checks[0]?.lineage?.connectionRevision, checks[1]?.lineage?.connectionRevision,
+  ]);
+  assert.doesNotMatch(JSON.stringify(trace), /selected-automation|fixture-credential|automation\.night/u);
+  assert.doesNotMatch(JSON.stringify(trace), /inputSchema|outputSchema|permissions/u);
 });
 
 test("phone diagnosis distinguishes missing entities and denied credentials and rejects misbound or oversized results", async () => {

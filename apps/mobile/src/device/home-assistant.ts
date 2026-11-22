@@ -131,8 +131,10 @@ export function prepareHomeAssistantDevice(input: HomeAssistantDeviceInput & {
       return { error: "service_unavailable" };
     }
   };
-  const makeObservation = (request: DeviceActionRequestV1, state: HomeAssistantEntityState, readAt: string, verify: boolean): DeviceObservationV1 => ({
-    id: `${request.taskId}:${request.actionId}:${verify ? "readback" : "entity"}`,
+  const makeObservation = (
+    request: DeviceActionRequestV1, state: HomeAssistantEntityState, readAt: string, verify: boolean, evidenceId?: string,
+  ): DeviceObservationV1 => ({
+    id: evidenceId ?? `${request.taskId}:${request.actionId}:${verify ? "readback" : "entity"}`,
     subjectId: verify ? targetId : entityId,
     source: "home_assistant",
     value: { entityId, ...state },
@@ -191,7 +193,7 @@ export function prepareHomeAssistantDevice(input: HomeAssistantDeviceInput & {
         observations: [observation],
       };
     },
-    async verify({ request, signal }) {
+    async verify({ request, signal, evidenceId }) {
       const rule = automationEnabledRule;
       const result = matchesRecovery(request) ? await readEntity(signal) : undefined;
       const checkedAt = input.now();
@@ -199,7 +201,7 @@ export function prepareHomeAssistantDevice(input: HomeAssistantDeviceInput & {
         || result.state.automationEnabled === undefined) {
         return { actionId: request.actionId, status: "not_evaluable", rule, observationIds: [], checkedAt };
       }
-      const observation = makeObservation(request, result.state, checkedAt, true);
+      const observation = makeObservation(request, result.state, checkedAt, true, evidenceId);
       return {
         verification: {
           actionId: request.actionId, status: result.state.automationEnabled ? "verified" : "failed",
@@ -223,6 +225,11 @@ export function prepareHomeAssistantDevice(input: HomeAssistantDeviceInput & {
 export function entityIdFromRequest(request: DeviceActionRequestV1): string | undefined {
   const entityId = record(request.normalizedInput)?.entityId;
   return typeof entityId === "string" ? entityId : undefined;
+}
+
+export function automationIdentityFromRequest(request: DeviceActionRequestV1): string | undefined {
+  const identity = record(request.normalizedInput)?.automationIdentity;
+  return typeof identity === "string" && /^[a-zA-Z0-9_-]{43}$/u.test(identity) ? identity : undefined;
 }
 
 export function homeAssistantEntityState(observation: DeviceObservationV1): HomeAssistantEntityState | undefined {

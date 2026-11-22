@@ -9,6 +9,10 @@ import type { PhoneHomeAssistantRun, PhoneLinuxSshRun, StandaloneDeviceRuntime }
 import type { MobileThemeTokens } from "../../theme/mobile-theme";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
 
+type HomeAssistantScreenOperation =
+  | { readonly kind: "diagnosis" }
+  | { readonly kind: "enable_automation" | "readback"; readonly taskId: string };
+
 export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => void }) {
   const state = useStandaloneDeviceRuntime();
   const { theme } = useMobileTheme();
@@ -17,7 +21,7 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
   const [origin, setOrigin] = useState("");
   const [entityId, setEntityId] = useState("");
   const [token, setToken] = useState("");
-  const [running, setRunning] = useState<PhoneHomeAssistantRun["operation"]>();
+  const [running, setRunning] = useState<HomeAssistantScreenOperation>();
   const [automationTaskId, setAutomationTaskId] = useState<string>();
   const [error, setError] = useState<string>();
   const [runs, setRuns] = useState<readonly PhoneHomeAssistantRun[]>([]);
@@ -36,26 +40,28 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
 
   useEffect(() => () => { activeRun.current?.abort(); }, []);
 
-  const runHomeAssistant = async (diagnosisTaskId?: string) => {
+  const runHomeAssistant = async (operation: HomeAssistantScreenOperation) => {
     if (state.status !== "ready" || activeRun.current) return;
     const controller = new AbortController();
     activeRun.current = controller;
-    setRunning(diagnosisTaskId ? "enable_automation" : "diagnosis");
+    setRunning(operation);
     setAutomationTaskId(undefined);
     setError(undefined);
     const input = { origin, entityId, token, signal: controller.signal };
     try {
-      const result = diagnosisTaskId
-        ? await state.runtime.enableHomeAssistantAutomation({ ...input, diagnosisTaskId })
-        : await state.runtime.diagnoseHomeAssistant(input);
+      const result = operation.kind === "enable_automation"
+        ? await state.runtime.enableHomeAssistantAutomation({ ...input, diagnosisTaskId: operation.taskId })
+        : operation.kind === "readback"
+          ? await state.runtime.verifyHomeAssistantRecovery({ ...input, recoveryTaskId: operation.taskId })
+          : await state.runtime.diagnoseHomeAssistant(input);
       if (!controller.signal.aborted) {
-        if (!diagnosisTaskId && result.taskStatus === "succeeded" && result.canEnableAutomation) setAutomationTaskId(result.taskId);
+        if (operation.kind === "diagnosis" && result.taskStatus === "succeeded" && result.canEnableAutomation) setAutomationTaskId(result.taskId);
         else setToken("");
         setRuns(previous => [result, ...previous.filter(run => run.taskId !== result.taskId)].slice(0, 8));
       }
     } catch (cause) {
       if (!controller.signal.aborted) {
-        if (diagnosisTaskId) setToken("");
+        if (operation.kind !== "diagnosis") setToken("");
         setError(cause instanceof HomeAssistantInputError ? cause.message : "设备操作中断，请在前台读取状态。");
       }
     } finally {
@@ -68,7 +74,7 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
     if (!canDiagnose || !automationTaskId) return;
     Alert.alert("重新启用自动化", `${origin.trim()}\n${entityId.trim()}\n\n启用后，现有触发条件会恢复运行。`, [
       { text: "取消", style: "cancel" },
-      { text: "重新启用", onPress: () => void runHomeAssistant(automationTaskId) },
+      { text: "重新启用", onPress: () => void runHomeAssistant({ kind: "enable_automation", taskId: automationTaskId }) },
     ]);
   };
 
@@ -113,11 +119,11 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
           <TextInput accessibilityLabel="Home Assistant 访问令牌" autoCapitalize="none" autoComplete="off" autoCorrect={false}
             editable={!running} maxLength={8192} onChangeText={setToken} secureTextEntry style={styles.input} value={token} />
         </View>
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canDiagnose, busy: running === "diagnosis" }}
-          disabled={!canDiagnose} onPress={() => void runHomeAssistant()} style={[styles.action, !canDiagnose && styles.disabled]}>
-          <Text style={styles.actionText}>{running === "diagnosis" ? "正在读取…" : "读取设备状态"}</Text>
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canDiagnose, busy: running?.kind === "diagnosis" }}
+          disabled={!canDiagnose} onPress={() => void runHomeAssistant({ kind: "diagnosis" })} style={[styles.action, !canDiagnose && styles.disabled]}>
+          <Text style={styles.actionText}>{running?.kind === "diagnosis" ? "正在读取…" : "读取设备状态"}</Text>
         </Pressable>
-        {(automationTaskId && canDiagnose) || running === "enable_automation" ? (
+        {(automationTaskId && canDiagnose) || running?.kind === "enable_automation" ? (
           <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canDiagnose, busy: !!running }}
             disabled={!canDiagnose} onPress={confirmAutomation} style={[styles.action, !canDiagnose && styles.disabled]}>
             <Text style={styles.actionText}>{running ? "正在启用并验证…" : "重新启用自动化"}</Text>
@@ -134,6 +140,14 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
                 <Text style={styles.label}>{run.entityId}</Text>
                 <Text style={styles.note}>{resultText(run)}</Text>
                 <Text style={styles.note}>{new Date(run.updatedAt).toLocaleString()}</Text>
+                {run.operation === "enable_automation" && run.taskStatus === "unknown" ? (
+                  <Pressable accessibilityRole="button" disabled={!canDiagnose || entityId.trim() !== run.entityId}
+                    accessibilityState={{ disabled: !canDiagnose || entityId.trim() !== run.entityId,
+                      busy: running?.kind === "readback" && running.taskId === run.taskId }}
+                    onPress={() => void runHomeAssistant({ kind: "readback", taskId: run.taskId })} style={styles.shareButton}>
+                    <Text style={styles.backText}>{running?.kind === "readback" && running.taskId === run.taskId ? "正在读取…" : "验证这次恢复"}</Text>
+                  </Pressable>
+                ) : null}
                 {state.status === "ready" ? <DeviceTraceShareButton runtime={state.runtime} taskId={run.taskId} styles={styles} /> : null}
               </View>
             ))}
@@ -286,7 +300,7 @@ function linuxResultText(run: PhoneLinuxSshRun): string {
 
 function resultText(run: PhoneHomeAssistantRun): string {
   if (run.operation === "enable_automation") {
-    if (run.taskStatus === "unknown") return "恢复结果待确认，请读取自动化状态";
+    if (run.taskStatus === "unknown") return "恢复结果待确认。输入原地址、实体 ID 和访问令牌后，可验证这次恢复。";
     if (run.taskStatus === "cancelled") return "恢复已取消";
     if (run.errorCode === "target_changed") return "自动化身份已更改，请重新读取状态";
     if (run.errorCode === "permission_denied") return "恢复授权已过期或权限不足";
