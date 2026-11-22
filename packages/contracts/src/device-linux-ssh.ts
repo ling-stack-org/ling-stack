@@ -1,3 +1,5 @@
+export type LinuxSshReadOperation = "kernel" | "addresses" | "route" | "wifi" | "link" | "dns";
+
 export interface LinuxSshReadResult {
   readonly stdout: string;
   readonly stderr: string;

@@ -1,4 +1,6 @@
-import type { DeviceApprovalBindingV1, DeviceErrorCodeV1, DeviceTaskV1, LinuxNetworkFacts } from "@ling-stack/contracts";
+import type {
+  DeviceApprovalBindingV1, DeviceErrorCodeV1, DeviceTaskV1, LinuxNetworkFacts, RemotePhoneTaskProjectionV1,
+} from "@ling-stack/contracts";
 
 import { digestDeviceRequest, MobileDeviceExecution, type MobileDeviceJournal } from "./execution.ts";
 import {
@@ -13,6 +15,7 @@ import {
 import { createMobilePlaybookAction, runMobileReadOnlyPlaybook, runMobileSetupPlaybook } from "./playbook.ts";
 import { projectMobileDeviceTaskTrace } from "./trace.ts";
 import { projectMobileTaskEvidenceExport } from "./conformance.ts";
+import { createPhoneTaskCollaboration } from "./phone-task-collaboration.ts";
 
 const ownerKey = "ling:standalone-device-owner:v1";
 const homeAssistantPlaybookId = "home-assistant-offline-diagnosis@1.0.0";
@@ -58,11 +61,19 @@ export async function createStandaloneDeviceRuntime(options: {
   execution.setForeground(false);
   let foreground = false;
   let recovery = Promise.resolve();
+  const collaborate = createPhoneTaskCollaboration({
+    storage: options.storage, ownerId, now, randomId: options.randomId,
+    readProjection: async taskId => {
+      await recovery;
+      return projectPhoneTask(await journal.readTaskEvidence(taskId), ownerId);
+    },
+  });
   let targetWrites = Promise.resolve();
   const linuxTargetsKey = "ling:standalone-linux-targets:v1:" + ownerId;
   const activeLinux = new Set<AbortController>();
 
   return {
+    collaborate,
     linuxSshAvailable: options.openLinuxSsh !== undefined,
     setForeground(active: boolean): Promise<void> {
       if (active === foreground) return recovery;
@@ -272,12 +283,22 @@ function readLinuxTargets(json: string | null): readonly LinuxSshTarget[] {
 }
 
 async function readLinuxSshRun(journal: MobileDeviceJournal, task: DeviceTaskV1): Promise<PhoneLinuxSshRun | undefined> {
-  const record = (await journal.listAttempts(task.id)).find(item => item.request.actionId.startsWith(linuxSshPlaybookId + ":"));
+  const result = readLinuxSshAttempt({ attempts: await journal.listAttempts(task.id), observations: await journal.listObservations(task.id) });
+  if (!result) return undefined;
+  const { record, facts } = result;
+  return {
+    taskId: task.id, updatedAt: task.updatedAt, taskStatus: task.status, deviceId: record.request.targetDeviceId, facts,
+    errorCode: record.attempt.receipt?.errorCode,
+  };
+}
+
+function readLinuxSshAttempt({ attempts, observations }: Pick<MobileTaskEvidence, "attempts" | "observations">) {
+  const record = attempts.find(item => item.request.actionId.startsWith(linuxSshPlaybookId + ":"));
   if (!record) return undefined;
   const deviceId = record.request.targetDeviceId;
   const receipt = record.attempt.receipt;
-  const observation = receipt && (await journal.listObservations(task.id)).find(item =>
-    receipt.observationIds.includes(item.id) && item.subjectId === deviceId && item.source === "linux.wifi" && item.provenance.includes(deviceId));
+  const observation = receipt && observations.find(item => item.redactionClass === "public"
+    && receipt.observationIds.includes(item.id) && item.subjectId === deviceId && item.source === "linux.wifi" && item.provenance.includes(deviceId));
   const value = observation?.value;
   let facts: LinuxNetworkFacts | undefined;
   if (value !== null && typeof value === "object" && "connected" in value && typeof value.connected === "boolean") {
@@ -291,7 +312,7 @@ async function readLinuxSshRun(journal: MobileDeviceJournal, task: DeviceTaskV1)
         ? { linkError } : {}),
     };
   }
-  return { taskId: task.id, updatedAt: task.updatedAt, taskStatus: task.status, deviceId, facts, errorCode: receipt?.errorCode };
+  return { record, facts };
 }
 
 function readHomeAssistantAttempt(evidence: MobileTaskEvidence) {
@@ -324,5 +345,40 @@ function projectHomeAssistantRun(evidence: MobileTaskEvidence): PhoneHomeAssista
     canEnableAutomation: task.status === "succeeded" && operation === "diagnosis"
       && state?.automationEnabled === false && !!state.automationIdentity,
     errorCode: task.status === "succeeded" ? undefined : record.attempt.receipt?.errorCode,
+  };
+}
+
+function projectPhoneTask(evidence: MobileTaskEvidence, ownerId: string): RemotePhoneTaskProjectionV1 | undefined {
+  const { task } = evidence;
+  if (!task || task.ownerKind !== "mobile" || task.ownerId !== ownerId || task.targetDeviceIds.length !== 1) return undefined;
+  const [targetDeviceId] = task.targetDeviceIds;
+  const linux = readLinuxSshAttempt(evidence);
+  const home = readHomeAssistantAttempt(evidence);
+  const record = linux?.record ?? home?.record;
+  if (!record) return undefined;
+  const { request, attempt } = record;
+  if (!attempt.connectionRevision || attempt.ownerKind !== "mobile" || attempt.ownerId !== ownerId
+    || attempt.taskId !== task.id || request.taskId !== task.id || attempt.actionId !== request.actionId
+    || attempt.targetDeviceId !== targetDeviceId || request.targetDeviceId !== targetDeviceId) return undefined;
+  const trace = projectMobileDeviceTaskTrace(evidence, ownerId);
+  const readbackId = task.lastVerificationId ?? `${attempt.actionId}:verification`;
+  const readback = trace?.spans.find(span =>
+    span.kind === "verification" && span.sourceId === readbackId && span.lineage?.attemptId === attempt.attemptId);
+  const verification: RemotePhoneTaskProjectionV1["attempt"]["verification"] = readback?.lineage?.connectionRevision ? {
+    evidenceId: readbackId, connectionRevision: readback.lineage.connectionRevision,
+    status: readback.status === "ok" ? "verified" : readback.status === "failed" ? "failed" : "not_evaluable",
+  } : undefined;
+  const homeState = home?.observation?.redactionClass === "public" ? home.state : undefined;
+  const facts: RemotePhoneTaskProjectionV1["facts"] = linux?.facts ? { kind: "linux_network", network: linux.facts }
+    : homeState ? { kind: "home_assistant", availability: homeState.availability,
+      ...(homeState.automationEnabled === undefined ? {} : { automationEnabled: homeState.automationEnabled }) } : undefined;
+  return {
+    taskId: task.id, ownerId, targetDeviceId, status: task.status, updatedAt: task.updatedAt,
+    attempt: {
+      attemptId: attempt.attemptId, capabilityId: request.capabilityId,
+      connectionRevision: attempt.connectionRevision, status: attempt.status,
+      ...(verification ? { verification } : {}),
+    },
+    ...(facts ? { facts } : {}),
   };
 }

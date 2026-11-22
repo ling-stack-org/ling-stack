@@ -54,6 +54,27 @@ const validClientFrame = {
   },
 };
 
+test("phone device collaboration admits typed evidence with explicit commands", () => {
+  const projection = {
+    taskId: "phone-task", ownerId: "phone-owner", targetDeviceId: "external-pc", status: "unknown", updatedAt: now,
+    attempt: { attemptId: "task:linux-wifi-diagnosis@1.0.0:inspect", capabilityId: "linux.wifi.read", connectionRevision: "conn-3", status: "unknown" },
+    facts: { kind: "linux_network", network: { connected: true, wifiAssociated: false, linkError: "wifi_observation_failed" } },
+  };
+  const action = { kind: "publish", expiresAt: "2026-07-19T10:20:00.000Z", expectedRevision: 0, projection };
+  const command = { ...validClientFrame, type: "device.collaboration",
+    payload: { commandId: "phone-publish", workspaceId: "workspace-1", shareId: "phone-share", action } };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(command), { nowMs }), command);
+  for (const malformed of [
+    { ...action, expectedRevision: -1 },
+    { ...action, projection: { ...projection, normalizedInput: {} } },
+    { ...action, projection: { ...projection, facts: { kind: "linux_network", network: { connected: true, host: "local-host" } } } },
+    { ...action, kind: "read" },
+    { kind: "execute", expectedRevision: 1 },
+  ]) {
+    assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({ ...command, payload: { ...command.payload, action: malformed } }), { nowMs }));
+  }
+});
+
 test("device journal frames bind cursor ranges to public events from the task owner", () => {
   const command = {
     ...validClientFrame,

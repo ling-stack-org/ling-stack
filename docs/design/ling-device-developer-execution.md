@@ -422,6 +422,20 @@ unavailable response, identity change, or disabled automation leaves it
 unresolved. The original write receipt and connection revision remain in the
 journal, with the readback recorded under its own revision.
 
+### Collaborate from a phone-owned diagnosis
+
+On a paired phone, find a Linux SSH or Home Assistant task in **手机设备诊断**
+and choose **请配对电脑协助**. Confirm the 30-minute share. In Ling Desktop, open
+**Settings → Mobile Access → Phone device tasks** to view the target reference,
+diagnostic facts and verification state. Use **Send analysis** to attach a note
+to the displayed task revision.
+
+On the phone, choose **同步记录和建议** to review the note. The phone records the
+accept or reject decision and keeps device operations in the task's existing
+controls. A completed readback updates the shared task revision, and a note
+awaiting review on the earlier revision expires. Choose **结束共享** to remove
+the projection from the PC's active shares.
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with

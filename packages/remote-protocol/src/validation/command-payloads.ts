@@ -6,6 +6,7 @@ import {
 } from "@ling-stack/contracts";
 
 import { RemoteProtocolError } from "../errors.js";
+import { validateDeviceCollaborationCommand } from "./device-collaboration.js";
 import {
   validateDeviceListCommand,
   validateDeviceTaskApproveCommand,
@@ -203,6 +204,9 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
       break;
     case "device.task.reconcile":
       payload = validateDeviceTaskReconcileCommand(value, path);
+      break;
+    case "device.collaboration":
+      payload = validateDeviceCollaborationCommand(value, path);
       break;
   }
   return payload as RemoteClientCommandPayloadMapV1[TType];

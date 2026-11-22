@@ -1,10 +1,9 @@
 import {
   isLinuxDnsProbeHostname, readLinuxDnsLookup, readLinuxIpv4Evidence, readLinuxWifiLink, selectLinuxWifiInterface,
   type CapabilityDescriptorV1, type DeviceActionResultV1, type DeviceCapabilitySnapshotV1,
-  type DeviceProfileV1, type LinuxNetworkFacts, type LinuxSshReadResult,
+  type DeviceProfileV1, type LinuxNetworkFacts, type LinuxSshReadOperation, type LinuxSshReadResult,
 } from "@ling-stack/contracts";
 import { canonicalJsonBytes, decodeBase64Url, encodeBase64Url, sha256 } from "@ling-stack/remote-protocol";
-import type { LinuxSshReadOperation } from "../../modules/ling-device-transport/index.ts";
 import type { MobileDeviceExecutionResult, MobileDeviceTransport } from "./execution.ts";
 
 export const linuxSshPlaybookId = "linux-wifi-diagnosis@1.0.0";

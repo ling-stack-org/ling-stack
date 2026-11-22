@@ -9,6 +9,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   type RemoteAuthProofV1,
   type RemoteCapabilityV1,
   type RemoteClientFrameV1,
@@ -127,6 +128,7 @@ function createHarness(beforeRandomId?: (prefix: string) => Promise<void> | unde
         webSocketFactory: (url, subprotocol) => {
           assert.equal(url, "wss://ling-pc.example.ts.net/v1/session");
           assert.deepEqual(subprotocol, [
+            REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
             REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
             REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
             REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,

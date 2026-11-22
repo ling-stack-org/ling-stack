@@ -8,6 +8,8 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteDeviceApprovalPreviewV1,
+  type RemoteDeviceCollaborationActionV1,
+  type RemoteDeviceCollaborationViewV1,
   type RemoteDeviceTaskJournalCommandV1,
   type RemoteDeviceTaskJournalV1,
   type RemoteDeviceReconciliationPreviewV1,
@@ -284,6 +286,44 @@ export class RemoteSessionClient {
     if (result.kind !== "device_task_journal_read") throw new Error("remote_device_journal_binding_mismatch");
     assertDeviceJournalPage(result.journal, workspaceId, taskId, normalized);
     return result.journal;
+  }
+
+  async updateDeviceCollaboration(shareId: string, action: RemoteDeviceCollaborationActionV1): Promise<RemoteDeviceCollaborationViewV1> {
+    const sessionId = this.requireSessionId();
+    const workspaceId = this.requireWorkspaceId();
+    const assertCurrent = () => {
+      if (sessionId !== this.requireSessionId() || workspaceId !== this.requireWorkspaceId()
+        || !this.stateValue.policy?.capabilities.includes("device.collaboration")) {
+        throw new Error("remote_device_collaboration_unavailable");
+      }
+    };
+    assertCurrent();
+    const handle = await this.sendCommand("device.collaboration", {
+      commandId: await this.options.entropy.randomId("device_collaboration"), workspaceId, shareId, action,
+    }, assertCurrent);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        const pending = this.commands.get(handle.commandId);
+        if (pending) {
+          this.commands.delete(handle.commandId);
+          this.outboundByMessage.delete(pending.messageId);
+        }
+        reject(new Error("remote_device_collaboration_timed_out"));
+      }, 15_000);
+    });
+    const { share } = await Promise.race([handle.completion, deadline]).finally(() => clearTimeout(timer));
+    assertCurrent();
+    if (share.shareId !== shareId || share.workspaceId !== workspaceId
+      || (action.kind === "publish" && (share.state !== "active" || share.expiresAt !== action.expiresAt
+        || ![action.expectedRevision, action.expectedRevision + 1].includes(share.revision)
+        || canonicalizeJson(share.projection) !== canonicalizeJson(action.projection)))
+      || (action.kind === "decide" && (share.state !== "active" || share.revision !== action.expectedRevision
+        || !share.proposals.some(proposal => proposal.proposalId === action.proposalId && proposal.status === action.decision)))
+      || (action.kind === "revoke" && share.state !== "revoked")) {
+      throw new Error("remote_device_collaboration_binding_mismatch");
+    }
+    return share;
   }
 
   watchDeviceTaskJournal(
@@ -697,6 +737,13 @@ export class RemoteSessionClient {
         }
         return;
       case "command.completed":
+        if (frame.payload.commandType === "device.collaboration") {
+          const pending = this.commands.get(frame.payload.commandId);
+          if (frame.streamId !== this.controlStreamId || (pending
+            && (pending.type !== frame.payload.commandType || pending.messageId !== frame.requestId))) {
+            throw new Error("remote_device_collaboration_command_mismatch");
+          }
+        }
         if (frame.payload.commandType === "device.task.journal.watch" && frame.payload.result.kind === "device_task_journal_watching") {
           const pending = this.commands.get(frame.payload.commandId);
           if (frame.streamId !== this.controlStreamId || (pending && pending.type !== frame.payload.commandType)) {

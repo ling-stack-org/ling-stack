@@ -164,6 +164,7 @@ import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-f
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
+import { PhoneTaskCollaboration } from "./features/remote-access/phone-task-collaboration.js";
 import { parseHomeAssistantOrigin } from "./features/device-support/adapters/home-assistant.js";
 import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
 import { readAndroidAdbTargets } from "./features/device-support/android-adb-targets.js";
@@ -1093,6 +1094,7 @@ export function createDaemonServer(
     managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
     dispatcher: remoteReplyDispatcher,
     deviceFacade: deviceSupport.remoteFacade,
+    phoneTaskCollaboration: new PhoneTaskCollaboration(deviceSupport.developerStore),
   });
   const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
   // Terminal-QA human authority is independent of CU gate, live Run or lease.

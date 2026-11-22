@@ -127,7 +127,8 @@
   gap: 8px;
 }
 
-.mobile-access-migration-form {
+.mobile-access-migration-form,
+.mobile-access-collaboration-task {
   display: grid;
   gap: 14px;
 }
@@ -136,6 +137,19 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.mobile-access-analysis-notes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-inline-start: 20px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mobile-access-analysis-notes span {
+  color: var(--ling-text-muted);
 }
 
 @media (max-width: 700px) {

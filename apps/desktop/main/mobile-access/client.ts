@@ -4,6 +4,8 @@ import type {
   LingServerPairingMigrationPublicationRequestV1,
   LingServerPairingMigrationRequestV1,
   LingServerPairingMigrationV1,
+  RemoteDeviceAnalysisInputV1,
+  RemoteDeviceCollaborationViewV1,
 } from "@ling-stack/contracts";
 import type {
   DesktopMobileAccessCapabilities,
@@ -60,6 +62,17 @@ export class DesktopMobileAccessClient implements DesktopMobileAccessCapabilitie
 
   async revoke(): Promise<DesktopMobileAccessStatus> {
     return await this.request("/v1/mobile-access/revoke", "POST", {}) as DesktopMobileAccessStatus;
+  }
+
+  async listDeviceCollaboration(): Promise<readonly RemoteDeviceCollaborationViewV1[]> {
+    const response = await this.request("/v1/mobile-access/device-collaboration", "GET") as {
+      readonly shares: readonly RemoteDeviceCollaborationViewV1[];
+    };
+    return response.shares;
+  }
+
+  async proposeDeviceAnalysis(request: RemoteDeviceAnalysisInputV1): Promise<RemoteDeviceCollaborationViewV1> {
+    return await this.request("/v1/mobile-access/device-collaboration", "POST", request) as RemoteDeviceCollaborationViewV1;
   }
 
   async preparePairingMigration(request: LingServerPairingMigrationRequestV1): Promise<LingServerPairingMigrationV1> {

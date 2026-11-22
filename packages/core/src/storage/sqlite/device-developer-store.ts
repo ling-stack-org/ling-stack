@@ -9,11 +9,21 @@ import type {
   DeviceDeveloperArtifactV1,
   DeviceDeveloperJobV1,
   DeviceDeveloperSessionV1,
+  RemotePhoneTaskProjectionV1,
 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "../../device-fabric.js";
 
 export interface DeviceDeveloperStoreOptions {
   readonly databasePath?: string;
+}
+
+export interface PhoneTaskShareRecord {
+  readonly shareId: string;
+  readonly principal: string;
+  readonly revision: number;
+  readonly expiresAt: string;
+  readonly projection?: RemotePhoneTaskProjectionV1;
+  readonly proposalIds: readonly string[];
 }
 
 export class SqliteDeviceDeveloperStore {
@@ -29,6 +39,15 @@ export class SqliteDeviceDeveloperStore {
       CREATE TABLE IF NOT EXISTS device_developer_jobs (job_id TEXT PRIMARY KEY NOT NULL, session_id TEXT NOT NULL, revision INTEGER NOT NULL, job_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS device_developer_artifacts (artifact_id TEXT PRIMARY KEY NOT NULL, digest TEXT NOT NULL, artifact_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS device_collaboration_proposals (proposal_id TEXT PRIMARY KEY NOT NULL, payload_digest TEXT NOT NULL, proposal_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS device_phone_task_shares (
+        share_id TEXT PRIMARY KEY NOT NULL,
+        principal TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        active INTEGER NOT NULL CHECK(active IN (0,1)),
+        share_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS device_phone_task_shares_principal
+        ON device_phone_task_shares(principal, active, expires_at);
       CREATE TABLE IF NOT EXISTS device_artifact_transfers (transfer_id TEXT PRIMARY KEY NOT NULL, proposal_id TEXT NOT NULL, transfer_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS device_artifact_transfer_chunks (
         transfer_id TEXT NOT NULL REFERENCES device_artifact_transfers(transfer_id),
@@ -127,6 +146,27 @@ export class SqliteDeviceDeveloperStore {
   getProposal(proposalId: string): DeviceCollaborationProposalV1 | undefined {
     const row = this.database.prepare("SELECT proposal_json FROM device_collaboration_proposals WHERE proposal_id=?").get(proposalId) as Row | undefined;
     return row ? parseJson<DeviceCollaborationProposalV1>(row.proposal_json, "collaboration proposal") : undefined;
+  }
+
+  getPhoneTaskShare(shareId: string): PhoneTaskShareRecord | undefined {
+    const row = this.database.prepare("SELECT share_json FROM device_phone_task_shares WHERE share_id=?").get(shareId) as Row | undefined;
+    return row ? parseJson<PhoneTaskShareRecord>(row.share_json, "phone task share") : undefined;
+  }
+
+  listActivePhoneTaskShares(principal: string, now: string, limit: number): readonly PhoneTaskShareRecord[] {
+    return this.database.prepare(`
+      SELECT share_json FROM device_phone_task_shares WHERE principal=? AND active=1 AND expires_at>?
+      ORDER BY expires_at DESC, share_id LIMIT ?
+    `).all(principal, now, limit).map(row => parseJson<PhoneTaskShareRecord>(row.share_json, "phone task share"));
+  }
+
+  savePhoneTaskShare(share: PhoneTaskShareRecord): void {
+    const updated = this.database.prepare(`
+      INSERT INTO device_phone_task_shares(share_id,principal,expires_at,active,share_json) VALUES(?,?,?,?,?)
+      ON CONFLICT(share_id) DO UPDATE SET active=excluded.active,share_json=excluded.share_json
+      WHERE principal=excluded.principal AND expires_at=excluded.expires_at
+    `).run(share.shareId, share.principal, share.expiresAt, share.projection ? 1 : 0, JSON.stringify(share));
+    if (updated.changes !== 1) throw new DeviceFabricError("revision_conflict", "task share authority cannot change");
   }
 
   saveTransfer(transfer: DeviceArtifactTransferV1): DeviceArtifactTransferV1 {

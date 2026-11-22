@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../i18n.js";
 import { Badge, Button, Field, InlineFeedback, Input, Skeleton } from "../../../shared/ui/index.js";
 import { LingServerPairingMigrationCard } from "./LingServerPairingMigrationCard.js";
+import { PhoneTaskCollaborationCard } from "./PhoneTaskCollaborationCard.js";
 
 type BusyAction = "enable" | "disable" | "pair" | "confirm" | "reject" | "revoke" | "refresh";
 
@@ -111,7 +112,6 @@ export function MobileAccessSettingsPage(): React.JSX.Element {
             <Detail label={t("Gateway")} value={status.gatewayOrigin ?? "—"} />
             <Detail label={t("Text replies")} value={status.sendEnabled ? t("Enabled") : t("Unavailable")} />
           </dl>
-          <InlineFeedback tone="info">{t("Mobile can read and send plain conversation text only. Tools, workflows, approvals, and files remain on the PC.")}</InlineFeedback>
           <div className="mobile-access-actions">
             <Button variant="danger" loading={busy === "revoke"} onClick={() => void run("revoke", () => capability.revoke())}>{t("Revoke phone")}</Button>
             <Button variant="secondary" loading={busy === "disable"} onClick={() => void run("disable", () => capability.disable())}>{t("Disable Mobile Access")}</Button>
@@ -160,6 +160,9 @@ export function MobileAccessSettingsPage(): React.JSX.Element {
           mobileDeviceId={status.pairedDevice.deviceId}
           workspaceBindingId={status.workspaceBindingId}
         />
+      ) : null}
+      {status?.enabled && status.pairedDevice && status.deviceCollaborationEnabled && capability ? (
+        <PhoneTaskCollaborationCard key={`${status.gatewayId}:${status.workspaceBindingId}:${status.policyVersion}`} access={capability} />
       ) : null}
     </div>
   );

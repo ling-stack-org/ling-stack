@@ -15,7 +15,9 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   REMOTE_PROTOCOL_LIMITS,
+  isRemoteDeviceAnalysisInputV1,
   type LingServerGatewayRouteV1,
   type RemoteAuthChallengeV1,
   type RemoteCapabilityV1,
@@ -34,10 +36,12 @@ import { RemoteProjectionOutboxWorker } from "./projection-outbox-worker.js";
 import { RemoteGatewaySession } from "./session.js";
 import { RemoteAccessStateStore } from "./state-store.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
+import type { PhoneTaskCollaboration, PhoneTaskCollaborationPrincipal } from "./phone-task-collaboration.js";
 import { LingServerGatewayPeer } from "./ling-server-gateway-peer.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "./pion-peer-worker.js";
 
 const deviceTaskProtocols = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
@@ -55,6 +59,7 @@ export interface RemoteAccessControllerOptions {
   readonly managementAllowedOrigins: readonly string[];
   readonly dispatcher?: RemoteReplyDispatcher;
   readonly deviceFacade?: RemoteDeviceFacade;
+  readonly phoneTaskCollaboration?: PhoneTaskCollaboration;
   readonly now?: () => string;
 }
 
@@ -74,6 +79,7 @@ export interface RemoteAccessStatus {
   readonly policyVersion: number;
   readonly workspaceBindingId: string;
   readonly sendEnabled: boolean;
+  readonly deviceCollaborationEnabled?: boolean;
 }
 
 interface RoutedSessionAuthentication {
@@ -203,6 +209,7 @@ export class RemoteAccessController {
       policyVersion: state.policyVersion,
       workspaceBindingId: state.workspaceBindingId,
       sendEnabled: Boolean(this.options.dispatcher),
+      ...(this.options.phoneTaskCollaboration ? { deviceCollaborationEnabled: true } : {}),
     };
   }
 
@@ -234,6 +241,22 @@ export class RemoteAccessController {
       if (url.pathname === `${MANAGEMENT_PREFIX}/status` && request.method === "GET") {
         writeManagementJson(response, 200, this.status(), origin);
         return true;
+      }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/device-collaboration` && this.options.phoneTaskCollaboration) {
+        const collaboration = this.options.phoneTaskCollaboration;
+        if (request.method === "GET") {
+          const principal = this.currentCollaborationPrincipal();
+          writeManagementJson(response, 200, { shares: principal ? collaboration.listForPc(principal, this.now()) : [] }, origin);
+          return true;
+        }
+        if (request.method === "POST") {
+          const input = await readJson(request);
+          if (!isRemoteDeviceAnalysisInputV1(input)) throw new Error("Invalid device analysis proposal.");
+          const principal = this.currentCollaborationPrincipal();
+          if (!principal) throw new RemoteAccessError("binding_changed", "Pair a phone before sending analysis.");
+          writeManagementJson(response, 200, collaboration.proposeFromPc(principal, input, this.now()), origin);
+          return true;
+        }
       }
       if (url.pathname === `${MANAGEMENT_PREFIX}/enable` && request.method === "POST") {
         const body = requireRecord(await readJson(request));
@@ -301,6 +324,16 @@ export class RemoteAccessController {
   private migrationStore(): SqliteLingServerStore {
     this.pairingMigrationStore ??= new SqliteLingServerStore({ databasePath: join(this.options.stateDir, "ling-server-pairing-migrations.sqlite") });
     return this.pairingMigrationStore;
+  }
+
+  private currentCollaborationPrincipal(): PhoneTaskCollaborationPrincipal | undefined {
+    const state = this.auth.state();
+    const device = state.pairedDevice;
+    if (!state.enabled || !device) return undefined;
+    return {
+      gatewayId: this.auth.identity.gatewayId, deviceId: device.deviceId, deviceEpoch: device.deviceEpoch,
+      workspaceId: DEFAULT_WORKSPACE_ID, workspaceBindingId: state.workspaceBindingId, policyVersion: state.policyVersion,
+    };
   }
 
   private refreshLingServerPeer(): void {
@@ -441,7 +474,8 @@ export class RemoteAccessController {
       throw new Error("Authentication no longer current.");
     }
     const deviceFacade = deviceTaskProtocols.includes(protocol) ? this.options.deviceFacade : undefined;
-    const capabilities = this.capabilities(deviceFacade ? protocol : "");
+    const phoneTaskCollaboration = protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 ? this.options.phoneTaskCollaboration : undefined;
+    const capabilities = this.capabilities(deviceFacade ? protocol : "", !!phoneTaskCollaboration);
     const facade = new RemoteConversationFacade({
       store: this.options.store,
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -457,12 +491,15 @@ export class RemoteAccessController {
       gatewayId: this.auth.identity.gatewayId,
       facade,
       deviceFacade,
-      recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+      phoneTaskCollaboration,
+      recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5
+        || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
       isPairedDeviceCurrent: () => {
         const state = this.auth.state();
         const device = state.pairedDevice;
         return !this.stopped && state.enabled && device?.deviceId === authenticated.device.deviceId
-          && device.deviceEpoch === authenticated.device.deviceEpoch && state.policyVersion === current.policyVersion
+          && device.deviceEpoch === authenticated.device.deviceEpoch && device.publicKeyFingerprint === authenticated.device.publicKeyFingerprint
+          && state.workspaceBindingId === current.workspaceBindingId && state.policyVersion === current.policyVersion
           && (!peer || Date.parse(this.now()) < peer.authorityUntil());
       },
       routeAuthorityUntil: peer?.authorityUntil,
@@ -530,8 +567,8 @@ export class RemoteAccessController {
     }
   }
 
-  private capabilities(deviceTaskProtocol: string): readonly RemoteCapabilityV1[] {
-    const supportsJournalWatch = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5;
+  private capabilities(deviceTaskProtocol: string, supportsCollaboration: boolean): readonly RemoteCapabilityV1[] {
+    const supportsJournalWatch = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5 || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6;
     const supportsJournal = supportsJournalWatch || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3
       || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4;
     return [
@@ -545,6 +582,7 @@ export class RemoteAccessController {
       ...(supportsJournal || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 ? ["device.reconcile" as const] : []),
       ...(supportsJournal ? ["device.journal" as const] : []),
       ...(supportsJournalWatch ? ["device.journal.watch" as const] : []),
+      ...(supportsCollaboration ? ["device.collaboration" as const] : []),
     ];
   }
 

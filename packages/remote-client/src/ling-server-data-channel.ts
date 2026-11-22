@@ -1,6 +1,7 @@
 import {
   LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, LING_SERVER_SIGNAL_LANE_LIMIT_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   type LingServerGatewayRouteV1, type LingServerSignalingResponseV1,
 } from "@ling-stack/contracts";
 import { encodeBase64Url, encodeUtf8, sha256, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
@@ -9,6 +10,7 @@ import { LingServerSignalingClient, type LingServerSignalingClientOptions } from
 
 const channelLabel = "ling-peer";
 const channelProtocol = "ling-peer.v1";
+const deviceCollaborationSdpAttribute = "a=ling-device-tasks:6";
 const pollIntervalMs = 350;
 
 export const lingServerNativeGatewayFeatures = [
@@ -20,6 +22,7 @@ export const lingServerNativeGatewayFeatures = [
 export interface LingServerDataChannelOptions extends LingServerSignalingClientOptions {
   readonly createPeerConnection?: (configuration: RTCConfiguration) => RTCPeerConnection;
   readonly timeoutMs?: number;
+  readonly deviceCollaboration?: boolean;
 }
 
 export interface LingServerDataChannel {
@@ -54,7 +57,7 @@ export async function connectLingServerDataChannel(options: LingServerDataChanne
     const createPeer = options.createPeerConnection ?? (configuration => new RTCPeerConnection(configuration));
     peer = createPeer(iceConfiguration(config));
     const negotiatedChannel = options.features?.includes(LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1) === true;
-    return await negotiate(peer, signaling, options.role, controller, negotiatedChannel);
+    return await negotiate(peer, signaling, options.role, controller, negotiatedChannel, options.deviceCollaboration === true);
   };
   try {
     const connected = await Promise.race([aborted, open()]);
@@ -75,6 +78,7 @@ async function negotiate(
   role: LingServerSignalingClientOptions["role"],
   controller: AbortController,
   negotiatedChannel: boolean,
+  supportsCollaboration: boolean,
 ): Promise<LingServerDataChannel> {
   const signal = controller.signal;
   signal.throwIfAborted();
@@ -84,6 +88,8 @@ async function negotiate(
   let nextSequence = 1;
   let remoteSequence = 0;
   let hasRemoteDescription = false;
+  let advertisedCollaboration = false;
+  let peerAdvertisedCollaboration = false;
   let gatheredCandidates = 0;
   const descriptionDigests: Partial<Record<"offer" | "answer", string>> = {};
   const localCandidates: RTCIceCandidateInit[] = [];
@@ -122,8 +128,11 @@ async function negotiate(
     if (!description.sdp || (description.type !== "offer" && description.type !== "answer")) {
       throw new Error("ling_server_local_description_invalid");
     }
-    await publish(description.type, description.sdp);
-    descriptionDigests[description.type] = digestDescription(description.sdp);
+    // The signed descriptions advertise features independently of the existing signaling scope.
+    const sdp = supportsCollaboration ? advertiseDeviceCollaboration(description.sdp) : description.sdp;
+    advertisedCollaboration = sdp !== description.sdp;
+    await publish(description.type, sdp);
+    descriptionDigests[description.type] = digestDescription(sdp);
   };
   const detach = () => {
     peer.removeEventListener("icecandidate", gatherCandidate);
@@ -150,10 +159,13 @@ async function negotiate(
       if (channel?.readyState === "open") {
         const { offer, answer } = descriptionDigests;
         if (!transport || !offer || !answer) throw new Error("ling_server_gateway_route_incomplete");
+        const route = signaling.gatewayRoute({ offerDigest: offer, answerDigest: answer });
         return {
           channel,
           transport,
-          route: signaling.gatewayRoute({ offerDigest: offer, answerDigest: answer }),
+          route: advertisedCollaboration && peerAdvertisedCollaboration && !route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6)
+            ? { ...route, features: [...route.features, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6] }
+            : route,
           close: () => transport?.close(),
         };
       }
@@ -169,7 +181,12 @@ async function negotiate(
           await peer.addIceCandidate(readIceCandidate(message.payload));
         } else {
           if (hasRemoteDescription) throw new Error("ling_server_peer_description_duplicate");
-          await peer.setRemoteDescription({ type: message.messageType, sdp: message.payload });
+          const lines = message.payload.split(/\r?\n/u);
+          peerAdvertisedCollaboration = lines.includes(deviceCollaborationSdpAttribute);
+          const remoteSdp = peerAdvertisedCollaboration
+            ? lines.filter(line => line !== deviceCollaborationSdpAttribute).join(message.payload.includes("\r\n") ? "\r\n" : "\n")
+            : message.payload;
+          await peer.setRemoteDescription({ type: message.messageType, sdp: remoteSdp });
           signal.throwIfAborted();
           descriptionDigests[message.messageType] = digestDescription(message.payload);
           hasRemoteDescription = true;
@@ -183,6 +200,12 @@ async function negotiate(
     signal.removeEventListener("abort", detach);
     detach();
   }
+}
+
+function advertiseDeviceCollaboration(sdp: string): string {
+  if (!/^m=application\s/mu.test(sdp)) return sdp;
+  const newline = sdp.includes("\r\n") ? "\r\n" : "\n";
+  return sdp + (sdp.endsWith(newline) ? "" : newline) + deviceCollaborationSdpAttribute + newline;
 }
 
 function digestDescription(sdp: string): string {

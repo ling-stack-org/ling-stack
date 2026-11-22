@@ -8,6 +8,7 @@ import { useStandaloneDeviceRuntime } from "../../device/StandaloneDeviceProvide
 import type { PhoneHomeAssistantRun, PhoneLinuxSshRun, StandaloneDeviceRuntime } from "../../device/standalone-runtime";
 import type { MobileThemeTokens } from "../../theme/mobile-theme";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
+import { PhoneTaskCollaborationPanel } from "./PhoneTaskCollaborationPanel";
 
 type HomeAssistantScreenOperation =
   | { readonly kind: "diagnosis" }
@@ -149,6 +150,9 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
                   </Pressable>
                 ) : null}
                 {state.status === "ready" ? <DeviceTraceShareButton runtime={state.runtime} taskId={run.taskId} styles={styles} /> : null}
+                {state.status === "ready" ? (
+                  <PhoneTaskCollaborationPanel runtime={state.runtime} taskId={run.taskId} updatedAt={run.updatedAt} styles={styles} />
+                ) : null}
               </View>
             ))}
           </View>
@@ -252,6 +256,7 @@ function LinuxSshPanel({ runtime, styles }: { readonly runtime: StandaloneDevice
       <Text style={styles.note}>{linuxResultText(run)}</Text>
       <Text style={styles.note}>{new Date(run.updatedAt).toLocaleString()}</Text>
       <DeviceTraceShareButton runtime={runtime} taskId={run.taskId} styles={styles} />
+      <PhoneTaskCollaborationPanel runtime={runtime} taskId={run.taskId} updatedAt={run.updatedAt} styles={styles} />
     </View>)}
   </>;
 }

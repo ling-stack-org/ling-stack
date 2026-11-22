@@ -4,6 +4,7 @@ import {
   LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1,
   REMOTE_PROTOCOL_LIMITS,
   REMOTE_PROTOCOL_VERSION,
+  isRemoteDeviceAnalysisInputV1,
   type LingServerPairingMigrationConfirmationV1,
   type LingServerPairingMigrationRequestV1,
 } from "@ling-stack/contracts";
@@ -181,15 +182,30 @@ export function registerDesktopIpc(input: {
     assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
     return await input.mobileAccess!.revoke();
   });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationList, async event => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    const shares = await input.mobileAccess.listDeviceCollaboration();
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return shares;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationPropose, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceAnalysisInputV1(request)) throw new Error("invalid_device_analysis_proposal");
+    const share = await input.mobileAccess.proposeDeviceAnalysis(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return share;
+  });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationPrepare, async (event, request: unknown) => {
-    const isTrustedSender = () => isPairingMigrationSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
     const preview = await input.mobileAccess.preparePairingMigration(readPairingMigrationRequest(request));
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
     return preview;
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationConfirm, async (event, request: unknown) => {
-    const isTrustedSender = () => isPairingMigrationSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
     const publication = await input.mobileAccess.confirmPairingMigration(readPairingMigrationConfirmation(request));
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
@@ -725,7 +741,7 @@ function assertMobileAccessSender(
   }
 }
 
-function isPairingMigrationSender(event: IpcMainInvokeEvent, window: BrowserWindow | undefined, trustedDocumentUrl: string | undefined): boolean {
+function isTrustedMainDocumentSender(event: IpcMainInvokeEvent, window: BrowserWindow | undefined, trustedDocumentUrl: string | undefined): boolean {
   const owner = window?.webContents;
   if (!window || window.isDestroyed() || !owner || owner.isDestroyed() || event.sender !== owner || !trustedDocumentUrl
     || !event.senderFrame || event.senderFrame !== owner.mainFrame || event.senderFrame.detached) return false;

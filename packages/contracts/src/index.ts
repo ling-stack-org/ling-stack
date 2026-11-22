@@ -89,6 +89,7 @@ export * from "./computer-use.js";
 export * from "./computer-use-validation.js";
 export * from "./remote-access.js";
 export * from "./remote-device.js";
+export * from "./remote-device-collaboration.js";
 export * from "./device.js";
 export * from "./device-capability-schema.js";
 export * from "./device-attempt-conformance.js";

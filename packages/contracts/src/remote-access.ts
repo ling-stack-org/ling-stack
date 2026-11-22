@@ -18,6 +18,7 @@ import type {
   RemoteDeviceTaskStatusCommandV1,
   RemoteDeviceTaskStatusRequestedV1,
 } from "./remote-device.js";
+import type { RemoteDeviceCollaborationCommandV1, RemoteDeviceCollaborationResultV1 } from "./remote-device-collaboration.js";
 
 export const REMOTE_PROTOCOL_VERSION = 1 as const;
 
@@ -64,6 +65,7 @@ export const REMOTE_CAPABILITIES_V1 = [
   "device.approve",
   "device.revoke",
   "device.reconcile",
+  "device.collaboration",
 ] as const;
 
 export type RemoteCapabilityV1 = (typeof REMOTE_CAPABILITIES_V1)[number];
@@ -89,6 +91,7 @@ export const REMOTE_CLIENT_COMMAND_TYPES_V1 = [
   "device.task.approve",
   "device.task.revoke",
   "device.task.reconcile",
+  "device.collaboration",
 ] as const;
 
 export type RemoteClientCommandTypeV1 = (typeof REMOTE_CLIENT_COMMAND_TYPES_V1)[number];
@@ -113,6 +116,7 @@ export const REMOTE_LIFECYCLE_COMMAND_TYPES_V1 = [
   "device.task.approve",
   "device.task.revoke",
   "device.task.reconcile",
+  "device.collaboration",
 ] as const;
 
 export type RemoteLifecycleCommandTypeV1 = (typeof REMOTE_LIFECYCLE_COMMAND_TYPES_V1)[number];
@@ -512,6 +516,7 @@ export interface RemoteCommandResultMapV1 {
   readonly "device.task.approve": RemoteDeviceTaskApprovedV1;
   readonly "device.task.revoke": RemoteDeviceTaskRevokedV1;
   readonly "device.task.reconcile": RemoteDeviceTaskRecheckedV1;
+  readonly "device.collaboration": RemoteDeviceCollaborationResultV1;
 }
 
 export type RemoteCommandResultV1 = RemoteCommandResultMapV1[RemoteLifecycleCommandTypeV1];
@@ -588,6 +593,7 @@ export interface RemoteClientCommandPayloadMapV1 {
   readonly "device.task.approve": RemoteDeviceTaskApproveCommandV1;
   readonly "device.task.revoke": RemoteDeviceTaskRevokeCommandV1;
   readonly "device.task.reconcile": RemoteDeviceTaskReconcileCommandV1;
+  readonly "device.collaboration": RemoteDeviceCollaborationCommandV1;
 }
 
 export type RemoteClientCommandFrameV1<

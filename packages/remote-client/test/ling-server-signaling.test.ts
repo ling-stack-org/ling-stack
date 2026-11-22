@@ -4,11 +4,11 @@ import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 
 import {
-  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, type LingServerRendezvousReceiptV1,
+  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6, type LingServerRendezvousReceiptV1,
   type LingServerSignalingInputV1, type LingServerSignedRendezvousRequestV1, type RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
 import {
-  fingerprintPublicJwkSync, lingServerRendezvousReceiptBytes, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1,
+  fingerprintPublicJwkSync, lingServerGatewayDeviceTasksProtocol, lingServerRendezvousReceiptBytes, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1,
   validateLingServerSignedRendezvousRequestV1, validateLingServerSignedSignalingV1,
 } from "@ling-stack/remote-protocol";
 import {
@@ -403,4 +403,43 @@ test("the signed native feature opens a reliable negotiated channel with the fix
   assert.deepEqual(fixture.requests.map(request => request.operation.kind), ["transport_config", "poll", "publish"]);
   connection.close();
   assert.equal(closed, true);
+});
+
+test("the signed SDP selects collaboration only when both peers offer it", async t => {
+  for (const [mobile, gateway, selected] of [
+    [true, true, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6],
+    [false, true, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5],
+    [true, false, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5],
+  ] as const) {
+    await t.test(`mobile ${mobile}, gateway ${gateway}`, async () => {
+      const fixture = harness();
+      const features = [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1];
+      const sdp = "v=0\r\ns=fixture\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n";
+      const attribute = "a=ling-device-tasks:6\r\n";
+      const offer = fixture.offer({
+        features,
+        operation: { kind: "publish", messageType: "offer", sequence: 1, payload: sdp + (gateway ? attribute : "") },
+      });
+      fixture.setResponder(({ operation }) => {
+        if (operation.kind === "transport_config") return { kind: "transport_config", route: "lan", stunUrls: [], turnUrls: [] };
+        if (operation.kind === "poll") return { kind: "signals", messages: [offer], latestSequence: 1, hasMore: false };
+        assert.equal(operation.payload, sdp + (mobile ? attribute : ""));
+        return { kind: "published", sequence: 1, replayed: false };
+      });
+      const channel = Object.assign(new EventTarget(), { readyState: "connecting", bufferedAmount: 0, close() {} });
+      const peer = Object.assign(new EventTarget(), {
+        createDataChannel: () => channel,
+        async setRemoteDescription(description: RTCSessionDescriptionInit) { assert.equal(description.sdp, sdp); },
+        async createAnswer() { return { type: "answer", sdp }; },
+        async setLocalDescription() { channel.readyState = "open"; },
+        close() {},
+      });
+      const connection = await connectLingServerDataChannel({
+        ...fixture.options, features, deviceCollaboration: mobile, createPeerConnection: () => peer as unknown as RTCPeerConnection,
+      });
+      assert.equal(lingServerGatewayDeviceTasksProtocol(connection.route), selected);
+      assert.ok(fixture.requests.every(request => !request.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6)));
+      connection.close();
+    });
+  }
 });

@@ -1,17 +1,13 @@
 import { requireOptionalNativeModule } from "expo";
-
-export type LinuxSshReadOperation = "kernel" | "addresses" | "route" | "wifi" | "link" | "dns";
+import type { LinuxSshReadOperation, LinuxSshReadResult } from "@ling-stack/contracts";
+export type { LinuxSshReadOperation } from "@ling-stack/contracts";
 
 interface LinuxSshNativeModule {
   reserve(): string;
   connect(
     sessionId: string, host: string, port: number, user: string, fingerprintHex: string, password: string,
   ): Promise<void>;
-  read(sessionId: string, operation: LinuxSshReadOperation, argument: string): Promise<{
-    readonly stdout: string;
-    readonly stderr: string;
-    readonly exitCode: number;
-  }>;
+  read(sessionId: string, operation: LinuxSshReadOperation, argument: string): Promise<LinuxSshReadResult>;
   close(sessionId: string): void;
 }
 

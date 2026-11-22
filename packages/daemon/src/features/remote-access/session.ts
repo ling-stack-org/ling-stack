@@ -31,6 +31,7 @@ import {
 } from "@ling-stack/remote-protocol";
 import type { RemoteConversationFacade, RemoteProjectedEvent } from "./conversation-facade.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
+import type { PhoneTaskCollaboration } from "./phone-task-collaboration.js";
 import { RemoteAccessError } from "./errors.js";
 import type { AuthenticatedRemoteSession } from "./pairing-auth-service.js";
 
@@ -57,6 +58,7 @@ export interface RemoteGatewaySessionOptions {
   readonly gatewayId: string;
   readonly facade: RemoteConversationFacade;
   readonly deviceFacade?: RemoteDeviceFacade;
+  readonly phoneTaskCollaboration?: PhoneTaskCollaboration;
   readonly recoveryApprovals?: boolean;
   readonly isPairedDeviceCurrent?: () => boolean;
   readonly policy: RemoteAccessPolicySummaryV1;
@@ -146,7 +148,7 @@ export class RemoteGatewaySession {
   pushDeviceJournalPage(): void {
     if (!this.checkAuthority() || this.journalWatches.size === 0) return;
     try {
-      this.assertCurrentJournalPrincipal();
+      this.assertCurrentDevicePrincipal();
       if (this.controlStream.ackServerSeq < this.journalPageServerSeq
         || this.options.channel.bufferedAmount > MAX_BUFFERED_BYTES - REMOTE_PROTOCOL_LIMITS.maxFrameBytes) return;
       for (const [watchId, watch] of this.journalWatches) {
@@ -333,7 +335,7 @@ export class RemoteGatewaySession {
         return;
       }
       case "device.task.journal.watch": {
-        this.assertCurrentJournalPrincipal();
+        this.assertCurrentDevicePrincipal();
         const request = frame.payload;
         const facade = this.requireDeviceFacade(request.workspaceId);
         if (this.journalWatches.has(request.commandId)) {
@@ -349,7 +351,7 @@ export class RemoteGatewaySession {
         return;
       }
       case "device.task.journal.unwatch": {
-        this.assertCurrentJournalPrincipal();
+        this.assertCurrentDevicePrincipal();
         const { workspaceId, taskId, watchId } = frame.payload;
         this.requireDeviceFacade(workspaceId);
         const watch = this.journalWatches.get(watchId);
@@ -386,14 +388,26 @@ export class RemoteGatewaySession {
         this.complete(frame, { kind: "device_task_rechecked", taskId: frame.payload.taskId, status });
         return;
       }
+      case "device.collaboration": {
+        this.assertCurrentDevicePrincipal();
+        const service = this.options.phoneTaskCollaboration;
+        if (!service) throw new RemoteAccessError("capability_not_allowed", "Phone task collaboration is unavailable.");
+        const { gatewayId, authenticated, policy } = this.options;
+        const share = service.fromPhone({
+          gatewayId, deviceId: this.deviceId, deviceEpoch: authenticated.device.deviceEpoch,
+          workspaceId: policy.workspaceId, workspaceBindingId: policy.workspaceBindingId, policyVersion: policy.policyVersion,
+        }, frame.payload, this.now());
+        this.complete(frame, { kind: "device_collaboration_state", share });
+        return;
+      }
       default:
         throw new RemoteAccessError("protocol_incompatible", `Unsupported command: ${(payload as { commandId: string }).commandId}`);
     }
   }
 
-  private assertCurrentJournalPrincipal(): void {
+  private assertCurrentDevicePrincipal(): void {
     if (this.options.isPairedDeviceCurrent?.() === false) {
-      throw new RemoteAccessError("binding_changed", "The device journal pairing is no longer current.", true);
+      throw new RemoteAccessError("binding_changed", "The device pairing is no longer current.", true);
     }
   }
 
@@ -653,6 +667,7 @@ function commandCapability(
   if (commandType === "device.task.reconcile") {
     return "device.reconcile";
   }
+  if (commandType === "device.collaboration") return "device.collaboration";
   return undefined;
 }
 

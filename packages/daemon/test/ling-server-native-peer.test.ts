@@ -11,17 +11,22 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import type {
-  LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteP256PublicJwkV1,
+  LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceCollaborationViewV1, RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 } from "@ling-stack/contracts";
 import { createSqliteRunStore } from "@ling-stack/core";
 import {
   RemoteSessionClient, createFetchRemoteHttpClient, type RemoteBindingV1, type RemoteDeviceKeyAdapter,
 } from "@ling-stack/remote-client";
 import { fingerprintPublicJwkSync, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
 import { connectMobileLingServerPeer } from "../../../apps/mobile/src/remote/mobile-ling-server-peer.ts";
+import { createStandaloneDeviceRuntime } from "../../../apps/mobile/src/device/standalone-runtime.ts";
+import type { HomeAssistantFetch } from "../../../apps/mobile/src/device/home-assistant.ts";
+import type { PhoneTaskCollaborationPeer } from "../../../apps/mobile/src/device/phone-task-collaboration.ts";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { RemoteAccessController } from "../dist/features/remote-access/controller.js";
+import { PhoneTaskCollaboration } from "../dist/features/remote-access/phone-task-collaboration.js";
 import { createRemoteGatewayIdentity } from "../dist/features/remote-access/pairing-auth-service.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "../dist/features/remote-access/pion-peer-worker.js";
 import { RemoteAccessStateStore } from "../dist/features/remote-access/state-store.js";
@@ -101,13 +106,21 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     const managementCapability = randomUUID();
     const managementOrigin = "http://127.0.0.1";
     const createGateway = () => new RemoteAccessController({ store: workspace, stateDir, listenerPort, workspaceDisplayName: "Native fixture",
-      managementCapability, managementAllowedOrigins: [managementOrigin], now, deviceFacade: devices.remoteFacade });
+      managementCapability, managementAllowedOrigins: [managementOrigin], now, deviceFacade: devices.remoteFacade,
+      phoneTaskCollaboration: new PhoneTaskCollaboration(devices.developerStore) });
     gateway = createGateway();
     await gateway.startIfEnabled();
     management = createServer(async (request, response) => {
       if (!await gateway?.handleManagementRequest(request, response)) response.writeHead(404).end();
     });
     const managementPort = await listen(management);
+    const collaborationUrl = managementOrigin + ":" + managementPort + "/v1/mobile-access/device-collaboration";
+    const collaborationHeaders = { Origin: managementOrigin, "X-Ling-Mobile-Management-Capability": managementCapability };
+    const listShares = async () => {
+      const response = await fetch(collaborationUrl, { headers: collaborationHeaders });
+      assert.equal(response.status, 200);
+      return (await response.json() as { shares: RemoteDeviceCollaborationViewV1[] }).shares;
+    };
     const post = async (action: string, body: unknown) => {
       const response = await fetch(managementOrigin + ":" + managementPort + "/v1/mobile-access/pairing-migration/" + action, {
         method: "POST", headers: { Origin: managementOrigin, "Content-Type": "application/json",
@@ -156,6 +169,7 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
         assert.equal(activeBinding.lingServerRoutingProfile?.bindingId, publication.binding.bindingId);
         const connection = await connectMobileLingServerPeer(activeBinding, signal, peerOptions);
         assert.ok(connection);
+        assert.ok(connection.route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6));
         routes.push({ id: connection.route.routeAttemptId, expiresAt: connection.route.expiresAt });
         return connection;
       },
@@ -163,6 +177,7 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     await client.confirmLingServerPairingPin(record);
     await client.connect();
     assert.equal(client.state.workspaceBindingId, originalState.workspaceBindingId);
+    assert.ok(client.state.policy?.capabilities.includes("device.collaboration"));
     await waitFor(() => Boolean(client?.state.conversations[channel.id]));
     const first = await client.openConversation(channel.id);
     assert.deepEqual(await first.completion, { kind: "conversation_opened", conversationId: channel.id });
@@ -174,6 +189,63 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     assert.equal(initialJournal.task.taskId, taskId);
     assert.equal(initialJournal.events.length, 1);
     assert.equal(initialJournal.hasMore, true);
+    const phoneStorage = new Map<string, string>();
+    const storage = {
+      async getItem(key: string) { return phoneStorage.get(key) ?? null; },
+      async setItem(key: string, value: string) { phoneStorage.set(key, value); },
+    };
+    const phoneTarget = { origin: "https://phone.fixture.example", token: "phone-fixture-credential", entityId: "automation.test" };
+    let phoneWrites = 0;
+    const phoneFetch: HomeAssistantFetch = async (_url, request) => {
+      if (request.method === "POST") {
+        phoneWrites += 1;
+        throw new Error("the phone lost the successful write response");
+      }
+      return Response.json({
+        entity_id: phoneTarget.entityId, state: phoneWrites ? "on" : "off",
+        attributes: { id: "test-automation", description: "private-fixture-data" },
+      });
+    };
+    const openPhone = async () => {
+      const runtime = await createStandaloneDeviceRuntime({ storage, now, randomId: prefix => prefix + "_" + randomUUID(), fetch: phoneFetch });
+      await runtime.setForeground(true);
+      return runtime;
+    };
+    const phonePeer: PhoneTaskCollaborationPeer = {
+      scope: JSON.stringify([binding.gatewayId, binding.deviceId, binding.deviceEpoch, client.state.policy?.workspaceBindingId]),
+      update: (shareId, action) => client!.updateDeviceCollaboration(shareId, action),
+    };
+    let phone = await openPhone();
+    const phoneDiagnosis = await phone.diagnoseHomeAssistant(phoneTarget);
+    const phoneRecovery = await phone.enableHomeAssistantAutomation({ ...phoneTarget, diagnosisTaskId: phoneDiagnosis.taskId });
+    assert.equal(phoneRecovery.taskStatus, "unknown");
+    assert.deepEqual(await listShares(), []);
+    const share = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "share" });
+    assert.ok(share?.state === "active");
+    assert.equal(share.projection.taskId, phoneRecovery.taskId);
+    assert.equal(share.projection.status, "unknown");
+    assert.doesNotMatch(JSON.stringify(share), /phone\.fixture|phone-fixture-credential|private-fixture-data|automation\.test/u);
+    assert.deepEqual(await listShares(), [share]);
+    const notes = [
+      { proposalId: "suggest-readback", text: "Use the existing readback to verify the automation." },
+      { proposalId: "stale-note", text: "Check the recorded automation status." },
+    ];
+    for (const note of notes) {
+      const response: Response = await fetch(collaborationUrl, {
+        method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": gateway.csrfToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ shareId: share.shareId, expectedRevision: share.revision, ...note }),
+      });
+      assert.equal(response.status, 200);
+    }
+    let shared = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "sync" });
+    assert.ok(shared?.state === "active");
+    assert.deepEqual(shared.proposals.map(proposal => proposal.status), ["proposed", "proposed"]);
+    const accepted = await phone.collaborate(phoneRecovery.taskId, phonePeer, {
+      kind: "decide", view: shared, proposalId: "suggest-readback", decision: "accepted",
+    });
+    assert.ok(accepted?.state === "active");
+    assert.deepEqual(accepted.proposals.map(proposal => proposal.status), ["accepted", "proposed"]);
+    assert.ok([...phoneStorage.values()].some(value => value.includes('"decision":"accepted"')));
     const expiry = Date.parse(routes[0]!.expiresAt);
     const expectedReceipts = rendezvousReceipts + 2;
     clockOffset = expiry - Date.now() - 8_000;
@@ -202,6 +274,28 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     assert.equal(continued.events[0]?.sequence, 2);
     assert.equal(continued.task.ownerId, initialJournal.task.ownerId);
     assert.deepEqual(devices.store.listAttempts(taskId).map(record => record.attempt.attemptId), attemptIds);
+    phone = await openPhone();
+    shared = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "sync" });
+    assert.ok(shared?.state === "active");
+    assert.equal(shared.shareId, share.shareId);
+    assert.equal(shared.proposals[0]?.status, "accepted");
+    const verified = await phone.verifyHomeAssistantRecovery({ ...phoneTarget, recoveryTaskId: phoneRecovery.taskId });
+    assert.equal(verified.taskStatus, "succeeded");
+    const stale = shared;
+    await assert.rejects(phone.collaborate(phoneRecovery.taskId, phonePeer, {
+      kind: "decide", view: stale, proposalId: "stale-note", decision: "accepted",
+    }), /phone_task_evidence_changed/u);
+    const verifiedShare = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "sync" });
+    assert.ok(verifiedShare?.state === "active");
+    assert.equal(verifiedShare.revision, shared.revision + 1);
+    assert.equal(verifiedShare.projection.attempt.verification?.status, "verified");
+    assert.equal(verifiedShare.projection.attempt.attemptId, shared.projection.attempt.attemptId);
+    assert.deepEqual(verifiedShare.proposals, []);
+    assert.deepEqual(await listShares(), [verifiedShare]);
+    assert.equal(phoneWrites, 1);
+    const revoked = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "revoke" });
+    assert.equal(revoked?.state, "revoked");
+    assert.deepEqual(await listShares(), []);
     control.registry.revokeBinding(publication.binding.bindingId, publication.binding.revision + 1);
     await waitFor(() => client?.state.connection !== "connected", 12_000);
     await assert.rejects(client.connect(), { status: 403 });
