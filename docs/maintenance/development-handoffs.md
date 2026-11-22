@@ -30,6 +30,7 @@ are not published here. The relay URL and temporary development checkout are exa
 - [Device Support Platform continuation, 2026-11-22](#device-support-platform-continuation-2026-11-22)
 - [Device Support Platform adapter isolation, 2026-11-22](#device-support-platform-adapter-isolation-2026-11-22)
 - [Device Support Platform Home Assistant and verification, 2026-11-22](#device-support-platform-home-assistant-and-verification-2026-11-22)
+- [Device Support Platform live capture, collaboration and semantic context, 2026-11-22](#device-support-platform-live-capture-collaboration-and-semantic-context-2026-11-22)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
@@ -189,6 +190,29 @@ paired principal while the public projection omits private principal fields.
 The focused run passed 46 tests. A loopback Home Assistant fixture covered startup
 configuration, token resolution, version binding, diagnosis, journal persistence and
 redaction. Physical Home Assistant acceptance remains open.
+
+## Device Support Platform live capture, collaboration and semantic context 2026-11-22
+
+The live hardware path is in `98ea1e92c`. A developer session can select a registered
+transport bound to the target profile and connection revision. The Daemon captures
+USB, BLE, serial, RS-485, CAN, OBD or vendor frames through a platform-owned async
+driver, validates byte and timestamp bounds, retains loss metadata, persists the
+capture digest and returns the same replay projection after restart. The loopback
+RS-485 fixture received one Modbus response, recorded a connection interruption,
+and did not start a second capture on replay.
+
+The collaboration path is in `aac808173`. Phone-owned artifact transfers now retain
+each chunk's digest and bytes in SQLite, verify index and size metadata, reconstruct
+the accepted SHA-256 artifact and return a verified receipt. A foreign owner, target,
+revision, expiry, duplicate bytes or mismatched final digest is rejected.
+
+The semantic resolver and planning-context path are in `f9f0f8ab5`. Workspace-scoped
+capability lookup reports available, unsupported, stale and unavailable targets. The
+bounded context includes profile, adapter, connection, semantic capability and
+dispatch-stop revisions. Stale and unprojectable observations stay out of model facts.
+
+The focused Core and Daemon checks passed. Native transport drivers, packaged
+developer clients and physical hardware or vehicle acceptance remain open.
 
 ## Typed Transcript Handoff
 
