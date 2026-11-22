@@ -447,6 +447,7 @@ export async function routeRequest(
     automationSchedulers,
     controlPlaneEvents,
     providerImportPreflight,
+    providerModelCatalog,
     providerStartupRefresh,
     startupState,
     computerUsePreviews,
@@ -880,7 +881,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/providers/import-models") {
-    await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents, providerImportPreflight);
+    await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents, providerImportPreflight, providerModelCatalog);
     return;
   }
 
@@ -1047,7 +1048,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/provider-models") {
-    await handleProviderModelsProbe(request, response, config, storeRegistry, secretResolver);
+    await handleProviderModelsProbe(request, response, config, storeRegistry, secretResolver, providerModelCatalog);
     return;
   }
 

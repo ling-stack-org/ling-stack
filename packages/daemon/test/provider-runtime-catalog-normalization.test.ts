@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeModelTokenLimits, normalizeThinkingModes } from "../provider-model-catalog-normalization.mjs";
+import { normalizeModelTokenLimits, normalizeThinkingModes } from "../dist/features/providers/model-catalog-normalize.js";
 
-test("catalog sync preserves provider-native top reasoning levels", () => {
+test("runtime catalog preserves provider-native top reasoning levels", () => {
   assert.deepEqual(normalizeThinkingModes([{ type: "effort", values: ["low", "xhigh", "max", "maximum", "ultra", "unknown"] }]),
     ["low", "xhigh", "max", "ultra"]);
   assert.deepEqual(normalizeThinkingModes([{ type: "toggle" }]), ["off", "auto"]);

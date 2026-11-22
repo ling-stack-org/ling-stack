@@ -59,7 +59,7 @@ test("PR workflow is guarded to same-repository heads and re-checks the head bef
   assert.match(prWorkflow, /group: translate-pr-catalogs-\$\{\{ github\.event\.pull_request\.number \}\}/u);
 });
 
-test("sync workflow mirrors the model catalog automation contract", () => {
+test("translation sync workflow limits updates to its reviewed automation branch", () => {
   assert.match(syncWorkflow, /cron: "41 3 \* \* \*"/u);
   assert.match(syncWorkflow, /if: github\.ref == 'refs\/heads\/main'/u);
   assert.match(syncWorkflow, /git push --force-with-lease origin "HEAD:\$branch"/u);

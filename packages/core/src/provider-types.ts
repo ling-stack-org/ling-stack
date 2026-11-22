@@ -141,6 +141,7 @@ export interface ProviderCheckResult {
 
 export interface ProviderModelOption {
   readonly id: string;
+  readonly catalogVersion?: string;
   readonly displayName?: string;
   readonly ownedBy?: string;
   readonly createdAt?: string;

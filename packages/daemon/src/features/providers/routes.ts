@@ -31,6 +31,7 @@ import { transcribeOpenAICompatibleAudio, TranscriptionProviderError } from "./t
 import { checkProviderPreset } from "./preflight.js";
 import { publishProviderCheckResult } from "./check-publication.js";
 import type { ProviderImportPreflightService } from "./import-preflight.js";
+import type { ProviderModelCatalogService } from "./model-catalog-service.js";
 import {
   formatProviderDeleteBlockedMessage,
   formatProviderReferenceBlockedMessage,
@@ -244,6 +245,7 @@ export async function handleProviderModelImport(
   secretResolver: SecretResolver,
   controlPlaneEvents: ControlPlaneEventHub,
   providerImportPreflight: ProviderImportPreflightService,
+  providerModelCatalog: ProviderModelCatalogService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -270,11 +272,13 @@ export async function handleProviderModelImport(
     // Validate every effective pair before the first write/check: raw request
     // validation cannot see catalog defaults or values inherited from a preset.
     const modelImports = dedupeProviderImportModels(input.models).map((rawModel) => {
+      const catalog = providerModelCatalog.snapshotForVersion(rawModel.catalogVersion);
+      if (!catalog) throw new HttpError(409, "model_catalog_changed", "The model catalog changed. Refresh the model list and try again.");
       const model = enrichProviderModelOption(rawModel, {
         kind: input.kind,
         providerId: input.providerId,
         api: input.api,
-      });
+      }, catalog);
       const existing = existingProviders.find((provider) =>
         provider.providerId === input.providerId &&
         provider.api === (model.api ?? input.api) &&
@@ -385,8 +389,8 @@ export async function handleProviderModelImport(
       warnings,
     });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -904,6 +908,7 @@ export async function handleProviderModelsProbe(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
+  providerModelCatalog: ProviderModelCatalogService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -920,7 +925,16 @@ export async function handleProviderModelsProbe(
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseProviderModelListRequest(body);
     const store = storeRegistry.getStore(cwd);
-    const result = await listProviderModels(store, input, secretResolver);
+    // Give an explicit model refresh a short chance to use new metadata without
+    // holding provider discovery for the catalog's full network timeout.
+    const refresh = providerModelCatalog.refreshIfDue(true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([refresh, new Promise<void>((resolve) => { timer = setTimeout(resolve, 2_000); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    const result = await listProviderModels(store, input, secretResolver, providerModelCatalog.snapshot());
     writeJson(response, 200, result);
   } catch (error) {
     const statusCode = error instanceof HttpError ? error.statusCode : 400;
