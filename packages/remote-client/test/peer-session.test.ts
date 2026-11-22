@@ -4,7 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
-  type LingServerGatewayRouteV1, type RemoteAuthChallengeV1, type RemoteAuthProofV1, type RemoteP256PublicJwkV1,
+  type LingServerGatewayRouteV1, type LingServerRoutingProfileV1, type RemoteAuthChallengeV1, type RemoteAuthProofV1, type RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
 import {
   authChallengeSigningBytes, authChallengeSigningInput, authProofSigningBytes, authProofSigningInput, domainSeparatedCanonicalBytes, encodeBase64Url,
@@ -53,13 +53,14 @@ function channel() {
   };
 }
 
-function makeFixture() {
+function makeFixture(lingServerRoutingProfile?: LingServerRoutingProfileV1) {
   const gateway = key();
   const phone = key();
   const binding: RemoteBindingV1 = {
     version: 1, status: "active", gatewayId, gatewayOrigin, gatewayIdentityPublicKeyJwk: gateway.publicJwk,
     gatewayIdentityFingerprint: fingerprintPublicJwkSync(gateway.publicJwk),
     deviceId, deviceKeyId: "device-key", deviceEpoch: 7, pairedAt: now,
+    ...(lingServerRoutingProfile ? { workspaceBindingId: "workspace-binding", lingServerRoutingProfile } : {}),
   };
   let saved: RemoteBindingV1 | undefined = binding;
   let keyRemovals = 0;
@@ -115,11 +116,11 @@ function frame<T>(type: string, sessionId: string, payload: T, sequence: number)
   };
 }
 
-function ready(sessionId: string) {
+function ready(sessionId: string, workspaceBindingId = "workspace-binding") {
   return frame("session.ready", sessionId, {
     deviceId, protocolVersion: 1, connectedAt: now,
     policy: {
-      version: 1, workspaceId: "default", workspaceBindingId: "workspace-binding", policyVersion: 1,
+      version: 1, workspaceId: "default", workspaceBindingId, policyVersion: 1,
       conversationAccess: { mode: "all_in_workspace", kinds: ["channel", "conversation", "teammate_direct"] },
       capabilities: ["conversation.read", "device.read", "device.journal"],
     },
@@ -194,4 +195,28 @@ test("peer challenge signatures and session readiness must match the verified ro
   wrongSession.receive(ready("wrong-session"));
   await rejected;
   assert.equal(fixture.binding?.status, "active");
+});
+
+test("reauthentication retains the confirmed server pin only within its authenticated workspace", async () => {
+  const profile: LingServerRoutingProfileV1 = {
+    schemaVersion: 1, bindingId: "binding-1", installationId: "installation-1", installationRevision: 1,
+    serverOrigin: "https://ling.example", applicationKeyFingerprint: encodeBase64Url(sha256(Uint8Array.of(1))),
+    signalingProtocolMajor: 1, gatewayProtocolMajor: 1,
+  };
+  const fixture = makeFixture(profile);
+  let peer = channel();
+  const client = fixture.createClient(async () => ({ route: fixture.route, transport: peer.transport }));
+  for (const workspaceBindingId of ["workspace-binding", "another-workspace"]) {
+    const connected = client.connect();
+    await setImmediate();
+    const challenge = fixture.challenge(fixture.route);
+    peer.receive(challenge);
+    await setImmediate();
+    peer.receive(ready(challenge.candidateSessionId, workspaceBindingId));
+    await connected;
+    assert.equal(fixture.binding?.workspaceBindingId, workspaceBindingId);
+    assert.deepEqual(fixture.binding?.lingServerRoutingProfile, workspaceBindingId === "workspace-binding" ? profile : undefined);
+    client.disconnect();
+    peer = channel();
+  }
 });

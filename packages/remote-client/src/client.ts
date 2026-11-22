@@ -18,10 +18,12 @@ import {
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
 import {
+  canonicalizeJson,
   parseRemoteAuthFrameV1,
   parseRemoteServerFrameV1,
   type RemoteMessageChannel,
 } from "@ling-stack/remote-protocol";
+import { verifyLingServerPairingPin } from "./ling-server-pairing-pin.js";
 import {
   createRemoteSessionProof, openRemoteSessionChannel, type RemoteSessionAuthentication, type RemoteSessionConnectionOptions,
 } from "./session-authentication.js";
@@ -39,6 +41,7 @@ import {
   type RemoteClock,
   type RemoteDeviceKeyAdapter,
   type RemoteEntropy,
+  type RemoteHttpClient,
 } from "./types.js";
 
 type CommandType = Exclude<RemoteClientCommandTypeV1, "stream.ack">;
@@ -83,6 +86,7 @@ export class RemoteSessionClient {
   private connectPromise?: Promise<void>;
   private frameQueue = Promise.resolve();
   private bindingMutation = Promise.resolve();
+  private unpairing = false;
   private clientSeq = 0;
   private reconnectAttempts = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -98,6 +102,10 @@ export class RemoteSessionClient {
 
   get state(): RemoteClientState {
     return this.stateValue;
+  }
+
+  get activeBinding(): RemoteBindingV1 | undefined {
+    return this.binding.status === "active" ? this.binding : undefined;
   }
 
   subscribe(listener: (state: RemoteClientState) => void): () => void {
@@ -347,7 +355,50 @@ export class RemoteSessionClient {
     void handle.completion.catch(() => undefined);
   }
 
+  async confirmLingServerPairingPin(confirmation: unknown, options: {
+    readonly http?: RemoteHttpClient;
+    readonly signal?: AbortSignal;
+  } = {}): Promise<RemoteBindingV1> {
+    const binding = this.binding;
+    const http = options.http ?? this.options.http;
+    if (!http) throw new Error("ling_server_pairing_http_unavailable");
+    const assertCurrentPairing = () => {
+      if (this.unpairing || this.binding.status !== "active" || this.binding.workspaceBindingId !== binding.workspaceBindingId) {
+        throw new Error("ling_server_pairing_binding_changed");
+      }
+    };
+    assertCurrentPairing();
+    const { keys, entropy, clock } = this.options;
+    const proof = await verifyLingServerPairingPin({ confirmation, binding, http, keys, entropy, clock, signal: options.signal });
+    return await this.runBindingMutation(async () => {
+      assertCurrentPairing();
+      const current = this.binding;
+      const stored = await this.options.bindingStore.read();
+      assertCurrentPairing();
+      options.signal?.throwIfAborted();
+      const next = { ...current, lingServerRoutingProfile: proof.routingProfile };
+      const storedBinding = stored && canonicalizeJson(stored);
+      const currentBinding = canonicalizeJson(current);
+      if (storedBinding !== canonicalizeJson(next)) {
+        if (storedBinding !== currentBinding) {
+          throw new Error("ling_server_pairing_binding_changed");
+        }
+        if (canonicalizeJson(current.lingServerRoutingProfile ?? null) !== canonicalizeJson(binding.lingServerRoutingProfile ?? null)) {
+          throw new Error("ling_server_pairing_profile_changed");
+        }
+        await this.options.bindingStore.write(next);
+        assertCurrentPairing();
+      } else if (storedBinding === currentBinding) {
+        return current;
+      }
+      this.binding = next;
+      this.emit();
+      return next;
+    });
+  }
+
   async unpair(): Promise<void> {
+    this.unpairing = true;
     let remoteError: unknown;
     try {
       if (this.stateValue.connection === "connected") {
@@ -675,19 +726,24 @@ export class RemoteSessionClient {
     generation: number,
     socket: RemoteMessageChannel,
   ): Promise<void> {
-    const previous = this.binding.workspaceBindingId;
-    if (previous && previous !== workspaceBindingId) {
-      await this.options.cacheStore.remove(previous);
+    await this.runBindingMutation(async () => {
       this.assertCurrentSocket(generation, socket);
-      this.dispatch({ type: "clear_workspace", workspaceBindingId });
-    }
-    const nextBinding = { ...this.binding, workspaceBindingId };
-    this.assertCurrentSocket(generation, socket);
-    await this.runBindingMutation(() => this.options.bindingStore.write(nextBinding));
-    if (!this.isCurrentSocket(generation, socket)) {
-      throw new Error("remote_connection_invalidated");
-    }
-    this.binding = nextBinding;
+      const previous = this.binding.workspaceBindingId;
+      if (previous && previous !== workspaceBindingId) {
+        await this.options.cacheStore.remove(previous);
+        this.assertCurrentSocket(generation, socket);
+        this.dispatch({ type: "clear_workspace", workspaceBindingId });
+      }
+      const { lingServerRoutingProfile, ...binding } = this.binding;
+      const nextBinding = {
+        ...binding, workspaceBindingId,
+        ...(previous === workspaceBindingId && lingServerRoutingProfile ? { lingServerRoutingProfile } : {}),
+      };
+      this.assertCurrentSocket(generation, socket);
+      await this.options.bindingStore.write(nextBinding);
+      this.assertCurrentSocket(generation, socket);
+      this.binding = nextBinding;
+    });
     const cache = await this.options.cacheStore.read(workspaceBindingId);
     this.assertCurrentSocket(generation, socket);
     if (cache?.workspaceBindingId === workspaceBindingId) {

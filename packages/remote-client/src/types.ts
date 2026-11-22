@@ -1,4 +1,5 @@
 import type {
+  LingServerRoutingProfileV1,
   RemoteP256PublicJwkV1,
   RemoteResumeCursorV1,
 } from "@ling-stack/contracts";
@@ -55,6 +56,7 @@ export interface RemoteBindingV1 {
   readonly deviceEpoch: number;
   readonly pairedAt: string;
   readonly workspaceBindingId?: string;
+  readonly lingServerRoutingProfile?: LingServerRoutingProfileV1;
 }
 
 export interface RemoteBindingStore {
