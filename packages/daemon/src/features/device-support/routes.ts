@@ -121,18 +121,39 @@ function writeFabricGraph(request: IncomingMessage, response: ServerResponse, ru
     return;
   }
   try {
+    const generatedAt = new Date().toISOString();
+    const now = Date.parse(generatedAt);
     const ownedDeviceIds = new Set(runtime.store.listDevices()
       .filter(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID)
       .map(profile => profile.device.id));
-    const nodes = runtime.fabricStore.listGraphNodes().filter(node => node.deviceId !== undefined && ownedDeviceIds.has(node.deviceId));
+    const nodes = runtime.fabricStore.listGraphNodes()
+      .filter(node => node.deviceId !== undefined && ownedDeviceIds.has(node.deviceId));
     const nodeIds = new Set(nodes.map(node => node.nodeId));
-    const relationships = runtime.fabricStore.listGraphRelationships().filter(relationship =>
-      nodeIds.has(relationship.fromNodeId) && nodeIds.has(relationship.toNodeId));
-    const twins = nodes.flatMap(node => {
-      const twin = runtime.fabricStore.getTwin(node.nodeId);
-      return twin ? [twin] : [];
+    const relationships = runtime.fabricStore.listGraphRelationships()
+      .filter(relationship => nodeIds.has(relationship.fromNodeId) && nodeIds.has(relationship.toNodeId));
+    const twins = [...new Set(nodes.flatMap(node => node.deviceId ? [node.deviceId] : []))].flatMap(deviceId => {
+      const twin = runtime.fabricStore.getTwin(deviceId);
+      return twin ? [{
+        deviceId, revision: twin.revision, updatedAt: twin.updatedAt,
+        values: twin.values.map(value => ({
+          key: value.key, observedAt: value.observedAt, freshnessUntil: value.freshnessUntil,
+          quality: Date.parse(value.freshnessUntil) > now ? value.quality : "stale",
+          hasReported: value.reported !== undefined, hasDesired: value.desired !== undefined,
+          hasPending: value.pending !== undefined, hasVerified: value.verified !== undefined,
+        })),
+      }] : [];
     });
-    writePrivateJson(response, 200, { generatedAt: new Date().toISOString(), nodes, relationships, twins });
+    writePrivateJson(response, 200, {
+      generatedAt,
+      nodes: nodes.map(({ nodeId, kind, deviceId, parentNodeId, label, deviceKind, revision }) => ({
+        nodeId, kind, deviceId, parentNodeId: parentNodeId && nodeIds.has(parentNodeId) ? parentNodeId : undefined,
+        label, deviceKind, revision,
+      })),
+      relationships: relationships.map(({ relationshipId, fromNodeId, toNodeId, type, revision }) => ({
+        relationshipId, fromNodeId, toNodeId, type, revision,
+      })),
+      twins,
+    });
   } catch (error) {
     writeDeviceOperationError(response, error);
   }
@@ -145,7 +166,10 @@ function writeEdgeRuntimeProjection(request: IncomingMessage, response: ServerRe
     return;
   }
   try {
-    writePrivateJson(response, 200, { generatedAt: new Date().toISOString(), runtimes: runtime.edgeRuntimes.list() });
+    const runtimes = runtime.edgeRuntimes.list().map((
+      { runtimeId, displayName, contractMajor, supportedTransports, status, revision, lastSeenAt },
+    ) => ({ runtimeId, displayName, contractMajor, supportedTransports, status, revision, lastSeenAt }));
+    writePrivateJson(response, 200, { generatedAt: new Date().toISOString(), runtimes });
   } catch (error) {
     writeDeviceOperationError(response, error);
   }

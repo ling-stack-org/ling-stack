@@ -102,17 +102,6 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
   assert.ok(address && typeof address === "object");
   const base = `http://127.0.0.1:${address.port}/v1/device-support`;
   const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
-  const graphResponse = await fetch(base + "/fabric/graph", { headers });
-  assert.equal(graphResponse.status, 200);
-  const graphProjection = await graphResponse.json() as { generatedAt: string; nodes: unknown[]; relationships: unknown[]; twins: unknown[] };
-  assert.match(graphProjection.generatedAt, /^2026-/u);
-  assert.deepEqual(graphProjection.nodes, []);
-  assert.deepEqual(graphProjection.relationships, []);
-  assert.deepEqual(graphProjection.twins, []);
-  const edgeProjection = await fetch(base + "/fabric/edge-runtimes", { headers });
-  assert.equal(edgeProjection.status, 200);
-  assert.deepEqual((await edgeProjection.json() as { runtimes: unknown[] }).runtimes, []);
-
   const post = (body: object, extraHeaders: Record<string, string> = {}) => fetch(base + "/home-assistant/diagnose", {
     method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
   });
@@ -159,6 +148,55 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
   assert.equal(freshness.hypotheses[0]?.code, "stale_entity_report");
   const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
+    const registered = store.listDevices().find(profile => profile.device.kind === "home_assistant");
+    assert.ok(registered);
+    const deviceId = registered.device.id;
+    const foreignId = "home-assistant:foreign";
+    assert.equal(store.registerDevice({ ...registered, device: { ...registered.device, id: foreignId, ownerScope: "foreign" } },
+      new Date().toISOString()), true);
+    const fabric = new SqliteDeviceFabricStore({ databasePath: workspace.paths.databasePath });
+    try {
+      const node = { nodeId: "integration", deviceId, kind: "device" as const, label: "Integration", revision: 1,
+        identityRefs: ["private-identity-detail"], properties: { detail: "private-node-detail" } };
+      fabric.upsertGraphNode(node);
+      fabric.upsertGraphNode({ ...node, nodeId: "component", kind: "component", parentNodeId: "integration" });
+      fabric.upsertGraphNode({ ...node, nodeId: "foreign", deviceId: foreignId, label: "foreign-node" });
+      fabric.addGraphRelationship({ relationshipId: "contains-component", fromNodeId: "integration", toNodeId: "component",
+        type: "contains", provenance: ["private-graph-provenance"], revision: 1 });
+      fabric.addGraphRelationship({ relationshipId: "foreign-link", fromNodeId: "integration", toNodeId: "foreign",
+        type: "connects", provenance: [], revision: 1 });
+      const past = "2025-01-01T00:00:00.000Z";
+      fabric.saveTwin({
+        deviceId, revision: 1, updatedAt: past,
+        values: [{ key: "availability", reported: "private-twin-value", quality: "good", source: "fixture", observedAt: past, freshnessUntil: past }],
+      });
+      fabric.saveEdgeRuntime({ runtimeId: "bench-edge", displayName: "Bench Edge", publicKeyFingerprint: "fixture-edge-fingerprint",
+        contractMajor: 1, supportedTransports: ["rs485"], status: "offline", revision: 1 });
+    } finally {
+      fabric.close();
+    }
+    const graphResponse = await fetch(base + "/fabric/graph", { headers });
+    assert.equal(graphResponse.status, 200);
+    const graph = await graphResponse.json() as {
+      generatedAt: string;
+      nodes: { nodeId: string; deviceId: string }[];
+      relationships: { relationshipId: string }[];
+      twins: { deviceId: string; values: { quality: string; hasReported: boolean }[] }[];
+    };
+    assert.ok(Number.isFinite(Date.parse(graph.generatedAt)));
+    assert.deepEqual(graph.nodes.map(node => [node.nodeId, node.deviceId]), [["component", deviceId], ["integration", deviceId]]);
+    assert.deepEqual(graph.relationships.map(link => link.relationshipId), ["contains-component"]);
+    assert.equal(graph.twins.length, 1);
+    assert.equal(graph.twins[0]?.deviceId, deviceId);
+    assert.equal(graph.twins[0]?.values[0]?.quality, "stale");
+    assert.equal(graph.twins[0]?.values[0]?.hasReported, true);
+    assert.doesNotMatch(JSON.stringify(graph), /foreign-node|foreign-link|private-/u);
+    const edgeResponse = await fetch(base + "/fabric/edge-runtimes", { headers });
+    assert.equal(edgeResponse.status, 200);
+    const edge = await edgeResponse.json() as { runtimes: { runtimeId: string; status: string; revision: number }[] };
+    assert.deepEqual(edge.runtimes.map(item => [item.runtimeId, item.status, item.revision]), [["bench-edge", "offline", 1]]);
+    assert.doesNotMatch(JSON.stringify(edge), /fixture-edge-fingerprint/u);
+    assert.equal((await fetch(base + "/fabric/graph", { headers: { ...headers, Origin: "https://foreign.example" } })).status, 403);
     assert.equal(store.getTask(report.taskId)?.ownerKind, "daemon");
     assert.equal(store.getObservation(freshness.taskId, freshness.facts[0]!.observationId)?.subjectId, "sensor.reporting");
     assert.equal(store.listDevices().find(profile => profile.device.kind === "home_assistant")?.device.firmwareVersion, "2026.11.4");
