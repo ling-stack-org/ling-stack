@@ -158,6 +158,8 @@ export const LING_APP_SERVER_METHODS = [
   "github/intake/poll",
   "github/intake/read",
   "github/delivery/reconcile",
+  "github/delivery/enqueue",
+  "github/delivery/queue/read",
   "workItem/evidence/read",
   "workItem/evidence/append",
   "workItem/collaboration/read",
@@ -1174,6 +1176,40 @@ export interface LingAppServerReconcileGitHubDeliveryParams {
 export interface LingAppServerGitHubDeliveryResult {
   readonly cwd: string;
   readonly delivery: LingAppServerGitHubDelivery;
+}
+
+export interface LingAppServerGitHubQueueParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly queueReceiptId: string;
+}
+
+export interface LingAppServerGitHubEnqueueParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly deliveryId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+  readonly confirmed: true;
+}
+
+export interface LingAppServerGitHubQueueReceipt {
+  readonly queueReceiptId: string;
+  readonly workItemId: string;
+  readonly deliveryId: string;
+  readonly repository: string;
+  readonly repositoryId: string;
+  readonly pullRequestNumber: number;
+  readonly headSha: string;
+  readonly status: "pending" | "enqueued" | "merged" | "unknown";
+  readonly queueEntryId?: string;
+  readonly mergedCommit?: string;
+  readonly createdAt: string;
+}
+
+export interface LingAppServerGitHubQueueResult {
+  readonly cwd: string;
+  readonly receipt: LingAppServerGitHubQueueReceipt;
 }
 
 export interface LingAppServerWorkItemSourceReceipt {

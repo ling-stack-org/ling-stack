@@ -10,6 +10,7 @@ export interface AppServerGitHubDeliveryPolicy {
    * source its acceptance configuration from the trusted CI environment.
    */
   readonly requiredChecks: readonly LingGitHubRequiredCheck[];
+  readonly mergeQueue?: { readonly requiredGate: { readonly name: string; readonly appId: number } };
 }
 
 export interface AppServerGitHubSourceConfig {
@@ -126,6 +127,15 @@ function resolveDeliveryPolicies(policies: readonly AppServerGitHubDeliveryPolic
       return { name: check.name, appId: check.appId, workflowId: check.workflowId, workflowPath: check.workflowPath,
         workflowSha256: check.workflowSha256, basis: check.basis, coverageRefs: [...check.coverageRefs] };
     });
-    return { baseRef: policy.baseRef, requiredChecks };
+    const mergeQueue = policy.mergeQueue;
+    if (mergeQueue !== undefined && (!isRecord(mergeQueue) || !isRecord(mergeQueue.requiredGate)
+      || typeof mergeQueue.requiredGate.name !== "string" || !mergeQueue.requiredGate.name.trim() || mergeQueue.requiredGate.name.length > 160
+      || !validInteger(mergeQueue.requiredGate.appId, 1, Number.MAX_SAFE_INTEGER)
+      || requiredChecks.some(check => check.basis === "integration" || check.appId === mergeQueue.requiredGate.appId || check.name === mergeQueue.requiredGate.name)
+      || !requiredChecks.some(check => check.basis === "merge_group"))) {
+      throw new Error("A configured GitHub merge queue requires group checks and a distinct trusted provider-required gate.");
+    }
+    return { baseRef: policy.baseRef, requiredChecks,
+      ...(mergeQueue ? { mergeQueue: { requiredGate: { name: mergeQueue.requiredGate.name, appId: mergeQueue.requiredGate.appId } } } : {}) };
   });
 }

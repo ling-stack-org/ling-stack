@@ -162,6 +162,17 @@ export async function runLingAppServerMcp(
         retryKey: z.string().max(160).optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.pollGitHubIntake(params)));
+    if (methods.has("github/delivery/enqueue")) server.registerTool("ling_github_delivery_enqueue", {
+      description: "Admit a current trusted GitHub delivery to the provider-enforced merge queue.",
+      inputSchema: z.strictObject({ workItemId: objectId, deliveryId: objectId, expectedWorkItemRevision: z.number().int().positive(),
+        idempotencyKey: requestKey, confirmed: z.literal(true) }),
+      annotations: { idempotentHint: true, destructiveHint: true },
+    }, async params => describe(await client.enqueueGitHubDelivery(params)));
+    if (methods.has("github/delivery/queue/read")) server.registerTool("ling_github_delivery_queue_read", {
+      description: "Read and reconcile a provider-owned GitHub merge queue receipt.",
+      inputSchema: z.strictObject({ workItemId: objectId, queueReceiptId: objectId }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.readGitHubQueue(params)));
     if (methods.has("github/intake/read")) server.registerTool("ling_github_intake_read", {
       description: "Read a durable GitHub intake evaluation receipt.",
       inputSchema: z.strictObject({ receiptId: objectId }),

@@ -358,6 +358,15 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       ["threadId", "workItemId", "repository", "pullRequestNumber", "candidateDigest"]), result: deliveryResult };
     case "workItem/delivery/read":
       return { params: objectWith(workItemTarget, ["workItemId"]), result: deliveryResult };
+    case "github/delivery/enqueue":
+      return { params: objectWith({ ...workItemTarget, deliveryId: stringSchema, expectedWorkItemRevision: integerSchema,
+        idempotencyKey: stringSchema, confirmed: { enum: [true] } },
+      ["workItemId", "deliveryId", "expectedWorkItemRevision", "idempotencyKey", "confirmed"]), result: objectWith({
+        cwd: stringSchema, receipt: objectSchema,
+      }, ["cwd", "receipt"]) };
+    case "github/delivery/queue/read":
+      return { params: objectWith({ ...workItemTarget, queueReceiptId: stringSchema }, ["workItemId", "queueReceiptId"]),
+        result: objectWith({ cwd: stringSchema, receipt: objectSchema }, ["cwd", "receipt"]) };
     case "delivery/read":
       return { params: objectWith({ ...workItemTarget, deliveryId: stringSchema }, ["workItemId", "deliveryId"]), result: deliveryResult };
     case "turn/retry":

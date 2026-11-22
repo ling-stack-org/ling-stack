@@ -104,6 +104,7 @@ import {
 import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
 import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
+import { enqueueGitHubDelivery, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import { readWorkItemWorkflowStages } from "../features/work-items/workflow-stages.js";
 import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
@@ -176,7 +177,8 @@ const operatorMethods = new Set([
   "worktree/create", "worktree/cleanup",
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
-  "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
+  "github/subject/read", "github/delivery/reconcile", "github/delivery/enqueue", "github/delivery/queue/read",
+  "workItem/delivery/read", "delivery/read",
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
   "workItem/workflow/bind",
@@ -780,6 +782,15 @@ class RpcConnection {
           expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
         });
         return { cwd: record.cwd, delivery } satisfies LingAppServerGitHubDeliveryResult;
+      }
+      case "github/delivery/enqueue": {
+        const record = this.workspaceParams(params, true);
+        return enqueueGitHubDelivery(this.context, this.context.storeRegistry.getStore(record.cwd), record as never);
+      }
+      case "github/delivery/queue/read": {
+        const record = this.workspaceParams(params, true);
+        return readGitHubQueue(this.context, this.context.storeRegistry.getStore(record.cwd),
+          readStringField(record, "workItemId"), readStringField(record, "queueReceiptId"));
       }
       case "workItem/delivery/read":
       case "delivery/read": {
