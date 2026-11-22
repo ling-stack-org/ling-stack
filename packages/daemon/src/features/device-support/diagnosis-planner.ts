@@ -50,7 +50,10 @@ export function createDeviceDiagnosisPlanner(input: {
         const prompt = JSON.stringify({
           symptom: symptom ?? null,
           steps: steps.map(({ id, capabilityId }) => ({ id, capabilityId })),
+          targets: request.context.targets,
+          policyRevision: request.context.policyRevision,
           facts: request.context.facts,
+          factMetadata: request.context.factMetadata,
           hypotheses: request.context.hypotheses,
         });
         const deadline = AbortSignal.timeout(DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS);

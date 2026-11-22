@@ -51,6 +51,25 @@ export interface DeviceTwinV1 {
   readonly updatedAt: string;
 }
 
+export type DeviceSemanticCapabilityV1 = Pick<CapabilityDescriptorV1,
+  "id" | "schemaVersion" | "semanticVerb" | "sideEffect" | "approvalClass" | "prerequisites" | "verificationCapabilityId">;
+
+export interface DeviceSemanticTargetV1 {
+  readonly deviceId: string;
+  readonly kind: DeviceKindV1;
+  readonly profileRevision: string;
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly status: "available" | "unavailable" | "stale" | "unsupported";
+  readonly capabilities: readonly DeviceSemanticCapabilityV1[];
+  readonly snapshot?: {
+    readonly snapshotId: string;
+    readonly connectionRevision: string;
+    readonly observedAt: string;
+    readonly freshnessUntil: string;
+  };
+}
+
 export interface DeviceTaskGraphNodeV1 {
   readonly nodeId: string;
   readonly targetDeviceId: string;
@@ -332,7 +351,20 @@ export interface DeviceContextPackV1 {
   readonly observations: readonly string[];
   readonly untrustedTextRefs: readonly string[];
   readonly factMetadata?: readonly DeviceContextFactMetadataV1[];
+  readonly targets?: readonly DeviceContextTargetV1[];
+  readonly policyRevision?: string;
   readonly generatedAt: string;
+}
+
+export interface DeviceContextTargetV1 {
+  readonly deviceId: string;
+  readonly kind: DeviceKindV1;
+  readonly profileRevision: string;
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly snapshot: NonNullable<DeviceSemanticTargetV1["snapshot"]>;
+  readonly capabilities: readonly Omit<DeviceSemanticCapabilityV1, "prerequisites">[];
+  readonly dispatchStopped: boolean;
 }
 
 export interface DeviceContextFactMetadataV1 {

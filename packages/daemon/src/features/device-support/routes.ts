@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace,
+  resolveDeviceSemanticTargets } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
@@ -24,7 +25,9 @@ export async function handleDeviceSupportRoute(
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
-  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !dispatchStop && !linuxAction && !homeAssistant && !fleetHealth) return false;
+  const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
+  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !dispatchStop && !linuxAction
+    && !homeAssistant && !fleetHealth && !capabilityLookup) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2] === "trace", request, response, runtime);
@@ -40,6 +43,10 @@ export async function handleDeviceSupportRoute(
   }
   if (homeAssistant) {
     await handleHomeAssistantDiagnosis(request, response, runtime);
+    return true;
+  }
+  if (capabilityLookup) {
+    writeSemanticTargets(url, request, response, runtime);
     return true;
   }
   if (fleetHealth) {
@@ -73,6 +80,28 @@ export async function handleDeviceSupportRoute(
     writeDeviceOperationError(response, error);
   }
   return true;
+}
+
+function writeSemanticTargets(url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): void {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  const verb = url.searchParams.get("verb");
+  const deviceId = url.searchParams.get("deviceId");
+  try {
+    if (verb === null || !/^[a-z][a-z0-9_.-]{0,127}$/u.test(verb)
+      || (deviceId !== null && (!validBoundedText(deviceId, 512) || deviceId !== deviceId.trim()))) {
+      throw new DeviceBrokerError("invalid_request", "invalid semantic capability lookup");
+    }
+    const evaluatedAt = new Date().toISOString();
+    const targets = resolveDeviceSemanticTargets({ store: runtime.store, workspaceId: DEFAULT_WORKSPACE_ID,
+      semanticVerb: verb, targetDeviceId: deviceId ?? undefined, evaluatedAt });
+    writePrivateJson(response, 200, { semanticVerb: verb, evaluatedAt, targets });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
 }
 
 async function handleHomeAssistantDiagnosis(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): Promise<void> {

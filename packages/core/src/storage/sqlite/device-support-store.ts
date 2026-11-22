@@ -409,9 +409,13 @@ export class SqliteDeviceSupportStore {
     this.appendEvent(taskId, "observation_recorded", { observationId: observation.id }, now);
   }
 
-  listObservations(taskId: string): readonly DeviceObservationV1[] {
-    return (this.database.prepare("SELECT body_json FROM device_observations WHERE task_id=? ORDER BY created_at,observation_id").all(taskId) as Row[])
+  listObservations(taskId: string, page?: { readonly recentLimit: number }): readonly DeviceObservationV1[] {
+    const statement = this.database.prepare(page
+      ? "SELECT body_json FROM device_observations WHERE task_id=? ORDER BY created_at DESC, observation_id DESC LIMIT ?"
+      : "SELECT body_json FROM device_observations WHERE task_id=? ORDER BY created_at, observation_id");
+    const observations = (page ? statement.all(taskId, page.recentLimit) : statement.all(taskId))
       .map(row => parseJson<DeviceObservationV1>(row.body_json, isDeviceObservationV1, "device observation"));
+    return page ? observations.reverse() : observations;
   }
 
   acquireTargetLease(targetDeviceId: string, taskId: string, ownerId: string, now: string, leaseMs: number, attemptId?: string): boolean {

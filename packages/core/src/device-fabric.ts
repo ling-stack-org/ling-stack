@@ -570,8 +570,13 @@ export class DeviceContextBuilder {
       observations: input.observations,
       untrustedTextRefs: input.untrustedTextRefs,
       ...(input.factMetadata && input.factMetadata.length > 0 ? { factMetadata: input.factMetadata } : {}),
+      ...(input.targets ? { targets: input.targets } : {}),
+      ...(input.policyRevision ? { policyRevision: input.policyRevision } : {}),
       generatedAt: input.generatedAt,
     };
+    if (!Number.isSafeInteger(input.maxBytes) || input.maxBytes < 1) {
+      throw new DeviceFabricError("revision_conflict", "device context pack budget is invalid");
+    }
     if (Buffer.byteLength(JSON.stringify(pack), "utf8") > input.maxBytes) throw new DeviceFabricError("revision_conflict", "device context pack exceeds its bound");
     return pack;
   }
