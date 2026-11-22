@@ -751,6 +751,50 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   assert.equal(scope.daemon, false);
 });
 
+test("CLI migrations accept verified dependency builds and the package build check", t => {
+  const repo = repositoryFixture(t);
+  const root = "packages/cli";
+  const manifest = {
+    name: "@ling-stack/cli", type: "module",
+    dependencies: {
+      "@ling-stack/browser-host": "workspace:*", "@ling-stack/contracts": "workspace:*",
+      "@ling-stack/core": "workspace:*", "@ling-stack/daemon": "workspace:*",
+    },
+    scripts: {
+      build: "corepack pnpm --filter @ling-stack/browser-host build && tsc -p tsconfig.json",
+      "build:ci": "tsc -p tsconfig.json",
+      typecheck: "corepack pnpm --filter @ling-stack/browser-host build && tsc -p tsconfig.json --noEmit",
+      "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+      test: "corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.json && node --test test/*.test.mjs",
+      "test:ci": "node --test test/*.test.mjs",
+    } as Record<string, string>,
+  };
+  const saveManifest = () => repo.write(`${root}/package.json`, JSON.stringify(manifest));
+  saveManifest();
+  repo.write(`${root}/test/probe.test.mjs`, "import test from 'node:test'; test('probe', () => {});\n");
+  const base = repo.commit();
+
+  repo.git("mv", `${root}/test/probe.test.mjs`, `${root}/test/probe.test.ts`);
+  Object.assign(manifest.scripts, {
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    typecheck: "corepack pnpm --filter @ling-stack/daemon... run build:ci && corepack pnpm build:ci && corepack pnpm typecheck:ci",
+    test: "corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.json && corepack pnpm test:ci",
+    "test:ci": "node --test test/*.test.ts",
+  });
+  repo.write(`${root}/tsconfig.test.json`, JSON.stringify({ compilerOptions: { noEmit: true }, include: ["test/**/*.ts"] }));
+  saveManifest();
+  repo.commit();
+
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/cli"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/cli"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/cli"]);
+  assert.equal(scope.dependencyPolicy, false);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+});
+
 test("Browser Host test migration builds Daemon for the shared broker fixture", t => {
   const repo = repositoryFixture(t);
   const host = "packages/browser-host";
