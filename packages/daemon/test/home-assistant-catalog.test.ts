@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import { DeviceBrokerError } from "@ling-stack/core";
 import {
   assertHomeAssistantCatalogQuery, homeAssistantEntityAvailability, projectHomeAssistantCatalog,
-  readHomeAssistantDeviceRegistry,
+  readHomeAssistantRegistry,
 } from "../dist/features/device-support/adapters/home-assistant-catalog.js";
 
 const observedAt = "2026-11-22T00:00:00.000Z";
@@ -64,8 +64,9 @@ test("Home Assistant registry transport authenticates the pinned version and bou
       }
     });
   });
-  const result = await readHomeAssistantDeviceRegistry({
+  const result = await readHomeAssistantRegistry({
     origin: "http://127.0.0.1:" + address.port, token: "token", version: "2026.11.2", signal: AbortSignal.timeout(2_000),
+    command: { type: "config/device_registry/list" },
   });
   assert.deepEqual(result, [{ id: "0123456789abcdef0123456789abcdef", disabled_by: null }]);
   assert.deepEqual(seen, [
@@ -84,7 +85,8 @@ test("Home Assistant registry rejects a version change before exposing device da
     socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.4" }));
     socket.on("message", () => socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.4" })));
   });
-  await assert.rejects(() => readHomeAssistantDeviceRegistry({
+  await assert.rejects(() => readHomeAssistantRegistry({
     origin: "http://127.0.0.1:" + address.port, token: "token", version: "2026.11.2", signal: AbortSignal.timeout(2_000),
+    command: { type: "config/device_registry/list" },
   }), (error: unknown) => error instanceof DeviceBrokerError && error.code === "target_changed");
 });

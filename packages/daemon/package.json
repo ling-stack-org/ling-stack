@@ -37,6 +37,7 @@
     "@ling-stack/runner-pi": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@napi-rs/keyring": "2.1.2",
+    "@serialport/bindings-cpp": "13.0.0",
     "@xmldom/xmldom": "0.9.12",
     "diff": "9.0.0",
     "docx": "9.15.4",

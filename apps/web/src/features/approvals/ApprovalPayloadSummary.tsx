@@ -5,6 +5,21 @@ import type { ApprovalRequest } from "../../types.js";
 export function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalRequest }): React.JSX.Element | null {
   const { t } = useI18n();
   const payloadType = readDataString(approval.payload, "type");
+  if (approval.actionType === "device_action" && payloadType === "device_action") {
+    const targetDeviceId = readDataString(approval.payload, "targetDeviceId");
+    const capabilityId = readDataString(approval.payload, "capabilityId");
+    const entryId = readDataString(approval.payload, "entryId");
+    const entityId = readDataString(approval.payload, "entityId");
+    const expectedAvailability = readDataString(approval.payload, "expectedAvailability");
+    return (
+      <div className="approval-payload-summary" role="group" aria-label={t("Device action")}>
+        {targetDeviceId ? <span>{t("Target device {device}", { device: targetDeviceId })}</span> : null}
+        {capabilityId ? <span>{t("Capability {capability}", { capability: capabilityId })}</span> : null}
+        {entryId ? <span>{t("Integration entry {entry}", { entry: entryId })}</span> : null}
+        {entityId && expectedAvailability === "available" ? <span>{t("Verify that {entity} is available", { entity: entityId })}</span> : null}
+      </div>
+    );
+  }
   if (payloadType === "bash") {
     const command = readDataString(approval.payload, "command");
     const cwd = readDataString(approval.payload, "cwd");

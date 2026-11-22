@@ -29,6 +29,7 @@ export interface DaemonConfig {
   /** Trusted startup configuration for device connections and resource publishers. */
   readonly deviceSupport?: {
     readonly linuxSshTargetsFile?: string;
+    readonly modbusSerialTargetsFile?: string;
     readonly resourceTrustFile?: string;
     readonly homeAssistant?: { readonly origin: string; readonly tokenRef: string };
   };

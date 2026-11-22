@@ -120,6 +120,49 @@ OS permission and physical validation belong to the host adapter.
   follows the runtime contract's observation and reconciliation rules.
   [Approval and recovery contract](ling-device-support-platform-runtime-contract.md#3-approval-and-dispatch)
 
+#### PC Modbus RTU capture
+
+Set `LING_STACK_DEVICE_MODBUS_SERIAL_TARGETS_FILE` to an absolute JSON path or
+set `deviceSupport.modbusSerialTargetsFile` in the Daemon startup configuration.
+For an authorized bench sensor, record the OS port, USB adapter identity,
+documented UART settings, unit address and register range.
+
+```json
+{
+  "version": 1,
+  "targets": [
+    {
+      "transportId": "bench-sensor",
+      "displayName": "Bench temperature sensor",
+      "path": "/dev/cu.usbserial-ABCD",
+      "vendorId": "0403",
+      "productId": "6001",
+      "serialNumber": "ABCD",
+      "baudRate": 9600,
+      "parity": "even",
+      "stopBits": 1,
+      "read": { "unitAddress": 1, "table": "input", "startAddress": 0, "quantity": 1 }
+    }
+  ]
+}
+```
+
+Use `GET /v1/device-support/protocol/transports` to obtain the target and transport
+IDs for the local workbench. Create a session with `profileId` set to
+`modbus-rtu-registers`, then use that session's capture endpoint. The Daemon opens
+the exact configured port only when the OS reports its USB identity. The
+transport sends a holding- or input-register read and records the host request
+and reply. A timeout or disconnect preserves the received bytes as incomplete
+evidence. A completed capture describes the observed traffic, including a device
+exception or a checksum error when the decoder sees one.
+
+The OS driver must report the USB identity of the adapter. That pins the host
+interface. The Modbus unit address identifies the responding device on the
+configured bus. The operator records the bus wiring and device identity for
+bench acceptance. Use an automatic-direction USB-to-RS-485 adapter for this
+transport. A change to the serial settings or the configured request requires a
+new session after Daemon restart.
+
 ### 3.2 Standalone Mobile and PC collaboration
 
 | Placement | Device connection and capture | Workbench and verification |

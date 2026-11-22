@@ -22,7 +22,7 @@ import {
 import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
 import {
   assertHomeAssistantCatalogQuery, HOME_ASSISTANT_CATALOG_MAX_BYTES, homeAssistantCatalogCapabilities, homeAssistantEntityAvailability,
-  projectHomeAssistantCatalog, readHomeAssistantDeviceRegistry, type HomeAssistantCatalogKind, type HomeAssistantCatalogQuery,
+  projectHomeAssistantCatalog, readHomeAssistantRegistry, type HomeAssistantCatalogKind, type HomeAssistantCatalogQuery,
 } from "./home-assistant-catalog.js";
 
 export interface HomeAssistantEntityRead {
@@ -42,6 +42,19 @@ export interface HomeAssistantAdapterOptions {
   readonly token: string | (() => string | undefined);
   readonly fetchImpl?: typeof globalThis.fetch;
   readonly now?: () => string;
+}
+
+export const HOME_ASSISTANT_RELOAD_CAPABILITY_ID = "home_assistant.reload_config_entry";
+const HOME_ASSISTANT_CAPABILITY_FRESHNESS_MS = 180_000;
+const entityIdPattern = /^[a-z0-9_]+\.[a-z0-9_]+$/u;
+const integrationIdPattern = /^(?:[a-f0-9]{32}|[0-9a-hjkmnp-tv-z]{26})$/iu;
+
+export function isHomeAssistantReloadTarget(input: { readonly entryId?: unknown; readonly entityId?: unknown }): input is {
+  readonly entryId: string;
+  readonly entityId: string;
+} {
+  return typeof input.entryId === "string" && integrationIdPattern.test(input.entryId)
+    && typeof input.entityId === "string" && input.entityId.length <= 160 && entityIdPattern.test(input.entityId);
 }
 
 const homeAssistantManifest: AdapterManifestV1 = {
@@ -77,10 +90,13 @@ const homeAssistantManifest: AdapterManifestV1 = {
       displayMetadata: { label: "Read entity state", category: "diagnostics" },
     },
     {
-      id: "home_assistant.reload_config_entry",
+      id: HOME_ASSISTANT_RELOAD_CAPABILITY_ID,
       schemaVersion: "1.0",
       semanticVerb: "reload.integration",
-      inputSchema: { type: "object", required: ["entryId"] },
+      inputSchema: {
+        type: "object", required: ["entryId", "entityId"], additionalProperties: false,
+        properties: { entryId: { type: "string" }, entityId: { type: "string" } },
+      },
       outputSchema: { type: "object" },
       sideEffect: "reversible",
       approvalClass: "ask",
@@ -167,7 +183,11 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     if (await this.readVersion(input.signal) !== input.profile.device.firmwareVersion) {
       throw new DeviceBrokerError("target_changed", "Home Assistant version changed during enrollment");
     }
-    return createAdapterCapabilitySnapshot(this.manifest, input, this.#now());
+    const observedAt = this.#now();
+    return {
+      ...createAdapterCapabilitySnapshot(this.manifest, input, observedAt),
+      freshnessUntil: new Date(Date.parse(observedAt) + HOME_ASSISTANT_CAPABILITY_FRESHNESS_MS).toISOString(),
+    };
   }
 
   private async readVersion(signal?: AbortSignal): Promise<string> {
@@ -203,6 +223,26 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     return { entityId, availability, quality: availability === "available" ? "good" : "degraded", observedAt,
       ...(reported.value ? { lastReportedAt: reported.value } : {}), ...(updated.value ? { lastUpdatedAt: updated.value } : {}),
       ...(changed.value ? { lastChangedAt: changed.value } : {}), reportTimestampStatus, reportFreshness };
+  }
+
+  async assertReloadTarget(profile: DeviceProfileV1, target: {
+    readonly entryId: unknown;
+    readonly entityId: unknown;
+  }, callerSignal?: AbortSignal): Promise<void> {
+    this.assertTarget(profile);
+    if (!isHomeAssistantReloadTarget(target)) {
+      throw new DeviceBrokerError("invalid_request", "Home Assistant reload requires an integration and an entity");
+    }
+    const deadline = AbortSignal.timeout(8_000);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
+    const entry = await readHomeAssistantRegistry({
+      origin: this.#baseUrl, version: profile.device.firmwareVersion, token: this.requireToken(), signal,
+      command: { type: "config/entity_registry/get", entity_id: target.entityId },
+    });
+    if (!isRecord(entry) || entry.entity_id !== target.entityId || entry.config_entry_id !== target.entryId
+      || entry.disabled_by != null) {
+      throw new DeviceBrokerError("target_changed", "the entity does not belong to the selected active integration");
+    }
   }
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
@@ -256,14 +296,21 @@ export class HomeAssistantAdapter implements DeviceAdapter {
         observations: [this.entityObservation(action.observationIds[0]!, entity)],
       };
     }
-    if (input.capability.id !== "home_assistant.reload_config_entry") {
+    if (input.capability.id !== HOME_ASSISTANT_RELOAD_CAPABILITY_ID) {
       return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
     }
-    const entryId = requireString(args.entryId, "entryId");
+    const target = { entryId: args.entryId, entityId: args.entityId };
+    try {
+      await this.assertReloadTarget(input.profile, target, input.signal);
+    } catch (error) {
+      return { actionId: input.request.actionId, status: "rejected",
+        errorCode: error instanceof DeviceBrokerError ? error.code : "service_unavailable",
+        startedAt, finishedAt: this.#now(), observationIds: [] };
+    }
     const response = await this.request("/api/services/homeassistant/reload_config_entry", {
       method: "POST",
       signal: input.signal,
-      body: JSON.stringify({ entry_id: entryId }),
+      body: JSON.stringify({ entry_id: target.entryId }),
     });
     await readBoundedText(response, 64 * 1024);
     return { actionId: input.request.actionId, status: response.ok ? "completed" : "rejected", errorCode: response.ok ? undefined : "service_unavailable", startedAt, finishedAt: this.#now(), observationIds: [] };
@@ -275,14 +322,15 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     const args = asObject(request.normalizedInput);
     const entityId = typeof args.entityId === "string" ? args.entityId : undefined;
     const rule = request.expectedVerification ?? { availability: "available" };
-    if (input.capability.id !== "home_assistant.reload_config_entry" || !entityId || !isRecord(rule)
+    if (input.capability.id !== HOME_ASSISTANT_RELOAD_CAPABILITY_ID || !entityId || !isRecord(rule)
       || Object.keys(rule).length !== 1 || !["available", "unavailable", "absent"].includes(String(rule.availability))) {
       return { verification: {
         actionId: request.actionId, status: "not_evaluable", rule, observationIds: [],
         checkedAt: this.#now(), reason: "an entity and its expected availability are required",
       } };
     }
-    const entity = await this.readEntity(entityId, input.signal, readMaxReportAge(args.maxReportAgeMs));
+    await this.assertReloadTarget(input.profile, { entryId: args.entryId, entityId }, input.signal);
+    const entity = await this.readEntity(entityId, input.signal);
     const observation = this.entityObservation(input.evidenceId, entity, input.profile.device.id);
     return {
       verification: {
@@ -317,7 +365,9 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     const deadline = AbortSignal.timeout(8_000);
     const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
     const source: unknown = query.kind === "devices"
-      ? await readHomeAssistantDeviceRegistry({ origin: this.#baseUrl, version, token: this.requireToken(), signal })
+      ? await readHomeAssistantRegistry({
+        origin: this.#baseUrl, version, token: this.requireToken(), signal, command: { type: "config/device_registry/list" },
+      })
       : JSON.parse(await readBoundedText(await this.request(query.kind === "entities" ? "/api/states" : "/api/services", { method: "GET", signal }),
         HOME_ASSISTANT_CATALOG_MAX_BYTES));
     return projectHomeAssistantCatalog(query, source, this.#now());

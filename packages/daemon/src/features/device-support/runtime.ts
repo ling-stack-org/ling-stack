@@ -5,6 +5,7 @@ import type {
   DevicePlannerProviderHandoffV1, DeviceProfileV1, JsonValue,
 } from "@ling-stack/contracts";
 import {
+  type ApprovalRequest,
   type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
   createHomeAssistantOfflinePlaybook,
@@ -36,14 +37,16 @@ import {
 } from "@ling-stack/core";
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
 import type { ExternalDeviceAdapter } from "./adapters/external-process.js";
-import { HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
+import { HOME_ASSISTANT_RELOAD_CAPABILITY_ID, HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
 import { assertHomeAssistantCatalogQuery, homeAssistantCatalogCapabilities, type HomeAssistantCatalogQuery } from "./adapters/home-assistant-catalog.js";
 import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { PcAdapter } from "./adapters/pc.js";
 import { bindLinuxSshTargets, type BoundLinuxSshTarget, type ConfiguredLinuxSshTarget } from "./linux-ssh-targets.js";
+import { bindModbusSerialTarget, modbusSerialAdapterId, type ConfiguredModbusSerialTarget } from "./modbus-serial-targets.js";
 import { DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS, type DeviceDiagnosisPlanner, type DeviceDiagnosisRequest } from "./diagnosis-planner.js";
 import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
+import { createDeviceApprovalQueue } from "./approval-queue.js";
 
 interface LinuxSshTargetSummary {
   readonly connectionId: string;
@@ -68,8 +71,10 @@ export interface DeviceSupportRuntime {
   readonly resourceTrustConfigured: boolean;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
+  readonly approvalQueue: ReturnType<typeof createDeviceApprovalQueue>;
   diagnoseLocalPc(request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   diagnoseHomeAssistant(entityId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
+  proposeHomeAssistantReload(target: { readonly entryId: string; readonly entityId: string }): Promise<ApprovalRequest>;
   readHomeAssistantCatalog(query: HomeAssistantCatalogQuery): Promise<{ readonly taskId: string; readonly deviceId: string; readonly catalog: JsonValue }>;
   listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
@@ -97,6 +102,7 @@ export function createDeviceSupportRuntime(options: {
   readonly linuxSshRunner?: LocalProcessRunner;
   readonly homeAssistant?: HomeAssistantAdapterOptions;
   readonly protocolTransports?: readonly HardwareProtocolLiveTransport[];
+  readonly modbusSerialTargets?: readonly ConfiguredModbusSerialTarget[];
   readonly createDiagnosisPlanner?: DeviceDiagnosisPlanner;
   readonly externalAdapters?: readonly ExternalDeviceAdapter[];
 }): DeviceSupportRuntime {
@@ -139,6 +145,9 @@ export function createDeviceSupportRuntime(options: {
     });
     protocolStore.registerProfile(modbusProfile);
     for (const transport of options.protocolTransports ?? []) protocolTransports.register(transport);
+    const configuredModbus = (options.modbusSerialTargets ?? []).map(target => bindModbusSerialTarget(target));
+    for (const { transport } of configuredModbus) protocolTransports.register(transport);
+    const configuredModbusIds = new Set(configuredModbus.map(({ profile }) => profile.device.id));
     broker.registerAdapter(adapter);
     ssh = bindLinuxSshTargets(options.linuxSshTargets ?? [], options.linuxSshRunner);
     linuxAdapter = new LinuxSshAdapter({ now, connections: ssh.targets });
@@ -155,6 +164,7 @@ export function createDeviceSupportRuntime(options: {
     }
     for (const target of ssh.targets) linuxTargets.set(linuxSshDeviceId(DEFAULT_WORKSPACE_ID, target.hostKeyFingerprint), target);
     store.withWriteTransaction(() => {
+      for (const { profile } of configuredModbus) store.registerDevice(profile, now());
       for (const profile of store.listDevices()) {
         if (profile.device.ownerScope !== DEFAULT_WORKSPACE_ID) continue;
         if (profile.adapterId === adapter.manifest.adapterId && profile.transports.includes("local_process")
@@ -162,7 +172,8 @@ export function createDeviceSupportRuntime(options: {
           && profile.device.lifecycleStatus !== "revoked" && profile.device.lifecycleStatus !== "retired") {
           broker.registerDevice(adapter.manifest.adapterId, { ...profile, adapterVersion: adapter.manifest.adapterVersion });
         }
-        if ((profile.adapterId === linuxAdapter.manifest.adapterId && !hasCurrentLinuxConnection(profile))
+        if ((profile.adapterId === modbusSerialAdapterId && !configuredModbusIds.has(profile.device.id))
+          || (profile.adapterId === linuxAdapter.manifest.adapterId && !hasCurrentLinuxConnection(profile))
           || (profile.adapterId === homeAssistantAdapterManifest().adapterId && profile.device.id !== homeAssistant?.deviceId)) {
           store.markDeviceOffline(profile.device.id, now());
         }
@@ -179,6 +190,7 @@ export function createDeviceSupportRuntime(options: {
     throw error;
   }
   const remoteFacade = createRemoteDeviceFacade({ store, broker, now });
+  const approvalQueue = createDeviceApprovalQueue(store, broker, now);
   const planner = new DeviceRunnerPlanningBridge();
   const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
@@ -295,18 +307,20 @@ export function createDeviceSupportRuntime(options: {
     }
   }
 
-  async function withHomeAssistant<T>(run: (profile: DeviceProfileV1) => Promise<T>): Promise<T> {
+  async function withHomeAssistant<T>(run: (profile: DeviceProfileV1, adapter: HomeAssistantAdapter) => Promise<T>): Promise<T> {
     const adapter = homeAssistant;
     if (!adapter) throw new DeviceBrokerError("missing_target", "Home Assistant is not configured on this host");
     return withDeviceTarget(adapter.deviceId, async () => {
-      const status = store.getDevice(adapter.deviceId)?.device.lifecycleStatus;
-      if (status === "revoked" || status === "retired") {
+      const current = store.getDevice(adapter.deviceId);
+      if (current?.device.lifecycleStatus === "revoked" || current?.device.lifecycleStatus === "retired") {
         throw new DeviceBrokerError("permission_denied", "Home Assistant registration is no longer active");
       }
-      const target = await broker.discover(adapter.manifest.adapterId, {
-        ownerId: DEFAULT_WORKSPACE_ID, connectionRef: adapter.deviceId, signal: AbortSignal.timeout(10_000),
-      });
-      return run(target);
+      const snapshot = store.getCurrentCapabilitySnapshot(adapter.deviceId);
+      const target = current?.device.ownerScope === DEFAULT_WORKSPACE_ID && snapshot?.adapterVersion === adapter.manifest.adapterVersion
+        && Date.parse(snapshot.freshnessUntil) > Date.parse(now()) ? current : await broker.discover(adapter.manifest.adapterId, {
+          ownerId: DEFAULT_WORKSPACE_ID, connectionRef: adapter.deviceId, signal: AbortSignal.timeout(10_000),
+        });
+      return run(target, adapter);
     });
   }
 
@@ -342,6 +356,7 @@ export function createDeviceSupportRuntime(options: {
     resourceTrustConfigured: options.resourceTrust !== undefined,
     broker,
     remoteFacade,
+    approvalQueue,
     async diagnoseLocalPc(request = {}) {
       const key = JSON.stringify([request.providerPresetId, request.fallbackProviderPresetId, request.symptom]);
       if (localDiagnosis && localDiagnosis.key !== key) throw new DeviceBrokerError("target_busy", "PC diagnosis is active");
@@ -350,6 +365,39 @@ export function createDeviceSupportRuntime(options: {
     },
     async diagnoseHomeAssistant(entityId, request = {}) {
       return withHomeAssistant(target => runDiagnosis(target, target.device.id, createHomeAssistantOfflinePlaybook(entityId, { maxReportAgeMs: request.maxReportAgeMs }), request));
+    },
+    async proposeHomeAssistantReload({ entryId, entityId }) {
+      return withHomeAssistant(async (target, adapter) => {
+        const deviceId = target.device.id;
+        const snapshot = store.getCurrentCapabilitySnapshot(deviceId);
+        const capability = snapshot?.capabilities.find(item => item.id === HOME_ASSISTANT_RELOAD_CAPABILITY_ID);
+        if (!snapshot || !capability) throw new DeviceBrokerError("stale_snapshot", "Home Assistant snapshot is unavailable");
+        await adapter.assertReloadTarget(target, { entryId, entityId });
+        const taskId = `device_task_${randomUUID()}`;
+        const approvalId = `device_approval_${randomUUID()}`;
+        const timestamp = now();
+        broker.createTask({
+          id: taskId, ownerKind: "daemon", ownerId: deviceId, targetDeviceIds: [deviceId], status: "planning",
+          capabilitySnapshotIds: [snapshot.snapshotId], createdAt: timestamp, updatedAt: timestamp,
+        });
+        try {
+          broker.proposeAction({
+            taskId, actionId: `${taskId}:reload`, targetDeviceId: deviceId,
+            capabilityId: capability.id, capabilitySchemaVersion: capability.schemaVersion,
+            capabilitySnapshotId: snapshot.snapshotId, idempotencyKey: taskId,
+            normalizedInput: { entryId, entityId }, expectedVerification: { availability: "available" },
+          }, {
+            approvalId, payload: { type: "device_action", targetDeviceId: deviceId, capabilityId: capability.id,
+              entryId, entityId, expectedAvailability: "available" },
+          });
+        } catch (error) {
+          store.stopDaemonTask(taskId, now());
+          throw error;
+        }
+        const approval = approvalQueue.get(approvalId);
+        if (!approval) throw new DeviceBrokerError("missing_target", "the queued device approval is unavailable");
+        return approval;
+      });
     },
     async readHomeAssistantCatalog(query) {
       assertHomeAssistantCatalogQuery(query);

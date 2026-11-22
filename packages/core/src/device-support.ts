@@ -5,6 +5,7 @@ import {
   type AdapterManifestV1,
   type CapabilityDescriptorV1,
   type DeviceAccessGrantV1,
+  type DeviceActionApprovalPayload,
   type DeviceActionAuthorityV1,
   type DeviceActionRequestV1,
   type DeviceActionResultV1,
@@ -102,6 +103,7 @@ export interface DeviceSupportBrokerOptions {
 export interface DeviceExecuteOptions {
   readonly finalizeTask?: boolean;
   readonly requireCurrentProposal?: boolean;
+  readonly resolveQueuedApproval?: boolean;
   readonly onlyUnattendedReads?: boolean;
   readonly planningNode?: DevicePlanningNodeRefV1;
   readonly approvalPrincipal?: DeviceApprovalPrincipalV1;
@@ -246,11 +248,14 @@ export class DeviceCapabilityBroker {
     return this.store.createTask(task.policyRevision ? task : { ...task, policyRevision: this.policyRevision }, this.now());
   }
 
-  proposeAction(request: DeviceActionRequestV1): void {
+  proposeAction(request: DeviceActionRequestV1, queue?: {
+    readonly approvalId: string;
+    readonly payload: DeviceActionApprovalPayload;
+  }): void {
     if (!isDeviceActionRequestV1(request)) throw new DeviceBrokerError("invalid_request", "device action request is invalid");
     this.store.withWriteTransaction(() => {
       const task = this.requireTaskTarget(request);
-      const { capability } = this.resolveCapability(request);
+      const { snapshot, capability } = this.resolveCapability(request);
       const now = this.now();
       if (capability.sideEffect !== "read_only" && task.status !== "awaiting_approval") {
         if (!["capabilities_loaded", "planning", "executing", "partial"].includes(task.status)
@@ -259,7 +264,23 @@ export class DeviceCapabilityBroker {
         }
         this.store.transitionTask(task.id, "awaiting_approval", {}, now);
       }
-      this.store.saveActionProposal(request, digestRequest(request), now);
+      const requestDigest = digestRequest(request);
+      this.store.saveActionProposal(request, requestDigest, now);
+      if (queue) {
+        if (capability.sideEffect === "read_only" || request.approval || request.approvalId
+          || queue.payload.targetDeviceId !== request.targetDeviceId || queue.payload.capabilityId !== capability.id) {
+          throw new DeviceBrokerError("invalid_request", "device action cannot be queued for approval");
+        }
+        this.store.queueApproval({
+          binding: {
+            approvalId: queue.approvalId, taskId: task.id, actionId: request.actionId, targetDeviceId: request.targetDeviceId,
+            capabilitySnapshotId: snapshot.snapshotId, connectionRevision: snapshot.connectionRevision, policyRevision: this.policyRevision,
+            normalizedInputDigest: requestDigest, expiresAt: snapshot.freshnessUntil,
+            ...(request.recoveryPlan ? { recoveryScope: request.recoveryPlan } : {}),
+          },
+          idempotencyKey: request.idempotencyKey, payload: queue.payload, createdAt: now,
+        });
+      }
     });
   }
 
@@ -648,6 +669,12 @@ export class DeviceCapabilityBroker {
     };
     if (!this.store.acquireTargetLease(profile.device.id, task.id, task.ownerId, now, this.leaseMs, attempt.attemptId)) {
       throw new DeviceBrokerError("target_busy", "device target is leased by another task");
+    }
+    if (options.resolveQueuedApproval) {
+      if (!approval || !options.requireCurrentProposal || approvalPrincipal) {
+        throw new DeviceBrokerError("permission_denied", "queued device approvals require a local decision");
+      }
+      this.store.approveQueuedAction(approval, request.idempotencyKey, now);
     }
     if (approval) this.store.recordApproval(approval, approvalPrincipal, now);
     this.store.createAttempt({ attempt, request, requestDigest }, now);

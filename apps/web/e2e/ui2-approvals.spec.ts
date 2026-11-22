@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { DeviceActionApprovalPayload } from "@ling-stack/contracts";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { addExternalActionApproval, mockDaemon } from "./support/mock-daemon";
@@ -202,6 +203,70 @@ test("Decision failure retains its draft, selection changes reset state, and exp
   await expect(selectedDetail(surface)).toContainText("expired");
   await expect(selectedDetail(surface).getByRole("button", { name: "Approve" })).toHaveCount(0);
   await runtime.assertClean([409, 503]);
+});
+
+test("Device actions show exact targets and accept decisions from the inbox", async ({ page }) => {
+  await prepareSurface(page, "en-US", "light", 1440, 960);
+  const state = createBaseState({ approvalStatus: "pending" });
+  const createDeviceApproval = (id: string, title: string, entryId: string, entityId: string) => createApproval({
+    id,
+    deviceTaskId: `task_${id}`,
+    title,
+    description: "Reload the Home Assistant integration and then check its entity.",
+    actionType: "device_action",
+    risk: "high",
+    availableDecisions: ["approve_once", "deny"],
+    payload: {
+      type: "device_action",
+      targetDeviceId: "home_assistant_fixture",
+      capabilityId: "home_assistant.reload_config_entry",
+      entryId,
+      entityId,
+      expectedAvailability: "available",
+    } satisfies DeviceActionApprovalPayload,
+  });
+  const approve = createDeviceApproval("approval_device_light", "Reload lighting integration", "entry_lighting", "light.office");
+  const deny = createDeviceApproval("approval_device_climate", "Reload climate integration", "entry_climate", "climate.office");
+  state.approvals = [approve, deny];
+  await mockDaemon(page, state);
+  const runtime = watchRuntime(page);
+  const surface = await openInbox(page);
+
+  await selectApproval(surface, approve.title);
+  const detail = selectedDetail(surface);
+  const summary = detail.getByRole("group", { name: "Device action" });
+  await expect(detail).toContainText("task_approval_device_light");
+  await expect(summary.getByText("Target device home_assistant_fixture")).toBeVisible();
+  await expect(summary.getByText("Capability home_assistant.reload_config_entry")).toBeVisible();
+  await expect(summary.getByText("Integration entry entry_lighting")).toBeVisible();
+  await expect(summary.getByText("Verify that light.office is available")).toBeVisible();
+  await expect(detail.getByRole("button", { name: "Open Work Board" })).toHaveCount(0);
+  await assertNoHorizontalOverflow(page, surface);
+  await captureEvidence(page, "1440x960-ling-light-device-approval.png");
+
+  await detail.getByRole("button", { name: "Approve", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /Decision: Reload lighting integration/ });
+  await expect(dialog.getByRole("group", { name: "Device action" })).toContainText("Verify that light.office is available");
+  await dialog.getByLabel("Decision reason").fill("Confirmed the lighting integration and its entity");
+  await captureEvidence(page, "1440x960-ling-light-device-approval-confirm.png");
+  await dialog.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await selectApproval(surface, deny.title);
+  await detail.getByRole("button", { name: "Deny", exact: true }).click();
+  await expect(surface.getByRole("option", { name: deny.title })).toHaveCount(0);
+  expect(state.approvalDecisionRequests).toEqual([
+    { approvalId: approve.id, action: "approve", body: { decisionKind: "approve_once", reason: "Confirmed the lighting integration and its entity" } },
+    { approvalId: deny.id, action: "deny", body: {} },
+  ]);
+
+  await surface.getByText("History", { exact: true }).click();
+  await selectApproval(surface, approve.title);
+  await expect(detail.getByText("approved", { exact: true }).first()).toBeVisible();
+  await expect(detail.getByRole("button", { name: /^(Approve|Deny)$/u })).toHaveCount(0);
+  await selectApproval(surface, deny.title);
+  await expect(detail.getByText("denied", { exact: true }).first()).toBeVisible();
+  await runtime.assertClean();
 });
 
 test("Permission delta remains durable after approval and shows add, remove, and unchanged scopes", async ({ page }) => {

@@ -76,11 +76,13 @@ export function projectHomeAssistantCatalog(query: HomeAssistantCatalogQuery, so
   return result;
 }
 
-export async function readHomeAssistantDeviceRegistry(input: {
+export async function readHomeAssistantRegistry(input: {
   readonly origin: string;
   readonly token: string;
   readonly version: string | undefined;
   readonly signal: AbortSignal;
+  readonly command: { readonly type: "config/device_registry/list" }
+    | { readonly type: "config/entity_registry/get"; readonly entity_id: string };
 }): Promise<unknown> {
   const endpoint = new URL("/api/websocket", input.origin);
   endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
@@ -122,13 +124,16 @@ export async function readHomeAssistantDeviceRegistry(input: {
         if (stage === "authentication" && message.type === "auth_ok") {
           if (message.ha_version !== input.version) throw new DeviceBrokerError("target_changed", "Home Assistant registry version changed");
           stage = "catalog";
-          socket.send(JSON.stringify({ id: 1, type: "config/device_registry/list" }));
+          socket.send(JSON.stringify({ id: 1, ...input.command }));
           return;
         }
         if (stage === "catalog" && message.type === "result" && message.id === 1) {
           if (message.success === true) {
             finish(undefined, message.result);
             return;
+          }
+          if (isRecord(message.error) && message.error.code === "not_found") {
+            throw new DeviceBrokerError("missing_target", "Home Assistant registry entry was not found");
           }
           if (isRecord(message.error) && ["unauthorized", "forbidden"].includes(String(message.error.code))) {
             throw new DeviceBrokerError("permission_denied", "Home Assistant denied registry access");

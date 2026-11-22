@@ -21,12 +21,13 @@ export type ApprovalActionType =
   | "node_rerun"
   | "mcp_tool_call"
   | "host_capability"
+  | "device_action"
   | "runtime_permission_request";
 
 export const approvalActionTypes: readonly ApprovalActionType[] = [
   "read", "grep", "find", "ls", "write", "edit", "bash", "git_commit", "git_push", "external_send",
   "deploy", "media_cost", "credential_change", "provider_change", "workflow_step", "workflow_merge", "node_rerun",
-  "mcp_tool_call", "host_capability", "runtime_permission_request",
+  "mcp_tool_call", "host_capability", "device_action", "runtime_permission_request",
 ];
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
@@ -98,8 +99,18 @@ export interface ApprovalResumeBasisV1 {
   readonly fingerprint: string;
 }
 
+export interface DeviceActionApprovalPayload {
+  readonly type: "device_action";
+  readonly targetDeviceId: string;
+  readonly capabilityId: string;
+  readonly entryId: string;
+  readonly entityId: string;
+  readonly expectedAvailability: "available";
+}
+
 export interface ApprovalRequest {
   readonly id: string;
+  readonly deviceTaskId?: string;
   readonly runId?: string;
   readonly taskId?: string;
   readonly mediaJobId?: string;

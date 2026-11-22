@@ -165,6 +165,7 @@ import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
 import { parseHomeAssistantOrigin } from "./features/device-support/adapters/home-assistant.js";
 import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
+import { readModbusSerialTargets } from "./features/device-support/modbus-serial-targets.js";
 import { readDeviceResourceTrustPolicy } from "./features/device-support/resource-trust.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
@@ -306,6 +307,7 @@ export function createDaemonServer(
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
   const linuxSshTargets = readLinuxSshTargets(config.deviceSupport?.linuxSshTargetsFile ?? process.env.LING_STACK_DEVICE_SSH_TARGETS_FILE);
+  const modbusSerialTargets = readModbusSerialTargets(config.deviceSupport?.modbusSerialTargetsFile ?? process.env.LING_STACK_DEVICE_MODBUS_SERIAL_TARGETS_FILE);
   const deviceResourceTrust = readDeviceResourceTrustPolicy(config.deviceSupport?.resourceTrustFile ?? process.env.LING_STACK_DEVICE_RESOURCE_TRUST_FILE);
   const homeAssistantOrigin = config.deviceSupport?.homeAssistant?.origin ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_ORIGIN;
   const homeAssistantTokenRef = config.deviceSupport?.homeAssistant?.tokenRef ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_TOKEN_REF;
@@ -1048,6 +1050,7 @@ export function createDaemonServer(
   const deviceSupport = createDeviceSupportRuntime({
     databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
     protocolTransports: dependencies.deviceProtocolTransports,
+    modbusSerialTargets,
     resourceTrust: deviceResourceTrust,
     ...(homeAssistantBaseUrl && homeAssistantTokenRef ? { homeAssistant: {
       baseUrl: homeAssistantBaseUrl, token: () => secretResolver.resolve(homeAssistantTokenRef).value,

@@ -291,6 +291,7 @@
     "test/memory-verification-prompt.test.mjs",
     "test/memory-wiki.test.mjs",
     "test/mock-openai-compatible-server.test.mjs",
+    "test/modbus-serial-targets.test.ts",
     "test/narration-owner.test.mjs",
     "test/native-artifact-import.test.mjs",
     "test/native-codex-candidate.test.mjs",

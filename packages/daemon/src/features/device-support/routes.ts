@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceAttemptConformance,
+import { type ApprovalRequest, DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceAttemptConformance,
   readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace, requireWorkspaceDeviceTask, resolveDeviceSemanticTargets } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
@@ -8,6 +8,7 @@ import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
 import type { DeviceDiagnosisRequest } from "./diagnosis-planner.js";
+import { isHomeAssistantReloadTarget } from "./adapters/home-assistant.js";
 import { isHomeAssistantCatalogKind } from "./adapters/home-assistant-catalog.js";
 import { handleDeviceProtocolRoute } from "./protocol-routes.js";
 import { handleDeviceResourceRoute } from "./resource-routes.js";
@@ -19,6 +20,7 @@ export async function handleDeviceSupportRoute(
   request: IncomingMessage,
   response: ServerResponse,
   runtime: DeviceSupportRuntime,
+  onApprovalCreated?: (approval: ApprovalRequest) => void,
 ): Promise<boolean> {
   if (url.pathname.startsWith("/v1/device-support/developer/")) return await handleDeviceDeveloperRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
@@ -28,11 +30,12 @@ export async function handleDeviceSupportRoute(
   const accessGrantOperation = /^\/v1\/device-support\/devices\/([^/]+)\/access-grants\/([^/]+)$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
+  const homeAssistantReload = url.pathname === "/v1/device-support/home-assistant/reload-proposals";
   const homeAssistantCatalog = url.pathname === "/v1/device-support/home-assistant/catalog";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
-    && !linuxAction && !homeAssistant && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
+    && !linuxAction && !homeAssistant && !homeAssistantReload && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
@@ -53,6 +56,10 @@ export async function handleDeviceSupportRoute(
   }
   if (homeAssistant) {
     await handleHomeAssistantDiagnosis(request, response, runtime);
+    return true;
+  }
+  if (homeAssistantReload) {
+    await handleHomeAssistantReloadProposal(request, response, runtime, onApprovalCreated);
     return true;
   }
   if (homeAssistantCatalog) {
@@ -136,6 +143,64 @@ async function handleHomeAssistantDiagnosis(request: IncomingMessage, response: 
     }
     const { status, report } = await runtime.diagnoseHomeAssistant(entityId, { ...readDiagnosisOptions(options), maxReportAgeMs });
     writePrivateJson(response, 200, { status, report });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+async function handleHomeAssistantReloadProposal(request: IncomingMessage, response: ServerResponse,
+  runtime: DeviceSupportRuntime, onApprovalCreated?: (approval: ApprovalRequest) => void): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("Allow", "POST");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const body = await readJsonBody(request, 4096).catch(() => undefined);
+    if (!isRecord(body) || Object.keys(body).length !== 2 || !isHomeAssistantReloadTarget(body)) {
+      throw new DeviceBrokerError("invalid_request", "Home Assistant reload proposal requires an integration and an entity");
+    }
+    const approval = await runtime.proposeHomeAssistantReload(body);
+    onApprovalCreated?.(approval);
+    writePrivateJson(response, 201, { approval });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+export async function handleDeviceApprovalItem(request: IncomingMessage, response: ServerResponse,
+  runtime: DeviceSupportRuntime, route: { readonly approvalId: string; readonly action?: "approve" | "deny" },
+  workspaceMatches: boolean, onResolved: (approval: ApprovalRequest) => void): Promise<void> {
+  if (!allowLocalServiceRequest(request, response)) return;
+  if (!workspaceMatches) {
+    writePrivateJson(response, 404, { error: "approval_not_found" });
+    return;
+  }
+  const method = route.action ? "POST" : "GET";
+  if (request.method !== method) {
+    response.setHeader("Allow", method);
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    if (!route.action) {
+      const approval = runtime.approvalQueue.get(route.approvalId);
+      if (!approval) {
+        writePrivateJson(response, 404, { error: "approval_not_found" });
+        return;
+      }
+      writePrivateJson(response, 200, { approval });
+      return;
+    }
+    const body = await readOptionalJsonBody(request, 4096).catch(() => null);
+    if (body !== undefined && (!isRecord(body) || Object.keys(body).some(key => key !== "reason" && key !== "decisionKind")
+      || (body.reason !== undefined && typeof body.reason !== "string")
+      || (body.decisionKind !== undefined && (route.action !== "approve" || body.decisionKind !== "approve_once")))) {
+      throw new DeviceBrokerError("invalid_request", "device actions require a one-time approval or denial");
+    }
+    const approval = await runtime.approvalQueue.resolve(route.approvalId, route.action);
+    onResolved(approval);
+    writePrivateJson(response, 200, { approval });
   } catch (error) {
     writeDeviceOperationError(response, error);
   }
@@ -346,7 +411,7 @@ function writeDeviceOperationError(response: ServerResponse, error: unknown): vo
   }
   const code = error instanceof DeviceBrokerError || (error instanceof DeviceFabricError && error.code === "target_changed")
     ? error.code : "service_unavailable";
-  const statuses = { invalid_request: 400, missing_target: 404, permission_denied: 403, target_changed: 409, target_busy: 409 };
+  const statuses = { invalid_request: 400, missing_target: 404, permission_denied: 403, target_changed: 409, target_busy: 409, stale_snapshot: 409 };
   writePrivateJson(response, Object.hasOwn(statuses, code) ? statuses[code as keyof typeof statuses] : 503, { error: code });
 }
 

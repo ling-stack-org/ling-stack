@@ -18,19 +18,30 @@ export async function handleDeviceProtocolRoute(
   url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
   const profiles = url.pathname === `${protocolPath}/profiles`;
+  const transports = url.pathname === `${protocolPath}/transports`;
   const createSession = url.pathname === `${protocolPath}/sessions`;
   const [, sessionId, operation] = sessionOperationPath.exec(url.pathname) ?? [];
-  if (!profiles && !createSession && !sessionId) return false;
+  if (!profiles && !transports && !createSession && !sessionId) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   const method = request.method;
-  if (profiles ? method !== "GET" : createSession ? method !== "POST" : method !== "GET" && method !== "POST") {
-    response.setHeader("Allow", profiles ? "GET" : createSession ? "POST" : "GET, POST");
+  if (profiles || transports ? method !== "GET" : createSession ? method !== "POST" : method !== "GET" && method !== "POST") {
+    response.setHeader("Allow", profiles || transports ? "GET" : createSession ? "POST" : "GET, POST");
     writePrivateJson(response, 405, { error: "method_not_allowed" });
     return true;
   }
   try {
     if (profiles) {
       writePrivateJson(response, 200, { profiles: runtime.protocolProfiles.list() });
+      return true;
+    }
+    if (transports) {
+      const visible = runtime.protocolTransports.list().flatMap(({ transportId, targetDeviceId, transport }) => {
+        const target = runtime.store.getDevice(targetDeviceId);
+        if (target?.device.ownerScope !== DEFAULT_WORKSPACE_ID
+          || ["offline", "retired", "revoked"].includes(target.device.lifecycleStatus)) return [];
+        return [{ transportId, targetDeviceId, transport, displayName: target.device.displayName }];
+      });
+      writePrivateJson(response, 200, { transports: visible });
       return true;
     }
     if (createSession) {

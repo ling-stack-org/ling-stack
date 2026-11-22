@@ -4,6 +4,8 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  type ApprovalStatus,
+  type DeviceActionApprovalPayload,
   type DeviceActionRequestV1,
   type DeviceActionResultV1,
   type DeviceApprovalBindingV1,
@@ -22,6 +24,7 @@ import {
   type DeviceTaskV1,
   type DeviceVerificationResultV1,
   isDeviceActionRequestV1,
+  isDeviceApprovalBindingV1,
   isDeviceActionResultV1,
   isDeviceCapabilitySnapshotV1,
   isDeviceObservationV1,
@@ -37,6 +40,15 @@ import { readSqliteSnapshot, withSqliteSnapshotParentTransaction } from "./read-
 
 export interface DeviceSupportStoreOptions {
   readonly databasePath?: string;
+}
+
+export interface QueuedDeviceApproval {
+  readonly binding: DeviceApprovalBindingV1;
+  readonly idempotencyKey: string;
+  readonly payload: DeviceActionApprovalPayload;
+  readonly status: ApprovalStatus;
+  readonly createdAt: string;
+  readonly resolvedAt?: string;
 }
 
 export interface DeviceTaskPatch {
@@ -331,6 +343,88 @@ export class SqliteDeviceSupportStore {
       VALUES(?,?,?,?,?,?,?)
       ON CONFLICT(task_id) DO UPDATE SET action_id=excluded.action_id,idempotency_key=excluded.idempotency_key,request_digest=excluded.request_digest,request_json=excluded.request_json,updated_at=excluded.updated_at
     `).run(request.taskId, request.actionId, request.idempotencyKey, requestDigest, JSON.stringify(request), now, now);
+  }
+
+  queueApproval(approval: Pick<QueuedDeviceApproval, "binding" | "idempotencyKey" | "payload" | "createdAt">): void {
+    const { binding, payload } = approval;
+    this.database.prepare(`
+      INSERT INTO device_queued_approvals (
+        approval_id, task_id, target_device_id, snapshot_id, request_digest, idempotency_key,
+        binding_json, payload_json, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(binding.approvalId, binding.taskId, binding.targetDeviceId, binding.capabilitySnapshotId,
+      binding.normalizedInputDigest, approval.idempotencyKey, JSON.stringify(binding),
+      JSON.stringify(payload), approval.createdAt, binding.expiresAt);
+  }
+
+  getQueuedApproval(id: string, now: string): QueuedDeviceApproval | undefined {
+    return this.readQueuedApprovals(now, id, undefined, 1)[0];
+  }
+
+  listQueuedApprovals(now: string, status: ApprovalStatus | undefined, limit: number): QueuedDeviceApproval[] {
+    return this.readQueuedApprovals(now, undefined, status, limit);
+  }
+
+  private readQueuedApprovals(now: string, id: string | undefined, status: ApprovalStatus | undefined,
+    limit: number): QueuedDeviceApproval[] {
+    const rows = this.database.prepare(`
+      WITH projected AS (
+        SELECT approval.*, CASE
+          WHEN approval.status <> 'pending' THEN approval.status
+          WHEN task.status IS NOT 'awaiting_approval'
+            OR proposal.idempotency_key IS NOT approval.idempotency_key
+            OR proposal.request_digest IS NOT approval.request_digest
+            OR registry.lifecycle_status IN ('revoked', 'retired', 'offline')
+            OR json_extract(registry.capability_snapshot_json, '$.snapshotId') IS NOT approval.snapshot_id
+          THEN 'cancelled'
+          WHEN approval.expires_at <= ? THEN 'expired'
+          ELSE 'pending'
+        END AS effective_status
+        FROM device_queued_approvals AS approval
+        JOIN device_tasks AS task ON task.task_id = approval.task_id
+        LEFT JOIN device_task_proposals AS proposal ON proposal.task_id = approval.task_id
+        JOIN device_registry AS registry ON registry.device_id = approval.target_device_id
+        WHERE (? IS NULL OR approval.approval_id = ?)
+      )
+      SELECT * FROM projected WHERE (? IS NULL OR effective_status = ?)
+      ORDER BY created_at DESC, approval_id DESC LIMIT ?
+    `).all(now, id ?? null, id ?? null, status ?? null, status ?? null, limit) as Row[];
+    return rows.map(row => ({
+      binding: parseJson(row.binding_json, isDeviceApprovalBindingV1, "queued device approval binding"),
+      idempotencyKey: readString(row, "idempotency_key"),
+      payload: JSON.parse(readString(row, "payload_json")) as DeviceActionApprovalPayload,
+      status: readString(row, "effective_status") as ApprovalStatus,
+      createdAt: readString(row, "created_at"),
+      ...(typeof row.resolved_at === "string" ? { resolvedAt: row.resolved_at } : {}),
+    }));
+  }
+
+  approveQueuedAction(binding: DeviceApprovalBindingV1, idempotencyKey: string, now: string): void {
+    const approval = this.getQueuedApproval(binding.approvalId, now);
+    if (approval?.status !== "pending" || approval.idempotencyKey !== idempotencyKey
+      || !isDeepStrictEqual(approval.binding, binding)) {
+      throw new DeviceBrokerError("target_changed", "the queued device approval changed");
+    }
+    this.writeQueuedDecision(approval, "approved", now);
+  }
+
+  denyQueuedAction(id: string, now: string): void {
+    this.withWriteTransaction(() => {
+      const approval = this.getQueuedApproval(id, now);
+      if (approval?.status === "denied") return;
+      if (approval?.status !== "pending") {
+        throw new DeviceBrokerError("target_changed", "the queued device approval changed");
+      }
+      this.writeQueuedDecision(approval, "denied", now);
+      this.stopDaemonTaskInTransaction(this.requireTask(approval.binding.taskId), now);
+    });
+  }
+
+  private writeQueuedDecision(approval: QueuedDeviceApproval, status: "approved" | "denied", now: string): void {
+    const { approvalId, taskId } = approval.binding;
+    this.database.prepare("UPDATE device_queued_approvals SET status = ?, resolved_at = ? WHERE approval_id = ?")
+      .run(status, now, approvalId);
+    this.appendEvent(taskId, "queued_approval_resolved", { approvalId, status, resolvedBy: "local-user" }, now);
   }
 
   recordApproval(approval: DeviceApprovalBindingV1, principal: DeviceApprovalPrincipalV1 | undefined, now: string): void {
@@ -722,6 +816,21 @@ export class SqliteDeviceSupportStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS device_queued_approvals (
+        approval_id TEXT PRIMARY KEY NOT NULL,
+        task_id TEXT UNIQUE NOT NULL REFERENCES device_tasks(task_id),
+        target_device_id TEXT NOT NULL REFERENCES device_registry(device_id),
+        snapshot_id TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        binding_json TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'denied')),
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_queued_approvals_created ON device_queued_approvals(created_at DESC, approval_id DESC);
       CREATE TABLE IF NOT EXISTS device_task_attempts (
         attempt_id TEXT PRIMARY KEY NOT NULL,
         task_id TEXT NOT NULL REFERENCES device_tasks(task_id),

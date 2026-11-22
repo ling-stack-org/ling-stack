@@ -228,6 +228,7 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
   const result = await build({
     absWorkingDir: desktopRoot, entryPoints: [sourceInputs?.entryPoint ?? "../../packages/daemon/dist/cli.js"],
     bundle: true, platform: "node", format: "esm", outfile: "dist/daemon/cli.mjs",
+    external: ["@serialport/bindings-cpp"],
     ...(sourceInputs ? { write: false, metafile: true, tsconfigRaw: sourceInputs.tsconfigRaw, target: "es2022" } : {}),
     banner: { js: 'import { createRequire as __lingCreateRequire } from "node:module"; const require = __lingCreateRequire(import.meta.url);' },
     plugins: [gstack.plugin, agentRuntime.plugin, {

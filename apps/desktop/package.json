@@ -72,6 +72,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "@napi-rs/keyring": "2.1.2",
+    "@serialport/bindings-cpp": "13.0.0",
     "@ling-stack/core": "workspace:*"
   },
   "devDependencies": {
@@ -234,7 +235,8 @@
       "include": "build/installer.nsh"
     },
     "asarUnpack": [
-      "**/node_modules/@napi-rs/keyring*/**/*.node"
+      "**/node_modules/@napi-rs/keyring*/**/*.node",
+      "**/node_modules/@serialport/bindings-cpp/prebuilds/**/*.node"
     ]
   }
 }

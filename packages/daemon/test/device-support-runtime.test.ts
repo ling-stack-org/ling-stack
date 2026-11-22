@@ -10,7 +10,7 @@ import test from "node:test";
 import { WebSocketServer } from "ws";
 
 import type {
-  DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
+  ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
   DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
@@ -162,6 +162,184 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
       assert.deepEqual(store.listObservations(page.taskId)[0]?.value, page.catalog);
       assert.doesNotMatch(JSON.stringify([page, store.listEvents(page.taskId)]), /private device output|fixture-ha-access-token/u);
     }
+  } finally {
+    store.close();
+  }
+});
+
+test("the local Home Assistant approval queue persists exact decisions and never repeats a reload", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-home-assistant-approval-"));
+  const accessToken = "fixture-ha-queue-token";
+  const entryId = "0123456789abcdef0123456789abcdef";
+  const otherEntryId = "0123456789abcdef0123456789abcdee";
+  const entityId = "sensor.garage";
+  let registryEntry = entryId;
+  let loseReloadResponse = false;
+  let reads = 0;
+  const writes: unknown[] = [];
+  const home = createServer(async (req, res) => {
+    if (req.headers.authorization !== `Bearer ${accessToken}`) {
+      res.writeHead(401).end();
+      return;
+    }
+    if (req.url === "/api/config" && req.method === "GET") {
+      res.writeHead(200).end(JSON.stringify({ version: "2026.11.4" }));
+    } else if (req.url === "/api/services/homeassistant/reload_config_entry" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      writes.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      if (loseReloadResponse) res.destroy();
+      else res.writeHead(200).end("[]");
+    } else if (req.url === `/api/states/${entityId}` && req.method === "GET") {
+      reads++;
+      res.writeHead(200).end(JSON.stringify({ entity_id: entityId, state: "on" }));
+    } else res.writeHead(404).end();
+  });
+  const registry = new WebSocketServer({ server: home, path: "/api/websocket" });
+  registry.on("connection", socket => {
+    let authenticated = false;
+    socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.4" }));
+    socket.on("message", raw => {
+      const message = JSON.parse(raw.toString()) as { type: string; entity_id?: string; access_token?: string; id?: number };
+      if (!authenticated && message.type === "auth" && message.access_token === accessToken) {
+        authenticated = true;
+        socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.4" }));
+      } else if (authenticated && message.type === "config/entity_registry/get" && message.entity_id === entityId) {
+        socket.send(JSON.stringify({ id: message.id, type: "result", success: true,
+          result: { entity_id: entityId, config_entry_id: registryEntry, private_field: "fixture-hidden-registry-field" } }));
+      } else socket.close();
+    });
+  });
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  t.after(async () => {
+    await daemon?.stop();
+    await new Promise<void>(resolve => registry.close(() => resolve()));
+    await new Promise<void>(resolve => home.close(() => resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  home.listen(0, "127.0.0.1");
+  await once(home, "listening");
+  const homeAddress = home.address();
+  assert.ok(homeAddress && typeof homeAddress === "object");
+  const authToken = "fixture-daemon-queue-authority";
+  const options = {
+    host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd,
+    deviceSupport: { homeAssistant: { origin: `http://127.0.0.1:${homeAddress.port}`, tokenRef: "env:HA_FIXTURE" } },
+  };
+  let base = "";
+  async function restart(): Promise<void> {
+    await daemon?.stop();
+    daemon = createDaemonServer(options, {
+      secretResolver: createEnvSecretResolver({ HA_FIXTURE: accessToken }), chromeBrowserNativeMessagingEnabled: false,
+      remoteReplyDispatcher: null,
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    base = `http://127.0.0.1:${address.port}`;
+  }
+  await restart();
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const workspaceQuery = `cwd=${encodeURIComponent(cwd)}`;
+  const approvals = (query = workspaceQuery, extraHeaders: Record<string, string> = {}) =>
+    fetch(base + "/approvals?" + query, { headers: { ...headers, ...extraHeaders } });
+  const propose = (id = entryId, extraHeaders: Record<string, string> = {}) =>
+    fetch(base + "/v1/device-support/home-assistant/reload-proposals", {
+      method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify({ entryId: id, entityId }),
+    });
+  const decision = (approvalId: string, action: "approve" | "deny", body: object = {},
+    extraHeaders: Record<string, string> = {}, query = workspaceQuery) => fetch(base + `/approvals/${approvalId}/${action}?${query}`, {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
+  });
+  async function createProposal(): Promise<ApprovalRequest> {
+    const response = await propose();
+    assert.equal(response.status, 201);
+    return (await response.json() as { approval: ApprovalRequest }).approval;
+  }
+  const workspace = createSqliteRunStore(cwd);
+  const databasePath = workspace.paths.databasePath;
+  workspace.close();
+
+  assert.equal((await propose(otherEntryId)).status, 409);
+  assert.equal((await propose(entryId, { Origin: "https://foreign.example" })).status, 403);
+  const pending = await createProposal();
+  assert.equal(pending.status, "pending");
+  assert.deepEqual(pending.availableDecisions, ["approve_once", "deny"]);
+  assert.deepEqual(pending.payload, {
+    type: "device_action", targetDeviceId: (pending.payload as { targetDeviceId: string }).targetDeviceId,
+    capabilityId: "home_assistant.reload_config_entry", entryId, entityId, expectedAvailability: "available",
+  });
+  assert.match((pending.payload as { targetDeviceId: string }).targetDeviceId, /^home-assistant:[a-f0-9]{24}$/u);
+  assert.deepEqual(writes, []);
+  await restart();
+  assert.deepEqual((await (await approvals(workspaceQuery + "&status=pending")).json() as { approvals: ApprovalRequest[] }).approvals,
+    [pending]);
+  const foreign = await approvals(workspaceQuery, { Origin: "https://foreign.example" });
+  assert.deepEqual((await foreign.json() as { approvals: ApprovalRequest[] }).approvals, []);
+  assert.equal((await decision(pending.id, "approve", { decisionKind: "approve_command_rule" })).status, 400);
+  assert.equal((await decision(pending.id, "approve", {}, { Origin: "https://foreign.example" })).status, 403);
+  assert.equal((await decision(pending.id, "approve", {}, {}, `cwd=${encodeURIComponent(join(cwd, "other"))}`)).status, 404);
+  assert.deepEqual(writes, []);
+
+  const approvalsTogether = await Promise.all([decision(pending.id, "approve", { decisionKind: "approve_once" }),
+    decision(pending.id, "approve", { decisionKind: "approve_once" })]);
+  for (const response of approvalsTogether) {
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as { approval: ApprovalRequest }).approval.status, "approved");
+  }
+  assert.deepEqual(writes, [{ entry_id: entryId }]);
+  assert.equal(reads, 1);
+  await restart();
+  assert.equal((await decision(pending.id, "approve")).status, 200);
+  assert.equal((await decision(pending.id, "deny")).status, 409);
+  assert.equal(writes.length, 1);
+
+  const denied = await createProposal();
+  assert.equal((await decision(denied.id, "deny")).status, 200);
+  assert.equal((await decision(denied.id, "approve")).status, 409);
+
+  const superseded = await createProposal();
+  const proposalStore = new SqliteDeviceSupportStore({ databasePath });
+  try {
+    const proposal = proposalStore.getActionProposal(superseded.deviceTaskId!);
+    assert.ok(proposal);
+    proposalStore.saveActionProposal({ ...proposal.request, idempotencyKey: "replacement-key" }, proposal.requestDigest, new Date().toISOString());
+  } finally {
+    proposalStore.close();
+  }
+  const staleReceipt = await fetch(base + `/approvals/${superseded.id}?${workspaceQuery}`, { headers });
+  assert.equal(staleReceipt.status, 200);
+  assert.equal((await staleReceipt.json() as { approval: ApprovalRequest }).approval.status, "cancelled");
+  assert.equal((await decision(superseded.id, "approve")).status, 409);
+  assert.equal(writes.length, 1);
+
+  const changed = await createProposal();
+  registryEntry = otherEntryId;
+  assert.equal((await decision(changed.id, "approve")).status, 200);
+  assert.equal(writes.length, 1);
+  registryEntry = entryId;
+  const interrupted = await createProposal();
+  loseReloadResponse = true;
+  assert.equal((await decision(interrupted.id, "approve")).status, 200);
+  assert.equal(writes.length, 2);
+  await restart();
+  assert.equal((await decision(interrupted.id, "approve")).status, 200);
+  assert.equal(writes.length, 2);
+  assert.equal(reads, 1);
+  const store = new SqliteDeviceSupportStore({ databasePath });
+  try {
+    assert.equal(store.getTask(pending.deviceTaskId!)?.status, "succeeded");
+    assert.equal(store.getTask(denied.deviceTaskId!)?.status, "cancelled");
+    assert.equal(store.getTask(changed.deviceTaskId!)?.status, "failed");
+    assert.equal(store.getTask(interrupted.deviceTaskId!)?.status, "unknown");
+    assert.deepEqual(store.listAttempts(denied.deviceTaskId!), []);
+    assert.deepEqual(store.listAttempts(superseded.deviceTaskId!), []);
+    assert.equal(store.listAttempts(changed.deviceTaskId!)[0]?.attempt.receipt?.errorCode, "target_changed");
+    assert.equal(store.listAttempts(pending.deviceTaskId!)[0]?.attempt.verification?.status, "verified");
+    assert.equal(store.listAttempts(interrupted.deviceTaskId!).length, 1);
+    const events = store.listEvents(pending.deviceTaskId!);
+    assert.equal(events.filter(event => event.type === "queued_approval_resolved").length, 1);
+    assert.doesNotMatch(JSON.stringify([pending, events]), /fixture-ha-queue-token|fixture-hidden-registry-field/u);
   } finally {
     store.close();
   }
