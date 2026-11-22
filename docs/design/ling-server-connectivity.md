@@ -471,6 +471,75 @@ installation and use the same fingerprint in the PC migration profile. The TLS
 certificate and application key identify their respective protocol layers.
 [CLI and configuration](../../packages/daemon/src/ling-server-cli.ts)
 
+### Single-node deployment with coturn
+
+Build the standalone control package from a source checkout.
+
+```bash
+corepack pnpm --filter @ling-stack/daemon build:ling-server
+```
+
+Copy `ling-server.mjs` and `LICENSE` from `packages/daemon/dist/ling-server/`
+to the server. The bundle runs with Node.js 22.22.1 or compatible later releases.
+Install coturn separately on the same host. Configure both services in one
+`server.json` so the advertised listeners and the TURN credential issuer use
+the same configuration and shared secret.
+
+```json
+{
+  "host": "192.0.2.10",
+  "port": 443,
+  "adminPort": 17894,
+  "databasePath": "state/ling-server.sqlite",
+  "authTokenFile": "secrets/operator-token",
+  "applicationIdentityKeyFile": "secrets/application-identity.pem",
+  "tls": {
+    "certFile": "tls/control-fullchain.pem",
+    "keyFile": "tls/control-key.pem"
+  },
+  "transport": {
+    "relaySharedSecretFile": "secrets/coturn-rest-secret",
+    "coturn": {
+      "publicHost": "relay.example.com",
+      "bindAddress": "192.0.2.11",
+      "publicAddress": "198.51.100.11",
+      "udpPort": 3478,
+      "tlsPort": 443,
+      "allocationPortMin": 49160,
+      "allocationPortMax": 49259,
+      "stateDirectory": "state/coturn",
+      "tls": {
+        "certFile": "tls/relay-fullchain.pem",
+        "keyFile": "tls/relay-key.pem"
+      }
+    }
+  }
+}
+```
+
+Use the server's addresses, DNS names and certificate files. Set `publicAddress`
+when NAT maps the relay host to a different IPv4 address. Preserve the configured
+listener and allocation ports through NAT and verify that relay allocations can
+reach one another at the advertised address. `udpPort: null` configures TLS-only
+TURN. The relay certificate must cover `publicHost`. The shared secret file
+accepts 32–256 base64url characters.
+
+```bash
+node ling-server.mjs --write-coturn-config server.json turnserver.conf
+turnserver -c turnserver.conf
+node ling-server.mjs server.json
+```
+
+Run the last two commands as independent services. Give their service accounts
+access to the corresponding TLS files and writable state directories. The
+configuration command creates a private `0600` file and requires a new output path.
+Generate a new file for rotation and activate it with the matching server settings.
+The generated relay configuration applies allocation quotas and permits relay
+destinations at the advertised relay address. Independently test public HTTPS,
+TURN/TLS and the UDP allocation range before registering a production pairing.
+[Build script](../../packages/daemon/scripts/build-ling-server.mjs)
+[Configuration](../../packages/daemon/src/features/ling-server/configuration.ts)
+
 ### Deployment topology
 
 | Listener or component | Deployment |
@@ -478,7 +547,7 @@ certificate and application key identify their respective protocol layers.
 | HTTPS/WSS signaling | Ling-controlled TLS on TCP 443 at the configured server origin. Guests authenticate an explicitly initiated pairing claim or present a valid installation proof. |
 | STUN and TURN | Operator-provided DNS and addressed listeners for UDP and TURN/TLS, plus the configured UDP allocation range. Publish only these configured endpoints to clients. |
 | TURN/TLS on TCP 443 | Use a dedicated listener address for relay if HTTPS signaling also uses 443. The services can share a host with separate bind addresses. Verify the actual NAT and firewall reachability of the advertised relay address and port range. |
-| Metadata and admin | Package control and coturn together as the self-hosted installation with SQLite metadata for a single node. Bind admin and database access to private interfaces. |
+| Metadata and admin | Run the standalone control bundle and coturn with the shared single-node configuration. Control metadata stays in SQLite and the administration listener binds to loopback. |
 | Scaled installation | Keep peer binding epochs and revocations in a shared PostgreSQL store. Use an authenticated internal trust channel and relay-specific credentials. Preserve affinity for active relay allocations and drain them before cycling a worker. |
 
 The operator can run Ling Server or deploy it under Ling-operated infrastructure.

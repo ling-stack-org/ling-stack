@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ import {
   lingServerSignalingSigningBytes, validateLingServerRendezvousReceiptV1, validateRemoteP256PublicJwkV1,
 } from "@ling-stack/remote-protocol";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
+import { readLingServerConfiguration } from "../dist/features/ling-server/configuration.js";
 
 test("self-hosted Ling Server control plane requires auth and preserves route fallback", async () => {
   const control = new LingServerControlPlane({ authToken: "server-token", now: () => "2026-11-21T00:00:00.000Z", transport: {
@@ -324,12 +325,50 @@ test("the standalone Ling Server starts a TLS peer listener and private administ
   writeFileSync(join(root, "operator.txt"), token + "\n", { mode: 0o600 });
   const applicationKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
   writeFileSync(join(root, "application.pem"), applicationKey.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
-  writeFileSync(confPath, JSON.stringify({
+  const relaySecret = randomBytes(32).toString("base64url");
+  writeFileSync(join(root, "turn-secret"), relaySecret + "\n", { mode: 0o600 });
+  const config = {
     host: "127.0.0.1", port: 0, adminPort: 0, authTokenFile: "operator.txt", databasePath: "server.sqlite",
     applicationIdentityKeyFile: "application.pem",
     tls: { certFile: "tls.crt", keyFile: "tls.key" },
-  }));
+    transport: {
+      relaySharedSecretFile: "turn-secret",
+      coturn: {
+        publicHost: "relay.example.com", bindAddress: "192.0.2.12", publicAddress: "198.51.100.12",
+        tlsPort: 443, allocationPortMin: 49160, allocationPortMax: 49179,
+        tls: { certFile: "tls.crt", keyFile: "tls.key" },
+      },
+    },
+  };
+  writeFileSync(confPath, JSON.stringify(config));
   const cli = fileURLToPath(new URL("../dist/ling-server-cli.js", import.meta.url));
+  const { control } = readLingServerConfiguration(confPath);
+  assert.deepEqual(control.transport?.stunUrls, ["stun:relay.example.com:3478"]);
+  assert.deepEqual(control.transport?.turnUrls, ["turn:relay.example.com:3478?transport=udp", "turns:relay.example.com:443?transport=tcp"]);
+  const coturnPath = join(root, "turnserver.conf");
+  const render = () => spawnSync(process.execPath, [cli, "--write-coturn-config", confPath, coturnPath], {
+    encoding: "utf8", timeout: 3000,
+  });
+  const written = render();
+  assert.equal(written.status, 0);
+  assert.equal(written.stdout.includes(relaySecret) || written.stderr.includes(relaySecret), false);
+  if (process.platform !== "win32") assert.equal(statSync(coturnPath).mode & 0o777, 0o600);
+  const coturn = readFileSync(coturnPath, "utf8");
+  assert.ok(coturn.includes("static-auth-secret=" + relaySecret + "\n"));
+  for (const line of [
+    "listening-ip=192.0.2.12", "relay-ip=192.0.2.12", "external-ip=198.51.100.12/192.0.2.12",
+    "listening-port=3478", "tls-listening-port=443", "realm=relay.example.com", "total-quota=20",
+    "allowed-peer-ip=198.51.100.12", "denied-peer-ip=0.0.0.0-255.255.255.255", "no-tcp-relay",
+  ]) {
+    assert.ok(coturn.split("\n").includes(line), line);
+  }
+  assert.equal(render().status, 1);
+  assert.ok(readFileSync(coturnPath, "utf8") === coturn);
+  const invalidPath = join(root, "invalid.json");
+  writeFileSync(invalidPath, JSON.stringify({ ...config, host: "0.0.0.0", port: 443 }));
+  assert.throws(() => readLingServerConfiguration(invalidPath), /distinct addresses or ports/u);
+  writeFileSync(invalidPath, JSON.stringify({ ...config, transport: { ...config.transport, turnUrls: [] } }));
+  assert.throws(() => readLingServerConfiguration(invalidPath), /one source for the advertised TURN endpoints/u);
   const child = spawn(process.execPath, [cli, confPath], { stdio: ["ignore", "pipe", "pipe"] });
   const exited = once(child, "exit");
   t.after(async () => {

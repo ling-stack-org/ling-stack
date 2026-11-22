@@ -19,6 +19,7 @@
     "lint": "echo \"lint not configured yet\"",
     "test": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/api-client build:ci && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm --filter @ling-stack/remote-client build:ci && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs && corepack pnpm test:ci",
     "build:peer-worker": "node scripts/build-ling-peer-worker.mjs",
+    "build:ling-server": "corepack pnpm --filter @ling-stack/core... --filter @ling-stack/remote-protocol... build:ci && node scripts/build-ling-server.mjs",
     "build:engine-supervisor": "node scripts/build-engine-supervisor.mjs",
     "build:image-sanitizer": "node scripts/build-image-sanitizer.mjs",
     "test:image-sanitizer": "cargo test --locked --manifest-path native/image-sanitizer/Cargo.toml -- --test-threads=1"
@@ -65,6 +66,7 @@
     "@types/pdf-parse": "1.1.5",
     "@types/proper-lockfile": "4.1.4",
     "@types/ws": "^8.5.13",
+    "esbuild": "0.28.2",
     "pngjs": "7.0.0",
     "typescript": "7.0.2"
   }

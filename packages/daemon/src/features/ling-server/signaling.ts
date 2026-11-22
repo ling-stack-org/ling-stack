@@ -5,7 +5,7 @@ import {
   LING_SERVER_SIGNAL_LANE_LIMIT_V1, LING_SERVER_SIGNAL_PAGE_LIMIT_V1, LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1,
   type LingServerPeerRoleV1, type LingServerSignedSignalingV1, type LingServerSignalingResponseV1, type LingServerTransportRouteV1,
 } from "@ling-stack/contracts";
-import { DeviceFabricError, type LingServerPeerRegistry, type LingServerRelayCredentialIssuer } from "@ling-stack/core";
+import { DeviceFabricError, type LingServerPeerRegistry, type LingServerRelayCredentialIssuer } from "@ling-stack/core/ling-server-control";
 import {
   decodeBase64Url, lingServerSignalingSigningBytes, matchesPublicJwkFingerprint, validateLingServerSignedSignalingV1,
 } from "@ling-stack/remote-protocol";

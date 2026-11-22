@@ -1,7 +1,7 @@
 import { createPrivateKey, createPublicKey, sign, timingSafeEqual, verify } from "node:crypto";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
-import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
+import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core/ling-server-control";
 import {
   LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
   type LingServerPairingPinProofV1, type LingServerPeerBindingV1, type LingServerRouteAttemptV1, type RemoteP256PublicJwkV1,

@@ -3,7 +3,7 @@ import {
   LING_SERVER_RENDEZVOUS_MAX_LIFETIME_MS_V1,
   type LingServerRendezvousReceiptV1, type LingServerSignedRendezvousRequestV1, type RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
-import { DeviceFabricError, type LingServerPeerRegistry } from "@ling-stack/core";
+import { DeviceFabricError, type LingServerPeerRegistry } from "@ling-stack/core/ling-server-control";
 import {
   decodeBase64Url, encodeBase64Url, lingServerRendezvousReceiptBytes, lingServerRendezvousRequestBytes,
   lingServerRendezvousRoute, matchesPublicJwkFingerprint, validateLingServerSignedRendezvousRequestV1,
