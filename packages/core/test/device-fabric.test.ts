@@ -164,6 +164,14 @@ test("edge enrollment, ordered event recovery, resource rollback, safety and lif
   const denied = safety.evaluate({ ...safetyInput, operatorHandoffConfirmed: false });
   assert.deepEqual({ status: denied.status, reason: denied.reason }, { status: "denied", reason: "operator_handoff_required" });
   assert.equal(safety.evaluate(safetyInput).status, "authorized");
+  const controllerEvidence = {
+    evidenceId: "controller-evidence", targetDeviceId: "vehicle-1", capabilityId: criticalPolicy.capabilityId,
+    policyRevision: criticalPolicy.policyRevision, controller: "certified_controller", controllerId: "controller-1",
+    readinessDigest: "a".repeat(64), operatorId: "operator-1", handoffDigest: "b".repeat(64),
+    observedAt: now, expiresAt: "2026-11-21T00:05:00.000Z",
+  } as const;
+  assert.equal(safety.evaluate({ ...safetyInput, controllerEvidence }).status, "authorized");
+  assert.equal(safety.evaluate({ ...safetyInput, controllerEvidence: { ...controllerEvidence, expiresAt: now } }).reason, "safety_controller_evidence_invalid");
   assert.equal(safety.evaluate({ ...safetyInput, targetDeviceId: "other" }).reason, "physical_target_mismatch");
   assert.equal(safety.evaluate({ ...safetyInput, context: { ...safetyInput.context, policyRevision: "old" } }).reason, "policy_revision_changed");
   assert.equal(safety.evaluate({ ...safetyInput, evaluatedAt: "2026-11-21T00:01:00.000Z" }).reason, "safety_observation_stale");

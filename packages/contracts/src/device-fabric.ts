@@ -298,6 +298,21 @@ export interface DeviceSafetyDecisionV1 {
   readonly evaluatedAt: string;
 }
 
+export interface DeviceSafetyControllerEvidenceV1 {
+  readonly evidenceId: string;
+  readonly targetDeviceId: string;
+  readonly capabilityId: string;
+  readonly policyRevision: string;
+  readonly controller: "certified_controller" | "vendor_workflow";
+  readonly controllerId: string;
+  readonly readinessDigest: string;
+  readonly operatorId?: string;
+  readonly handoffDigest?: string;
+  readonly observedAt: string;
+  readonly expiresAt: string;
+  readonly readbackEvidenceRef?: string;
+}
+
 export interface DeviceSecretUseV1 {
   readonly useId: string;
   readonly taskId: string;

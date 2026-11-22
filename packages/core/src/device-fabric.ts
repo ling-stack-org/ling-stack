@@ -21,6 +21,7 @@ import type {
   DeviceResourceManifestV1,
   DeviceSafetyActionPolicyV1,
   DeviceSafetyContextV1,
+  DeviceSafetyControllerEvidenceV1,
   DeviceSafetyDecisionV1,
   DeviceTaskGraphNodeV1,
   DeviceTaskGraphV1,
@@ -596,6 +597,7 @@ export class DeviceSafetyBroker {
     readonly controllerReady: boolean;
     readonly operatorHandoffConfirmed: boolean;
     readonly cancellationRequested: boolean;
+    readonly controllerEvidence?: DeviceSafetyControllerEvidenceV1;
     readonly evaluatedAt?: string;
   }): DeviceSafetyDecisionV1 {
     const evaluatedAt = input.evaluatedAt ?? new Date().toISOString();
@@ -611,6 +613,7 @@ export class DeviceSafetyBroker {
     else if (input.policy.requiredPhysicalState !== "unknown" && input.context.physicalState !== input.policy.requiredPhysicalState) reason = "physical_precondition_unsatisfied";
     else if (input.policy.requiredSecretRefs.some(secretRef => !input.context.requiredSecretRefs.includes(secretRef))) reason = "secret_reference_unauthorized";
     else if (!input.controllerReady) reason = "safety_controller_unavailable";
+    else if (input.controllerEvidence && !validControllerEvidence(input.controllerEvidence, input.targetDeviceId, input.policy, evaluatedAt)) reason = "safety_controller_evidence_invalid";
     else if (input.policy.sideEffect === "critical" && input.policy.controller === "adapter") reason = "critical_action_requires_controller_or_handoff";
     else if ((vendorHandoff || input.policy.operatorHandoffRequired) && !input.operatorHandoffConfirmed) reason = "operator_handoff_required";
     else if (input.cancellationRequested && !input.policy.cancellationSupported) reason = "cancellation_unsupported";
@@ -624,6 +627,21 @@ export class DeviceSafetyBroker {
       evaluatedAt,
     };
   }
+}
+
+function validControllerEvidence(
+  evidence: DeviceSafetyControllerEvidenceV1,
+  targetDeviceId: string,
+  policy: DeviceSafetyActionPolicyV1,
+  evaluatedAt: string,
+): boolean {
+  return evidence.targetDeviceId === targetDeviceId && evidence.capabilityId === policy.capabilityId
+    && evidence.policyRevision === policy.policyRevision && evidence.controller === policy.controller
+    && evidence.controllerId.trim().length > 0 && /^[0-9a-f]{64}$/u.test(evidence.readinessDigest)
+    && (evidence.handoffDigest === undefined || /^[0-9a-f]{64}$/u.test(evidence.handoffDigest))
+    && Number.isFinite(Date.parse(evidence.observedAt)) && Number.isFinite(Date.parse(evidence.expiresAt))
+    && Date.parse(evidence.observedAt) <= Date.parse(evaluatedAt) && Date.parse(evidence.expiresAt) > Date.parse(evaluatedAt)
+    && (policy.operatorHandoffRequired ? Boolean(evidence.operatorId && evidence.handoffDigest) : true);
 }
 
 export class DeviceLifecycleManager {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createHash } from "node:crypto";
-import type { DeviceConformanceReportV1, DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
+import type { DeviceConformanceReportV1, DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceSafetyControllerEvidenceV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
 import { DeviceFabricError, DeviceTaskGraphCoordinator, EdgeRuntimeJournal } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
 import { DeviceEventProjector, DevicePeerEventSynchronizer } from "../dist/device-event-projection.js";
@@ -220,6 +220,23 @@ test("fabric store persists lifecycle revisions and rejects invalid transitions"
   assert.equal(store.getLifecycle("device-1")?.status, "identified");
   assert.throws(() => store.transitionLifecycle({ deviceId: "device-1", status: "healthy", revision: 3, reason: "skip", authority: "adapter", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "lifecycle_invalid");
   assert.throws(() => store.transitionLifecycle({ deviceId: "device-1", status: "enrolled", revision: 2, reason: "replay", authority: "adapter", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "lifecycle_invalid");
+  store.close();
+});
+
+test("fabric store retains certified-controller and vendor handoff evidence without secrets", () => {
+  const store = new SqliteDeviceFabricStore();
+  const evidence: DeviceSafetyControllerEvidenceV1 = {
+    evidenceId: "controller-evidence-1", targetDeviceId: "vehicle-1", capabilityId: "vehicle.flash.firmware",
+    policyRevision: "policy-critical-2", controller: "certified_controller", controllerId: "controller-1",
+    readinessDigest: "a".repeat(64), operatorId: "operator-1", handoffDigest: "b".repeat(64),
+    observedAt: now, expiresAt: "2026-11-21T00:05:00.000Z", readbackEvidenceRef: "readback-1",
+  };
+  assert.deepEqual(store.saveSafetyControllerEvidence(evidence), evidence);
+  assert.deepEqual(store.saveSafetyControllerEvidence(evidence), evidence);
+  assert.deepEqual(store.getSafetyControllerEvidence(evidence.evidenceId), evidence);
+  assert.throws(() => store.saveSafetyControllerEvidence({ ...evidence, readinessDigest: "secret" }), /invalid/u);
+  assert.throws(() => store.saveSafetyControllerEvidence({ ...evidence, evidenceId: "changed", expiresAt: now }), /invalid/u);
+  assert.doesNotMatch(JSON.stringify(store.getSafetyControllerEvidence(evidence.evidenceId)), /secret/u);
   store.close();
 });
 

@@ -397,6 +397,7 @@ maintenance for the vehicle cases. Safety-critical vehicle, lock, alarm, power a
 firmware operations use the certified controller or the operator's authorized vendor
 workflow. Ling can collect permitted diagnostics and verification evidence. Device
 policies and safety interlocks remain effective on the controller.
+A critical action admission can include a certified-controller or vendor-workflow readiness record. The record binds target, capability, policy revision, controller identity, readiness digest, operator handoff digest and expiry. The fabric stores the evidence references and digests, then requires fresh readback after the controller reports completion.
 
 The execution host resolves a secret reference only for the authorized local action.
 Journal the reason, target and policy decision. The model and peer projections receive

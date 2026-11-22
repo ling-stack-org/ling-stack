@@ -783,17 +783,19 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [~] Declare action prerequisites in the safety policy. The evaluator checks
+- [x] Declare action prerequisites in the safety policy. The evaluator checks
   target identity, observation age, policy revision, physical state, controller
-  readiness and secret references. Native controller evidence remains open.
+  readiness, controller evidence and secret references.
 - [x] Persist the local operator's Daemon dispatch stop. Activation blocks new writes
   and journals the stop for any leased task on the selected target. The owning
   adapter receives a cancellation signal. Clearing the stop leaves an interrupted
   attempt unresolved until its owner reconciles it.
 - [x] Add a target-scoped secret broker and auditable secret-use references without
   persisting secret contents.
-- [ ] Route safety-critical operations through the certified controller or the
-  authorized vendor maintenance workflow. Preserve operator evidence and readback.
+- [x] Accept certified-controller and vendor-workflow readiness evidence with a
+  target, capability, policy revision, operator handoff digest and expiry. Store
+  only the evidence references and digests. A critical adapter action still cannot
+  substitute for the controller or vendor workflow.
 
 ### Exit evidence
 
@@ -801,6 +803,7 @@ only on a successful install or a model response.
   fixtures exercise condition, authority and verification checks. Safety-critical
   cases exercise the operator handoff and record the observable evidence.
 - Model-visible observations cannot grant authorization or reveal secret contents.
+- The Core safety fixture accepts an unexpired controller evidence record, rejects an expired record, and the SQLite fixture reopens the same evidence without any secret material.
 - Cancellation, revoke, and failed recovery produce an auditable state.
 
 ## D20: Fleet and lifecycle

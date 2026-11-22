@@ -17,6 +17,7 @@ import {
   type DeviceOwnershipRevisionV1,
   type DeviceResourceManifestV1,
   type DeviceSecretUseV1,
+  type DeviceSafetyControllerEvidenceV1,
   type DeviceTaskGraphV1,
   type DeviceTraceSpanV1,
   type DeviceTwinV1,
@@ -622,6 +623,24 @@ export class SqliteDeviceFabricStore {
       .run(use.useId, use.taskId, use.attemptId ?? null, use.targetDeviceId, use.secretRef, use.purpose, use.policyRevision, use.usedAt, JSON.stringify(use));
   }
 
+  saveSafetyControllerEvidence(evidence: DeviceSafetyControllerEvidenceV1): DeviceSafetyControllerEvidenceV1 {
+    validateSafetyControllerEvidence(evidence);
+    const serialized = JSON.stringify(evidence);
+    const current = this.getSafetyControllerEvidence(evidence.evidenceId);
+    if (current) {
+      if (!isDeepStrictEqual(current, evidence)) throw new DeviceFabricError("revision_conflict", "safety controller evidence id is bound to different evidence");
+      return current;
+    }
+    this.database.prepare("INSERT INTO device_safety_controller_evidence(evidence_id,target_device_id,evidence_json) VALUES(?,?,?)")
+      .run(evidence.evidenceId, evidence.targetDeviceId, serialized);
+    return evidence;
+  }
+
+  getSafetyControllerEvidence(evidenceId: string): DeviceSafetyControllerEvidenceV1 | undefined {
+    const row = this.database.prepare("SELECT evidence_json FROM device_safety_controller_evidence WHERE evidence_id=?").get(evidenceId) as Row | undefined;
+    return row ? parseJson<DeviceSafetyControllerEvidenceV1>(row.evidence_json, "safety controller evidence") : undefined;
+  }
+
   listSecretUses(targetDeviceId?: string): readonly DeviceSecretUseV1[] {
     const rows = targetDeviceId
       ? this.database.prepare("SELECT use_json FROM device_secret_uses WHERE target_device_id=? ORDER BY used_at,use_id").all(targetDeviceId) as Row[]
@@ -878,6 +897,11 @@ export class SqliteDeviceFabricStore {
         used_at TEXT NOT NULL,
         use_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS device_safety_controller_evidence (
+        evidence_id TEXT PRIMARY KEY NOT NULL,
+        target_device_id TEXT NOT NULL,
+        evidence_json TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS idx_device_secret_uses_target ON device_secret_uses(target_device_id,used_at,use_id);
       CREATE TABLE IF NOT EXISTS device_lifecycle_state (
         device_id TEXT PRIMARY KEY NOT NULL,
@@ -973,6 +997,22 @@ function validateResourceCompatibility(
       ? compatibility.isFirmwareSupported(manifest.supportedFirmwareRanges, compatibility.firmwareVersion)
       : manifest.supportedFirmwareRanges.includes(compatibility.firmwareVersion);
     if (!supported) throw new DeviceFabricError("resource_conflict", "resource firmware range is incompatible");
+  }
+}
+
+function validateSafetyControllerEvidence(evidence: DeviceSafetyControllerEvidenceV1): void {
+  const fields = ["evidenceId", "targetDeviceId", "capabilityId", "policyRevision", "controller", "controllerId", "readinessDigest", "operatorId", "handoffDigest", "observedAt", "expiresAt", "readbackEvidenceRef"];
+  const bounded = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0 && value.length <= 512;
+  if (Object.keys(evidence).some(key => !fields.includes(key))
+    || ![evidence.evidenceId, evidence.targetDeviceId, evidence.capabilityId, evidence.policyRevision, evidence.controllerId].every(bounded)
+    || !["certified_controller", "vendor_workflow"].includes(evidence.controller)
+    || !/^[0-9a-f]{64}$/u.test(evidence.readinessDigest)
+    || (evidence.handoffDigest !== undefined && !/^[0-9a-f]{64}$/u.test(evidence.handoffDigest))
+    || (evidence.operatorId !== undefined && !bounded(evidence.operatorId))
+    || (evidence.readbackEvidenceRef !== undefined && !bounded(evidence.readbackEvidenceRef))
+    || !Number.isFinite(Date.parse(evidence.observedAt)) || !Number.isFinite(Date.parse(evidence.expiresAt))
+    || Date.parse(evidence.expiresAt) <= Date.parse(evidence.observedAt)) {
+    throw new DeviceFabricError("safety_denied", "safety controller evidence is invalid");
   }
 }
 
