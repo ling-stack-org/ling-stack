@@ -19,7 +19,7 @@ import {
   type PcProcessInfo,
   type PcServiceStatus,
 } from "../dist/features/device-support/adapters/index.js";
-import { readAndroidAdbTargets } from "../dist/features/device-support/android-adb-targets.js";
+import { bindAndroidAdbTargets, readAndroidAdbConfiguration } from "../dist/features/device-support/android-adb-targets.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 
@@ -479,7 +479,7 @@ test("configured ADB logs and package versions use the pinned target connection"
       return { stdout: "fixture-hardware-id\nLinaro P\n7.1.2\nfixture/fingerprint\n", stderr: "", exitCode: 0 };
     },
   };
-  const [target] = readAndroidAdbTargets(path, runner);
+  const [target] = bindAndroidAdbTargets(readAndroidAdbConfiguration(path), root, runner).targets;
   assert.ok(target?.executor.readLogs);
   const readLogs = target.executor.readLogs;
   const { connectionRevision } = await target.executor.inventory();

@@ -1,7 +1,9 @@
-import { execFile as nodeExecFile, spawn } from "node:child_process";
+import { execFile as nodeExecFile, spawn, type ChildProcess } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import { posix, win32 } from "node:path";
 import { createInterface } from "node:readline";
+import type { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { PC_INSPECTION_TIMEOUT_MS, type PcInstalledSoftware, type PcLogEntry, type PcNetworkStatus, type PcProcessInfo, type PcServiceStatus, type PcSoftwareInventory, type PcTargetExecutor } from "./pc.js";
 
@@ -105,14 +107,22 @@ const rpmSoftwareInspection: PcInspection<PcInstalledSoftware> = {
 };
 
 export interface LocalProcessRunner {
-  run(file: string, args: readonly string[], signal?: AbortSignal): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }>;
+  run(file: string, args: readonly string[], signal?: AbortSignal, input?: LocalProcessInput): Promise<{
+    readonly stdout: string; readonly stderr: string; readonly exitCode: number;
+  }>;
   scanLines?(file: string, args: readonly string[], consume: (line: string) => boolean, signal: AbortSignal): Promise<boolean>;
 }
 
+export interface LocalProcessInput {
+  readonly source: Readable;
+  readonly readyPrefix: string;
+}
+
 export const localProcessRunner: LocalProcessRunner = {
-  async run(file, args, signal) {
+  async run(file, args, signal, input) {
     try {
-      const result = await execFile(file, [...args], { signal, maxBuffer: 256 * 1024, windowsHide: true });
+      const running = execFile(file, [...args], { signal, maxBuffer: 256 * 1024, windowsHide: true });
+      const result = input ? await sendProcessInput(running, input, signal) : await running;
       return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
     } catch (error) {
       const failure = error as { readonly stdout?: string; readonly stderr?: string; readonly code?: number };
@@ -140,6 +150,44 @@ export const localProcessRunner: LocalProcessRunner = {
     }
   },
 };
+
+async function sendProcessInput(
+  running: Promise<{ stdout: string; stderr: string }> & { child: ChildProcess },
+  input: LocalProcessInput, signal?: AbortSignal,
+): Promise<{ stdout: string; stderr: string }> {
+  const { stdin, stdout } = running.child;
+  if (!stdin || !stdout) {
+    await running;
+    throw new Error("The process input pipes are unavailable");
+  }
+  const ready = new Promise<boolean>(resolve => {
+    let output = "";
+    const ended = () => finish(false);
+    const data = (chunk: string | Buffer) => {
+      output += String(chunk);
+      if (output.length >= input.readyPrefix.length || !input.readyPrefix.startsWith(output)) {
+        finish(output.startsWith(input.readyPrefix));
+      }
+    };
+    function finish(confirmed: boolean) {
+      stdout!.off("data", data);
+      running.child.off("close", ended);
+      resolve(confirmed);
+    }
+    stdout.on("data", data);
+    running.child.once("close", ended);
+  });
+  const upload = ready.then(confirmed => {
+    if (confirmed) return pipeline(input.source, stdin, { signal });
+    stdin.on("error", () => undefined);
+    stdin.end();
+    throw new Error("The process did not confirm its input target");
+  });
+  const [processResult, sent] = await Promise.allSettled([running, upload]);
+  if (processResult.status === "rejected") throw processResult.reason;
+  if (sent.status === "rejected") throw sent.reason;
+  return processResult.value;
+}
 
 export interface LocalPcTargetExecutorOptions {
   readonly platform?: NodeJS.Platform;

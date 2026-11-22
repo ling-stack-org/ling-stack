@@ -1,20 +1,20 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { DeviceDeveloperJobV1, DeviceDeveloperSessionV1 } from "@ling-stack/contracts";
 import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, requireWorkspaceDeviceTask } from "@ling-stack/core";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
-import { readJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
-import { androidAdbAdapterId, androidAdbLogCapability } from "./adapters/android-adb.js";
+import { androidAdbAdapterId, androidAdbInstallCapability, androidAdbLogCapability } from "./adapters/android-adb.js";
 import { assertDeveloperTargetActive, requireCurrentDeveloperTarget } from "./developer-jobs.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const developerPath = "/v1/device-support/developer/sessions";
-const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs)(?:\/([^/]+)(?:\/(logcat))?)?)?$/u;
+const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs|artifact)(?:\/([^/]+)(?:\/(logcat|readback))?)?)?$/u;
 const jobKinds = ["build", "deploy", "launch", "logs", "test", "retest"] as const satisfies readonly DeviceDeveloperJobV1["kind"][];
-const jobFields = new Set(["jobId", "kind", "artifactDigest", "authorizationRevision"]);
+const jobFields = new Set(["jobId", "kind", "artifactDigest", "authorizationRevision", "expectedSessionRevision"]);
 
 export async function handleDeviceDeveloperRoute(
   url: URL,
@@ -26,10 +26,11 @@ export async function handleDeviceDeveloperRoute(
   if (!match && url.pathname !== developerPath) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   const [sessionId, operation, jobId, projection] = match?.slice(1) ?? [];
-  if (operation === "authorize" && jobId) return false;
-  const method = !sessionId || (operation !== undefined && !jobId) ? "POST" : "GET";
-  if (request.method !== method) {
-    response.setHeader("Allow", method);
+  if (jobId && operation !== "jobs") return false;
+  const write = !sessionId || (operation !== undefined && !jobId) || projection === "readback";
+  const methods = operation === "artifact" ? ["GET", "POST"] : [write ? "POST" : "GET"];
+  if (!methods.includes(request.method ?? "")) {
+    response.setHeader("Allow", methods.join(", "));
     writePrivateJson(response, 405, { error: "method_not_allowed" });
     return true;
   }
@@ -40,6 +41,10 @@ export async function handleDeviceDeveloperRoute(
     }
     if (operation === "authorize") {
       await authorizeSession(sessionId, request, response, runtime);
+      return true;
+    }
+    if (operation === "artifact") {
+      await handleAndroidArtifact(url, request, response, runtime, sessionId);
       return true;
     }
     if (operation === "jobs" && !jobId) {
@@ -55,11 +60,89 @@ export async function handleDeviceDeveloperRoute(
     if (!job || job.sessionId !== session.sessionId || job.targetDeviceId !== session.targetDeviceId) {
       throw new DeviceBrokerError("missing_target", "developer job is unavailable");
     }
-    writePrivateJson(response, 200, projection === "logcat" ? readDeveloperLogcat(runtime, session, job) : { job });
+    if (projection === "readback") {
+      const body = await readOptionalJsonBody(request, 2048).catch(() => null);
+      if (body !== undefined && (!isRecord(body) || Object.keys(body).length !== 0)) {
+        throw new DeviceBrokerError("invalid_request", "readback uses the recorded developer job");
+      }
+      const result = await reconcileAndroidDeployment(runtime, session, job);
+      if (!response.destroyed) writePrivateJson(response, 200, result);
+    } else writePrivateJson(response, 200, projection === "logcat" ? readDeveloperLogcat(runtime, session, job) : { job });
   } catch (error) {
-    writeDeveloperError(response, error);
+    if (!response.destroyed) writeDeveloperError(response, error);
   }
   return true;
+}
+
+async function reconcileAndroidDeployment(runtime: DeviceSupportRuntime, session: DeviceDeveloperSessionV1, job: DeviceDeveloperJobV1) {
+  const taskId = `developer-deploy:${job.jobId}`;
+  if (session.mode !== "developer" || job.kind !== "deploy" || (job.status !== "unknown" && job.status !== "completed") || job.outputRef !== taskId) {
+    throw new DeviceBrokerError("missing_target", "Android deployment readback is unavailable");
+  }
+  const { store, broker } = runtime;
+  const task = requireWorkspaceDeviceTask(store, taskId, session.workspaceId);
+  const attempt = store.listAttempts(taskId).find(record => record.request.capabilityId === androidAdbInstallCapability
+    && record.attempt.targetDeviceId === session.targetDeviceId && record.attempt.ownerId === session.targetDeviceId
+    && isRecord(record.request.normalizedInput) && record.request.normalizedInput.artifactDigest === job.artifactDigest);
+  if (task.ownerId !== session.targetDeviceId || !attempt) {
+    throw new DeviceBrokerError("missing_target", "Android deployment attempt is unavailable");
+  }
+  if (task.status === "succeeded") return { job, taskStatus: task.status, status: "verified" };
+  if (session.status === "revoked") throw new DeviceBrokerError("permission_denied", "developer session is revoked");
+  const target = runtime.listAndroidAdbTargets().find(item => item.deviceId === session.targetDeviceId);
+  if (task.status !== "unknown" || !target) throw new DeviceBrokerError("target_changed", "Android deployment lacks a current readback target");
+  const profile = await runtime.enrollAndroidAdbTarget(target.connectionId);
+  const signal = AbortSignal.timeout(30_000);
+  const snapshot = await broker.refreshCapabilities(profile.device.id, profile.profileRevision, signal);
+  const reconciliation = await broker.reconcileTask({
+    taskId, attemptId: attempt.attempt.attemptId, capabilitySnapshotId: snapshot.snapshotId, signal,
+  });
+  return { job, taskStatus: store.getTask(taskId)?.status, status: reconciliation.status, reconciliation };
+}
+
+async function handleAndroidArtifact(
+  url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime, encodedSession: string,
+): Promise<void> {
+  const session = requireSession(runtime, encodedSession);
+  if (session.mode !== "developer" || session.protocolReplay) {
+    throw new DeviceBrokerError("permission_denied", "APK artifacts require an Android developer session");
+  }
+  if (request.method === "GET") {
+    const artifact = session.artifactId ? runtime.developerSessions.getArtifact(session.artifactId) : undefined;
+    if (!artifact?.androidApk || artifact.workspaceId !== session.workspaceId || artifact.targetDeviceId !== session.targetDeviceId) {
+      throw new DeviceBrokerError("missing_target", "the developer session has no verified APK");
+    }
+    writePrivateJson(response, 200, { session, artifact });
+    return;
+  }
+  const expectedRevision = Number(url.searchParams.get("expectedRevision"));
+  const contentLength = request.headers["content-length"];
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1
+    || request.headers["content-type"] !== "application/vnd.android.package-archive"
+    || !contentLength || !/^[1-9]\d{0,9}$/u.test(contentLength)) {
+    throw new DeviceBrokerError("invalid_request", "upload an APK with its length and the reviewed session revision");
+  }
+  const { androidApks } = runtime;
+  if (!androidApks || !runtime.canDeployAndroid(session.targetDeviceId)) {
+    throw new DeviceBrokerError("unsupported_capability", "APK tools are unavailable for this target");
+  }
+  const authorize = () => {
+    const current = requireSession(runtime, encodedSession);
+    if (current.status !== "authorized" || current.authorizationRevision !== session.authorizationRevision) {
+      throw new DeviceBrokerError("permission_denied", "developer session authorization changed");
+    }
+    if (current.revision !== expectedRevision) throw new DeviceBrokerError("target_changed", "developer session revision changed");
+    requireCurrentDeveloperTarget(runtime.store, current);
+  };
+  authorize();
+  const result = await androidApks.importApk(request, Number(contentLength), authorize, apk => {
+    const artifactId = "android-apk:" + createHash("sha256").update(JSON.stringify([session.sessionId, apk.digest])).digest("hex");
+    const updated = runtime.developerSessions.bindArtifact(session.sessionId, {
+      ...apk, artifactId, workspaceId: session.workspaceId, targetDeviceId: session.targetDeviceId, createdAt: new Date().toISOString(),
+    }, expectedRevision);
+    return { session: updated, artifact: runtime.developerSessions.getArtifact(artifactId)! };
+  });
+  if (!response.destroyed) writePrivateJson(response, 201, result);
 }
 
 function readDeveloperLogcat(runtime: DeviceSupportRuntime, session: DeviceDeveloperSessionV1, job: DeviceDeveloperJobV1) {
@@ -91,12 +174,15 @@ async function createJob(request: IncomingMessage, response: ServerResponse, run
   if (!isRecord(body) || !kind || typeof body.jobId !== "string" || !/^[a-z0-9_-]{1,128}$/iu.test(body.jobId)
     || Object.keys(body).some(key => !jobFields.has(key))
     || (body.artifactDigest !== undefined && !boundedReference(body.artifactDigest))
+    || (body.expectedSessionRevision !== undefined && (typeof body.expectedSessionRevision !== "number"
+      || !Number.isSafeInteger(body.expectedSessionRevision) || body.expectedSessionRevision < 1))
     || !boundedReference(body.authorizationRevision)) {
     throw new DeviceBrokerError("invalid_request", "invalid developer job");
   }
   const { job, admitted } = await runtime.developerJobs.submit(requireSession(runtime, sessionId), {
     jobId: body.jobId, kind, authorizationRevision: body.authorizationRevision,
     ...(body.artifactDigest ? { artifactDigest: body.artifactDigest } : {}),
+    ...(typeof body.expectedSessionRevision === "number" ? { expectedSessionRevision: body.expectedSessionRevision } : {}),
   });
   if (!response.destroyed) writePrivateJson(response, admitted ? 201 : 200, { job });
 }

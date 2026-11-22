@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type {
   DeviceArtifactTransferV1,
   DeviceArtifactChunkReceiptV1,
   DeviceCollaborationProposalV1,
   DeviceDeveloperArtifactV1,
+  DeviceDeveloperExecutorResultV1,
   DeviceDeveloperJobV1,
   DeviceDeveloperSessionV1,
 } from "@ling-stack/contracts";
@@ -41,23 +43,29 @@ export class DeviceDeveloperSessionCoordinator {
     });
   }
 
-  bindArtifact(sessionId: string, artifact: DeviceDeveloperArtifactV1): DeviceDeveloperSessionV1 {
+  bindArtifact(sessionId: string, artifact: DeviceDeveloperArtifactV1, expectedRevision?: number): DeviceDeveloperSessionV1 {
     return this.write(() => {
       const session = this.requireSession(sessionId);
+      if (expectedRevision !== undefined && session.revision !== expectedRevision) {
+        throw new DeviceFabricError("revision_conflict", "developer session revision changed");
+      }
       if (session.status === "revoked") throw new DeviceFabricError("safety_denied", "developer session is revoked");
       if (artifact.workspaceId !== session.workspaceId || artifact.targetDeviceId !== session.targetDeviceId) {
         throw new DeviceFabricError("target_missing", "artifact is bound to another workspace or target");
       }
-      const current = this.#store ? this.#store.getArtifact(artifact.artifactId) : this.#artifacts.get(artifact.artifactId);
+      const current = this.getArtifact(artifact.artifactId);
       if (current && (current.digest !== artifact.digest || current.workspaceId !== artifact.workspaceId
-        || current.targetDeviceId !== artifact.targetDeviceId || current.packageId !== artifact.packageId || current.sizeBytes !== artifact.sizeBytes)) {
+        || current.targetDeviceId !== artifact.targetDeviceId || current.packageId !== artifact.packageId
+        || current.sizeBytes !== artifact.sizeBytes || !isDeepStrictEqual(current.androidApk, artifact.androidApk))) {
         throw new DeviceFabricError("revision_conflict", "artifact id is bound to another artifact identity");
       }
       if (!current) {
         if (this.#store) this.#store.saveArtifact(artifact);
         else this.#artifacts.set(artifact.artifactId, artifact);
       }
-      return this.saveSession({ ...session, artifactDigest: artifact.digest, revision: session.revision + 1, updatedAt: artifact.createdAt });
+      if (current && session.artifactId === artifact.artifactId) return session;
+      return this.saveSession({ ...session, artifactId: artifact.artifactId, artifactDigest: artifact.digest,
+        revision: session.revision + 1, updatedAt: artifact.createdAt });
     });
   }
 
@@ -98,9 +106,15 @@ export class DeviceDeveloperSessionCoordinator {
     });
   }
 
-  recoverInterruptedJobs(owner: Pick<DeviceDeveloperSessionV1, "ownerKind" | "ownerId">, now: string): void {
+  recoverInterruptedJobs(
+    owner: Pick<DeviceDeveloperSessionV1, "ownerKind" | "ownerId">, now: string,
+    readOutcome?: (job: DeviceDeveloperJobV1) => DeviceDeveloperExecutorResultV1 | undefined,
+  ): void {
     for (const jobId of this.#store?.listInterruptedJobIds(owner) ?? []) {
-      this.settleJob(jobId, "unknown", undefined, now, "unknown");
+      const job = this.getJob(jobId);
+      if (!job || isTerminalDeveloperJob(job.status)) continue;
+      const outcome = readOutcome?.(job);
+      this.settleJob(jobId, outcome?.status ?? "unknown", outcome?.outputRef, now, outcome?.taskStatus ?? "unknown", outcome?.outputDigest);
     }
   }
 
@@ -136,6 +150,9 @@ export class DeviceDeveloperSessionCoordinator {
   }
   getJob(jobId: string): DeviceDeveloperJobV1 | undefined {
     return this.#store ? this.#store.getJob(jobId) : this.#jobs.get(jobId);
+  }
+  getArtifact(artifactId: string): DeviceDeveloperArtifactV1 | undefined {
+    return this.#store ? this.#store.getArtifact(artifactId) : this.#artifacts.get(artifactId);
   }
 
   private requireSession(sessionId: string): DeviceDeveloperSessionV1 {

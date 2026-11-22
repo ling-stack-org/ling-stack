@@ -168,7 +168,7 @@ import { PhoneTaskCollaboration } from "./features/remote-access/phone-task-coll
 import { PhoneTaskArtifacts } from "./features/remote-access/phone-task-artifacts.js";
 import { parseHomeAssistantOrigin } from "./features/device-support/adapters/home-assistant.js";
 import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
-import { readAndroidAdbTargets } from "./features/device-support/android-adb-targets.js";
+import { bindAndroidAdbTargets, readAndroidAdbConfiguration } from "./features/device-support/android-adb-targets.js";
 import { readModbusSerialTargets } from "./features/device-support/modbus-serial-targets.js";
 import { readDeviceResourceTrustPolicy } from "./features/device-support/resource-trust.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
@@ -311,8 +311,7 @@ export function createDaemonServer(
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
   const linuxSshTargets = readLinuxSshTargets(config.deviceSupport?.linuxSshTargetsFile ?? process.env.LING_STACK_DEVICE_SSH_TARGETS_FILE);
-  const androidAdbTargets = readAndroidAdbTargets(config.deviceSupport?.androidAdbTargetsFile ?? process.env.LING_STACK_DEVICE_ADB_TARGETS_FILE,
-    dependencies.androidAdbProcessRunner);
+  const androidAdbConfiguration = readAndroidAdbConfiguration(config.deviceSupport?.androidAdbTargetsFile ?? process.env.LING_STACK_DEVICE_ADB_TARGETS_FILE);
   const modbusSerialTargets = readModbusSerialTargets(config.deviceSupport?.modbusSerialTargetsFile ?? process.env.LING_STACK_DEVICE_MODBUS_SERIAL_TARGETS_FILE);
   const deviceResourceTrust = readDeviceResourceTrustPolicy(config.deviceSupport?.resourceTrustFile ?? process.env.LING_STACK_DEVICE_RESOURCE_TRUST_FILE);
   const homeAssistantOrigin = config.deviceSupport?.homeAssistant?.origin ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_ORIGIN;
@@ -1056,11 +1055,14 @@ export function createDaemonServer(
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
   const defaultWorkspaceStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
+  const androidAdb = bindAndroidAdbTargets(androidAdbConfiguration, join(dirname(defaultWorkspaceStore.paths.databasePath), "android-apks"),
+    dependencies.androidAdbProcessRunner);
   const deviceSupport = createDeviceSupportRuntime({
     databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
     protocolTransports: dependencies.deviceProtocolTransports,
     androidAdbExecutor: dependencies.androidAdbExecutor,
-    androidAdbTargets,
+    androidAdbTargets: androidAdb.targets,
+    androidApks: androidAdb.apks,
     obdExecutor: dependencies.obdExecutor,
     developerExecutor: dependencies.developerExecutor,
     modbusSerialTargets,

@@ -52,7 +52,8 @@ import { ObdVehicleAdapter, type ObdExecutor } from "./adapters/obd.js";
 import { DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS, type DeviceDiagnosisPlanner, type DeviceDiagnosisRequest } from "./diagnosis-planner.js";
 import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 import { createDeviceApprovalQueue } from "./approval-queue.js";
-import { createDeviceDeveloperJobs, type DeviceDeveloperExecutor } from "./developer-jobs.js";
+import { createDeviceDeveloperJobs, retainedAndroidDeployResult, type DeviceDeveloperExecutor } from "./developer-jobs.js";
+import type { AndroidApkLibrary } from "./android-apks.js";
 import { homeAssistantReportedValue } from "./home-assistant-twin.js";
 
 interface ConfiguredDeviceTargetSummary {
@@ -81,6 +82,8 @@ export interface DeviceSupportRuntime {
   readonly protocolProfiles: HardwareProtocolProfileRegistry;
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly developerJobs: ReturnType<typeof createDeviceDeveloperJobs>;
+  readonly androidApks?: AndroidApkLibrary;
+  canDeployAndroid(deviceId: string): boolean;
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
   readonly edgeJournal: EdgeRuntimeJournal;
@@ -131,6 +134,7 @@ export function createDeviceSupportRuntime(options: {
   readonly externalAdapters?: readonly ExternalDeviceAdapter[];
   readonly androidAdbExecutor?: AndroidAdbExecutor;
   readonly androidAdbTargets?: readonly BoundAndroidAdbTarget[];
+  readonly androidApks?: AndroidApkLibrary;
   readonly obdExecutor?: ObdExecutor;
   readonly developerExecutor?: DeviceDeveloperExecutor;
 }): DeviceSupportRuntime {
@@ -162,11 +166,13 @@ export function createDeviceSupportRuntime(options: {
   let obd: ObdVehicleAdapter | undefined;
   const linuxTargets = new Map<string, BoundLinuxSshTarget>();
   const adbTargets = new Map(options.androidAdbTargets?.map(target => [target.deviceId, target]));
+  const canDeployAndroid = (deviceId: string) => Boolean(options.androidApks && adbTargets.get(deviceId)?.executor.installArtifact);
   const androidAdb = options.androidAdbExecutor || adbTargets.size > 0
     ? new AndroidAdbAdapter({ executor: options.androidAdbExecutor, targets: [...adbTargets.values()], now }) : undefined;
   const configuredModbusIds = new Set<string>();
   try {
-    developerSessions.recoverInterruptedJobs({ ownerKind: "daemon", ownerId: DEFAULT_WORKSPACE_ID }, now());
+    developerSessions.recoverInterruptedJobs({ ownerKind: "daemon", ownerId: DEFAULT_WORKSPACE_ID }, now(),
+      job => retainedAndroidDeployResult(store, job));
     protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
     protocolWorkbench.registerCodec(modbusRtuRegisterCodec);
     const modbusProfile = protocolProfiles.register({
@@ -238,7 +244,9 @@ export function createDeviceSupportRuntime(options: {
   const remoteFacade = createRemoteDeviceFacade({ store, broker, now });
   const approvalQueue = createDeviceApprovalQueue(store, broker, now);
   const planner = new DeviceRunnerPlanningBridge();
-  const developerJobs = createDeviceDeveloperJobs({ broker, sessions: developerSessions, executor: options.developerExecutor, now });
+  const developerJobs = createDeviceDeveloperJobs({
+    broker, sessions: developerSessions, executor: options.developerExecutor, canDeployAndroid, now,
+  });
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
   const edgeJournal = new EdgeRuntimeJournal({ persistence: fabricStore });
@@ -442,6 +450,8 @@ export function createDeviceSupportRuntime(options: {
     protocolProfiles,
     developerSessions,
     developerJobs,
+    androidApks: options.androidApks,
+    canDeployAndroid,
     collaboration,
     edgeRuntimes,
     edgeJournal,

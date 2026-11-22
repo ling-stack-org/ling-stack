@@ -558,9 +558,44 @@ reads the package inventory from the same target and records the observed versio
 in the owner journal. An installed older version fails verification. When
 the target provides package presence alone, the verification stays unresolved.
 The configured PC executor queries package version codes where Android supports
-them and falls back to the package inventory on older targets.
+them. On older releases it reads the selected installed package's version through
+`dumpsys package`. It also reads the installed base APK digest where the device
+makes the file available to ADB. After an uncertain installation, reconciliation
+requires this digest as well as the approved package ID and version.
 [Adapter](../../packages/daemon/src/features/device-support/adapters/android-adb.ts)
 [Readback fixture](../../packages/daemon/test/device-support-adapters.test.ts)
+
+### PC-owned signed APK deployment
+
+Add `apkTools` to the authorized ADB targets file to enable APK import and
+installation. Set `javaPath`, `apkSignerJar`, and `aapt2Path` to absolute paths
+to Java and the Android SDK Build Tools. The daemon verifies the staged APK
+with `apksigner.jar` and reads the standalone package manifest with AAPT2.
+It retains the SHA-256, package ID, version code and certificate fingerprints
+against the developer session. An import reports the long version code and
+its legacy component where the app declares a version code major.
+
+Create and authorize the developer session for the enrolled target. The
+following paths are relative to `/v1/device-support/developer/sessions/{sessionId}`
+on the authenticated loopback daemon.
+
+| Operation | Method and path | Inputs and evidence |
+| --- | --- | --- |
+| Review the signed APK | `POST /artifact?expectedRevision={revision}` | Raw APK body with `Content-Type: application/vnd.android.package-archive` and its `Content-Length`. Returns the verified artifact and updated session. |
+| Reopen reviewed metadata | `GET /artifact` | Returns the retained artifact and session. |
+| Confirm installation | `POST /jobs` | Send `jobId`, `kind: "deploy"`, the reviewed `artifactDigest`, `authorizationRevision` and `expectedSessionRevision`. The owner journal binds these to the registered target and connection. |
+| Inspect the job | `GET /jobs/{jobId}` | Returns the retained job and its device task reference when available. |
+| Settle an uncertain installation | `POST /jobs/{jobId}/readback` | Reopens the authorized connection to the same device and reconciles the original attempt from package, version and digest evidence. The original job outcome remains available with the current task status. |
+
+The PC checks the retained file digest before dispatch. ADB must report the
+enrolled serial and build fingerprint on the selected connection before the
+PC sends the APK. Android's package manager applies installation and signing
+continuity rules. Repeat submissions with the same job ID return the retained
+job. The daemon records the fresh readback and preserves the original attempt
+when a response is lost.
+[APK verifier](../../packages/daemon/src/features/device-support/android-apks.ts)
+[Deployment routes](../../packages/daemon/src/features/device-support/developer-routes.ts)
+[Integration test](../../packages/daemon/test/android-apk-deployment.test.ts)
 
 ### PC-owned Android developer logs
 

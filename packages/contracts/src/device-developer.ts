@@ -26,6 +26,7 @@ export interface DeviceDeveloperSessionV1 {
       readonly connectionRevision: string;
     };
   };
+  readonly artifactId?: string;
   readonly artifactDigest?: string;
   readonly status: "created" | "authorized" | "running" | "paused" | "completed" | "failed" | "revoked";
   readonly revision: number;
@@ -62,6 +63,11 @@ export interface DeviceDeveloperArtifactV1 {
   readonly digest: string;
   readonly sizeBytes: number;
   readonly packageId?: string;
+  readonly androidApk?: {
+    readonly versionCode: string;
+    readonly legacyVersionCode?: string;
+    readonly signerCertificateSha256: readonly string[];
+  };
   readonly createdAt: string;
 }
 
