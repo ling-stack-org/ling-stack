@@ -24,10 +24,11 @@ export type ApprovalActionType =
   | "device_action"
   | "runtime_permission_request";
 
+/** Action types accepted in Run and workflow approval profiles. */
 export const approvalActionTypes: readonly ApprovalActionType[] = [
   "read", "grep", "find", "ls", "write", "edit", "bash", "git_commit", "git_push", "external_send",
   "deploy", "media_cost", "credential_change", "provider_change", "workflow_step", "workflow_merge", "node_rerun",
-  "mcp_tool_call", "host_capability", "device_action", "runtime_permission_request",
+  "mcp_tool_call", "host_capability", "runtime_permission_request",
 ];
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
