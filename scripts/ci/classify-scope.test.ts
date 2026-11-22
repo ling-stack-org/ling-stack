@@ -237,7 +237,7 @@ test("removed dependency edges cannot erase consumers from a multi-package PR", 
 
 test("dependency regressions cannot be skipped with ordinary test-only scope", () => {
   for (const file of ["packages/daemon/test/dependency-security.test.mjs",
-    "apps/mobile/test/dependency-security-patches.test.mjs", "apps/mobile/test/dependency-security-tooling.test.mjs"]) {
+    "apps/mobile/test/dependency-security-patches.test.ts", "apps/mobile/test/dependency-security-tooling.test.ts"]) {
     assert.equal(classify([file]).dependencyPolicy, true, file);
   }
   assert.equal(classify(["packages/daemon/test/runtime-supervisor.test.mjs"]).dependencyPolicy, false);

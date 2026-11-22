@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = async (path) => await readFile(new URL(path, import.meta.url), "utf8");
+const source = async (path: string) => await readFile(new URL(path, import.meta.url), "utf8");
 
 test("unpaired launch is gated by secure QR pairing and PC confirmation", async () => {
   const [app, gate, provider] = await Promise.all([
