@@ -188,12 +188,139 @@ test("a phone-only Home Assistant diagnosis records scoped facts and restores th
   assert.deepEqual(adapter?.metadata, {
     attemptStatus: "completed", capabilityId: "home_assistant.read_entity",
     capabilitySnapshotId: trace?.capabilitySnapshots?.[0]?.snapshotId,
-    adapterBinding: { adapterId: adapter?.lineage?.adapterId, adapterVersion: "1.0.0", profileRevision: "1.0.0", transport: "https" },
+    adapterBinding: { adapterId: adapter?.lineage?.adapterId, adapterVersion: "1.1.0", profileRevision: "1.1.0", transport: "https" },
     receiptStatus: "completed", evidenceRefs: [`${result.taskId}:home-assistant-offline-diagnosis@1.0.0:read-entity:entity`],
   });
   assert.equal(await reopened.readTaskTrace("another-task"), undefined);
   for (const value of [target.token, target.origin, target.entityId, "untrusted-entity-output"]) assert.ok(!JSON.stringify(trace).includes(value));
   assert.equal(requests, 1);
+});
+
+test("a phone-owned Home Assistant recovery requires the fresh diagnosis and verifies the enabled automation", async () => {
+  const storage = new MemoryStorage();
+  const calls: string[] = [];
+  let enabled = false;
+  const automation = "automation.night";
+  const fetch: HomeAssistantFetch = async (url, init) => {
+    calls.push(`${init.method} ${url}`);
+    assert.equal(init.headers.authorization, `Bearer ${target.token}`);
+    if (init.method === "POST") {
+      assert.equal(url, `${target.origin}/api/services/automation/turn_on`);
+      assert.deepEqual(JSON.parse(init.body ?? ""), { entity_id: automation });
+      enabled = true;
+      return new Response(null, { status: 200 });
+    }
+    assert.equal(url, `${target.origin}/api/states/${automation}`);
+    return Response.json({
+      entity_id: automation,
+      state: enabled ? "on" : "off",
+      attributes: { id: "fixture-automation-identity", hidden: "private-state" },
+    });
+  };
+  const phone = await createStandaloneDeviceRuntime({
+    ...options,
+    storage,
+    fetch,
+  });
+  await phone.setForeground(true);
+  const diagnosis = await phone.diagnoseHomeAssistant({ ...target, entityId: automation });
+  assert.equal(diagnosis.taskStatus, "succeeded");
+  assert.equal(diagnosis.automationEnabled, false);
+  assert.equal(diagnosis.canEnableAutomation, true);
+
+  const approvedInput = {
+    ...target,
+    entityId: automation,
+    diagnosisTaskId: diagnosis.taskId,
+  };
+  const recovered = await phone.enableHomeAssistantAutomation(approvedInput);
+  assert.equal(recovered.operation, "enable_automation");
+  assert.equal(recovered.taskStatus, "succeeded");
+  assert.equal(recovered.automationEnabled, true);
+  assert.equal(recovered.canEnableAutomation, false);
+  assert.deepEqual(calls, [
+    `GET ${target.origin}/api/states/${automation}`,
+    `GET ${target.origin}/api/states/${automation}`,
+    `POST ${target.origin}/api/services/automation/turn_on`,
+    `GET ${target.origin}/api/states/${automation}`,
+  ]);
+  const journal = [...storage.values.values()].join("\n");
+  for (const value of [target.token, target.origin, "fixture-automation-identity", "private-state"]) assert.ok(!journal.includes(value));
+  const trace = await phone.readTaskTrace(recovered.taskId);
+  assert.equal(trace?.taskStatus, "succeeded");
+  assert.equal(trace?.spans.find(span => span.kind === "verification")?.status, "ok");
+
+  const reopened = await createStandaloneDeviceRuntime({ ...options, storage, fetch });
+  await reopened.setForeground(true);
+  assert.deepEqual(await reopened.listHomeAssistantRuns(), [recovered, diagnosis]);
+  assert.deepEqual(await reopened.enableHomeAssistantAutomation(approvedInput), recovered);
+  assert.equal(calls.length, 4);
+});
+
+test("a phone recovery rejects stale or replaced automation targets before the write", async () => {
+  const storage = new MemoryStorage();
+  const automationTarget = { ...target, entityId: "automation.night" };
+  let automationId = "first";
+  let now = Date.parse(time);
+  let requests = 0;
+  const phone = await createStandaloneDeviceRuntime({
+    ...options,
+    storage,
+    now: () => new Date(now).toISOString(),
+    fetch: async (_url, init) => {
+      requests += 1;
+      assert.equal(init.method, "GET");
+      return Response.json({ entity_id: automationTarget.entityId, state: "off", attributes: { id: automationId } });
+    },
+  });
+  await phone.setForeground(true);
+  const diagnosis = await phone.diagnoseHomeAssistant(automationTarget);
+  const approved = { ...automationTarget, diagnosisTaskId: diagnosis.taskId };
+  await assert.rejects(() => phone.enableHomeAssistantAutomation({ ...approved, entityId: "automation.other" }), /已更改/u);
+  await assert.rejects(() => phone.enableHomeAssistantAutomation({ ...approved, origin: "https://different.fixture.example" }), /已更改/u);
+  now += 30_001;
+  await assert.rejects(() => phone.enableHomeAssistantAutomation(approved), /已过期/u);
+  assert.equal(requests, 1);
+
+  const fresh = await phone.diagnoseHomeAssistant(automationTarget);
+  automationId = "replacement";
+  const result = await phone.enableHomeAssistantAutomation({ ...approved, diagnosisTaskId: fresh.taskId });
+  assert.equal(result.taskStatus, "failed");
+  assert.equal(result.errorCode, "target_changed");
+  assert.equal(requests, 3);
+});
+
+test("a phone recovery keeps an interrupted write or unsettled readback without a second dispatch", async t => {
+  for (const outcome of ["write reply lost", "readback unavailable", "automation still disabled"] as const) {
+    await t.test(outcome, async () => {
+      const storage = new MemoryStorage();
+      const automationTarget = { ...target, entityId: "automation.night" };
+      let writes = 0;
+      let reads = 0;
+      const fetch: HomeAssistantFetch = async (_url, init) => {
+        if (init.method === "POST") {
+          writes += 1;
+          if (outcome === "write reply lost") throw new Error("link lost after dispatch");
+          return new Response(null, { status: 200 });
+        }
+        reads += 1;
+        if (writes && outcome === "readback unavailable") return new Response(null, { status: 503 });
+        return Response.json({ entity_id: automationTarget.entityId, state: "off", attributes: { id: "fixture-automation" } });
+      };
+      const phone = await createStandaloneDeviceRuntime({ ...options, storage, fetch });
+      await phone.setForeground(true);
+      const diagnosis = await phone.diagnoseHomeAssistant(automationTarget);
+      const approved = { ...automationTarget, diagnosisTaskId: diagnosis.taskId };
+      const result = await phone.enableHomeAssistantAutomation(approved);
+      assert.equal(result.taskStatus, outcome === "automation still disabled" ? "failed" : "unknown");
+      assert.equal(result.automationEnabled, outcome === "automation still disabled" ? false : undefined);
+      const reopened = await createStandaloneDeviceRuntime({ ...options, storage, fetch });
+      await reopened.setForeground(true);
+      assert.deepEqual(await reopened.enableHomeAssistantAutomation(approved), result);
+      assert.equal(reads, outcome === "write reply lost" ? 2 : 3);
+      assert.equal(writes, 1);
+    });
+  }
 });
 
 test("phone diagnosis distinguishes missing entities and denied credentials and rejects misbound or oversized results", async () => {

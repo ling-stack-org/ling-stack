@@ -396,6 +396,24 @@ so the native Gradle package has not been accepted yet. Physical Android LAN
 and hotspot runs, native iOS SSH, and a recovery path for network changes remain
 on the acceptance ledger.
 
+### Phone-owned Home Assistant recovery
+
+Open phone device diagnosis and enter the trusted Home Assistant HTTPS origin,
+the entity ID, and the access token. For a disabled automation with a configured
+ID, the phone accepts **Re-enable automation** for 30 seconds after diagnosis.
+Confirmation binds the approved action to the origin, entity, configured ID
+digest, capability snapshot, connection revision and policy revision. The phone
+owns this workflow and its journal independently of PC pairing.
+
+The Mobile adapter rechecks the automation and calls `automation.turn_on` for
+the approved entity if it is still disabled. It reads the entity again and records
+successful verification when the same automation is enabled. A changed identity,
+expired baseline or denied authorization stops dispatch. A lost write response
+or missing readback leaves the result unknown. Another confirmation of the same
+diagnosis returns the saved attempt. The shared trace includes the attempt,
+adapter revision and verification references. The token lives in memory until the
+workflow ends.
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with

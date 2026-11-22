@@ -1,17 +1,22 @@
-import type { DeviceErrorCodeV1, DeviceTaskV1, LinuxNetworkFacts } from "@ling-stack/contracts";
+import type { DeviceApprovalBindingV1, DeviceErrorCodeV1, DeviceTaskV1, LinuxNetworkFacts } from "@ling-stack/contracts";
 
-import { MobileDeviceExecution, type MobileDeviceJournal } from "./execution.ts";
-import { entityIdFromRequest, homeAssistantAvailability, prepareHomeAssistantDiagnosis, type HomeAssistantAvailability, type HomeAssistantFetch } from "./home-assistant.ts";
-import { createAsyncStorageMobileDeviceJournal, type MobileStorageLike } from "./journal.ts";
+import { digestDeviceRequest, MobileDeviceExecution, type MobileDeviceJournal } from "./execution.ts";
+import {
+  entityIdFromRequest, HomeAssistantInputError, homeAssistantEntityState, prepareHomeAssistantDevice,
+  type HomeAssistantAvailability, type HomeAssistantDeviceInput, type HomeAssistantFetch,
+} from "./home-assistant.ts";
+import { createAsyncStorageMobileDeviceJournal, type MobileStorageLike, type MobileTaskEvidence } from "./journal.ts";
 import {
   linuxSshPlaybookId, prepareLinuxSshDiagnosis,
   type LinuxSshTarget, type LinuxSshTargetInput, type OpenLinuxSshConnection,
 } from "./linux-ssh.ts";
-import { runMobileReadOnlyPlaybook } from "./playbook.ts";
+import { createMobilePlaybookAction, runMobileReadOnlyPlaybook, runMobileSetupPlaybook } from "./playbook.ts";
 import { projectMobileDeviceTaskTrace } from "./trace.ts";
 
 const ownerKey = "ling:standalone-device-owner:v1";
 const homeAssistantPlaybookId = "home-assistant-offline-diagnosis@1.0.0";
+const homeAssistantRecoveryPlaybookId = "home-assistant-enable-automation@1.0.0";
+const policyRevision = "device-policy-v1";
 const recentRunLimit = 8;
 
 export interface PhoneHomeAssistantRun {
@@ -19,7 +24,10 @@ export interface PhoneHomeAssistantRun {
   readonly updatedAt: string;
   readonly taskStatus: DeviceTaskV1["status"];
   readonly entityId: string;
+  readonly operation: "diagnosis" | "enable_automation";
   readonly availability?: HomeAssistantAvailability;
+  readonly automationEnabled?: boolean;
+  readonly canEnableAutomation?: boolean;
   readonly errorCode?: DeviceErrorCodeV1;
 }
 
@@ -45,7 +53,7 @@ export async function createStandaloneDeviceRuntime(options: {
   if (persistedOwner === null) await options.storage.setItem(ownerKey, ownerId);
   const journal = createAsyncStorageMobileDeviceJournal(options.storage, ownerId);
   const now = options.now ?? (() => new Date().toISOString());
-  const execution = new MobileDeviceExecution({ ownerId, journal, now });
+  const execution = new MobileDeviceExecution({ ownerId, journal, now, policyRevision });
   execution.setForeground(false);
   let foreground = false;
   let recovery = Promise.resolve();
@@ -64,18 +72,13 @@ export async function createStandaloneDeviceRuntime(options: {
       return recovery;
     },
 
-    async diagnoseHomeAssistant(input: {
-      readonly origin: string;
-      readonly token: string;
-      readonly entityId: string;
-      readonly signal?: AbortSignal;
-    }): Promise<PhoneHomeAssistantRun> {
+    async diagnoseHomeAssistant(input: HomeAssistantDeviceInput & { readonly signal?: AbortSignal }): Promise<PhoneHomeAssistantRun> {
       const expectedRecovery = recovery;
       await expectedRecovery;
       const taskId = await options.randomId("device_task");
       const connectionRevision = await options.randomId("ha_connection");
       if (!foreground || expectedRecovery !== recovery || input.signal?.aborted) throw new Error("请在手机界面保持打开时运行诊断。");
-      const { profile, snapshot, transport, step } = prepareHomeAssistantDiagnosis({
+      const { profile, snapshot, transport, step } = prepareHomeAssistantDevice({
         ...input, ownerId, connectionRevision, now, fetch: options.fetch,
       });
       const task: DeviceTaskV1 = {
@@ -85,15 +88,61 @@ export async function createStandaloneDeviceRuntime(options: {
       await runMobileReadOnlyPlaybook({
         playbookId: homeAssistantPlaybookId, steps: [step], task, profile, snapshot, transport, execution, signal: input.signal,
       });
-      const recorded = await journal.getTask(task.id);
-      const run = recorded && await readHomeAssistantRun(journal, recorded);
+      const run = projectHomeAssistantRun(await journal.readTaskEvidence(task.id));
       if (!run) throw new Error("手机未能读取本次诊断记录。");
+      return run;
+    },
+
+    async enableHomeAssistantAutomation(input: HomeAssistantDeviceInput & {
+      readonly diagnosisTaskId: string;
+      readonly signal?: AbortSignal;
+    }): Promise<PhoneHomeAssistantRun> {
+      const expectedRecovery = recovery;
+      await expectedRecovery;
+      const baseline = await journal.readTaskEvidence(input.diagnosisTaskId);
+      const diagnosis = readHomeAssistantAttempt(baseline);
+      if (baseline.task?.status !== "succeeded" || diagnosis?.operation !== "diagnosis"
+        || diagnosis.state?.automationEnabled !== false || !diagnosis.state.automationIdentity || !diagnosis.observation) {
+        throw new HomeAssistantInputError("先读取已停用的 Home Assistant 自动化。");
+      }
+      const connectionRevision = await options.randomId("ha_connection");
+      const approvalId = await options.randomId("device_approval");
+      const { profile, snapshot, transport, entityId, recoveryStep } = prepareHomeAssistantDevice({
+        ...input, ownerId, connectionRevision, now, fetch: options.fetch, automationIdentity: diagnosis.state.automationIdentity,
+      });
+      if (entityId !== diagnosis.entityId || profile.device.id !== diagnosis.record.request.targetDeviceId || !recoveryStep) {
+        throw new HomeAssistantInputError("Home Assistant 地址或自动化已更改，请重新读取状态。");
+      }
+      const taskId = `${input.diagnosisTaskId}:enable-automation`;
+      const prior = await journal.readTaskEvidence(taskId);
+      if (prior.task) {
+        return projectHomeAssistantRun(prior) ?? {
+          taskId, entityId, operation: "enable_automation", taskStatus: prior.task.status, updatedAt: prior.task.updatedAt,
+        };
+      }
+      const expiresAt = diagnosis.observation.freshnessUntil;
+      if (Date.parse(expiresAt) <= Date.parse(now())) throw new HomeAssistantInputError("自动化状态已过期，请重新读取状态。");
+      if (!foreground || expectedRecovery !== recovery || input.signal?.aborted) throw new HomeAssistantInputError("请在手机前台重新确认恢复。");
+      const task: DeviceTaskV1 = {
+        id: taskId, ownerKind: "mobile", ownerId, targetDeviceIds: [profile.device.id], status: "awaiting_approval",
+        capabilitySnapshotIds: [snapshot.snapshotId], policyRevision, createdAt: snapshot.observedAt, updatedAt: snapshot.observedAt,
+      };
+      const context = { playbookId: homeAssistantRecoveryPlaybookId, profile, snapshot, task, transport, execution, signal: input.signal };
+      const request = createMobilePlaybookAction(context, recoveryStep);
+      const approval: DeviceApprovalBindingV1 = {
+        approvalId, taskId, actionId: request.actionId, targetDeviceId: request.targetDeviceId,
+        capabilitySnapshotId: snapshot.snapshotId, connectionRevision, policyRevision,
+        expiresAt, normalizedInputDigest: digestDeviceRequest(request),
+      };
+      await runMobileSetupPlaybook({ ...context, steps: [{ ...recoveryStep, approval }] });
+      const run = projectHomeAssistantRun(await journal.readTaskEvidence(taskId));
+      if (!run) throw new Error("手机未能读取本次恢复记录。");
       return run;
     },
 
     async listHomeAssistantRuns(): Promise<readonly PhoneHomeAssistantRun[]> {
       await recovery;
-      return listRecentRuns(journal, ownerId, readHomeAssistantRun);
+      return listRecentRuns(journal, ownerId, async task => projectHomeAssistantRun(await journal.readTaskEvidence(task.id)));
     },
 
     async readTaskTrace(taskId: string) {
@@ -150,7 +199,7 @@ export async function createStandaloneDeviceRuntime(options: {
 
     async listLinuxSshRuns(): Promise<readonly PhoneLinuxSshRun[]> {
       await recovery;
-      return listRecentRuns(journal, ownerId, readLinuxSshRun);
+      return listRecentRuns(journal, ownerId, task => readLinuxSshRun(journal, task));
     },
 
     async listLinuxSshTargets(): Promise<readonly LinuxSshTarget[]> {
@@ -163,13 +212,13 @@ export async function createStandaloneDeviceRuntime(options: {
 export type StandaloneDeviceRuntime = Awaited<ReturnType<typeof createStandaloneDeviceRuntime>>;
 
 async function listRecentRuns<Run>(
-  journal: MobileDeviceJournal, ownerId: string, read: (journal: MobileDeviceJournal, task: DeviceTaskV1) => Promise<Run | undefined>,
+  journal: MobileDeviceJournal, ownerId: string, read: (task: DeviceTaskV1) => Promise<Run | undefined>,
 ): Promise<readonly Run[]> {
   const tasks = (await journal.listTasks()).filter(task => task.ownerKind === "mobile" && task.ownerId === ownerId);
   const recent = [...tasks].reverse().sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   const runs: Run[] = [];
   for (const task of recent) {
-    const run = await read(journal, task);
+    const run = await read(task);
     if (run) runs.push(run);
     if (runs.length >= recentRunLimit) break;
   }
@@ -207,17 +256,33 @@ async function readLinuxSshRun(journal: MobileDeviceJournal, task: DeviceTaskV1)
   return { taskId: task.id, updatedAt: task.updatedAt, taskStatus: task.status, deviceId, facts, errorCode: receipt?.errorCode };
 }
 
-async function readHomeAssistantRun(journal: MobileDeviceJournal, task: DeviceTaskV1): Promise<PhoneHomeAssistantRun | undefined> {
-  const record = (await journal.listAttempts(task.id)).find(item =>
-    item.request.actionId.startsWith(`${homeAssistantPlaybookId}:`));
+function readHomeAssistantAttempt(evidence: MobileTaskEvidence) {
+  const record = evidence.attempts.find(item =>
+    item.request.actionId.startsWith(`${homeAssistantPlaybookId}:`) || item.request.actionId.startsWith(`${homeAssistantRecoveryPlaybookId}:`));
   const entityId = record && entityIdFromRequest(record.request);
   if (!record || !entityId) return undefined;
-  const receipt = record.attempt.receipt;
-  const observation = receipt && (await journal.listObservations(task.id)).find(item =>
-    receipt.observationIds.includes(item.id) && item.subjectId === entityId && item.provenance.includes(record.request.targetDeviceId));
+  const recovery = record.request.actionId.startsWith(`${homeAssistantRecoveryPlaybookId}:`);
+  const targetId = record.request.targetDeviceId;
+  const observationIds = (recovery ? record.attempt.verification : record.attempt.receipt)?.observationIds;
+  const observation = evidence.observations.find(item => observationIds?.includes(item.id)
+    && item.subjectId === (recovery ? targetId : entityId) && item.provenance.includes(targetId));
   return {
-    taskId: task.id, updatedAt: task.updatedAt, taskStatus: task.status, entityId,
-    availability: observation && homeAssistantAvailability(observation),
-    errorCode: receipt?.errorCode,
+    record, entityId, observation, state: observation && homeAssistantEntityState(observation),
+    operation: recovery ? "enable_automation" as const : "diagnosis" as const,
+  };
+}
+
+function projectHomeAssistantRun(evidence: MobileTaskEvidence): PhoneHomeAssistantRun | undefined {
+  const { task } = evidence;
+  const result = readHomeAssistantAttempt(evidence);
+  if (!task || !result) return undefined;
+  const { record, entityId, operation, state } = result;
+  return {
+    taskId: task.id, updatedAt: task.updatedAt, taskStatus: task.status, entityId, operation,
+    availability: state?.availability,
+    automationEnabled: state?.automationEnabled,
+    canEnableAutomation: task.status === "succeeded" && operation === "diagnosis"
+      && state?.automationEnabled === false && !!state.automationIdentity,
+    errorCode: record.attempt.receipt?.errorCode,
   };
 }

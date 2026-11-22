@@ -53,6 +53,24 @@ export function runMobileSetupPlaybook(input: MobileSetupPlaybookInput): Promise
   return runMobilePlaybook(input, "setup");
 }
 
+export function createMobilePlaybookAction(
+  input: Pick<MobileReadOnlyPlaybookInput, "playbookId" | "profile" | "snapshot" | "task">,
+  step: MobileReadOnlyPlaybookStep & Pick<MobileSetupPlaybookStep, "expectedVerification" | "recoveryPlan">,
+): DeviceActionRequestV1 {
+  return {
+    actionId: `${input.playbookId}:${step.stepId}`,
+    taskId: input.task.id,
+    targetDeviceId: input.profile.device.id,
+    capabilityId: step.capabilityId,
+    capabilitySchemaVersion: step.capabilitySchemaVersion,
+    capabilitySnapshotId: input.snapshot.snapshotId,
+    normalizedInput: step.normalizedInput,
+    idempotencyKey: `${input.task.id}:${input.playbookId}:${step.stepId}`,
+    ...(step.expectedVerification === undefined ? {} : { expectedVerification: step.expectedVerification }),
+    ...(step.recoveryPlan === undefined ? {} : { recoveryPlan: step.recoveryPlan }),
+  };
+}
+
 async function runMobilePlaybook(
   input: MobileReadOnlyPlaybookInput | MobileSetupPlaybookInput,
   mode: "read_only" | "setup",
@@ -70,20 +88,8 @@ async function runMobilePlaybook(
     }
     const setup = mode === "setup" ? isSetupStep(step) : undefined;
     const request: DeviceActionRequestV1 = {
-      actionId: `${input.playbookId}:${step.stepId}`,
-      taskId: input.task.id,
-      targetDeviceId: input.profile.device.id,
-      capabilityId: step.capabilityId,
-      capabilitySchemaVersion: step.capabilitySchemaVersion,
-      capabilitySnapshotId: input.snapshot.snapshotId,
-      normalizedInput: step.normalizedInput,
-      idempotencyKey: `${input.task.id}:${input.playbookId}:${step.stepId}`,
-      ...(setup ? {
-        approvalId: setup.approval.approvalId,
-        approval: setup.approval,
-        ...(setup.expectedVerification === undefined ? {} : { expectedVerification: setup.expectedVerification }),
-        ...(setup.recoveryPlan === undefined ? {} : { recoveryPlan: setup.recoveryPlan }),
-      } : {}),
+      ...createMobilePlaybookAction(input, setup ?? step),
+      ...(setup ? { approvalId: setup.approval.approvalId, approval: setup.approval } : {}),
     };
     const attempt = await input.execution.execute({
       profile: input.profile,
