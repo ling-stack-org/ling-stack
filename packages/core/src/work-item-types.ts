@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { LingAppServerGitHubDelivery, LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
+import type {
+  LingAppServerGitHubDelivery, LingAppServerWorkItemAcceptance, LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
+} from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
 
 export type WorkItemStatus =
@@ -176,16 +178,17 @@ export interface WorkItemAcceptanceRequest {
   readonly expectedRevision: number;
   readonly actorId: string;
   readonly idempotencyKey: string;
+  readonly dispatch?: LingAppServerWorkItemConversationDispatch;
 }
 
-export interface WorkItemAcceptanceReceipt {
-  readonly id: string;
+export interface WorkItemConversationBinding {
   readonly workItemId: string;
-  readonly acceptedRevision: number;
-  readonly workItemRevision: number;
-  readonly actorId: string;
-  readonly idempotencyKey: string;
-  readonly acceptedAt: string;
+  readonly acceptanceId: string;
+  readonly submissionKey: string;
+}
+
+export interface WorkItemAcceptanceReceipt extends LingAppServerWorkItemAcceptance {
+  readonly dispatch?: LingAppServerWorkItemConversationDispatch & { readonly submissionKey: string };
 }
 
 export interface WorkItemAcceptanceResult {

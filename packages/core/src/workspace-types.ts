@@ -1273,6 +1273,7 @@ export interface HardDeleteAiTeammateResult {
 
 export interface HardDeleteLingThreadInput {
   readonly reason?: string;
+  readonly expectedThreadRevision?: string;
 }
 
 export interface HardDeleteLingThreadResult {

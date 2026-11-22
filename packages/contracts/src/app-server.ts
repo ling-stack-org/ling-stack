@@ -504,6 +504,44 @@ export interface LingAppServerWorkItemCreateParams {
   readonly gitHubSubject?: Omit<LingAppServerGitHubSubjectParams, "cwd">;
 }
 
+export interface LingAppServerWorkItemConversationDispatch {
+  readonly threadId: string;
+  readonly message: string;
+  readonly providerPresetId?: string;
+}
+
+export interface LingAppServerWorkItemAcceptParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+  readonly actorId?: string;
+  readonly dispatch?: LingAppServerWorkItemConversationDispatch;
+}
+
+export interface LingAppServerWorkItemAcceptance {
+  readonly id: string;
+  readonly workItemId: string;
+  readonly acceptedRevision: number;
+  readonly workItemRevision: number;
+  readonly actorId: string;
+  readonly idempotencyKey: string;
+  readonly acceptedAt: string;
+}
+
+export interface LingAppServerWorkItemAcceptResult extends LingAppServerWorkItemResult {
+  readonly accepted: true;
+  readonly acceptance: LingAppServerWorkItemAcceptance;
+  readonly replayed: boolean;
+  readonly dispatch?: {
+    readonly threadId: string;
+    readonly submissionKey: string;
+    readonly status: "pending" | "admitted" | "held";
+    readonly runId?: string;
+    readonly blocker?: string;
+  };
+}
+
 export interface LingAppServerWorkItemReadResult extends LingAppServerWorkItemResult {
   readonly cursor: string;
 }

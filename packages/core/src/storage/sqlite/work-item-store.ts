@@ -19,6 +19,7 @@ import {
   type WorkItemControlRequest,
   type WorkItemControlReceipt,
   type WorkItemControlResult,
+  type WorkItemConversationBinding,
   type WorkItemFailRequest,
   type WorkItemHeartbeatRequest,
   type WorkItemReleaseRequest,
@@ -34,6 +35,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import type { LingAppServerGitHubDelivery, LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
+import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -153,6 +155,7 @@ export class SqliteWorkItemStore {
         || prior && (prior.threadId !== delivery.threadId || prior.subject.repositoryId !== delivery.subject.repositoryId
           || prior.subject.number !== delivery.subject.number)) throw new Error("github_delivery_binding_conflict");
       if (!workItem || workItem.revision !== expectedWorkItemRevision || acceptance?.id !== delivery.acceptanceId
+        || acceptance.dispatch && acceptance.dispatch.threadId !== delivery.threadId
         || !database.prepare("SELECT 1 FROM ling_threads WHERE id=? AND archived_at IS NULL").get(delivery.threadId)) {
         throw new Error("github_delivery_stale");
       }
@@ -403,7 +406,7 @@ export class SqliteWorkItemStore {
       const { workItem, receipt } = result;
       const event = events.store.appendControlPlaneEventWithinTransaction({
         workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items",
-        entityType: "work_item", entityId: id, action: "work_item.accepted", idempotencyKey: receipt.id,
+        entityType: "work_item", entityId: id, action: receipt.dispatch ? "work_item.thread.linked" : "work_item.accepted", idempotencyKey: receipt.id,
         data: { workItemId: id, revision: receipt.workItemRevision, actorId: receipt.actorId, acceptanceId: receipt.id },
       }, now);
       database.exec("COMMIT");
@@ -420,9 +423,11 @@ export class SqliteWorkItemStore {
     const prior = state.get("work_item_acceptance", id)?.payload as WorkItemAcceptanceReceipt | undefined;
     if (prior) {
       if (prior.idempotencyKey !== input.idempotencyKey) {
+        if (prior.dispatch && input.dispatch) return { workItem, receipt: prior, replayed: true };
         throw new Error("work_item_acceptance_already_committed");
       }
-      if (prior.actorId !== input.actorId || prior.acceptedRevision !== input.expectedRevision) {
+      if (prior.actorId !== input.actorId || prior.acceptedRevision !== input.expectedRevision
+        || !sameConversationDispatch(prior.dispatch, input.dispatch)) {
         throw new Error("work_item_acceptance_idempotency_conflict");
       }
       return { workItem, receipt: prior, replayed: true };
@@ -430,19 +435,61 @@ export class SqliteWorkItemStore {
     if (workItem.revision !== input.expectedRevision || workItem.control.state !== "active"
       || workItem.holds.some(hold => hold.blocksNewAdmission)
       || !["intake", "triage", "backlog", "ready"].includes(workItem.status)) return undefined;
+    const acceptanceId = `work_item_acceptance_${randomUUID()}`;
+    const dispatch = input.dispatch ? { ...input.dispatch, submissionKey: `work-item:${acceptanceId}` } : undefined;
+    if (dispatch) {
+      const thread = this.context.database.prepare(`SELECT active_run_id FROM ling_threads
+        WHERE id=? AND workspace_id=? AND kind='conversation' AND channel_id IS NULL AND archived_at IS NULL AND status!='archived'`)
+        .get(dispatch.threadId, workItem.workspaceId);
+      if (!thread || thread.active_run_id || state.get("work_item_thread", dispatch.threadId)
+        || this.context.database.prepare(`SELECT 1 FROM ling_turns WHERE thread_id=? AND status IN ('queued','running','waiting_for_approval','waiting_for_input') LIMIT 1`)
+          .get(dispatch.threadId)) throw new Error("work_item_dispatch_thread_unavailable");
+      const binding: WorkItemConversationBinding = { workItemId: id, acceptanceId, submissionKey: dispatch.submissionKey };
+      state.putWithinTransaction({ kind: "work_item_thread", recordId: dispatch.threadId, expectedRevision: 0, payload: binding }, now);
+    }
     const receipt: WorkItemAcceptanceReceipt = {
-      id: `work_item_acceptance_${randomUUID()}`,
+      id: acceptanceId,
       workItemId: id,
       acceptedRevision: workItem.revision,
       workItemRevision: workItem.revision + 1,
       actorId: input.actorId,
       idempotencyKey: input.idempotencyKey,
       acceptedAt: now,
+      ...(dispatch ? { dispatch } : {}),
     };
     this.context.database.prepare("UPDATE work_items SET status='ready', waiting_reason=NULL, revision=revision+1, updated_at=? WHERE workspace_id=? AND id=?")
       .run(now, workItem.workspaceId, id);
     state.putWithinTransaction({ kind: "work_item_acceptance", recordId: id, expectedRevision: 0, payload: receipt }, now);
     return { workItem: this.getWorkItem(id)!, receipt, replayed: false };
+  }
+
+  getConversationBinding(threadId: string, state: SqliteAppServerStateStore): WorkItemConversationBinding | undefined {
+    return state.get("work_item_thread", threadId)?.payload as WorkItemConversationBinding | undefined;
+  }
+
+  checkConversationAdmission(threadId: string, submissionKey: unknown, state: SqliteAppServerStateStore): WorkItem | undefined {
+    const binding = this.getConversationBinding(threadId, state);
+    if (!binding) return undefined;
+    const workItem = this.getWorkItem(binding.workItemId);
+    if (!workItem || workItem.control.state !== "active" || workItem.control.unresolvedEffectIds.length > 0
+      || workItem.holds.some(hold => hold.blocksNewAdmission)
+      || ["done", "cancelled", "superseded", "archived"].includes(workItem.status)) throw new Error("work_item_dispatch_held");
+    if (!workItem.runId && binding.submissionKey !== submissionKey
+      && normalConversationSubmissionKey(threadId, binding.submissionKey) !== submissionKey) throw new Error("work_item_dispatch_intent_required");
+    return workItem;
+  }
+
+  linkFirstConversationRun(
+    workItem: WorkItem, runId: string, now: string, events: { readonly store: SqliteControlPlaneStore; readonly cwd: string },
+  ): void {
+    if (workItem.runId) return;
+    this.context.database.prepare("UPDATE work_items SET run_id=?, revision=revision+1, updated_at=? WHERE id=?")
+      .run(runId, now, workItem.id);
+    events.store.appendControlPlaneEventWithinTransaction({
+      workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items", entityType: "work_item", entityId: workItem.id,
+      action: "work_item.dispatch.admitted", idempotencyKey: `work-item-dispatch:${workItem.id}`,
+      data: { workItemId: workItem.id, revision: workItem.revision + 1, dispatchStatus: "admitted" },
+    }, now);
   }
 
   claimWorkItem(
@@ -708,6 +755,10 @@ export class SqliteWorkItemStore {
     }
     return undefined;
   }
+}
+
+function sameConversationDispatch(left: WorkItemAcceptanceReceipt["dispatch"], right: WorkItemAcceptanceRequest["dispatch"]): boolean {
+  return left?.threadId === right?.threadId && left?.message === right?.message && left?.providerPresetId === right?.providerPresetId;
 }
 
 function nextWorkItemControlState(state: WorkItemControlState, action: WorkItemControlAction, unresolvedEffectCount: number): WorkItemControlState | undefined {

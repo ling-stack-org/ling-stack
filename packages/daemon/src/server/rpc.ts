@@ -1,4 +1,4 @@
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
@@ -36,6 +36,8 @@ import {
   type LingAppServerThreadSnapshotResult,
   type LingAppServerTurnResumeResult,
   type LingAppServerWorkItemControlResult,
+  type LingAppServerWorkItemAcceptResult,
+  type LingAppServerWorkItemConversationDispatch,
   type LingAppServerWorkItemReadResult,
   type LingAppServerWorkItemResult,
 } from "@ling-stack/contracts";
@@ -94,6 +96,7 @@ import {
 } from "./app-server-authorization.js";
 import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
+import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import {
   ExternalAgentFederationService,
   externalAgentRpcError,
@@ -154,6 +157,7 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "model/list", "skill/read", "permissionProfile/list",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
+const appServerConnectionsByContext = new WeakMap<DaemonContext, Set<RpcConnection>>();
 const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
   "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
@@ -163,17 +167,30 @@ const operatorMethods = new Set([
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
   "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
+  "workItem/accept",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
-export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
+export function attachRpcWebSocketServer(
+  server: Pick<Server, "on" | "off" | "once">, context: DaemonContext,
+  options: { readonly permitsRemoteUpgrade?: (request: IncomingMessage) => boolean } = {},
+): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const appServerConnections = new Set<RpcConnection>();
+  const daemonConnections = appServerConnectionsByContext.get(context) ?? new Set<RpcConnection>();
+  appServerConnectionsByContext.set(context, daemonConnections);
+  const remote = Boolean(options.permitsRemoteUpgrade);
   let closed = false;
   let draining = false;
   const handleUpgrade: Parameters<Server["on"]>[1] = (request, socket, head) => {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
+    let url: URL;
+    try { url = new URL(request.url ?? "/", "http://localhost"); }
+    catch { rejectUpgrade(socket, 400, "Invalid WebSocket request path."); return; }
     const appServer = url.pathname === APP_SERVER_RPC_PATH;
+    if (remote && !appServer) {
+      rejectUpgrade(socket, 404, "The remote listener exposes only App Server RPC.");
+      return;
+    }
     if (url.pathname !== "/rpc/stream" && !appServer) {
       return;
     }
@@ -181,7 +198,7 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
       rejectUpgrade(socket, 503, "App Server is draining.");
       return;
     }
-    if (!context.config.transports.localWebSocketRpc) {
+    if (!remote && !context.config.transports.localWebSocketRpc) {
       rejectUpgrade(socket, 404, "WebSocket RPC transport is disabled");
       return;
     }
@@ -189,12 +206,17 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     const daemonAuthorized = daemonRequestIsAuthorized(context.config.authToken, authorization);
     const scopedBearer = appServer && typeof authorization === "string" && authorization.startsWith(appServerGrantBearerPrefix)
       && !(context.config.authToken && daemonAuthorized);
-    if (!daemonAuthorized && !scopedBearer) {
-      rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
+    if (remote && !options.permitsRemoteUpgrade?.(request)
+      || appServer && !remote && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
+      rejectUpgrade(socket, 403, "The App Server listener does not permit this host or origin.");
       return;
     }
-    if (appServer && !scopedBearer && !context.config.authToken && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
-      rejectUpgrade(socket, 403, "WebSocket RPC access requires a direct loopback Ling page or bearer token.");
+    if (remote && !scopedBearer) {
+      rejectUpgrade(socket, 401, "Remote App Server access requires a scoped grant.");
+      return;
+    }
+    if (!daemonAuthorized && !scopedBearer) {
+      rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
       return;
     }
     const cwd = url.searchParams.get("cwd");
@@ -227,11 +249,15 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     wss.handleUpgrade(request, socket, head, (ws) => {
       const connection = new RpcConnection(ws, workspaceCwd, context, appServer, Boolean(context.config.authToken && daemonAuthorized),
         () => draining, grant, (cwd, id) => {
-          for (const peer of appServerConnections) peer.invalidateGrant(cwd, id);
+          for (const peer of daemonConnections) peer.invalidateGrant(cwd, id);
         });
       if (appServer) {
         appServerConnections.add(connection);
-        ws.once("close", () => appServerConnections.delete(connection));
+        daemonConnections.add(connection);
+        ws.once("close", () => {
+          appServerConnections.delete(connection);
+          daemonConnections.delete(connection);
+        });
       }
       connection.start();
     });
@@ -927,7 +953,7 @@ class RpcConnection {
     }
   }
 
-  private acceptWorkItem(params: unknown): unknown {
+  private async acceptWorkItem(params: unknown): Promise<LingAppServerWorkItemAcceptResult> {
     const record = this.workspaceParams(params);
     const { cwd } = record;
     const workItemId = readStringField(record, "workItemId");
@@ -937,6 +963,7 @@ class RpcConnection {
       expectedRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
       actorId: readOptionalStringField(record, "actorId") ?? "local-user",
       idempotencyKey: readStringField(record, "idempotencyKey"),
+      dispatch: readOptionalWorkItemConversationDispatch(record.dispatch),
     };
     let result;
     try {
@@ -948,12 +975,41 @@ class RpcConnection {
       if (error instanceof Error && error.message === "work_item_acceptance_already_committed") {
         throw rpcError(-32030, "stale_revision", "The Work Item already has an accepted dispatch.");
       }
+      if (error instanceof Error && error.message === "work_item_dispatch_thread_unavailable") {
+        throw rpcError(-32040, "workspace_binding_invalid", "The selected conversation is unavailable for first dispatch.");
+      }
       throw error;
     }
     if (!result) throw rpcError(-32030, "stale_revision", "The Work Item is no longer eligible for acceptance at this revision.");
     const { workItem, receipt, replayed, event } = result;
     if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
-    return { cwd, accepted: true, workItem: projectWorkItemSnapshot(workItem), acceptance: receipt, replayed };
+    const { dispatch, ...acceptance } = receipt;
+    const started = dispatch ? await this.dispatchAcceptedWorkItem(store, cwd, workItem, dispatch) : undefined;
+    return {
+      cwd, accepted: true, workItem: projectWorkItemSnapshot(store.getWorkItem(workItemId) ?? workItem), acceptance, replayed,
+      ...(started ? { dispatch: started } : {}),
+    };
+  }
+
+  private async dispatchAcceptedWorkItem(
+    store: RunStore, cwd: string, workItem: WorkItem,
+    intent: LingAppServerWorkItemConversationDispatch & { readonly submissionKey: string },
+  ): Promise<NonNullable<LingAppServerWorkItemAcceptResult["dispatch"]>> {
+    const { threadId, submissionKey, providerPresetId, message } = intent;
+    const identity = { threadId, submissionKey };
+    const thread = store.getLingThread(threadId);
+    if (workItem.runId) return { ...identity, status: "admitted", runId: workItem.runId };
+    if (!thread) return { ...identity, status: "held", blocker: "work_item_dispatch_thread_unavailable" };
+    try {
+      await this.startConversationTurn({ threadId, providerPresetId, idempotencyKey: submissionKey }, thread, cwd, message);
+    } catch (error) {
+      const blocker = normalizeRpcError(error).code;
+      const runId = store.getWorkItem(workItem.id)?.runId;
+      if (runId) return { ...identity, status: "admitted", runId };
+      return { ...identity, status: blocker === "work_item_dispatch_held" ? "held" : "pending", blocker };
+    }
+    const runId = store.getWorkItem(workItem.id)?.runId;
+    return runId ? { ...identity, status: "admitted", runId } : { ...identity, status: "pending" };
   }
 
   private clarifyWorkItem(params: unknown): unknown {
@@ -1446,6 +1502,8 @@ class RpcConnection {
     const turns = store.listLingTurns({ threadId, limit: 500 });
     const goal = store.getLingThreadGoal(threadId);
     const plans = store.listProposedPlanArtifacts({ threadId, limit: 200 });
+    const workItemIds = store.listLingThreadWorkItemDependencies(threadId);
+    if (workItemIds.length) blockers.push("current Work Item depends on thread");
     if (goal && ["active", "paused", "blocked", "usage_limited", "budget_limited"].includes(goal.status)) blockers.push("active goal depends on thread");
     if (plans.some((plan) => plan.status === "accepted")) blockers.push("accepted plan depends on thread");
     return {
@@ -1454,7 +1512,7 @@ class RpcConnection {
       revision: thread.updatedAt,
       allowed: blockers.length === 0,
       blockers,
-      dependencies: { turnCount: turns.length, goalId: goal?.id, planIds: plans.filter((plan) => plan.status === "accepted").map((plan) => plan.id) },
+      dependencies: { turnCount: turns.length, goalId: goal?.id, planIds: plans.filter((plan) => plan.status === "accepted").map((plan) => plan.id), workItemIds },
     };
   }
 
@@ -1468,7 +1526,10 @@ class RpcConnection {
       readonly blockers: readonly string[];
     };
     if (!preview.allowed) throw rpcError(-32061, "resume_blocked", `Thread deletion is blocked: ${preview.blockers.join("; ")}`);
-    const result = store.hardDeleteLingThread(threadId, { reason: readOptionalStringField(record, "reason") }, new Date().toISOString());
+    const result = store.hardDeleteLingThread(threadId, {
+      reason: readOptionalStringField(record, "reason"),
+      expectedThreadRevision: readOptionalStringField(record, "expectedRevision"),
+    }, new Date().toISOString());
     if (!result) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
     appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -1775,6 +1836,7 @@ class RpcConnection {
       }
       return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(prior, thread), replayed: true };
     }
+    assertWorkItemConversationAdmission(store, threadId, undefined);
     const turn = store.createLingTurn({
       id: turnId,
       threadId,
@@ -2018,7 +2080,8 @@ class RpcConnection {
       if (!workItem) {
         throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
       }
-      return { cwd, workItem: projectWorkItemSnapshot(workItem), cursor: scope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
+      return { cwd, workItem: projectWorkItemSnapshot(workItem, this.grant?.subject.kind !== "workItem"),
+        cursor: scope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
     });
   }
 
@@ -2047,7 +2110,7 @@ class RpcConnection {
         throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${result.workItem.control.state}.`);
       case "applied":
       case "replayed": {
-        const workItem = projectWorkItemSnapshot(result.workItem);
+        const workItem = projectWorkItemSnapshot(result.workItem, this.grant?.subject.kind !== "workItem");
         if (result.event) {
           this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
           this.send({ jsonrpc: "2.0", method: "workItem/control/updated", params: {
@@ -2523,14 +2586,14 @@ function parseJsonRpcRequest(data: RawData): JsonRpcRequest | undefined {
   }
 }
 
-function projectWorkItemSnapshot(workItem: WorkItem) {
-  const currentExecutionRefs = [
+function projectWorkItemSnapshot(workItem: WorkItem, includeExecutionRefs = true) {
+  const currentExecutionRefs = includeExecutionRefs ? [
     workItem.taskId,
     workItem.runId,
     workItem.workflowId,
     workItem.workflowStepId,
     workItem.approvalId,
-  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  ].filter((value): value is string => typeof value === "string" && value.length > 0) : [];
   return {
     workspaceId: workItem.workspaceId,
     workItemId: workItem.id,
@@ -2704,6 +2767,16 @@ function readOptionalStringField(record: Record<string, unknown>, key: string): 
   return value;
 }
 
+function readOptionalWorkItemConversationDispatch(value: unknown): LingAppServerWorkItemConversationDispatch | undefined {
+  if (value === undefined) return undefined;
+  const record = readParamsRecord(value);
+  const threadId = readStringField(record, "threadId");
+  const message = readStringField(record, "message");
+  if (!message.trim() || message.length > 16_384) throw rpcError(-32602, "invalid_params", "dispatch.message must be 1–16384 characters.");
+  const providerPresetId = readOptionalStringField(record, "providerPresetId");
+  return { threadId, message, ...(providerPresetId ? { providerPresetId } : {}) };
+}
+
 function rpcError(jsonRpcCode: number, code: string, message: string): Error & { readonly jsonRpcCode: number; readonly code: string } {
   return Object.assign(new Error(message), { jsonRpcCode, code });
 }
@@ -2752,6 +2825,12 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   }
   if (error instanceof Error && error.message === "work_item_evidence_idempotency_conflict") {
     return { jsonRpcCode: -32031, code: "idempotency_conflict", message: "The evidence key was reused with different input." };
+  }
+  if (error instanceof Error && error.message === "thread_delete_preview_stale") {
+    return { jsonRpcCode: -32030, code: "stale_revision", message: "The Thread changed after the deletion preview." };
+  }
+  if (error instanceof Error && error.message === "thread_work_item_dependency") {
+    return { jsonRpcCode: -32061, code: "resume_blocked", message: "The Thread has a current Work Item dependency." };
   }
   if (error instanceof Error && /^goal_(acceptance|completion|supervision)_/u.test(error.message)) {
     return { jsonRpcCode: -32061, code: error.message, message: error.message };
@@ -2886,6 +2965,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   }
   if (event.entityType === "work_item") {
     if (event.action === "work_item.created") return "workItem/created";
+    if (event.action === "work_item.thread.linked") return "workItem/thread/linked";
     if (event.action.includes("evidence")) return "workItem/evidence/updated";
     if (event.action.includes("control")) return "workItem/control/updated";
     if (event.action.includes("collaboration")) return "workItem/collaboration/updated";

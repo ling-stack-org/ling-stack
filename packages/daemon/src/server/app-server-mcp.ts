@@ -53,6 +53,20 @@ export async function runLingAppServerMcp(
       }),
       annotations: { idempotentHint: true },
     }, async params => describe(await client.startTurn(params)));
+    server.registerTool("ling_work_item_create", {
+      description: "Submit a source occurrence to the Ling task inbox. Use a structured GitHub subject to join existing work.",
+      inputSchema: z.strictObject({ sourceId: objectId, title: z.string().min(1).max(200), idempotencyKey: requestKey,
+        gitHubSubject: z.strictObject({ repository: z.string().min(3).max(201), kind: z.enum(["issue", "pull_request"]), number: z.number().int().positive() }).optional(),
+      }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.createWorkItem(params)));
+    server.registerTool("ling_work_item_accept", {
+      description: "Accept a Work Item and give its primary execution to a Ling conversation. A retry uses the original dispatch.",
+      inputSchema: z.strictObject({ workItemId: objectId, expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey,
+        dispatch: z.strictObject({ threadId: objectId, message: z.string().min(1).max(16_384), providerPresetId: objectId.optional() }).optional(),
+      }),
+      annotations: { idempotentHint: true },
+    }, async params => describe(await client.acceptWorkItem(params)));
     server.registerTool("ling_turn_queue", {
       description: "Queue a follow-up for the active Ling Turn from ling_thread_snapshot. Retry with the same request key.",
       inputSchema: followupInput,

@@ -32,6 +32,7 @@ import type {
   LingAppServerVerifyPlanResult,
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemCollaborationAppendResult,
+  LingAppServerWorkItemAcceptResult,
   LingAppServerWorkItemControlResult,
   LingAppServerWorkItemReadResult,
   LingAppServerWorkItemResult,
@@ -1071,6 +1072,66 @@ test("authorized GitHub occurrences converge on one Work Item and retain their o
   assert.equal(fixture.getStore().listWorkItems().length, 1);
 });
 
+test("a reserved Work Item dispatch recovers once through the conversation owner and obeys pause and deletion fences", { timeout: 25_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "First assignment complete." }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  const first = await fixture.connect();
+  const { thread } = await first.call<ThreadRead>("thread/start", { title: "Primary assignment" });
+  const { thread: alternate } = await first.call<ThreadRead>("thread/start", { title: "Competing assignment" });
+  const { workItem } = await first.call<LingAppServerWorkItemResult>("workItem/create", { sourceId: "dispatch", title: "Accept one assignment" });
+  const store = fixture.getStore();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const dispatch = { threadId: thread.id, message: "Inspect primary assignment", providerPresetId: preset.id };
+  const input = { workItemId: workItem.workItemId, expectedWorkItemRevision: Number(workItem.revision),
+    actorId: "local-user", idempotencyKey: "accept-primary", dispatch };
+  const before = await first.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: workItem.workItemId });
+  const reserved = store.acceptWorkItem(workItem.workItemId, {
+    expectedRevision: input.expectedWorkItemRevision, actorId: input.actorId, idempotencyKey: input.idempotencyKey, dispatch,
+  }, new Date().toISOString());
+  assert.ok(reserved?.receipt.dispatch);
+  assert.equal(store.listRuns({ threadId: thread.id }).length, 0);
+  await assert.rejects(first.call("turn/start", { ...dispatch, idempotencyKey: "different-execution" }), { code: "work_item_dispatch_intent_required" });
+  const pause = await first.call<LingAppServerWorkItemControlResult>("workItem/pause", {
+    workItemId: workItem.workItemId, expectedWorkItemRevision: reserved.workItem.revision, expectedControlGeneration: 0,
+    idempotencyKey: "pause-primary", actorId: "local-user",
+  });
+  const held = await first.call<LingAppServerWorkItemAcceptResult>("workItem/accept", input);
+  assert.equal(held.dispatch?.status, "held");
+  assert.equal(held.acceptance.id, reserved.receipt.id);
+  assert.equal(provider.requests.length, 0);
+  await fixture.restart();
+  const [restored, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
+  await peer.call("workItem/subscribe", { workItemId: workItem.workItemId, cursor: before.cursor });
+  await waitFor(() => peer.notices.find(value => value.method === "workItem/thread/linked"));
+  await restored.call("workItem/resume", {
+    workItemId: workItem.workItemId, expectedWorkItemRevision: Number(pause.workItem.revision), expectedControlGeneration: 1,
+    idempotencyKey: "resume-primary", actorId: "local-user",
+  });
+  const [primary, competing] = await Promise.all([
+    restored.call<LingAppServerWorkItemAcceptResult>("workItem/accept", input),
+    peer.call<LingAppServerWorkItemAcceptResult>("workItem/accept", {
+      ...input, idempotencyKey: "accept-competing", dispatch: { ...dispatch, threadId: alternate.id },
+    }),
+  ]);
+  assert.deepEqual(primary.acceptance, competing.acceptance);
+  assert.equal(primary.acceptance.id, reserved.receipt.id);
+  const runId = primary.dispatch?.runId;
+  assert.ok(runId, `Expected an admitted primary run, got ${primary.dispatch?.status}: ${primary.dispatch?.blocker}`);
+  assert.deepEqual(competing.dispatch, primary.dispatch);
+  await waitFor(() => fixture.getStore().getRun(runId)?.status === "succeeded" ? true : undefined);
+  await waitFor(() => peer.notices.find(value => value.params?.event?.action === "work_item.dispatch.admitted"));
+  assert.equal(provider.requests.length, 1);
+  assert.equal(fixture.getStore().listRuns({ threadId: thread.id }).length, 1);
+  assert.equal(fixture.getStore().listRuns({ threadId: alternate.id }).length, 0);
+  assert.equal(fixture.getStore().getWorkItem(workItem.workItemId)?.runId, runId);
+  await restored.call("thread/archive", { threadId: thread.id });
+  const preview = await restored.call<{ allowed: boolean; dependencies: { workItemIds: string[] } }>("thread/delete/preview", { threadId: thread.id });
+  assert.equal(preview.allowed, false);
+  assert.deepEqual(preview.dependencies.workItemIds, [workItem.workItemId]);
+  assert.throws(() => fixture.getStore().hardDeleteLingThread(thread.id, {}, new Date().toISOString()), /thread_work_item_dependency/u);
+});
+
 test("GitHub delivery keeps head checks across base changes and completes a Goal only with current trusted merge evidence", { timeout: 30_000 }, async t => {
   const originalBase = "b".repeat(40);
   const newBase = "c".repeat(40);
@@ -1524,6 +1585,74 @@ test("App Server grants restrict observers, controllers and approvers to their s
   await assert.rejects(fixture.connect("/rpc/stream", fixture.cwd, control.bearer), /401/u);
 });
 
+test("the dedicated TLS App Server accepts scoped controllers and revokes access across listeners", { timeout: 30_000 }, async t => {
+  const fixture = await releaseFixture(t, {
+    wssConfig: async root => {
+      const certificateFile = join(root, "certificate.pem");
+      const privateKeyFile = join(root, "private-key.pem");
+      const opensslConfig = join(root, "tls.cnf");
+      await writeFile(opensslConfig, [
+        "[req]", "prompt=no", "distinguished_name=dn", "x509_extensions=extensions", "[dn]", "CN=127.0.0.1",
+        "[extensions]", "subjectAltName=IP:127.0.0.1", "basicConstraints=critical,CA:TRUE",
+      ].join("\n"));
+      execFileSync("openssl", ["req", "-x509", "-nodes", "-newkey", "rsa:2048", "-days", "1", "-config", opensslConfig,
+        "-keyout", privateKeyFile, "-out", certificateFile], { stdio: "ignore" });
+      return { certificateFile, privateKeyFile, host: "127.0.0.1", port: 0, allowedHosts: ["127.0.0.1"] };
+    },
+  });
+  const host = await fixture.connect();
+  const { thread } = await host.call<ThreadRead>("thread/start", { title: "Remote authorized task" });
+  const { thread: other } = await host.call<ThreadRead>("thread/start", { title: "Unrelated task" });
+  const secret = createHash("sha256").update(randomUUID()).digest("hex");
+  const { grant } = await host.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+    label: "Remote controller", scopes: ["observe", "control"], subject: { kind: "thread", id: thread.id },
+    expiresAt: new Date(Date.now() + 60_000).toISOString(), idempotencyKey: "remote-grant",
+    credentialSha256: createHash("sha256").update(secret).digest("hex"),
+  });
+  const credential = `las1.${grant.grantId}.${secret}`;
+  const url = new URL(fixture.wssUrl());
+  url.pathname = "/app-server/rpc";
+  url.searchParams.set("cwd", fixture.cwd);
+  const ca = await readFile(join(fixture.root, "certificate.pem"));
+  const open = (credential: string | undefined, options: { host?: string; origin?: string; trust?: boolean } = {}) => once(new WebSocket(url, {
+    ca: options.trust === false ? undefined : ca,
+    headers: { ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
+      ...(options.host ? { Host: options.host } : {}), ...(options.origin ? { Origin: options.origin } : {}) },
+  }), "open");
+  await assert.rejects(open(undefined), /401/u);
+  await assert.rejects(open(fixture.transportOptions().authToken), /401/u);
+  await assert.rejects(open(credential, { host: "unapproved.example.test" }), /403/u);
+  await assert.rejects(open(credential, { origin: "https://unapproved.example.test" }), /403/u);
+  await assert.rejects(open(credential, { trust: false }), /certificate/u);
+  const legacy = new URL(url);
+  legacy.pathname = "/rpc/stream";
+  await assert.rejects(once(new WebSocket(legacy, { ca, headers: { Authorization: `Bearer ${credential}` } }), "open"), /404/u);
+
+  let socket: WebSocket | undefined;
+  const client = new LingAppServerClient({
+    url: url.href, clientInfo: { name: "remote-contract-test", version: "1" }, autoReconnect: false,
+    createSocket: address => {
+      socket = new WebSocket(address, { ca, headers: { Authorization: `Bearer ${credential}` } });
+      return socket as unknown as LingAppServerSocket;
+    },
+  });
+  t.after(() => client.close());
+  const notifications: string[] = [];
+  client.onNotification(notification => notifications.push(notification.method));
+  const remote = await client.connect();
+  assert.deepEqual(remote.effectiveScopes, ["control", "observe"]);
+  await client.subscribe({ threadId: thread.id });
+  await assert.rejects(client.readThread(other.id), { code: "capability_denied" });
+  const action = await client.startTurn({ threadId: thread.id, turnId: "wss-turn", message: "Record a remote control input." }) as { turn: { id: string } };
+  assert.equal(action.turn.id, "wss-turn");
+  await waitFor(() => notifications.includes("turn/started") ? true : undefined);
+  assert.ok(socket);
+  const closed = once(socket, "close");
+  await host.call("server/grants/revoke", { grantId: grant.grantId, expectedRevision: grant.revision });
+  await closed;
+  await assert.rejects(open(credential), /401/u);
+});
+
 test("stdio and the private Unix socket deliver the same App Server Thread events", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const options = fixture.transportOptions();
@@ -1881,7 +2010,7 @@ type ReleaseRuntime = {
 const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunStore, resolveStoragePaths };
 
 async function releaseFixture(t: TestContext, {
-  runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch,
+  runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, wssConfig,
 }: {
   runner?: RunnerRegistrationInput;
   initialRuntime?: ReleaseRuntime;
@@ -1890,12 +2019,14 @@ async function releaseFixture(t: TestContext, {
   verificationRecipes?: (root: string, cwd: string) => Promise<DaemonConfig["appServerVerificationRecipes"]>;
   githubSources?: (cwd: string) => DaemonConfig["appServerGitHubSources"];
   externalWorkFetch?: typeof fetch;
+  wssConfig?: (root: string) => Promise<DaemonConfig["appServerWss"]>;
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
   const appServerVerificationRecipes = await verificationRecipes?.(root, cwd);
   const appServerGitHubSources = githubSources?.(cwd);
+  const appServerWss = await wssConfig?.(root);
   let authToken = randomUUID();
   const priorLingHome = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(root, "fixture-home");
@@ -1903,7 +2034,7 @@ async function releaseFixture(t: TestContext, {
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
     host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness,
-    appServerVerificationRecipes, appServerGitHubSources,
+    appServerVerificationRecipes, appServerGitHubSources, appServerWss,
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,
@@ -1938,6 +2069,11 @@ async function releaseFixture(t: TestContext, {
       const address = daemon.server.address();
       assert.ok(address && typeof address === "object");
       return { daemonUrl: `http://127.0.0.1:${address.port}`, cwd, authToken };
+    },
+    wssUrl() {
+      const address = daemon.appServerWss?.address();
+      assert.ok(address && typeof address === "object");
+      return `wss://127.0.0.1:${address.port}`;
     },
     getStore() {
       const store = stores.get(cwd);

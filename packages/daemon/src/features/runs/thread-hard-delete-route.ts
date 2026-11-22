@@ -64,6 +64,10 @@ export async function handleLingThreadHardDelete(
     }
     writeJson(response, 200, { tombstone: result.tombstone });
   } catch (error) {
+    if (error instanceof Error && ["thread_delete_preview_stale", "thread_work_item_dependency"].includes(error.message)) {
+      writeJson(response, 409, { error: error.message, message: "The conversation has a current Work Item dependency or its revision changed." });
+      return;
+    }
     if (error instanceof NormalConversationForkSourceInUseError) {
       writeJson(response, 409, { error: error.code, message: error.message });
       return;

@@ -107,3 +107,7 @@ export class ConversationItemStoreError extends Error {
     this.code = code;
   }
 }
+
+export function normalConversationSubmissionKey(threadId: string, submissionKey: string): string {
+  return `normal-conversation:${threadId}:${submissionKey}`;
+}

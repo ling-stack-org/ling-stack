@@ -5,6 +5,7 @@ import { listAllConversationTurns } from "./all-turns.js";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
+  normalConversationSubmissionKey,
   type ConversationAttachment,
   type LingConversationTone,
   type LingThread,
@@ -111,7 +112,7 @@ export async function startConversationReplacementRun(input: {
   }
   const replacementKey = `message-edit:${revision.id}`;
   const existingInput = input.store.getConversationItemByIdempotencyKey(input.thread.id,
-    `normal-conversation:${input.thread.id}:${replacementKey}`);
+    normalConversationSubmissionKey(input.thread.id, replacementKey));
   // New replacements require a selection before creating a canonical turn.
   // Accepted replacements retain their persisted replay even after revocation.
   const selection = existingInput ? undefined

@@ -63,6 +63,8 @@ import type {
   LingAppServerWorkItemControlParams,
   LingAppServerWorkItemControlResult,
   LingAppServerWorkItemCreateParams,
+  LingAppServerWorkItemAcceptParams,
+  LingAppServerWorkItemAcceptResult,
   LingAppServerWorkItemReadResult,
   LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
@@ -248,7 +250,7 @@ export class LingAppServerClient {
     return await this.request(params.deliveryId === undefined ? "workItem/delivery/read" : "delivery/read", params);
   }
 
-  async acceptWorkItem(params: Record<string, unknown>): Promise<unknown> {
+  async acceptWorkItem(params: LingAppServerWorkItemAcceptParams): Promise<LingAppServerWorkItemAcceptResult> {
     await this.connect();
     return await this.request("workItem/accept", params);
   }

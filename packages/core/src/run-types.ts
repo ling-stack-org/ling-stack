@@ -1749,6 +1749,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   ): ResolveOrCreateConversationThreadResult;
   getLingThread(threadId: string): LingThread | undefined;
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
+  listLingThreadWorkItemDependencies(threadId: string): readonly string[];
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly surfaceKind?: LingThread["surfaceKind"];
@@ -2696,6 +2697,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
   acceptWorkItem(id: string, input: import("./work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemAcceptanceResult | undefined;
+  checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown): WorkItem | undefined;
   claimWorkItem(id: string, input: WorkItemClaimRequest, now: string): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined;
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined;
   releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined;

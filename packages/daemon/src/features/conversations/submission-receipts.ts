@@ -1,7 +1,7 @@
 import { findChannelDefaultConversationThread } from "../channels/conversation-thread-resolution.js";
 import { createHash } from "node:crypto";
 import type { ServerResponse } from "node:http";
-import type { RunStore } from "@ling-stack/core";
+import { normalConversationSubmissionKey, type RunStore } from "@ling-stack/core";
 import type { ConversationSubmissionQuery, ConversationSubmissionReceipt } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import { writeJson } from "../../shared/response.js";
@@ -19,7 +19,7 @@ export function readConversationSubmission(store: RunStore, query: ConversationS
   if (!thread) return unknown;
   if (query.surface === "normal" ? thread.kind !== "conversation" || Boolean(thread.channelId || thread.teammateId && thread.teammateId !== "ling_agent")
     : thread.kind !== "channel_discussion" || thread.channelId !== query.channelId) return unknown;
-  const itemKey = query.surface === "normal" ? `normal-conversation:${thread.id}:${query.idempotencyKey}` : query.idempotencyKey;
+  const itemKey = query.surface === "normal" ? normalConversationSubmissionKey(thread.id, query.idempotencyKey) : query.idempotencyKey;
   const item = store.getConversationItemByIdempotencyKey(thread.id, itemKey);
   const turn = item?.turnId ? store.getLingTurn(item.turnId) : undefined;
   if (!item || item.kind !== "user_message" || item.threadId !== thread.id || item.workspaceId !== thread.workspaceId

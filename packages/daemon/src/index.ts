@@ -115,6 +115,7 @@ import {
 } from "./runtime/work-units.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
+import { createAppServerWssListener } from "./server/app-server-wss.js";
 import {
   CHROME_BROWSER_DEFAULT_EXTENSION_IDS,
   CHROME_BROWSER_PLUGIN_ID,
@@ -278,6 +279,7 @@ export {
 
 export interface DaemonServer {
   readonly server: Server;
+  readonly appServerWss?: Pick<Server, "address">;
   readonly config: ResolvedDaemonConfig;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly startupState: StartupStateRegistry;
@@ -1146,6 +1148,7 @@ export function createDaemonServer(
     activeRuns.trackCompletion(completion);
   });
   const rpcWebSocketServer = attachRpcWebSocketServer(server, context);
+  const appServerWss = resolvedConfig.appServerWss ? createAppServerWssListener(resolvedConfig.appServerWss, context) : undefined;
   const chromeBrowserWebSocketServer = attachChromeBrowserWebSocketServer({
     server,
     controller: chromeBrowserSessions,
@@ -1168,6 +1171,7 @@ export function createDaemonServer(
     : undefined;
 
   let networkShutdown: Promise<void> | undefined;
+  let appServerWssShutdown: Promise<void> | undefined;
   let remoteAccessShutdown: Promise<void> | undefined;
   let providerImportShutdown: Promise<void> | undefined;
   const runShutdown = createRunShutdownCoordinator({ activeRuns, delegations: delegationRuntimeRegistry,
@@ -1176,6 +1180,7 @@ export function createDaemonServer(
     stopExternalAdmission: () => {
       harnessShuttingDown = true;
       rpcWebSocketServer.beginShutdown();
+      appServerWssShutdown = appServerWss?.beginShutdown();
       learningReviewCoordinator?.beginShutdown();
       for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();
@@ -1237,6 +1242,7 @@ export function createDaemonServer(
       learningReviewCoordinator?.drain() ?? Promise.resolve(),
       Promise.all([...memorySemanticServices.values()].map(service => service.drain())),
       runShutdown.shutdown("daemon_restart").then(() => networkShutdown),
+      appServerWssShutdown ?? Promise.resolve(),
       remoteAccessShutdown ?? Promise.resolve(),
     ]),
   });
@@ -1256,7 +1262,7 @@ export function createDaemonServer(
         await runShutdown.shutdown("daemon_restart");
       } catch (error) {
         const failures = [error];
-        for (const close of [() => controlPlaneEvents.closeAll(), () => rpcWebSocketServer.close(),
+        for (const close of [() => controlPlaneEvents.closeAll(), () => rpcWebSocketServer.close(), () => appServerWss?.close(),
           () => server.closeAllConnections()]) {
           try { close(); } catch (closeError) { failures.push(closeError); }
         }
@@ -1274,6 +1280,7 @@ export function createDaemonServer(
         desktopBrowser.close();
         chromeBrowserWebSocketServer.close();
         rpcWebSocketServer.close();
+        appServerWss?.close();
         server.closeAllConnections();
       });
     },
@@ -1311,6 +1318,7 @@ export function createDaemonServer(
 
   const daemon: DaemonServer = {
     server,
+    ...(appServerWss ? { appServerWss: appServerWss.server } : {}),
     config: resolvedConfig,
     extensionRegistry,
     startupState,
@@ -1368,6 +1376,7 @@ export function createDaemonServer(
         if (resolvedConfig.port !== 0) {
           await remoteAccess.startIfEnabled();
         }
+        await appServerWss?.start();
         startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         companionSchedulers?.start(resolvedConfig.defaultWorkspaceCwd);
         taskSupervisor.start(resolvedConfig.defaultWorkspaceCwd);

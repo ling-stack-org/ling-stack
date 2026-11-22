@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createLingTurnId, type AppendConversationAcceptedInput, type ConversationAttachment, type LingThread, type LingTurn, type LingTurnKind, type RunStore } from "@ling-stack/core";
+import { createLingTurnId, normalConversationSubmissionKey, type AppendConversationAcceptedInput, type ConversationAttachment, type LingThread, type LingTurn, type LingTurnKind, type RunStore } from "@ling-stack/core";
 import type { ChannelMessageFileRef } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunRequest } from "../runs/schemas.js";
@@ -34,7 +34,7 @@ export function prepareNormalConversationInput(input: {
   readonly now: string;
 }): PreparedNormalConversationInput {
   const { store, thread } = input;
-  const idempotencyKey = `normal-conversation:${thread.id}:${input.idempotencyKey ?? createLingTurnId()}`;
+  const idempotencyKey = normalConversationSubmissionKey(thread.id, input.idempotencyKey ?? createLingTurnId());
   const existing = store.getConversationItemByIdempotencyKey(thread.id, idempotencyKey);
   const previousTurn = existing?.turnId ? store.getLingTurn(existing.turnId) : undefined;
   // Stable IDs let processes that both missed this read converge inside SQLite.

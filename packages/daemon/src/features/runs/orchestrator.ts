@@ -115,7 +115,8 @@ import {
   transitionWorkUnitTerminal,
 } from "../../runtime/work-units.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
-import { appendControlPlaneEvent } from "../control-plane/events.js";
+import { appendControlPlaneEvent, trimOversizedEvent } from "../control-plane/events.js";
+import type { WorkItemConversationBinding } from "@ling-stack/core";
 import { CuaDriverComputerUseProjectionProducer } from "../computer-use/cua-driver-producer.js";
 import { resolveEligibleCuaDriverProjectionServerIds } from "../computer-use/provider-eligibility.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
@@ -4819,6 +4820,12 @@ export function appendRunCreatedControlPlaneEvent(
 ): void {
   if (!hub) {
     return;
+  }
+  const binding = run.threadId
+    ? store.getAppServerState("work_item_thread", run.threadId)?.payload as WorkItemConversationBinding | undefined : undefined;
+  if (binding && store.getWorkItem(binding.workItemId)?.runId === run.id) {
+    const event = store.getControlPlaneEventByIdempotency(DEFAULT_WORKSPACE_ID, `work-item-dispatch:${binding.workItemId}`);
+    if (event) hub.publish(trimOversizedEvent(event));
   }
   appendControlPlaneEvent(store, hub, {
     workspaceId: DEFAULT_WORKSPACE_ID,

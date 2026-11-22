@@ -63,6 +63,12 @@ export class SqliteLingThreadCleanupStore {
 
     this.context.database.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      const current = this.ports.getLingThread(threadId);
+      if (!current || current.updatedAt !== thread.updatedAt
+        || input.expectedThreadRevision !== undefined && current.updatedAt !== input.expectedThreadRevision) {
+        throw new Error("thread_delete_preview_stale");
+      }
+      if (this.listWorkItemDependencies(threadId, thread.workspaceId).length) throw new Error("thread_work_item_dependency");
       prepareNormalForkRetentionForThreadDelete(this.context, threadId);
       this.context.database
         .prepare(`
@@ -96,6 +102,15 @@ export class SqliteLingThreadCleanupStore {
     }
 
     return { tombstone, deletedAttachmentPaths };
+  }
+
+  listWorkItemDependencies(threadId: string, workspaceId: string): readonly string[] {
+    return this.context.database.prepare(`SELECT DISTINCT w.id FROM app_server_state s JOIN work_items w
+      ON w.workspace_id=s.workspace_id AND w.id=json_extract(s.payload_json, '$.workItemId')
+      WHERE s.workspace_id=? AND w.status!='archived' AND (
+        s.kind='work_item_thread' AND s.record_id=? OR
+        s.kind='github_delivery_current' AND json_extract(s.payload_json, '$.threadId')=?
+      ) ORDER BY w.id`).all(workspaceId, threadId, threadId).map(row => readString(row, "id"));
   }
 }
 

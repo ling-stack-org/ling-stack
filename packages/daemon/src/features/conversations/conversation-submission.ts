@@ -10,6 +10,7 @@ import { prepareNormalConversationInput } from "./normal-conversation-input.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 import { readConversationSubmission } from "./submission-receipts.js";
 import { withProjectInstructions } from "./project-instructions.js";
+import { assertWorkItemConversationAdmission } from "../work-items/conversation-admission.js";
 
 export async function prepareConversationSubmission(options: {
   readonly store: RunStore;
@@ -28,6 +29,10 @@ export async function prepareConversationSubmission(options: {
   }) : undefined;
   const selection = accepted?.status === "accepted" ? undefined : resolveConversationExecutionSelection(store, runnerRegistry, input);
   const thread = options.resolveThread();
+  const acceptedTurn = accepted?.status === "accepted" && accepted.turnId ? store.getLingTurn(accepted.turnId) : undefined;
+  if (!(acceptedTurn?.activeRunId || acceptedTurn?.lastRunId)) {
+    assertWorkItemConversationAdmission(store, thread.id, input.idempotencyKey);
+  }
   const fileRefs = input.fileRefs ?? [];
   const prepared = prepareNormalConversationInput({
     store, thread, message: input.message,

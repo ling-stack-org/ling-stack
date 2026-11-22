@@ -1338,6 +1338,21 @@ export class SqliteRunStore implements RunStore {
         recordRunSelection: (run) => this.recordRunSkillUsage(run, "selected", run.createdAt),
         assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
         getDelegationCompletionEvidence: (input) => this.getDelegationCompletionEvidence(input),
+        checkWorkItemAdmission: (threadId, turnId, request) => {
+          const snapshot = request as { idempotencyKey?: string; normalConversationPreparedRequestRef?: { id: string; fingerprint: string } } | null;
+          const workItem = this.checkWorkItemConversationAdmission(threadId, snapshot?.idempotencyKey);
+          if (workItem && !workItem.runId) {
+            const turn = turnId ? this.getLingTurn(turnId) : undefined;
+            const prepared = turn?.sourceItemId && this.getConversationPreparedInput(turn.sourceItemId, "request");
+            if (!prepared || prepared.threadId !== threadId || prepared.id !== snapshot?.normalConversationPreparedRequestRef?.id
+              || prepared.fingerprint !== snapshot?.normalConversationPreparedRequestRef?.fingerprint) {
+              throw new Error("work_item_dispatch_intent_required");
+            }
+          }
+          return workItem;
+        },
+        linkWorkItemRun: (workItem, runId, now) => this.workItems.linkFirstConversationRun(workItem, runId, now,
+          { store: this.controlPlane, cwd: this.paths.cwd }),
       },
     );
     this.nodeRerunTargets = new SqliteNodeRerunTargetStore({ database: this.database }, this,
@@ -2644,6 +2659,11 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): HardDeleteLingThreadResult | undefined {
     return this.lingThreadCleanup.hardDeleteLingThread(threadId, input, now);
+  }
+
+  listLingThreadWorkItemDependencies(threadId: string): readonly string[] {
+    const thread = this.getLingThread(threadId);
+    return thread ? this.lingThreadCleanup.listWorkItemDependencies(threadId, thread.workspaceId) : [];
   }
 
   findLingThreadByOwner(input: {
@@ -6120,6 +6140,10 @@ export class SqliteRunStore implements RunStore {
 
   acceptWorkItem(id: string, input: import("../work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd = this.paths.cwd): import("../work-item-types.js").WorkItemAcceptanceResult | undefined {
     return this.workItems.acceptWorkItem(id, input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
+  }
+
+  checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown): WorkItem | undefined {
+    return this.workItems.checkConversationAdmission(threadId, submissionKey, this.appServerState);
   }
 
   claimWorkItem(
