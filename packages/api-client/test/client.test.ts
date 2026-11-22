@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type {
+  CreateAndRunTaskChannelWorkflowStepStartRequest,
+  CreateMediaWorkflowConnectionRequest,
+  CreateTaskChannelWorkflowStepStartRequest,
+  SkillCandidateDraftDefinition,
+  SkillEditableDefinition,
+  SkillSourceSyncRequest,
+} from "@ling-stack/contracts";
 import { LingDaemonClient, LingDaemonError, daemonBaseUrlFromEnv } from "../dist/index.js";
 
-function createFetchMock(responseBody = { ok: true }) {
-  const calls = [];
+type CapturedRequest = RequestInit & { url: string };
+
+function createFetchMock(responseBody: unknown = { ok: true }) {
+  const calls: CapturedRequest[] = [];
   const responses = Array.isArray(responseBody) ? [...responseBody] : undefined;
-  const fetch = async (url, init = {}) => {
+  const fetch: typeof globalThis.fetch = async (url, init = {}) => {
     calls.push({
       url: String(url),
       method: init.method ?? "GET",
@@ -17,7 +27,12 @@ function createFetchMock(responseBody = { ok: true }) {
   return { calls, fetch };
 }
 
-function jsonResponse(body, init = {}) {
+function parseRequestBody(body: RequestInit["body"]) {
+  assert.ok(typeof body === "string", "expected a serialized JSON request body");
+  return JSON.parse(body);
+}
+
+function jsonResponse(body: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(body), {
     status: init.status ?? 200,
     statusText: init.statusText ?? "OK",
@@ -50,7 +65,7 @@ test("builds command-rule approval and management requests", async () => {
     ["GET", "http://daemon.test/approval-command-rules?cwd=%2Frepo"],
     ["DELETE", "http://daemon.test/approval-command-rules/rule%201?cwd=%2Frepo"],
   ]);
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     decisionKind: "approve_command_rule",
     proposedRuleFingerprint: "fingerprint-1",
   });
@@ -144,10 +159,10 @@ test("builds capability-bound transcript file requests without putting the token
     ["POST", "http://daemon.test/workspace-files/capabilities"],
     ["POST", "http://daemon.test/workspace-files/preview"],
   ]);
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     cwd: "/repo", capabilityTarget: "open_file", refId: "/repo/src/a.ts", scope,
   });
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {
     cwd: "/repo", capabilityId: "wscap_1", scope, maxBytes: 4096, line: 12,
   });
 });
@@ -155,7 +170,7 @@ test("builds capability-bound transcript file requests without putting the token
 test("binds global fetch to globalThis when no custom fetch is provided", async () => {
   const originalFetch = globalThis.fetch;
   try {
-    globalThis.fetch = async function (url, init = {}) {
+    globalThis.fetch = async function (this: typeof globalThis, url, init = {}) {
       assert.equal(this, globalThis);
       assert.equal(String(url), "http://daemon.test/runs?cwd=%2Frepo&limit=50");
       assert.equal(init.method, "GET");
@@ -175,7 +190,7 @@ test("builds skill revision preview and publish requests", async () => {
     { cwd: "/repo", draftId: "draft 1", skill: {} },
   ]);
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
-  const definition = {
+  const definition: SkillEditableDefinition = {
     name: "Edited skill",
     summary: "Edited summary",
     promptFragments: ["Do the edited work."],
@@ -196,13 +211,13 @@ test("builds skill revision preview and publish requests", async () => {
 
   assert.equal(mock.calls[0].url, "http://daemon.test/skills/skill%201/revision-preview?cwd=%2Frepo");
   assert.equal(mock.calls[0].method, "POST");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     expectedUpdatedAt: "2026-07-16T00:00:00.000Z",
     definition,
   });
   assert.equal(mock.calls[1].url, "http://daemon.test/skills/skill%201/revisions?cwd=%2Frepo");
   assert.equal(mock.calls[1].method, "POST");
-  assert.equal(JSON.parse(mock.calls[1].body).confirmAuthorityChanges, true);
+  assert.equal(parseRequestBody(mock.calls[1].body).confirmAuthorityChanges, true);
 });
 
 test("builds URL query parameters for list endpoints", async () => {
@@ -241,7 +256,13 @@ test("builds URL query parameters for list endpoints", async () => {
   await client.listCandidateGenerationDecisions("/repo path", { observationId: "observation 1", clusterId: "cluster 1", decision: "append_evidence", limit: 4 });
   await client.listSkillCandidates("/repo path", { status: "pending", origin: "manual-draft", limit: 14 });
   await client.getSkillCandidate("/repo path", "candidate 1");
-  await client.createSkillCandidate("/repo path", { title: "Candidate", summary: "Candidate summary", definition: {}, sourceRefs: [] });
+  await client.createSkillCandidate("/repo path", {
+    title: "Candidate",
+    summary: "Candidate summary",
+    // The route smoke uses a minimal payload to verify transport forwarding.
+    definition: {} as SkillCandidateDraftDefinition,
+    sourceRefs: [],
+  });
   await client.reviewSkillCandidate("/repo path", "candidate 1", { action: "reject", reason: "Duplicate." });
   await client.createSkillCandidateDraft("/repo path", "candidate 1", { content: "# Edited candidate" });
   await client.listChannelProtocolCandidates("/repo path", "channel 1", { status: "draft", limit: 6 });
@@ -340,7 +361,7 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[29].method, "POST");
   assert.equal(mock.calls[30].url, "http://daemon.test/skill-candidates/candidate%201/draft?cwd=%2Frepo+path");
   assert.equal(mock.calls[30].method, "POST");
-  assert.deepEqual(JSON.parse(mock.calls[30].body), { content: "# Edited candidate" });
+  assert.deepEqual(parseRequestBody(mock.calls[30].body), { content: "# Edited candidate" });
   assert.equal(mock.calls[31].url, "http://daemon.test/channels/channel%201/protocol-candidates?cwd=%2Frepo+path&status=draft&limit=6");
   assert.equal(mock.calls[32].url, "http://daemon.test/channels/channel%201/protocol-candidates?cwd=%2Frepo+path");
   assert.equal(mock.calls[32].method, "POST");
@@ -371,7 +392,7 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[47].method, "GET");
   assert.equal(mock.calls[48].url, "http://daemon.test/workspace-terminal/commands?cwd=%2Frepo+path");
   assert.equal(mock.calls[48].method, "POST");
-  assert.deepEqual(JSON.parse(mock.calls[48].body), { command: "pwd" });
+  assert.deepEqual(parseRequestBody(mock.calls[48].body), { command: "pwd" });
 });
 
 test("builds channel team experts projection endpoint URL", async () => {
@@ -469,7 +490,7 @@ test("builds channel team pattern endpoint URLs", async () => {
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-patterns?cwd=%2Frepo+path&status=provisional&includeExpired=true&limit=12");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/team-patterns?cwd=%2Frepo+path");
   assert.equal(mock.calls[1].method, "POST");
-  assert.equal(JSON.parse(mock.calls[1].body).pattern, "Prefer security review.");
+  assert.equal(parseRequestBody(mock.calls[1].body).pattern, "Prefer security review.");
 });
 
 test("builds channel team snapshot and evaluation endpoint URLs", async () => {
@@ -494,12 +515,12 @@ test("builds channel team snapshot and evaluation endpoint URLs", async () => {
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/team-snapshots?cwd=%2Frepo+path&limit=12");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/team-snapshots?cwd=%2Frepo+path");
   assert.equal(mock.calls[1].method, "POST");
-  assert.equal(JSON.parse(mock.calls[1].body).reason, "Before enabling rule.");
+  assert.equal(parseRequestBody(mock.calls[1].body).reason, "Before enabling rule.");
   assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/team-snapshots?cwd=%2Frepo+path&baseSnapshotId=snapshot+1&targetSnapshotId=snapshot+2");
   assert.equal(mock.calls[3].url, "http://daemon.test/channels/channel%201/team-evaluations?cwd=%2Frepo+path&limit=13");
   assert.equal(mock.calls[4].url, "http://daemon.test/channels/channel%201/team-evaluations?cwd=%2Frepo+path");
   assert.equal(mock.calls[4].method, "POST");
-  assert.equal(JSON.parse(mock.calls[4].body).cases[0].expectedRiskReviewStatus, "required");
+  assert.equal(parseRequestBody(mock.calls[4].body).cases[0].expectedRiskReviewStatus, "required");
 });
 
 test("builds governance notification endpoint URLs", async () => {
@@ -571,7 +592,7 @@ test("builds AI council endpoint URLs", async () => {
   assert.equal(mock.calls[1].url, "http://daemon.test/ai-councils/council%201?cwd=%2Frepo+path");
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/ai-councils?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[2].body), {
     displayName: "Review Council",
     description: "Reviews implementation slices.",
     routingPolicy: { defaultMode: "advisory", maxActiveMembers: 2 },
@@ -580,13 +601,13 @@ test("builds AI council endpoint URLs", async () => {
   });
   assert.equal(mock.calls[3].method, "POST");
   assert.equal(mock.calls[3].url, "http://daemon.test/ai-councils/council%201/clone?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), {
     displayName: "Clone Council",
     pinned: false,
   });
   assert.equal(mock.calls[4].method, "PATCH");
   assert.equal(mock.calls[4].url, "http://daemon.test/ai-councils/council%201?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[4].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[4].body), {
     displayName: "Updated Council",
     status: "archived",
   });
@@ -594,13 +615,13 @@ test("builds AI council endpoint URLs", async () => {
   assert.equal(mock.calls[6].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
   assert.equal(mock.calls[7].method, "PUT");
   assert.equal(mock.calls[7].url, "http://daemon.test/ai-councils/council%201/members?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[7].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[7].body), {
     members: [{ teammateId: "teammate 1", slotKey: "engineer", enabled: false }],
   });
   assert.equal(mock.calls[8].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
   assert.equal(mock.calls[9].method, "PUT");
   assert.equal(mock.calls[9].url, "http://daemon.test/channels/channel%201/council-policy?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[9].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[9].body), {
     attachedCouncilIds: ["council 1"],
     preferredCouncilId: "council 1",
   });
@@ -663,8 +684,8 @@ test("builds control-plane snapshot, events, and stream endpoints", async () => 
     },
     new Response("", { status: 200, headers: { "Content-Type": "text/event-stream" } }),
   ];
-  const calls = [];
-  const fetch = async (url, init = {}) => {
+  const calls: CapturedRequest[] = [];
+  const fetch: typeof globalThis.fetch = async (url, init = {}) => {
     calls.push({
       url: String(url),
       method: init.method ?? "GET",
@@ -794,7 +815,7 @@ test("builds automation draft endpoints without transforming daemon responses", 
   assert.equal(mock.calls[0].url, "http://daemon.test/automation-drafts?cwd=%2Frepo+path&status=ready_for_confirmation&source=chat&channelId=channel+1&includeTerminal=true&limit=10");
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/automation-drafts?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {
     source: "template",
     templateId: "ci_failure_summary",
     partialAutomation: { channelId: "channel 1" },
@@ -802,7 +823,7 @@ test("builds automation draft endpoints without transforming daemon responses", 
   assert.equal(mock.calls[2].method, "GET");
   assert.equal(mock.calls[2].url, "http://daemon.test/automation-drafts/draft%201?cwd=%2Frepo+path");
   assert.equal(mock.calls[3].method, "PATCH");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), {
     partialAutomation: { title: "CI draft" },
   });
   assert.equal(mock.calls[4].method, "POST");
@@ -828,7 +849,7 @@ test("lists and refreshes skills through expected routes", async () => {
   assert.equal(mock.calls[0].url, "http://daemon.test/skills?cwd=%2Frepo+path");
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/skills/refresh?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {});
 });
 
 test("archives and permanently deletes skills through distinct routes", async () => {
@@ -846,7 +867,7 @@ test("archives and permanently deletes skills through distinct routes", async ()
   assert.equal(mock.calls[0].url, "http://daemon.test/skills/skill%201?cwd=%2Frepo+path");
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/skills/skill%201/hard-delete?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {});
 });
 
 test("reads skill source snapshots and source health through expected routes", async () => {
@@ -884,10 +905,10 @@ test("reads skill source snapshots and source health through expected routes", a
   assert.equal(mock.calls[2].url, "http://daemon.test/skills/review%20skill/source/archive?cwd=%2Frepo+path");
   assert.equal(mock.calls[3].method, "POST");
   assert.equal(mock.calls[3].url, "http://daemon.test/skills/review%20skill/optimization-preview?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), { mode: "preview_on_demand" });
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), { mode: "preview_on_demand" });
   assert.equal(mock.calls[4].method, "POST");
   assert.equal(mock.calls[4].url, "http://daemon.test/skills/import-draft/optimization-preview?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[4].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[4].body), {
     content: "# Draft skill\n\nUse when a draft needs review.",
     source: "custom",
     mode: "preview_on_demand",
@@ -896,10 +917,10 @@ test("reads skill source snapshots and source health through expected routes", a
   assert.equal(mock.calls[5].url, "http://daemon.test/skills/review%20skill/compiled-views?cwd=%2Frepo+path");
   assert.equal(mock.calls[6].method, "POST");
   assert.equal(mock.calls[6].url, "http://daemon.test/skills/review%20skill/compiled-views?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[6].body), { mode: "preview_on_demand" });
+  assert.deepEqual(parseRequestBody(mock.calls[6].body), { mode: "preview_on_demand" });
   assert.equal(mock.calls[7].method, "POST");
   assert.equal(mock.calls[7].url, "http://daemon.test/skills/review%20skill/compiled-views/skill_compiled_1/archive?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[7].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[7].body), {});
 });
 
 test("previews skill imports without using the durable draft route", async () => {
@@ -925,7 +946,7 @@ test("previews skill imports without using the durable draft route", async () =>
   assert.deepEqual(await client.previewSkillImport("/repo path", input), response);
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/skills/import-preview?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), input);
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), input);
 });
 
 test("syncs gstack skill sources through expected routes", async () => {
@@ -937,7 +958,7 @@ test("syncs gstack skill sources through expected routes", async () => {
   ];
   const mock = createFetchMock(responses);
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
-  const syncInput = {
+  const syncInput: SkillSourceSyncRequest = {
     roots: [{ rootPath: "/repo/.agents/skills", sourceKind: "workspace-skill-directory" }],
     includeSkillIds: ["review"],
     includeDetectedRoots: false,
@@ -953,16 +974,16 @@ test("syncs gstack skill sources through expected routes", async () => {
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/skills/sync/gstack/preview?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), syncInput);
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), syncInput);
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/skills/sync/gstack/apply?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {});
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/skills/sync/gstack/refresh?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), syncInput);
+  assert.deepEqual(parseRequestBody(mock.calls[2].body), syncInput);
   assert.equal(mock.calls[3].method, "POST");
   assert.equal(mock.calls[3].url, "http://daemon.test/skills/sync/gstack/publish?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), {
     ...syncInput,
     selectedSkillIds: ["review"],
   });
@@ -1066,7 +1087,7 @@ test("configures and deletes external work secrets without transforming daemon r
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/secrets/configure?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     channelId: "channel 1",
     workflowPath: "WORKFLOW.md",
     token: "test-github-token",
@@ -1074,7 +1095,7 @@ test("configures and deletes external work secrets without transforming daemon r
   });
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/external-work/secrets/delete?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {
     channelId: "channel 1",
     workflowPath: "WORKFLOW.md",
     secretRef: "keychain:LING_STACK_GITHUB_OWNER_REPO_TOKEN",
@@ -1109,7 +1130,7 @@ test("configures external work workflow without transforming daemon responses", 
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/workflow/configure?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     channelId: "channel 1",
     workflowPath: "WORKFLOW.md",
     sourceKind: "github",
@@ -1136,11 +1157,11 @@ test("sends provider model import requests", async () => {
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/providers/import-models?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[0].body).models.map((model) => model.id), ["relay-gpt", "relay-image"]);
+  assert.deepEqual((parseRequestBody(mock.calls[0].body) as { models: { id: string }[] }).models.map((model) => model.id), ["relay-gpt", "relay-image"]);
 });
 
 test("sends mutation bodies for channel, task, provider, policy, media, and approval requests", async () => {
-  const responses = Array.from({ length: 24 }, () => ({ channel: { id: "ch_1" } }));
+  const responses: unknown[] = Array.from({ length: 24 }, () => ({ channel: { id: "ch_1" } }));
   responses[17] = {
     status: "started",
     mode: "create_task",
@@ -1276,7 +1297,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/channels?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     name: "Engineering",
     status: "active",
     boundPath: "/repo",
@@ -1292,57 +1313,57 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
   });
   assert.equal(mock.calls[1].method, "PATCH");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), { defaultTeammateId: "designer" });
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), { defaultTeammateId: "designer" });
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/turns?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[2].body), {
     body: "hello @Engineer",
     mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
     requestAiReply: true,
   });
   assert.equal(mock.calls[3].url, "http://daemon.test/channels/channel%201/attachments?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), { fileName: "brief.txt", contentType: "text/plain", contentBase64: "aGVsbG8=" });
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), { fileName: "brief.txt", contentType: "text/plain", contentBase64: "aGVsbG8=" });
   assert.equal(mock.calls[4].url, "http://daemon.test/channels/channel%201/link-previews?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[4].body), { url: "https://example.com" });
+  assert.deepEqual(parseRequestBody(mock.calls[4].body), { url: "https://example.com" });
   assert.equal(mock.calls[5].method, "PATCH");
   assert.equal(mock.calls[5].url, "http://daemon.test/channels/channel%201/brief?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[5].body).acceptanceCriteria, ["Brief persists"]);
+  assert.deepEqual(parseRequestBody(mock.calls[5].body).acceptanceCriteria, ["Brief persists"]);
   assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/decisions?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[6].body).sourceMessageId, "msg 1");
+  assert.deepEqual(parseRequestBody(mock.calls[6].body).sourceMessageId, "msg 1");
   assert.equal(mock.calls[7].url, "http://daemon.test/decisions/decision%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[7].body), { status: "rejected" });
+  assert.deepEqual(parseRequestBody(mock.calls[7].body), { status: "rejected" });
   assert.equal(mock.calls[8].url, "http://daemon.test/channels/channel%201/handoffs?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[8].body).toParticipantId, "engineer");
+  assert.deepEqual(parseRequestBody(mock.calls[8].body).toParticipantId, "engineer");
   assert.equal(mock.calls[9].url, "http://daemon.test/handoffs/handoff%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[9].body), { status: "completed" });
+  assert.deepEqual(parseRequestBody(mock.calls[9].body), { status: "completed" });
   assert.equal(mock.calls[10].url, "http://daemon.test/channels/channel%201/context-summaries?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[10].body).decisionIds, ["decision 1"]);
+  assert.deepEqual(parseRequestBody(mock.calls[10].body).decisionIds, ["decision 1"]);
   assert.equal(mock.calls[11].url, "http://daemon.test/context-summaries/summary%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[11].body), { openQuestions: ["None"] });
+  assert.deepEqual(parseRequestBody(mock.calls[11].body), { openQuestions: ["None"] });
   assert.equal(mock.calls[12].url, "http://daemon.test/channels/channel%201/workflows?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[12].body).sourceHandoffId, "handoff 1");
+  assert.deepEqual(parseRequestBody(mock.calls[12].body).sourceHandoffId, "handoff 1");
   assert.equal(mock.calls[13].url, "http://daemon.test/workflows/workflow%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[13].body), { status: "running" });
+  assert.deepEqual(parseRequestBody(mock.calls[13].body), { status: "running" });
   assert.equal(mock.calls[14].url, "http://daemon.test/handoffs/handoff%201/workflow?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[14].body), { createdBy: "local-user" });
+  assert.deepEqual(parseRequestBody(mock.calls[14].body), { createdBy: "local-user" });
   assert.equal(mock.calls[15].url, "http://daemon.test/workflows/workflow%201/steps?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[15].body).toParticipantId, "engineer");
+  assert.deepEqual(parseRequestBody(mock.calls[15].body).toParticipantId, "engineer");
   assert.equal(mock.calls[16].url, "http://daemon.test/workflow-steps/step%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[16].body), { status: "skipped", resultSummary: "Not needed" });
+  assert.deepEqual(parseRequestBody(mock.calls[16].body), { status: "skipped", resultSummary: "Not needed" });
   assert.equal(mock.calls[17].url, "http://daemon.test/workflow-steps/step%201/start?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[17].body), { mode: "create_task", taskTitle: "Implement" });
+  assert.deepEqual(parseRequestBody(mock.calls[17].body), { mode: "create_task", taskTitle: "Implement" });
   assert.equal(mock.calls[18].method, "PATCH");
   assert.equal(mock.calls[18].url, "http://daemon.test/tasks/task%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[18].body), { title: "T", prompt: "P", status: "review" });
+  assert.deepEqual(parseRequestBody(mock.calls[18].body), { title: "T", prompt: "P", status: "review" });
   assert.equal(mock.calls[19].url, "http://daemon.test/providers/provider%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[20].body).allowedWritePaths, ["/repo"]);
-  assert.deepEqual(JSON.parse(mock.calls[21].body), { providerPresetId: "media", operation: "image_generate", prompt: "draw", input: { size: "1024x1024" } });
-  assert.deepEqual(JSON.parse(mock.calls[22].body), { reason: "looks good" });
-  assert.deepEqual(JSON.parse(mock.calls[23].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[20].body).allowedWritePaths, ["/repo"]);
+  assert.deepEqual(parseRequestBody(mock.calls[21].body), { providerPresetId: "media", operation: "image_generate", prompt: "draw", input: { size: "1024x1024" } });
+  assert.deepEqual(parseRequestBody(mock.calls[22].body), { reason: "looks good" });
+  assert.deepEqual(parseRequestBody(mock.calls[23].body), {});
 });
 
 test("streams create-and-run workflow steps without attempting to parse SSE as JSON", async () => {
-  const calls = [];
+  const calls: CapturedRequest[] = [];
   const client = new LingDaemonClient({
     baseUrl: "http://daemon.test",
     fetch: async (url, init = {}) => {
@@ -1364,7 +1385,7 @@ test("streams create-and-run workflow steps without attempting to parse SSE as J
   assert.equal(calls[0].method, "POST");
   assert.equal(calls[0].url, "http://daemon.test/workflow-steps/step%201/start?cwd=%2Frepo");
   assert.equal(new Headers(calls[0].headers).get("Accept"), "text/event-stream");
-  assert.deepEqual(JSON.parse(calls[0].body), {
+  assert.deepEqual(parseRequestBody(calls[0].body), {
     mode: "create_and_run_task",
     providerPresetId: "provider 1",
     assigneeTeammateId: "engineer",
@@ -1393,12 +1414,13 @@ test("rejects workflow-step start calls that use the wrong response transport", 
     skipProviderPreflight: false,
   };
 
+  // JavaScript callers can supply a mode outside the typed request contract.
   await assert.rejects(
-    client.startChannelWorkflowStep("/repo", "step 1", { mode: "create_and_run_task" }, expected),
+    client.startChannelWorkflowStep("/repo", "step 1", { mode: "create_and_run_task" } as unknown as CreateTaskChannelWorkflowStepStartRequest, expected),
     /use streamChannelWorkflowStep/u,
   );
   await assert.rejects(
-    client.streamChannelWorkflowStep("/repo", "step 1", { mode: "create_task" }),
+    client.streamChannelWorkflowStep("/repo", "step 1", { mode: "create_task" } as unknown as CreateAndRunTaskChannelWorkflowStepStartRequest),
     /use startChannelWorkflowStep/u,
   );
   await assert.rejects(
@@ -1459,18 +1481,18 @@ test("creates, streams, inspects, and corrects channel turns through item APIs",
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/turns?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), { body: "first turn", requestAiReply: false });
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), { body: "first turn", requestAiReply: false });
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/turns/stream?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {
     body: "hello @Engineer",
     mentions: [{ id: "engineer", label: "Engineer", kind: "ai-teammate" }],
     requestAiReply: true,
   });
-  assert.equal(mock.calls[1].headers.Accept, "text/event-stream");
+  assert.equal((mock.calls[1].headers as Record<string, string>).Accept, "text/event-stream");
   assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/turns/turn%201/context?cwd=%2Frepo");
   assert.equal(mock.calls[3].url, "http://daemon.test/channels/channel%201/turns/turn%201/context/corrections?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), { segmentId: "segment 2", expectedAssignmentRevision: 3 });
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), { segmentId: "segment 2", expectedAssignmentRevision: 3 });
 });
 
 test("serializes canonical Thread ids and Topic anchor item ids separately", async () => {
@@ -1492,7 +1514,7 @@ test("serializes canonical Thread ids and Topic anchor item ids separately", asy
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201/items?cwd=%2Frepo");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/items?cwd=%2Frepo&threadId=thread+1");
   assert.equal(mock.calls[2].url, "http://daemon.test/channels/channel%201/items?cwd=%2Frepo&anchorItemId=item+1");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), {
     surface: { kind: "topic", anchorItemId: "item 1" },
     body: "start topic",
   });
@@ -1516,13 +1538,13 @@ test("uses expected managed plugin routes", async () => {
   assert.equal(mock.calls[1].url, "http://daemon.test/plugins/trusted-local%3Acua-driver?cwd=%2Frepo+path");
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/connect?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), { command: "/bin/cua-driver" });
+  assert.deepEqual(parseRequestBody(mock.calls[2].body), { command: "/bin/cua-driver" });
   assert.equal(mock.calls[3].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/apply-preset?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), { options: { command: "/bin/cua-driver" } });
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), { options: { command: "/bin/cua-driver" } });
   assert.equal(mock.calls[4].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/check?cwd=%2Frepo+path");
   assert.equal(mock.calls[5].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/enable?cwd=%2Frepo+path");
   assert.equal(mock.calls[6].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/disable?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[6].body), { reason: "pause" });
+  assert.deepEqual(parseRequestBody(mock.calls[6].body), { reason: "pause" });
   assert.equal(mock.calls[7].url, "http://daemon.test/plugins/built-in%3Achrome/repair-browser-host?cwd=%2Frepo+path");
 });
 
@@ -1539,10 +1561,10 @@ test("uses expected teammate private data lifecycle routes", async () => {
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/teammates/teammate%201/hard-delete?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), { reason: "owner request" });
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), { reason: "owner request" });
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/teammates/teammate%201/direct-messages/stream?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), { body: "hello", attachmentIds: ["att 1"] });
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), { body: "hello", attachmentIds: ["att 1"] });
   assert.equal(mock.calls[2].url, "http://daemon.test/teammates/teammate%201/direct-attachments?cwd=%2Frepo&limit=12");
   assert.equal(mock.calls[3].url, "http://daemon.test/teammates/teammate%201/direct-attachments?cwd=%2Frepo");
   assert.equal(mock.calls[4].url, "http://daemon.test/teammates/teammate%201/avatar?cwd=%2Frepo");
@@ -1558,7 +1580,7 @@ test("uses expected archived conversation hard delete route", async () => {
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/threads/thread%201/hard-delete?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), { reason: "owner request" });
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), { reason: "owner request" });
 });
 
 test("imports GitHub and Linear external work without transforming daemon responses", async () => {
@@ -1617,7 +1639,7 @@ test("imports GitHub and Linear external work without transforming daemon respon
   assert.equal(mock.calls.length, 2);
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/github/import?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     channelId: "channel 1",
     eventType: "pull_request.opened",
     payload: { pull_request: { number: 123 } },
@@ -1625,7 +1647,7 @@ test("imports GitHub and Linear external work without transforming daemon respon
   });
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/external-work/linear/import?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {
     channelId: "channel 1",
     eventType: "issue.created",
     payload: { identifier: "LIN-123" },
@@ -1679,7 +1701,7 @@ test("polls and reconciles external work without transforming daemon responses",
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/github/poll?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     channelId: "channel_1",
     workflowPath: "WORKFLOW.md",
     limit: 25,
@@ -1687,14 +1709,14 @@ test("polls and reconciles external work without transforming daemon responses",
   });
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/external-work/linear/poll?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {
     channelId: "channel_1",
     workflowPath: "WORKFLOW.md",
     limit: 10,
   });
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/external-work/reconcile?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[2].body), {
     channelId: "channel_1",
     workflowPath: "WORKFLOW.md",
   });
@@ -1740,7 +1762,7 @@ test("manages GitHub external work background schedulers without transforming da
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/github/background/start?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     channelId: "channel_1",
     workflowPath: "WORKFLOW.md",
     limit: 5,
@@ -1751,7 +1773,7 @@ test("manages GitHub external work background schedulers without transforming da
   assert.equal(mock.calls[1].url, "http://daemon.test/external-work/background?cwd=%2Frepo");
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/external-work/background/external_work_background_1/stop?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[2].body), {});
 });
 
 test("manages automations and local automation scheduler with expected routes", async () => {
@@ -1818,36 +1840,36 @@ test("manages automations and local automation scheduler with expected routes", 
   assert.equal(mock.calls[0].url, "http://daemon.test/automations?cwd=%2Frepo+path&status=enabled&kind=daily_brief&channelId=channel+1&includeArchived=true&scheduledOnly=false&limit=25");
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/automations?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), { kind: "daily_brief", title: "Daily Brief", channelId: "channel 1" });
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), { kind: "daily_brief", title: "Daily Brief", channelId: "channel 1" });
   assert.equal(mock.calls[2].method, "GET");
   assert.equal(mock.calls[2].url, "http://daemon.test/automations/automation%201?cwd=%2Frepo");
   assert.equal(mock.calls[3].method, "PATCH");
   assert.equal(mock.calls[3].url, "http://daemon.test/automations/automation%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[3].body), { title: "Daily Brief v2" });
+  assert.deepEqual(parseRequestBody(mock.calls[3].body), { title: "Daily Brief v2" });
   assert.equal(mock.calls[4].method, "DELETE");
   assert.equal(mock.calls[4].url, "http://daemon.test/automations/automation%201?cwd=%2Frepo");
   assert.equal(mock.calls[4].body, undefined);
   assert.equal(mock.calls[5].method, "POST");
   assert.equal(mock.calls[5].url, "http://daemon.test/automations/automation%201/preview?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[5].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[5].body), {});
   assert.equal(mock.calls[6].method, "POST");
   assert.equal(mock.calls[6].url, "http://daemon.test/automations/automation%201/run?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[6].body), { idempotencyKey: "slot 1" });
+  assert.deepEqual(parseRequestBody(mock.calls[6].body), { idempotencyKey: "slot 1" });
   assert.equal(mock.calls[7].method, "GET");
   assert.equal(mock.calls[7].url, "http://daemon.test/automation-runs?cwd=%2Frepo&automationId=automation+1&runId=run+1&status=succeeded&limit=10");
   assert.equal(mock.calls[8].method, "GET");
   assert.equal(mock.calls[8].url, "http://daemon.test/automation-runs/automation%20run%201?cwd=%2Frepo");
   assert.equal(mock.calls[9].method, "POST");
   assert.equal(mock.calls[9].url, "http://daemon.test/automation-runs/automation%20run%201/cancel?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[9].body), { reason: "stop" });
+  assert.deepEqual(parseRequestBody(mock.calls[9].body), { reason: "stop" });
   assert.equal(mock.calls[10].method, "POST");
   assert.equal(mock.calls[10].url, "http://daemon.test/automations/scheduler/start?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[10].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[10].body), {});
   assert.equal(mock.calls[11].method, "GET");
   assert.equal(mock.calls[11].url, "http://daemon.test/automations/scheduler?cwd=%2Frepo");
   assert.equal(mock.calls[12].method, "POST");
   assert.equal(mock.calls[12].url, "http://daemon.test/automations/scheduler/stop?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[12].body), {});
+  assert.deepEqual(parseRequestBody(mock.calls[12].body), {});
 });
 
 test("triages GitHub external work CI without transforming daemon response", async () => {
@@ -1882,7 +1904,7 @@ test("triages GitHub external work CI without transforming daemon response", asy
   assert.equal(mock.calls.length, 1);
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/github/ci/triage?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     externalWorkId: "external_work_1",
     workflowPath: "WORKFLOW.md",
     limit: 5,
@@ -1891,8 +1913,8 @@ test("triages GitHub external work CI without transforming daemon response", asy
 });
 
 test("starts GitHub external work CI triage runs as an SSE request", async () => {
-  const calls = [];
-  const fetch = async (url, init = {}) => {
+  const calls: CapturedRequest[] = [];
+  const fetch: typeof globalThis.fetch = async (url, init = {}) => {
     calls.push({
       url: String(url),
       method: init.method ?? "GET",
@@ -1921,7 +1943,7 @@ test("starts GitHub external work CI triage runs as an SSE request", async () =>
     Accept: "text/event-stream",
     "Content-Type": "application/json",
   });
-  assert.deepEqual(JSON.parse(calls[0].body), {
+  assert.deepEqual(parseRequestBody(calls[0].body), {
     providerPresetId: "provider_1",
     skipProviderPreflight: true,
     tools: ["read"],
@@ -2013,14 +2035,14 @@ test("manages external work actions without transforming daemon responses", asyn
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/external-work/actions/propose?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[0].body), {
     externalWorkId: "external_work_1",
     actionKind: "github_comment",
     payload: { type: "github_comment", body: "Ready" },
   });
   assert.equal(mock.calls[1].method, "POST");
   assert.equal(mock.calls[1].url, "http://daemon.test/external-work/actions/propose?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), {
     externalWorkId: "external_work_1",
     actionKind: "github_pr_review",
     approvalRequirement: "strict",
@@ -2032,17 +2054,17 @@ test("manages external work actions without transforming daemon responses", asyn
   assert.equal(mock.calls[3].url, "http://daemon.test/external-work/actions/external_work_action_1?cwd=%2Frepo+path");
   assert.equal(mock.calls[4].method, "POST");
   assert.equal(mock.calls[4].url, "http://daemon.test/external-work/actions/external_work_action_1/cancel?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[4].body), { reason: "No longer needed" });
+  assert.deepEqual(parseRequestBody(mock.calls[4].body), { reason: "No longer needed" });
   assert.equal(mock.calls[5].method, "POST");
   assert.equal(mock.calls[5].url, "http://daemon.test/external-work/actions/external_work_action_1/execute?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[5].body), { workflowPath: "WORKFLOW.md" });
+  assert.deepEqual(parseRequestBody(mock.calls[5].body), { workflowPath: "WORKFLOW.md" });
 });
 
 test("builds media workflow connection and lifecycle requests", async () => {
   const mock = createFetchMock(Array.from({ length: 10 }, () => ({ ok: true })));
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
   const graph = { "1": { class_type: "CLIPTextEncode", inputs: { text: "Prompt" } } };
-  const connection = {
+  const connection: CreateMediaWorkflowConnectionRequest = {
     name: "Local ComfyUI",
     baseUrl: "http://127.0.0.1:8188",
     authMode: "none",
@@ -2062,13 +2084,13 @@ test("builds media workflow connection and lifecycle requests", async () => {
 
   assert.equal(mock.calls[0].url, "http://daemon.test/media-workflow-connections?cwd=%2Frepo+path");
   assert.equal(mock.calls[1].method, "POST");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), connection);
+  assert.deepEqual(parseRequestBody(mock.calls[1].body), connection);
   assert.equal(mock.calls[2].url, "http://daemon.test/media-workflow-connections/connection%201/check?cwd=%2Frepo+path");
   assert.equal(mock.calls[4].url, "http://daemon.test/media-workflows/analyze?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[4].body), { connectionId: "connection 1", graph });
+  assert.deepEqual(parseRequestBody(mock.calls[4].body), { connectionId: "connection 1", graph });
   assert.equal(mock.calls[6].url, "http://daemon.test/media-workflows/workflow%201/test?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[6].body), { versionId: "version 1", inputValues: { "1.text": "Scene" } });
-  assert.deepEqual(JSON.parse(mock.calls[7].body), { versionId: "version 1" });
+  assert.deepEqual(parseRequestBody(mock.calls[6].body), { versionId: "version 1", inputValues: { "1.text": "Scene" } });
+  assert.deepEqual(parseRequestBody(mock.calls[7].body), { versionId: "version 1" });
   assert.equal(mock.calls[8].url, "http://daemon.test/media-workflows/workflow%201/archive?cwd=%2Frepo+path");
   assert.equal(mock.calls[9].method, "DELETE");
 });

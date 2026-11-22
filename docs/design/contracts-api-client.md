@@ -391,7 +391,7 @@ builders now return shared contract types; this does not mean every route has mi
 - Source/test anchors: `packages/api-client/src/client.ts`,
   `packages/api-client/src/endpoints/conversations.ts`,
   `packages/api-client/src/endpoints/channels.ts`,
-  `packages/api-client/test/client.test.mjs`,
+  `packages/api-client/test/client.test.ts`,
   `packages/daemon/src/features/channels/channel-conversation-api.ts`, and
   `apps/web/e2e/api-adapters.spec.ts`.
 

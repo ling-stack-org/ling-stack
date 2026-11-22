@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { MemorySemanticPolicyUpdate, MemoryWikiScope } from "@ling-stack/contracts";
 import { LingDaemonClient, LingDaemonError } from "../dist/index.js";
 
 function fixture() {
-  const calls = [];
+  const calls: { url: URL; method: RequestInit["method"]; body: unknown }[] = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (input, init) => {
-    calls.push({ url: new URL(String(input)), method: init.method, body: init.body === undefined ? undefined : JSON.parse(init.body) });
+    calls.push({ url: new URL(String(input)), method: init!.method, body: init!.body === undefined ? undefined : JSON.parse(init!.body as string) });
     return Response.json({ status: "ready", human: { revision: 4, text: "Keep this note" } });
   } });
   return { client, calls };
@@ -18,7 +19,7 @@ function fixture() {
 test("Wiki client preserves exact owner, cwd and note revision on every derivative request", async () => {
   const { client, calls } = fixture();
   const cwd = "/workspace 中文/with spaces";
-  const scope = { scopeType: "teammate", ownerId: "owner / 私有?&" };
+  const scope: MemoryWikiScope = { scopeType: "teammate", ownerId: "owner / 私有?&" };
   await client.getMemoryWiki(cwd, scope);
   await client.compileMemoryWiki(cwd, scope);
   await client.exportMemoryWiki(cwd, scope);
@@ -41,7 +42,7 @@ test("memory and semantic client requests preserve encoded identity, opt-ins and
   const cwd = "/repo", memoryId = "memory / 中文?";
   await client.getMemoryObject(cwd, memoryId);
   await client.getMemorySemanticPolicy(cwd);
-  const policy = { mode: "lancedb", expectedRevision: 7, providerPresetId: "provider / 一", model: "local-embedding",
+  const policy: MemorySemanticPolicyUpdate = { mode: "lancedb", expectedRevision: 7, providerPresetId: "provider / 一", model: "local-embedding",
     dimensions: 768, maxDistance: 0.2, timeoutMs: 1000, allowRemote: false, allowPrivateRemote: false };
   await client.updateMemorySemanticPolicy(cwd, policy);
   assert.deepEqual(calls.map(call => [call.method, call.url.pathname, call.url.searchParams.get("cwd")]), [

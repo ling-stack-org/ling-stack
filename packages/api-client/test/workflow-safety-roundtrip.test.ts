@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { CreateChannelWorkflowFromCustomTemplateRequest, CreateChannelWorkflowFromGraphRequest } from "@ling-stack/contracts";
 import { LingDaemonClient } from "../dist/index.js";
 
-const safety = { sideEffectClass: "analysis_readonly", parallelPolicy: { autoParallel: true,
+const safety = { sideEffectClass: "analysis_readonly" as const, parallelPolicy: { autoParallel: true,
   maxParallelSiblings: 2, resourceKeys: ["port:2", "port:1"], requiresArtifactOnly: true, cancelSiblingsOnFailure: false } };
 
 test("workflow client preserves direct safety fields in custom/graph requests and metadata responses", async () => {
-  const calls = [];
+  const calls: { url: URL; method: RequestInit["method"]; body: unknown }[] = [];
   const response = { workflow: { id: "workflow-1" }, workflowSteps: [{ id: "step-1", metadata: safety }] };
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (input, init) => {
-    calls.push({ url: new URL(String(input)), method: init.method, body: init.body === undefined ? undefined : JSON.parse(init.body) });
+    calls.push({ url: new URL(String(input)), method: init!.method, body: init!.body === undefined ? undefined : JSON.parse(init!.body as string) });
     return Response.json(response);
   } });
   const step = { id: "review", name: "Review", prompt: "Read evidence", ...safety };
-  const custom = { customTemplate: { schemaVersion: 1, id: "custom-safety", name: "Safety", steps: [step] },
+  const custom: CreateChannelWorkflowFromCustomTemplateRequest = { customTemplate: { schemaVersion: 1, id: "custom-safety", name: "Safety", steps: [step] },
     objective: "Review evidence", createdBy: "local-user" };
-  const graph = { workflowGraph: { schemaVersion: 1, id: "graph-safety", name: "Safety", entryNodeId: step.id,
+  const graph: CreateChannelWorkflowFromGraphRequest = { workflowGraph: { schemaVersion: 1, id: "graph-safety", name: "Safety", entryNodeId: step.id,
     nodes: [{ ...step, kind: "step" }], edges: [],
     termination: { success: "all_required_succeeded", onFailedRequiredNode: "fail_workflow", onApprovalDenied: "block_for_user" } },
     objective: "Review evidence", createdBy: "local-user" };

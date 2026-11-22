@@ -3,7 +3,7 @@ import test from "node:test";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("submission recovery reads only the original workspace/surface/key with encoded private ownership", async () => {
-  const calls = [];
+  const calls: { url: URL; method: string }[] = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init = {}) => {
     calls.push({ url: new URL(String(url)), method: init.method ?? "GET" });
     return new Response(JSON.stringify({ status: "unknown" }), { headers: { "Content-Type": "application/json" } });
@@ -25,7 +25,7 @@ test("submission recovery reads only the original workspace/surface/key with enc
 });
 
 test("guidance lookup sends an exact encoded key on existing read-only collections", async () => {
-  const calls = [];
+  const calls: { url: URL; method: string }[] = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init = {}) => {
     calls.push({ url: new URL(String(url)), method: init.method ?? "GET" });
     return new Response(JSON.stringify({ interventions: [] }), { headers: { "Content-Type": "application/json" } });
