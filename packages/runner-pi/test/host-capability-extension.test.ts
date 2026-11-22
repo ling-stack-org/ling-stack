@@ -1,18 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.mjs";
+import type { PiRunnerRunOptions } from "../dist/types.js";
+import { extensionAPI, type FixtureTool } from "./support/extension-fixture.ts";
+import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.ts";
 import { createLingStackHostCapabilityExtension } from "../dist/extensions/host-capability.js";
 
-function fixture(overrides = {}) {
-  const handlers = new Map(), tools = [], calls = [];
-  const options = { cwd: "/fixture", task: { id: "task", title: "Open", prompt: "Open index.html" },
+type TestOptions = Partial<PiRunnerRunOptions>;
+type ToolResult = (event: Record<string, unknown>) => { isError: boolean };
+
+function fixture(overrides: TestOptions = {}) {
+  const handlers = new Map<string, ToolResult>();
+  const tools: FixtureTool[] = [];
+  const calls: [string, Record<string, unknown>][] = [];
+  const options: PiRunnerRunOptions = { cwd: "/fixture", task: { id: "task", title: "Open", prompt: "Open index.html" },
+    provider: { provider: "fixture", model: "fixture" },
     runId: "run", runnerAttemptId: "attempt", hostCapabilityTools: [hostCapabilityToolsV1[0]],
-    onToolBefore: async request => { calls.push(["gate", request]); return { allowed: true }; },
-    onApprovalRequired: async request => { calls.push(["approval", request]); return { approved: true, approvalId: "approval" }; },
-    onHostCapabilityCall: async request => { calls.push(["execute", request]); return { content: [{ type: "text", text: "Host accepted" }] }; },
+    onToolBefore: async request => { calls.push(["gate", { ...request }]); return { allowed: true }; },
+    onApprovalRequired: async request => { calls.push(["approval", { ...request }]); return { approved: true, approvalId: "approval" }; },
+    onHostCapabilityCall: async request => { calls.push(["execute", { ...request }]); return { content: [{ type: "text", text: "Host accepted" }] }; },
     ...overrides };
-  createLingStackHostCapabilityExtension(options)({ on: (name, handler) => handlers.set(name, handler), registerTool: tool => tools.push(tool) });
-  return { options, tools, calls, handlers, run: signal => tools[0].execute("call", { path: "index.html" }, signal) };
+  createLingStackHostCapabilityExtension(options)(extensionAPI(tools, (name, handler) => {
+    handlers.set(name, handler as unknown as ToolResult);
+    return () => undefined;
+  }));
+  return { options, tools, calls, handlers, run: (signal?: AbortSignal) => tools[0].execute("call", { path: "index.html" }, signal) };
 }
 test("Host execution is separately approved, re-gated, and receives Host-owned identity", async () => {
   const f = fixture(); await f.run();
@@ -35,7 +46,7 @@ test("Host denial, missing durable approval identity and revoked fence never dis
     const f = fixture({ onApprovalRequired: async () => ({ approved }) });
     const result = await f.run();
     assert.equal(f.calls.some(call => call[0] === "execute"), false);
-    assert.equal(f.handlers.get("tool_result")({ toolCallId: "call", toolName: "host_open_local_target", ...result, isError: false }).isError, true);
+    assert.equal(f.handlers.get("tool_result")!({ toolCallId: "call", toolName: "host_open_local_target", ...result, isError: false }).isError, true);
   }
   let gates = 0;
   const f = fixture({ onToolBefore: async () => ++gates === 1 ? { allowed: true } : { allowed: false, code: "stale_attempt", reason: "revoked" } });
@@ -53,7 +64,7 @@ test("cancellation during approval, through either signal, stops before the Host
 test("Host error status reaches the SDK result hook instead of resolved success", async () => {
   const f = fixture({ onHostCapabilityCall: async () => ({ isError: true, content: [{ type: "text", text: "Viewer unavailable" }], details: { code: "unavailable" } }) });
   const result = await f.run();
-  assert.equal(f.handlers.get("tool_result")({ toolCallId: "call", toolName: "host_open_local_target", ...result, isError: false }).isError, true);
+  assert.equal(f.handlers.get("tool_result")!({ toolCallId: "call", toolName: "host_open_local_target", ...result, isError: false }).isError, true);
 });
 test("Host schema names cannot collide with MCP or be substituted by another capability", () => {
   for (const change of [
@@ -61,5 +72,5 @@ test("Host schema names cannot collide with MCP or be substituted by another cap
     { hostCapabilityTools: [], mcpTools: [{ registeredName: "host_open_local_target" }] },
     { hostCapabilityTools: [hostCapabilityToolsV1[0], hostCapabilityToolsV1[0]] },
     { hostCapabilityTools: [{ ...hostCapabilityToolsV1[0], capabilityId: "host.local_network_info" }] },
-  ]) assert.throws(() => fixture(change), /Host capability/);
+  ]) assert.throws(() => fixture(change as TestOptions), /Host capability/);
 });

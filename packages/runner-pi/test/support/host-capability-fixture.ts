@@ -1,3 +1,5 @@
+import type { PiRunnerHostCapabilityToolDefinition } from "../../dist/types.js";
+
 // Adapter-only schema fixture. Runner tests must not require an undeclared
 // Contracts package build; Daemon tests verify the real catalog/adapter seam.
 export const hostCapabilityToolsFixture = [
@@ -9,4 +11,4 @@ export const hostCapabilityToolsFixture = [
     inputSchema: { type: "object", additionalProperties: false, properties: {
       family: { type: "string", enum: ["all", "IPv4", "IPv6"] }, includeLoopback: { type: "boolean" },
     } } },
-];
+] satisfies readonly PiRunnerHostCapabilityToolDefinition[];

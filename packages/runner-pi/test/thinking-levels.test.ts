@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
 import { zstdDecompressSync } from "node:zlib";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,11 +8,11 @@ import { join } from "node:path";
 import test from "node:test";
 import { PiRunnerAdapter } from "../dist/adapter.js";
 
-for (const api of ["openai-completions", "openai-responses", "openai-codex-responses"]) {
+for (const api of ["openai-completions", "openai-responses", "openai-codex-responses"] as const) {
   test(`${api} sends distinct max and ultra efforts after prepared-input replay`, { timeout: 15_000 }, async t => {
     const cwd = await mkdtemp(join(tmpdir(), "ling-thinking-levels-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
-    const requests = [];
+    const requests: { reasoning_effort?: string; reasoning?: { effort?: string } }[] = [];
     const server = createServer(async (request, response) => {
       const chunks = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -35,24 +36,26 @@ for (const api of ["openai-completions", "openai-responses", "openai-codex-respo
         response.end(events.map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
       }
     });
-    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-    t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = server.address();
+    assert.ok(endpoint && typeof endpoint === "object");
+    t.after(() => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }));
     const provider = { provider: "thinking-fixture", model: "fixture", api, apiKey: `fixture.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } })).toString("base64url")}.fixture`, providerTransport: "sse",
-      baseUrl: `http://127.0.0.1:${server.address().port}/v1`, reasoning: true,
+      baseUrl: `http://127.0.0.1:${endpoint.port}/v1`, reasoning: true,
       thinkingLevelMap: { high: "high", xhigh: "xhigh", max: "max", ultra: "ultra" },
-      compat: { supportsReasoningEffort: true } };
+      compat: { supportsReasoningEffort: true } } satisfies PiRunnerProviderConfig;
     const runner = new PiRunnerAdapter();
-    for (const thinkingLevel of ["max", "ultra", "max"]) {
+    for (const thinkingLevel of ["max", "ultra", "max"] as const) {
       const options = { cwd, agentDir: join(cwd, "agent"), tools: [], provider, thinkingLevel,
         task: { id: "thinking-levels", title: "Test", prompt: "Reply Done" } };
       const preparedInput = await runner.prepareTaskInput(options);
       await runner.runTask({ ...options, preparedInput });
-      const body = requests.at(-1);
+      const body = requests.at(-1)!;
       assert.equal(api === "openai-completions" ? body.reasoning_effort : body.reasoning?.effort, thinkingLevel);
       assert.equal(provider.thinkingLevelMap.max, "max", "ultra must not mutate later max requests");
     }
     assert.equal(requests.length, 3);
-    for (const thinkingLevel of ["max", "ultra"]) {
+    for (const thinkingLevel of ["max", "ultra"] as const) {
       await assert.rejects(runner.prepareTaskInput({ cwd, provider: { ...provider, thinkingLevelMap: {} },
         thinkingLevel, tools: [], task: { id: "unsupported", title: "Test", prompt: "Test" } }), /does not declare reasoning level/);
       if (api === "openai-completions") {
@@ -63,19 +66,19 @@ for (const api of ["openai-completions", "openai-responses", "openai-codex-respo
     }
     assert.equal(requests.length, 3, "unsupported levels must fail before HTTP dispatch");
     if (api === "openai-completions") {
-      for (const thinkingFormat of ["qwen-chat-template", "chat-template"]) {
+      for (const thinkingFormat of ["qwen-chat-template", "chat-template"] as const) {
         await assert.rejects(runner.prepareTaskInput({ cwd, tools: [], thinkingLevel: "max",
           provider: { ...provider, compat: { thinkingFormat } },
           task: { id: "format", title: "Test", prompt: "Test" } }), /adapter configuration/);
       }
       // These provider defaults normally suppress reasoning_effort. Explicit model
       // capability metadata must take precedence without changing other sessions.
-      for (const thinkingLevel of ["max", "ultra"]) {
+      for (const thinkingLevel of ["max", "ultra"] as const) {
         const options = { cwd, tools: [], provider: { ...provider, provider: "zai", compat: undefined }, thinkingLevel,
           task: { id: "compat", title: "Test", prompt: "Done" } };
         const preparedInput = await runner.prepareTaskInput(options);
         await runner.runTask({ ...options, preparedInput });
-        assert.equal(requests.at(-1).reasoning_effort, thinkingLevel);
+        assert.equal(requests.at(-1)!.reasoning_effort, thinkingLevel);
       }
     }
   });
@@ -86,12 +89,12 @@ test("declared efforts override a built-in model's older map without mutating it
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const runner = new PiRunnerAdapter();
   const provider = { provider: "openai", model: "gpt-5.5", api: "openai-responses", reasoning: true,
-    thinkingLevelMap: { max: "max", ultra: "ultra" } };
-  for (const thinkingLevel of ["max", "ultra", "max"]) {
+    thinkingLevelMap: { max: "max", ultra: "ultra" } } satisfies PiRunnerProviderConfig;
+  for (const thinkingLevel of ["max", "ultra", "max"] as const) {
     const prepared = await runner.prepareTaskInput({ cwd, provider, thinkingLevel, tools: [],
       task: { id: "builtin", title: "Test", prompt: "Test" } });
     assert.equal(prepared.thinkingLevel, "max");
-    assert.equal(prepared.model.thinkingLevelMap.max, thinkingLevel);
+    assert.equal(prepared.model.thinkingLevelMap?.max, thinkingLevel);
   }
 });
 
@@ -99,7 +102,7 @@ test("budget-only adapters reject top levels instead of sending a lower budget",
   const cwd = await mkdtemp(join(tmpdir(), "ling-thinking-budget-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const runner = new PiRunnerAdapter();
-  for (const thinkingLevel of ["max", "ultra"]) {
+  for (const thinkingLevel of ["max", "ultra"] as const) {
     await assert.rejects(runner.prepareTaskInput({ cwd, tools: [], thinkingLevel,
       provider: { provider: "anthropic-relay", model: "claude-opus-4-8", api: "anthropic-messages",
         baseUrl: "http://127.0.0.1:1", reasoning: true, thinkingLevelMap: { max: "max", ultra: "ultra" } },
@@ -109,5 +112,6 @@ test("budget-only adapters reject top levels instead of sending a lower budget",
     provider: { provider: "anthropic", model: "claude-opus-4-8", reasoning: true, thinkingLevelMap: { max: "max" } },
     task: { id: "adaptive", title: "Test", prompt: "Test" } });
   assert.equal(prepared.thinkingLevel, "max");
+  assert.ok(prepared.model.compat && "forceAdaptiveThinking" in prepared.model.compat);
   assert.equal(prepared.model.compat.forceAdaptiveThinking, true);
 });
