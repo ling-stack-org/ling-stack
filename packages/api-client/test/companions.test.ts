@@ -3,7 +3,7 @@ import test from "node:test";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("companion mutations preserve JSON delete and proactive responses", async () => {
-  const calls = [];
+  const calls: { url: URL; method: string }[] = [];
   const disabled = { companion: { id: "companion-1", status: "disabled" } };
   const proactive = {
     status: "skipped",

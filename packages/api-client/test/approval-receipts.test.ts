@@ -3,7 +3,7 @@ import test from "node:test";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("approval recovery queries the original encoded ID and workspace without a mutation", async () => {
-  const calls = [];
+  const calls: { url: URL; method: string }[] = [];
   const receipt = { approval: { id: "approval/owner", status: "approved" }, postCommitEffects: [{
     approvalId: "approval/owner", effectKind: "owner", status: "effect_unknown", revision: 2,
     attempts: 1, updatedAt: "2026-10-15T00:00:00.000Z",
