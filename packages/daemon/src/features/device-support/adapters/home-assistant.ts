@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import type {
   AdapterManifestV1,
+  CapabilityDescriptorV1,
   DeviceActionRequestV1,
   DeviceCapabilitySnapshotV1,
   DeviceObservationV1,
@@ -19,6 +20,10 @@ import {
 } from "@ling-stack/core";
 
 import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
+import {
+  assertHomeAssistantCatalogQuery, HOME_ASSISTANT_CATALOG_MAX_BYTES, homeAssistantCatalogCapabilities, homeAssistantEntityAvailability,
+  projectHomeAssistantCatalog, readHomeAssistantDeviceRegistry, type HomeAssistantCatalogKind, type HomeAssistantCatalogQuery,
+} from "./home-assistant-catalog.js";
 
 export interface HomeAssistantEntityRead {
   readonly entityId: string;
@@ -84,6 +89,26 @@ const homeAssistantManifest: AdapterManifestV1 = {
       supportedTransports: ["https"],
       displayMetadata: { label: "Reload integration", category: "repair" },
     },
+    ...Object.entries(homeAssistantCatalogCapabilities).map(([kind, id]): CapabilityDescriptorV1 => ({
+      id,
+      schemaVersion: "1.0",
+      semanticVerb: `list.${kind}`,
+      inputSchema: {
+        type: "object", required: ["limit"], additionalProperties: false,
+        properties: { limit: { type: "integer", minimum: 1, maximum: 100 }, after: { type: "string" } },
+      },
+      outputSchema: { type: "object", required: ["kind", "items", "observedAt"] },
+      sideEffect: "read_only",
+      approvalClass: "allow",
+      requiredPermissions: ["home_assistant.read"],
+      prerequisites: [],
+      timeoutMs: 8_000,
+      responseBytesLimit: 32 * 1024,
+      idempotency: "request",
+      supportedDeviceKinds: ["home_assistant"],
+      supportedTransports: ["https"],
+      displayMetadata: { label: `List Home Assistant ${kind}`, category: "diagnostics" },
+    })),
   ],
   removalBehavior: "revoke_and_disconnect",
   displayMetadata: { label: "Home Assistant", category: "smart_home" },
@@ -162,17 +187,39 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     }
     const body = await readJson(response);
     if (body.entity_id !== entityId) throw new DeviceBrokerError("target_changed", "Home Assistant returned another entity");
-    const state = typeof body.state === "string" ? body.state : undefined;
-    if (!state || state === "unknown" || state === "unavailable") {
-      return { entityId, availability: "unavailable", quality: "degraded", observedAt };
-    }
-    return { entityId, availability: "available", quality: "good", observedAt };
+    const availability = homeAssistantEntityAvailability(body.state);
+    return { entityId, availability, quality: availability === "available" ? "good" : "degraded", observedAt };
   }
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     this.assertTarget(input.profile);
     const startedAt = this.#now();
     const args = asObject(input.request.normalizedInput);
+    const catalogKind = (Object.keys(homeAssistantCatalogCapabilities) as HomeAssistantCatalogKind[])
+      .find(kind => homeAssistantCatalogCapabilities[kind] === input.capability.id);
+    if (catalogKind) {
+      const actionId = input.request.actionId;
+      try {
+        if (Object.keys(args).some(key => key !== "after" && key !== "limit") || typeof args.limit !== "number"
+          || (args.after !== undefined && typeof args.after !== "string")) {
+          throw new DeviceBrokerError("invalid_request", "Home Assistant catalog query is invalid");
+        }
+        const query = { kind: catalogKind, after: args.after, limit: args.limit };
+        const value = await this.readCatalog(query, input.profile.device.firmwareVersion, input.signal);
+        const observationId = `${actionId}:catalog`;
+        return {
+          action: { actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [observationId] },
+          observations: [{
+            id: observationId, subjectId: this.deviceId, source: "home_assistant.catalog", value,
+            observedAt: value.observedAt, receivedAt: this.#now(), freshnessUntil: new Date(Date.parse(value.observedAt) + 30_000).toISOString(),
+            quality: "good", provenance: [this.deviceId], redactionClass: "public",
+          }],
+        };
+      } catch (error) {
+        return { actionId, status: "rejected", errorCode: error instanceof DeviceBrokerError ? error.code : "service_unavailable",
+          startedAt, finishedAt: this.#now(), observationIds: [] };
+      }
+    }
     if (input.capability.id === "home_assistant.read_entity") {
       let entity: HomeAssistantEntityRead;
       try {
@@ -247,12 +294,28 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     };
   }
 
-  private async request(path: string, init: RequestInit & { readonly allowNotFound?: boolean }): Promise<Response> {
-    const { allowNotFound, ...requestInit } = init;
+  private async readCatalog(query: HomeAssistantCatalogQuery, version: string | undefined, callerSignal?: AbortSignal) {
+    assertHomeAssistantCatalogQuery(query);
+    const deadline = AbortSignal.timeout(8_000);
+    const signal = callerSignal ? AbortSignal.any([callerSignal, deadline]) : deadline;
+    const source: unknown = query.kind === "devices"
+      ? await readHomeAssistantDeviceRegistry({ origin: this.#baseUrl, version, token: this.requireToken(), signal })
+      : JSON.parse(await readBoundedText(await this.request(query.kind === "entities" ? "/api/states" : "/api/services", { method: "GET", signal }),
+        HOME_ASSISTANT_CATALOG_MAX_BYTES));
+    return projectHomeAssistantCatalog(query, source, this.#now());
+  }
+
+  private requireToken(): string {
     const token = typeof this.#token === "function" ? this.#token() : this.#token;
     if (!token || token.length > 8192 || !/^[\x21-\x7e]+$/u.test(token)) {
       throw new DeviceBrokerError("authentication_required", "Home Assistant credential is unavailable");
     }
+    return token;
+  }
+
+  private async request(path: string, init: RequestInit & { readonly allowNotFound?: boolean }): Promise<Response> {
+    const { allowNotFound, ...requestInit } = init;
+    const token = this.requireToken();
     const deadline = AbortSignal.timeout(8_000);
     const signal = requestInit.signal ? AbortSignal.any([requestInit.signal, deadline]) : deadline;
     const response = await this.#fetch(`${this.#baseUrl}${path}`, {
