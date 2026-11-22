@@ -50,7 +50,7 @@ export interface SqliteRunSessionStorePorts {
   /** Reject new/promoted execution while an explicit workspace restore owns the fence. */
   readonly assertWorkspaceSnapshotFence?: (cwd: string) => void;
   readonly getDelegationCompletionEvidence: RunStore["getDelegationCompletionEvidence"];
-  readonly checkWorkItemAdmission?: (threadId: string, turnId: string | undefined, request: unknown) => WorkItem | undefined;
+  readonly checkWorkItemAdmission?: (threadId: string, turnId: string | undefined, request: unknown, automaticIntakeReceiptId?: string) => WorkItem | undefined;
   readonly linkWorkItemRun?: (workItem: WorkItem, runId: string, now: string) => void;
 }
 
@@ -109,7 +109,7 @@ export class SqliteRunSessionStore {
     }
     const requestSnapshot: unknown = JSON.parse(prepared.requestJson);
     const workItem = sourceThreadId
-      ? readSqliteWithinTransaction(this.context.database, () => this.ports.checkWorkItemAdmission?.(sourceThreadId, captured.turnId, requestSnapshot))
+      ? readSqliteWithinTransaction(this.context.database, () => this.ports.checkWorkItemAdmission?.(sourceThreadId, captured.turnId, requestSnapshot, captured.automaticIntakeReceiptId))
       : undefined;
     this.assertManagedWorkspaceBinding(captured, requestSnapshot, sourceThread);
     const eventLogPath = getRunEventLogPath(this.paths, captured.id);

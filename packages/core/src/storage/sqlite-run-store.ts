@@ -1340,9 +1340,9 @@ export class SqliteRunStore implements RunStore {
         recordRunSelection: (run) => this.recordRunSkillUsage(run, "selected", run.createdAt),
         assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
         getDelegationCompletionEvidence: (input) => this.getDelegationCompletionEvidence(input),
-        checkWorkItemAdmission: (threadId, turnId, request) => {
+        checkWorkItemAdmission: (threadId, turnId, request, automaticIntakeReceiptId) => {
           const snapshot = request as { idempotencyKey?: string; normalConversationPreparedRequestRef?: { id: string; fingerprint: string } } | null;
-          const workItem = this.checkWorkItemConversationAdmission(threadId, snapshot?.idempotencyKey);
+          const workItem = this.checkWorkItemConversationAdmission(threadId, snapshot?.idempotencyKey, automaticIntakeReceiptId);
           if (workItem && !workItem.runId) {
             const turn = turnId ? this.getLingTurn(turnId) : undefined;
             const prepared = turn?.sourceItemId && this.getConversationPreparedInput(turn.sourceItemId, "request");
@@ -6146,8 +6146,8 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.acceptWorkItem(id, input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
   }
 
-  checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown): WorkItem | undefined {
-    return this.workItems.checkConversationAdmission(threadId, submissionKey, this.appServerState);
+  checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown, automaticIntakeReceiptId?: string): WorkItem | undefined {
+    return this.workItems.checkConversationAdmission(threadId, submissionKey, this.appServerState, automaticIntakeReceiptId);
   }
 
   claimWorkItem(
@@ -6155,7 +6155,7 @@ export class SqliteRunStore implements RunStore {
     input: WorkItemClaimRequest,
     now: string,
   ): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined {
-    return this.workItems.claimWorkItem(id, input, now);
+    return this.workItems.claimWorkItem(id, input, now, this.appServerState);
   }
 
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined {
@@ -6200,6 +6200,10 @@ export class SqliteRunStore implements RunStore {
 
   getLatestVerificationState(threadId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
     return this.appServerState.latestVerification(threadId);
+  }
+
+  listPendingGitHubIntakeDispatches(updatedBefore: string, limit: number): import("../app-server-state-types.js").AppServerStateRecord[] {
+    return this.appServerState.pendingGitHubIntakeDispatches(updatedBefore, limit);
   }
 
   putAppServerState(input: import("../app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("../app-server-state-types.js").PutAppServerStateResult | undefined {

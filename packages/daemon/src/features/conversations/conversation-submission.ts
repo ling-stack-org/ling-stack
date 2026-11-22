@@ -2,6 +2,7 @@ import type { ConversationStreamRequest } from "@ling-stack/contracts";
 import type { LingThread, LingTurn, RunStore } from "@ling-stack/core";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
+import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import { resolveConversationExecutionSelection } from "./conversation-execution-selection.js";
 import { buildConversationRunRequest } from "./conversation-run-request.js";
@@ -21,6 +22,7 @@ export async function prepareConversationSubmission(options: {
   readonly resolveThread: () => LingThread;
   readonly title?: string;
   readonly turnKind?: LingTurn["kind"];
+  readonly automaticIntakeReceiptId?: string;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }) {
   const { store, workspaceCwd, runnerRegistry, input, now } = options;
@@ -31,7 +33,7 @@ export async function prepareConversationSubmission(options: {
   const thread = options.resolveThread();
   const acceptedTurn = accepted?.status === "accepted" && accepted.turnId ? store.getLingTurn(accepted.turnId) : undefined;
   if (!(acceptedTurn?.activeRunId || acceptedTurn?.lastRunId)) {
-    assertWorkItemConversationAdmission(store, thread.id, input.idempotencyKey);
+    assertWorkItemConversationAdmission(store, thread.id, input.idempotencyKey, options.automaticIntakeReceiptId);
   }
   const fileRefs = input.fileRefs ?? [];
   const prepared = prepareNormalConversationInput({
@@ -63,4 +65,14 @@ export async function prepareConversationSubmission(options: {
 export function conversationTitle(message: string): string {
   const oneLine = message.replace(/\s+/g, " ").trim();
   return oneLine.length > 48 ? `${oneLine.slice(0, 45)}...` : oneLine || "New conversation";
+}
+
+export function publishPreparedConversationTurn(store: RunStore, events: ControlPlaneEventHub, turn: LingTurn): void {
+  const idempotencyKey = `app-server-turn:${turn.id}`;
+  if (store.getControlPlaneEventByIdempotency(turn.workspaceId, idempotencyKey)) return;
+  appendControlPlaneEvent(store, events, {
+    workspaceId: turn.workspaceId, cwd: store.paths.cwd, domain: "runs",
+    entityType: "turn", entityId: turn.id, action: "turn.started", idempotencyKey,
+    data: { threadId: turn.threadId, turnId: turn.id, status: "queued" },
+  });
 }

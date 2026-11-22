@@ -1,5 +1,7 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
-import { processGitHubWebhookIntake } from "./server/app-server-github-intake.js";
+import { dispatchGitHubIntake, processGitHubWebhookIntake } from "./server/app-server-github-intake.js";
+import { HttpError } from "./errors.js";
+import { isRecord } from "./shared/validation.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
@@ -565,7 +567,11 @@ export function createDaemonServer(
     companionSchedulers?.start(cwd);
     worktreeMaintenance.registerStore(cwd, store);
     if (store.listAutomationEventSources().some(source => source.enabled)
-      || store.listAppServerState("github_intake_pending").length) automationEvents?.start(cwd);
+      || store.listAppServerState("github_intake_pending").length
+      || store.listPendingGitHubIntakeDispatches(new Date().toISOString(), 1).length
+      || resolvedConfig.appServerGitHubSources.some(source => source.workspaceRoot === cwd && source.intake?.mode === "auto_start")) {
+      automationEvents?.start(cwd);
+    }
     taskSupervisor?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
     if (!memorySemanticServices.has(store)) {
@@ -745,9 +751,26 @@ export function createDaemonServer(
       runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
         onRunReady: (id, info) => { hooks.onRunReady?.(id, info); onReady(id); },
         afterRunTerminal: hooks.afterRunTerminal, controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher,
-      })), (store, signal) => processGitHubWebhookIntake({
-        config: resolvedConfig, secretResolver, externalWorkFetch, controlPlaneEvents,
-      }, store, signal));
+      })), async (store, signal) => {
+      const intakeContext = { config: resolvedConfig, secretResolver, externalWorkFetch, controlPlaneEvents, runnerRegistry, imageVisionSummarizer };
+      await processGitHubWebhookIntake(intakeContext, store, signal);
+      await dispatchGitHubIntake(intakeContext, store, signal, async (request, automaticIntakeAdmission) => {
+        let refusal: HttpError | undefined;
+        const sink = createDetachedRunExecutionSink();
+        sink.writeError = (status, body) => {
+          if (isRecord(body) && typeof body.error === "string") {
+            refusal = new HttpError(status, body.error, "The automatic intake Run could not start.");
+          }
+        };
+        const runId = await startDetachedRunAndResolveReady(onRunReady => executeRunRequest(request, sink,
+          runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
+            onRunReady, automaticIntakeAdmission, afterRunTerminal: afterChannelRunTerminal,
+            controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher, enableUserInputPause: true,
+          }));
+        if (!runId && refusal) throw refusal;
+        return runId;
+      });
+    });
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,

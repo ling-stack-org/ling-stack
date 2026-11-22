@@ -13,18 +13,10 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   color: var(--ling-text-default);
   background: var(--ling-bg-panel);
-}
-
-.automation-ui2-page.titlebar-window {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.automation-ui2-page.titlebar-window > .automation-ui2-main {
-  grid-row: 3;
 }
 
 .automation-ui2-header {
@@ -75,6 +67,39 @@
 
 .automation-ui2-stale {
   margin: var(--ling-space-4) var(--ling-space-8) 0;
+}
+
+.automation-ui2-github-intake {
+  max-height: min(42vh, 320px);
+  overflow: auto;
+  padding: var(--ling-space-4) var(--ling-space-8);
+}
+
+.automation-ui2-github-intake summary {
+  cursor: pointer;
+}
+
+.automation-ui2-github-intake section {
+  display: grid;
+  gap: var(--ling-space-2);
+  padding-block: var(--ling-space-4);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.automation-ui2-github-intake section header,
+.automation-ui2-github-intake li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
+}
+
+.automation-ui2-github-intake ul {
+  display: grid;
+  gap: var(--ling-space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
 }
 
 .automation-ui2-main {

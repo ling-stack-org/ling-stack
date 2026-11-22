@@ -40,10 +40,12 @@ export function prepareRunConcurrency(input: {
   readonly attempt: WorkUnitAttempt;
   /** Host-only identity of an already activated same-Run continuation, never a request flag. */
   readonly existingContinuationId?: string;
+  readonly automaticIntakeReceiptId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
   assertWorkflowRepositoryRunAllowed(input.store, input.runRequest);
-  if (input.runRequest.threadId) assertWorkItemConversationAdmission(input.store, input.runRequest.threadId, input.runRequest.idempotencyKey);
+  if (input.runRequest.threadId) assertWorkItemConversationAdmission(input.store, input.runRequest.threadId,
+    input.runRequest.idempotencyKey, input.automaticIntakeReceiptId);
   input.store.expireResourceLeases(input.now);
 
   const taskId = input.runRequest.task.id;

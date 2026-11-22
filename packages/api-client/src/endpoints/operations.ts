@@ -52,6 +52,12 @@ export const operationEndpoints = {
   async cancelWorkspaceVerification(this: LingDaemonEndpointContext, cwd: string, input: Omit<import("@ling-stack/contracts").LingAppServerVerifyCancelParams, "cwd">): Promise<import("@ling-stack/contracts").LingAppServerVerifyCancelResult> {
     return this._post("/workspace/verification/cancel", { cwd }, input);
   },
+  async listGitHubIntakePolicies(this: LingDaemonEndpointContext, cwd: string): Promise<import("@ling-stack/contracts").LingAppServerGitHubIntakePolicyList> {
+    return this._get("/workspace/github-intake", { cwd });
+  },
+  async pollGitHubIntake(this: LingDaemonEndpointContext, cwd: string, input: Omit<import("@ling-stack/contracts").LingAppServerGitHubIntakePollParams, "cwd">): Promise<import("@ling-stack/contracts").LingAppServerGitHubIntakePollResult> {
+    return this._post("/workspace/github-intake", { cwd }, input);
+  },
   async createCodeAssessmentOverview(this: LingDaemonEndpointContext, cwd: string, input: CreateCodeAssessmentRequest): Promise<import("@ling-stack/contracts").CodeAssessmentOverview> {
     return this._post("/workspace/code-assessments", { cwd, view: "overview" }, input);
   },

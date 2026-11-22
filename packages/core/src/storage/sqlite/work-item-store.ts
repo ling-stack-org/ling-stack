@@ -6,6 +6,8 @@ import {
   type CommitWorkItemGitHubDeliveryResult,
   type CreateWorkItemInput,
   type CreateWorkItemResult,
+  type GitHubIntakeDispatchIntent,
+  type GitHubIntakeOccurrence,
   type ListWorkItemsOptions,
   type UpsertWorkItemInput,
   type WorkItem,
@@ -131,11 +133,13 @@ export class SqliteWorkItemStore {
       }, now) : undefined;
       let gitHubIntakeReceipt: LingAppServerGitHubIntakeReceipt | undefined;
       if (input.gitHubIntake) {
-        const intake = input.gitHubIntake;
+        const { automatic, ...intake } = input.gitHubIntake;
         const prior = state.get("github_intake_receipt", intake.receiptId)?.payload as LingAppServerGitHubIntakeReceipt | undefined;
         if (prior && prior.workItemId !== workItem.id) throw new Error("github_intake_conflict");
-        gitHubIntakeReceipt = prior ?? { ...intake, workItemId: workItem.id, outcome: existing ? "deduplicated" : "suggested",
-          reasonCode: existing ? "existing_target" : "suggested_for_acceptance" };
+        const decision = prior ?? (automatic ? this.reserveGitHubIntake({ ...intake, automatic }, workItem, state, now)
+          : existing ? { outcome: "deduplicated" as const, reasonCode: "existing_target" }
+            : { outcome: "suggested" as const, reasonCode: "suggested_for_acceptance" });
+        gitHubIntakeReceipt = { ...intake, ...decision, workItemId: workItem.id };
         if (!prior && !state.putWithinTransaction({
           kind: "github_intake_receipt", recordId: intake.receiptId, expectedRevision: 0, payload: gitHubIntakeReceipt,
         }, now)) throw new Error("github_intake_conflict");
@@ -146,6 +150,41 @@ export class SqliteWorkItemStore {
       rollbackOwnedSqliteTransaction(database);
       throw error;
     }
+  }
+
+  private reserveGitHubIntake(
+    { repository, receiptId, policyRevision, automatic }: GitHubIntakeOccurrence & { automatic: NonNullable<GitHubIntakeOccurrence["automatic"]> },
+    workItem: WorkItem, state: SqliteAppServerStateStore, now: string,
+  ): Pick<LingAppServerGitHubIntakeReceipt, "outcome" | "reasonCode"> {
+    if (state.get("github_intake_dispatch", workItem.id) || state.get("work_item_acceptance", workItem.id)
+      || workItem.runId || workItem.taskId || workItem.workflowId || workItem.claim) {
+      return { outcome: "deduplicated", reasonCode: "existing_execution" };
+    }
+    if (workItem.control.state !== "active" || workItem.holds.some(hold => hold.blocksNewAdmission)) {
+      return { outcome: "paused", reasonCode: "work_item_held" };
+    }
+    if (!["intake", "triage", "backlog", "ready"].includes(workItem.status)) {
+      return { outcome: "suppressed", reasonCode: "work_item_ineligible" };
+    }
+    const { repositoryId, budget, webhook } = automatic;
+    const windowStart = new Date(Date.parse(now) - budget.windowMs).toISOString();
+    const counts = this.context.database.prepare(`
+      SELECT COUNT(CASE WHEN dispatch.created_at >= ? THEN 1 END) AS starts,
+        COUNT(CASE WHEN json_extract(dispatch.payload_json, '$.status') = 'pending'
+          OR run.status IN ('queued', 'running', 'waiting_for_approval', 'yielded') THEN 1 END) AS concurrent
+      FROM app_server_state dispatch
+      LEFT JOIN work_items item ON item.id = dispatch.record_id AND item.workspace_id = dispatch.workspace_id
+      LEFT JOIN run_sessions run ON run.id = item.run_id
+      WHERE dispatch.workspace_id = ? AND dispatch.kind = 'github_intake_dispatch'
+        AND json_extract(dispatch.payload_json, '$.repositoryId') = ?
+    `).get(windowStart, workItem.workspaceId, repositoryId);
+    if (Number(counts?.starts) >= budget.maxStartsPerWindow) return { outcome: "suppressed", reasonCode: "start_budget_exhausted" };
+    if (Number(counts?.concurrent) >= budget.maxConcurrent) return { outcome: "suppressed", reasonCode: "concurrency_limit" };
+    const intent: GitHubIntakeDispatchIntent = {
+      workItemId: workItem.id, receiptId, repository, repositoryId, policyRevision, webhook, status: "pending",
+    };
+    state.putWithinTransaction({ kind: "github_intake_dispatch", recordId: workItem.id, expectedRevision: 0, payload: intent }, now);
+    return { outcome: "accepted", reasonCode: "automatic_intake_reserved" };
   }
 
   commitGitHubDelivery(
@@ -445,6 +484,7 @@ export class SqliteWorkItemStore {
     }
     if (workItem.revision !== input.expectedRevision || workItem.control.state !== "active"
       || workItem.holds.some(hold => hold.blocksNewAdmission)
+      || workItem.claim && workItem.claim.expiresAt > now
       || !["intake", "triage", "backlog", "ready"].includes(workItem.status)) return undefined;
     const acceptanceId = `work_item_acceptance_${randomUUID()}`;
     const dispatch = input.dispatch ? { ...input.dispatch, submissionKey: `work-item:${acceptanceId}` } : undefined;
@@ -478,7 +518,7 @@ export class SqliteWorkItemStore {
     return state.get("work_item_thread", threadId)?.payload as WorkItemConversationBinding | undefined;
   }
 
-  checkConversationAdmission(threadId: string, submissionKey: unknown, state: SqliteAppServerStateStore): WorkItem | undefined {
+  checkConversationAdmission(threadId: string, submissionKey: unknown, state: SqliteAppServerStateStore, automaticIntakeReceiptId?: string): WorkItem | undefined {
     const binding = this.getConversationBinding(threadId, state);
     if (!binding) return undefined;
     const workItem = this.getWorkItem(binding.workItemId);
@@ -487,6 +527,16 @@ export class SqliteWorkItemStore {
       || ["done", "cancelled", "superseded", "archived"].includes(workItem.status)) throw new Error("work_item_dispatch_held");
     if (!workItem.runId && binding.submissionKey !== submissionKey
       && normalConversationSubmissionKey(threadId, binding.submissionKey) !== submissionKey) throw new Error("work_item_dispatch_intent_required");
+    if (!workItem.runId) {
+      const intent = state.get("github_intake_dispatch", workItem.id)?.payload as GitHubIntakeDispatchIntent | undefined;
+      const acceptance = intent ? state.get("work_item_acceptance", workItem.id)?.payload as WorkItemAcceptanceReceipt | undefined : undefined;
+      if (intent && acceptance?.idempotencyKey === intent.receiptId && (intent.status !== "pending" || automaticIntakeReceiptId !== intent.receiptId
+        || intent.webhook && !this.context.database.prepare(`
+          SELECT 1 FROM automation_event_sources WHERE id=? AND revision=? AND json_extract(source_json, '$.enabled')=1
+        `).get(intent.webhook.sourceId, intent.webhook.sourceRevision))) {
+        throw new Error("work_item_dispatch_held");
+      }
+    }
     return workItem;
   }
 
@@ -507,15 +557,30 @@ export class SqliteWorkItemStore {
     id: string,
     input: WorkItemClaimRequest,
     now: string,
+    state: SqliteAppServerStateStore,
   ): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined {
+    const { database } = this.context;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.claimWithinTransaction(id, input, now, state);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(database);
+      throw error;
+    }
+  }
+
+  private claimWithinTransaction(id: string, input: WorkItemClaimRequest, now: string, state: SqliteAppServerStateStore) {
     const existing = this.getWorkItem(id);
-    if (!existing) {
-      return undefined;
+    if (!existing) return undefined;
+    const acceptance = state.get("work_item_acceptance", id)?.payload as WorkItemAcceptanceReceipt | undefined;
+    const intake = state.get("github_intake_dispatch", id)?.payload as GitHubIntakeDispatchIntent | undefined;
+    if (acceptance?.dispatch || intake?.status === "pending") {
+      return { workItem: existing, blocker: { code: "control_blocked" as const, message: "Work item has an assigned conversation owner." } };
     }
     const blocker = this.workItemClaimBlocker(existing, now);
-    if (blocker) {
-      return { workItem: existing, blocker };
-    }
+    if (blocker) return { workItem: existing, blocker };
     const claimToken = createWorkItemClaimToken();
     const expiresAt = new Date(Date.parse(now) + clampWorkItemLeaseMs(input.leaseMs)).toISOString();
     this.context.database
@@ -736,7 +801,7 @@ export class SqliteWorkItemStore {
   }
 
   private workItemClaimBlocker(item: WorkItem, now: string): WorkItemClaimBlocker | undefined {
-    if (item.control.state !== "active") {
+    if (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission)) {
       return { code: "control_blocked", message: `Work item control is ${item.control.state}.` };
     }
     if (item.status === "done" || item.status === "archived") {

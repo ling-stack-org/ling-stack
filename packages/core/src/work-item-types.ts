@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
-  LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemAcceptance,
+  LingAppServerGitHubDelivery, LingAppServerGitHubIntakeBudget, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemAcceptance,
   LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
@@ -141,7 +141,27 @@ export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
   readonly idempotencyKey?: string;
   /** Host-resolved target identity shared by the source occurrences. */
   readonly verifiedTargetKey?: string;
-  readonly gitHubIntake?: Omit<LingAppServerGitHubIntakeReceipt, "outcome" | "reasonCode" | "workItemId">;
+  readonly gitHubIntake?: GitHubIntakeOccurrence;
+}
+
+export interface GitHubIntakeOccurrence extends Omit<LingAppServerGitHubIntakeReceipt, "outcome" | "reasonCode" | "workItemId"> {
+  readonly automatic?: {
+    readonly repositoryId: string;
+    readonly budget: LingAppServerGitHubIntakeBudget;
+    readonly webhook?: { readonly sourceId: string; readonly sourceRevision: number };
+  };
+}
+
+export interface GitHubIntakeDispatchIntent {
+  readonly workItemId: string;
+  readonly receiptId: string;
+  readonly repositoryId: string;
+  readonly repository: string;
+  readonly policyRevision: string;
+  readonly webhook?: NonNullable<GitHubIntakeOccurrence["automatic"]>["webhook"];
+  readonly status: "pending" | "held" | "admitted";
+  readonly reasonCode?: string;
+  readonly runId?: string;
 }
 
 export interface CreateWorkItemResult {

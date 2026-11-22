@@ -53,7 +53,7 @@
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入，审批和用户答复仍需按不同真实宿主与远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复和工作台浏览器验证报告已接入。仍需选中 hunk、跨工作树应用和各发行平台验证。 |
 | F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。仍需跨 Agent Workflow 的执行归属和预算承接。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
-| O1、O3–O9 | 已验证 GitHub 签名 webhook、独立轮询和显式接单可以归并到同一工作项。Webhook 入箱和待处理目标同事务提交，Daemon 重启后重试原目标。人工与建议模式保留评估收据。仍需自治派发及配置视图、合并队列、经验和设备反馈、阶段简报、在途改计划、交接、审议裁决和跨 Run 预算，以及原 Workflow 的联合 UI 验收。 |
+| O1、O3–O9 | 已验证 GitHub 签名 webhook、独立轮询和显式接单可以归并到同一工作项。Webhook 入箱和待处理目标同事务提交。已登记的自动接单策略适用免打扰、并发和启动额度，由现有 Automation worker 以原受理键提交 Ling Agent 只读会话。Automations 显示生效策略及评估回执。Channel、设备和已有 AutomationRun 的统一自治接入仍待完成。合并队列、经验和设备反馈、阶段简报、在途改计划、交接、审议裁决、跨 Run 预算及原 Workflow 的联合 UI 验收仍待完成。 |
 | G | 自研切换和回退日志对账、签名安装产物、远程 WSS 和三个真实 Provider 自研试点。macOS 打包预检仍缺当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检达到评审条件，真实试点仍需按 Framework Assurance 准入。 |
 
 ## 目标与开工顺序

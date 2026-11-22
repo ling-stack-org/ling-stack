@@ -88,8 +88,9 @@ export async function runLingAppServerMcp(
       annotations: { idempotentHint: true, destructiveHint: true },
     }, async params => describe(await client.applyChanges(params)));
     server.registerTool("ling_github_intake_poll", {
-      description: "Evaluate a configured GitHub intake page and create suggestion Work Items without dispatching them.",
-      inputSchema: z.strictObject({ repository: z.string().min(3).max(201), page: z.number().int().min(1).max(500).optional() }),
+      description: "Evaluate a registered GitHub intake page under its current manual, suggestion, or automatic admission policy.",
+      inputSchema: z.strictObject({ repository: z.string().min(3).max(201), page: z.number().int().min(1).max(500).optional(),
+        retryKey: z.string().max(160).optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.pollGitHubIntake(params)));
     server.registerTool("ling_github_intake_read", {

@@ -51,7 +51,7 @@ import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { expireStaleApproval } from "../features/runs/approvals.js";
 import { reconcileApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import { HttpError } from "../errors.js";
-import { prepareConversationSubmission } from "../features/conversations/conversation-submission.js";
+import { prepareConversationSubmission, publishPreparedConversationTurn } from "../features/conversations/conversation-submission.js";
 import { parseConversationStreamRequest } from "../features/conversations/routes.js";
 import { readConversationSubmission } from "../features/conversations/submission-receipts.js";
 import { readNormalConversationPreparedRequest } from "../features/conversations/normal-conversation-prepared-request.js";
@@ -96,7 +96,7 @@ import {
   grantAllowsMethod, grantAllowsRequest, listAppServerGrants, revokeAppServerGrant,
 } from "./app-server-authorization.js";
 import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
-import { pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
+import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import {
@@ -168,7 +168,7 @@ const operatorMethods = new Set([
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
   "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
-  "github/intake/poll", "github/intake/read",
+  "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
   "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
   "changes/read", "changes/apply/preview", "changes/apply",
@@ -725,7 +725,13 @@ class RpcConnection {
       }
       case "github/intake/poll": {
         const record = this.workspaceParams(params, true);
-        return await pollGitHubIntake(this.context, this.context.storeRegistry.getStore(record.cwd), record);
+        const result = await pollGitHubIntake(this.context, this.context.storeRegistry.getStore(record.cwd), record);
+        if (result.receipts.some(receipt => receipt.outcome === "accepted")) this.context.automationEvents.poke(record.cwd);
+        return result;
+      }
+      case "github/intake/policy/list": {
+        const record = this.workspaceParams(params, true);
+        return listGitHubIntakePolicies(this.context, this.context.storeRegistry.getStore(record.cwd));
       }
       case "github/intake/read": {
         const record = this.workspaceParams(params, true);
@@ -1829,7 +1835,7 @@ class RpcConnection {
       if (!prepared || prepared.threadId !== thread.id || prepared.turnId !== turn.id || prepared.workspaceCwd !== cwd) {
         throw rpcError(-32061, "resume_blocked", "The Turn has no saved execution preparation.");
       }
-      this.publishConversationTurnStarted(store, cwd, turn);
+      publishPreparedConversationTurn(store, this.context.controlPlaneEvents, turn);
       const recovered = await this.executeConversationRun(prepared);
       return projectTurnResume(store, cwd, thread, turn, store.getRun(recovered), "recovered");
     }
@@ -1852,7 +1858,7 @@ class RpcConnection {
       if (!prepared || prepared.parentRunId !== run.id || latestTurnId !== successor.id || thread.activeRunId) {
         throw rpcError(-32061, "resume_blocked", "The recovery has no current prepared request.");
       }
-      this.publishConversationTurnStarted(store, cwd, successor);
+      publishPreparedConversationTurn(store, this.context.controlPlaneEvents, successor);
       const recovered = await this.executeConversationRun(prepared);
       return projectTurnResume(store, cwd, thread, successor, store.getRun(recovered), "continued", turn.id);
     }
@@ -1869,7 +1875,7 @@ class RpcConnection {
     });
     const successor = resume.runRequest.turnId && store.getLingTurn(resume.runRequest.turnId);
     if (!successor) throw rpcError(-32061, "resume_blocked", "The recovery has no accepted successor Turn.");
-    this.publishConversationTurnStarted(store, cwd, successor);
+    publishPreparedConversationTurn(store, this.context.controlPlaneEvents, successor);
     const recovered = await this.executeConversationRun(resume.runRequest);
     return projectTurnResume(store, cwd, thread, successor, store.getRun(recovered), "continued", turn.id);
   }
@@ -1954,7 +1960,7 @@ class RpcConnection {
       throw rpcError(-32031, "idempotency_conflict", "The original submission used a different execution configuration.");
     }
     if (!this.grantIsCurrent()) throw rpcError(-32020, "authorization_required", "The App Server grant expired or was revoked before dispatch.");
-    this.publishConversationTurnStarted(store, cwd, turn);
+    publishPreparedConversationTurn(store, this.context.controlPlaneEvents, turn);
     const receipt = readConversationSubmission(store, { surface: "normal", threadId: thread.id, idempotencyKey: input.idempotencyKey! });
     const runId = turn.activeRunId ?? turn.lastRunId ?? await this.executeConversationRun(runRequest);
     const currentThread = store.getLingThread(thread.id) ?? thread;
@@ -1962,16 +1968,6 @@ class RpcConnection {
       cwd, thread: projectPublicLingThread(currentThread), turn: projectPublicLingTurn(store.getLingTurn(turn.id) ?? turn, currentThread),
       run: projectPublicRunSession(store.getRun(runId), store), receipt, replayed,
     };
-  }
-
-  private publishConversationTurnStarted(store: RunStore, cwd: string, turn: LingTurn): void {
-    const idempotencyKey = `app-server-turn:${turn.id}`;
-    if (store.getControlPlaneEventByIdempotency(turn.workspaceId, idempotencyKey)) return;
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: turn.workspaceId, cwd, domain: "runs", entityType: "turn", entityId: turn.id,
-      action: "turn.started", idempotencyKey,
-      data: { threadId: turn.threadId, turnId: turn.id, status: "queued" },
-    });
   }
 
   private executeConversationRun(runRequest: RunRequest): Promise<string> {
@@ -2142,7 +2138,11 @@ class RpcConnection {
       if (!workItem) {
         throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
       }
-      return { cwd, workItem: projectWorkItemSnapshot(workItem, this.grant?.subject.kind !== "workItem"),
+      const includeExecutionRefs = this.grant?.subject.kind !== "workItem";
+      const dispatch = store.getAppServerState("github_intake_dispatch", workItemId)?.payload as import("@ling-stack/core").GitHubIntakeDispatchIntent | undefined;
+      return { cwd, workItem: projectWorkItemSnapshot(workItem, includeExecutionRefs),
+        ...(dispatch ? { intakeDispatch: { receiptId: dispatch.receiptId, status: dispatch.status,
+          reasonCode: dispatch.reasonCode, ...(includeExecutionRefs ? { runId: dispatch.runId } : {}) } } : {}),
         cursor: scope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
     });
   }

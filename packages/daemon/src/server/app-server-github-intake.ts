@@ -1,13 +1,19 @@
 import type {
   LingAppServerGitHubIntakePolicy,
+  LingAppServerGitHubIntakePolicyList,
   LingAppServerGitHubIntakePollResult,
   LingAppServerGitHubIntakeReceipt,
   LingAppServerGitHubSubject,
+  LingAppServerGitHubIntakeQuietHours,
 } from "@ling-stack/contracts";
-import type { AutomationEventEnvelope, AutomationEventSource, AutomationGitHubIntakePending, AutomationGitHubIntakeTarget, RunStore } from "@ling-stack/core";
+import { LING_AGENT_ID, type AutomationEventEnvelope, type AutomationEventSource, type AutomationGitHubIntakePending,
+  type AutomationGitHubIntakeTarget, type GitHubIntakeDispatchIntent, type GitHubIntakeOccurrence, type RunStore,
+  type WorkItemAcceptanceReceipt } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
+import { prepareConversationSubmission, publishPreparedConversationTurn } from "../features/conversations/conversation-submission.js";
 import { trimOversizedEvent } from "../features/control-plane/events.js";
+import type { RunRequest } from "../features/runs/schemas.js";
 import { isRecord } from "../shared/validation.js";
 import { assertGitHubRepository, digest, gitHubReadClient, gitHubWorkItemTargetKey, readAppServerGitHubSubject } from "./app-server-github-subject.js";
 import { githubRepositoryPattern, type AppServerGitHubSourceConfig } from "./app-server-github-sources.js";
@@ -46,10 +52,22 @@ export function gitHubIntakeReceiptId(origin: LingAppServerGitHubIntakeReceipt["
   return `github_intake_${digest([origin, sourceEventId])}`;
 }
 
+export function listGitHubIntakePolicies(
+  context: Pick<IntakeContext, "config">, store: RunStore,
+): LingAppServerGitHubIntakePolicyList {
+  const cwd = store.paths.cwd;
+  return { cwd, sources: context.config.appServerGitHubSources.filter(source => source.workspaceRoot === cwd).map(source => {
+    const policy = source.intake ?? defaultPolicy;
+    return { repository: source.repository, revision: policyRevision(source), policy,
+      ...(policy.mode === "auto_start" ? { providerAvailable: store.getProviderPreset(policy.providerPresetId)?.enabled === true } : {}) };
+  }) };
+}
+
 export async function pollGitHubIntake(context: IntakeContext, store: RunStore, input: Record<string, unknown>): Promise<LingAppServerGitHubIntakePollResult> {
-  const { repository, page = 1 } = input;
+  const { repository, page = 1, retryKey } = input;
   if (typeof repository !== "string" || !githubRepositoryPattern.test(repository)
-    || typeof page !== "number" || !Number.isSafeInteger(page) || page < 1 || page > 500) {
+    || typeof page !== "number" || !Number.isSafeInteger(page) || page < 1 || page > 500
+    || retryKey !== undefined && (typeof retryKey !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/u.test(retryKey))) {
     throw new HttpError(400, "invalid_params", "Supply a registered GitHub repository and a positive page.");
   }
   const cwd = store.paths.cwd;
@@ -72,7 +90,11 @@ export async function pollGitHubIntake(context: IntakeContext, store: RunStore, 
         isRecord(label) && typeof label.name === "string" ? [label.name.slice(0, 80)] : []) : [],
     };
     const sourceEventId = `poll_${digest([subject, item.updated_at, revision])}`;
-    const basis = receiptBasis("poll", sourceEventId, subject, revision);
+    let basis = receiptBasis("poll", sourceEventId, subject, revision);
+    const prior = retryKey ? readReceipt(store, basis.receiptId) : undefined;
+    if (prior && ["quiet_hours", "start_budget_exhausted", "concurrency_limit", "work_item_held"].includes(prior.reasonCode)) {
+      basis = receiptBasis("poll", `poll_${digest([sourceEventId, retryKey])}`, subject, revision);
+    }
     return evaluateGitHubIntake(context, store, basis, policy, subject);
   });
   return { cwd, receipts, ...(items.length === pageSize && page < 500 ? { nextPage: page + 1 } : {}) };
@@ -110,7 +132,8 @@ export async function processGitHubWebhookIntake(context: IntakeContext, store: 
           const subject = await readAppServerGitHubSubject(client, target);
           signal.throwIfAborted();
           if (!current()) saveReceipt(store, { ...basis, outcome: "paused", reasonCode: "source_authority_changed" });
-          else evaluateGitHubIntake(context, store, basis, source?.intake ?? defaultPolicy, subject);
+          else evaluateGitHubIntake(context, store, basis, source?.intake ?? defaultPolicy, subject,
+            { sourceId: target.sourceId, sourceRevision: target.sourceRevision });
         } catch (error) {
           signal.throwIfAborted();
           if (error instanceof HttpError && error.statusCode === 404) {
@@ -138,7 +161,9 @@ function receiptBasis(
 }
 
 function evaluateGitHubIntake(context: IntakeContext, store: RunStore, basis: ReceiptBasis,
-  policy: LingAppServerGitHubIntakePolicy, subject: IntakeSubject): LingAppServerGitHubIntakeReceipt {
+  policy: LingAppServerGitHubIntakePolicy, subject: IntakeSubject,
+  webhook?: NonNullable<GitHubIntakeOccurrence["automatic"]>["webhook"],
+): LingAppServerGitHubIntakeReceipt {
   const retained = readReceipt(store, basis.receiptId);
   if (retained) return retained;
   if (!policy.enabled) return saveReceipt(store, { ...basis, outcome: "paused", reasonCode: "policy_disabled" });
@@ -147,14 +172,126 @@ function evaluateGitHubIntake(context: IntakeContext, store: RunStore, basis: Re
     return saveReceipt(store, { ...basis, outcome: "suppressed", reasonCode: "required_label_missing" });
   }
   if (policy.mode === "manual") return saveReceipt(store, { ...basis, outcome: "manual", reasonCode: "manual_intake" });
+  if (policy.mode === "auto_start" && isQuiet(policy.quietHours, new Date(basis.evaluatedAt))) {
+    return saveReceipt(store, { ...basis, outcome: "suppressed", reasonCode: "quiet_hours" });
+  }
   const result = store.createWorkItem({
     sourceType: "external_work", sourceId: basis.receiptId, title: subject.title.slice(0, 500), initialStatus: "intake",
     priority: policy.priority ?? "normal", verifiedTargetKey: gitHubWorkItemTargetKey(subject),
-    description: `GitHub ${subject.kind} ${subject.repository}#${subject.number}`, gitHubIntake: basis,
+    description: `GitHub ${subject.kind} ${subject.repository}#${subject.number}`,
+    gitHubIntake: { ...basis, ...(policy.mode === "auto_start" ? { automatic: {
+      repositoryId: subject.repositoryId, budget: policy.budget, webhook,
+    } } : {}) },
   }, basis.evaluatedAt, store.paths.cwd);
   if (result.event) context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
   if (!result.gitHubIntakeReceipt) throw new HttpError(409, "intake_conflict", "The GitHub intake receipt was not committed.");
   return result.gitHubIntakeReceipt;
+}
+
+function isQuiet(quiet: LingAppServerGitHubIntakeQuietHours | undefined, now: Date): boolean {
+  if (!quiet) return false;
+  const time = new Intl.DateTimeFormat("en-GB", { timeZone: quiet.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+  return quiet.start < quiet.end ? time >= quiet.start && time < quiet.end : time >= quiet.start || time < quiet.end;
+}
+
+export async function dispatchGitHubIntake(
+  context: Pick<DaemonContext, "config" | "controlPlaneEvents" | "runnerRegistry" | "imageVisionSummarizer">,
+  store: RunStore, signal: AbortSignal,
+  startRun: (request: RunRequest, admission: { readonly receiptId: string; readonly assertCurrent: () => void }) => Promise<string | undefined>,
+): Promise<void> {
+  const eligibleBefore = new Date(Date.now() - 4_000).toISOString();
+  for (const record of store.listPendingGitHubIntakeDispatches(eligibleBefore, 4)) {
+    signal.throwIfAborted();
+    const intent = record.payload as GitHubIntakeDispatchIntent;
+    const complete = (status: GitHubIntakeDispatchIntent["status"], reasonCode?: string, runId?: string) => {
+      const publication = status === intent.status && reasonCode === intent.reasonCode ? undefined : {
+        workspaceId: record.workspaceId, cwd: store.paths.cwd, domain: "work_items" as const,
+        entityType: "work_item", entityId: intent.workItemId, action: "work_item.intake.dispatch.updated",
+        data: { workItemId: intent.workItemId, receiptId: intent.receiptId, status, reasonCode },
+      };
+      const saved = store.putAppServerState({ kind: "github_intake_dispatch", recordId: record.recordId, expectedRevision: record.revision,
+        payload: { ...intent, status, reasonCode, runId } }, new Date().toISOString(), publication);
+      if (saved?.event) context.controlPlaneEvents.publish(trimOversizedEvent(saved.event));
+    };
+    const workItem = store.getWorkItem(intent.workItemId);
+    if (workItem?.runId) {
+      complete("admitted", undefined, workItem.runId);
+      continue;
+    }
+    const source = context.config.appServerGitHubSources.find(source => source.workspaceRoot === store.paths.cwd
+      && source.repository === intent.repository && source.repositoryId === intent.repositoryId);
+    const policy = source?.intake;
+    const sourceIsCurrent = () => {
+      if (!source || policy?.mode !== "auto_start" || !policy.enabled || policyRevision(source) !== intent.policyRevision) return false;
+      if (!intent.webhook) return true;
+      const webhook = store.getAutomationEventSource(intent.webhook.sourceId);
+      return webhook?.enabled === true && webhook.revision === intent.webhook.sourceRevision;
+    };
+    if (!workItem || !sourceIsCurrent() || policy?.mode !== "auto_start"
+      || ["done", "cancelled", "superseded", "archived"].includes(workItem.status)) {
+      complete("held", "intake_authority_changed");
+      continue;
+    }
+    if (isQuiet(policy.quietHours, new Date()) || workItem.control.state !== "active" || workItem.holds.some(hold => hold.blocksNewAdmission)) {
+      complete("pending", "intake_temporarily_held");
+      continue;
+    }
+    if (!store.getProviderPreset(policy.providerPresetId)?.enabled) {
+      complete("pending", "intake_provider_unavailable");
+      continue;
+    }
+    const receipt = readReceipt(store, intent.receiptId);
+    if (!receipt || receipt.outcome !== "accepted" || receipt.workItemId !== workItem.id) {
+      complete("held", "intake_receipt_unavailable");
+      continue;
+    }
+    try {
+      const assertCurrent = () => {
+        signal.throwIfAborted();
+        if (!sourceIsCurrent() || isQuiet(policy.quietHours, new Date())) {
+          throw new HttpError(409, "intake_authority_changed", "GitHub intake authority changed before Run admission.");
+        }
+      };
+      assertCurrent();
+      const original = store.getAppServerState("work_item_acceptance", workItem.id)?.payload as WorkItemAcceptanceReceipt | undefined;
+      if (original && original.idempotencyKey !== receipt.receiptId) {
+        complete("held", "work_item_already_assigned");
+        continue;
+      }
+      const { kind, number } = receipt.subject;
+      const title = `GitHub ${receipt.repository}#${number}`;
+      const threadId = original?.dispatch?.threadId ?? `thread_github_${digest(workItem.id)}`;
+      const thread = store.getLingThread(threadId) ?? store.createLingThread({
+        id: threadId, kind: "conversation", status: "open", title, objective: title,
+      }, receipt.evaluatedAt);
+      const message = `Review the authorized GitHub ${kind} ${receipt.repository}#${number} for this project. Use its title `
+        + `${JSON.stringify(workItem.title)} as source data. Check the requirements against the repository and propose a scoped plan or ask for clarification.`;
+      const acceptance = store.acceptWorkItem(workItem.id, {
+        expectedRevision: original?.acceptedRevision ?? workItem.revision, actorId: LING_AGENT_ID, idempotencyKey: receipt.receiptId,
+        dispatch: original?.dispatch ?? { threadId, message, providerPresetId: policy.providerPresetId },
+      }, new Date().toISOString());
+      if (!acceptance?.receipt.dispatch || acceptance.receipt.idempotencyKey !== receipt.receiptId) {
+        complete("pending", "work_item_admission_changed");
+        continue;
+      }
+      if (acceptance.event) context.controlPlaneEvents.publish(trimOversizedEvent(acceptance.event));
+      const dispatch = acceptance.receipt.dispatch;
+      const prepared = await prepareConversationSubmission({ store, workspaceCwd: store.paths.cwd, runnerRegistry: context.runnerRegistry,
+        resolveThread: () => thread, input: { threadId, providerPresetId: dispatch.providerPresetId, message: dispatch.message,
+          idempotencyKey: dispatch.submissionKey, workspaceAccessMode: "read_only", tools: ["read", "grep", "find", "ls"] },
+        automaticIntakeReceiptId: receipt.receiptId, imageVisionSummarizer: context.imageVisionSummarizer, now: new Date().toISOString() });
+      assertCurrent();
+      publishPreparedConversationTurn(store, context.controlPlaneEvents, prepared.turn);
+      const runId = prepared.turn.activeRunId ?? prepared.turn.lastRunId ?? await startRun(prepared.runRequest, { receiptId: receipt.receiptId, assertCurrent });
+      if (runId) complete("admitted", undefined, runId);
+      else complete("pending", "work_item_admission_pending");
+    } catch (error) {
+      signal.throwIfAborted();
+      const reason = error instanceof HttpError ? error.code : "work_item_admission_pending";
+      if (reason === "duplicate_work_unit") complete("held", "intake_dispatch_reconciliation_required");
+      else complete("pending", reason);
+    }
+  }
 }
 
 function readReceipt(store: RunStore, receiptId: string): LingAppServerGitHubIntakeReceipt | undefined {

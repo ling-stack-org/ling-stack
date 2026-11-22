@@ -1395,6 +1395,87 @@ test("signed GitHub webhooks and polling converge on one work item across restar
   assert.equal(fixture.getStore().listWorkItems({ sourceType: "external_work" })[0]?.status, "intake");
 });
 
+test("automatic GitHub intake resumes a scoped dispatch once and preserves admission limits", { timeout: 35_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "The task needs a scoped plan." }));
+  t.after(() => provider.close());
+  const repository = "example/ling";
+  const quietRepository = "example/quiet";
+  let providerPresetId = "fixture-provider-unconfigured";
+  const observedAt = new Date();
+  const quietTime = (delta: number) => new Date(observedAt.getTime() + delta * 60_000).toISOString().slice(11, 16);
+  const issue = (num: number) => ({ number: num, title: `Triage issue ${num}`, state: "open",
+    labels: [{ name: "agent-ready" }], updated_at: observedAt.toISOString() });
+  let current = [issue(21), issue(22)];
+  const fixture = await releaseFixture(t, {
+    githubSources: cwd => [
+      { workspaceRoot: cwd, repository, repositoryId: "714",
+        intake: { enabled: true, mode: "auto_start", requiredLabel: "agent-ready", providerPresetId,
+          budget: { maxConcurrent: 1, maxStartsPerWindow: 2, windowMs: 60_000 } } },
+      { workspaceRoot: cwd, repository: quietRepository, repositoryId: "715",
+        intake: { enabled: true, mode: "auto_start", requiredLabel: "agent-ready", providerPresetId,
+          budget: { maxConcurrent: 1, maxStartsPerWindow: 2, windowMs: 60_000 },
+          quietHours: { timeZone: "UTC", start: quietTime(-30), end: quietTime(30) } } },
+    ],
+    externalWorkFetch: async input => {
+      const { pathname } = new URL(String(input));
+      if (pathname === `/repos/${repository}`) return Response.json({ id: 714, full_name: repository });
+      if (pathname === `/repos/${quietRepository}`) return Response.json({ id: 715, full_name: quietRepository });
+      if (pathname === `/repos/${repository}/issues`) return Response.json(current);
+      if (pathname === `/repos/${quietRepository}/issues`) return Response.json([issue(1)]);
+      return new Response(null, { status: 404 });
+    },
+  });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  providerPresetId = preset.id;
+  fixture.getStore().updateProviderPreset(preset.id, { enabled: false }, new Date().toISOString());
+  await fixture.restart();
+  const [first, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
+  const [poll, duplicate] = await Promise.all([first, peer].map(client =>
+    client.call<LingAppServerGitHubIntakePollResult>("github/intake/poll", { repository })));
+  assert.deepEqual(poll, duplicate);
+  const [accepted, suppressed] = poll.receipts;
+  assert.ok(accepted?.workItemId);
+  assert.equal(accepted.outcome, "accepted");
+  assert.equal(suppressed?.reasonCode, "concurrency_limit");
+  const awaiting = fixture.getStore();
+  const now = new Date().toISOString();
+  const claimed = awaiting.claimWorkItem(accepted.workItemId, { ownerId: "competing-owner" }, now);
+  assert.equal(claimed?.blocker?.code, "control_blocked");
+  const quiet = await first.call<LingAppServerGitHubIntakePollResult>("github/intake/poll", { repository: quietRepository });
+  assert.equal(quiet.receipts[0]?.reasonCode, "quiet_hours");
+  const stagedThread = awaiting.createLingThread({ kind: "conversation", status: "open", title: "Reserved triage", objective: "Triage issue 21" }, now);
+  const staged = awaiting.acceptWorkItem(accepted.workItemId, {
+    expectedRevision: claimed!.workItem.revision, actorId: "ling_agent", idempotencyKey: accepted.receiptId,
+    dispatch: { threadId: stagedThread.id, providerPresetId: preset.id, message: "Triage issue 21" },
+  }, now);
+  assert.ok(staged?.receipt.dispatch);
+  await assert.rejects(first.call("turn/start", { threadId: stagedThread.id, message: staged.receipt.dispatch.message,
+    providerPresetId: preset.id, idempotencyKey: staged.receipt.dispatch.submissionKey }), { code: "work_item_dispatch_held" });
+  assert.equal(provider.requests.length, 0);
+  await fixture.restart();
+  fixture.getStore().updateProviderPreset(preset.id, { enabled: true }, new Date().toISOString());
+  fixture.getStore().recordProviderCheckResult(preset.id, { ok: true, code: "ready", message: "Loopback fixture", checkedAt: new Date().toISOString() });
+  const restored = await fixture.connect();
+  const finished = await waitFor(() => {
+    const runId = fixture.getStore().getWorkItem(accepted.workItemId!)?.runId;
+    const run = runId ? fixture.getStore().getRun(runId) : undefined;
+    return run && ["succeeded", "failed", "cancelled"].includes(run.status) ? run : undefined;
+  }).catch(async error => {
+    const state = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: accepted.workItemId });
+    throw new Error(JSON.stringify(state.intakeDispatch), { cause: error });
+  });
+  assert.equal(finished.status, "succeeded", finished.errorMessage ?? "The routed Run succeeded.");
+  assert.equal(finished.threadId, stagedThread.id);
+  assert.equal(provider.requests.length, 1);
+  assert.equal(fixture.getStore().listRuns({ threadId: finished.threadId }).length, 1);
+  assert.match(JSON.stringify(provider.requests[0]), /Triage issue 21/u);
+  assert.deepEqual(await restored.call("github/intake/poll", { repository }), poll);
+  current = [issue(23), issue(24)];
+  const next = await restored.call<LingAppServerGitHubIntakePollResult>("github/intake/poll", { repository });
+  assert.equal(next.receipts[0]?.outcome, "accepted");
+  assert.equal(next.receipts[1]?.reasonCode, "start_budget_exhausted");
+});
+
 test("a reserved Work Item dispatch recovers once through the conversation owner and obeys pause and deletion fences", { timeout: 25_000 }, async t => {
   const provider = await startLoopbackPiProvider(() => ({ text: "First assignment complete." }));
   t.after(() => provider.close());
@@ -2440,7 +2521,6 @@ async function releaseFixture(t: TestContext, {
   const cwd = join(root, "workspace");
   await mkdir(cwd);
   const appServerVerificationRecipes = await verificationRecipes?.(root, cwd);
-  const appServerGitHubSources = githubSources?.(cwd);
   const appServerWss = await wssConfig?.(root);
   let authToken = randomUUID();
   const priorLingHome = process.env.LING_STACK_HOME;
@@ -2449,7 +2529,7 @@ async function releaseFixture(t: TestContext, {
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
     host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness,
-    appServerVerificationRecipes, appServerGitHubSources, appServerWss,
+    appServerVerificationRecipes, appServerGitHubSources: githubSources?.(cwd), appServerWss,
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,

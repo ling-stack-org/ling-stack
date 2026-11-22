@@ -44,6 +44,17 @@ export class SqliteAppServerStateStore {
     return row ? mapRecord(row) : undefined;
   }
 
+  pendingGitHubIntakeDispatches(updatedBefore: string, limit: number, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord[] {
+    const rows = this.context.database.prepare(`
+      SELECT * FROM app_server_state
+      WHERE workspace_id = ? AND kind = 'github_intake_dispatch'
+        AND json_extract(payload_json, '$.status') = 'pending'
+        AND (revision = 1 OR updated_at <= ?)
+      ORDER BY updated_at ASC, record_id ASC LIMIT ?
+    `).all(workspaceId, updatedBefore, limit);
+    return rows.map(mapRecord);
+  }
+
   put(input: PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): PutAppServerStateResult | undefined {
     this.context.database.exec("BEGIN IMMEDIATE");
     try {

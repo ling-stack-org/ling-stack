@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { LingAppServerGitHubIntakePolicy, LingGitHubRequiredCheck } from "@ling-stack/contracts";
+import type { LingAppServerGitHubIntakeBudget, LingAppServerGitHubIntakePolicy, LingAppServerGitHubIntakeQuietHours, LingGitHubRequiredCheck } from "@ling-stack/contracts";
 import { isRecord } from "../shared/validation.js";
 
 export interface AppServerGitHubDeliveryPolicy {
@@ -57,7 +57,7 @@ export function resolveAppServerGitHubSources(
 
 function resolveIntakePolicy(policy: unknown): LingAppServerGitHubIntakePolicy | undefined {
   if (policy === undefined) return undefined;
-  if (!isRecord(policy) || policy.mode !== "manual" && policy.mode !== "suggest" || typeof policy.enabled !== "boolean"
+  if (!isRecord(policy) || policy.mode !== "manual" && policy.mode !== "suggest" && policy.mode !== "auto_start" || typeof policy.enabled !== "boolean"
     || policy.requiredLabel !== undefined && (typeof policy.requiredLabel !== "string" || !policy.requiredLabel.trim()
       || policy.requiredLabel.length > 50 || /[,\r\n\0]/u.test(policy.requiredLabel))
     || policy.webhookSourceId !== undefined && (typeof policy.webhookSourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/u.test(policy.webhookSourceId))
@@ -65,8 +65,39 @@ function resolveIntakePolicy(policy: unknown): LingAppServerGitHubIntakePolicy |
       && policy.priority !== "high" && policy.priority !== "urgent") {
     throw new Error("Invalid App Server GitHub intake policy.");
   }
-  return { mode: policy.mode, enabled: policy.enabled, requiredLabel: policy.requiredLabel,
-    webhookSourceId: policy.webhookSourceId, priority: policy.priority };
+  const scope: Omit<LingAppServerGitHubIntakePolicy, "mode"> = {
+    enabled: policy.enabled, requiredLabel: policy.requiredLabel, webhookSourceId: policy.webhookSourceId, priority: policy.priority,
+  };
+  if (policy.mode !== "auto_start") return { ...scope, mode: policy.mode };
+  if (!policy.requiredLabel || typeof policy.providerPresetId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/u.test(policy.providerPresetId)) {
+    throw new Error("Automatic GitHub intake requires a label and a configured conversation provider preset.");
+  }
+  return { ...scope, mode: "auto_start", requiredLabel: policy.requiredLabel, providerPresetId: policy.providerPresetId,
+    budget: resolveIntakeBudget(policy.budget), quietHours: resolveQuietHours(policy.quietHours) };
+}
+
+function resolveIntakeBudget(value: unknown): LingAppServerGitHubIntakeBudget {
+  if (!isRecord(value) || !validInteger(value.maxConcurrent, 1, 16) || !validInteger(value.maxStartsPerWindow, 1, 500)
+    || !validInteger(value.windowMs, 60_000, 7 * 86_400_000)) {
+    throw new Error("Automatic GitHub intake requires bounded concurrency and a rolling start budget.");
+  }
+  return { maxConcurrent: value.maxConcurrent, maxStartsPerWindow: value.maxStartsPerWindow, windowMs: value.windowMs };
+}
+
+function resolveQuietHours(value: unknown): LingAppServerGitHubIntakeQuietHours | undefined {
+  if (value === undefined) return undefined;
+  const time = /^(?:[01]\d|2[0-3]):[0-5]\d$/u;
+  if (!isRecord(value) || typeof value.timeZone !== "string" || value.timeZone.length > 80 || !value.timeZone.trim()
+    || typeof value.start !== "string" || !time.test(value.start) || typeof value.end !== "string" || !time.test(value.end)
+    || value.start === value.end) {
+    throw new Error("Invalid GitHub intake quiet hours.");
+  }
+  const timeZone = new Intl.DateTimeFormat("en-US", { timeZone: value.timeZone }).resolvedOptions().timeZone;
+  return { timeZone, start: value.start, end: value.end };
+}
+
+function validInteger(value: unknown, min: number, max: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
 }
 
 function resolveDeliveryPolicies(policies: readonly AppServerGitHubDeliveryPolicy[] | undefined): readonly AppServerGitHubDeliveryPolicy[] {

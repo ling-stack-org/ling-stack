@@ -148,6 +148,7 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/feedback/add",
   "delivery/read",
   "github/subject/read",
+  "github/intake/policy/list",
   "github/intake/poll",
   "github/intake/read",
   "github/delivery/reconcile",
@@ -552,6 +553,12 @@ export interface LingAppServerWorkItemAcceptResult extends LingAppServerWorkItem
 
 export interface LingAppServerWorkItemReadResult extends LingAppServerWorkItemResult {
   readonly cursor: string;
+  readonly intakeDispatch?: {
+    readonly receiptId: string;
+    readonly status: "pending" | "held" | "admitted";
+    readonly reasonCode?: string;
+    readonly runId?: string;
+  };
 }
 
 export interface LingAppServerWorkItemControlResult extends LingAppServerWorkItemResult {
@@ -889,13 +896,35 @@ export interface LingAppServerGitHubSubject extends Omit<LingAppServerGitHubSubj
   readonly merged?: boolean;
 }
 
-export interface LingAppServerGitHubIntakePolicy {
-  readonly mode: "manual" | "suggest";
+interface GitHubIntakePolicyScope {
   readonly enabled: boolean;
   readonly requiredLabel?: string;
   readonly webhookSourceId?: string;
   readonly priority?: "low" | "normal" | "high" | "urgent";
 }
+
+export interface LingAppServerGitHubIntakeBudget {
+  readonly maxConcurrent: number;
+  readonly maxStartsPerWindow: number;
+  readonly windowMs: number;
+}
+
+export interface LingAppServerGitHubIntakeQuietHours {
+  readonly timeZone: string;
+  readonly start: string;
+  readonly end: string;
+}
+
+export type LingAppServerGitHubIntakePolicy = GitHubIntakePolicyScope & (
+  | { readonly mode: "manual" | "suggest" }
+  | {
+    readonly mode: "auto_start";
+    readonly requiredLabel: string;
+    readonly providerPresetId: string;
+    readonly budget: LingAppServerGitHubIntakeBudget;
+    readonly quietHours?: LingAppServerGitHubIntakeQuietHours;
+  }
+);
 
 export interface LingAppServerGitHubIntakeReceipt {
   readonly receiptId: string;
@@ -904,7 +933,7 @@ export interface LingAppServerGitHubIntakeReceipt {
   readonly repository: string;
   readonly policyRevision: string;
   readonly subject: { readonly kind: "issue" | "pull_request"; readonly number: number };
-  readonly outcome: "manual" | "suggested" | "suppressed" | "paused" | "deduplicated";
+  readonly outcome: "manual" | "suggested" | "accepted" | "suppressed" | "paused" | "deduplicated";
   readonly reasonCode: string;
   readonly workItemId?: string;
   readonly evaluatedAt: string;
@@ -914,6 +943,17 @@ export interface LingAppServerGitHubIntakePollParams {
   readonly cwd?: string;
   readonly repository: string;
   readonly page?: number;
+  readonly retryKey?: string;
+}
+
+export interface LingAppServerGitHubIntakePolicyList {
+  readonly cwd: string;
+  readonly sources: readonly {
+    readonly repository: string;
+    readonly revision: string;
+    readonly policy: LingAppServerGitHubIntakePolicy;
+    readonly providerAvailable?: boolean;
+  }[];
 }
 
 export interface LingAppServerGitHubIntakePollResult {

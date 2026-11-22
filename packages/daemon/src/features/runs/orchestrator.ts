@@ -296,6 +296,7 @@ export interface ExecuteRunRequestOptions {
   readonly onProviderInvocationFailure?: ProviderInvocationFailureSink;
   readonly providerInvocationOrigin?: ProviderInvocationOrigin;
   readonly onRunReady?: (runId: string, info?: RunReadyInfo) => void;
+  readonly automaticIntakeAdmission?: { readonly receiptId: string; readonly assertCurrent: () => void };
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   /** Runs after a durable user-input yield, never for ordinary terminal completion. */
   readonly afterRunYielded?: (run: RunSession, wait: CommitUserInputYieldResult["wait"]) => void | Promise<void>;
@@ -1109,6 +1110,7 @@ async function executeAdmittedRunRequest(
           } : undefined);
     const assertPreparationCurrent = (): void => {
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
+      options.automaticIntakeAdmission?.assertCurrent();
       assertHostCapabilitiesCurrent();
       assertWorkflowSafetyRequest(runStore, runRequest);
       if (!frozenExecution) assertPreselectedMemoryCurrent(runStore, runRequest);
@@ -1438,9 +1440,11 @@ async function executeAdmittedRunRequest(
       });
     };
     const persistRun = (context?: RunnerContinuationContextIdentity): RunSession => {
+      options.automaticIntakeAdmission?.assertCurrent();
       prepareManagedRuntime();
       const persisted = persistenceStore.createRun({
         id: runId,
+        ...(options.automaticIntakeAdmission ? { automaticIntakeReceiptId: options.automaticIntakeAdmission.receiptId } : {}),
         cwd: runRequest.cwd,
         taskId: runRequest.task.id,
         channelId: preparedConcurrency.channel?.id ?? runRequest.task.channelId,
@@ -1833,6 +1837,7 @@ async function executeAdmittedRunRequest(
       });
     } else {
       preparedConcurrency = prepareRunConcurrency({
+        automaticIntakeReceiptId: options.automaticIntakeAdmission?.receiptId,
         store,
         runRequest: { ...runRequest, tools: runtimeTools },
         runId,

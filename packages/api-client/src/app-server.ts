@@ -332,6 +332,11 @@ export class LingAppServerClient {
     return await this.request("github/intake/poll", params);
   }
 
+  async listGitHubIntakePolicies(): Promise<import("@ling-stack/contracts").LingAppServerGitHubIntakePolicyList> {
+    await this.connect();
+    return await this.request("github/intake/policy/list", {});
+  }
+
   async readGitHubIntake(params: LingAppServerGitHubIntakeReadParams): Promise<LingAppServerGitHubIntakeReceipt> {
     await this.connect();
     const result = await this.request<{ receipt: LingAppServerGitHubIntakeReceipt }>("github/intake/read", params);
