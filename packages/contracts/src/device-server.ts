@@ -24,6 +24,29 @@ export interface LingServerPeerBindingV1 {
   readonly status: "active" | "revoked";
 }
 
+/** Stable binding identity retained when a paired route is moved to a new profile. */
+export interface LingServerPairingIdentityV1 {
+  readonly gatewayId: string;
+  readonly gatewayOrigin: string;
+  readonly mobileDeviceId: string;
+  readonly gatewayKeyFingerprint: string;
+  readonly mobileKeyFingerprint: string;
+  readonly deviceEpoch: number;
+  readonly workspaceBindingId: string;
+}
+
+/** Versioned, operator-selected route policy used by a pairing migration. */
+export interface LingServerRoutingProfileV1 {
+  readonly schemaVersion: 1;
+  readonly bindingId: string;
+  readonly installationId: string;
+  readonly installationRevision: number;
+  readonly serverOrigin: string;
+  readonly applicationKeyFingerprint: string;
+  readonly signalingProtocolMajor: 1;
+  readonly gatewayProtocolMajor: 1;
+}
+
 export interface LingServerRouteAttemptV1 {
   readonly routeAttemptId: string;
   readonly bindingId: string;
@@ -76,6 +99,35 @@ export interface LingServerCommandReceiptV1 {
   readonly result?: JsonValue;
   readonly recordedAt: string;
 }
+
+export interface LingServerPairingMigrationConfirmationV1 {
+  readonly migrationId: string;
+  readonly confirmationDigest: string;
+}
+
+export interface LingServerPairingMigrationRequestV1 {
+  readonly routingProfile: LingServerRoutingProfileV1;
+  readonly retainedCommandIds: readonly string[];
+}
+
+export interface LingServerPairingMigrationProposalV1 {
+  readonly schemaVersion: 1;
+  readonly migrationId: string;
+  readonly oldPairing: LingServerPairingIdentityV1;
+  readonly routingProfile: LingServerRoutingProfileV1;
+  readonly retainedReceipts: readonly {
+    readonly commandId: string;
+    readonly payloadDigest: string;
+  }[];
+  readonly confirmationDigest: string;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+}
+
+export type LingServerPairingMigrationV1 = LingServerPairingMigrationProposalV1 & (
+  | { readonly status: "pending" }
+  | { readonly status: "confirmed"; readonly confirmedAt: string; readonly gatewaySignature: string }
+);
 
 export type LingServerPeerRoleV1 = "gateway" | "mobile";
 export type LingServerTransportRouteV1 = "lan" | "direct" | "relay";

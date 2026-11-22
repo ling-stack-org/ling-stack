@@ -261,6 +261,7 @@ export * from "./device-runner.js";
 export * from "./device-access.js";
 export * from "./device-developer.js";
 export * from "./ling-server.js";
+export * from "./ling-server-pairing-migration.js";
 export * from "./ling-server-transport.js";
 export * from "./device-protocol.js";
 export * from "./device-protocol-transport.js";

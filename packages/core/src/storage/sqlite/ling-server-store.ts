@@ -8,6 +8,7 @@ import type {
   LingServerPeerFrameV1,
   LingServerPeerBindingV1,
   LingServerPeerSessionV1,
+  LingServerPairingMigrationV1,
   LingServerRouteAttemptV1,
 } from "@ling-stack/contracts";
 
@@ -61,6 +62,11 @@ export class SqliteLingServerStore {
         command_id TEXT PRIMARY KEY NOT NULL,
         payload_digest TEXT NOT NULL,
         receipt_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ling_server_pairing_migrations (
+        migration_id TEXT PRIMARY KEY NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','confirmed')),
+        migration_json TEXT NOT NULL
       );
     `);
   }
@@ -152,6 +158,23 @@ export class SqliteLingServerStore {
   saveReceipt(receipt: LingServerCommandReceiptV1): void {
     this.database.prepare("INSERT INTO ling_server_command_receipts(command_id,payload_digest,receipt_json) VALUES(?,?,?) ON CONFLICT(command_id) DO NOTHING")
       .run(receipt.commandId, receipt.payloadDigest, JSON.stringify(receipt));
+  }
+
+  getPairingMigration(migrationId: string): LingServerPairingMigrationV1 | undefined {
+    const row = this.database.prepare("SELECT migration_json FROM ling_server_pairing_migrations WHERE migration_id=?").get(migrationId) as Row | undefined;
+    return row ? parseJson<LingServerPairingMigrationV1>(row.migration_json, "Ling Server pairing migration") : undefined;
+  }
+
+  savePairingMigration(migration: LingServerPairingMigrationV1): void {
+    const json = JSON.stringify(migration);
+    if (migration.status === "pending") {
+      this.database.prepare("INSERT INTO ling_server_pairing_migrations(migration_id,status,migration_json) VALUES(?,'pending',?)")
+        .run(migration.migrationId, json);
+    } else {
+      const { changes } = this.database.prepare("UPDATE ling_server_pairing_migrations SET status='confirmed',migration_json=? WHERE migration_id=? AND status='pending'")
+        .run(json, migration.migrationId);
+      if (changes !== 1) throw new Error("Pairing migration confirmation did not match a pending record");
+    }
   }
 
   close(): void { this.database.close(); }

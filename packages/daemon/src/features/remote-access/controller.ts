@@ -1,9 +1,12 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import {
   DEFAULT_WORKSPACE_ID,
+  LingServerPairingMigrationJournal,
+  SqliteLingServerStore,
   type RunStore,
 } from "@ling-stack/core";
 import {
@@ -74,6 +77,7 @@ export class RemoteAccessController {
   private readonly now: () => string;
   private readonly stateStore: RemoteAccessStateStore;
   private readonly auth: RemotePairingAuthService;
+  private pairingMigrationStore?: SqliteLingServerStore;
   private remoteServer?: Server;
   private webSocketServer?: WebSocketServer;
   private activeSession?: RemoteGatewaySession;
@@ -121,6 +125,8 @@ export class RemoteAccessController {
     this.cancelPendingAuthentication();
     this.activeSession?.disconnect();
     this.activeSession = undefined;
+    this.pairingMigrationStore?.close();
+    this.pairingMigrationStore = undefined;
     const server = this.remoteServer;
     const webSocketServer = this.webSocketServer;
     this.remoteServer = undefined;
@@ -237,6 +243,18 @@ export class RemoteAccessController {
         writeManagementJson(response, 200, this.status(), origin);
         return true;
       }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/pairing-migration/prepare` && request.method === "POST") {
+        const input = await readJson(request);
+        const migration = this.auth.prepareLingServerPairingMigration(this.pairingMigrationJournal(), input);
+        writeManagementJson(response, 200, migration, origin);
+        return true;
+      }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/pairing-migration/confirm` && request.method === "POST") {
+        const input = await readJson(request);
+        const migration = this.auth.confirmLingServerPairingMigration(this.pairingMigrationJournal(), input);
+        writeManagementJson(response, 200, migration, origin);
+        return true;
+      }
       if (url.pathname === `${MANAGEMENT_PREFIX}/revoke` && request.method === "POST") {
         this.auth.revokeDevice();
         writeManagementJson(response, 200, this.status(), origin);
@@ -252,6 +270,15 @@ export class RemoteAccessController {
       }, origin);
       return true;
     }
+  }
+
+  private pairingMigrationJournal(): LingServerPairingMigrationJournal {
+    this.pairingMigrationStore ??= new SqliteLingServerStore({ databasePath: join(this.options.stateDir, "ling-server-pairing-migrations.sqlite") });
+    return new LingServerPairingMigrationJournal({
+      store: this.pairingMigrationStore,
+      readReceipt: commandId => this.options.store.getRemoteCommandReceipt(commandId),
+      now: this.now,
+    });
   }
 
   private async startListener(): Promise<void> {

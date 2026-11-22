@@ -300,6 +300,25 @@ protocol cannot prove the new binding, perform local QR pairing. Keep conversati
 IDs, read state and durable receipts with their owner through the migration. A changed
 server identity needs its own verified trust transition.
 
+The Gateway's local Mobile Access management API prepares the migration at
+`POST /v1/mobile-access/pairing-migration/prepare`. The request supplies a versioned
+profile and the command IDs to retain. The PC reads the active Gateway origin,
+both peer fingerprints, device epoch and workspace binding from its existing
+pairing. The profile carries the new server origin, application fingerprint,
+installation revision, proposed peer binding ID and separate signaling and Gateway
+protocol majors. The preview keeps command IDs and payload digests from the current
+device's owner journal.
+
+`POST /v1/mobile-access/pairing-migration/confirm` consumes the preview's migration
+ID and confirmation digest within five minutes. The Gateway rechecks the pair
+and receipt references before signing the exact record under
+`ling.server.pairing_migration.v1`. SQLite retains the signature and returns the
+same record for an exact retry from the active pairing. The original Gateway origin
+continues to serve its existing session and the owner journal retains the original
+receipts. Publication to Ling Server, phone pin verification and route activation
+are subsequent steps of the migration workflow.
+[Gateway migration entry point](../../packages/daemon/src/features/remote-access/controller.ts)
+
 ### 6.2 Reconnect and cursors
 
 Use the owner's stream identity, snapshot/generation, event sequence and durable

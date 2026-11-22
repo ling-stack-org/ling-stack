@@ -7,12 +7,15 @@ import {
   timingSafeEqual,
   verify,
 } from "node:crypto";
+import { DEFAULT_WORKSPACE_ID, type LingServerPairingMigrationJournal } from "@ling-stack/core";
 import {
   LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_SIGNING_ALGORITHM,
   REMOTE_SUPPORTED_PROTOCOL_VERSIONS,
   type LingServerGatewayRouteV1,
+  type LingServerPairingIdentityV1,
+  type LingServerPairingMigrationV1,
   type RemoteAuthChallengeV1,
   type RemoteAuthProofV1,
   type RemotePairingAcceptedV1,
@@ -27,6 +30,7 @@ import {
   authProofSigningBytes,
   authProofSigningInput,
   decodeBase64Url,
+  domainSeparatedCanonicalBytes,
   encodeBase64Url,
   encodePairingQrV1,
   fingerprintPublicJwkSync,
@@ -318,6 +322,30 @@ export class RemotePairingAuthService {
       throw new RemoteAccessError("pairing_confirmation_required", "No phone is waiting for confirmation.");
     }
     this.pairing = undefined;
+  }
+
+  prepareLingServerPairingMigration(journal: LingServerPairingMigrationJournal, value: unknown): LingServerPairingMigrationV1 {
+    return journal.prepare(value, this.requirePairedIdentity(), DEFAULT_WORKSPACE_ID);
+  }
+
+  confirmLingServerPairingMigration(journal: LingServerPairingMigrationJournal, value: unknown): LingServerPairingMigrationV1 {
+    return journal.confirm(value, this.requirePairedIdentity(), DEFAULT_WORKSPACE_ID, confirmation =>
+      this.sign(domainSeparatedCanonicalBytes("ling.server.pairing_migration.v1", confirmation)));
+  }
+
+  private requirePairedIdentity(): LingServerPairingIdentityV1 {
+    const state = this.requireEnabledState();
+    const device = state.pairedDevice;
+    if (!device) throw new RemoteAccessError("device_revoked", "This device is not paired.");
+    return {
+      gatewayId: this.identity.gatewayId,
+      gatewayOrigin: state.gatewayOrigin!,
+      gatewayKeyFingerprint: this.identity.publicKeyFingerprint,
+      mobileDeviceId: device.deviceId,
+      mobileKeyFingerprint: device.publicKeyFingerprint,
+      deviceEpoch: device.deviceEpoch,
+      workspaceBindingId: state.workspaceBindingId,
+    };
   }
 
   createAuthChallenge(deviceId: string): RemoteAuthChallengeV1 {

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import type { LingServerPairingIdentityV1, LingServerPairingMigrationRequestV1 } from "@ling-stack/contracts";
 import {
-  encodeModbusRtuRegisterRead, HardwareProtocolWorkbench, LingServerPeerRegistry, LingServerPeerSessionCoordinator,
+  encodeModbusRtuRegisterRead, HardwareProtocolWorkbench, LingServerPairingMigrationJournal, LingServerPeerRegistry, LingServerPeerSessionCoordinator,
   LingServerRelayCredentialIssuer, LingServerTransportPlanner, modbusRtuRegisterCodec, SqliteDeviceProtocolStore, SqliteLingServerStore,
 } from "../dist/index.js";
 
@@ -90,6 +91,73 @@ test("Ling Server peer registry restores installation, binding and route state f
   assert.equal(second.selectRoute("route-1", "direct", now).selected, "direct");
   assert.equal(second.revokeBinding("binding-1", 2).epoch, 2);
   secondStore.close();
+});
+
+test("a pairing migration confirms only the recorded keys, routing profile and owned receipts across restart", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-server-migration-"));
+  const databasePath = join(root, "migrations.sqlite");
+  let store = new SqliteLingServerStore({ databasePath });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  const workspaceId = "workspace-1";
+  const pairing: LingServerPairingIdentityV1 = {
+    gatewayId: "gateway-1", gatewayOrigin: "https://pc.example", mobileDeviceId: "mobile-1", deviceEpoch: 2,
+    gatewayKeyFingerprint: "gateway-fixture-fingerprint", mobileKeyFingerprint: "mobile-fixture-fingerprint",
+    workspaceBindingId: "workspace-binding-1",
+  };
+  const input: LingServerPairingMigrationRequestV1 = {
+    routingProfile: {
+      schemaVersion: 1, bindingId: "binding-1", installationId: "install-1", installationRevision: 1,
+      serverOrigin: "https://ling.example", applicationKeyFingerprint: Buffer.alloc(32, 5).toString("base64url"),
+      signalingProtocolMajor: 1, gatewayProtocolMajor: 1,
+    },
+    retainedCommandIds: ["command-1"],
+  };
+  let clock = now;
+  let bodyHash = "fixture-digest";
+  const journal = () => new LingServerPairingMigrationJournal({
+    store, now: () => clock,
+    readReceipt: commandId => ({
+      commandId, workspaceId, bodyHash, deviceId: commandId === "command-1" ? pairing.mobileDeviceId : "foreign-device",
+    }),
+  });
+  let signedCount = 0;
+  const sign = () => { signedCount += 1; return "fixture-signature"; };
+  const prepare = (request: unknown) => journal().prepare(request, pairing, workspaceId);
+  assert.throws(() => prepare({ ...input, retainedCommandIds: ["foreign-command"] }), /unavailable for the active pairing/u);
+  assert.throws(() => prepare({ ...input, routingProfile: { ...input.routingProfile, signalingProtocolMajor: 2 } }), /incompatible/u);
+  assert.throws(() => prepare({ ...input, routingProfile: { ...input.routingProfile, serverOrigin: "https://ling.example/path" } }), /invalid/u);
+  const expired = prepare({ ...input, routingProfile: { ...input.routingProfile, serverOrigin: "https://ling.example/" } });
+  assert.equal(expired.routingProfile.serverOrigin, input.routingProfile.serverOrigin);
+  clock = expired.expiresAt;
+  assert.throws(() => journal().confirm({
+    migrationId: expired.migrationId, confirmationDigest: expired.confirmationDigest,
+  }, pairing, workspaceId, sign), /expired/u);
+
+  const pending = prepare(input);
+  assert.deepEqual(pending.oldPairing, pairing);
+  assert.deepEqual(pending.routingProfile, input.routingProfile);
+  assert.deepEqual(pending.retainedReceipts, [{ commandId: "command-1", payloadDigest: bodyHash }]);
+  const { migrationId, confirmationDigest } = pending;
+  const confirmation = { migrationId, confirmationDigest };
+  assert.throws(() => journal().confirm(confirmation, { ...pairing, mobileKeyFingerprint: "other-key" }, workspaceId, sign), /active pairing/u);
+  assert.throws(() => journal().confirm({ ...confirmation, confirmationDigest: expired.confirmationDigest }, pairing, workspaceId, sign), /active pairing/u);
+  bodyHash = "changed-digest";
+  assert.throws(() => journal().confirm(confirmation, pairing, workspaceId, sign), /receipts have changed/u);
+  bodyHash = "fixture-digest";
+  assert.equal(signedCount, 0);
+  assert.deepEqual(store.getPairingMigration(migrationId), pending);
+
+  store.close();
+  store = new SqliteLingServerStore({ databasePath });
+  const confirmed = journal().confirm(confirmation, pairing, workspaceId, sign);
+  assert.equal(confirmed.status, "confirmed");
+  assert.equal(confirmed.confirmedAt, clock);
+  assert.equal(confirmed.gatewaySignature, "fixture-signature");
+  store.close();
+  store = new SqliteLingServerStore({ databasePath });
+  assert.deepEqual(journal().confirm(confirmation, pairing, workspaceId, sign), confirmed);
+  assert.throws(() => journal().confirm(confirmation, { ...pairing, deviceEpoch: 3 }, workspaceId, sign), /active pairing/u);
+  assert.equal(signedCount, 1);
 });
 
 test("Ling Server transport planner emits ephemeral direct and relay configuration with redacted diagnostics", () => {
