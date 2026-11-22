@@ -12,6 +12,8 @@ const syntaxCheckCommand = /^node --check src\/(?:[\w-]+\/)*[\w-]+(?:\.[\w-]+)*\
 const workspacePackageName = /^@ling-stack\/[a-z0-9-]+$/u;
 const browserHostTestRunner = "node scripts/test.mjs";
 const browserHostTestPatterns = ["test/*.test.mjs", "test/*.test.ts"];
+// Browser Host tests use the Daemon broker built for the A01 fixture.
+export const VALIDATION_BUILD_DEPENDENCIES = new Map([["@ling-stack/browser-host", ["@ling-stack/daemon"]]]);
 const localizationTestDeclarations = [
   "scripts/catalog-locales.d.mts",
   "scripts/catalog-utils.d.mts",
@@ -39,7 +41,8 @@ export function packageValidationScope({ current, previous, directory, root, rep
   const production = Object.values(productionScripts(scripts));
   const workspaceBuilds = new Set(Object.entries({ ...metadata.dependencies, ...metadata.devDependencies })
     .filter(([name, range]) => workspacePackageName.test(name) && range === "workspace:*")
-    .flatMap(([name]) => [`corepack pnpm --filter ${name} build`, `corepack pnpm --filter ${name} run build`]));
+    .flatMap(([name]) => [`corepack pnpm --filter ${name} build`, `corepack pnpm --filter ${name} run build`,
+      `corepack pnpm --filter ${name}... run build:ci`]));
   if (typeof scripts["build:deps"] === "string"
     && scripts["build:deps"].split(" && ").every(command => workspaceBuilds.has(command))) {
     workspaceBuilds.add("corepack pnpm build:deps");
@@ -47,6 +50,9 @@ export function packageValidationScope({ current, previous, directory, root, rep
   }
   if (workspacePackageName.test(metadata.name) && typeof scripts["build:ci"] === "string" && scripts["build:ci"].trim()) {
     workspaceBuilds.add(`corepack pnpm --filter ${metadata.name}... run build:ci`);
+  }
+  for (const dependency of VALIDATION_BUILD_DEPENDENCIES.get(metadata.name) ?? []) {
+    workspaceBuilds.add(`corepack pnpm --filter ${dependency}... run build:ci`);
   }
   const previousPaths = new Set(previousFiles);
   const testConfigs = new Set();
@@ -158,10 +164,11 @@ export function packageValidationScope({ current, previous, directory, root, rep
   if (previous && (baselineTests.length === 0 || baselineTests.some(file =>
     !testIdentities.has(file.replace(/\.(?:mjs|ts)$/u, ""))))) return undefined;
   const testInputs = [...testConfigs];
-  if (localization && typedTestIncludes.size > 0) {
+  const declarations = browserHost ? ["scripts/test.d.mts"] : localization ? localizationTestDeclarations : [];
+  if (typedTestIncludes.size > 0) {
     // These private script declarations accompany the no-emit test config.
     // Changes to their runtime counterparts retain the consumer graph.
-    for (const declaration of localizationTestDeclarations) {
+    for (const declaration of declarations) {
       const file = `${directory}/${declaration}`;
       const implementation = file.replace(/\.d\.mts$/u, ".mjs");
       if (changedFiles.includes(file) && !previousPaths.has(file)

@@ -13,7 +13,7 @@ const bootstrapZip = resolve(root, "ling-for-chrome-store-bootstrap.zip");
 test("store bootstrap build omits the production key and identity", async () => {
   try {
     await execFileAsync(process.execPath, [resolve(root, "scripts/build.mjs"), "--store-bootstrap"]);
-    const manifest = JSON.parse(await readFile(resolve(bootstrapDist, "manifest.json"), "utf8"));
+    const manifest: { key?: string; icons: Record<string, string> } = JSON.parse(await readFile(resolve(bootstrapDist, "manifest.json"), "utf8"));
     const metadata = JSON.parse(await readFile(resolve(bootstrapDist, "build-metadata.json"), "utf8"));
     assert.equal("key" in manifest, false);
     assert.equal(metadata.identityMode, "store-bootstrap");
