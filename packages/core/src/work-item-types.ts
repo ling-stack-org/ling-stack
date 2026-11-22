@@ -135,11 +135,14 @@ export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
   "id" | "sourceType" | "sourceId" | "title" | "description" | "initialStatus" | "priority" | "labels"
 > {
   readonly idempotencyKey?: string;
+  /** Host-resolved target identity shared by the source occurrences. */
+  readonly verifiedTargetKey?: string;
 }
 
 export interface CreateWorkItemResult {
   readonly workItem: WorkItem;
   readonly event?: ControlPlaneEvent;
+  readonly sourceReceipt?: import("@ling-stack/contracts").LingAppServerWorkItemSourceReceipt;
 }
 
 export interface ListWorkItemsOptions {

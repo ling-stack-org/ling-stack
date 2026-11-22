@@ -19,6 +19,7 @@ import type {
   LingAppServerExternalAgentRegisterResult,
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartResult,
+  LingAppServerGitHubSubjectResult,
   LingAppServerGrant,
   LingAppServerGrantScope,
   LingAppServerHandoffResult,
@@ -1007,6 +1008,67 @@ test("a second App Server connection cancels the same external dispatch and reco
   assert.deepEqual(starts, [start.task.taskId]);
 });
 
+test("authorized GitHub occurrences converge on one Work Item and retain their original receipts", { timeout: 20_000 }, async t => {
+  let repositoryId = 73;
+  const fixture = await releaseFixture(t, {
+    githubSources: cwd => [{ workspaceRoot: cwd, repository: "example/ling", repositoryId: "73" }],
+    externalWorkFetch: async input => {
+      const url = new URL(String(input));
+      assert.equal(url.origin, "https://api.github.com");
+      if (url.pathname === "/repos/example/ling") return Response.json({ id: repositoryId, full_name: "Example/Ling" });
+      const number = Number(url.pathname.split("/").at(-1));
+      assert.ok([7, 8].includes(number));
+      return Response.json({ number, title: "Correct event replay", state: "open" });
+    },
+  });
+  const [first, second] = await Promise.all([fixture.connect(), fixture.connect()]);
+  const gitHubSubject = { repository: "Example/Ling", kind: "issue", number: 7 } as const;
+  const { subject } = await first.call<LingAppServerGitHubSubjectResult>("github/subject/read", gitHubSubject);
+  assert.equal(subject.repositoryId, "73");
+  assert.equal(subject.repository, "example/ling");
+  const request = { gitHubSubject, title: "Correct event replay" };
+  const chat = { ...request, sourceId: "chat-input", idempotencyKey: "chat" };
+  const codex = { ...request, sourceId: "codex-input", idempotencyKey: "codex" };
+  const [chatResult, codexResult] = await Promise.all([
+    first.call<LingAppServerWorkItemResult>("workItem/create", chat),
+    second.call<LingAppServerWorkItemResult>("workItem/create", codex),
+  ]);
+  const { workItemId, workspaceId, revision } = chatResult.workItem;
+  assert.deepEqual(codexResult.workItem, chatResult.workItem);
+  assert.equal(chatResult.sourceReceipt?.sourceId, chat.sourceId);
+  assert.equal(codexResult.sourceReceipt?.sourceId, codex.sourceId);
+  assert.equal(chatResult.sourceReceipt?.targetKey, codexResult.sourceReceipt?.targetKey);
+  const accept = { workItemId, expectedWorkItemRevision: Number(revision), idempotencyKey: "first-accept" };
+  type Accepted = { acceptance: { id: string }; replayed: boolean };
+  const accepted = await Promise.all([
+    first.call<Accepted>("workItem/accept", accept),
+    second.call<Accepted>("workItem/accept", accept),
+  ]);
+  assert.deepEqual(accepted[0].acceptance, accepted[1].acceptance);
+  assert.equal(accepted.filter(result => !result.replayed).length, 1);
+  await assert.rejects(first.call("workItem/create", {
+    ...codex, idempotencyKey: "other-target", gitHubSubject: { ...gitHubSubject, number: 8 },
+  }), { code: "workspace_binding_invalid" });
+  await assert.rejects(first.call("workItem/create", {
+    ...request, sourceId: "unregistered", gitHubSubject: { ...gitHubSubject, repository: "other/repo" },
+  }), { code: "github_subject_unavailable" });
+  repositoryId = 74;
+  await assert.rejects(first.call("workItem/create", { ...request, sourceId: "transferred" }), {
+    code: "github_subject_unavailable",
+  });
+  repositoryId = 73;
+  assert.deepEqual(fixture.getStore().listControlPlaneEvents({ workspaceId, entityId: workItemId }).map(event => event.action),
+    ["work_item.created", "work_item.source_linked", "work_item.accepted"]);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const replay = await restored.call<LingAppServerWorkItemResult>("workItem/create", codex);
+  assert.equal(replay.workItem.workItemId, workItemId);
+  assert.deepEqual(replay.sourceReceipt, codexResult.sourceReceipt);
+  const { gitHubSubject: _, idempotencyKey: __, ...bareSource } = codex;
+  assert.deepEqual(await restored.call("workItem/create", bareSource), replay);
+  assert.equal(fixture.getStore().listWorkItems().length, 1);
+});
+
 test("Work Item creation, acceptance, evidence and collaboration retries keep one event per committed revision", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const client = await fixture.connect();
@@ -1670,28 +1732,33 @@ type ReleaseRuntime = {
 const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunStore, resolveStoragePaths };
 
 async function releaseFixture(t: TestContext, {
-  runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes,
+  runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch,
 }: {
   runner?: RunnerRegistrationInput;
   initialRuntime?: ReleaseRuntime;
   harness?: DaemonConfig["harness"];
   requireAuth?: boolean;
   verificationRecipes?: (root: string, cwd: string) => Promise<DaemonConfig["appServerVerificationRecipes"]>;
+  githubSources?: (cwd: string) => DaemonConfig["appServerGitHubSources"];
+  externalWorkFetch?: typeof fetch;
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
   const appServerVerificationRecipes = await verificationRecipes?.(root, cwd);
+  const appServerGitHubSources = githubSources?.(cwd);
   let authToken = randomUUID();
   const priorLingHome = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(root, "fixture-home");
   const stores = new Map<string, SqliteRunStore>();
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
-    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness, appServerVerificationRecipes,
+    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness,
+    appServerVerificationRecipes, appServerGitHubSources,
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,
+    externalWorkFetch,
     remoteReplyDispatcher: null,
     storeFactory(workspace) {
       const store = runtime.createSqliteRunStore(workspace, runtime.resolveStoragePaths(workspace, {

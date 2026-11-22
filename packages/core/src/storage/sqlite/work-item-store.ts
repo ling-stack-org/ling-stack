@@ -31,6 +31,7 @@ import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
+import type { LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -76,11 +77,24 @@ export class SqliteWorkItemStore {
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
     try {
-      const existing = this.getWorkItemBySource(input.sourceType, input.sourceId);
+      const sourceWorkItem = this.getWorkItemBySource(input.sourceType, input.sourceId);
+      const targetKey = input.verifiedTargetKey;
+      const sourceKey = createHash("sha256").update(JSON.stringify([input.sourceType, input.sourceId])).digest("hex");
+      const target = (targetKey ? state.get("work_item_target", targetKey)?.payload : undefined) as { workItemId: string } | undefined;
+      const source = state.get("work_item_source", sourceKey)?.payload as LingAppServerWorkItemSourceReceipt | undefined;
+      const boundId = target?.workItemId ?? source?.workItemId;
+      if ((targetKey && source && source.targetKey !== targetKey)
+        || (source && target && source.workItemId !== target.workItemId)
+        || (boundId && sourceWorkItem && sourceWorkItem.id !== boundId)) {
+        throw new Error("work_item_creation_source_conflict");
+      }
+      const existing = boundId ? this.getWorkItem(boundId) : sourceWorkItem;
+      if (boundId && !existing) throw new Error("work_item_creation_source_conflict");
       const submission = input.idempotencyKey ? {
         recordId: createHash("sha256").update(input.idempotencyKey).digest("hex"),
         fingerprint: createHash("sha256").update(JSON.stringify([
           input.id, input.sourceType, input.sourceId, input.title, input.description, input.priority, input.labels,
+          ...(targetKey ? [targetKey] : []),
         ])).digest("hex"),
       } : undefined;
       const prior = submission ? state.get("work_item_creation", submission.recordId)?.payload as WorkItemCreationReceipt | undefined : undefined;
@@ -91,17 +105,28 @@ export class SqliteWorkItemStore {
         throw new Error("work_item_creation_source_conflict");
       }
       const workItem = existing ?? this.saveWorkItem(input, now);
+      let sourceReceipt = source;
+      if (targetKey && !source) {
+        sourceReceipt = { workItemId: workItem.id, targetKey, sourceType: input.sourceType, sourceId: input.sourceId };
+        if (!target) state.putWithinTransaction({
+          kind: "work_item_target", recordId: targetKey, expectedRevision: 0, payload: { workItemId: workItem.id },
+        }, now);
+        state.putWithinTransaction({
+          kind: "work_item_source", recordId: sourceKey, expectedRevision: 0, payload: sourceReceipt,
+        }, now);
+      }
       if (submission && !prior) {
         state.putWithinTransaction({ kind: "work_item_creation", recordId: submission.recordId, expectedRevision: 0,
           payload: { fingerprint: submission.fingerprint, workItemId: workItem.id } satisfies WorkItemCreationReceipt }, now);
       }
-      const event = existing ? undefined : events.store.appendControlPlaneEventWithinTransaction({
+      const action = !existing ? "work_item.created" : sourceReceipt && !source ? "work_item.source_linked" : undefined;
+      const event = action ? events.store.appendControlPlaneEventWithinTransaction({
         workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items",
-        entityType: "work_item", entityId: workItem.id, action: "work_item.created",
+        entityType: "work_item", entityId: workItem.id, action,
         data: { workItemId: workItem.id, revision: workItem.revision, status: workItem.status },
-      }, now);
+      }, now) : undefined;
       database.exec("COMMIT");
-      return { workItem, event };
+      return { workItem, event, sourceReceipt };
     } catch (error) {
       rollbackOwnedSqliteTransaction(database);
       throw error;

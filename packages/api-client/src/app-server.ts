@@ -21,6 +21,8 @@ import type {
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartParams,
   LingAppServerExternalAgentTaskStartResult,
+  LingAppServerGitHubSubjectParams,
+  LingAppServerGitHubSubjectResult,
   LingAppServerGrant,
   LingAppServerGrantCreateParams,
   LingAppServerHandoffCreateParams,
@@ -58,7 +60,9 @@ import type {
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemControlParams,
   LingAppServerWorkItemControlResult,
+  LingAppServerWorkItemCreateParams,
   LingAppServerWorkItemReadResult,
+  LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
   LingAppServerWorkItemCollaborationAppendParams,
   LingAppServerWorkItemCollaborationAppendResult,
@@ -222,9 +226,14 @@ export class LingAppServerClient {
     return await this.request("workItem/list", params);
   }
 
-  async createWorkItem(params: Record<string, unknown>): Promise<unknown> {
+  async createWorkItem(params: LingAppServerWorkItemCreateParams): Promise<LingAppServerWorkItemResult> {
     await this.connect();
     return await this.request("workItem/create", params);
+  }
+
+  async readGitHubSubject(params: LingAppServerGitHubSubjectParams): Promise<LingAppServerGitHubSubjectResult> {
+    await this.connect();
+    return await this.request("github/subject/read", params);
   }
 
   async acceptWorkItem(params: Record<string, unknown>): Promise<unknown> {

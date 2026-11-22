@@ -91,6 +91,7 @@ import {
   appServerGrantBearerPrefix, appServerGrantStillActive, authenticateAppServerGrant, createAppServerGrant,
   grantAllowsMethod, grantAllowsRequest, listAppServerGrants, revokeAppServerGrant,
 } from "./app-server-authorization.js";
+import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
 import {
   ExternalAgentFederationService,
   externalAgentRpcError,
@@ -148,7 +149,7 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "turn/retry", "turn/steer", "thread/compact/start", "thread/revert",
   "changes/read",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
-  "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
+  "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const operatorMethods = new Set([
@@ -159,6 +160,7 @@ const operatorMethods = new Set([
   "worktree/create", "worktree/cleanup",
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
+  "github/subject/read",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
@@ -674,6 +676,12 @@ class RpcConnection {
         return this.listWorkItems(params);
       case "workItem/create":
         return this.createWorkItem(params);
+      case "github/subject/read": {
+        const record = this.workspaceParams(params, true);
+        const subjectParams = parseGitHubSubjectParams(record);
+        const subject = await readAppServerGitHubSubject(gitHubReadClient(this.context, record.cwd, subjectParams.repository), subjectParams);
+        return { cwd: record.cwd, subject };
+      }
       case "workItem/accept":
         return this.acceptWorkItem(params);
       case "workItem/clarify":
@@ -852,7 +860,7 @@ class RpcConnection {
     return { cwd, workspaceId: snapshot.workspaceId, domain, snapshot: snapshot.domains[domain] };
   }
 
-  private createWorkItem(params: unknown): LingAppServerWorkItemResult {
+  private async createWorkItem(params: unknown): Promise<LingAppServerWorkItemResult> {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const sourceType = readOptionalWorkItemSourceType(record.sourceType) ?? "manual";
@@ -863,6 +871,13 @@ class RpcConnection {
       throw rpcError(-32602, "invalid_params", "idempotencyKey must be a non-empty string of up to 200 characters.");
     }
     const store = this.context.storeRegistry.getStore(cwd);
+    let verifiedTargetKey: string | undefined;
+    if (record.gitHubSubject !== undefined) {
+      this.workspaceParams(params, true);
+      const subjectParams = parseGitHubSubjectParams(record.gitHubSubject);
+      const subject = await readAppServerGitHubSubject(gitHubReadClient(this.context, cwd, subjectParams.repository), subjectParams);
+      verifiedTargetKey = gitHubWorkItemTargetKey(subject);
+    }
     const input = {
       id: readOptionalStringField(record, "workItemId"),
       sourceType,
@@ -873,11 +888,12 @@ class RpcConnection {
       priority: readOptionalWorkItemPriority(record.priority),
       labels: Array.isArray(record.labels) && record.labels.every((value) => typeof value === "string") ? record.labels as string[] : undefined,
       idempotencyKey,
+      verifiedTargetKey,
     };
     try {
-      const { workItem, event } = store.createWorkItem(input, new Date().toISOString(), cwd);
+      const { workItem, event, sourceReceipt } = store.createWorkItem(input, new Date().toISOString(), cwd);
       if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
-      return { cwd, workItem: projectWorkItemSnapshot(workItem) };
+      return { cwd, workItem: projectWorkItemSnapshot(workItem), ...(sourceReceipt ? { sourceReceipt } : {}) };
     } catch (error) {
       if (error instanceof Error && error.message === "work_item_creation_idempotency_conflict") {
         throw rpcError(-32031, "idempotency_conflict", "The creation key was reused with different input.");

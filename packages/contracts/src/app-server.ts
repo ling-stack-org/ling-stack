@@ -488,6 +488,20 @@ export interface LingAppServerWorkItemSnapshot {
 export interface LingAppServerWorkItemResult {
   readonly cwd: string;
   readonly workItem: LingAppServerWorkItemSnapshot;
+  readonly sourceReceipt?: LingAppServerWorkItemSourceReceipt;
+}
+
+export interface LingAppServerWorkItemCreateParams {
+  readonly cwd?: string;
+  readonly workItemId?: string;
+  readonly sourceType?: "channel_task" | "channel_workflow_step" | "external_work" | "external_work_action" | "approval" | "run" | "manual";
+  readonly sourceId: string;
+  readonly title: string;
+  readonly description?: string;
+  readonly priority?: "low" | "normal" | "high" | "urgent";
+  readonly labels?: readonly string[];
+  readonly idempotencyKey?: string;
+  readonly gitHubSubject?: Omit<LingAppServerGitHubSubjectParams, "cwd">;
 }
 
 export interface LingAppServerWorkItemReadResult extends LingAppServerWorkItemResult {
@@ -733,6 +747,38 @@ export interface LingAppServerHandoffResumeResult {
   readonly turn?: LingTurn;
   readonly run?: RunSession;
   readonly replayed: boolean;
+}
+
+export interface LingAppServerGitHubSubjectParams {
+  readonly cwd?: string;
+  readonly repository: string;
+  readonly kind: "issue" | "pull_request";
+  readonly number: number;
+}
+
+export interface LingAppServerGitHubSubject extends Omit<LingAppServerGitHubSubjectParams, "cwd"> {
+  readonly githubInstanceId: "github.com";
+  readonly repositoryId: string;
+  readonly title: string;
+  readonly state: "open" | "closed";
+  readonly sourceRevision: string;
+  readonly baseRef?: string;
+  readonly baseSha?: string;
+  readonly headSha?: string;
+  readonly mergeSha?: string;
+  readonly merged?: boolean;
+}
+
+export interface LingAppServerGitHubSubjectResult {
+  readonly cwd: string;
+  readonly subject: LingAppServerGitHubSubject;
+}
+
+export interface LingAppServerWorkItemSourceReceipt {
+  readonly workItemId: string;
+  readonly sourceType: string;
+  readonly sourceId: string;
+  readonly targetKey: string;
 }
 
 export type LingAppServerVerificationCheckKind = "command" | "test" | "typecheck" | "browser" | "platform";
