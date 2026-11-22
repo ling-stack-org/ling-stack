@@ -1,19 +1,28 @@
+import type { ImageContent, TextContent, TranscriptContext } from "@earendil-works/pi-ai";
+import type { PiRunnerHydratedToolSurface, PiRunnerMcpToolDefinition } from "../dist/types.js";
 import assert from "node:assert/strict";
+import type { PiRunnerEvent, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
+import type { Model } from "@earendil-works/pi-ai";
+import type { TestContext } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { PiRunnerAdapter } from "../dist/adapter.js";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.ts";
 
-const descriptor = {
+const descriptor: PiRunnerMcpToolDefinition = {
   registeredName: "fixture_read", serverId: "fixture", rawName: "read_file", displayName: "Fixture read",
   inputSchema: { type: "object", properties: {} }, sideEffectLevel: "read", defaultApproval: "allow",
 };
+type ToolResult = { details: Record<string, unknown>; content: (ImageContent | TextContent)[] };
+
 const evidence = { sourceRefs: [{ kind: "artifact", artifactId: "artifact_fixture_failed" }], status: "failed" };
 
-function response(call) {
+function response(call?: { id: string; name: string; input?: unknown }) {
   const delta = call ? { tool_calls: [{ index: 0, id: call.id, type: "function",
     function: { name: call.name, arguments: JSON.stringify(call.input ?? {}) } }] } : { content: "Fixture ended." };
   const records = [
@@ -25,16 +34,16 @@ function response(call) {
 }
 
 /** Actual Ling adapter and SDK; only this instance's provider transport is replaced. */
-async function fixture(t, calls, changes) {
+async function fixture(t: TestContext, calls: readonly { id: string; name: string; input?: unknown }[], changes: Partial<PiRunnerRunOptions>) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-h4-sdk-result-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const requests = [], events = [];
-  class FixtureRunner extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  const requests: TranscriptContext["messages"][] = [], events: PiRunnerEvent[] = [];
+  class FixtureRunner extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       runtime.registerProvider(provider.provider, {
-        api: "openai-completions",
-        streamSimple: (model, context, options) => stream(model, context, {
+        api: "openai-completions" as const,
+        streamSimple: (model, context, options) => stream(model as Model<"openai-completions">, context, {
           ...options,
           fetch: async () => {
             requests.push(structuredClone(context.messages));
@@ -48,7 +57,7 @@ async function fixture(t, calls, changes) {
     cwd, agentDir: join(cwd, "agent"),
     task: { id: "fixture_result", title: "Tool result fixture", prompt: "Execute the isolated fixture." },
     provider: { provider: "tool-result-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1",
-      api: "openai-completions", apiKey: "fixture-no-network", reasoning: false },
+      api: "openai-completions" as const, apiKey: "fixture-no-network", reasoning: false },
     tools: [], onEvent: event => events.push(event), ...changes,
   });
   return { requests, events, result };
@@ -59,9 +68,9 @@ test("MCP failure retains structured evidence in actual SDK tool_end", { timeout
     mcpTools: [descriptor],
     onMcpToolCall: async () => ({ content: [{ type: "text", text: "Fixture MCP failed." }], details: evidence, isError: true }),
   });
-  const end = f.events.find(event => event.type === "tool_end");
-  assert.equal(end.isError, true);
-  assert.deepEqual(end.result.details, { serverId: "fixture", rawName: "read_file", result: evidence });
+  const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+  assert.equal(end!.isError, true);
+  assert.deepEqual((end!.result as ToolResult).details, { serverId: "fixture", rawName: "read_file", result: evidence });
 });
 
 test("Host command failure remains failed in SDK model context, not only translated Host event", { timeout: 10000 }, async t => {
@@ -72,10 +81,10 @@ test("Host command failure remains failed in SDK model context, not only transla
       details: { unifiedExec: { status: "failed", exitCode: 9 }, ...evidence }, isError: true,
     } }),
   });
-  assert.equal(f.events.find(event => event.type === "tool_end").isError, true);
+  assert.equal(f.events.find(event => event.type === "tool_end")!.isError, true);
   const modelResult = f.requests[1].find(message => message.role === "toolResult");
-  assert.equal(modelResult.details.unifiedExec.exitCode, 9);
-  assert.equal(modelResult.isError, true);
+  assert.equal((modelResult!.details as { unifiedExec: { exitCode: number } }).unifiedExec.exitCode, 9);
+  assert.equal(modelResult!.isError, true);
 });
 
 test("hydrated MCP failure retains structured evidence in actual SDK tool_end", { timeout: 10000 }, async t => {
@@ -90,12 +99,12 @@ test("hydrated MCP failure retains structured evidence in actual SDK tool_end", 
       tools: [{ id: toolId, namespaceId: "mcp:fixture", sourceKind: "mcp_tool", name: "read_file",
         displayName: "Fixture read", inputSchema: { type: "object" }, sideEffectLevel: "read",
         defaultApproval: "allow", executionApproval: "allow", enabled: true, disabledReasons: [] }],
-    }),
+    } as unknown as PiRunnerHydratedToolSurface),
     onMcpToolCall: async () => ({ content: [{ type: "text", text: "Fixture hydrated MCP failed." }], details: evidence, isError: true }),
   });
-  const end = f.events.find(event => event.type === "tool_end" && event.toolCallId === "call_hydrated");
-  assert.equal(end.isError, true);
-  assert.deepEqual(end.result.details, { serverId: "fixture", rawName: "read_file", toolId, result: evidence });
+  const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end" && event.toolCallId === "call_hydrated");
+  assert.equal(end!.isError, true);
+  assert.deepEqual((end!.result as ToolResult).details, { serverId: "fixture", rawName: "read_file", toolId, result: evidence });
 });
 
 for (const flag of [undefined, false]) {
@@ -107,8 +116,8 @@ for (const flag of [undefined, false]) {
       } }),
     });
     const modelResult = f.requests[1].find(message => message.role === "toolResult");
-    assert.equal(modelResult.content[0].text, "HOST_ONLY_RESULT");
-    assert.equal(modelResult.details.hostOnly, true);
+    assert.equal((modelResult!.content[0] as TextContent).text, "HOST_ONLY_RESULT");
+    assert.equal((modelResult!.details as { hostOnly: boolean }).hostOnly, true);
   });
 }
 
@@ -116,7 +125,7 @@ for (const [tool, input] of [
   ["bash", { command: "fixture-only" }],
   ["edit", { patchText: "*** Begin Patch\n*** End Patch" }],
   ["write", { path: "fixture.txt", content: "must not write" }],
-]) {
+] as const) {
   for (const approved of [true, false]) {
     test(`${tool} Host ${approved ? "failure" : "denial"} preserves evidence and SDK status`, { timeout: 10000 }, async t => {
       const f = await fixture(t, [{ name: tool, id: "call_host", input }], {
@@ -128,12 +137,12 @@ for (const [tool, input] of [
           isError: approved,
         } }),
       });
-      const end = f.events.find(event => event.type === "tool_end");
-      assert.equal(end.isError, true);
-      assert.deepEqual(end.result.details, evidence);
+      const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+      assert.equal(end!.isError, true);
+      assert.deepEqual((end!.result as ToolResult).details, evidence);
       const modelResult = f.requests[1].find(message => message.role === "toolResult");
-      assert.equal(modelResult.isError, true);
-      assert.deepEqual(modelResult.details, evidence);
+      assert.equal(modelResult!.isError, true);
+      assert.deepEqual(modelResult!.details, evidence);
     });
   }
 }
@@ -143,12 +152,12 @@ for (const isError of [true, false]) {
     const f = await fixture(t, [{ name: descriptor.registeredName, id: "call_empty" }], {
       mcpTools: [descriptor], onMcpToolCall: async () => ({ content: [], details: evidence, isError }),
     });
-    const end = f.events.find(event => event.type === "tool_end");
-    assert.equal(end.isError, isError);
-    assert.match(end.result.content[0].text, isError ? /failed/ : /completed/);
+    const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+    assert.equal(end!.isError, isError);
+    assert.match(((end!.result as ToolResult).content[0] as TextContent).text, isError ? /failed/ : /completed/);
     const modelResult = f.requests[1].find(message => message.role === "toolResult");
-    assert.equal(modelResult.isError, isError);
-    assert.deepEqual(modelResult.details, end.result.details);
+    assert.equal(modelResult!.isError, isError);
+    assert.deepEqual(modelResult!.details, (end!.result as ToolResult).details);
   });
 }
 
@@ -159,8 +168,8 @@ test("MCP data cannot self-declare Host failure or success via text/details", { 
       details: { isError: true, unifiedExec: { status: "failed" } }, isError: false,
     }),
   });
-  assert.equal(f.events.find(event => event.type === "tool_end").isError, false);
-  assert.equal(f.requests[1].find(message => message.role === "toolResult").isError, false);
+  assert.equal(f.events.find(event => event.type === "tool_end")!.isError, false);
+  assert.equal(f.requests[1].find(message => message.role === "toolResult")!.isError, false);
 });
 
 test("MCP transport exception remains an SDK failure, not a Host handled result", { timeout: 10000 }, async t => {
@@ -169,11 +178,11 @@ test("MCP transport exception remains an SDK failure, not a Host handled result"
       throw Object.assign(new Error("Fixture transport unavailable."), { details: evidence, isError: false });
     },
   });
-  const end = f.events.find(event => event.type === "tool_end");
-  assert.equal(end.isError, true);
-  assert.deepEqual(end.result.details, {});
-  assert.match(end.result.content[0].text, /Fixture transport unavailable/);
-  assert.equal(f.requests[1].find(message => message.role === "toolResult").isError, true);
+  const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+  assert.equal(end!.isError, true);
+  assert.deepEqual((end!.result as ToolResult).details, {});
+  assert.match(((end!.result as ToolResult).content[0] as TextContent).text, /Fixture transport unavailable/);
+  assert.equal(f.requests[1].find(message => message.role === "toolResult")!.isError, true);
 });
 
 test("MCP approval denial does not execute callback", { timeout: 10000 }, async t => {
@@ -184,8 +193,8 @@ test("MCP approval denial does not execute callback", { timeout: 10000 }, async 
     onMcpToolCall: async () => { calls += 1; return { content: [] }; },
   });
   assert.equal(calls, 0);
-  assert.equal(f.events.find(event => event.type === "tool_end").isError, true);
-  assert.equal(f.requests[1].find(message => message.role === "toolResult").isError, true);
+  assert.equal(f.events.find(event => event.type === "tool_end")!.isError, true);
+  assert.equal(f.requests[1].find(message => message.role === "toolResult")!.isError, true);
 });
 
 test("separate SDK sessions with identical call IDs retain independent evidence and status", { timeout: 10000 }, async t => {
@@ -196,10 +205,10 @@ test("separate SDK sessions with identical call IDs retain independent evidence 
   }) })));
   for (const [index, f] of results.entries()) {
     const expected = Boolean(index);
-    const end = f.events.find(event => event.type === "tool_end");
-    assert.equal(end.isError, expected);
-    assert.equal(end.result.details.result.owner, String(expected));
-    assert.equal(f.requests[1].find(message => message.role === "toolResult").isError, expected);
+    const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+    assert.equal(end!.isError, expected);
+    assert.equal(((end!.result as ToolResult).details.result as { owner: string }).owner, String(expected));
+    assert.equal(f.requests[1].find(message => message.role === "toolResult")!.isError, expected);
   }
 });
 
@@ -212,10 +221,10 @@ test("media generation failure reaches SDK history without discarding job eviden
       details: { ...evidence, mediaJobId: "fixture_job" }, isError: true,
     }),
   });
-  const end = f.events.find(event => event.type === "tool_end");
-  assert.equal(end.isError, true);
-  assert.equal(end.result.details.mediaJobId, "fixture_job");
-  assert.equal(f.requests[1].find(message => message.role === "toolResult").isError, true);
+  const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+  assert.equal(end!.isError, true);
+  assert.equal((end!.result as ToolResult).details.mediaJobId, "fixture_job");
+  assert.equal(f.requests[1].find(message => message.role === "toolResult")!.isError, true);
 });
 
 test("MCP image content and failure evidence survive SDK image normalization", { timeout: 10000 }, async t => {
@@ -225,11 +234,11 @@ test("MCP image content and failure evidence survive SDK image normalization", {
       content: [{ type: "image", data: png, mimeType: "image/png" }], details: evidence, isError: true,
     }),
   });
-  const end = f.events.find(event => event.type === "tool_end");
-  assert.equal(end.isError, true);
-  assert.ok(end.result.content.some(part => part.type === "image" && part.mimeType === "image/png"));
-  assert.deepEqual(end.result.details.result, evidence);
-  assert.equal(f.requests[1].find(message => message.role === "toolResult").isError, true);
+  const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+  assert.equal(end!.isError, true);
+  assert.ok((end!.result as ToolResult).content.some(part => part.type === "image" && part.mimeType === "image/png"));
+  assert.deepEqual((end!.result as ToolResult).details.result, evidence);
+  assert.equal(f.requests[1].find(message => message.role === "toolResult")!.isError, true);
 });
 
 test("large MCP result remains intact in atomic tool evidence", { timeout: 10000 }, async t => {
@@ -237,14 +246,14 @@ test("large MCP result remains intact in atomic tool evidence", { timeout: 10000
   const f = await fixture(t, [{ name: descriptor.registeredName, id: "call_large" }], {
     mcpTools: [descriptor], onMcpToolCall: async () => ({ content: [{ type: "text", text }], details: evidence, isError: true }),
   });
-  const end = f.events.find(event => event.type === "tool_end");
-  assert.equal(end.result.content[0].text, text);
-  assert.equal(end.isError, true);
-  assert.deepEqual(end.result.details.result, evidence);
+  const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+  assert.equal(((end!.result as ToolResult).content[0] as TextContent).text, text);
+  assert.equal(end!.isError, true);
+  assert.deepEqual((end!.result as ToolResult).details.result, evidence);
   // This checks atomic evidence only. Model projection budgeting has a separate contract.
   const modelResult = f.requests[1].find(message => message.role === "toolResult");
-  assert.ok(Buffer.byteLength(modelResult.content[0].text, "utf8") < Buffer.byteLength(text, "utf8"));
-  assert.match(modelResult.content[0].text, /full Host evidence retained/);
+  assert.ok(Buffer.byteLength((modelResult!.content[0] as TextContent).text, "utf8") < Buffer.byteLength(text, "utf8"));
+  assert.match((modelResult!.content[0] as TextContent).text, /full Host evidence retained/);
 });
 
 for (const outcome of ["success", "failed", "denied", "throw"]) {
@@ -261,10 +270,10 @@ for (const outcome of ["success", "failed", "denied", "throw"]) {
         return { isError: outcome === "failed", content: [{ type: "text", text: "Isolated Host fixture receipt" }], details: { receiptId: "fixture-receipt" } };
       },
     });
-    const end = f.events.find(event => event.type === "tool_end");
-    assert.equal(end.toolName, "host_open_local_target"); assert.equal(end.isError, outcome !== "success");
-    assert.equal(f.requests[1].find(message => message.role === "toolResult").isError, outcome !== "success");
+    const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
+    assert.equal(end!.toolName, "host_open_local_target"); assert.equal(end!.isError, outcome !== "success");
+    assert.equal(f.requests[1].find(message => message.role === "toolResult")!.isError, outcome !== "success");
     assert.equal(calls, outcome === "denied" ? 0 : 1); assert.equal(mcp, 0);
-    if (outcome === "success" || outcome === "failed") assert.equal(end.result.details.receiptId, "fixture-receipt");
+    if (outcome === "success" || outcome === "failed") assert.equal((end!.result as ToolResult).details.receiptId, "fixture-receipt");
   });
 }

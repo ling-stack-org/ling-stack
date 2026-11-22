@@ -1,31 +1,44 @@
 import assert from "node:assert/strict";
+import type { PiRunnerProviderBudgetPort, PiRunnerProviderBudgetRequest, PiRunnerRunOptions } from "../dist/types.js";
+import type { AssistantMessage, Context, Model, TranscriptContext } from "@earendil-works/pi-ai";
 import test from "node:test";
 import { createAssistantMessageEventStream, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { generateSummaryWithUsage, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createPiTaskBoundary } from "../dist/task-boundary.js";
 import { createPiProviderBudgetInvocation } from "../dist/provider-budget.js";
 
-const model = { provider: "hard-budget-fixture", id: "budget-model", api: "openai-completions", baseUrl: "https://fixture.invalid/v1",
+const model: Model<"openai-completions"> = { provider: "hard-budget-fixture", id: "budget-model", name: "Fixture", api: "openai-completions" as const, baseUrl: "https://fixture.invalid/v1",
   reasoning: false, input: ["text"], contextWindow: 8_192, maxTokens: 1_024,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
-const context = () => ({ messages: [{ role: "user", content: "Synthetic budget QA only", timestamp: 0 }] });
+const context = (): Context => ({ messages: [{ role: "user", content: "Synthetic budget QA only", timestamp: 0 }] });
 const actualUsage = { input: 7, output: 3, cacheRead: 2, cacheWrite: 1, totalTokens: 13,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-const message = (overrides = {}) => ({ role: "assistant", content: [{ type: "text", text: "Synthetic QA result" }],
+const message = (overrides: Partial<AssistantMessage> = {}): AssistantMessage => ({ role: "assistant", content: [{ type: "text", text: "Synthetic QA result" }],
   provider: model.provider, model: model.id, api: model.api, timestamp: 0, stopReason: "stop", usage: actualUsage, ...overrides });
 
+interface BudgetFixtureControls {
+  port?: Omit<Partial<PiRunnerProviderBudgetPort>, "reserve"> & { reserve?: () => unknown };
+  options?: Partial<PiRunnerRunOptions>;
+  beforePayload?: (context: TranscriptContext) => void | Promise<void>;
+  payloadCalls?: number;
+  payload?: (index: number) => unknown;
+  readReservedPayload?: (payload: unknown) => void;
+  beforeResult?: () => void | Promise<void>;
+  result?: Partial<AssistantMessage>;
+}
+
 /** Real SDK preparation/auth/summary paths with an isolated, non-network Provider. */
-async function fixture(controls = {}) {
-  const reserved = [], settled = [], unknown = [], order = [];
+async function fixture(controls: BudgetFixtureControls = {}) {
+  const reserved: PiRunnerProviderBudgetRequest[] = [], settled: Parameters<PiRunnerProviderBudgetPort["settle"]>[0][] = [], unknown: Parameters<PiRunnerProviderBudgetPort["settleUnknown"]>[0][] = [], order: string[] = [];
   let wire = 0;
-  const providerBudget = { requiresTokenUpperBound: true, requiresCostUpperBound: true,
+  const providerBudget: PiRunnerProviderBudgetPort = { requiresTokenUpperBound: true, requiresCostUpperBound: true,
     reserve(request) {
       reserved.push(request); order.push("reserve");
       return { reservationId: `reservation-${reserved.length}`, reservedTokens: 9_216, reservedCostMicros: 500 };
     },
     settle(receipt) { settled.push(receipt); order.push("settle"); },
     settleUnknown(receipt) { unknown.push(receipt); order.push("unknown"); },
-    ...controls.port };
+    ...controls.port as Partial<PiRunnerProviderBudgetPort> };
   const options = { cwd: process.cwd(), task: { id: "hard-budget-task", title: "QA", prompt: "Synthetic QA" },
     runId: "hard-budget-run", runnerAttemptId: "hard-budget-attempt", providerBudget,
     provider: { provider: model.provider, model: model.id, api: model.api, baseUrl: model.baseUrl,
@@ -40,7 +53,7 @@ async function fixture(controls = {}) {
           await controls.beforePayload?.(requestContext);
           for (let index = 0; index < (controls.payloadCalls ?? 1); index += 1) {
             const payload = controls.payload?.(index) ?? { messages: ["synthetic private QA payload"], max_tokens: 64 };
-            const returned = await requestOptions.onPayload(payload, requestModel);
+            const returned = await requestOptions!.onPayload!(payload, requestModel);
             controls.readReservedPayload?.(returned);
           }
           wire += 1; order.push("wire");
@@ -50,7 +63,7 @@ async function fixture(controls = {}) {
             ? { type: "error", reason: result.stopReason, error: result }
             : { type: "done", reason: "stop", message: result });
         } catch (error) {
-          stream.push({ type: "error", reason: "error", error: message({ stopReason: "error", errorMessage: error.message, usage: undefined }) });
+          stream.push({ type: "error", reason: "error", error: message({ stopReason: "error", errorMessage: (error as Error).message, usage: undefined }) });
         }
       })();
       return stream;
@@ -68,11 +81,11 @@ test("hard gate reserves actual immutable payload before wire and synchronously 
   assert.equal(f.reserved[0].contextWindowTokens, 8_192);
   assert.equal(f.reserved[0].maxOutputTokens, 64);
   assert.match(f.reserved[0].payloadSha256, /^[0-9a-f]{64}$/);
-  assert.equal(Object.isFrozen(f.reserved[0].payload.messages), true);
+  assert.equal(Object.isFrozen((f.reserved[0].payload as { messages: unknown }).messages), true);
   assert.equal(f.settled[0].invocationId, f.reserved[0].invocationId);
   assert.equal(f.settled[0].reservationId, "reservation-1");
   assert.deepEqual(f.settled[0].usage, { input: 7, output: 3, cacheRead: 2, cacheWrite: 1, totalTokens: 13 });
-  assert.equal(JSON.stringify(f.reserved[0]).includes(f.options.provider.apiKey), false);
+  assert.equal(JSON.stringify(f.reserved[0]).includes(f.options.provider.apiKey!), false);
   assert.deepEqual(f.unknown, []);
   f.boundary.assertOpen();
 });
@@ -101,7 +114,7 @@ for (const [name, reservation] of [
   ["negative bound", { reservationId: "id", reservedTokens: -1, reservedCostMicros: 5 }],
   ["fractional bound", { reservationId: "id", reservedTokens: 10.5, reservedCostMicros: 5 }],
   ["invalid receipt", undefined],
-]) {
+] as const) {
   test(`${name} fails closed before wire`, async () => {
     const f = await fixture({ port: { reserve: () => reservation } });
     await f.runtime.streamSimple(model, context(), {}).result();
@@ -139,7 +152,7 @@ test("async reserve cannot race a request onto the wire", async () => {
 });
 
 test("actual SDK credential/header overrides cannot borrow another budget tuple", async () => {
-  for (const requestOptions of [{ apiKey: "synthetic-other-key" }, { transformHeaders: async headers => ({ ...headers, "X-Other": "other" }) }]) {
+  for (const requestOptions of [{ apiKey: "synthetic-other-key" }, { transformHeaders: async headers => ({ ...headers, "X-Other": "other" }) }] satisfies NonNullable<Parameters<ModelRuntime["streamSimple"]>[2]>[]) {
     const f = await fixture();
     await f.runtime.streamSimple(model, context(), requestOptions).result();
     assert.equal(f.wire, 0);
@@ -151,9 +164,9 @@ test("actual SDK credential/header overrides cannot borrow another budget tuple"
 test("unknown SDK resolution cannot degrade a hard gate into an observation-only path", () => {
   const options = { cwd: process.cwd(), task: { id: "x", title: "x", prompt: "x" }, runId: "r", runnerAttemptId: "a",
     provider: { provider: model.provider, model: model.id },
-    providerBudget: { requiresTokenUpperBound: true, requiresCostUpperBound: false, reserve() {}, settle() {}, settleUnknown() {} } };
-  const boundary = createPiTaskBoundary(options);
-  assert.throws(() => boundary.bindModelRuntime({ streamSimple() { assert.fail("must not enter unproven provider"); } }), /provider_budget_resolution_unavailable/);
+    providerBudget: { requiresTokenUpperBound: true, requiresCostUpperBound: false, reserve() { return undefined; }, settle() {}, settleUnknown() {} } };
+  const boundary = createPiTaskBoundary(options as unknown as PiRunnerRunOptions);
+  assert.throws(() => boundary.bindModelRuntime({ streamSimple() { assert.fail("must not enter unproven provider"); } } as unknown as ModelRuntime), /provider_budget_resolution_unavailable/);
 });
 
 for (const [name, result] of [
@@ -162,7 +175,7 @@ for (const [name, result] of [
   ["inconsistent total", { usage: { ...actualUsage, totalTokens: 999 } }],
   ["different model", { model: "different-model" }],
   ["deferred task", { stopReason: "deferred" }],
-]) {
+] satisfies [string, Partial<AssistantMessage>][] ) {
   test(`${name} retains unresolved liability instead of fabricating measured usage or a refund`, async () => {
     const f = await fixture({ result });
     await f.runtime.streamSimple(model, context(), {}).result();
@@ -227,13 +240,13 @@ test("SDK summary cannot bypass a depleted shared hard budget", async () => {
 });
 
 test("a rejected final Promise settles unknown, preserving the original rejection and outstanding reservation", async () => {
-  const unknown = [], failures = [];
+  const unknown: Parameters<PiRunnerProviderBudgetPort["settleUnknown"]>[0][] = [], failures: unknown[] = [];
   const options = { cwd: process.cwd(), task: { id: "qa", title: "qa", prompt: "qa" }, runId: "run", runnerAttemptId: "attempt",
     provider: { provider: model.provider, model: model.id, api: model.api, baseUrl: model.baseUrl,
       contextWindow: model.contextWindow, maxTokens: model.maxTokens, apiKey: "synthetic-key" },
     providerBudget: { requiresTokenUpperBound: true, requiresCostUpperBound: false,
       reserve: () => ({ reservationId: "held", reservedTokens: 9_216 }), settle() { assert.fail("no measured usage exists"); },
-      settleUnknown: receipt => unknown.push(receipt) } };
+      settleUnknown: receipt => unknown.push(receipt) } } satisfies PiRunnerRunOptions;
   const gate = createPiProviderBudgetInvocation(options, () => undefined, error => failures.push(error));
   gate.captureResolvedTuple(model, { apiKey: options.provider.apiKey });
   gate.authorize({ messages: ["qa"] }, model);

@@ -1,4 +1,14 @@
+import type { TextContent } from "@earendil-works/pi-ai";
+import type { PiRunnerPreparedInputReceipt } from "../dist/types.js";
+import type { FieldSchema } from "./support/extension-fixture.ts";
 import assert from "node:assert/strict";
+import type { Api, TranscriptContext } from "@earendil-works/pi-ai";
+import type { PiRunnerEvent, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderConfig } from "../dist/types.js";
+import type { Model } from "@earendil-works/pi-ai";
+import type { TestContext } from "node:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,19 +16,18 @@ import { join } from "node:path";
 import test from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
-import { PiRunnerAdapter } from "../dist/adapter.js";
 import { assertPiModelContextCapacity } from "../dist/prepared-input.js";
 import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.ts";
 
-async function fixture(t, overrides = {}) {
+async function fixture(t: TestContext, overrides: Partial<PiRunnerRunOptions> = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-n03-runner-prepared-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const contexts = [], events = [], wireRequests = [];
-  const controls = {};
+  const contexts: { systemPrompt: string; messages: TranscriptContext["messages"]; tools: { name: string }[] }[] = [], events: PiRunnerEvent[] = [], wireRequests: { messages: unknown[] }[] = [];
+  const controls: { beforePayload?: (model: Model<Api>, context: TranscriptContext) => void; response?: () => Response | undefined } = {};
   let hostCalls = 0;
   const host = async () => { hostCalls += 1; throw new Error("No tool should execute in this fixture"); };
-  class FixtureRunner extends PiRunnerAdapter {
-    registerCustomProviderIfNeeded(runtime, provider) {
+  class FixtureRunner extends FixtureRunnerBase {
+    registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       runtime.registerProvider(provider.provider, { api: "openai-completions", streamSimple: (model, context, options) => {
         contexts.push(structuredClone({ systemPrompt: getCurrentSystemPrompt(context.messages),
@@ -26,8 +35,8 @@ async function fixture(t, overrides = {}) {
           tools: getCurrentTools(context.messages).map(({ name, description, parameters, constrainedSampling }) =>
           ({ name, description, parameters, ...(constrainedSampling !== undefined ? { constrainedSampling } : {}) })) }));
         controls.beforePayload?.(model, context);
-        return stream(model, context, { ...options, fetch: async (_url, request) => {
-          wireRequests.push(JSON.parse(request.body));
+        return stream(model as Model<"openai-completions">, context, { ...options, fetch: async (_url, request) => {
+          wireRequests.push(JSON.parse(String(request?.body)));
           const response = controls.response?.();
           if (response) return response;
           return new Response(
@@ -38,8 +47,8 @@ async function fixture(t, overrides = {}) {
       } });
     }
   }
-  const options = { cwd, agentDir: join(cwd, "agent"), task: { id: "prepared_task", title: "Prepared", prompt: "Current input." },
-    provider: { provider: "prepared-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1", api: "openai-completions",
+  const options: PiRunnerRunOptions = { cwd, agentDir: join(cwd, "agent"), task: { id: "prepared_task", title: "Prepared", prompt: "Current input." },
+    provider: { provider: "prepared-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1", api: "openai-completions" as const,
       apiKey: "fixture-not-real", headers: { "X-Test-Credential": "fixture-header-not-real" }, reasoning: false },
     tools: ["read", "bash"], runtimeToolFeatures: { unifiedExec: true },
     appendSystemPrompt: ["FIRST MEMORY", "FIRST SKILL"], onEvent: (event) => events.push(event),
@@ -97,24 +106,24 @@ test("exclusive-create schema is native-only in prepared and actual SDK model in
   } });
   const preparedInput = await f.runner.prepareTaskInput(f.options);
   const write = preparedInput.tools.find(tool => tool.name === "write");
-  assert.deepEqual(write.parameters.required, ["path", "content"]);
-  assert.deepEqual(Object.keys(write.parameters.properties).sort(), ["content", "path"]);
-  assert.equal(write.parameters.additionalProperties, false);
-  assert.equal(write.parameters.anyOf, undefined);
-  assert.match(write.description, /exclusive|overwrite/i);
-  assert.doesNotMatch(write.description, /patchText|apply-patch/);
-  assert.ok(preparedInput.tools.find(tool => tool.name === "edit").parameters.properties.patchText,
+  assert.deepEqual((write!.parameters as FieldSchema).required, ["path", "content"]);
+  assert.deepEqual(Object.keys((write!.parameters as FieldSchema).properties).sort(), ["content", "path"]);
+  assert.equal((write!.parameters as FieldSchema).additionalProperties, false);
+  assert.equal((write!.parameters as FieldSchema).anyOf, undefined);
+  assert.match(write!.description, /exclusive|overwrite/i);
+  assert.doesNotMatch(write!.description, /patchText|apply-patch/);
+  assert.ok((preparedInput.tools.find(tool => tool.name === "edit")!.parameters as FieldSchema).properties.patchText,
     "the edit schema is unchanged; the Host still decides authorized effects");
   await f.runner.runTask({ ...f.options, preparedInput, runId: "native-create-run", runnerAttemptId: "native-create-attempt" });
   assert.deepEqual(f.contexts[0].tools, preparedInput.tools);
   assert.equal(f.hostCalls(), 0, "schema selection is not execution authority");
   const ordinary = await f.runner.prepareTaskInput({ ...f.options, initialToolSurface: {
-    ...f.options.initialToolSurface, nativeFileCreate: false,
+    ...f.options.initialToolSurface!, nativeFileCreate: false,
   } });
-  assert.ok(ordinary.tools.find(tool => tool.name === "write").parameters.properties.patchText);
+  assert.ok((ordinary.tools.find(tool => tool.name === "write")!.parameters as FieldSchema).properties.patchText);
   assert.notEqual(ordinary.fingerprint, preparedInput.fingerprint);
   await assert.rejects(f.runner.runTask({ ...f.options, initialToolSurface: {
-    ...f.options.initialToolSurface, nativeFileCreate: false,
+    ...f.options.initialToolSurface!, nativeFileCreate: false,
   }, preparedInput }), /prepared.*input|input.*prepar/i);
   assert.equal(f.contexts.length, 1, "schema drift must fail before any later provider request");
   const withoutWrite = await f.runner.prepareTaskInput({ ...f.options, tools: ["read"] });
@@ -179,8 +188,8 @@ test("approved continuation sends a bounded large result without changing Host e
     },
   });
   assert.equal(f.contexts.length, 1);
-  assert.match(f.contexts[0].messages.at(-1).content[0].text, /truncated/);
-  assert.ok(f.contexts[0].messages.at(-1).content[0].text.length < fullResult.length);
+  assert.match((f.contexts[0].messages.at(-1)!.content[0] as TextContent).text, /truncated/);
+  assert.ok((f.contexts[0].messages.at(-1)!.content[0] as TextContent).text.length < fullResult.length);
   assert.equal(f.wireRequests.length, 1);
   assert.equal(f.hostCalls(), 0);
 });
@@ -194,7 +203,7 @@ for (const change of ["prompt", "system", "tool-schema", "tool-set", "model", "f
       onPreparedInputAccepted: () => { receipts += 1; } };
     if (change === "prompt") changed.task = { ...changed.task, prompt: "DRIFT" };
     if (change === "system") changed.appendSystemPrompt = ["DRIFT"];
-    if (change === "tool-schema") changed.mcpTools = [{ ...changed.mcpTools[0], inputSchema: { type: "string" } }];
+    if (change === "tool-schema") changed.mcpTools = [{ ...changed.mcpTools![0], inputSchema: { type: "string" } }];
     if (change === "tool-set") changed.tools = ["read"];
     if (change === "model") changed.provider = { ...changed.provider, model: "changed" };
     if (change === "fingerprint") changed.preparedInput = { ...preparedInput, fingerprint: "invalid" };
@@ -227,7 +236,7 @@ for (const changed of ["system", "messages", "model", "tools"]) {
     const preparedInput = await f.runner.prepareTaskInput(f.options);
     f.controls.beforePayload = (model, context) => {
       if (changed === "system") context.messages[0].content += "\nLATE_DRIFT";
-      if (changed === "messages") context.messages.find(message => message.role === "user").content = "LATE_DRIFT";
+      if (changed === "messages") context.messages.find(message => message.role === "user")!.content = "LATE_DRIFT";
       if (changed === "model") model.contextWindow += 1;
       if (changed === "tools") getCurrentTools(context.messages)[0].description += " LATE_DRIFT";
     };
@@ -245,7 +254,7 @@ for (const changed of ["system", "messages", "model", "tools"]) {
 test("prepared receipt is immutable, minimal, and precedes model execution", async (t) => {
   const f = await fixture(t);
   const preparedInput = await f.runner.prepareTaskInput(f.options);
-  const receipts = [];
+  const receipts: PiRunnerPreparedInputReceipt[] = [];
   await f.runner.runTask({ ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
     onPreparedInputAccepted: (receipt, signal) => {
       assert.equal(f.contexts.length, 0);
@@ -285,7 +294,7 @@ test("final prepared-input gate includes tool schemas and reserved output", asyn
   const f = await fixture(t);
   const options = { ...f.options,
     provider: { ...f.options.provider, contextWindow: 4_096, maxTokens: 512 },
-    mcpTools: [{ ...f.options.mcpTools[0], inputSchema: { type: "object", description: "schema ".repeat(20_000) } }] };
+    mcpTools: [{ ...f.options.mcpTools![0], inputSchema: { type: "object", description: "schema ".repeat(20_000) } }] };
   const prepared = await f.runner.prepareTaskInput(options);
   assert.ok(prepared.fingerprint);
   await assert.rejects(f.runner.runTask({ ...options, preparedInput: prepared }), /model context exceeds selected model budget/);
@@ -300,13 +309,13 @@ test("post-tool model context gate counts cumulative projected results", () => {
     { role: "toolResult", content: [{ type: "text", text: "x".repeat(8_000) }] },
     { role: "toolResult", content: [{ type: "text", text: "y".repeat(8_000) }] },
   ] };
-  assert.doesNotThrow(() => assertPiModelContextCapacity(model, context));
+  assert.doesNotThrow(() => assertPiModelContextCapacity(model as Model<Api>, context as unknown as Parameters<typeof assertPiModelContextCapacity>[1]));
   context.messages.push({ role: "toolResult", content: [{ type: "text", text: "z".repeat(8_000) }] });
-  const projected = assertPiModelContextCapacity(model, context);
+  const projected = assertPiModelContextCapacity(model as Model<Api>, context as unknown as Parameters<typeof assertPiModelContextCapacity>[1]);
   const results = projected.messages.filter(message => message.role === "toolResult");
-  assert.ok(results[0].content[0].text.length < 8_000);
-  assert.match(results[0].content[0].text, /truncated/);
-  assert.equal(context.messages[1].content[0].text.length, 8_000, "Host/SDK evidence remains complete");
+  assert.ok((results[0].content[0] as TextContent).text.length < 8_000);
+  assert.match((results[0].content[0] as TextContent).text, /truncated/);
+  assert.equal((context.messages[1].content[0] as TextContent).text.length, 8_000, "Host/SDK evidence remains complete");
 });
 
 test("provider capacity gate uses remaining model space instead of a fixed tool-result allowance", () => {
@@ -315,12 +324,12 @@ test("provider capacity gate uses remaining model space instead of a fixed tool-
     { role: "user", content: "request" },
     { role: "toolResult", content: [{ type: "text", text: "x".repeat(10_000) }] },
   ] };
-  const projected = assertPiModelContextCapacity(model, context);
+  const projected = assertPiModelContextCapacity(model as Model<Api>, context as unknown as Parameters<typeof assertPiModelContextCapacity>[1]);
   const result = projected.messages.find(message => message.role === "toolResult");
-  assert.match(result.content[0].text, /truncated/);
-  assert.ok(result.content[0].text.length < 10_000);
-  assert.equal(context.messages[1].content[0].text.length, 10_000);
-  assert.doesNotThrow(() => assertPiModelContextCapacity(model, projected));
+  assert.match((result!.content[0] as TextContent).text, /truncated/);
+  assert.ok((result!.content[0] as TextContent).text.length < 10_000);
+  assert.equal((context.messages[1].content[0] as TextContent).text.length, 10_000);
+  assert.doesNotThrow(() => assertPiModelContextCapacity(model as Model<Api>, projected));
 });
 
 test("provider boundary refuses a tool history whose required omission markers exceed the model-view budget", () => {
@@ -329,7 +338,7 @@ test("provider boundary refuses a tool history whose required omission markers e
     { role: "user", content: "request" },
     ...Array.from({ length: 9_000 }, () => ({ role: "toolResult", content: [{ type: "text", text: "x".repeat(20) }] })),
   ] };
-  assert.throws(() => assertPiModelContextCapacity(model, context), /tool result markers exceed/);
+  assert.throws(() => assertPiModelContextCapacity(model as Model<Api>, context as unknown as Parameters<typeof assertPiModelContextCapacity>[1]), /tool result markers exceed/);
 });
 
 test("Host schemas are prepared without handlers and frozen through the real SDK", async t => {
@@ -359,7 +368,7 @@ for (const missing of ["preparedInput", "runId", "runnerAttemptId"]) {
     let received = 0;
     const options = { ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
       onPreparedInputAccepted: () => { received += 1; } };
-    delete options[missing];
+    delete options[missing as keyof typeof options];
     await assert.rejects(f.runner.runTask(options), /prepared.*receipt|receipt.*prepared/i);
     assert.equal(received, 0);
     assert.equal(f.contexts.length, 0);
@@ -371,7 +380,7 @@ for (const rejected of [new Error("Host receipt rejected"), "Host rejection", un
   test(`prepared receipt rejection (${typeof rejected}) cannot execute or report success`, async (t) => {
     const f = await fixture(t);
     const preparedInput = await f.runner.prepareTaskInput(f.options);
-    let failure = { notRejected: true };
+    let failure: unknown = { notRejected: true };
     try {
       await f.runner.runTask({ ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
         onPreparedInputAccepted: async () => { throw rejected; } });
@@ -386,7 +395,7 @@ for (const rejected of [new Error("Host receipt rejected"), "Host rejection", un
 test("prepared receipt waits for Host acceptance before the first model call", { timeout: 15_000 }, async (t) => {
   const f = await fixture(t);
   const preparedInput = await f.runner.prepareTaskInput(f.options);
-  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   const running = f.runner.runTask({ ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
     onPreparedInputAccepted: async () => { entered.resolve(); await release.promise; } });
   try {
@@ -401,7 +410,7 @@ for (const settlement of ["resolve", "reject"]) {
   test(`cancelled prepared receipt ignores late ${settlement} and never dispatches`, { timeout: 15_000 }, async (t) => {
     const f = await fixture(t);
     const preparedInput = await f.runner.prepareTaskInput(f.options);
-    const entered = Promise.withResolvers(), pending = Promise.withResolvers(), abort = new AbortController();
+    const entered = Promise.withResolvers<void>(), pending = Promise.withResolvers<void>(), abort = new AbortController();
     // The red implementation may never invoke the callback; still observe fixture cleanup.
     void pending.promise.catch(() => {});
     let receiverSignal;
@@ -413,9 +422,10 @@ for (const settlement of ["resolve", "reject"]) {
       await Promise.race([entered.promise, running.then(() => { throw new Error("Run bypassed prepared receipt"); })]);
       abort.abort();
       await assert.rejects(running, { name: "AbortError" });
-      assert.equal(receiverSignal.aborted, true);
+      assert.equal(receiverSignal!.aborted, true);
     } finally {
-      pending[settlement](settlement === "reject" ? new Error("Late Host rejection") : undefined);
+      if (settlement === "reject") pending.reject(new Error("Late Host rejection"));
+      else pending.resolve();
       await running.catch(() => {});
     }
     await new Promise(resolve => setImmediate(resolve));
@@ -430,7 +440,7 @@ test("prepared receipt callback cannot silently replace the accepted task input"
   const preparedInput = await f.runner.prepareTaskInput(f.options);
   let received = 0;
   await assert.rejects(f.runner.runTask({ ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
-    onPreparedInputAccepted: () => { received += 1; f.options.task.prompt = "Changed during Host acceptance"; } }),
+    onPreparedInputAccepted: () => { received += 1; (f.options.task as { prompt: string }).prompt = "Changed during Host acceptance"; } }),
   /prepared.*input|input.*prepar/i);
   assert.equal(received, 1);
   assert.equal(f.contexts.length, 0);
@@ -490,7 +500,7 @@ test("prepared receipt does not mask a subsequent provider failure", async (t) =
 test("parallel prepared receipt rejection does not close another execution", async (t) => {
   const a = await fixture(t), b = await fixture(t);
   const [pa, pb] = await Promise.all([a.runner.prepareTaskInput(a.options), b.runner.prepareTaskInput(b.options)]);
-  const receipts = [];
+  const receipts: PiRunnerPreparedInputReceipt[] = [];
   const outcomes = await Promise.allSettled([
     a.runner.runTask({ ...a.options, runId: "rejected-run", runnerAttemptId: "rejected-attempt", preparedInput: pa,
       onPreparedInputAccepted: receipt => { receipts.push(receipt); throw new Error("Only A rejected"); } }),
@@ -506,10 +516,10 @@ test("parallel prepared receipt rejection does not close another execution", asy
 
 test("recreated Runner reports the same receipt identity for Host idempotency", async (t) => {
   const f = await fixture(t);
-  const preparedInput = await f.runner.prepareTaskInput(f.options), receipts = [];
+  const preparedInput = await f.runner.prepareTaskInput(f.options), receipts: PiRunnerPreparedInputReceipt[] = [];
   const options = { ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
-    onPreparedInputAccepted: receipt => { receipts.push(receipt); throw new Error("No durable Host ACK in this fixture"); } };
-  for (let i = 0; i < 2; i += 1) await assert.rejects(new f.runner.constructor().runTask(options), /No durable Host ACK/);
+    onPreparedInputAccepted: (receipt: PiRunnerPreparedInputReceipt) => { receipts.push(receipt); throw new Error("No durable Host ACK in this fixture"); } };
+  for (let i = 0; i < 2; i += 1) await assert.rejects(new (f.runner.constructor as new () => typeof f.runner)().runTask(options), /No durable Host ACK/);
   assert.equal(receipts.length, 2);
   assert.deepEqual(receipts[0], receipts[1]);
   assert.equal(f.wireRequests.length, 0);
@@ -522,7 +532,7 @@ for (const invalid of ["callback", "blank-run", "blank-attempt", "task"]) {
     let receipts = 0;
     const options = { ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
       onPreparedInputAccepted: () => { receipts += 1; } };
-    if (invalid === "callback") options.onPreparedInputAccepted = null;
+    if (invalid === "callback") (options as { onPreparedInputAccepted: (() => void) | null }).onPreparedInputAccepted = null;
     if (invalid === "blank-run") options.runId = "  ";
     if (invalid === "blank-attempt") options.runnerAttemptId = "  ";
     if (invalid === "task") options.task = { ...options.task, id: "another-task" };
@@ -541,12 +551,12 @@ test("prepared receipt pins input even if the caller mutates and rehashes its sn
   await assert.rejects(f.runner.runTask({ ...f.options, runId: "receipt-run", runnerAttemptId: "receipt-attempt", preparedInput,
     onPreparedInputAccepted: received => {
       receipt = received;
-      f.options.task.prompt = "Changed and rehashed";
+      (f.options.task as { prompt: string }).prompt = "Changed and rehashed";
       preparedInput.userPrompt = "Task: Prepared\n\nChanged and rehashed";
       const { fingerprint: _old, ...body } = preparedInput;
       preparedInput.fingerprint = createHash("sha256").update(JSON.stringify(body)).digest("hex");
     } }), /prepared.*input|input.*prepar/i);
-  assert.equal(receipt.preparedInputFingerprint, expectedFingerprint);
+  assert.equal(receipt!.preparedInputFingerprint, expectedFingerprint);
   assert.notEqual(preparedInput.fingerprint, expectedFingerprint);
   assert.equal(f.contexts.length, 0);
   assert.equal(f.wireRequests.length, 0);
