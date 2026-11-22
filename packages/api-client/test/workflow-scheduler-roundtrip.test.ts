@@ -3,14 +3,14 @@ import test from "node:test";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("workflow orchestration and retry preserve explicit safety scheduling reasons", async () => {
-  const calls = [];
+  const calls: { url: URL; method: RequestInit["method"]; body: unknown }[] = [];
   const response = { status: "idle", workflow: { id: "workflow-1" }, reason: "No safe scheduling slot.",
     schedulingDecision: { schedulingMode: "smart", effectiveMode: "serial", parallelLimit: 1,
       runnableStepIds: [], queuedStepIds: ["step-1"], resourceLocks: ["host:shared-index"], safetyEvidence: "partial",
       reasonCodes: ["safety_opt_in_required", "host_parallel_capability_unavailable",
         "active_step_safety_unverified", "resource_conflict"] } };
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (input, init) => {
-    calls.push({ url: new URL(String(input)), method: init.method, body: JSON.parse(init.body) });
+    calls.push({ url: new URL(String(input)), method: init!.method, body: JSON.parse(init!.body as string) });
     return Response.json(response);
   } });
   assert.deepEqual(await client.orchestrateChannelWorkflow("/repo", "workflow / safety"), response);
@@ -32,9 +32,9 @@ test("isolated writing scheduling preserves its distinct reason and worktree res
 });
 
 test("isolated execution is selected explicitly without adding target application authority", async () => {
-  const calls = [], response = { status: "idle", workflow: { id: "selected" } };
+  const calls: { url: URL; method: RequestInit["method"]; body: unknown }[] = [], response = { status: "idle", workflow: { id: "selected" } };
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init) => {
-    calls.push({ url: new URL(String(url)), method: init.method, body: JSON.parse(init.body) });
+    calls.push({ url: new URL(String(url)), method: init!.method, body: JSON.parse(init!.body as string) });
     return Response.json(response);
   } });
   assert.deepEqual(await client.orchestrateChannelWorkflow("/repo", "selected", { executionProfile: "pi_host_isolated_files_v1" }), response);

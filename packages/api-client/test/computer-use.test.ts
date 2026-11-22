@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("Computer Use client sends structured list and stop requests", async () => {
-  const requests = [];
+  const requests: { url: string; init: RequestInit | undefined }[] = [];
   const client = new LingDaemonClient({
     baseUrl: "http://daemon.test",
     fetch: async (url, init) => {
@@ -28,15 +29,15 @@ test("Computer Use client sends structured list and stop requests", async () => 
   assert.equal(stopped.acknowledged, true);
   assert.match(requests[0].url, /computer-use\/sessions\?cwd=%2Fworkspace/);
   assert.match(requests[1].url, /computer-use\/sessions\/session-1\/stop\?cwd=%2Fworkspace/);
-  assert.equal(JSON.parse(requests[1].init.body).reason, "operator_requested");
+  assert.equal((JSON.parse(requests[1].init!.body as string) as { reason: string }).reason, "operator_requested");
 });
 
 test("Computer Use stream forwards the abort signal to fetch", async () => {
-  let receivedSignal;
+  let receivedSignal: RequestInit["signal"];
   const client = new LingDaemonClient({
     baseUrl: "http://daemon.test",
     fetch: async (_url, init) => {
-      receivedSignal = init.signal;
+      receivedSignal = init!.signal;
       return new Response(new ReadableStream(), {
         headers: { "Content-Type": "text/event-stream" },
       });
@@ -48,7 +49,7 @@ test("Computer Use stream forwards the abort signal to fetch", async () => {
 });
 
 test("Computer Use native requests carry only the scoped route token", async () => {
-  const requests = [];
+  const requests: { url: string; init: RequestInit | undefined }[] = [];
   const client = new LingDaemonClient({
     baseUrl: "http://daemon.test",
     computerUseRouteToken: "route-secret",
@@ -94,7 +95,7 @@ test("Computer Use native requests carry only the scoped route token", async () 
 });
 
 test("Computer Use browser client does not invent a native route token", async () => {
-  let receivedHeaders;
+  let receivedHeaders: Headers | undefined;
   const client = new LingDaemonClient({
     baseUrl: "http://daemon.test",
     fetch: async (_url, init) => {
@@ -103,7 +104,7 @@ test("Computer Use browser client does not invent a native route token", async (
     },
   });
   await client.listComputerUsePreviews("/workspace");
-  assert.equal(receivedHeaders.get("X-Ling-Computer-Use-Token"), null);
+  assert.equal(receivedHeaders!.get("X-Ling-Computer-Use-Token"), null);
 });
 
 test("Computer Use client rejects malformed daemon payloads before returning them", async () => {
@@ -133,7 +134,7 @@ test("Computer Use client rejects malformed daemon payloads before returning the
   );
 });
 
-function projection(status) {
+function projection(status: ComputerUsePreviewProjection["status"]): ComputerUsePreviewProjection {
   return {
     sessionId: "session-1",
     conversationId: "conversation-1",
