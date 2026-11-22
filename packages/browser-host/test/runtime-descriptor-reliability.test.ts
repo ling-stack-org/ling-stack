@@ -14,22 +14,25 @@ if (!caseName) {
   for (const name of cases) test(`A01 descriptor reliability: ${name}`, { timeout: 50_000 },
     () => runA01Child(name, import.meta.url));
 } else if (caseName.startsWith("coordination-worker-")) {
-  const observed = observeA01Descriptor({ mock, after(callback) { process.once("beforeExit", callback); } }, descriptorPathForA01());
+  const observed = observeA01Descriptor({ mock, after(callback: () => void) { process.once("beforeExit", callback); } }, descriptorPathForA01());
   const { createChromeBrowserRuntimeDescriptor, publishChromeBrowserRuntimeDescriptor } = await import("../dist/index.js");
   const descriptor = createChromeBrowserRuntimeDescriptor({ port: 43123, generation: caseName, token: "test-a01-coordination-token" });
   const gate = observed.renameGate(descriptor.generation), go = signal(), finish = signal();
+  assert.ok(process.send && process.disconnect);
+  const send = process.send.bind(process);
   process.on("message", message => {
+    assert.ok(message && typeof message === "object" && "kind" in message);
     if (message.kind === "go") go.complete();
     if (message.kind === "release") gate.release.complete();
     if (message.kind === "finish") { gate.release.complete(); finish.complete(); }
   });
-  observed.contention.promise.then(evidence => process.send({ kind: "lock-contention", evidence }));
-  gate.entered.promise.then(() => process.send({ kind: "held", generation: descriptor.generation }));
-  process.send({ kind: "ready-to-publish" });
+  observed.contention.promise.then(evidence => send({ kind: "lock-contention", evidence }));
+  gate.entered.promise.then(() => send({ kind: "held", generation: descriptor.generation }));
+  send({ kind: "ready-to-publish" });
   try {
     await bounded(go.promise, "worker launch");
     await publishChromeBrowserRuntimeDescriptor(descriptor, descriptorPathForA01());
-    process.send({ kind: "published", generation: descriptor.generation });
+    send({ kind: "published", generation: descriptor.generation });
     await bounded(finish.promise, "worker finish", 30_000);
   } finally { observed.restore(); process.disconnect(); }
 } else {
@@ -41,7 +44,12 @@ if (!caseName) {
     const actual = { chmod: fs.chmod, rename: fs.rename, rm: fs.rm, open: fs.open };
     const product = await import("../dist/index.js");
     const { withDescriptorCoordination } = await import("../dist/descriptor-coordination.js");
-    const descriptor = generation => product.createChromeBrowserRuntimeDescriptor({
+    const readPublished = async () => {
+      const value = await observed.actualRead();
+      assert.ok(value, "Expected a published runtime descriptor");
+      return value;
+    };
+    const descriptor = (generation: string) => product.createChromeBrowserRuntimeDescriptor({
       port: 43123, generation, token: "test-a01-reliability-token" });
     try {
       if (caseName === "coordination-yields" || caseName === "coordination-timeout") {
@@ -54,7 +62,7 @@ if (!caseName) {
         try {
           const pending = product.publishChromeBrowserRuntimeDescriptor(descriptor("generation-next"), path);
           // Attach rejection immediately, while observing actual BUSY in parallel.
-          const settled = pending.then(value => ({ value }), error => ({ error }));
+          const settled = pending.then(value => ({ value }), (error: unknown) => ({ error }));
           const contention = await bounded(observed.contention.promise, "real BEGIN SQLITE_BUSY");
           assert.equal(contention.errcode & 0xff, 5);
           if (caseName === "coordination-yields") {
@@ -62,12 +70,13 @@ if (!caseName) {
             assert.ok(beats >= 3, "same-thread timer continues while lock owner awaits FS");
             holder.exec("ROLLBACK");
             assert.deepEqual(await settled, { value: "published" });
-            assert.equal((await observed.actualRead()).generation, "generation-next");
+            assert.equal((await readPublished()).generation, "generation-next");
           } else {
             const result = await bounded(settled, "bounded acquisition fails", 7_000);
-            assert.equal(result.error?.message, "browser_host_descriptor_lock_timeout");
-            assert.equal(result.error.cause.errcode & 0xff, 5);
-            assert.equal((await observed.actualRead()).generation, first.generation);
+            assert.ok("error" in result && result.error instanceof Error);
+            assert.equal(result.error.message, "browser_host_descriptor_lock_timeout");
+            assert.equal(sqliteErrorCode(result.error.cause) & 0xff, 5);
+            assert.equal((await readPublished()).generation, first.generation);
             assert.equal(await fs.stat(`${path}.generation-next.tmp`).then(() => true, error => {
               assert.equal(error.code, "ENOENT"); return false;
             }), false, "no unlocked fallback or operation replay");
@@ -88,16 +97,19 @@ if (!caseName) {
         let failure;
         try { await product.publishChromeBrowserRuntimeDescriptor(descriptor("generation-corrupt"), path); }
         catch (error) { failure = error; }
-        assert.equal(failure.errcode & 0xff, 26, "real SQLITE_NOTADB is not retried as contention");
+        assert.equal(sqliteErrorCode(failure) & 0xff, 26, "real SQLITE_NOTADB is not retried as contention");
         assert.ok(performance.now() - started < 1_000);
         assert.equal((await fs.stat(sidecar)).ino, before.ino);
         assert.equal(await fs.readFile(sidecar, "utf8"), "test-not-a-sqlite-database");
         assert.equal(await observed.actualRead(), undefined);
-        console.log(`A01 non-BUSY evidence: ${JSON.stringify({ code: failure.code, errcode: failure.errcode })}`);
+        assert.ok(failure instanceof Error && "code" in failure);
+        console.log(`A01 non-BUSY evidence: ${JSON.stringify({ code: failure.code, errcode: sqliteErrorCode(failure) })}`);
       } else if (caseName === "coordination-processes") {
-        const workers = [];
-        const spawn = async role => {
-          const workspace = join(process.env.LING_STACK_DEFAULT_WORKSPACE_CWD, role);
+        const workers: ReturnType<typeof spawnA01Worker>[] = [];
+        const workspaceRoot = process.env.LING_STACK_DEFAULT_WORKSPACE_CWD;
+        assert.ok(workspaceRoot);
+        const spawn = async (role: string) => {
+          const workspace = join(workspaceRoot, role);
           await fs.mkdir(workspace);
           const worker = spawnA01Worker(import.meta.url, role, workspace); workers.push(worker);
           await worker.wait("ready-to-publish"); return worker;
@@ -113,7 +125,7 @@ if (!caseName) {
           winner.send({ kind: "release" }); await winner.wait("published");
           await loser.wait("held"); loser.send({ kind: "release" });
           const successor = await loser.wait("published");
-          assert.equal((await observed.actualRead()).generation, successor.generation);
+          assert.equal((await readPublished()).generation, successor.generation);
           assert.equal((await fs.stat(sidecar)).ino, identity.ino);
           for (const worker of [a, b]) { worker.send({ kind: "finish" }); assert.deepEqual(await worker.exited, { code: 0, signal: null }); }
           const crashing = await spawn("coordination-worker-crash"); crashing.send({ kind: "go" });
@@ -123,7 +135,7 @@ if (!caseName) {
           const recovered = await spawn("coordination-worker-recovered"); recovered.send({ kind: "go" });
           await recovered.wait("held"); recovered.send({ kind: "release" });
           const recovery = await recovered.wait("published");
-          assert.equal((await observed.actualRead()).generation, recovery.generation);
+          assert.equal((await readPublished()).generation, recovery.generation);
           assert.equal((await fs.stat(sidecar)).ino, identity.ino, "crash recovery must not recreate the lock file");
           assert.equal((await fs.stat(`${path}.${held.generation}.tmp`)).mode & 0o777, 0o600, "successor does not delete another operation's temp");
           recovered.send({ kind: "finish" }); assert.deepEqual(await recovered.exited, { code: 0, signal: null });
@@ -143,9 +155,10 @@ if (!caseName) {
         assert.equal(await fs.readFile(occupied, "utf8"), "test-owned-other-operation");
         for (const boundary of ["write", "temporary-permission", "rename", "final-permission"]) {
           const value = descriptor(`generation-${boundary}`), temporary = `${path}.${value.generation}.tmp`;
-          let actualError, renamed = false;
-          const patches = [];
-          if (boundary === "write") patches.push(t.mock.method(fs, "open", async (target, ...args) => {
+          let actualError: unknown;
+          let renamed = false;
+          const patches: { mock: { restore(): void } }[] = [];
+          if (boundary === "write") patches.push(t.mock.method(fs, "open", async (...[target, ...args]: Parameters<typeof actual.open>) => {
             const handle = await actual.open(target, ...args);
             if (target === temporary) {
               const write = handle.writeFile.bind(handle);
@@ -156,10 +169,11 @@ if (!caseName) {
             }
             return handle;
           }));
-          if (boundary.endsWith("permission")) patches.push(t.mock.method(fs, "chmod", async (target, ...args) => {
+          if (boundary.endsWith("permission")) patches.push(t.mock.method(fs, "chmod", async (...[target, ...args]: Parameters<typeof actual.chmod>) => {
             if (target === (boundary === "temporary-permission" ? temporary : path)) {
               // This user is not root. Remove directory search permission so the
               // original chmod and owned cleanup really fail with EACCES.
+              assert.ok(process.getuid);
               assert.notEqual(process.getuid(), 0);
               await actual.chmod(dirname(path), 0o000);
               try { return await actual.chmod(target, ...args); }
@@ -167,7 +181,7 @@ if (!caseName) {
             }
             return actual.chmod(target, ...args);
           }));
-          patches.push(t.mock.method(fs, "rename", async (source, target) => {
+          patches.push(t.mock.method(fs, "rename", async (...[source, target]: Parameters<typeof actual.rename>) => {
             if (boundary === "rename" && source === temporary) await actual.rm(temporary);
             try { const result = await actual.rename(source, target); renamed = true; return result; }
             catch (error) { actualError = error; throw error; }
@@ -181,12 +195,12 @@ if (!caseName) {
             for (const patch of patches.reverse()) patch.mock.restore();
             syncBuiltinESMExports();
           }
-          assert.ok(actualError, `${boundary} must reach a real failed FS call`);
+          assert.ok(actualError instanceof Error && "code" in actualError, `${boundary} must reach a real failed FS call`);
           if (failure instanceof AggregateError) assert.equal(failure.errors[0], actualError);
           else assert.equal(failure, actualError);
           if (boundary === "final-permission") {
             assert.equal(renamed, true);
-            assert.equal((await observed.actualRead()).generation, value.generation, "failed ACL is not a promise of zero FS effects");
+            assert.equal((await readPublished()).generation, value.generation, "failed ACL is not a promise of zero FS effects");
             assert.ok(failure instanceof AggregateError, "original and cleanup EACCES are retained");
           } else if (boundary === "write" || boundary === "rename") {
             await assert.rejects(fs.stat(temporary), { code: "ENOENT" });
@@ -201,22 +215,24 @@ if (!caseName) {
         await product.publishChromeBrowserRuntimeDescriptor(descriptor("generation-valid"), path);
         assert.equal(await product.publishChromeBrowserRuntimeDescriptor(descriptor("generation-stale"), path,
           { expectedGeneration: "generation-stale" }), "superseded");
-        assert.equal((await observed.actualRead()).generation, "generation-valid");
+        assert.equal((await readPublished()).generation, "generation-valid");
         await product.removeChromeBrowserRuntimeDescriptor("generation-valid", path);
         assert.equal(await product.publishChromeBrowserRuntimeDescriptor(descriptor("generation-missing"), path,
           { expectedGeneration: "generation-valid" }), "superseded");
         assert.equal(await observed.actualRead(), undefined);
       } else if (caseName === "coordination-cleanup") {
-        let originalError, rollbackError, closeError;
+        let originalError: unknown;
+        let rollbackError: unknown;
+        let closeError: unknown;
         const exec = DatabaseSync.prototype.exec, close = DatabaseSync.prototype.close;
-        const rollbackPatch = t.mock.method(DatabaseSync.prototype, "exec", function (sql) {
+        const rollbackPatch = t.mock.method(DatabaseSync.prototype, "exec", function (this: DatabaseSync, sql: string) {
           const result = exec.call(this, sql);
           if (sql === "ROLLBACK") {
             try { exec.call(this, sql); } catch (error) { rollbackError = error; throw error; }
           }
           return result;
         });
-        const closePatch = t.mock.method(DatabaseSync.prototype, "close", function () {
+        const closePatch = t.mock.method(DatabaseSync.prototype, "close", function (this: DatabaseSync) {
           close.call(this);
           try { close.call(this); } catch (error) { closeError = error; throw error; }
         });
@@ -228,8 +244,11 @@ if (!caseName) {
           }); } catch (error) { failure = error; }
           assert.ok(failure instanceof AggregateError);
           assert.deepEqual(failure.errors, [originalError, rollbackError, closeError]);
+          assert.ok(originalError instanceof Error && "code" in originalError);
           assert.equal(originalError.code, "ENOENT");
+          assert.ok(rollbackError instanceof Error && "code" in rollbackError);
           assert.equal(rollbackError.code, "ERR_SQLITE_ERROR");
+          assert.ok(closeError instanceof Error && "code" in closeError);
           assert.equal(closeError.code, "ERR_INVALID_STATE");
         } finally { closePatch.mock.restore(); rollbackPatch.mock.restore(); }
         const inode = (await fs.stat(sidecar)).ino;
@@ -243,4 +262,9 @@ if (!caseName) {
       }
     } finally { observed.releaseAll(); observed.restore(); }
   });
+}
+
+function sqliteErrorCode(error: unknown): number {
+  assert.ok(error instanceof Error && "errcode" in error && typeof error.errcode === "number");
+  return error.errcode;
 }
