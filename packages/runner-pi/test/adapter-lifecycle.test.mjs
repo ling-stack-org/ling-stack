@@ -8,7 +8,7 @@ import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { PiRunnerAdapter } from "../dist/adapter.js";
 import { isPiToolFreeCompletion } from "../dist/index.js";
 import { createInitializedPiSession } from "../dist/session-factory.js";
-import { response as compactionResponse } from "./support/pi-compaction-fixture.mjs";
+import { response as compactionResponse } from "./support/pi-compaction-fixture.ts";
 import { formatTaskPrompt } from "../dist/utils.js";
 
 const requiredInput = { kind: "user_input_required", requestId: "input_fixture", requestVersion: 1 };
