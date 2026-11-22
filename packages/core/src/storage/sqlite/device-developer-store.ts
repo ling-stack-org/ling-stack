@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
@@ -29,6 +30,13 @@ export class SqliteDeviceDeveloperStore {
       CREATE TABLE IF NOT EXISTS device_developer_artifacts (artifact_id TEXT PRIMARY KEY NOT NULL, digest TEXT NOT NULL, artifact_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS device_collaboration_proposals (proposal_id TEXT PRIMARY KEY NOT NULL, payload_digest TEXT NOT NULL, proposal_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS device_artifact_transfers (transfer_id TEXT PRIMARY KEY NOT NULL, proposal_id TEXT NOT NULL, transfer_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS device_artifact_transfer_chunks (
+        transfer_id TEXT NOT NULL REFERENCES device_artifact_transfers(transfer_id),
+        chunk_index INTEGER NOT NULL,
+        digest TEXT NOT NULL,
+        payload BLOB NOT NULL,
+        PRIMARY KEY(transfer_id,chunk_index)
+      );
     `);
   }
 
@@ -131,6 +139,47 @@ export class SqliteDeviceDeveloperStore {
     const next = { ...transfer, receivedChunks: [...new Set([...transfer.receivedChunks, chunkIndex])].sort((left, right) => left - right) };
     this.database.prepare("UPDATE device_artifact_transfers SET transfer_json=? WHERE transfer_id=?").run(JSON.stringify(next), transferId);
     return next;
+  }
+
+  saveArtifactChunk(transferId: string, chunkIndex: number, digest: string, payload: Uint8Array): void {
+    const saved = this.database.prepare(`
+      INSERT INTO device_artifact_transfer_chunks(transfer_id,chunk_index,digest,payload) VALUES(?,?,?,?)
+      ON CONFLICT(transfer_id,chunk_index) DO NOTHING
+    `).run(transferId, chunkIndex, digest, payload);
+    if (saved.changes === 0) {
+      const row = this.database.prepare(`
+        SELECT digest,payload FROM device_artifact_transfer_chunks WHERE transfer_id=? AND chunk_index=?
+      `).get(transferId, chunkIndex);
+      if (row?.digest !== digest || !(row.payload instanceof Uint8Array) || !Buffer.from(row.payload).equals(payload)) {
+        throw new DeviceFabricError("revision_conflict", "artifact chunk index is already bound to different bytes");
+      }
+    }
+  }
+
+  listStoredArtifactChunkIndexes(transferId: string): readonly number[] {
+    return this.database.prepare("SELECT chunk_index FROM device_artifact_transfer_chunks WHERE transfer_id=? ORDER BY chunk_index")
+      .all(transferId).map(row => Number(row.chunk_index));
+  }
+
+  digestStoredArtifact(transfer: DeviceArtifactTransferV1): string {
+    const hash = createHash("sha256");
+    let chunkIndex = 0;
+    let size = 0;
+    for (const row of this.database.prepare(`
+      SELECT chunk_index,digest,payload FROM device_artifact_transfer_chunks WHERE transfer_id=? ORDER BY chunk_index
+    `).iterate(transfer.transferId)) {
+      if (row.chunk_index !== chunkIndex || !(row.payload instanceof Uint8Array)
+        || `sha256:${createHash("sha256").update(row.payload).digest("hex")}` !== row.digest) {
+        throw new DeviceFabricError("revision_conflict", "stored artifact chunk did not pass integrity checks");
+      }
+      hash.update(row.payload);
+      size += row.payload.byteLength;
+      chunkIndex += 1;
+    }
+    if (chunkIndex !== transfer.totalChunks || size !== transfer.sizeBytes) {
+      throw new DeviceFabricError("revision_conflict", "stored artifact is incomplete");
+    }
+    return `sha256:${hash.digest("hex")}`;
   }
 
   close(): void { this.database.close(); }

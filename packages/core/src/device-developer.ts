@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   DeviceArtifactTransferV1,
+  DeviceArtifactChunkReceiptV1,
   DeviceCollaborationProposalV1,
   DeviceDeveloperArtifactV1,
   DeviceDeveloperJobV1,
@@ -210,6 +211,60 @@ export class DeviceCollaborationCoordinator {
       }
       const receivedChunks = [...new Set([...transfer.receivedChunks, chunkIndex])].sort((left, right) => left - right);
       return this.saveTransfer({ ...transfer, receivedChunks });
+    });
+  }
+
+  receiveArtifactChunk(input: {
+    readonly transferId: string;
+    readonly proposalId: string;
+    readonly ownerId: string;
+    readonly targetDeviceId: string;
+    readonly taskRevision: string;
+    readonly chunkIndex: number;
+    readonly chunkDigest: string;
+    readonly bytes: Uint8Array;
+    readonly now: string;
+  }): DeviceArtifactChunkReceiptV1 {
+    const store = this.#store;
+    if (!store) throw new DeviceFabricError("target_missing", "artifact chunk storage is unavailable");
+    return store.withWriteTransaction(() => {
+      const transfer = this.getTransfer(input.transferId);
+      if (!transfer || transfer.proposalId !== input.proposalId) {
+        throw new DeviceFabricError("target_missing", "artifact transfer is unavailable for the selected proposal");
+      }
+      const proposal = this.requireProposal(transfer.proposalId);
+      assertOwner(proposal, input.ownerId);
+      const asOf = Date.parse(input.now);
+      if (proposal.targetDeviceId !== input.targetDeviceId || proposal.baseRevision !== input.taskRevision
+        || proposal.kind !== "artifact" || proposal.status !== "accepted"
+        || !(Date.parse(proposal.createdAt) <= asOf && asOf < Date.parse(proposal.expiresAt))) {
+        throw new DeviceFabricError("safety_denied", "artifact transfer authority changed");
+      }
+      const offer = proposal.payload;
+      if (!offer || typeof offer !== "object" || Array.isArray(offer)
+        || !("digest" in offer) || offer.digest !== transfer.digest || !("sizeBytes" in offer) || offer.sizeBytes !== transfer.sizeBytes
+        || !/^sha256:[0-9a-f]{64}$/u.test(transfer.digest)) {
+        throw new DeviceFabricError("safety_denied", "artifact transfer does not match the accepted digest and size");
+      }
+      const { chunkIndex, bytes, chunkDigest } = input;
+      const { sizeBytes, chunkSizeBytes, totalChunks } = transfer;
+      if (!Number.isSafeInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= totalChunks
+        || chunkSizeBytes > 64 * 1024 || totalChunks > 4096
+        || !(bytes instanceof Uint8Array) || bytes.byteLength !== Math.min(chunkSizeBytes, sizeBytes - chunkIndex * chunkSizeBytes)) {
+        throw new DeviceFabricError("invalid_graph", "artifact chunk size or index is invalid");
+      }
+      const payload = Buffer.from(bytes);
+      if (`sha256:${createHash("sha256").update(payload).digest("hex")}` !== chunkDigest) {
+        throw new DeviceFabricError("revision_conflict", "artifact chunk digest did not match the bytes");
+      }
+      store.saveArtifactChunk(transfer.transferId, chunkIndex, chunkDigest, payload);
+      const verifiedChunkIndexes = store.listStoredArtifactChunkIndexes(transfer.transferId);
+      const receipt = { transferId: transfer.transferId, proposalId: proposal.proposalId,
+        targetDeviceId: proposal.targetDeviceId, verifiedChunkIndexes };
+      if (verifiedChunkIndexes.length < totalChunks) return { ...receipt, status: "receiving" };
+      const artifactDigest = store.digestStoredArtifact(transfer);
+      if (artifactDigest !== transfer.digest) throw new DeviceFabricError("revision_conflict", "assembled artifact digest did not match the accepted proposal");
+      return { ...receipt, status: "verified", artifactDigest };
     });
   }
 

@@ -79,3 +79,12 @@ export interface DeviceArtifactTransferV1 {
   readonly totalChunks: number;
   readonly receivedChunks: readonly number[];
 }
+
+export interface DeviceArtifactChunkReceiptV1 {
+  readonly transferId: string;
+  readonly proposalId: string;
+  readonly targetDeviceId: string;
+  readonly verifiedChunkIndexes: readonly number[];
+  readonly status: "receiving" | "verified";
+  readonly artifactDigest?: string;
+}

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -82,6 +83,57 @@ test("collaboration coordinator reads and writes proposals and transfers through
   } finally {
     secondStore.close();
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("collaboration verifies scoped artifact bytes across reopen before reporting completion", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-collaboration-artifact-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "developer.sqlite");
+  const digest = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  const artifact = Buffer.from("ling-build-artifact");
+  const offer = { digest: digest(artifact), sizeBytes: artifact.byteLength };
+  const proposal = {
+    proposalId: "build-output", taskId: "phone-workbench", kind: "artifact", ownerKind: "mobile",
+    ownerId: "phone-1", proposerKind: "daemon", proposerId: "pc-1", targetDeviceId: "head-unit-1",
+    payload: offer, payloadDigest: digestCollaborationPayload(offer), baseRevision: "phone-task-r1",
+    status: "proposed", createdAt: now, expiresAt: "2026-11-21T00:05:00.000Z",
+  } as const;
+  const ids = { transferId: "app-transfer", proposalId: proposal.proposalId };
+  const scope = { ...ids, ownerId: proposal.ownerId, targetDeviceId: proposal.targetDeviceId, taskRevision: proposal.baseRevision, now };
+  const firstPart = artifact.subarray(0, 10);
+  const lastPart = artifact.subarray(10);
+  const firstChunk = { ...scope, chunkIndex: 0, bytes: firstPart, chunkDigest: digest(firstPart) };
+  const lastChunk = { ...scope, chunkIndex: 1, bytes: lastPart, chunkDigest: digest(lastPart) };
+  const firstStore = new SqliteDeviceDeveloperStore({ databasePath: path });
+  try {
+    const owner = new DeviceCollaborationCoordinator({ store: firstStore });
+    owner.propose(proposal);
+    owner.accept(proposal.proposalId, proposal.ownerId, now);
+    owner.registerTransfer({ ...ids, ...offer, chunkSizeBytes: 10, totalChunks: 2, receivedChunks: [] });
+    owner.acceptChunk(ids.transferId, 0);
+    assert.throws(() => owner.receiveArtifactChunk({ ...lastChunk, ownerId: "phone-2" }), { code: "safety_denied" });
+    assert.throws(() => owner.receiveArtifactChunk({ ...lastChunk, targetDeviceId: "head-unit-2" }), { code: "safety_denied" });
+    assert.throws(() => owner.receiveArtifactChunk({ ...lastChunk, chunkDigest: digest(firstPart) }), { code: "revision_conflict" });
+    assert.deepEqual(owner.receiveArtifactChunk(lastChunk), { ...ids, targetDeviceId: scope.targetDeviceId,
+      status: "receiving", verifiedChunkIndexes: [1] });
+  } finally {
+    firstStore.close();
+  }
+  const reopened = new SqliteDeviceDeveloperStore({ databasePath: path });
+  try {
+    const owner = new DeviceCollaborationCoordinator({ store: reopened });
+    const otherBytes = Buffer.alloc(firstPart.byteLength);
+    assert.throws(() => owner.receiveArtifactChunk({ ...firstChunk, now: proposal.expiresAt }), { code: "safety_denied" });
+    assert.throws(() => owner.receiveArtifactChunk({ ...firstChunk, bytes: otherBytes, chunkDigest: digest(otherBytes) }),
+      /assembled artifact digest/u);
+    assert.deepEqual(reopened.listStoredArtifactChunkIndexes(ids.transferId), [1]);
+    const settled = owner.receiveArtifactChunk(firstChunk);
+    assert.deepEqual(settled, { ...ids, targetDeviceId: scope.targetDeviceId, status: "verified",
+      verifiedChunkIndexes: [0, 1], artifactDigest: offer.digest });
+    assert.deepEqual(owner.receiveArtifactChunk(lastChunk), settled);
+  } finally {
+    reopened.close();
   }
 });
 
