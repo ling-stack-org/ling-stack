@@ -125,6 +125,20 @@ export interface EdgeRuntimeEnrollmentV1 {
   readonly lastSeenAt?: string;
 }
 
+export type EdgeRuntimePlacementModeV1 = "local" | "queued" | "blocked";
+
+export interface EdgeRuntimePlacementDecisionV1 {
+  readonly decisionId: string;
+  readonly runtimeId: string;
+  readonly ownerTaskId: string;
+  readonly targetDeviceId: string;
+  readonly capabilityId: string;
+  readonly sideEffect: CapabilitySideEffectV1;
+  readonly mode: EdgeRuntimePlacementModeV1;
+  readonly reason: "runtime_available" | "offline_read_fallback" | "offline_recovery_queued" | "runtime_revoked" | "offline_write_unsupported";
+  readonly evaluatedAt: string;
+}
+
 export interface DeviceBridgeFrameV1 {
   readonly frameId: string;
   readonly runtimeId: string;

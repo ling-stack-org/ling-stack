@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type {
   DeviceCapabilitySnapshotV1,
+  CapabilitySideEffectV1,
   DeviceConformanceReportV1,
   DeviceContextFactMetadataV1,
   DeviceContextPackV1,
@@ -27,6 +28,8 @@ import type {
   DeviceTwinV1,
   DeviceTwinValueV1,
   EdgeRuntimeEnrollmentV1,
+  EdgeRuntimePlacementDecisionV1,
+  EdgeRuntimePlacementModeV1,
   JsonValue,
 } from "@ling-stack/contracts";
 
@@ -294,6 +297,53 @@ export class EdgeRuntimeRegistry {
 
   list(): readonly EdgeRuntimeEnrollmentV1[] {
     return this.#persistence?.listEdgeRuntimes?.() ?? [...this.#runtimes.values()];
+  }
+}
+
+export class EdgeRuntimePlacementPolicy {
+  decide(input: {
+    readonly runtime: EdgeRuntimeEnrollmentV1;
+    readonly ownerTaskId: string;
+    readonly targetDeviceId: string;
+    readonly capabilityId: string;
+    readonly sideEffect: CapabilitySideEffectV1;
+    readonly hasLocalExecutor: boolean;
+    readonly offlineRecoverySupported: boolean;
+    readonly evaluatedAt: string;
+  }): EdgeRuntimePlacementDecisionV1 {
+    if (!input.ownerTaskId.trim() || !input.targetDeviceId.trim() || !input.capabilityId.trim()
+      || !Number.isFinite(Date.parse(input.evaluatedAt))) {
+      throw new DeviceFabricError("revision_conflict", "edge placement identity or timestamp is invalid");
+    }
+    let mode: EdgeRuntimePlacementModeV1;
+    let reason: EdgeRuntimePlacementDecisionV1["reason"];
+    if (input.runtime.status === "revoked") {
+      mode = "blocked";
+      reason = "runtime_revoked";
+    } else if (input.runtime.status === "enrolled") {
+      mode = "local";
+      reason = "runtime_available";
+    } else if (input.sideEffect === "read_only" && input.hasLocalExecutor) {
+      mode = "local";
+      reason = "offline_read_fallback";
+    } else if (input.offlineRecoverySupported && ["reversible", "mutating"].includes(input.sideEffect)) {
+      mode = "queued";
+      reason = "offline_recovery_queued";
+    } else {
+      mode = "blocked";
+      reason = "offline_write_unsupported";
+    }
+    return {
+      decisionId: `${input.runtime.runtimeId}:${input.ownerTaskId}:${input.capabilityId}:${input.runtime.revision}`,
+      runtimeId: input.runtime.runtimeId,
+      ownerTaskId: input.ownerTaskId,
+      targetDeviceId: input.targetDeviceId,
+      capabilityId: input.capabilityId,
+      sideEffect: input.sideEffect,
+      mode,
+      reason,
+      evaluatedAt: input.evaluatedAt,
+    };
   }
 }
 
