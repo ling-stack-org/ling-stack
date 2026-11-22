@@ -23,7 +23,7 @@ reconnection:
 ```text
 Ling conversation / teammate / channel
   -> existing MCP binding, approval, cancellation, and audit
-  -> built-in:chrome + mcp_chrome_browser
+  -> official:chrome-browser + mcp_chrome_browser
   -> daemon browser session controller
   -> private loopback native broker
   -> com.lingstack.browser Native Messaging Host
@@ -60,7 +60,7 @@ for already-installed `0.1.0` credentials during the `0.1.1`/`0.1.2` migration w
 ## Stable Identities
 
 ```text
-plugin id:                  built-in:chrome
+plugin id:                  official:chrome-browser
 logical MCP id:             mcp_chrome_browser
 business protocol:          ling.chrome.v1
 native transport protocol:  ling.chrome.native.v1
@@ -96,8 +96,9 @@ refresh loop that causes status flicker.
 
 1. The user installs Ling for Chrome from the Web Store and enables Chrome in Ling. These two
    explicit actions form the one-time connection authorization.
-2. Desktop startup idempotently registers `com.lingstack.browser` for Chrome and Chromium. Source
-   users run `ling-stack browser-host install` once.
+2. The Ling package supplies the platform Native Host. Restart Desktop after installing,
+   updating or rolling back that package to register `com.lingstack.browser` for Chrome and
+   Chromium. Source users run `ling-stack browser-host install` once.
 3. The daemon starts a private random-port broker and publishes a short-lived user-only runtime
    descriptor.
 4. The extension connects with `chrome.runtime.connectNative("com.lingstack.browser")`.

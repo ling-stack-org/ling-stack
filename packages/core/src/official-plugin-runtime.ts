@@ -14,14 +14,14 @@ MCowBQYDK2VwAyEA7ua9pbZ24GNj4qwssYOMEiwu7ypghh3pzluiMAX2xXw=
 -----END PUBLIC KEY-----`;
 
 export const OFFICIAL_PLUGIN_RUNTIME_SIGNATURE_CONTEXT = "ling-plugin-runtime-checksums/v1\0";
-const nativeIds = ["official:chrome-browser", "official:office-documents", "official:cua-driver"] as const;
+export const OFFICIAL_NATIVE_PLUGIN_IDS = ["official:chrome-browser", "official:office-documents", "official:cua-driver"] as const;
 const metadataLimit = 512 * 1024;
 const nativeFileLimit = 1024 * 1024 * 1024;
 const digestPattern = /^[a-f0-9]{64}$/u;
-type NativePluginId = (typeof nativeIds)[number];
+type NativePluginId = (typeof OFFICIAL_NATIVE_PLUGIN_IDS)[number];
 
 export function isOfficialNativePluginId(value: string): value is NativePluginId {
-  return (nativeIds as readonly string[]).includes(value);
+  return (OFFICIAL_NATIVE_PLUGIN_IDS as readonly string[]).includes(value);
 }
 
 export function usesHostPluginCache(cacheRef: string | undefined): boolean {

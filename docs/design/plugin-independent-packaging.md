@@ -27,7 +27,7 @@ daemon 验证归档签名后解压到暂存目录，校验 ZIP 路径、逐文�
 ~/.ling-stack/plugins/cache/host/current/<plugin>.json
 ```
 
-选择记录在同一次原子替换中保存当前版本与上一版本。回滚前复验包、平台和 Ling 版本。用户正常退出再启动 Ling 时，Desktop 离线验证选中版本的运行文件并接管新进程。工作区的插件 ID、启用状态、授权及审计沿用原有记录。
+选择记录在同一次原子替换中保存当前版本与上一版本。回滚前复验包、平台和 Ling 版本。用户正常退出再启动 Ling 时，Desktop 离线验证选中版本的运行文件并接管新进程。工作区读取同一用户级签名包的版本和回滚状态，各自保存插件启用状态、授权和审计。首次安装包后仍需在工作区启用插件。
 
 Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容构建可使用包内资源。Cua Driver 的按需模式由 Desktop 包提供运行信任策略。它沿用平台代码签名、系统权限、交互会话、进程隔离和租约检查。Cua Driver 无缓存时保留 Desktop 管理边界，外部进程无法取得该托管运行权。
 
@@ -52,6 +52,7 @@ Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容�
 
 ## 候选构建证据
 
+- 使用隔离用户配置、本地开发目录和临时包签名，Office 候选在真实 daemon 中通过首次安装、更新、重新读取和离线回滚。macOS helper 在三个阶段均响应 `driver_status`。更新测试使用同一 helper 的另一归档版本。自动化回归覆盖空工作区安装、跨工作区显示和回滚、保留工作区启用状态，以及缓存篡改拒绝。
 - Windows x64 的两个未签名开发包使用同一源码 `6e5ab9b99cf87288341ea8362adad95278220c01` 和同一 Electron 版本。安装程序从 789,003,385 减到 743,372,482 字节，降幅 5.78%。解包后常规文件从 2,667,153,787 减到 2,531,662,000 字节，降幅 5.08%。两次构建使用同版 gstack，其清单摘要不同，安装后的体积差集中在插件资源和 `app.asar`。两组均通过 runner 安装、同版本覆盖安装和卸载。兼容包包含 Cua Driver 的插件元数据。真实 GUI、Excel、Chrome、Cua Driver 和用户配置迁移仍需安装版验收。[瘦包运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45060119665) · [兼容包运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45061861558)
 - macOS arm64 的同源码开发对照固定在 `e3eb23bcee73a614e02c1b2fd48c6b38c1995bfb`。两组通过 App 的 ad-hoc 代码签名、DMG 校验和与 ZIP 完整性检查。DMG 从 271,297,948 减到 270,888,791 字节，ZIP 从 261,662,802 减到 261,263,318 字节，解包后常规文件从 780,023,183 减到 778,940,565 字节。开发对照未纳入包内 gstack，也未纳入生产 Cua Driver provider。采用完整发布资源的 macOS 候选仍需 Office 打包源码闭包的独立复核。15 项 Office addon 原生输入摘要均匹配，GitHub runner 的受限命令运行时记录也通过复核。[macOS 开发对照](https://github.com/ling-stack-org/ling-stack/actions/runs/45073421597) · [macOS 发布候选](https://github.com/ling-stack-org/ling-stack/actions/runs/45060119665)
 - Cua Driver 的 macOS A/B 都完成原生测试。两边观察到相同的两个 Mach-O 摘要，均未命中已审核的锁定摘要。Windows 原生构建与托管会话验证的进度记录在生产者 PR 中。[macOS A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45061741519) · [Cua Driver 原生构建](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/1)

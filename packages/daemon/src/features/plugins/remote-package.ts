@@ -3,7 +3,7 @@ import { comparePluginVersions } from "@ling-stack/contracts";
 import { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import JSZip from "jszip";
-import { resolveUserConfigPaths, type LingStackRuntimePaths } from "@ling-stack/core";
+import { resolveUserConfigPaths, type LingStackRuntimePaths, type ManagedPluginStoreFacet } from "@ling-stack/core";
 import {
   isOfficialNativePluginId,
   OFFICIAL_PLUGIN_ARTIFACT_PUBLIC_KEY,
@@ -212,6 +212,54 @@ export async function readCurrentPluginPointer(paths: LingStackRuntimePaths, plu
     if (native) return native;
   }
   return readPointer(pluginPointerPath(paths.pluginCacheDir, pluginId, undefined, "current"));
+}
+
+/** Project the verified host selection into a workspace's distribution state. */
+export async function syncOfficialNativePluginPackage(
+  store: ManagedPluginStoreFacet,
+  pluginId: string,
+  lingVersion: string,
+  now: string,
+): Promise<void> {
+  if (!isOfficialNativePluginId(pluginId)) return;
+  const cacheDir = resolveUserConfigPaths().pluginCacheDir;
+  const pointerPath = officialPluginRuntimePointerPath(cacheDir, pluginId, "current");
+  await withPointerWrite(pointerPath, async () => {
+    const selected = await readPointer(pointerPath);
+    if (!selected || selected.pluginId !== pluginId || selected.platform !== process.platform
+      || selected.arch !== process.arch || !selected.runtimeChecksumSignature
+      || !selected.packageHash || !/^[a-f0-9]{64}$/u.test(selected.packageHash)
+      || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(selected.version)) return;
+    const cacheRef = `host/official-remote/${packageNameFromPluginId(pluginId)}/${selected.version}/${selected.platform}/${selected.arch}/${selected.packageHash.slice(0, 12)}`;
+    if (selected.cacheRef !== cacheRef) return;
+    const previousVersion = selected.previous?.version;
+    const existing = store.getManagedPluginPackage(pluginId);
+    if (existing?.status === "uninstalled"
+      || (existing?.cacheRef === cacheRef && existing.previousVersion === previousVersion)) return;
+
+    const packageRoot = join(cacheDir, cacheRef);
+    let plugin;
+    try {
+      const checksums = await readFile(join(packageRoot, ".ling-plugin", "checksums.json"));
+      if (!verifyOfficialRuntimeChecksumSignature(checksums, selected.runtimeChecksumSignature,
+        process.env.LING_PLUGIN_ARTIFACT_PUBLIC_KEY)) return;
+      await verifyPackageIntegrity(packageRoot, selected);
+      plugin = loadPluginPackageFromRoot(packageRoot);
+      if (!plugin.validation.ok || plugin.id !== pluginId || plugin.manifest.sourceKind !== "official-remote"
+        || plugin.manifest.version !== selected.version || plugin.manifest.artifactId !== selected.artifactId
+        || plugin.manifest.platform !== selected.platform || plugin.manifest.arch !== selected.arch) return;
+      assertCompatibleVersion(plugin.manifest, lingVersion);
+    } catch {
+      // A failed cache check must leave the workspace's package and activation records available.
+      return;
+    }
+    store.upsertManagedPluginPackage({
+      pluginId, sourceKind: "official-remote", version: selected.version, status: "installed",
+      cacheRef, packageHash: selected.packageHash, manifestJson: JSON.stringify(plugin.manifest),
+      artifactId: selected.artifactId, platform: selected.platform, arch: selected.arch,
+      sourceUrl: selected.sourceUrl, catalogVersion: selected.catalogVersion, previousVersion,
+    }, now);
+  });
 }
 
 export async function rollbackRemotePluginArtifact(input: {
