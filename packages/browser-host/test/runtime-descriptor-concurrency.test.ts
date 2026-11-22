@@ -14,11 +14,14 @@ if (!caseName) {
     console.log(`A01 child entered: ${caseName}`);
     const observed = observeA01Descriptor(t, descriptorPathForA01());
     const root = process.env.LING_STACK_DEFAULT_WORKSPACE_CWD;
+    assert.ok(root);
     const a = await createA01Broker({ workspace: join(root, "a") });
     const b = await createA01Broker({ workspace: join(root, "b") });
     try {
       await a.broker.start();
-      const gate = observed.readGate(a.broker.descriptor().generation);
+      const original = a.broker.descriptor();
+      assert.ok(original);
+      const gate = observed.readGate(original.generation);
       const closeA = a.broker.close();
       await bounded(gate.entered.promise, "A real descriptor bytes captured");
       const publishB = b.broker.start();
@@ -27,6 +30,7 @@ if (!caseName) {
       observed.record("release-A-read", { lane }); gate.release.complete();
       await bounded(Promise.all([closeA, publishB]), "both actual broker operations settle");
       const successor = b.broker.descriptor(), after = await observed.actualRead();
+      assert.ok(successor);
       await assertA01BrokerHandshake(successor);
       console.log(`A01 R2 lineage: ${JSON.stringify({ mode: caseName, lane, successorGeneration: successor.generation,
         publishedGeneration: after?.generation ?? null, successorPort: successor.port, successorHandshake: true,
@@ -40,10 +44,11 @@ if (!caseName) {
     console.log(`A01 child entered: ${caseName}`);
     const observed = observeA01Descriptor(t, descriptorPathForA01());
     const root = process.env.LING_STACK_DEFAULT_WORKSPACE_CWD;
+    assert.ok(root);
     const aWorkspace = join(root, "a"), bWorkspace = join(root, "b");
     await fs.mkdir(aWorkspace); await fs.mkdir(bWorkspace);
     const a = spawnA01Worker(import.meta.url, "worker-a", aWorkspace);
-    let b;
+    let b: ReturnType<typeof spawnA01Worker> | undefined;
     try {
       await a.wait("ready"); a.send({ kind: "close" });
       await a.wait("read-captured");
@@ -61,7 +66,7 @@ if (!caseName) {
       assert.equal(after?.port, readyB.port);
     } finally {
       a.send({ kind: "release-read" });
-      for (const worker of [a, b].filter(Boolean)) {
+      for (const worker of [a, b].filter(worker => worker !== undefined)) {
         worker.send({ kind: "finish" });
         try { const exit = await bounded(worker.exited, "owned worker cleanup"); assert.deepEqual(exit, { code: 0, signal: null }); }
         catch (error) { worker.child.kill(); throw error; }
@@ -73,23 +78,32 @@ if (!caseName) {
   assert.ok(caseName === "worker-a" || caseName === "worker-b");
   console.log(`A01 worker entered: ${caseName}`);
   // Workers run directly under node with their own IPC channel, not under --test's channel.
-  const mockContext = { mock, after(callback) { process.once("beforeExit", callback); } };
+  const mockContext = { mock, after(callback: () => void) { process.once("beforeExit", callback); } };
   const observed = observeA01Descriptor(mockContext, descriptorPathForA01());
-  const finished = signal(); let gate, closePromise;
+  assert.ok(process.send && process.disconnect);
+  const send = process.send.bind(process);
+  const finished = signal();
+  let gate: ReturnType<typeof observed.readGate> | undefined;
+  let closePromise: Promise<void> | undefined;
   const f = await createA01Broker();
   process.on("message", message => {
+    assert.ok(message && typeof message === "object" && "kind" in message);
     if (message.kind === "release-read") gate?.release.complete();
     if (message.kind === "finish") { gate?.release.complete(); finished.complete(); }
     if (message.kind === "close" && !closePromise) {
-      gate = observed.readGate(f.broker.descriptor().generation);
-      gate.entered.promise.then(() => process.send({ kind: "read-captured" }));
-      closePromise = f.broker.close().then(() => process.send({ kind: "closed" }));
+      const current = f.broker.descriptor();
+      assert.ok(current);
+      gate = observed.readGate(current.generation);
+      void gate.entered.promise.then(() => send({ kind: "read-captured" }));
+      closePromise = f.broker.close().then(() => { send({ kind: "closed" }); });
     }
   });
-  observed.contention.promise.then(evidence => process.send({ kind: "lock-contention", evidence }));
+  observed.contention.promise.then(evidence => send({ kind: "lock-contention", evidence }));
   try {
     await f.broker.start();
-    process.send({ kind: "ready", generation: f.broker.descriptor().generation, port: f.broker.descriptor().port });
+    const current = f.broker.descriptor();
+    assert.ok(current);
+    send({ kind: "ready", generation: current.generation, port: current.port });
     await bounded(finished.promise, "worker finish", 30_000);
     if (closePromise) await closePromise;
   } finally { observed.releaseAll(); await f.close(); observed.restore(); process.disconnect(); }
