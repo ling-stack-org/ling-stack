@@ -48,6 +48,7 @@ import {
   type LingAppServerWorkItemPlanChangeResult,
   type LingAppServerWorkItemReadResult,
   type LingAppServerWorkItemResult,
+  type LingAppServerWorkflowStageResultSource,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
@@ -116,7 +117,7 @@ import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github
 import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import { sendWorkItemStageMessage, WORKFLOW_STAGE_MESSAGE_ID_PREFIX } from "../features/work-items/stage-messages.js";
-import { readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
+import { readWorkItemWorkflowBinding, readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
 import { enqueueWorkItemFeedback } from "../features/learning/work-item-feedback.js";
 import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
 import { isPrivateHostRecoveryArtifact, toPublicArtifactMetadata } from "../features/runs/public-artifacts.js";
@@ -1175,6 +1176,7 @@ class RpcConnection {
       idempotencyKey: readStringField(record, "idempotencyKey"),
       previousWorkflowId: readOptionalStringField(record, "previousWorkflowId"),
       resolvedPlanChangeIds: record.resolvedPlanChangeIds === undefined ? undefined : readPlanScopeIds(record.resolvedPlanChangeIds, 0),
+      retainStageResults: readRetainedWorkflowStageResults(record.retainStageResults),
     };
     if (input.idempotencyKey.length > 200 || /[\r\n\0]/u.test(input.idempotencyKey)) {
       throw rpcError(-32602, "invalid_params", "Supply a Work Item binding key of up to 200 characters.");
@@ -1192,6 +1194,9 @@ class RpcConnection {
       if (code === "work_item_workflow_held") throw rpcError(-32061, "resume_blocked", "The Work Item or Workflow cannot accept a new binding.");
       if (code === "work_item_workflow_predecessor_unsettled") {
         throw rpcError(-32061, "resume_blocked", "The predecessor Workflow has unsettled Runs or effects.");
+      }
+      if (code === "work_item_workflow_retained_result_stale") {
+        throw rpcError(-32030, "stale_revision", "A retained stage result no longer matches the current predecessor or successor.");
       }
       if (code === "work_item_workflow_not_found") throw rpcError(-32040, "workspace_binding_invalid", "An accepted Work Item and converted Plan in this workspace are required.");
       throw error;
@@ -2564,9 +2569,11 @@ class RpcConnection {
       throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Thread.");
     }
     const itemForRequest = requestedWorkItemId ? store.getWorkItem(requestedWorkItemId) : undefined;
+    const retainedArtifact = itemForRequest?.workflowId && readWorkItemWorkflowBinding(store, itemForRequest.workflowId)?.retainedStageResults
+      ?.some(result => result.sourceArtifactId === artifact.id && result.sourceRunId === run?.id);
     if (requestedWorkItemId && (!itemForRequest || !(artifact.runId && itemForRequest.runId === artifact.runId)
       && !(run?.workflowStepId && itemForRequest.workflowId && store.getChannelWorkflowStep(run.workflowStepId)?.workflowId === itemForRequest.workflowId)
-      && !itemForRequest.artifactIds.includes(artifact.id) && !itemForRequest.proofArtifactIds.includes(artifact.id))) {
+      && !retainedArtifact && !itemForRequest.artifactIds.includes(artifact.id) && !itemForRequest.proofArtifactIds.includes(artifact.id))) {
       throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Work Item.");
     }
     if (this.grant?.subject.kind === "thread" && run?.threadId !== this.grant.subject.id) {
@@ -3191,6 +3198,21 @@ function readPlanScopeIds(value: unknown, minimum = 1): readonly string[] {
     throw rpcError(-32602, "invalid_params", "Supply a bounded list of distinct Plan stage or change IDs.");
   }
   return value as string[];
+}
+
+function readRetainedWorkflowStageResults(value: unknown): readonly LingAppServerWorkflowStageResultSource[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 20) throw rpcError(-32602, "invalid_params", "Supply at most 20 retained stage results.");
+  const results = value.map(input => {
+    const record = readParamsRecord(input);
+    return { sourceStepId: readStringField(record, "sourceStepId"), expectedSourceRevision: readStringField(record, "expectedSourceRevision"),
+      targetStepId: readStringField(record, "targetStepId") };
+  });
+  if (results.some(result => Object.values(result).some(field => !field.trim() || field.length > 256))
+    || new Set(results.map(result => JSON.stringify([result.sourceStepId, result.targetStepId]))).size !== results.length) {
+    throw rpcError(-32602, "invalid_params", "Retained stage results require distinct source and target pairs and bounded revisions.");
+  }
+  return results;
 }
 
 function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | undefined {

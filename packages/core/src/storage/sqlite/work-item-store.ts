@@ -40,7 +40,8 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt, WorkItemLinkedExecution,
-  LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding } from "@ling-stack/contracts";
+  LingAppServerRetainedWorkflowStageResult, LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding,
+  LingAppServerWorkflowStageResultSource } from "@ling-stack/contracts";
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
@@ -60,6 +61,7 @@ export interface SqliteWorkItemStorePorts {
   readonly getTask: RunStore["getTask"];
   readonly getAutomationRun: RunStore["getAutomationRun"];
   readonly getRun: RunStore["getRun"];
+  readonly getArtifact: RunStore["getArtifact"];
 }
 
 interface WorkItemCreationReceipt {
@@ -625,10 +627,12 @@ export class SqliteWorkItemStore {
 
   bindWorkflow(input: LingAppServerWorkItemWorkflowBindParams, now: string, state: SqliteAppServerStateStore,
     events: { readonly store: SqliteControlPlaneStore; readonly cwd: string }, previousWorkflowSettled?: (workflowId: string) => boolean) {
-    const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey, previousWorkflowId, resolvedPlanChangeIds } = input;
+    const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey, previousWorkflowId,
+      resolvedPlanChangeIds, retainStageResults } = input;
     const fingerprint = createHash("sha256").update(JSON.stringify([workItemId, planId, expectedPlanRevision, expectedWorkItemRevision,
       ...(previousWorkflowId === undefined ? [] : [previousWorkflowId]),
-      ...(resolvedPlanChangeIds?.length ? [[...resolvedPlanChangeIds].sort()] : [])])).digest("hex");
+      ...(resolvedPlanChangeIds?.length ? [[...resolvedPlanChangeIds].sort()] : []),
+      ...(retainStageResults?.length ? [retainStageResults.map(result => [result.sourceStepId, result.expectedSourceRevision, result.targetStepId])] : [])])).digest("hex");
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
     try {
@@ -671,8 +675,22 @@ export class SqliteWorkItemStore {
       if (previousWorkflowId && !readSqliteWithinTransaction(database, () => previousWorkflowSettled?.(previousWorkflowId))) {
         throw new Error("work_item_workflow_predecessor_unsettled");
       }
-      const binding = { workItemId, workflowId: workflow.id, threadId: plan.threadId,
-        planId, planRevision: plan.revision, linkedAt: now, ...(previousWorkflowId ? { previousWorkflowId } : {}) };
+      const stageResults: LingAppServerRetainedWorkflowStageResult[] = [];
+      if (retainStageResults?.length) {
+        if (!previousWorkflowId || !resolvedChanges.size) throw new Error("work_item_workflow_retained_result_stale");
+        const affected = new Set(item.holds.filter(hold => resolvedChanges.has(hold.id)).flatMap(hold => hold.workflowStepIds ?? []));
+        for (const input of retainStageResults) {
+          const target = this.ports.getChannelWorkflowStep(input.targetStepId);
+          const result = this.readRetainedStageResult(previousWorkflowId, input);
+          if (!result || affected.has(result.sourceStepId) || target?.workflowId !== workflow.id || target.status !== "queued") {
+            throw new Error("work_item_workflow_retained_result_stale");
+          }
+          stageResults.push(result);
+        }
+      }
+      const binding: LingAppServerWorkItemWorkflowBinding = { workItemId, workflowId: workflow.id, threadId: plan.threadId,
+        planId, planRevision: plan.revision, linkedAt: now, ...(previousWorkflowId ? { previousWorkflowId } : {}),
+        ...(stageResults.length ? { retainedStageResults: stageResults } : {}) };
       state.putWithinTransaction({ kind: "work_item_workflow", recordId: workflow.id, idempotencyKey, expectedRevision: 0,
         payload: { binding, fingerprint } satisfies WorkItemWorkflowLink }, now);
       database.prepare(`UPDATE work_items SET workflow_id=?, plan_revision=?, channel_id=?, holds_json=?, revision=revision+1, updated_at=?,
@@ -701,6 +719,21 @@ export class SqliteWorkItemStore {
         AND status IN ('queued','running','waiting_for_approval','waiting_for_input') LIMIT 1`).get(threadId));
   }
 
+  private readRetainedStageResult(sourceWorkflowId: string, input: LingAppServerWorkflowStageResultSource): LingAppServerRetainedWorkflowStageResult | undefined {
+    const source = this.ports.getChannelWorkflowStep(input.sourceStepId);
+    const sourceStageId = source?.metadata?.planStageId;
+    const sourceRunId = source?.runId;
+    const sourceArtifactId = source?.metadata?.outputArtifactId;
+    if (!source || source.workflowId !== sourceWorkflowId || source.updatedAt !== input.expectedSourceRevision
+      || source.status !== "succeeded" || !sourceStageId || !sourceRunId || !sourceArtifactId) return undefined;
+    const run = this.ports.getRun(sourceRunId);
+    const artifact = this.ports.getArtifact(sourceArtifactId);
+    const packet = artifact?.sealedPayload as { readonly workflowId?: string; readonly workflowStepId?: string; readonly runId?: string } | undefined;
+    if (run?.status !== "succeeded" || run.workflowStepId !== source.id || artifact?.runId !== run.id
+      || packet?.workflowId !== sourceWorkflowId || packet.workflowStepId !== source.id || packet.runId !== run.id) return undefined;
+    return { ...input, sourceWorkflowId, sourceStageId, sourceRunId, sourceArtifactId };
+  }
+
   getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore, step?: ChannelWorkflowStep): string | undefined {
     const link = state.get("work_item_workflow", workflowId)?.payload as WorkItemWorkflowLink | undefined;
     if (!link) {
@@ -722,6 +755,11 @@ export class SqliteWorkItemStore {
     }
     const scopedHolds = item.holds.filter(hold => hold.blocksNewAdmission && hold.workflowStepIds);
     if (step && scopedHolds.some(hold => hold.workflowStepIds!.includes(step.id))) return "work_item_plan_change_pending";
+    if (step && binding.retainedStageResults?.some(retained => {
+      if (retained.targetStepId !== step.id) return false;
+      const current = this.readRetainedStageResult(retained.sourceWorkflowId, retained);
+      return current?.sourceRunId !== retained.sourceRunId || current.sourceArtifactId !== retained.sourceArtifactId;
+    })) return "work_item_retained_stage_stale";
     const successor = plan.supersededByPlanId ? this.ports.getProposedPlanArtifact(plan.supersededByPlanId) : undefined;
     if (successor?.status === "accepted" && successor.acceptedWorkflowId
       && !(scopedHolds.length && step?.runId && ["running", "waiting_for_input", "waiting_for_approval"].includes(step.status))) {

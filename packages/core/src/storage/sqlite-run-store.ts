@@ -1770,6 +1770,7 @@ export class SqliteRunStore implements RunStore {
         getTask: (id) => this.getTask(id),
         getAutomationRun: (id) => this.getAutomationRun(id),
         getRun: (id) => this.getRun(id),
+        getArtifact: (id) => this.getArtifact(id),
       },
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });

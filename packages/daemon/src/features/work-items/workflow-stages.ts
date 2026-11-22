@@ -9,6 +9,23 @@ import { continuationSourceReady } from "../../runtime/continuation-source-barri
 import { isRecord } from "../../shared/validation.js";
 import { readAppServerStageBallot } from "./stage-ballot.js";
 
+export function readWorkItemWorkflowBinding(store: RunStore, workflowId: string): LingAppServerWorkItemWorkflowBinding | undefined {
+  const link = store.getAppServerState("work_item_workflow", workflowId)?.payload as { binding: LingAppServerWorkItemWorkflowBinding } | undefined;
+  return link?.binding;
+}
+
+export function readWorkItemRetainedStageInputs(store: RunStore, step: ChannelWorkflowStep) {
+  if (!step.metadata?.planStageId) return [];
+  const retained = readWorkItemWorkflowBinding(store, step.workflowId)?.retainedStageResults ?? [];
+  return retained.filter(result => result.targetStepId === step.id).map(result => {
+    const packet = store.getArtifact(result.sourceArtifactId)?.sealedPayload;
+    return {
+      stageId: result.sourceStageId, resultArtifactId: result.sourceArtifactId,
+      summary: isRecord(packet) && typeof packet.resultSummary === "string" ? packet.resultSummary.slice(0, 500) : undefined,
+    };
+  });
+}
+
 export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRegistry, workflowId: string): boolean {
   return store.listChannelWorkflowSteps({ workflowId, complete: true }).every(step => {
     if (["claimed", "running", "waiting_for_approval", "waiting_for_input"].includes(step.status)
@@ -24,10 +41,8 @@ export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRe
 /** Work Board and App Server project the actual Workflow owner and its retained evidence. */
 export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, includeEvidence: boolean, offset = 0): LingAppServerWorkItemWorkflowStages | undefined {
   if (!item.workflowId || !item.planRevision) return undefined;
-  const link = store.getAppServerState("work_item_workflow", item.workflowId)?.payload as {
-    readonly binding: LingAppServerWorkItemWorkflowBinding;
-  } | undefined;
-  if (!link) return undefined;
+  const binding = readWorkItemWorkflowBinding(store, item.workflowId);
+  if (!binding) return undefined;
   const workflow = store.getChannelWorkflow(item.workflowId);
   if (!workflow) return undefined;
   const limit = 20;
@@ -49,8 +64,11 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       ...(includeEvidence ? {
         runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
         briefBasis: readStageBriefBasis(store, step),
-        decision: readStageDecision(store, item.id, item.planRevision!, link.binding.planId, step),
+        decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),
         handoffs: readStageHandoffs(store, item.id, item.planRevision!, step),
+        ...(binding.retainedStageResults?.length ? {
+          retainedStageResults: binding.retainedStageResults.filter(result => result.targetStepId === step.id),
+        } : {}),
       } : {}),
     })),
   };
@@ -112,11 +130,9 @@ export function publishWorkItemWorkflowStep(store: RunStore, events: ControlPlan
   if (!events) return;
   const step = store.getChannelWorkflowStep(stepId);
   if (!step) return;
-  const link = store.getAppServerState("work_item_workflow", step.workflowId)?.payload as {
-    binding: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBinding;
-  } | undefined;
-  if (!link) return;
-  const { workItemId, threadId, planId, planRevision } = link.binding;
+  const binding = readWorkItemWorkflowBinding(store, step.workflowId);
+  if (!binding) return;
+  const { workItemId, threadId, planId, planRevision } = binding;
   const revision = createHash("sha256").update(JSON.stringify([step.id, step.updatedAt, step.status, step.runId])).digest("hex");
   const idempotencyKey = `work-item-stage:${revision}`;
   if (store.getControlPlaneEventByIdempotency(step.workspaceId, idempotencyKey)) return;

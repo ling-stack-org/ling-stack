@@ -3023,13 +3023,29 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   await fixture.restart();
   const restored = await fixture.connect();
   await assert.rejects(restored.call("workItem/workflow/bind", { ...rebind, resolvedPlanChangeIds: [] }), { code: "resume_blocked" });
+  const retainedSource = fixture.getStore().getChannelWorkflowStep(p01.id);
+  assert.ok(retainedSource?.metadata?.outputArtifactId);
+  const retainedResult = { sourceStepId: p01.id, expectedSourceRevision: retainedSource.updatedAt, targetStepId: newStep.id };
+  await assert.rejects(restored.call("workItem/workflow/bind", {
+    ...rebind, retainStageResults: [{ ...retainedResult, expectedSourceRevision: new Date(0).toISOString() }],
+  }), { code: "stale_revision" });
   const [boundSuccessor, replay] = await Promise.all([restored, await fixture.connect()].map(connection =>
-    connection.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", rebind)));
+    connection.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", { ...rebind, retainStageResults: [retainedResult] })));
   assert.ok(boundSuccessor && replay);
   assert.deepEqual([boundSuccessor.replayed, replay.replayed].sort(), [false, true]);
   assert.deepEqual(boundSuccessor.binding, replay.binding);
   assert.equal(boundSuccessor.binding.previousWorkflowId, original.workflowId);
   assert.equal(boundSuccessor.binding.workflowId, successor.workflowId);
+  assert.deepEqual(boundSuccessor.binding.retainedStageResults, [{
+    ...retainedResult, sourceWorkflowId: original.workflowId, sourceStageId: "P01", sourceRunId: retainedSource.runId,
+    sourceArtifactId: retainedSource.metadata.outputArtifactId,
+  }]);
+  const stageInputs = await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
+  assert.deepEqual(stageInputs.workflow?.steps.find(step => step.stepId === newStep.id)?.retainedStageResults, boundSuccessor.binding.retainedStageResults);
+  const artifact = await restored.call<{ artifact: { id: string } }>("artifact/read", {
+    workItemId: item.id, artifactId: retainedSource.metadata.outputArtifactId,
+  });
+  assert.equal(artifact.artifact.id, retainedSource.metadata.outputArtifactId);
   assert.equal(boundSuccessor.workItem.control.state, "paused");
   assert.ok(!boundSuccessor.workItem.holds.some(hold => hold.id === scopeChange.receipt.changeId));
   await restored.call("workItem/subscribe", { workItemId: item.id, cursor: before.cursor });
@@ -3047,6 +3063,8 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.equal(restoredStore.listRuns({ workflowStepId: p02.id }).length, 0);
   assert.equal(restoredStore.listRuns({ workflowStepId: newStep.id }).length, 1);
   assert.equal(provider.requests.length, 3);
+  assert.match(JSON.stringify(provider.requests[2]), /Retained upstream results from the predecessor Plan/u);
+  assert.ok(JSON.stringify(provider.requests[2]).includes(retainedSource.metadata.outputArtifactId));
 });
 
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {

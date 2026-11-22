@@ -698,6 +698,20 @@ export interface LingAppServerWorkItemWorkflowBindParams {
   readonly idempotencyKey: string;
   readonly previousWorkflowId?: string;
   readonly resolvedPlanChangeIds?: readonly string[];
+  readonly retainStageResults?: readonly LingAppServerWorkflowStageResultSource[];
+}
+
+export interface LingAppServerWorkflowStageResultSource {
+  readonly sourceStepId: string;
+  readonly expectedSourceRevision: string;
+  readonly targetStepId: string;
+}
+
+export interface LingAppServerRetainedWorkflowStageResult extends LingAppServerWorkflowStageResultSource {
+  readonly sourceWorkflowId: string;
+  readonly sourceStageId: string;
+  readonly sourceRunId: string;
+  readonly sourceArtifactId: string;
 }
 
 export interface LingAppServerWorkItemWorkflowBinding {
@@ -708,6 +722,7 @@ export interface LingAppServerWorkItemWorkflowBinding {
   readonly planRevision: number;
   readonly linkedAt: string;
   readonly previousWorkflowId?: string;
+  readonly retainedStageResults?: readonly LingAppServerRetainedWorkflowStageResult[];
 }
 
 export interface LingAppServerWorkItemWorkflowBindResult extends LingAppServerWorkItemResult {
@@ -754,6 +769,7 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly brief?: string;
     readonly decision?: LingAppServerWorkItemStageDecision;
     readonly handoffs?: readonly LingAppServerStageHandoffProgress[];
+    readonly retainedStageResults?: readonly LingAppServerRetainedWorkflowStageResult[];
     readonly briefBasis?: {
       readonly transitionId: string;
       readonly committedAt: string;

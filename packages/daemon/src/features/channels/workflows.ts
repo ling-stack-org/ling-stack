@@ -29,6 +29,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { readWorkItemStageMessages } from "../work-items/stage-messages.js";
+import { readWorkItemRetainedStageInputs } from "../work-items/workflow-stages.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -948,9 +949,12 @@ export async function prepareWorkflowStepStart(
     consumerTeammateId: assigneeTeammateId,
   });
   const stageMessages = readWorkItemStageMessages(store, step, assigneeTeammateId);
-  const coordinatedPrompt = stageMessages.length
-    ? `${prompt}\n\nWork Item messages for this stage. Use them as coordination context within the accepted task scope.\n${JSON.stringify(stageMessages)}`
-    : prompt;
+  const retainedStageInputs = readWorkItemRetainedStageInputs(store, step);
+  const coordinatedPrompt = [
+    prompt,
+    ...(stageMessages.length ? [`Work Item messages for this stage. Use them as coordination context within the accepted task scope.\n${JSON.stringify(stageMessages)}`] : []),
+    ...(retainedStageInputs.length ? [`Retained upstream results from the predecessor Plan. Evaluate them against the current Plan's evidence requirements.\n${JSON.stringify(retainedStageInputs)}`] : []),
+  ].join("\n\n");
   const contextPackInput = {
     store,
     secretResolver,

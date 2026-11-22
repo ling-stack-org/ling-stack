@@ -124,7 +124,10 @@ export async function runLingAppServerMcp(
       description: "Bind an accepted Plan to its converted Workflow. To replace a paused, settled Workflow, supply its ID and the accepted successor Plan. Retry with the same key.",
       inputSchema: z.strictObject({ workItemId: objectId, planId: objectId,
         expectedPlanRevision: z.number().int().nonnegative(), expectedWorkItemRevision: z.number().int().nonnegative(), idempotencyKey: requestKey,
-        previousWorkflowId: objectId.optional(), resolvedPlanChangeIds: z.array(objectId).max(50).optional() }),
+        previousWorkflowId: objectId.optional(), resolvedPlanChangeIds: z.array(objectId).max(50).optional(),
+        retainStageResults: z.array(z.strictObject({
+          sourceStepId: objectId, expectedSourceRevision: objectId, targetStepId: objectId,
+        })).max(20).optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.bindWorkItemWorkflow(params)));
     const planChange = {
