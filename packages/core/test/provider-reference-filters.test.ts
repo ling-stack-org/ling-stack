@@ -35,7 +35,7 @@ test("sqlite provider reference filters find config and active runtime reference
       approvalProfile: { mode: "none" },
     }, now);
     store.createAiTeammate({
-      roleKey: "analyst",
+      roleKey: "custom",
       displayName: "Analyst",
       description: "Reviews work",
       providerPresetId: "provider_secondary",
