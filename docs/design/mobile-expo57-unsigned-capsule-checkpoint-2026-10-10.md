@@ -43,7 +43,7 @@ The receipt is QA bookkeeping, not an authenticated production approval manifest
 
 ## Regression evidence
 
-[The standard tests](../../apps/mobile/test/unsigned-jsi-capsule.test.mjs) use
+[The standard tests](../../apps/mobile/test/unsigned-jsi-capsule.test.ts) use
 installed upstream shell scripts with a synthetic child that always exits 73.
 It records actual argv but never creates a fake framework or signs a binary.
 Constants tests run the real helper against shallow/deep synthetic bundles.

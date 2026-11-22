@@ -8,7 +8,7 @@ import {
 
 test("pairing confirmation polling survives a transient network failure", async () => {
   let submissions = 0;
-  const transientErrors = [];
+  const transientErrors: unknown[] = [];
   const accepted = await pollForPairingAcceptance({
     expiresAt: "2026-08-01T10:05:00.000Z",
     now: () => Date.parse("2026-08-01T10:00:00.000Z"),

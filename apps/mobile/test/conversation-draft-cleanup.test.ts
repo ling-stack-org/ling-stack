@@ -6,9 +6,9 @@ import {
   removeConversationDraftsFromStorage,
 } from "../src/platform/conversation-draft-cleanup.ts";
 
-function createStorage(entries = []) {
+function createStorage(entries: readonly (readonly [string, string])[] = []) {
   const values = new Map(entries);
-  const removalCalls = [];
+  const removalCalls: string[][] = [];
   let enumerationCalls = 0;
   return {
     values,
@@ -18,7 +18,7 @@ function createStorage(entries = []) {
       enumerationCalls += 1;
       return Object.freeze([...values.keys()]);
     },
-    async multiRemove(keys) {
+    async multiRemove(keys: readonly string[]) {
       removalCalls.push([...keys]);
       for (const key of keys) {
         values.delete(key);
@@ -68,7 +68,7 @@ test("empty storage does not call multiRemove", async () => {
 });
 
 test("a namespace without drafts leaves other stored data untouched", async () => {
-  const entries = [["ling.mobile.theme.v1", "dark"], ["ling.mobile.draft.v1.workspace_binding_2.conversation_1", "saved"]];
+  const entries: [string, string][] = [["ling.mobile.theme.v1", "dark"], ["ling.mobile.draft.v1.workspace_binding_2.conversation_1", "saved"]];
   const storage = createStorage(entries);
 
   await removeConversationDraftsFromStorage(storage, "workspace_binding_1");
