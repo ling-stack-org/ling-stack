@@ -45,11 +45,12 @@ test("a complete SDK write call supplies identity but never its own effect proof
 });
 
 test("unknown completion, repeated call IDs and nested boundaries invalidate the source", () => {
-  for (const corrupt of [
+  const corruptions: ((original: ReturnType<typeof observation.createPiToolBoundaryObservation>) => void)[] = [
     original => original.completeTool("missing", "read"),
     original => { original.enter("id", "read"); original.completeTool("id", "read"); original.enter("id", "read"); },
     original => original.enterProviderBoundary(),
-  ]) {
+  ];
+  for (const corrupt of corruptions) {
     const original = observation.createPiToolBoundaryObservation("run", "attempt");
     corrupt(original);
     original.enterProviderBoundary();
