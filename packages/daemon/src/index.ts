@@ -168,6 +168,7 @@ import { EngineManagementFeature } from "./features/execution-engines/feature.js
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 import { executeRunRequest, type RunExecutionSink } from "./features/runs/orchestrator.js";
+import { appServerRecoveryFor } from "./server/app-server-recovery.js";
 import { CompanionReplyService } from "./features/companions/reply-service.js";
 import { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
 import { WorktreeMaintenanceRegistry } from "./features/workspaces/worktree-retention.js";
@@ -599,6 +600,9 @@ export function createDaemonServer(
       },
     }), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
+    ...(resolvedConfig.appServerRecoveryDirectory ? {
+      recoveryBlocksDispatch: (store: RunStore) => appServerRecoveryFor(resolvedConfig, store)?.blocksDispatch() === true,
+    } : {}),
     recoverOnOpen: false,
     beforeRecovery: (cwd, store) => {
       if (harnessShuttingDown) throw new Error("runtime_shutting_down");

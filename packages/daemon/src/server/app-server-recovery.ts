@@ -80,7 +80,11 @@ export class AppServerRecoveryJournal {
   }
 
   assertReady(): void {
-    this.access(db => assertReady(readEpoch(db)));
+    if (this.blocksDispatch()) throw recoveryBlocked();
+  }
+
+  blocksDispatch(): boolean {
+    return this.access(db => requiresReconciliation(readEpoch(db)));
   }
 
   grantIssuanceEpoch(): string | undefined {
@@ -294,7 +298,11 @@ function requiresReconciliation(epoch: RecoveryEpoch): boolean {
 }
 
 function assertReady(epoch: RecoveryEpoch): void {
-  if (requiresReconciliation(epoch)) throw new HttpError(409, "resume_blocked", "App Server recovery reconciliation is required before new dispatch.");
+  if (requiresReconciliation(epoch)) throw recoveryBlocked();
+}
+
+export function recoveryBlocked(): HttpError {
+  return new HttpError(409, "resume_blocked", "App Server recovery reconciliation is required before new dispatch.");
 }
 
 function assertRevision(epoch: RecoveryEpoch, expected: number): void {

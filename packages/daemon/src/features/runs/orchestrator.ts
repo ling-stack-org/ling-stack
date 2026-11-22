@@ -92,6 +92,7 @@ import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunA
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
+import { recoveryBlocked } from "../../server/app-server-recovery.js";
 import { appendConversationResponseStyle } from "../../shared/conversation-response-style.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { runSuspensionOrderFor } from "../../runtime/run-suspension-order.js";
@@ -345,6 +346,11 @@ export function executeRunRequest(
     }
     if (activeRuns.isShuttingDown()) {
       writeRunPreparationFailure(sink, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
+      return undefined;
+    }
+    if (storeRegistry.recoveryBlocksDispatch(request.workspaceCwd ?? request.cwd)) {
+      const error = recoveryBlocked();
+      writeRunPreparationFailure(sink, error.statusCode, { error: error.code, message: error.message });
       return undefined;
     }
     const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
@@ -1110,6 +1116,7 @@ async function executeAdmittedRunRequest(
           } : undefined);
     const assertPreparationCurrent = (): void => {
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
+      if (!run && storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
       options.automaticIntakeAdmission?.assertCurrent();
       assertHostCapabilitiesCurrent();
       assertWorkflowSafetyRequest(runStore, runRequest);
@@ -1440,6 +1447,7 @@ async function executeAdmittedRunRequest(
       });
     };
     const persistRun = (context?: RunnerContinuationContextIdentity): RunSession => {
+      if (storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
       options.automaticIntakeAdmission?.assertCurrent();
       prepareManagedRuntime();
       const persisted = persistenceStore.createRun({

@@ -17,6 +17,7 @@ import {
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import { appServerRecoveryFor } from "../../server/app-server-recovery.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -228,6 +229,7 @@ export async function handleExternalWorkActionExecute(
   let supervised: ExternalWorkActionRuntimeHandle | undefined;
   let executionResult: ExternalWorkActionExecutionResult | undefined;
   try {
+    appServerRecoveryFor(config, store)?.assertReady();
     const body = await readOptionalJsonBody(request, config.maxBodyBytes);
     const input = parseExternalWorkActionExecuteRequest(body);
     const action = store.getExternalWorkAction(actionId);
