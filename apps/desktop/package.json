@@ -48,8 +48,8 @@
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
     "build:restricted-command-helper:mac": "node scripts/build-restricted-command-helper.mjs --platform darwin",
-    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/package-macos-with-office.mjs",
-    "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/daemon build:engine-supervisor && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64",
+    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/daemon build:peer-worker && corepack pnpm build && node scripts/package-macos-with-office.mjs",
+    "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/daemon build:engine-supervisor && corepack pnpm --filter @ling-stack/daemon build:peer-worker && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64",
     "build:engine-secret-worker": "esbuild ../../packages/daemon/dist/features/execution-engines/engine-secret-worker.js --bundle --platform=node --format=esm --external:@napi-rs/keyring --outfile=dist/daemon/engine-secret-worker.js",
     "build:locked-use:mac": "node scripts/build-locked-use.ts",
     "prepare:locked-use:release": "node scripts/prepare-locked-use-release.ts",
@@ -72,6 +72,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "@napi-rs/keyring": "2.1.2",
+    "@serialport/bindings-cpp": "13.0.0",
     "@ling-stack/core": "workspace:*"
   },
   "devDependencies": {
@@ -171,6 +172,16 @@
           "build-metadata.json",
           "THIRD_PARTY_LICENSES.txt"
         ]
+      },
+      {
+        "from": "../../packages/daemon/dist/native/ling-peer-worker",
+        "to": "ling-peer-worker",
+        "filter": [
+          "ling-peer-worker",
+          "ling-peer-worker.exe",
+          "build-metadata.json",
+          "THIRD_PARTY_LICENSES.txt"
+        ]
       }
     ],
     "mac": {
@@ -234,7 +245,8 @@
       "include": "build/installer.nsh"
     },
     "asarUnpack": [
-      "**/node_modules/@napi-rs/keyring*/**/*.node"
+      "**/node_modules/@napi-rs/keyring*/**/*.node",
+      "**/node_modules/@serialport/bindings-cpp/prebuilds/**/*.node"
     ]
   }
 }

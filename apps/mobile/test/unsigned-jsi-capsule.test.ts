@@ -50,9 +50,9 @@ function fixture() {
   const argvFile = join(root, "nested-argv.txt");
   write(join(commands, "xcrun"), '#!/bin/sh\nprintf "Synthetic Swift version\\n"\n', 0o755);
   write(join(commands, "xcodebuild"), `#!/bin/sh\nprintf '%s\\n' "$@" > '${argvFile}'\nexit 73\n`, 0o755);
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     PATH: `${commands}:/usr/bin:/bin:/usr/sbin:/sbin`, HOME: process.env.HOME,
-    TMPDIR: tmpdir(),
+    TMPDIR: tmpdir(), NODE_ENV: "test" as const,
     PODS_ROOT: pods, REACT_NATIVE_PATH: rnRoot, PLATFORM_NAME: "iphoneos",
     DEVELOPER_DIR: "/synthetic-toolchain", CODE_SIGNING_ALLOWED: "NO", CODE_SIGNING_REQUIRED: "NO",
   };

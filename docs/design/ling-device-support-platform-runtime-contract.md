@@ -73,6 +73,15 @@ check. At dispatch, recheck the current target and relevant prerequisites even i
 snapshot has time remaining. Retain the original planning snapshot and link any
 refreshed snapshot used to dispatch the action.
 
+The Daemon retains each capability snapshot under its device and snapshot IDs
+with its workspace and profile revision. Refresh changes the current pointer.
+A historical ID stays bound to its original facts. Dispatch and reconciliation
+admit work using the current snapshot. The task trace identifies the snapshots
+used for planning, dispatch and readback, with versioned capability summaries.
+Upgrading an existing journal preserves each retained current snapshot. A task
+that references an earlier snapshot missing from storage reports that evidence
+as unavailable.
+
 ### 2.3 Errors and budgets
 
 Expose stable categories for unsupported contract, unsupported capability, missing
@@ -117,6 +126,13 @@ can allow read-only observations under its ordinary scope.
    action arguments or scope.
 5. Use the configured adapter capability within the owner's lease and record its
    response. Verification reads the target state after the action.
+
+The Daemon records the policy, operator-stop revision and access grant applied
+at each dispatch and reconciliation read. The task trace exposes the authorized
+scope, revisions and exact approval digest. A paired Mobile approval also records
+the authenticated device ID, epoch, and Gateway session that presented it.
+Request arguments, credential references and adapter payloads stay in their
+owning records.
 
 The lease serializes access on the owning host. Capabilities that require exclusive
 access across hosts need a documented target session or conditional write that checks
@@ -187,6 +203,17 @@ only after the expected access path works. After expiry, observe the target befo
 reporting it restored. When neither path exists, offer guidance or diagnosis within
 the supported scope.
 
+An adapter marks a write that needs recovery with `requiresRecovery`. An
+alternate-route plan binds an opaque route revision, a baseline observation from
+the same task and snapshot, and a verification deadline. The action digest and
+approval cover that exact plan. The runtime checks the route and baseline under its
+target lease and rechecks current authority before recording dispatch. The owner
+keeps the plan, path verification time, and baseline reference with the attempt.
+Missing fresh readback at the deadline leaves the write outcome unknown for later
+reconciliation. Paired Gateway WebSocket clients negotiate `ling.device-tasks.v4`
+to display the plan and include it in the approval. Versions 1–3 present approvals
+for operations without a recovery plan.
+
 An already offline device may expose a documented setup mode. For the first BLE
 recovery flow, confirm that the user can re-enter setup and that the adapter can check
 the same device after provisioning. If setup ends before the result is observed, use
@@ -233,7 +260,7 @@ capability snapshot, and verification rule.
 | --- | --- |
 | D1 and D2 | Contract fixtures for common and incompatible versions, optional display metadata, invalid action and manifest schemas, unsupported versus denied versus offline, and dispatch after a permission change or reconnect. |
 | D3 | Trace approval, dispatch intent, cancellation, timeout, unknown outcome, and subsequent observation. Include a revoke versus dispatch race and verification after a simulated link loss. Test recovery of the exact baseline when an adapter supports that behavior. |
-| D4 | Read one authorized Home Assistant instance and distinguish an unavailable entity, a stale observation, and an absent capability. Test action verification separately when a supported write is added. |
+| D4 | Read one authorized Home Assistant instance and distinguish unavailable, stale, and absent entities. Read a selected config entry and verify an approved automation re-enable against its registry ID and fresh entity readback. |
 | D5 and D7 | Use repeatable Windows network fault evidence for the diagnostic branch and post-action check. Include an incomplete-data case, injected instructions in observation text, and a local read-only flow with the model service unavailable. |
 | D6 | Reconnect a paired Mobile client to the same daemon task and confirm that disconnect and a duplicate command leave the owner and attempt unchanged. |
 | D9 | Verify one phone restores a supported device's network through official BLE setup with no PC or Gateway. Cover denied permission, link loss and resume, and a local playbook with the model service unavailable. Record the exact phone OS, device model, firmware, and adapter version. |

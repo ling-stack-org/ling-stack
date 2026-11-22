@@ -321,6 +321,99 @@ maintains the SSH session and applies the accepted action. If the PC has its own
 verified connection to the Linux device, the user can select it as the owner at
 task creation.
 
+### PC-owned Linux SSH diagnosis
+
+The Daemon loads a host-owned JSON file from `LING_STACK_DEVICE_SSH_TARGETS_FILE`
+or the embedding option `deviceSupport.linuxSshTargetsFile`. The file belongs
+in the installation's trusted configuration area. Each target includes an
+operator-verified SSH server public key and an absolute path to a local client
+identity. OpenSSH reads the client identity on the executing host.
+
+```json
+{
+  "version": 1,
+  "targets": [
+    {
+      "connectionId": "lab-board",
+      "host": "board.lab.example",
+      "port": 22,
+      "user": "operator",
+      "identityFile": "<absolute path to the local SSH identity>",
+      "hostKey": "ssh-ed25519 <verified public key data>",
+      "credentialRevision": "key-1"
+    }
+  ]
+}
+```
+
+These routes use the direct-loopback Daemon listener and its configured bearer
+authentication. [Daemon routes](../../packages/daemon/src/features/device-support/routes.ts)
+
+| Operation | Route | Request |
+| --- | --- | --- |
+| List candidate and enrolled targets | `GET /v1/device-support/linux/targets` | No body |
+| Verify the supplied host key and enroll the board | `POST /v1/device-support/linux/enroll` | `{"connectionId":"lab-board"}` |
+| Run and persist a read-only diagnosis | `POST /v1/device-support/linux/diagnose` | `{"deviceId":"<enrolled device ID>"}` |
+| Read the durable task journal | `GET /v1/device-support/tasks/<task ID>/events` | Optional `afterSequence`, `generation` and `limit` |
+
+The device ID uses the verified host key fingerprint. A moved target with the
+same key retains its device ID. Update its endpoint or move the client identity
+to a new path in the host configuration and restart the Daemon. Bump
+`credentialRevision` when rotating the client identity in place. The next diagnosis
+revalidates the pin and refreshes the connection binding. A removed target goes
+offline and keeps its journals. A new server key requires enrollment as a new identity.
+
+Network evidence uses `iproute2` JSON output and `iw`. The report records IPv4
+configuration, route selection and Wi-Fi association separately. An optional
+`dnsProbeHostname` adds an IPv4 name-resolution observation through the target's
+DNS service via `getent`. Missing tools and unmeasured reachability remain unknown.
+Each report links its normalized facts to the owned task journal. Network changes
+that could drop SSH access require a verified recovery route or target-side restoration.
+[Linux SSH executor](../../packages/daemon/src/features/device-support/adapters/linux-ssh-executor.ts)
+
+### Phone-owned Linux SSH diagnosis
+
+An Android build with the `LingDeviceTransport` module exposes Linux SSH from
+phone device diagnosis. Enter the board address, port, SSH account and verified
+OpenSSH `SHA256:` host-key fingerprint. The fingerprint comes from the target's
+console or trusted inventory. Submit the account password for this connection.
+The transport checks the pin during the handshake before sending authentication.
+
+The phone runs the same IPv4, route, Wi-Fi and optional DNS observations as the
+PC adapter. It saves the enrolled device identity and endpoint metadata after a
+successful diagnosis. The password is scoped to the submitted operation. The
+local task journal retains typed facts and failure codes. When the app loses
+foreground access it closes the live SSH session and preserves an interrupted
+attempt for inspection after resume.
+[Mobile runtime](../../apps/mobile/src/device/standalone-runtime.ts)
+[Android native session](../../apps/mobile/modules/ling-device-transport/android/src/main/java/expo/modules/lingdevicetransport/PinnedSshSession.java)
+
+The Android native client has passed JVM loopback tests, including host-key
+rejection before authentication, fixed command execution and output bounds. The
+generated Gradle project requires Android SDK 37 for compilation and targets SDK
+36. The default build environment has no complete Android SDK/NDK installation,
+so the native Gradle package has not been accepted yet. Physical Android LAN
+and hotspot runs, native iOS SSH, and a recovery path for network changes remain
+on the acceptance ledger.
+
+### Phone-owned Home Assistant recovery
+
+Open phone device diagnosis and enter the trusted Home Assistant HTTPS origin,
+the entity ID, and the access token. For a disabled automation with a configured
+ID, the phone accepts **Re-enable automation** for 30 seconds after diagnosis.
+Confirmation binds the approved action to the origin, entity, configured ID
+digest, capability snapshot, connection revision and policy revision. The phone
+owns this workflow and its journal independently of PC pairing.
+
+The Mobile adapter rechecks the automation and calls `automation.turn_on` for
+the approved entity if it is still disabled. It reads the entity again and records
+successful verification when the same automation is enabled. A changed identity,
+expired baseline or denied authorization stops dispatch. A lost write response
+or missing readback leaves the result unknown. Another confirmation of the same
+diagnosis returns the saved attempt. The shared trace includes the attempt,
+adapter revision and verification references. The token lives in memory until the
+workflow ends.
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with
@@ -386,6 +479,31 @@ An Android phone can host Ling's developer adapter, with an iPhone still needed 
 test CarPlay. Vehicle acceptance records the exact OS, head unit, connection backend,
 and release. DiPlay remains an independently installed project. Bundling or modifying
 it requires dependency and license review.
+
+### PC-owned Android ADB diagnosis
+
+The Daemon uses an already authorized target on the PC's local Android Platform
+Tools server. Configure an absolute JSON file with `LING_STACK_DEVICE_ADB_TARGETS_FILE`
+or the Daemon embedding setting `deviceSupport.androidAdbTargetsFile`. Each entry
+has a `connectionId`, the serial shown by `adb devices -l` as `adbSerial`, the
+device's trusted `ro.serialno` as `hardwareSerial`, and a `kind` of `android` or
+`head_unit`. For devices that supply only `ro.boot.serialno`, use that value. The
+file sets `version` to `1`, lists entries under `targets`, and can specify an
+absolute `adbPath` when Platform Tools are outside the Daemon's PATH.
+
+| Operation | Route | Request |
+| --- | --- | --- |
+| List configured targets | `GET /v1/device-support/android/targets` | No body |
+| Verify the authorized debugging transport and enroll | `POST /v1/device-support/android/enroll` | `{"connectionId":"bench"}` |
+| Read Android version and package count | `POST /v1/device-support/android/diagnose` | `{"deviceId":"<enrolled device ID>"}` |
+
+The Daemon checks the hardware serial inside the selected ADB transport and
+stores a derived device ID. A change to the ADB transport or build fingerprint
+creates a new connection revision. The package query verifies the same hardware
+serial within its own shell process. The diagnosis uses the PC owner journal
+and projects the OS version and package count. The snapshot advertises the
+operations supported by the selected executor.
+[Daemon ADB target binding](../../packages/daemon/src/features/device-support/android-adb-targets.ts)
 
 ## 6. Acceptance and delivery evidence
 

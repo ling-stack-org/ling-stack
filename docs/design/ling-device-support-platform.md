@@ -341,6 +341,14 @@ The model does not see raw adapter transport methods. A capability broker valida
 target, input schema, current device snapshot, policy, approval state, lease, and action
 idempotency before dispatching an adapter call.
 
+Home Assistant integration recovery uses the same typed path. The adapter reads the
+entity registry and the selected config entry through the authenticated WebSocket API,
+then returns a redacted integration state observation. A disabled automation is a
+separate capability. Ling binds its entity ID and registry ID to a one-time approval,
+calls automation.turn_on, and verifies a fresh entity readback with
+automationEnabled true. A changed registry ID, a non-disabled target, a duplicate
+approval, or a failed service call leaves the task outcome and evidence durable.
+
 Developer sessions add project and authorized device capabilities such as artifact
 deployment, app launch and testing, and scoped diagnostics. Operator-controlled
 native terminals and vendor tools use the target's platform permissions. Their
@@ -601,6 +609,8 @@ for later review.
 
 1. Stabilize contracts, registry, capability descriptors, policy, and task recovery.
 2. Implement a read-only Home Assistant adapter and a small set of diagnosis playbooks.
+   Add typed integration-state diagnosis and approved automation re-enable with fresh
+   readback before adding broader service actions.
 3. Implement the PC adapter and target-side executor for software diagnostics.
 4. Extend the mobile Remote Gateway with device task projection and approvals.
 5. Validate standalone Mobile and its recovery workflow against the shared

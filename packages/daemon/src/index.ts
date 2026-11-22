@@ -1,6 +1,7 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
+import { createDeviceDiagnosisPlanner } from "./features/device-support/diagnosis-planner.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
 import { orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
 import { createWorkflowParallelCapabilityResolver } from "./features/runs/workflow-safety.js";
@@ -18,6 +19,7 @@ import {
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   createCompositeSecretResolver,
+  isSupportedSecretRef,
   getRunSummaryPath,
   resolveStoragePaths,
   type RunStore,
@@ -160,6 +162,12 @@ import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-g
 import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
+import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
+import { parseHomeAssistantOrigin } from "./features/device-support/adapters/home-assistant.js";
+import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
+import { readAndroidAdbTargets } from "./features/device-support/android-adb-targets.js";
+import { readModbusSerialTargets } from "./features/device-support/modbus-serial-targets.js";
+import { readDeviceResourceTrustPolicy } from "./features/device-support/resource-trust.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
@@ -172,6 +180,7 @@ import { reconcileContextViewLineagesAtStartup } from "./features/channels/conte
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, HarnessFeatureConfig, ResolvedDaemonConfig } from "./config.js";
 export * from "./features/harness/index.js";
+export { LingServerControlPlane } from "./features/ling-server/control-plane.js";
 export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter, RunnerNativeResumeInputV1 } from "./context.js";
 export {
   createRunnerRegistry,
@@ -298,6 +307,18 @@ export function createDaemonServer(
   dependencies: DaemonDependencies = {},
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
+  const linuxSshTargets = readLinuxSshTargets(config.deviceSupport?.linuxSshTargetsFile ?? process.env.LING_STACK_DEVICE_SSH_TARGETS_FILE);
+  const androidAdbTargets = readAndroidAdbTargets(config.deviceSupport?.androidAdbTargetsFile ?? process.env.LING_STACK_DEVICE_ADB_TARGETS_FILE,
+    dependencies.androidAdbProcessRunner);
+  const modbusSerialTargets = readModbusSerialTargets(config.deviceSupport?.modbusSerialTargetsFile ?? process.env.LING_STACK_DEVICE_MODBUS_SERIAL_TARGETS_FILE);
+  const deviceResourceTrust = readDeviceResourceTrustPolicy(config.deviceSupport?.resourceTrustFile ?? process.env.LING_STACK_DEVICE_RESOURCE_TRUST_FILE);
+  const homeAssistantOrigin = config.deviceSupport?.homeAssistant?.origin ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_ORIGIN;
+  const homeAssistantTokenRef = config.deviceSupport?.homeAssistant?.tokenRef ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_TOKEN_REF;
+  if ((homeAssistantOrigin !== undefined || homeAssistantTokenRef !== undefined)
+    && (!homeAssistantOrigin || !homeAssistantTokenRef || !isSupportedSecretRef(homeAssistantTokenRef))) {
+    throw new Error("Home Assistant startup configuration requires an origin and a secret reference");
+  }
+  const homeAssistantBaseUrl = homeAssistantOrigin ? parseHomeAssistantOrigin(homeAssistantOrigin) : undefined;
   const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner, resolvedConfig);
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
@@ -1028,10 +1049,25 @@ export function createDaemonServer(
   const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
+  const defaultWorkspaceStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
+  const deviceSupport = createDeviceSupportRuntime({
+    databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
+    protocolTransports: dependencies.deviceProtocolTransports,
+    androidAdbExecutor: dependencies.androidAdbExecutor,
+    androidAdbTargets,
+    obdExecutor: dependencies.obdExecutor,
+    developerExecutor: dependencies.developerExecutor,
+    modbusSerialTargets,
+    resourceTrust: deviceResourceTrust,
+    ...(homeAssistantBaseUrl && homeAssistantTokenRef ? { homeAssistant: {
+      baseUrl: homeAssistantBaseUrl, token: () => secretResolver.resolve(homeAssistantTokenRef).value,
+    } } : {}),
+    createDiagnosisPlanner: createDeviceDiagnosisPlanner({ store: defaultWorkspaceStore, runnerRegistry, secretResolver }),
+  });
   const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null
     ? undefined
     : dependencies.remoteReplyDispatcher ?? new DefaultRemoteReplyDispatcher({
-      store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+      store: defaultWorkspaceStore,
       storeRegistry,
       runnerRegistry,
       activeRuns,
@@ -1045,13 +1081,14 @@ export function createDaemonServer(
       nativeRunDispatcher,
     });
   const remoteAccess = new RemoteAccessController({
-    store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+    store: defaultWorkspaceStore,
     stateDir: dependencies.remoteAccessStateDir ?? defaultStoragePaths.user.stateDir,
     listenerPort: resolvedConfig.remoteAccess.listenerPort,
     workspaceDisplayName: defaultStoragePaths.workspace.identity.displayName,
     managementCapability: remoteAccessManagementCapability,
     managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
     dispatcher: remoteReplyDispatcher,
+    deviceFacade: deviceSupport.remoteFacade,
   });
   const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
   // Terminal-QA human authority is independent of CU gate, live Run or lease.
@@ -1108,6 +1145,7 @@ export function createDaemonServer(
       ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
     computerUseTargetOwnershipTimeoutMs: dependencies.computerUseTargetOwnershipTimeoutMs,
     remoteAccess,
+    deviceSupport,
     engineManagement,
     nativeRunDispatcher,
     chromeBrowserSessions,
@@ -1198,6 +1236,7 @@ export function createDaemonServer(
     closeResources: async () => {
       await engineManagement.close();
       runtimeSupervisor.releaseAll();
+      deviceSupport.close();
       storeRegistry.closeAll();
       closeHostRunCapacity();
       harnessProjectionStores.clear();

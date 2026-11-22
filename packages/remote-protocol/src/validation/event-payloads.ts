@@ -36,6 +36,7 @@ import {
   expectSafeInteger,
   expectString,
 } from "./primitives.js";
+import { validateDeviceListSnapshot, validateDeviceTaskJournal, validateDeviceTaskSnapshot } from "./device.js";
 
 function validateCommandResult(value: unknown, path: string): RemoteCommandResultV1 {
   const record = expectRecord(value, path);
@@ -51,6 +52,14 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "profile_read_requested",
     "profile_updated",
     "device_unpaired",
+    "device_list_requested",
+    "device_task_status_requested",
+    "device_task_journal_read",
+    "device_task_journal_watching",
+    "device_task_journal_unwatched",
+    "device_task_approved",
+    "device_task_revoked",
+    "device_task_rechecked",
   ] as const, `${path}.kind`);
   switch (kind) {
     case "pong":
@@ -64,6 +73,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "conversation_list_requested":
     case "profile_read_requested":
     case "device_unpaired":
+    case "device_task_journal_unwatched":
       assertStrictKeys(record, ["kind"], [], path);
       return { kind };
     case "conversation_opened":
@@ -86,6 +96,27 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "profile_updated":
       assertStrictKeys(record, ["kind", "revision"], [], path);
       return { kind, revision: expectSafeInteger(record.revision, `${path}.revision`, { minimum: 0 }) };
+    case "device_list_requested":
+      assertStrictKeys(record, ["kind"], [], path);
+      return { kind };
+    case "device_task_status_requested":
+      assertStrictKeys(record, ["kind", "taskId"], [], path);
+      return { kind, taskId: expectIdentifier(record.taskId, `${path}.taskId`) };
+    case "device_task_journal_read":
+    case "device_task_journal_watching":
+      assertStrictKeys(record, ["kind", "journal"], [], path);
+      return { kind, journal: validateDeviceTaskJournal(record.journal, `${path}.journal`) };
+    case "device_task_approved":
+    case "device_task_revoked":
+      assertStrictKeys(record, ["kind", "taskId"], [], path);
+      return { kind, taskId: expectIdentifier(record.taskId, `${path}.taskId`) };
+    case "device_task_rechecked":
+      assertStrictKeys(record, ["kind", "taskId", "status"], [], path);
+      return {
+        kind,
+        taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+        status: expectEnum(record.status, ["verified", "unresolved"] as const, `${path}.status`),
+      };
   }
 }
 
@@ -135,6 +166,14 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "profile.read": "profile_read_requested",
   "profile.update": "profile_updated",
   "security.unpair": "device_unpaired",
+  "device.list": "device_list_requested",
+  "device.task.status": "device_task_status_requested",
+  "device.task.journal": "device_task_journal_read",
+  "device.task.journal.watch": "device_task_journal_watching",
+  "device.task.journal.unwatch": "device_task_journal_unwatched",
+  "device.task.approve": "device_task_approved",
+  "device.task.revoke": "device_task_revoked",
+  "device.task.reconcile": "device_task_rechecked",
 };
 
 function validateCommandCompleted(value: unknown, path: string): RemoteCommandCompletedV1 {
@@ -243,6 +282,21 @@ export function validateServerPayload<TType extends RemoteServerEventTypeV1>(
     case "workspace.binding_changed":
       payload = validateBindingChanged(value, path);
       break;
+    case "device.list_snapshot":
+      payload = validateDeviceListSnapshot(value, path);
+      break;
+    case "device.task.snapshot":
+      payload = validateDeviceTaskSnapshot(value, path);
+      break;
+    case "device.task.journal_page": {
+      const record = expectRecord(value, path);
+      assertStrictKeys(record, ["watchId", "journal"], [], path);
+      payload = {
+        watchId: expectIdentifier(record.watchId, `${path}.watchId`),
+        journal: validateDeviceTaskJournal(record.journal, `${path}.journal`),
+      };
+      break;
+    }
   }
   return payload as RemoteServerEventPayloadMapV1[TType];
 }

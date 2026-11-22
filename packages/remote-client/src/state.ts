@@ -7,6 +7,8 @@ import type {
   RemoteConversationReadStateV1,
   RemoteConversationSnapshotV1,
   RemoteConversationSummaryV1,
+  RemoteDeviceListSnapshotV1,
+  RemoteDeviceTaskSnapshotV1,
   RemoteUserProfileV1,
   RemoteWorkspaceSummaryV1,
 } from "@ling-stack/contracts";
@@ -42,6 +44,10 @@ export interface RemoteClientState {
   readonly conversations: Readonly<Record<string, RemoteConversationSummaryV1>>;
   readonly details: Readonly<Record<string, RemoteConversationDetailState>>;
   readonly profile?: RemoteUserProfileV1;
+  readonly deviceOverview?: RemoteDeviceListSnapshotV1;
+  readonly deviceOverviewCurrent?: boolean;
+  readonly deviceTask?: RemoteDeviceTaskSnapshotV1;
+  readonly deviceTaskCurrent?: boolean;
   readonly pendingSends: Readonly<Record<string, RemotePendingSend>>;
   readonly lastError?: string;
 }
@@ -54,6 +60,8 @@ export type RemoteStateAction =
   | { readonly type: "conversation_snapshot"; readonly snapshot: RemoteConversationSnapshotV1; readonly appendOlder: boolean }
   | { readonly type: "conversation_delta"; readonly delta: RemoteConversationDeltaV1 }
   | { readonly type: "profile"; readonly profile: RemoteUserProfileV1 }
+  | { readonly type: "device_overview"; readonly snapshot: RemoteDeviceListSnapshotV1 }
+  | { readonly type: "device_task"; readonly snapshot: RemoteDeviceTaskSnapshotV1 }
   | { readonly type: "send_started"; readonly send: RemotePendingSend }
   | { readonly type: "send_accepted"; readonly commandId: string }
   | { readonly type: "send_completed"; readonly commandId: string; readonly messageId: string }
@@ -72,10 +80,16 @@ export function createInitialRemoteClientState(): RemoteClientState {
 export function reduceRemoteClientState(state: RemoteClientState, action: RemoteStateAction): RemoteClientState {
   switch (action.type) {
     case "connection":
-      return { ...state, connection: action.status, ...(action.error ? { lastError: action.error } : { lastError: undefined }) };
+      return { ...state, connection: action.status, deviceOverviewCurrent: false, deviceTaskCurrent: false, lastError: action.error };
     case "session_ready":
       return {
         ...state,
+        ...(action.policy.capabilities.includes("device.read") && state.deviceOverview?.workspaceId === action.policy.workspaceId
+          ? {} : { deviceOverview: undefined }),
+        ...(action.policy.capabilities.includes("device.read") && state.deviceTask?.workspaceId === action.policy.workspaceId
+          ? {} : { deviceTask: undefined }),
+        deviceOverviewCurrent: false,
+        deviceTaskCurrent: false,
         connection: "connected",
         policy: action.policy,
         workspaceBindingId: action.policy.workspaceBindingId,
@@ -95,6 +109,10 @@ export function reduceRemoteClientState(state: RemoteClientState, action: Remote
       return applyConversationDelta(state, action.delta);
     case "profile":
       return { ...state, profile: action.profile };
+    case "device_overview":
+      return { ...state, deviceOverview: action.snapshot, deviceOverviewCurrent: true };
+    case "device_task":
+      return { ...state, deviceTask: action.snapshot, deviceTaskCurrent: true };
     case "send_started":
       return { ...state, pendingSends: { ...state.pendingSends, [action.send.commandId]: action.send } };
     case "send_accepted": {

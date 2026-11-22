@@ -28,6 +28,7 @@ export interface RemoteAccessPersistentState {
   readonly workspaceBindingId: string;
   readonly conversationAccess: RemoteConversationAccessV1;
   readonly pairedDevice?: PairedRemoteDevice;
+  readonly lingServerMigrationId?: string;
   readonly updatedAt: string;
 }
 
@@ -122,6 +123,11 @@ function parsePersistentState(value: unknown): RemoteAccessPersistentState {
   const gatewayOrigin = value.gatewayOrigin === undefined ? undefined : normalizeGatewayOrigin(expectString(value.gatewayOrigin, "gatewayOrigin"));
   const conversationAccess = parseConversationAccess(value.conversationAccess);
   const pairedDevice = value.pairedDevice === undefined ? undefined : parsePairedDevice(value.pairedDevice);
+  const lingServerMigrationId = value.lingServerMigrationId === undefined ? undefined : expectString(value.lingServerMigrationId, "lingServerMigrationId");
+  if (lingServerMigrationId !== undefined && (!pairedDevice
+    || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/u.test(lingServerMigrationId))) {
+    throw new Error("Ling Server migration selection requires the paired device");
+  }
   if (pairedDevice && pairedDevice.deviceEpoch !== deviceEpoch) {
     throw new Error("Remote paired-device epoch does not match state");
   }
@@ -135,6 +141,7 @@ function parsePersistentState(value: unknown): RemoteAccessPersistentState {
     workspaceBindingId,
     conversationAccess,
     ...(pairedDevice ? { pairedDevice } : {}),
+    ...(lingServerMigrationId ? { lingServerMigrationId } : {}),
     updatedAt,
   };
 }

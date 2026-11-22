@@ -1,4 +1,11 @@
 import type {
+  LingServerConfirmedPairingMigrationV1,
+  LingServerPairingMigrationConfirmationV1,
+  LingServerPairingMigrationPublicationRequestV1,
+  LingServerPairingMigrationRequestV1,
+  LingServerPairingMigrationV1,
+} from "@ling-stack/contracts";
+import type {
   DesktopMobileAccessCapabilities,
   DesktopMobileAccessPairingStartResult,
   DesktopMobileAccessStatus,
@@ -53,6 +60,16 @@ export class DesktopMobileAccessClient implements DesktopMobileAccessCapabilitie
 
   async revoke(): Promise<DesktopMobileAccessStatus> {
     return await this.request("/v1/mobile-access/revoke", "POST", {}) as DesktopMobileAccessStatus;
+  }
+
+  async preparePairingMigration(request: LingServerPairingMigrationRequestV1): Promise<LingServerPairingMigrationV1> {
+    return await this.request("/v1/mobile-access/pairing-migration/prepare", "POST", request) as LingServerPairingMigrationV1;
+  }
+
+  async confirmPairingMigration(request: LingServerPairingMigrationConfirmationV1): Promise<LingServerPairingMigrationPublicationRequestV1> {
+    const { gatewayPublicKeyJwk } = await this.request("/v1/mobile-access/pairing-migration/gateway-key", "GET") as Pick<LingServerPairingMigrationPublicationRequestV1, "gatewayPublicKeyJwk">;
+    const confirmation = await this.request("/v1/mobile-access/pairing-migration/confirm", "POST", request) as LingServerConfirmedPairingMigrationV1;
+    return { confirmation, gatewayPublicKeyJwk };
   }
 
   private async request(path: string, method: "GET" | "POST", body?: unknown): Promise<unknown> {

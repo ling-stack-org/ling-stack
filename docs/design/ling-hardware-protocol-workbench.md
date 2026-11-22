@@ -88,6 +88,19 @@ the broker's typed actions follow the existing execution and verification contra
 
 ### 3.1 Capture provenance and offline replay
 
+The Core hardware transport registry accepts platform-owned USB, BLE, serial,
+RS-485, CAN, OBD and vendor bridges. Each registration binds a target and a
+connection revision. The registry enforces the duration, frame count, total
+bytes and individual frame size. An interrupted capture retains its completed
+frames, records the loss and holds the transport lease until the driver releases it.
+
+An authenticated local operator can create a developer session through
+`POST /v1/device-support/protocol/sessions` with a registered `transportId`,
+the `targetDeviceId` and `profileId`. The capture endpoint for that session accepts
+its `authorizationRevision`. `GET` reads the retained result with its content digest.
+The result includes decoder output and evidence references. Driver installation,
+OS permission and physical validation belong to the host adapter.
+
 - Record target and protocol profile revision, interface or bus channel, acknowledged
   serial or GATT settings, capture source, direction, sequence, bytes or typed fields,
   timestamps, and errors. Mark the capture as host I/O, instrument observation, or
@@ -106,6 +119,57 @@ the broker's typed actions follow the existing execution and verification contra
   new device state on the owning host after a live change. An interrupted write
   follows the runtime contract's observation and reconciliation rules.
   [Approval and recovery contract](ling-device-support-platform-runtime-contract.md#3-approval-and-dispatch)
+
+#### PC Modbus RTU capture
+
+Set `LING_STACK_DEVICE_MODBUS_SERIAL_TARGETS_FILE` to an absolute JSON path or
+set `deviceSupport.modbusSerialTargetsFile` in the Daemon startup configuration.
+For an authorized bench sensor, record the OS port, USB adapter identity,
+documented UART settings, unit address and register range.
+
+```json
+{
+  "version": 1,
+  "targets": [
+    {
+      "transportId": "bench-sensor",
+      "displayName": "Bench temperature sensor",
+      "path": "/dev/cu.usbserial-ABCD",
+      "vendorId": "0403",
+      "productId": "6001",
+      "serialNumber": "ABCD",
+      "baudRate": 9600,
+      "parity": "even",
+      "stopBits": 1,
+      "read": { "unitAddress": 1, "table": "input", "startAddress": 0, "quantity": 1 }
+    }
+  ]
+}
+```
+
+Use `GET /v1/device-support/protocol/transports` to obtain the target and transport
+IDs for the local workbench. Create a session with `profileId` set to
+`modbus-rtu-registers`, then use that session's capture endpoint. The Daemon opens
+the exact configured port only when the OS reports its USB identity. The
+transport sends a holding- or input-register read and records the host request
+and reply. A timeout or disconnect preserves the received bytes as incomplete
+evidence. A completed capture describes the observed traffic, including a device
+exception or a checksum error when the decoder sees one.
+
+For a standard diagnosis, send `POST /v1/device-support/modbus/diagnose` with
+the configured `deviceId`. The broker runs the configured read and reports
+register values only when the reply passes the checksum and matches the request's
+unit, function and register count. Partial, mismatched and exception replies
+produce failed diagnoses with distinct protocol facts. The task journal links
+the observation to a durable capture without placing frame bytes in the diagnosis
+report.
+
+The OS driver must report the USB identity of the adapter. That pins the host
+interface. The Modbus unit address identifies the responding device on the
+configured bus. The operator records the bus wiring and device identity for
+bench acceptance. Use an automatic-direction USB-to-RS-485 adapter for this
+transport. A change to the serial settings or the configured request requires a
+new session after Daemon restart.
 
 ### 3.2 Standalone Mobile and PC collaboration
 
@@ -160,4 +224,31 @@ flowchart TD
 
 The evidence ledger records the actual compatible devices, runtime versions, test
 inputs, replay results, and physical acceptance for each combination.
+
+The Daemon workbench can decode captured Modbus RTU holding and input register
+reads. The capture keeps original frame digests and may record overrun, connection
+loss, or capture-limit evidence. Replay validates the complete retained capture
+before delivering any frame. The register map for the selected device determines
+meaning, units and scaling.
+
+### Local developer capture replay
+
+Use the authenticated Daemon loopback API to list profiles at
+`GET /v1/device-support/protocol/profiles`. Open a replay session with
+`POST /v1/device-support/protocol/sessions` and the selected `profileId` and
+`targetDeviceId`. When the capture is from a disconnected bench device, the
+target ID is the label already recorded in the capture.
+
+Submit `authorizationRevision` and a capture with source `imported` to
+`POST /v1/device-support/protocol/sessions/:sessionId/replay`. The capture records
+its transport, target, timestamp, ordered frames, base64 bytes, per-frame SHA-256
+digests and optional loss. The response gives the retained job and decoded
+fields, including checksum status, frame digest, direction and time.
+
+The decoder runs against the session's recorded profile and codec revisions.
+`GET` on the same replay URL reconstructs the result from the retained bytes.
+Submitting the same capture after a restart resumes the existing job. A changed
+target, authorization revision or capture digest requires a matching session and job.
+[Daemon replay route](../../packages/daemon/src/features/device-support/protocol-routes.ts)
+
 [D13 delivery and evidence](ling-device-support-platform-implementation-plan.md#d13-hardware-protocol-development-and-debugging)

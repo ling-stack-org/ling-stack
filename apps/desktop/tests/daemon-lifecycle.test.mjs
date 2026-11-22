@@ -368,6 +368,7 @@ test("packaged Desktop marks only its fixed child bootstrap as packaged", async 
     defaultWorkspaceCwd: "/tmp/ling-desktop-packaged-workspace",
     packaged: true,
     imageSanitizerPath: "/fixed/product/image-sanitizer/ling-image-sanitizer",
+    peerWorkerPath: "/fixed/product/ling-peer-worker/ling-peer-worker",
     fetch: async () => ++healthChecks === 1
       ? Promise.reject(new TypeError("fetch failed"))
       : daemonHealth("/tmp/ling-desktop-packaged-workspace"),
@@ -377,6 +378,7 @@ test("packaged Desktop marks only its fixed child bootstrap as packaged", async 
   await lifecycle.ensureStarted();
   assert.equal(inputs[0].env.LING_STACK_PACKAGED_DESKTOP, "1");
   assert.equal(inputs[0].env.LING_IMAGE_SANITIZER_PATH, "/fixed/product/image-sanitizer/ling-image-sanitizer");
+  assert.equal(inputs[0].env.LING_PEER_WORKER_PATH, "/fixed/product/ling-peer-worker/ling-peer-worker");
   await lifecycle.stopOwnedDaemon();
 });
 

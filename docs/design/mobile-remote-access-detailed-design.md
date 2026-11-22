@@ -527,6 +527,22 @@ profile.update
 security.unpair
 ```
 
+The Gateway exposes device task access through the `ling.device-tasks.v1` WebSocket
+subprotocol. Sessions on this subprotocol can read workspace-scoped devices, recent
+daemon-owned tasks, and their attempt and verification references. Existing clients
+continue to use the conversation protocol. The PC owns execution and keeps target
+credentials and adapter payloads. Mobile marks the last authorized projection stale
+while offline and reads approval previews from the active session.
+
+`ling.device-tasks.v2` adds PC-owned readback for an unresolved attempt.
+`ling.device-tasks.v3` advertises `device.journal` for `device.task.journal`. The
+Gateway reads the owner's task state and public journal events in a single SQLite
+snapshot, bounded by the requested page size. Each reply carries the owner stream,
+generation, requested cursor, and latest sequence. The mobile client checks the task
+and workspace, keeps its displayed page on disconnect, and resumes from the last
+displayed sequence. An invalid cursor returns the current owner state and asks the
+client to read the current generation. Private observations remain in the PC journal.
+
 The 2026-08-01 completion scope adds independently removable capabilities and commands:
 
 ```text

@@ -25,8 +25,7 @@ export function isDirectLoopbackRequest(request: IncomingMessage): boolean {
   return localPeer && localHost && !forwarded;
 }
 
-/** User-level services without bearer authentication must stay on the local listener. */
-export function allowLocalServiceRequest(request: IncomingMessage, response: ServerResponse): boolean {
+export function isLocalServiceRequest(request: IncomingMessage): boolean {
   const headers = request.headers;
   let localOrigin = headers.origin === undefined;
   if (headers.origin !== undefined) {
@@ -34,7 +33,12 @@ export function allowLocalServiceRequest(request: IncomingMessage, response: Ser
       localOrigin = isAllowedLocalOrigin(headers.origin) && new URL(headers.origin).origin === headers.origin;
     } catch { localOrigin = false; }
   }
-  if (!isDirectLoopbackRequest(request) || !localOrigin || hasMissingBrowserOrigin(request)) {
+  return isDirectLoopbackRequest(request) && localOrigin && !hasMissingBrowserOrigin(request);
+}
+
+/** User-level services without bearer authentication must stay on the local listener. */
+export function allowLocalServiceRequest(request: IncomingMessage, response: ServerResponse): boolean {
+  if (!isLocalServiceRequest(request)) {
     writePrivateJson(response, 403, { error: "local_service_forbidden", message: "This service requires a local Ling page or authenticated daemon access." });
     return false;
   }

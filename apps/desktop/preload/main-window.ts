@@ -201,6 +201,8 @@ const capabilities: LingDesktopCapabilities = {
     confirmPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingConfirm),
     rejectPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingReject),
     revoke: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessRevoke),
+    preparePairingMigration: (request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationPrepare, request),
+    confirmPairingMigration: (request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationConfirm, request),
   },
   executionEngines: {
     discover: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesDiscover),

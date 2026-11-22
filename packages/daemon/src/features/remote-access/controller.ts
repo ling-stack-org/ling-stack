@@ -1,15 +1,26 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import {
   DEFAULT_WORKSPACE_ID,
+  LingServerPairingMigrationJournal,
+  SqliteLingServerStore,
   type RunStore,
 } from "@ling-stack/core";
 import {
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_PROTOCOL_LIMITS,
+  type LingServerGatewayRouteV1,
+  type RemoteAuthChallengeV1,
   type RemoteCapabilityV1,
 } from "@ling-stack/contracts";
+import { lingServerGatewayDeviceTasksProtocol, parseRemoteAuthFrameV1, remoteWebSocketChannel, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
 import type { RemoteReplyDispatcher } from "./dispatch-worker.js";
 import { RemoteDispatchWorker } from "./dispatch-worker.js";
 import { RemoteConversationFacade } from "./conversation-facade.js";
@@ -17,10 +28,20 @@ import { RemoteAccessError } from "./errors.js";
 import {
   createRemoteGatewayIdentity,
   RemotePairingAuthService,
+  type AuthenticatedRemoteSession,
 } from "./pairing-auth-service.js";
 import { RemoteProjectionOutboxWorker } from "./projection-outbox-worker.js";
 import { RemoteGatewaySession } from "./session.js";
 import { RemoteAccessStateStore } from "./state-store.js";
+import type { RemoteDeviceFacade } from "./device-facade.js";
+import { LingServerGatewayPeer } from "./ling-server-gateway-peer.js";
+import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "./pion-peer-worker.js";
+
+const deviceTaskProtocols = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+];
 
 const LOOPBACK_HOST = "127.0.0.1";
 const MANAGEMENT_PREFIX = "/v1/mobile-access";
@@ -33,6 +54,7 @@ export interface RemoteAccessControllerOptions {
   readonly managementCapability: string;
   readonly managementAllowedOrigins: readonly string[];
   readonly dispatcher?: RemoteReplyDispatcher;
+  readonly deviceFacade?: RemoteDeviceFacade;
   readonly now?: () => string;
 }
 
@@ -54,14 +76,24 @@ export interface RemoteAccessStatus {
   readonly sendEnabled: boolean;
 }
 
+interface RoutedSessionAuthentication {
+  readonly challenge: RemoteAuthChallengeV1;
+  readonly routeExpiresAt: number;
+  readonly authorityUntil: () => number;
+}
+
 export class RemoteAccessController {
   readonly csrfToken: string;
   private readonly now: () => string;
   private readonly stateStore: RemoteAccessStateStore;
   private readonly auth: RemotePairingAuthService;
+  private pairingMigrationStore?: SqliteLingServerStore;
+  private lingServerPeer?: LingServerGatewayPeer;
   private remoteServer?: Server;
   private webSocketServer?: WebSocketServer;
   private activeSession?: RemoteGatewaySession;
+  private readonly pendingAuthentications = new Set<() => void>();
+  private stopped = false;
   private pollTimer?: NodeJS.Timeout;
   private drainPromise?: Promise<void>;
 
@@ -84,10 +116,11 @@ export class RemoteAccessController {
       stateStore: this.stateStore,
       now: this.now,
       onSecurityStateChanged: (reason) => {
-        if (reason === "disabled") {
-          this.activeSession?.revoke("disabled");
-        } else if (reason === "revoked") {
-          this.activeSession?.revoke("revoked");
+        if (reason !== "paired") {
+          this.cancelPendingAuthentication();
+          this.activeSession?.revoke(reason);
+          this.lingServerPeer?.stop();
+          this.lingServerPeer = undefined;
         }
       },
     });
@@ -100,9 +133,15 @@ export class RemoteAccessController {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     this.stopPolling();
-    this.activeSession?.revoke("disabled");
+    this.lingServerPeer?.stop();
+    this.lingServerPeer = undefined;
+    this.cancelPendingAuthentication();
+    this.activeSession?.disconnect();
     this.activeSession = undefined;
+    this.pairingMigrationStore?.close();
+    this.pairingMigrationStore = undefined;
     const server = this.remoteServer;
     const webSocketServer = this.webSocketServer;
     this.remoteServer = undefined;
@@ -115,6 +154,28 @@ export class RemoteAccessController {
       server.close(() => resolve());
       server.closeAllConnections();
     });
+  }
+
+  /** Accept an open channel and route context from the local, authenticated peer transport. */
+  attachLingServerPeer(input: {
+    readonly route: LingServerGatewayRouteV1;
+    readonly channel: RemoteMessageChannel;
+    readonly authorityUntil?: () => number;
+  }): void {
+    const { channel, route } = input;
+    try {
+      if (this.stopped || channel.readyState !== 1) throw new Error("Peer transport is unavailable.");
+      const authentication = this.auth.createRoutedAuthentication(route);
+      const routeExpiresAt = Date.parse(route.expiresAt);
+      this.acceptSessionChannel(channel, authentication.verify, lingServerGatewayDeviceTasksProtocol(route), {
+        challenge: authentication.challenge,
+        routeExpiresAt,
+        authorityUntil: input.authorityUntil ?? (() => routeExpiresAt),
+      });
+    } catch (error) {
+      channel.close(1008, "Peer authentication unavailable.");
+      throw error;
+    }
   }
 
   status(): RemoteAccessStatus {
@@ -203,6 +264,23 @@ export class RemoteAccessController {
         writeManagementJson(response, 200, this.status(), origin);
         return true;
       }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/pairing-migration/prepare` && request.method === "POST") {
+        const input = await readJson(request);
+        const migration = this.auth.prepareLingServerPairingMigration(this.pairingMigrationJournal(), input);
+        writeManagementJson(response, 200, migration, origin);
+        return true;
+      }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/pairing-migration/confirm` && request.method === "POST") {
+        const input = await readJson(request);
+        const migration = this.auth.confirmLingServerPairingMigration(this.pairingMigrationJournal(), input);
+        this.refreshLingServerPeer();
+        writeManagementJson(response, 200, migration, origin);
+        return true;
+      }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/pairing-migration/gateway-key` && request.method === "GET") {
+        writeManagementJson(response, 200, { gatewayPublicKeyJwk: this.auth.identity.publicKeyJwk }, origin);
+        return true;
+      }
       if (url.pathname === `${MANAGEMENT_PREFIX}/revoke` && request.method === "POST") {
         this.auth.revokeDevice();
         writeManagementJson(response, 200, this.status(), origin);
@@ -218,6 +296,37 @@ export class RemoteAccessController {
       }, origin);
       return true;
     }
+  }
+
+  private migrationStore(): SqliteLingServerStore {
+    this.pairingMigrationStore ??= new SqliteLingServerStore({ databasePath: join(this.options.stateDir, "ling-server-pairing-migrations.sqlite") });
+    return this.pairingMigrationStore;
+  }
+
+  private refreshLingServerPeer(): void {
+    const { enabled, lingServerMigrationId } = this.auth.state();
+    const selected = this.remoteServer?.listening && enabled && lingServerMigrationId;
+    if (selected && selected === this.lingServerPeer?.migrationId) return;
+    this.lingServerPeer?.stop();
+    this.lingServerPeer = undefined;
+    if (!selected) return;
+    const executable = resolvePionPeerWorker();
+    if (!executable) return;
+    const confirmed = this.migrationStore().getPairingMigration(selected);
+    if (confirmed?.status !== "confirmed") return;
+    const options = this.auth.lingServerRendezvousOptions(confirmed);
+    if (options) {
+      this.lingServerPeer = new LingServerGatewayPeer(selected, options, createPionPeerConnectionFactory(executable), (route, channel, authorityUntil) =>
+        this.attachLingServerPeer({ route, channel, authorityUntil }));
+    }
+  }
+
+  private pairingMigrationJournal(): LingServerPairingMigrationJournal {
+    return new LingServerPairingMigrationJournal({
+      store: this.migrationStore(),
+      readReceipt: commandId => this.options.store.getRemoteCommandReceipt(commandId),
+      now: this.now,
+    });
   }
 
   private async startListener(): Promise<void> {
@@ -237,7 +346,11 @@ export class RemoteAccessController {
         }
       });
     });
-    const webSocketServer = new WebSocketServer({ noServer: true, maxPayload: REMOTE_PROTOCOL_LIMITS.maxFrameBytes });
+    const webSocketServer = new WebSocketServer({
+      noServer: true,
+      maxPayload: REMOTE_PROTOCOL_LIMITS.maxFrameBytes,
+      handleProtocols: protocols => deviceTaskProtocols.find(protocol => protocols.has(protocol)) ?? false,
+    });
     server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
       if (url.pathname !== "/v1/session") {
@@ -245,58 +358,7 @@ export class RemoteAccessController {
         return;
       }
       webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
-        const authenticationTimeout = setTimeout(() => webSocket.close(1008, "Authentication proof required."), 10_000);
-        authenticationTimeout.unref();
-        webSocket.once("message", (data, isBinary) => {
-          clearTimeout(authenticationTimeout);
-          if (isBinary) {
-            webSocket.close(1008, "Authentication proof must be JSON.");
-            return;
-          }
-          let proof: unknown;
-          try {
-            proof = JSON.parse(data.toString()) as unknown;
-          } catch {
-            webSocket.close(1008, "Authentication proof is invalid JSON.");
-            return;
-          }
-          void this.auth.verifyAuthProof(proof).then((authenticated) => {
-            this.activeSession?.revoke("replaced");
-            const currentState = this.auth.state();
-            const capabilities = this.capabilities();
-            const facade = new RemoteConversationFacade({
-              store: this.options.store,
-              workspaceId: DEFAULT_WORKSPACE_ID,
-              workspaceBindingId: currentState.workspaceBindingId,
-              workspaceDisplayName: this.options.workspaceDisplayName,
-              conversationAccess: currentState.conversationAccess,
-              policyVersion: currentState.policyVersion,
-              now: this.now,
-            });
-            const session = new RemoteGatewaySession({
-              socket: webSocket,
-              authenticated,
-              gatewayId: this.auth.identity.gatewayId,
-              facade,
-              policy: facade.policySummary(capabilities),
-              now: this.now,
-              onMutation: () => this.scheduleDrain(),
-              onSelfUnpair: () => {
-                setTimeout(() => this.auth.revokeDevice(), 0).unref();
-              },
-              onClosed: (closed) => {
-                if (this.activeSession === closed) {
-                  this.activeSession = undefined;
-                }
-              },
-            });
-            this.activeSession = session;
-            this.startPolling();
-            this.scheduleDrain();
-          }).catch((error) => {
-            webSocket.close(1008, error instanceof Error ? error.message.slice(0, 120) : "Authentication failed.");
-          });
-        });
+        this.acceptSessionChannel(remoteWebSocketChannel(webSocket), proof => this.auth.verifyAuthProof(proof), webSocket.protocol);
       });
     });
     await new Promise<void>((resolve, reject) => {
@@ -308,7 +370,122 @@ export class RemoteAccessController {
     });
     this.remoteServer = server;
     this.webSocketServer = webSocketServer;
+    this.stopped = false;
     this.startPolling();
+    this.refreshLingServerPeer();
+  }
+
+  private acceptSessionChannel(
+    channel: RemoteMessageChannel,
+    verify: (value: unknown) => Promise<AuthenticatedRemoteSession>,
+    protocol: string,
+    peer?: RoutedSessionAuthentication,
+  ): void {
+    let pending = true;
+    let verifying = false;
+    let detach: (() => void) | undefined;
+    const finish = (): boolean => {
+      if (!pending) return false;
+      pending = false;
+      detach?.();
+      clearTimeout(timeout);
+      this.pendingAuthentications.delete(cancel);
+      return true;
+    };
+    const reject = (reason: string) => {
+      if (finish()) channel.close(1008, reason.slice(0, 120));
+    };
+    const cancel = () => reject("Authentication cancelled.");
+    const timeout = setTimeout(() => reject("Authentication proof required."), 10_000);
+    timeout.unref();
+    this.pendingAuthentications.add(cancel);
+    try {
+      detach = channel.subscribe({
+        received: data => {
+          if (verifying || typeof data !== "string") {
+            reject("One JSON authentication proof is required.");
+            return;
+          }
+          verifying = true;
+          void (async () => {
+            const authenticated = await verify(parseRemoteAuthFrameV1(data));
+            if (!finish() || channel.readyState !== 1) return;
+            try {
+              this.activateSession(channel, authenticated, protocol, peer);
+            } catch {
+              channel.close(1008, "Authentication no longer current.");
+            }
+          })().catch(error => reject(error instanceof Error ? error.message : "Authentication failed."));
+        },
+        closed: finish,
+        failed: () => reject("Authentication transport failed."),
+      });
+      if (peer) channel.send(JSON.stringify(peer.challenge));
+    } catch {
+      reject("Authentication transport failed.");
+    }
+  }
+
+  private activateSession(
+    channel: RemoteMessageChannel,
+    authenticated: AuthenticatedRemoteSession,
+    protocol: string,
+    peer?: RoutedSessionAuthentication,
+  ): void {
+    const current = this.auth.state();
+    const device = current.pairedDevice;
+    const nowMs = Date.parse(this.now());
+    if (this.stopped || !current.enabled || !device || device.deviceId !== authenticated.device.deviceId
+      || device.deviceEpoch !== authenticated.device.deviceEpoch || device.publicKeyFingerprint !== authenticated.device.publicKeyFingerprint
+      || (peer && !(nowMs < Math.min(peer.routeExpiresAt, peer.authorityUntil())))) {
+      throw new Error("Authentication no longer current.");
+    }
+    const deviceFacade = deviceTaskProtocols.includes(protocol) ? this.options.deviceFacade : undefined;
+    const capabilities = this.capabilities(deviceFacade ? protocol : "");
+    const facade = new RemoteConversationFacade({
+      store: this.options.store,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      workspaceBindingId: current.workspaceBindingId,
+      workspaceDisplayName: this.options.workspaceDisplayName,
+      conversationAccess: current.conversationAccess,
+      policyVersion: current.policyVersion,
+      now: this.now,
+    });
+    const session = new RemoteGatewaySession({
+      channel,
+      authenticated,
+      gatewayId: this.auth.identity.gatewayId,
+      facade,
+      deviceFacade,
+      recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+      isPairedDeviceCurrent: () => {
+        const state = this.auth.state();
+        const device = state.pairedDevice;
+        return !this.stopped && state.enabled && device?.deviceId === authenticated.device.deviceId
+          && device.deviceEpoch === authenticated.device.deviceEpoch && state.policyVersion === current.policyVersion
+          && (!peer || Date.parse(this.now()) < peer.authorityUntil());
+      },
+      routeAuthorityUntil: peer?.authorityUntil,
+      policy: facade.policySummary(capabilities),
+      now: this.now,
+      onMutation: () => this.scheduleDrain(),
+      onSelfUnpair: () => {
+        setTimeout(() => this.auth.revokeDevice(), 0).unref();
+      },
+      onClosed: closed => {
+        if (this.activeSession === closed) this.activeSession = undefined;
+      },
+    });
+    if (session.isClosed) return;
+    const prior = this.activeSession;
+    this.activeSession = session;
+    prior?.revoke("replaced");
+    this.startPolling();
+    this.scheduleDrain();
+  }
+
+  private cancelPendingAuthentication(): void {
+    for (const cancel of this.pendingAuthentications) cancel();
   }
 
   private async handleRemoteHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -353,7 +530,10 @@ export class RemoteAccessController {
     }
   }
 
-  private capabilities(): readonly RemoteCapabilityV1[] {
+  private capabilities(deviceTaskProtocol: string): readonly RemoteCapabilityV1[] {
+    const supportsJournalWatch = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5;
+    const supportsJournal = supportsJournalWatch || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3
+      || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4;
     return [
       "conversation.read",
       ...(this.options.dispatcher ? ["conversation.send_text" as const] : []),
@@ -361,6 +541,10 @@ export class RemoteAccessController {
       "profile.read",
       "profile.update",
       "security.unpair",
+      ...(deviceTaskProtocol ? ["device.read" as const, "device.approve" as const, "device.revoke" as const] : []),
+      ...(supportsJournal || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 ? ["device.reconcile" as const] : []),
+      ...(supportsJournal ? ["device.journal" as const] : []),
+      ...(supportsJournalWatch ? ["device.journal.watch" as const] : []),
     ];
   }
 
@@ -368,7 +552,10 @@ export class RemoteAccessController {
     if (this.pollTimer) {
       return;
     }
-    this.pollTimer = setInterval(() => this.scheduleDrain(), 250);
+    this.pollTimer = setInterval(() => {
+      this.activeSession?.pushDeviceJournalPage();
+      this.scheduleDrain();
+    }, 250);
     this.pollTimer.unref();
   }
 

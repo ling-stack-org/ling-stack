@@ -2,14 +2,14 @@
 
 Status: retained implementation handoffs; historical checkpoints are not current acceptance
 Owner: repository maintainers
-Last verified: 2026-10-08 (document relocation and links only)
+Last verified: 2026-11-22 (device capability and approval history, Gateway PC task journal over Ling Server relay)
 Document type: maintenance handoff
 Code and test anchors: the owning plans and source modules linked below
 
 ## Reading Boundary
 
 This page preserves the implementation handoff previously embedded in the design index
-and five source checkpoints. Their test counts, branch names, remaining work and local
+and subsequent development checkpoints. Their test counts, branch names, remaining work and local
 instructions describe the recorded snapshot, not today's `main` or a new authorization.
 Use [Implementation Status](../design/implementation-status.md), the
 [Typed Transcript implementation plan](../design/conversation-codex-style-transcript-implementation-plan.md),
@@ -26,12 +26,215 @@ are not published here. The relay URL and temporary development checkout are exa
 
 ## Contents
 
+- [Device Support Platform checkpoint, 2026-11-21](#device-support-platform-checkpoint-2026-11-21)
+- [Device Support Platform continuation, 2026-11-22](#device-support-platform-continuation-2026-11-22)
+- [Device Support Platform adapter isolation, 2026-11-22](#device-support-platform-adapter-isolation-2026-11-22)
+- [Device Support Platform Home Assistant and verification, 2026-11-22](#device-support-platform-home-assistant-and-verification-2026-11-22)
+- [Device Support Platform live capture, collaboration and semantic context, 2026-11-22](#device-support-platform-live-capture-collaboration-and-semantic-context-2026-11-22)
+- [Device Support Platform recovery, catalogs and conformance, 2026-11-22](#device-support-platform-recovery-catalogs-and-conformance-2026-11-22)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
 - [Office observation boundary, 2026-10-05](#office-observation-boundary-2026-10-05)
 - [Office readonly closure facts, 2026-10-06](#office-readonly-closure-facts-2026-10-06)
 - [Reasoning-summary and automatic-review checkpoint, 2026-09-14](#reasoning-autoreview-checkpoint-2026-09-14)
+
+## Device Support Platform Checkpoint 2026-11-21
+
+The `codex/device-platform-implementation` branch incorporates `origin/main` at
+`7bd8cb5fb` through merge commit `8986aad3a`. The earlier merge `93791a2ec` keeps
+the complete Remote Client TypeScript test entry point and the device-task
+approval, revoke, reconnect and readback tests. D1 and D2 have completed their
+tracked core checks. D3–D22 remain in progress.
+[Per-slice implementation ledger](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+
+Commit `fdb3b50f7` uses the configured OpenSSH trust-store path and reads the target's
+IPv4 configuration, route lookup and wireless association as separate facts. Gateway
+and DNS reachability remain unknown without probes. An interrupted restart retains
+its uncertain receipt. The broker appends fresh observations to evaluate the approved
+rule, and a replay returns the original attempt. The fixture exercises missing,
+negative and matching readback with a single restart dispatch.
+[SSH executor](../../packages/daemon/src/features/device-support/adapters/linux-ssh-executor.ts)
+[Readback fixture](../../packages/daemon/test/device-support-adapters.test.ts)
+
+### Software verification
+
+The device checkpoint passed 234 local tests. The combined run used the package type checks
+for Contracts, Core, Daemon, Remote Protocol, Remote Client and Mobile, plus the Core
+and Daemon builds. Remote Client's `test` command also built its shared dependencies.
+
+| Area | Command from the repository root | Passed |
+| --- | --- | ---: |
+| Contracts | `node --test packages/contracts/test/device.test.ts` | 5 |
+| Core | `node --test packages/core/test/device-{support,developer,fabric,fabric-store,orchestration}.test.ts packages/core/test/ling-server-protocol.test.ts` | 57 |
+| Daemon | `node --test packages/daemon/test/{device-support-adapters,device-support-runtime,device-remote-facade,linux-ssh-executor,local-pc-executor,ling-server-control-plane}.test.ts packages/daemon/test/remote-gateway-security.test.mjs` | 23 |
+| Remote Protocol | `corepack pnpm --filter @ling-stack/remote-protocol test:ci` | 42 |
+| Remote Client | `corepack pnpm --filter @ling-stack/remote-client test` | 12 |
+| Mobile | `corepack pnpm --filter @ling-stack/mobile test:ci` | 95 |
+
+The main sync also passed 42 scope-selection tests with
+`node --test scripts/ci/classify-scope.test.ts`.
+
+OpenSSH `ssh -G` resolved the explicit known-hosts file path with spaces. This
+checkpoint exercised device paths through local fixtures and loopback services. Linux
+LAN and hotspot runs, packaged PC and Mobile clients, and physical head-unit,
+smart-home, hardware and Edge runs remain on the acceptance ledger.
+[Platform completion criteria](../design/ling-device-support-platform-implementation-plan.md#definition-of-platform-completion)
+
+### Resume work
+
+1. Wire authorized Linux connection enrollment and its credential reference to the
+   Daemon broker. Use the existing task journal for a read-only Linux diagnosis
+   report and confirm that the selected target identity persists across reconnects.
+   Record association, addressing, route and DNS evidence on the intended LAN and
+   phone hotspot. [Linux case flow](../design/ling-device-developer-execution.md#4-case-flow-linux-device-with-wi-fi-trouble)
+2. Attach the Mobile client to the owner's resumable task evidence and carry the
+   approval audit through the existing task detail. Keep phone-owned execution and
+   PC-owned tasks in their respective journals when adding native SSH.
+   [D6 paired Mobile](../design/ling-device-support-platform-implementation-plan.md#d6-mobile-device-task-facade)
+   [D9 standalone Mobile](../design/ling-device-support-platform-implementation-plan.md#d9-standalone-mobile-execution)
+   [D17 event plane](../design/ling-device-support-platform-implementation-plan.md#d17-event-and-telemetry-plane)
+3. Continue the developer, peer connectivity and Edge integration against the
+   per-slice gates. Capture direct and relayed workflows and keep each physical
+   result linked to its owner, adapter version, target and verification attempt.
+   [Developer, connectivity and field gates](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+
+## Device Support Platform Continuation 2026-11-22
+
+The new `codex/device-platform-complete` branch starts from the current
+`origin/main` at `75ad8920f` and keeps the earlier implementation through merge
+commit `d6f5c5250`. Merge `9b95db2df` advances the baseline to `20ec1c528`.
+
+### Delivered evidence
+
+- `8f6c65870` adds the `ling.device-tasks.v3` journal command. Paired Mobile
+  pages the PC-owned task journal, resumes by task-local sequence after reconnect,
+  and requests the current generation after a stale cursor. Gateway tests reject
+  v2 journal access, cross-workspace targets, phone-owned tasks, private
+  observations and internal task fields.
+- `f6008cf37` adds a startup trust policy for Ed25519 resource publishers,
+  digest-bound local import, update, disable and rollback routes, and signed
+  resource integration tests. Core activation verifies the current trust policy
+  again for active reads and rollback.
+- `0652965e4` binds each dispatched attempt to the access-grant revision.
+  Revoking a grant during verification leaves the result unknown and blocks
+  reconciliation. A read-only grant cannot dispatch a write.
+- The Daemon retains historical capability snapshots and the authority applied to
+  each dispatch and readback. The local trace links the original approval, paired
+  session, and later verification to their corresponding snapshots. A Linux SSH
+  reconnect fixture reads the same historical trace after a Daemon restart.
+  [D3 task and recovery evidence](../design/ling-device-support-platform-implementation-plan.md#d3-task-state-approval-verification-and-evidence)
+- `51c48dd84` starts Ling Server with TLS peer signaling and private loopback
+  administration. The shared Remote Client negotiates a signed WebRTC channel
+  and authenticates with the PC Gateway using that route and the paired keys.
+  The Chromium loopback relay run returned the Gateway's workspace snapshot and
+  two consecutive events from the PC-owned SQLite journal. Packaged desktop and
+  mobile clients still need adapters to select and open the first-party route.
+  [D12 checks and outstanding acceptance](../design/ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity)
+
+Focused checks passed for Contracts, Core, Daemon, Remote Protocol, Remote
+Client and Mobile. The Mobile JS export completed for iOS and Android. Android
+native Gradle and physical-device acceptance remain separate evidence gates
+because this environment has no connected Android device and the default SDK
+installation is incomplete.
+
+The platform ledger remains the authority for D1–D22 status and the exact
+remaining PC, Mobile, Edge, hardware, vehicle, smart-home, Ling Server and
+field acceptance work.
+[Implementation ledger](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+
+## Device Support Platform adapter isolation 2026-11-22
+
+The `codex/device-platform-complete` branch remains based on `origin/main@4eb8798b0`.
+Commit `0bc068955` adds the external adapter process boundary. A trusted adapter
+resource can be registered with the Daemon as a newline-delimited JSON child
+process. The host uses explicit argv execution, bounded frames and request
+deadlines. A child exit, malformed response, oversized frame, timeout or write
+failure rejects the pending operation with a category-only error, terminates the
+child and permits the next operation to start a fresh child. The broker therefore
+retains its existing uncertain-outcome behavior for interrupted writes while a
+third-party adapter cannot crash the Daemon process.
+
+The real child-process fixture passed the external discovery, capability,
+execution, crash and restart path. The runtime accepts trusted external adapters
+through `createDeviceSupportRuntime({ externalAdapters })` and closes them during
+runtime shutdown. Resource signing, production activation and physical adapter
+acceptance remain separate gates.
+
+### Verification
+
+- `corepack pnpm --filter @ling-stack/core build:ci`
+- `corepack pnpm --filter @ling-stack/daemon build:ci`
+- `corepack pnpm --filter @ling-stack/daemon typecheck:ci`
+- `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-adapters.test.ts`
+
+The focused run passed 35 tests. The native image-sanitizer build emits existing
+`asmjs` check-cfg warnings and completed successfully.
+
+## Device Support Platform Home Assistant and verification 2026-11-22
+
+Commit `fd2e14c64` adds the configured Home Assistant path to the Daemon. Startup
+configuration accepts an HTTPS origin or a loopback HTTP origin plus an `env:` or
+`keychain:` secret reference. The adapter resolves the credential only for the
+request, binds the target identity to the origin and reported Home Assistant
+version, bounds response bodies, rejects redirects and unexpected entity IDs, and
+records only typed availability facts. `POST /v1/device-support/home-assistant/diagnose`
+creates the normal Daemon-owned task and journal, so the PC flow uses the same
+playbook, Pi planning and evidence projection as other device diagnoses.
+
+Verification now requires fresh public evidence from the selected target and the
+declared evidence ID. A late receipt after cancellation or authority change remains
+unknown. Paired Mobile shows the target, side-effect class and expected verification
+before its confirmation command. The approval journal stores the exact binding and
+paired principal while the public projection omits private principal fields.
+
+The focused run passed 46 tests. A loopback Home Assistant fixture covered startup
+configuration, token resolution, version binding, diagnosis, journal persistence and
+redaction. Physical Home Assistant acceptance remains open.
+
+## Device Support Platform live capture, collaboration and semantic context 2026-11-22
+
+The live hardware path is in `98ea1e92c`. A developer session can select a registered
+transport bound to the target profile and connection revision. The Daemon captures
+USB, BLE, serial, RS-485, CAN, OBD or vendor frames through a platform-owned async
+driver, validates byte and timestamp bounds, retains loss metadata, persists the
+capture digest and returns the same replay projection after restart. The loopback
+RS-485 fixture received one Modbus response, recorded a connection interruption,
+and did not start a second capture on replay.
+
+The collaboration path is in `aac808173`. Phone-owned artifact transfers now retain
+each chunk's digest and bytes in SQLite, verify index and size metadata, reconstruct
+the accepted SHA-256 artifact and return a verified receipt. A foreign owner, target,
+revision, expiry, duplicate bytes or mismatched final digest is rejected.
+
+The semantic resolver and planning-context path are in `f9f0f8ab5`. Workspace-scoped
+capability lookup reports available, unsupported, stale and unavailable targets. The
+bounded context includes profile, adapter, connection, semantic capability and
+dispatch-stop revisions. Stale and unprojectable observations stay out of model facts.
+
+The focused Core and Daemon checks passed. Native transport drivers, packaged
+developer clients and physical hardware or vehicle acceptance remain open.
+
+## Device Support Platform recovery, catalogs and conformance 2026-11-22
+
+- D3 binds the recovery path and baseline to approval. The target lease protects
+  preflight. A task stop releases it and a late result creates no write. Paired
+  WebSocket clients use the v4 approval preview. Commits `a8c56cb0f` and `fef748002`.
+- D4 exercises the REST entities and services and WebSocket devices against Home
+  Assistant Core 2026.11.2 on macOS arm64. Four API pages matched the typed
+  observations after SQLite reopen. Commits `de0f2b111`, `85f9ab758` and `ca51da0fd`.
+- D5 uses native service queries on Linux, macOS and Windows. Fixtures cover the
+  three query paths. The local Daemon counted 549 macOS launchd jobs and recovered
+  their observation from SQLite. Commit `5c4987eb5`.
+- D12 gives ICE all configured TURN URLs in the selected credential scope. Local
+  Chromium peers connected through TURN/TLS when the UDP listener discarded requests.
+  Commit `09e2494a8`.
+- D14 preserves accepted graph identity evidence and replays the original node
+  revision after a split. Commit `ca51da0fd`.
+- D22 captures a report from the daemon-owned attempt and makes it available by ID.
+  The earlier report persists when readback adds new evidence to the journal.
+
+[Current evidence and open acceptance by slice](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
 ## Typed Transcript Handoff
 

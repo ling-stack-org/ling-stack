@@ -44,6 +44,7 @@ const actionLabelKeys: Readonly<Record<ApprovalActionType, string>> = {
   node_rerun: "Rerun",
   mcp_tool_call: "Call MCP tools",
   host_capability: "Call Host capabilities",
+  device_action: "Device action",
   runtime_permission_request: "Request runtime permissions",
 };
 

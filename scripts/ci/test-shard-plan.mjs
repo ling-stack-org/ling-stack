@@ -33,10 +33,14 @@ export const testSuites = {
   core: {
     packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 8, concurrency: 2, excluded: [],
     // The Host capacity suite exceeded the ordinary watchdog on hosted Linux even in the exclusive lane.
-    fileTimeouts: { "test/runtime-host-capacity-migration.test.ts": 600_000 },
+    fileTimeouts: {
+      "test/runtime-host-capacity-migration.test.ts": 600_000,
+      "test/runtime-run-queue-migration.test.ts": 600_000,
+    },
     // These migration suites apply SQLite schema changes across many isolated
     // databases and contend for disk with other workers on hosted Linux.
-    exclusive: ["test/runtime-delegation-capacity-admission-migration.test.ts", "test/runtime-host-capacity-migration.test.ts"],
+    exclusive: ["test/runtime-delegation-capacity-admission-migration.test.ts", "test/runtime-host-capacity-migration.test.ts",
+      "test/runtime-run-queue-migration.test.ts"],
   },
   daemon: daemonSuite,
   "daemon-linux": { ...daemonSuite, platform: "linux", shardCount: 8, concurrency: 2 },

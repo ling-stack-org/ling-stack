@@ -172,6 +172,7 @@ export function approvalDecisionEventType(
 }
 
 function resolveApprovalOwner(approval: ApprovalRequest): { readonly type: string; readonly id: string | null } {
+  if (approval.deviceTaskId) return { type: "device_task", id: approval.deviceTaskId };
   if (approval.runId) return { type: "run", id: approval.runId };
   if (approval.mediaJobId) return { type: "media_job", id: approval.mediaJobId };
   if (approval.externalWorkActionId) return { type: "external_work_action", id: approval.externalWorkActionId };

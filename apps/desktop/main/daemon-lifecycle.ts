@@ -105,6 +105,7 @@ export interface DesktopDaemonLifecycleOptions {
   readonly browserHostPath?: string;
   readonly engineSupervisorPath?: string;
   readonly imageSanitizerPath?: string;
+  readonly peerWorkerPath?: string;
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
   /** Test seam for evaluating the platform-specific bundled gate. */
   readonly platform?: string;
@@ -291,6 +292,7 @@ export class DesktopDaemonLifecycle {
           ...(this.options.browserHostPath ? { LING_BROWSER_HOST_PATH: this.options.browserHostPath } : {}),
           LING_ENGINE_SUPERVISOR_PATH: this.options.engineSupervisorPath,
           LING_IMAGE_SANITIZER_PATH: this.options.imageSanitizerPath,
+          LING_PEER_WORKER_PATH: this.options.peerWorkerPath,
           ...(this.options.desktopBridgeToken
             ? {
                 LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,
