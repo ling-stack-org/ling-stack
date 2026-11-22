@@ -20,7 +20,7 @@ Mixed changes union their affected packages and required lanes.
 | Verified deletions under the root `output/` | Common fast checks only for an archive cleanup |
 | Package tests and test support | Owning package; shared test-support importers are included |
 | Offline assurance tooling or fixtures | Assurance and actual package-level validation importers; no unrelated product shards |
-| Verified generated provider model catalog refresh | Core build, typecheck, and focused provider catalog tests |
+| Bundled provider model catalog | Normal Core source dependency graph and affected consumer checks |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
 | Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests and typecheck plus shared test-support consumers |

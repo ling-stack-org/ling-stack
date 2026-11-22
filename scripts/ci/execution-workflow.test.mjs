@@ -64,7 +64,7 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, testPackages = packages, documentationOnly = false, providerModelCatalog = false, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, testPackages = packages, documentationOnly = false, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
     mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(testPackages),
@@ -73,7 +73,6 @@ async function assertScopeOutputs(scope, { mode, packages, testPackages = packag
     "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
     "linux-contract": String(daemonPlatforms.includes("linux")), "macos-native": String(macosNative),
     "macos-helper": String(macosNative), "native-release": "false",
-    "provider-model-catalog": String(providerModelCatalog),
     "documentation-only": String(documentationOnly),
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]), { daemonPlatforms: JSON.parse(outputs["daemon-platforms"]) });
@@ -135,21 +134,11 @@ test("workflow transformations select the eight core shards for core test-only w
   });
 });
 
-test("the catalog regression runs within the required Core typecheck job", async () => {
-  const scopeJob = jobSource("scope");
-  assert.match(scopeJob, /pull_request\.user\.login == 'ling-stack-model-catalog\[bot\]'/u);
-  assert.match(scopeJob, /pull_request\.head\.repo\.full_name == github\.repository/u);
-  assert.match(scopeJob, /CATALOG_PROOF: \$\{\{ steps\.catalog-proof\.outputs\.digest \}\}/u);
-  assert.match(scopeJob, /--catalog-proof="\$CATALOG_PROOF"/u);
-  const scope = classifyChangedFiles({
-    files: ["packages/core/src/provider-model-catalog.generated.ts"], generatedProviderCatalog: true,
-  });
-  await assertScopeOutputs(scope, {
-    mode: "affected", packages: ["@ling-stack/core"], testPackages: [], providerModelCatalog: true,
-    daemon: false, matrix: [],
-  });
-  assert.match(jobSource("typecheck"),
-    /if: needs\.scope\.outputs\.provider-model-catalog == 'true'\n        working-directory: packages\/core\n        run: >-\n          node --test test\/provider-check\.test\.\*\n          test\/provider-model-capabilities\.test\.\* test\/provider-thinking-levels\.test\.\*/u);
+test("bundled model catalog changes run the ordinary dependent package gates", () => {
+  const scope = classifyChangedFiles({ files: ["packages/core/src/provider-model-catalog.generated.ts"] });
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.daemon, true);
+  assert.equal(scope.assurance, true);
 });
 
 test("workflow transformations omit Web work and retain its non-Web consumers", { timeout: 90_000 }, async () => {

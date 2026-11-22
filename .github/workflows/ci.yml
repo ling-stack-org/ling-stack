@@ -39,7 +39,6 @@ jobs:
       assurance-selected: ${{ steps.classify.outputs.assurance-selected }}
       build-selected: ${{ steps.classify.outputs.build-selected }}
       typecheck-selected: ${{ steps.classify.outputs.typecheck-selected }}
-      provider-model-catalog: ${{ steps.classify.outputs.provider-model-catalog }}
       unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
       daemon-matrix: ${{ steps.test-plan.outputs.daemon-matrix }}
       unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
@@ -70,29 +69,6 @@ jobs:
           printf 'execution-tier=%s\n' "$execution_tier" >> "$GITHUB_OUTPUT"
           printf 'CI execution tier: **%s**\n' "$execution_tier" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Verify model catalog artifact provenance
-        id: catalog-proof
-        if: >-
-          ${{ github.event_name == 'pull_request' &&
-              !contains(github.event.pull_request.labels.*.name, 'full-ci') &&
-              github.repository == 'ling-stack-org/ling-stack' &&
-              github.event.pull_request.user.login == 'ling-stack-model-catalog[bot]' &&
-              github.event.pull_request.head.repo.full_name == github.repository &&
-              github.event.pull_request.head.ref == 'automation/provider-model-catalog' &&
-              github.event.pull_request.base.ref == github.event.repository.default_branch }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        with:
-          script: |
-            const { lstatSync, readFileSync } = require('node:fs');
-            const { pathToFileURL } = require('node:url');
-            const { findProviderModelCatalogProof } = await import(pathToFileURL(
-              process.env.GITHUB_WORKSPACE + '/scripts/ci/provider-model-catalog-proof.mjs'));
-            const path = 'packages/core/src/provider-model-catalog.generated.ts';
-            if (!lstatSync(path, { throwIfNoEntry: false })?.isFile()) return;
-            const source = readFileSync(path);
-            const digest = await findProviderModelCatalogProof({ github, context, source });
-            core.setOutput('digest', digest ?? '');
-
       - name: Classify changed files
         id: classify
         shell: bash
@@ -100,7 +76,6 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          CATALOG_PROOF: ${{ steps.catalog-proof.outputs.digest }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
@@ -109,7 +84,6 @@ jobs:
               --base="$BASE_SHA" \
               --head=HEAD \
               --pr-head="$PR_HEAD_SHA" \
-              --catalog-proof="$CATALOG_PROOF" \
               --force-full="$FORCE_FULL")"
           else
             scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
@@ -127,7 +101,6 @@ jobs:
             "assurance-selected": String(scope.assurance),
             "build-selected": String(scope.packages.length > 0),
             "typecheck-selected": String(scope.typecheckPackages.length > 0),
-            "provider-model-catalog": String(scope.providerModelCatalog === true),
             daemon: String(scope.daemon),
             "daemon-platforms": JSON.stringify(scope.daemonPlatforms),
             "linux-contract": String(scope.linuxContract),
@@ -532,13 +505,6 @@ jobs:
 
       - name: Typecheck selected packages without rebuilding dependencies
         run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
-
-      - name: Test Core provider model catalog consumers
-        if: needs.scope.outputs.provider-model-catalog == 'true'
-        working-directory: packages/core
-        run: >-
-          node --test test/provider-check.test.*
-          test/provider-model-capabilities.test.* test/provider-thinking-levels.test.*
 
       - name: Check Desktop worktree confirmation IPC
         if: contains(needs.scope.outputs.typecheck-packages, '@ling-stack/desktop')

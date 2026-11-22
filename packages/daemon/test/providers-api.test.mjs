@@ -406,7 +406,7 @@ test("native Gemini and Mistral model discovery use protocol-specific auth and r
     assert.equal(gemini.models[0].maxTokens, 65536);
     assert.equal(gemini.source, `${modelServer.url}/models`);
     assert.ok(Date.parse(gemini.fetchedAt));
-    assert.equal(gemini.catalog.source, "models.dev");
+    assert.equal(gemini.catalog.source, "ling-builtin");
     assert.match(gemini.catalog.version, /^models\.dev:/);
     assert.equal(modelServer.requests[0].url, "/models");
     assert.equal(modelServer.requests[0].headers["x-goog-api-key"], geminiToken);

@@ -1,6 +1,6 @@
 # P15 Provider Model Catalog And Discovery Implementation Plan
 
-Status: Complete
+Status: Historical; superseded by [Runtime Provider Model Catalog Implementation Plan](runtime-provider-model-catalog-implementation-plan.md)
 Owner: Provider platform
 Depends on: [P15 Design](provider-model-catalog-and-discovery-p15.md)
 
