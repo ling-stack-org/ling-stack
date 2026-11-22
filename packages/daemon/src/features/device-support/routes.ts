@@ -130,8 +130,11 @@ async function handleHomeAssistantDiagnosis(request: IncomingMessage, response: 
       || !/^[a-z0-9_]+\.[a-z0-9_]+$/u.test(body.entityId)) {
       throw new DeviceBrokerError("invalid_request", "Home Assistant diagnosis requires an entity ID");
     }
-    const { entityId, ...options } = body;
-    const { status, report } = await runtime.diagnoseHomeAssistant(entityId, readDiagnosisOptions(options));
+    const { entityId, maxReportAgeMs, ...options } = body;
+    if (maxReportAgeMs !== undefined && (typeof maxReportAgeMs !== "number" || !Number.isSafeInteger(maxReportAgeMs) || maxReportAgeMs < 1)) {
+      throw new DeviceBrokerError("invalid_request", "invalid Home Assistant max report age");
+    }
+    const { status, report } = await runtime.diagnoseHomeAssistant(entityId, { ...readDiagnosisOptions(options), maxReportAgeMs });
     writePrivateJson(response, 200, { status, report });
   } catch (error) {
     writeDeviceOperationError(response, error);
@@ -311,10 +314,10 @@ async function handleLinuxSshRequest(
 
 function readDiagnosisOptions(value: unknown): DeviceDiagnosisRequest {
   if (value === undefined) return {};
-  if (!isRecord(value) || Object.keys(value).some(key => !["providerPresetId", "fallbackProviderPresetId", "symptom", "maxReportAgeMs"].includes(key))) {
+  if (!isRecord(value) || Object.keys(value).some(key => !["providerPresetId", "fallbackProviderPresetId", "symptom"].includes(key))) {
     throw new DeviceBrokerError("invalid_request", "invalid device diagnosis options");
   }
-  const { providerPresetId, fallbackProviderPresetId, symptom, maxReportAgeMs } = value;
+  const { providerPresetId, fallbackProviderPresetId, symptom } = value;
   if (providerPresetId !== undefined && (!validBoundedText(providerPresetId, 256) || providerPresetId.trim() !== providerPresetId)) {
     throw new DeviceBrokerError("invalid_request", "invalid diagnosis provider");
   }
@@ -325,10 +328,7 @@ function readDiagnosisOptions(value: unknown): DeviceDiagnosisRequest {
   if (symptom !== undefined && (providerPresetId === undefined || !validBoundedText(symptom, 2048))) {
     throw new DeviceBrokerError("invalid_request", "invalid diagnosis symptom");
   }
-  if (maxReportAgeMs !== undefined && (typeof maxReportAgeMs !== "number" || !Number.isSafeInteger(maxReportAgeMs) || maxReportAgeMs < 1 || maxReportAgeMs > 30 * 24 * 60 * 60 * 1000)) {
-    throw new DeviceBrokerError("invalid_request", "invalid Home Assistant max report age");
-  }
-  return { providerPresetId, fallbackProviderPresetId, symptom, maxReportAgeMs };
+  return { providerPresetId, fallbackProviderPresetId, symptom };
 }
 
 function validBoundedText(value: unknown, maxBytes: number): value is string {

@@ -184,14 +184,14 @@ export class HomeAssistantAdapter implements DeviceAdapter {
 
   async readEntity(entityId: string, signal?: AbortSignal, maxReportAgeMs?: number): Promise<HomeAssistantEntityRead> {
     if (!/^([a-z0-9_]+)\.([a-z0-9_]+)$/u.test(entityId)) throw new Error("Invalid Home Assistant entity id");
-    const observedAt = this.#now();
     const response = await this.request(`/api/states/${encodeURIComponent(entityId)}`, { method: "GET", signal, allowNotFound: true });
     if (response.status === 404) {
       await response.body?.cancel();
-      return { entityId, availability: "absent", quality: "unknown", observedAt, reportTimestampStatus: "missing", reportFreshness: "unknown" };
+      return { entityId, availability: "absent", quality: "unknown", observedAt: this.#now(), reportTimestampStatus: "missing", reportFreshness: "unknown" };
     }
     const body = await readJson(response);
     if (body.entity_id !== entityId) throw new DeviceBrokerError("target_changed", "Home Assistant returned another entity");
+    const observedAt = this.#now();
     const availability = homeAssistantEntityAvailability(body.state);
     const reported = normalizeHomeAssistantTimestamp(body.last_reported, observedAt);
     const updated = normalizeHomeAssistantTimestamp(body.last_updated, observedAt);
@@ -371,7 +371,7 @@ export function parseHomeAssistantOrigin(value: string): string {
 
 function readMaxReportAge(value: unknown): number | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 30 * 24 * 60 * 60 * 1000) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
     throw new DeviceBrokerError("invalid_request", "Home Assistant max report age is invalid");
   }
   return value;
@@ -382,7 +382,9 @@ function normalizeHomeAssistantTimestamp(value: unknown, observedAt: string): {
   readonly value?: string;
 } {
   if (value === undefined) return { status: "missing" };
-  if (typeof value !== "string") return { status: "invalid" };
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) {
+    return { status: "invalid" };
+  }
   const parsed = Date.parse(value);
   if (!Number.isFinite(parsed)) return { status: "invalid" };
   if (parsed > Date.parse(observedAt)) return { status: "future" };

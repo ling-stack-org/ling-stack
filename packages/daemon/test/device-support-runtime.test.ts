@@ -40,6 +40,10 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
         entity_id: "sensor.garage", state: "unavailable", attributes: { description: "private device output" },
       }));
+    } else if (req.url === "/api/states/sensor.reporting") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+        entity_id: "sensor.reporting", state: "on", last_reported: "2026-01-01T01:00:00.123456+01:00",
+      }));
     } else if (req.url === "/api/states") {
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify([
         { entity_id: "sensor.garage", state: "unavailable", attributes: { description: "private device output" } },
@@ -103,6 +107,10 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
   });
   assert.equal((await post({ entityId: "sensor.garage" }, { Origin: "https://foreign.example" })).status, 403);
   assert.equal((await post({ entityId: "sensor.garage", origin: "https://other.example" })).status, 400);
+  assert.equal((await post({ entityId: "sensor.reporting", maxReportAgeMs: 0 })).status, 400);
+  assert.equal((await fetch(base + "/pc/diagnose", {
+    method: "POST", headers, body: JSON.stringify({ maxReportAgeMs: 1000 }),
+  })).status, 400);
   assert.deepEqual(paths, []);
   const response = await post({ entityId: "sensor.garage" });
   assert.equal(response.status, 200);
@@ -131,9 +139,17 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
     assert.equal(page.catalog.nextAfter, nextAfter);
     pages.push(page);
   }
+  const freshnessResponse = await post({ entityId: "sensor.reporting", maxReportAgeMs: 1000 });
+  assert.equal(freshnessResponse.status, 200);
+  const freshness = (await freshnessResponse.json() as { report: DeviceDiagnosisReportV1 }).report;
+  assert.deepEqual(freshness.facts[0]?.value, {
+    availability: "available", lastReportedAt: "2026-01-01T00:00:00.123Z", reportTimestampStatus: "valid", reportFreshness: "stale",
+  });
+  assert.equal(freshness.hypotheses[0]?.code, "stale_entity_report");
   const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     assert.equal(store.getTask(report.taskId)?.ownerKind, "daemon");
+    assert.equal(store.getObservation(freshness.taskId, freshness.facts[0]!.observationId)?.subjectId, "sensor.reporting");
     assert.equal(store.listDevices().find(profile => profile.device.kind === "home_assistant")?.device.firmwareVersion, "2026.11.4");
     assert.doesNotMatch(JSON.stringify([report, store.listEvents(report.taskId), store.listObservations(report.taskId)]),
       /private device output|fixture-ha-access-token/u);

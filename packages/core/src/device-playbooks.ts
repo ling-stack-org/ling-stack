@@ -38,7 +38,7 @@ export interface DevicePlaybookRunResultV1 {
 
 export function createHomeAssistantOfflinePlaybook(entityId: string, options: { readonly maxReportAgeMs?: number } = {}): DevicePlaybookV1 {
   if (!/^([a-z0-9_]+)\.([a-z0-9_]+)$/u.test(entityId)) throw new Error("Invalid Home Assistant entity id");
-  if (options.maxReportAgeMs !== undefined && (!Number.isSafeInteger(options.maxReportAgeMs) || options.maxReportAgeMs < 1 || options.maxReportAgeMs > 30 * 24 * 60 * 60 * 1000)) {
+  if (options.maxReportAgeMs !== undefined && (!Number.isSafeInteger(options.maxReportAgeMs) || options.maxReportAgeMs < 1)) {
     throw new Error("Invalid Home Assistant max report age");
   }
   return {

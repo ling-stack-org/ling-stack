@@ -114,7 +114,7 @@ test("Home Assistant diagnosis normalizes report timestamps and distinguishes st
   const reports: Record<string, Record<string, unknown>> = {
     "sensor.fresh": { entity_id: "sensor.fresh", state: "on", attributes: { secret: "omit" }, last_reported: "2026-11-20T23:59:00Z", last_updated: "2026-11-20T23:58:00Z", last_changed: "2026-11-20T23:57:00Z" },
     "sensor.stale": { entity_id: "sensor.stale", state: "on", last_reported: "2026-11-20T00:00:00Z" },
-    "sensor.invalid": { entity_id: "sensor.invalid", state: "on", last_reported: "not-a-timestamp" },
+    "sensor.invalid": { entity_id: "sensor.invalid", state: "on", last_reported: "1" },
     "sensor.future": { entity_id: "sensor.future", state: "on", last_reported: "2026-11-22T00:00:00Z" },
     "sensor.legacy": { entity_id: "sensor.legacy", state: "on" },
   };
