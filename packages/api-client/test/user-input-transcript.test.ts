@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { UserInputAnswerCommandV1, UserInputTranscriptItemV1 } from "@ling-stack/contracts";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("existing read clients preserve typed user-input hydration for all three surfaces", async () => {
-  const userInputs = [{
+  const userInputs: UserInputTranscriptItemV1[] = [{
     kind: "user_input_answer", availability: "available", itemId: "answer-item",
     requestId: "request", requestVersion: 1, answerId: "answer", acceptedAt: "2026-09-07T00:00:01.000Z",
     source: { workspaceId: "default", threadId: "thread", turnId: "turn", runId: "run",
@@ -11,21 +12,25 @@ test("existing read clients preserve typed user-input hydration for all three su
     answers: [{ questionId: "theme", prompt: "选择主题", kind: "text", text: "深色\n保留换行" }],
     delivery: { status: "claimed", revision: 2, updatedAt: "2026-09-07T00:00:03.000Z" },
   }];
-  // Transport contract fixture only; this is not an App/Runner integration test.
+  // Each mocked endpoint returns the transcript projection for its surface.
   const responses = [{ userInputs }, { timeline: { userInputs } }, { items: [], userInputs, hasMore: false }];
-  const calls = [];
+  const calls: { url: string; method: RequestInit["method"] }[] = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init = {}) => {
     calls.push({ url: String(url), method: init.method ?? "GET" });
     return new Response(JSON.stringify(responses.shift()), { headers: { "Content-Type": "application/json" } });
   } });
   assert.deepEqual((await client.getConversation("/synthetic workspace", "thread")).userInputs, userInputs);
-  assert.deepEqual((await client.getTeammateDirectThread("/synthetic workspace", "engineer")).timeline.userInputs, userInputs);
+  // The transport forwards response fields from the fixture beyond the direct-thread DTO.
+  const direct = await client.getTeammateDirectThread("/synthetic workspace", "engineer");
+  assert.ok("timeline" in direct && direct.timeline && typeof direct.timeline === "object" && "userInputs" in direct.timeline);
+  assert.deepEqual(direct.timeline.userInputs, userInputs);
+  assert.equal(new URL(calls[1].url).pathname, "/teammates/engineer/direct-thread");
   assert.deepEqual((await client.listChannelConversationItems("/synthetic workspace", "channel", { limit: 1 })).userInputs, userInputs);
   assert.ok(calls.every(call => call.method === "GET" && call.url.includes("cwd=%2Fsynthetic+workspace")));
 });
 
 test("answer client posts exact public authority and reports Host acceptance separately from Runner application", async () => {
-  const command = {
+  const command: UserInputAnswerCommandV1 = {
     schemaVersion: 1,
     authority: { schemaVersion: 1, threadId: "thread", runId: "run", attemptId: "attempt",
       participantId: "engineer", requestId: "request", requestVersion: 1, statusRevision: 3,
@@ -36,7 +41,7 @@ test("answer client posts exact public authority and reports Host acceptance sep
   const accepted = { accepted: true, receipt: { requestId: "request", requestVersion: 1, answerId: "answer",
     answerItemId: "answer-item", deliveryId: "delivery", acceptedAt: "2026-09-07T00:00:01.000Z", replayed: false },
   delivery: { status: "pending" } };
-  const calls = [];
+  const calls: (Pick<RequestInit, "method" | "headers" | "body"> & { url: string })[] = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init = {}) => {
     calls.push({ url: String(url), method: init.method, headers: init.headers, body: init.body });
     return new Response(JSON.stringify(accepted), { status: 202, headers: { "Content-Type": "application/json" } });
@@ -48,5 +53,5 @@ test("answer client posts exact public authority and reports Host acceptance sep
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, "POST");
   assert.equal(calls[0].url, "http://daemon.test/user-input-answers?cwd=%2Fsynthetic+workspace");
-  assert.deepEqual(JSON.parse(calls[0].body), command);
+  assert.deepEqual(JSON.parse(calls[0].body as string), command);
 });

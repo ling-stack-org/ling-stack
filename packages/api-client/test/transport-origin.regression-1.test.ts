@@ -15,6 +15,7 @@ for (const method of ["_get", "_requestJson", "_fetch"]) {
     const client = new api.LingDaemonClient({ fetch: async () => { calls++; throw cause; } });
     await assert.rejects(() => method === "_get" ? client._get("/runs")
       : method === "_requestJson" ? client._requestJson("GET", "/runs") : client._fetch("http://127.0.0.1/runs"), error => {
+      assert.ok(error instanceof api.LingDaemonTransportError);
       assert.equal(error.name, "LingDaemonTransportError");
       assert.equal(error.phase, "fetch");
       assert.equal(error.cause, cause);
@@ -30,6 +31,7 @@ test("multipart transport errors preserve the fetch origin and cause", async () 
   let calls = 0;
   const client = new api.LingDaemonClient({ fetch: async () => { calls++; throw cause; } });
   await assert.rejects(() => client._requestMultipart("POST", "/transcribe", {}, new FormData()), error => {
+    assert.ok(error instanceof api.LingDaemonTransportError);
     assert.equal(error.name, "LingDaemonTransportError");
     assert.equal(error.phase, "fetch");
     assert.equal(error.cause, cause);

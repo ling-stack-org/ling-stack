@@ -3,9 +3,9 @@ import test from "node:test";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("stop requests carry the captured execution identity unchanged on all three APIs", async () => {
-  const calls = [];
+  const calls: Array<{ url: URL; method: RequestInit["method"]; body: unknown }> = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init) => {
-    calls.push({ url: new URL(url), method: init.method, body: JSON.parse(init.body) });
+    calls.push({ url: new URL(url as string), method: init!.method, body: JSON.parse(init!.body as string) });
     return new Response("{}", { headers: { "Content-Type": "application/json" } });
   } });
   const cwd = "/workspace with spaces";
@@ -18,7 +18,7 @@ test("stop requests carry the captured execution identity unchanged on all three
   assert.ok(calls.every(call => call.method === "POST" && call.url.searchParams.get("cwd") === cwd));
   assert.deepEqual(calls.map(call => call.body), [fence, fence, { ...fence, reason: "user_requested" }]);
   await client.cancelWorkUnit(cwd, "queued-unit", { expectedAttemptId: null, expectedRunId: null });
-  assert.deepEqual(calls.at(-1).body, { expectedAttemptId: null, expectedRunId: null });
+  assert.deepEqual(calls.at(-1)!.body, { expectedAttemptId: null, expectedRunId: null });
   await client.cancelRun(cwd, "legacy-run");
-  assert.deepEqual(calls.at(-1).body, {});
+  assert.deepEqual(calls.at(-1)!.body, {});
 });

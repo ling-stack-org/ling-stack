@@ -206,7 +206,7 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | 受约束恢复 | `packages/daemon/src/features/harness/continuations/daemon-recovery-coordinator.ts` |
 | SDK 运行时与打包边界 | `packages/plugin-sdk/src/manifest.ts`、`registry.ts`、四包 `package.json` 的出口、依赖与本次 `files` allowlist |
 | API 客户端现有错误与流行为 | `packages/api-client/src/transport.ts`、`endpoints/conversations.ts`、`endpoints/channels.ts`、`execution-engines.ts` |
-| SDK 回归 | `packages/plugin-sdk/test/package-manifest.test.mjs`、`registry.test.mjs`、`packages/api-client/test/client.test.mjs`、`transport-origin.regression-1.test.mjs` |
+| SDK 回归 | `packages/plugin-sdk/test/package-manifest.test.mjs`、`registry.test.mjs`、`packages/api-client/test/client.test.ts`、`transport-origin.regression-1.test.ts` |
 | 运行目录隔离 | `packages/core/src/runtime-paths.ts` |
 | macOS native boundary | `packages/daemon/src/runtime/sandbox/native-process-launch.ts`、`packages/daemon/test/native-process-boundary.test.mjs`；本地验证覆盖 workspace/private-state、Kimi metadata、relay 与进程回收 |
 | 本轮离线实现与回归 | `scripts/framework-assurance/manifest.mjs`、`preflight.mjs`、`grader.mjs`、`evidence.mjs`、`report.mjs`、`output.mjs`、`index.mjs`、`offline.test.mjs`、`cli.test.mjs` |

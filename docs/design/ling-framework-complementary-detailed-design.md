@@ -592,7 +592,7 @@ delegation、execution plan、safety/isolation profile 均 fail closed。
 - Core：`packages/core/src/harness/evaluation-rule-grader.ts`、`evaluation-json.ts`、`evaluations.ts`。
 - Daemon：`run-evaluation-scheduler.test.mjs`、`run-evaluation-storage-projection.test.mjs`、`run-evaluation-task-worker-composition.test.mjs`、`run-evaluation-qa-pilot-runner.test.mjs`、`harness-diagnostics-api.test.mjs`，均位于 `packages/daemon/test/`。
 - SDK：`packages/plugin-sdk/test/package-manifest.test.mjs`、`registry.test.mjs`、`packages/contracts/test/conversation-continuity-v2.test.ts`。
-- Client：`packages/api-client/test/client.test.mjs`、`computer-use.test.mjs`、`transport-origin.regression-1.test.mjs`；Web SSE 解码代码位于 `apps/web/src/sse.ts`，不等于 api-client 公共 decoder。
+- Client：`packages/api-client/test/client.test.ts`、`computer-use.test.ts`、`transport-origin.regression-1.test.ts`；Web SSE 解码代码位于 `apps/web/src/sse.ts`，不等于 api-client 公共 decoder。
 - 现有构建/测试调度：`scripts/ci/run-packages.mjs`；实施时按同一基线先构建再测试，不重复使用来源不明的 dist。
 - macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
 - 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs`、`diagnostics.test.mjs`、`trial-preflight.test.ts` 与 `host-readiness.test.ts`；F3-02 manifest 位于 `fixtures/framework-assurance/trials/t01-review.json`，Host readiness 合成形状位于 `fixtures/framework-assurance/execution-evidence/host-ready-shape.json`。

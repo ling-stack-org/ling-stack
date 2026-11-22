@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { LearningReviewPolicyUpdateRequest } from "@ling-stack/contracts";
 import { LingDaemonClient, LingDaemonError } from "../dist/index.js";
 
 function fixture() {
-  const calls = [];
+  const calls: { url: URL; method: RequestInit["method"]; body: unknown }[] = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (input, init) => {
-    calls.push({ url: new URL(String(input)), method: init.method, body: init.body === undefined ? undefined : JSON.parse(init.body) });
+    calls.push({ url: new URL(String(input)), method: init!.method, body: init!.body === undefined ? undefined : JSON.parse(init!.body as string) });
     return Response.json({ jobs: [], revisions: [] });
   } });
   return { client, calls };
@@ -18,7 +19,7 @@ function fixture() {
 test("learning client retains selected source, provider, correction, policy revision and optional filters", async () => {
   const { client, calls } = fixture();
   const cwd = "/repo 中文", jobId = "learning / job?&";
-  const policy = { mode: "propose", providerPresetId: "local", expectedRevision: 2, limits: { maxRequests: 1 } };
+  const policy: LearningReviewPolicyUpdateRequest = { mode: "propose", providerPresetId: "local", expectedRevision: 2, limits: { maxRequests: 1 } };
   const run = { runId: "run / 一", providerPresetId: "local", correction: "Read the signed receipt first." };
   const decision = { decisionId: "decision / 二", providerPresetId: "local" };
   await client.getLearningReviewPolicy(cwd);

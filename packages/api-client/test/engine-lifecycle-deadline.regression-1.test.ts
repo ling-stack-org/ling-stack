@@ -1,29 +1,39 @@
+/// <reference lib="es2024.promise" />
+
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { ExecutionEngineManagementClient } from "../dist/execution-engines.js";
+
+type PendingRequest = {
+  url: Parameters<typeof globalThis.fetch>[0];
+  signal: AbortSignal;
+  complete: (body: unknown) => void;
+};
 
 // Regression: synchronous engine lifecycle operations need their own finite budgets.
 // Found by independent review on 2026-10-28; no registry or installation is used.
 // The real client owns the AbortSignal; only its clock and network peer are controlled.
 const credentials = { token: "synthetic-lifecycle-session", csrfToken: "synthetic-lifecycle-csrf" };
-function fixture(t) {
+function fixture(t: TestContext) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  t.mock.method(AbortSignal, "timeout", milliseconds => {
+  t.mock.method(AbortSignal, "timeout", (milliseconds: number) => {
     const abort = new AbortController();
     setTimeout(() => abort.abort(new DOMException("Synthetic request deadline", "TimeoutError")), milliseconds);
     return abort.signal;
   });
-  const requests = [];
+  const requests: PendingRequest[] = [];
   const client = new ExecutionEngineManagementClient({ baseUrl: "http://127.0.0.1:17892", credentials: () => credentials,
     fetch(url, init) {
-      const response = Promise.withResolvers();
-      const abort = () => response.reject(init.signal.reason);
-      init.signal.addEventListener("abort", abort, { once: true });
-      if (init.signal.aborted) abort();
-      requests.push({ url, signal: init.signal, complete: body => response.resolve(Response.json(body)) });
-      return response.promise.finally(() => init.signal.removeEventListener("abort", abort));
+      const signal = init?.signal;
+      assert.ok(signal, "expected a request deadline signal");
+      const response = Promise.withResolvers<Response>();
+      const abort = () => response.reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      requests.push({ url, signal, complete: body => response.resolve(Response.json(body)) });
+      return response.promise.finally(() => signal.removeEventListener("abort", abort));
     } });
-  const observe = promise => promise.then(value => ({ value }), error => ({ error }));
+  const observe = (promise: Promise<unknown>): Promise<{ value?: unknown; error?: Error }> => promise.then(value => ({ value }), (error: Error) => ({ error }));
   return { client, requests, observe };
 }
 
@@ -43,7 +53,7 @@ for (const method of ["install", "discover"]) test(`${method} can finish after t
   assert.equal(f.requests.length, 1, "Completion must not require retrying the operation");
 });
 
-for (const [method, deadline] of [["install", 300_000], ["discover", 20_000], ["listProfiles", 10_000]]) {
+for (const [method, deadline] of [["install", 300_000], ["discover", 20_000], ["listProfiles", 10_000]] as const) {
   test(`${method} still aborts at its finite deadline without retry`, async t => {
     const f = fixture(t);
     const pending = f.observe(method === "install" ? f.client.install("claude-agent-sdk") : f.client[method]());

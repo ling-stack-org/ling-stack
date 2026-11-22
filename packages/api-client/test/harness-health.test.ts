@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { HarnessFeatureSnapshotV1 } from "@ling-stack/contracts";
 import { LingDaemonClient } from "../dist/index.js";
 
-const snapshot = {
+const snapshot: HarnessFeatureSnapshotV1 = {
   schemaVersion: 1,
   continuations: "enforce",
   toolBroker: "shadow",
@@ -13,7 +14,7 @@ const snapshot = {
   delegationSelectedWorkflowIds: ["workflow-explicit-qa"],
 };
 
-function healthClient(harness, features = {}) {
+function healthClient(harness: unknown, features: Record<string, unknown> = {}) {
   return new LingDaemonClient({
     baseUrl: "http://daemon.test",
     fetch: async (url) => {
@@ -45,10 +46,10 @@ test("health projects only the validated Harness snapshot fields", async () => {
   });
 });
 
-for (const mode of ["off", "shadow", "enforce"]) {
+for (const mode of ["off", "shadow", "enforce"] as const) {
   for (const depth of [1, 16]) {
     test(`health preserves Harness mode ${mode} and depth ${depth}`, async () => {
-      const expected = {
+      const expected: HarnessFeatureSnapshotV1 = {
         ...snapshot,
         continuations: mode,
         toolBroker: mode,
@@ -57,12 +58,12 @@ for (const mode of ["off", "shadow", "enforce"]) {
         delegations: mode,
         delegationMaxDepth: depth,
       };
-      assert.deepEqual((await healthClient(expected).getHealth()).features.harness, expected);
+      assert.deepEqual((await healthClient(expected).getHealth()).features!.harness, expected);
     });
   }
 }
 
-const invalidSnapshots = [
+const invalidSnapshots: [name: string, snapshot: unknown][] = [
   ["missing", undefined],
   ["null", null],
   ["array", []],
@@ -96,9 +97,9 @@ const invalidSnapshots = [
 for (const [name, harness] of invalidSnapshots) {
   test(`health treats ${name} Harness snapshot as unavailable without defaults`, async () => {
     const health = await healthClient(harness).getHealth();
-    assert.equal(health.features.harness, undefined);
-    assert.deepEqual(health.features.channels, { autoRoute: true, intentSelector: true });
-    assert.deepEqual(health.features.transports, {
+    assert.equal(health.features!.harness, undefined);
+    assert.deepEqual(health.features!.channels, { autoRoute: true, intentSelector: true });
+    assert.deepEqual(health.features!.transports, {
       providerWebSocketFallback: true,
       localWebSocketRpc: false,
     });
@@ -120,5 +121,5 @@ test("Harness projection does not change existing channel or transport parsing",
 
 test("health accepts a historical Harness snapshot without frozen workflow selection", async () => {
   const { delegationSelectedWorkflowIds: _selection, ...historical } = snapshot;
-  assert.deepEqual((await healthClient(historical).getHealth()).features.harness, historical);
+  assert.deepEqual((await healthClient(historical).getHealth()).features!.harness, historical);
 });
