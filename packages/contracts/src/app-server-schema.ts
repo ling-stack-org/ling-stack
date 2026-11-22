@@ -1,0 +1,382 @@
+import {
+  LING_APP_SERVER_METHODS,
+  LING_APP_SERVER_PROTOCOL_VERSION,
+  isLingAppServerMethod,
+  type LingAppServerMethod,
+} from "./app-server.js";
+
+/** The subset of JSON Schema used by the App Server contract registry. */
+export interface LingAppServerJsonSchema {
+  readonly $schema?: string;
+  readonly title?: string;
+  readonly type?: "object" | "array" | "string" | "number" | "integer" | "boolean" | "null";
+  readonly properties?: Readonly<Record<string, LingAppServerJsonSchema>>;
+  readonly required?: readonly string[];
+  readonly additionalProperties?: boolean;
+  readonly items?: LingAppServerJsonSchema;
+  readonly enum?: readonly (string | number | boolean | null)[];
+  readonly oneOf?: readonly LingAppServerJsonSchema[];
+  readonly description?: string;
+}
+
+export interface LingAppServerMethodSchema {
+  readonly params: LingAppServerJsonSchema;
+  readonly result: LingAppServerJsonSchema;
+}
+
+export interface LingAppServerSchemaDocument {
+  readonly $schema: "https://json-schema.org/draft/2020-12/schema";
+  readonly title: "Ling App Server protocol";
+  readonly protocolVersion: "ling-app-server/1";
+  readonly methods: Readonly<Record<LingAppServerMethod, LingAppServerMethodSchema>>;
+}
+
+export interface LingAppServerValidationResult {
+  readonly ok: boolean;
+  readonly path?: string;
+  readonly message?: string;
+}
+
+const objectSchema: LingAppServerJsonSchema = { type: "object", additionalProperties: true };
+const stringSchema: LingAppServerJsonSchema = { type: "string" };
+const integerSchema: LingAppServerJsonSchema = { type: "integer" };
+const booleanSchema: LingAppServerJsonSchema = { type: "boolean" };
+const arraySchema: LingAppServerJsonSchema = { type: "array" };
+const stringArraySchema: LingAppServerJsonSchema = { type: "array", items: stringSchema };
+
+const threadTarget = { threadId: stringSchema };
+const workItemTarget = { workItemId: stringSchema };
+const candidate = objectWith({ workspaceId: stringSchema, candidateDigest: stringSchema, worktreeId: stringSchema,
+  baseCommit: stringSchema, headCommit: stringSchema, filePaths: stringArraySchema }, ["workspaceId", "candidateDigest"]);
+const planResult = objectWith({ planId: stringSchema, planRevision: stringSchema, candidate, checks: arraySchema },
+  ["planId", "planRevision", "candidate", "checks"]);
+const operationResult = objectWith({ operationId: stringSchema, candidateDigest: stringSchema, status: stringSchema },
+  ["operationId", "candidateDigest", "status"]);
+const subscriptionResult = objectWith({ disposition: { enum: ["complete", "snapshot_required"] },
+  subscriptionId: stringSchema, cursor: stringSchema, window: objectSchema }, ["disposition"]);
+const collaborationAppend = { ...workItemTarget, idempotencyKey: stringSchema, actorId: stringSchema,
+  expectedWorkItemRevision: integerSchema, expectedCollaborationRevision: integerSchema, parentRecordId: stringSchema,
+  sourceRefs: arraySchema, payload: {} };
+const worktreeTarget = { ownerKind: { enum: ["channel", "teammate"] }, ownerId: stringSchema };
+
+function objectWith(
+  properties: Readonly<Record<string, LingAppServerJsonSchema>>,
+  required: readonly string[] = [],
+): LingAppServerJsonSchema {
+  return { type: "object", properties, required, additionalProperties: true };
+}
+
+function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
+  const result = objectSchema;
+  switch (method) {
+    case "initialize":
+      return {
+        params: objectWith({ protocolVersions: stringArraySchema,
+          clientInfo: objectWith({ name: stringSchema, version: stringSchema }, ["name", "version"]),
+          requiredCapabilities: stringArraySchema, optionalCapabilities: stringArraySchema, workspaceScope: stringArraySchema }, ["protocolVersions"]),
+        result: objectWith({ protocolVersion: { enum: [LING_APP_SERVER_PROTOCOL_VERSION] }, connectionId: stringSchema,
+          serverInfo: objectSchema, effectiveScopes: stringArraySchema, capabilities: stringArraySchema, limits: objectSchema },
+        ["protocolVersion", "connectionId", "serverInfo", "effectiveScopes", "capabilities", "limits"]),
+      };
+    case "server/ping":
+      return { params: objectSchema, result: objectWith({ ok: { enum: [true] }, connectionId: stringSchema, serverTime: stringSchema },
+        ["ok", "connectionId", "serverTime"]) };
+    case "server/capabilities":
+      return { params: objectSchema, result: objectWith({ protocolVersion: { enum: [LING_APP_SERVER_PROTOCOL_VERSION] },
+        capabilities: stringArraySchema, methods: stringArraySchema, notifications: stringArraySchema },
+      ["protocolVersion", "capabilities", "methods", "notifications"]) };
+    case "workspace/list":
+      return { params: objectSchema, result: objectWith({ workspaces: arraySchema }, ["workspaces"]) };
+    case "workspace/read":
+      return { params: objectWith({ workspaceId: stringSchema }), result: objectWith({ cwd: stringSchema, workspaceId: stringSchema }, ["cwd", "workspaceId"]) };
+    case "provider/list":
+    case "skill/list":
+      return { params: objectSchema, result: objectWith({ snapshot: objectSchema, domain: stringSchema }, ["domain"]) };
+    case "model/list":
+      return { params: objectWith({ offset: integerSchema }), result: objectWith({ models: arraySchema }, ["models"]) };
+    case "skill/read":
+      return { params: objectWith({ skillId: stringSchema }, ["skillId"]), result: objectWith({ skill: objectSchema }, ["skill"]) };
+    case "permissionProfile/list":
+      return { params: objectSchema, result: objectWith({ profiles: arraySchema }, ["profiles"]) };
+    case "server/grants/list":
+      return { params: objectSchema, result: objectWith({ grants: arraySchema }, ["grants"]) };
+    case "server/grants/create":
+      return { params: objectWith({ label: stringSchema, subject: objectSchema, scopes: stringArraySchema, expiresAt: stringSchema,
+        credentialSha256: stringSchema, idempotencyKey: stringSchema }, ["label", "subject", "scopes", "expiresAt", "credentialSha256", "idempotencyKey"]),
+      result: objectWith({ grant: objectSchema }, ["grant"]) };
+    case "server/grants/revoke":
+      return { params: objectWith({ grantId: stringSchema, expectedRevision: integerSchema, revision: integerSchema }, ["grantId"]),
+        result: objectWith({ grant: objectSchema }, ["grant"]) };
+    case "worktree/list":
+      return { params: objectSchema, result };
+    case "worktree/create":
+      return { params: objectWith({ ...worktreeTarget, baseBranch: stringSchema }, ["ownerKind", "ownerId"]), result };
+    case "worktree/refresh":
+    case "worktree/cleanup/preview":
+    case "worktree/cleanup":
+      return { params: objectWith({ ...worktreeTarget, expectedRevision: stringSchema, confirmed: booleanSchema }, ["ownerKind", "ownerId"]), result };
+    case "thread/start":
+      return { params: objectWith({ ...threadTarget, title: stringSchema, objective: stringSchema, kind: stringSchema }),
+        result: objectWith({ thread: objectSchema }, ["thread"]) };
+    case "thread/list":
+      return { params: objectWith({ limit: integerSchema }), result: objectWith({ threads: arraySchema }, ["threads"]) };
+    case "thread/name/set":
+      return { params: objectWith({ ...threadTarget, title: stringSchema }, ["threadId", "title"]), result };
+    case "thread/archive":
+    case "thread/unarchive":
+    case "thread/delete":
+    case "thread/delete/preview":
+      return { params: objectWith({ ...threadTarget, expectedRevision: stringSchema, reason: stringSchema }, ["threadId"]), result };
+    case "thread/read":
+    case "thread/goal/get":
+    case "thread/mode/get":
+    case "thread/turns/list":
+    case "thread/items/list":
+    case "thread/events/read":
+      return { params: objectWith({ ...threadTarget, limit: integerSchema, beforeSequence: integerSchema, cursor: stringSchema }, ["threadId"]), result };
+    case "thread/mode/set":
+      return { params: objectWith({ ...threadTarget, mode: { enum: ["default", "plan"] } }, ["threadId", "mode"]), result };
+    case "thread/goal/set":
+    case "thread/goal/pause":
+    case "thread/goal/resume":
+    case "thread/goal/clear":
+    case "thread/goal/complete":
+      return { params: objectWith({ ...threadTarget, expectedGoalRevision: stringSchema }, ["threadId"]), result };
+    case "plan/read":
+      return { params: objectWith({ ...threadTarget, planId: stringSchema, limit: integerSchema }), result };
+    case "plan/accept":
+      return { params: objectWith({ ...threadTarget, planId: stringSchema, expectedRevision: integerSchema }, ["threadId", "planId"]), result };
+    case "item/read":
+      return { params: objectWith({ ...threadTarget, itemId: stringSchema }, ["threadId", "itemId"]), result };
+    case "context/inspect":
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema }, ["threadId", "turnId"]), result };
+    case "submission/read":
+      return { params: objectWith({ ...threadTarget, idempotencyKey: stringSchema }, ["idempotencyKey"]), result };
+    case "thread/resume":
+    case "thread/snapshot":
+      return { params: objectWith({ threadId: stringSchema }, ["threadId"]), result: objectWith({ cwd: stringSchema, thread: objectSchema,
+        cursor: stringSchema, pendingApprovals: arraySchema, pendingInputs: arraySchema }, ["cwd", "thread", "cursor", "pendingApprovals", "pendingInputs"]) };
+    case "thread/subscribe":
+      return { params: objectWith({ ...threadTarget, cursor: stringSchema }), result: subscriptionResult };
+    case "workItem/subscribe":
+      return { params: objectWith({ ...workItemTarget, cursor: stringSchema }, ["workItemId"]), result: subscriptionResult };
+    case "thread/unsubscribe":
+    case "workItem/unsubscribe":
+      return { params: objectWith({ subscriptionId: stringSchema }, ["subscriptionId"]), result };
+    case "workItem/read":
+    case "workItem/clarify":
+    case "workItem/delivery/read":
+    case "workItem/evidence/read":
+    case "workItem/collaboration/read":
+    case "workItem/deliberation/read":
+    case "workItem/stage/read":
+    case "workItem/stage/brief/read":
+    case "workItem/coordination/read":
+    case "workItem/message/read":
+    case "workItem/message/list":
+    case "workItem/question/read":
+    case "workItem/handoff/read":
+      return { params: objectWith({ ...workItemTarget, afterRevision: integerSchema, afterSequence: integerSchema,
+        offset: integerSchema, limit: integerSchema }, ["workItemId"]), result };
+    case "workItem/list":
+      return { params: objectWith({ status: stringSchema, channelId: stringSchema, limit: integerSchema }), result };
+    case "workItem/create":
+      return { params: objectWith({ ...workItemTarget, sourceId: stringSchema, title: stringSchema, gitHubSubject: objectSchema,
+        idempotencyKey: stringSchema }, ["sourceId", "title"]), result };
+    case "workItem/workflow/bind":
+      return { params: objectWith({ ...workItemTarget, planId: stringSchema, expectedWorkItemRevision: integerSchema,
+        expectedPlanRevision: integerSchema, idempotencyKey: stringSchema },
+      ["workItemId", "planId", "expectedWorkItemRevision", "expectedPlanRevision", "idempotencyKey"]), result };
+    case "workItem/evidence/append":
+      return { params: objectWith({ ...workItemTarget, actorId: stringSchema, kind: stringSchema, subjectRevision: stringSchema,
+        content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arraySchema },
+      ["workItemId", "actorId", "kind", "subjectRevision", "content", "idempotencyKey"]), result };
+    case "workItem/collaboration/append":
+      return { params: objectWith({ ...collaborationAppend, kind: stringSchema, action: stringSchema }, ["workItemId", "kind", "action"]), result };
+    case "workItem/deliberation/start":
+    case "workItem/deliberation/cancel":
+    case "workItem/deliberation/decide":
+    case "workItem/coordination/start":
+    case "workItem/coordination/close":
+    case "workItem/message/send":
+    case "workItem/question/ask":
+    case "workItem/question/reply":
+    case "workItem/handoff/accept":
+    case "workItem/handoff/return":
+    case "workItem/feedback/add":
+      return { params: objectWith(collaborationAppend, ["workItemId"]), result };
+    case "workItem/coordination/schedule/read":
+    case "workItem/coordination/schedule/set":
+      return { params: objectWith({ ...workItemTarget, automationId: stringSchema, expectedRevision: integerSchema,
+        enabled: booleanSchema, kind: { enum: ["checkpoint", "retrospective"] }, durationMs: integerSchema }, ["workItemId", "automationId"]), result };
+    case "turn/start":
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema, idempotencyKey: stringSchema, message: stringSchema,
+        userInstruction: stringSchema, providerPresetId: stringSchema, executionBinding: objectSchema, attachmentIds: stringArraySchema }, ["threadId"]), result };
+    case "turn/queue":
+      return { params: objectWith({ threadId: stringSchema, expectedTurnId: stringSchema,
+        expectedTurnRevision: stringSchema, message: stringSchema, userInstruction: stringSchema, idempotencyKey: stringSchema },
+      ["threadId", "expectedTurnId", "expectedTurnRevision", "idempotencyKey"]), result };
+    case "turn/interrupt":
+      return { params: objectWith({ turnId: stringSchema, expectedTurnId: stringSchema }), result };
+    case "turn/resume":
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema, expectedTurnRevision: stringSchema,
+        sourceRunId: stringSchema, idempotencyKey: stringSchema, instruction: stringSchema }, ["turnId"]), result };
+    case "thread/fork":
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema, sourceRunId: stringSchema, idempotencyKey: stringSchema }, ["threadId"]), result };
+    case "approval/respond":
+      return { params: objectWith({ approvalId: stringSchema, decision: { enum: ["approve", "deny"] }, expectedRevision: stringSchema,
+        idempotencyKey: stringSchema, runId: stringSchema, threadId: stringSchema, turnId: stringSchema }, ["approvalId", "decision"]), result };
+    case "input/respond":
+      return { params: objectWith({ schemaVersion: { enum: [1] }, authority: objectSchema, answers: arraySchema, idempotencyKey: stringSchema },
+        ["schemaVersion", "authority", "answers", "idempotencyKey"]),
+      result: objectWith({ cwd: stringSchema, receipt: objectSchema }, ["cwd", "receipt"]) };
+    case "workItem/accept":
+      return { params: objectWith({ workItemId: stringSchema, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema },
+        ["workItemId", "expectedWorkItemRevision", "idempotencyKey"]), result };
+    case "workItem/pause":
+    case "workItem/resume":
+    case "workItem/cancel":
+      return { params: objectWith({ workItemId: stringSchema, expectedWorkItemRevision: integerSchema,
+        expectedControlGeneration: integerSchema, expectedRevision: integerSchema, controlGeneration: integerSchema, idempotencyKey: stringSchema },
+        ["workItemId", "idempotencyKey"]), result };
+    case "externalAgent/task/start":
+      return { params: objectWith({ registrationId: stringSchema, submission: objectSchema }, ["registrationId", "submission"]), result };
+    case "externalAgent/task/reconnect":
+      return { params: objectWith({ registrationId: stringSchema, taskId: stringSchema, submissionId: stringSchema },
+        ["registrationId", "taskId", "submissionId"]), result };
+    case "externalAgent/task/cancel":
+      return { params: objectWith({ registrationId: stringSchema, taskId: stringSchema, idempotencyKey: stringSchema },
+        ["registrationId", "taskId", "idempotencyKey"]), result };
+    case "externalAgent/register":
+      return { params: objectWith({ registration: objectSchema, idempotencyKey: stringSchema }, ["registration", "idempotencyKey"]), result };
+    case "externalAgent/capabilities/read":
+      return { params: objectWith({ registrationId: stringSchema }, ["registrationId"]), result };
+    case "changes/capture":
+      return { params: objectSchema, result: objectWith({ candidate, coverage: stringSchema }, ["candidate", "coverage"]) };
+    case "changes/read":
+      return { params: objectWith({ candidateDigest: stringSchema }, ["candidateDigest"]), result };
+    case "changes/apply/preview":
+      return { params: objectWith({ threadId: stringSchema, turnId: stringSchema, action: stringSchema, candidateDigest: stringSchema,
+        sourceWorktreeId: stringSchema, targetWorktreeId: stringSchema, hunkIds: stringArraySchema }), result };
+    case "changes/apply":
+      return { params: objectWith({ threadId: stringSchema, turnId: stringSchema, action: stringSchema,
+        expectedRevision: stringSchema, idempotencyKey: stringSchema, confirmed: booleanSchema, candidateDigest: stringSchema,
+        sourceWorktreeId: stringSchema, targetWorktreeId: stringSchema, hunkIds: stringArraySchema }), result };
+    case "artifact/read":
+      return { params: objectWith({ artifactId: stringSchema, ...threadTarget, ...workItemTarget, runId: stringSchema,
+        offset: integerSchema, limit: integerSchema }, ["artifactId"]), result };
+    case "verify/plan":
+      return { params: objectWith({ candidate, ...threadTarget, ...workItemTarget, requestedChecks: stringArraySchema,
+        idempotencyKey: stringSchema, planRevision: stringSchema }, ["candidate"]), result: planResult };
+    case "verify/start":
+      return { params: objectWith({ planId: stringSchema, planRevision: stringSchema, candidateDigest: stringSchema, idempotencyKey: stringSchema },
+        ["planId", "planRevision", "candidateDigest", "idempotencyKey"]), result: operationResult };
+    case "verify/status":
+      return { params: objectWith({ operationId: stringSchema }, ["operationId"]), result: objectWith({ operation: operationResult }, ["operation"]) };
+    case "verify/cancel":
+      return { params: objectWith({ operationId: stringSchema, expectedRevision: stringSchema, idempotencyKey: stringSchema }, ["operationId", "idempotencyKey"]), result };
+    case "review/start":
+      return { params: objectWith({ candidate, ...workItemTarget, idempotencyKey: stringSchema, reviewRulesRefs: stringArraySchema,
+        providerPresetId: stringSchema }, ["candidate", "idempotencyKey"]), result: operationResult };
+    case "review/status":
+      return { params: objectWith({ assessmentId: stringSchema, operationId: stringSchema }), result: operationResult };
+    case "review/finding/update":
+      return { params: objectWith({ assessmentId: stringSchema, findingId: stringSchema, disposition: { enum: ["open", "acknowledged", "resolved", "dismissed"] },
+        expectedRevision: stringSchema, idempotencyKey: stringSchema }, ["assessmentId", "findingId", "disposition", "idempotencyKey"]), result };
+    case "simplify/status":
+      return { params: objectWith({ operationId: stringSchema, offset: integerSchema }, ["operationId"]), result: operationResult };
+    case "simplify/start":
+      return { params: objectWith({ candidate, ...workItemTarget, idempotencyKey: stringSchema, providerPresetId: stringSchema },
+      ["candidate", "idempotencyKey"]), result: operationResult };
+    case "doctor/run":
+      return { params: objectWith({ includeLogTail: booleanSchema, scope: { enum: ["workspace", "project", "candidate"] } }), result };
+    case "instructions/init":
+      return { params: objectWith({ mode: { enum: ["preview", "apply"] }, idempotencyKey: stringSchema }, ["idempotencyKey"]), result };
+    case "handoff/create":
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema, idempotencyKey: stringSchema, nextInstruction: stringSchema },
+      ["threadId", "turnId", "idempotencyKey", "nextInstruction"]), result };
+    case "handoff/read":
+      return { params: objectWith({ handoffId: stringSchema }, ["handoffId"]), result };
+    case "handoff/resume":
+      return { params: objectWith({ handoffId: stringSchema, providerPresetId: stringSchema }, ["handoffId", "providerPresetId"]), result };
+    case "github/intake/policy/list":
+      return { params: objectSchema, result };
+    case "github/intake/read":
+      return { params: objectWith({ receiptId: stringSchema }, ["receiptId"]), result };
+    case "github/intake/poll":
+      return { params: objectWith({ repository: stringSchema, page: integerSchema }, ["repository"]), result };
+    case "github/subject/read":
+      return { params: objectWith({ repository: stringSchema, kind: { enum: ["issue", "pull_request"] }, number: integerSchema },
+      ["repository", "kind", "number"]), result };
+    case "github/delivery/reconcile":
+      return { params: objectWith({ ...threadTarget, ...workItemTarget, repository: stringSchema, pullRequestNumber: integerSchema,
+        candidateDigest: stringSchema, expectedWorkItemRevision: integerSchema }, ["threadId", "workItemId", "repository", "pullRequestNumber", "candidateDigest"]), result };
+    case "delivery/read":
+      return { params: objectWith({ ...workItemTarget, deliveryId: stringSchema }, ["workItemId", "deliveryId"]), result };
+    case "turn/retry":
+    case "turn/steer":
+    case "thread/compact/start":
+    case "thread/revert":
+      return { params: objectSchema, result };
+  }
+}
+
+export const LING_APP_SERVER_METHOD_SCHEMAS: Readonly<Record<LingAppServerMethod, LingAppServerMethodSchema>> =
+  Object.fromEntries(LING_APP_SERVER_METHODS.map(method => [method, schemaFor(method)])) as Record<LingAppServerMethod, LingAppServerMethodSchema>;
+
+export function getLingAppServerSchema(): LingAppServerSchemaDocument {
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    title: "Ling App Server protocol",
+    protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
+    methods: LING_APP_SERVER_METHOD_SCHEMAS,
+  };
+}
+
+export function validateLingAppServerParams(method: string, params: unknown): LingAppServerValidationResult {
+  if (!isLingAppServerMethod(method)) return { ok: false, path: "method", message: "unknown App Server method" };
+  return validateAgainstSchema(params === undefined ? {} : params, LING_APP_SERVER_METHOD_SCHEMAS[method].params, "params");
+}
+
+export function validateLingAppServerResult(method: LingAppServerMethod, result: unknown): LingAppServerValidationResult {
+  return validateAgainstSchema(result, LING_APP_SERVER_METHOD_SCHEMAS[method].result, "result");
+}
+
+function validateAgainstSchema(value: unknown, schema: LingAppServerJsonSchema, path: string): LingAppServerValidationResult {
+  if (schema.oneOf) {
+    if (schema.oneOf.filter(candidate => validateAgainstSchema(value, candidate, path).ok).length === 1) return { ok: true };
+    return { ok: false, path, message: "does not match any allowed shape" };
+  }
+  if (schema.enum && !schema.enum.includes(value as never)) return { ok: false, path, message: "must be one of the allowed values" };
+  if (schema.type === "object") {
+    if (!isRecord(value)) return { ok: false, path, message: "must be an object" };
+    for (const key of schema.required ?? []) {
+      if (!Object.hasOwn(value, key) || value[key] === undefined) return { ok: false, path: `${path}.${key}`, message: "is required" };
+    }
+    for (const [key, property] of Object.entries(schema.properties ?? {})) {
+      if (Object.hasOwn(value, key) && value[key] !== undefined) {
+        const result = validateAgainstSchema(value[key], property, `${path}.${key}`);
+        if (!result.ok) return result;
+      }
+    }
+    return { ok: true };
+  }
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) return { ok: false, path, message: "must be an array" };
+    if (schema.items) for (const [index, item] of value.entries()) {
+      const result = validateAgainstSchema(item, schema.items, `${path}[${index}]`);
+      if (!result.ok) return result;
+    }
+    return { ok: true };
+  }
+  if (schema.type === "string" && typeof value !== "string") return { ok: false, path, message: "must be a string" };
+  if (schema.type === "boolean" && typeof value !== "boolean") return { ok: false, path, message: "must be a boolean" };
+  if (schema.type === "integer" && (!Number.isInteger(value) || !Number.isSafeInteger(value))) return { ok: false, path, message: "must be an integer" };
+  if (schema.type === "number" && (typeof value !== "number" || !Number.isFinite(value))) return { ok: false, path, message: "must be a number" };
+  if (schema.type === "null" && value !== null) return { ok: false, path, message: "must be null" };
+  return { ok: true };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

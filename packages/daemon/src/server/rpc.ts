@@ -25,7 +25,10 @@ import {
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
   LING_PRODUCT_VERSION,
+  isLingAppServerMethod,
   parseUserInputAnswerCommandV1,
+  validateLingAppServerParams,
+  validateLingAppServerResult,
   type ControlPlaneSubscribeResult,
   type LingAppServerContextInspectResult,
   type LingAppServerInputRespondResult,
@@ -400,6 +403,10 @@ class RpcConnection {
         || !grantAllowsRequest(this.context.storeRegistry.getStore(this.defaultCwd), this.grant, request.method, readParamsRecord(params)))) {
         throw rpcError(-32021, "capability_denied", "The App Server grant does not authorize this method or subject.");
       }
+      if (this.appServer && isLingAppServerMethod(request.method)) {
+        const validation = validateLingAppServerParams(request.method, params);
+        if (!validation.ok) throw rpcError(-32602, "invalid_params", `${validation.path} ${validation.message}.`);
+      }
       if (request.method === "controlPlane.subscribe") {
         if (this.appServer) {
           throw rpcError(-32601, "method_not_found", "Use thread/subscribe or workItem/subscribe on the App Server.");
@@ -447,6 +454,10 @@ class RpcConnection {
         return;
       }
       const result = await this.dispatch(request.method, params);
+      if (this.appServer && isLingAppServerMethod(request.method)) {
+        const validation = validateLingAppServerResult(request.method, result);
+        if (!validation.ok) throw rpcError(-32603, "invalid_result", `Invalid result for ${request.method}: ${validation.path} ${validation.message}.`);
+      }
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
         if (this.appServer && this.canRespondToInput() && (request.method === "thread/snapshot" || request.method === "thread/resume")) {
           this.outbound.sendThreadSnapshot(id as LingAppServerJsonRpcId, result as LingAppServerThreadSnapshotResult);

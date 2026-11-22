@@ -61,7 +61,7 @@ import {
   type LocalServiceStatus,
   type LocalStackStatus,
 } from "./local/services.js";
-import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
+import { getLingAppServerSchema, isLingAppServerMethod, LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
@@ -258,13 +258,21 @@ export async function main(): Promise<void> {
 
 async function handleAppServer(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [mode = "stdio", socketPath, ...rest] = args;
+  if (mode === "schema") {
+    if (rest.length || socketPath !== undefined && !isLingAppServerMethod(socketPath)) {
+      throw new CliError(2, "bad_usage", "Usage: ling-stack app-server schema [method]");
+    }
+    const document = getLingAppServerSchema();
+    printJson(socketPath === undefined ? document : document.methods[socketPath]);
+    return 0;
+  }
   const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
   if (mode === "instructions-init" || mode === "verify" || mode === "verify-status") {
     return handleAppServerDevelopment(mode, args.slice(1), transportOptions);
   }
   if (!["stdio", "probe", "mcp", "listen"].includes(mode) || rest.length
     || (mode === "listen" ? !socketPath : socketPath !== undefined)) {
-    throw new CliError(2, "bad_usage", "Use app-server with stdio, probe, mcp, listen, instructions-init, verify, or verify-status.");
+    throw new CliError(2, "bad_usage", "Use app-server with stdio, probe, mcp, listen, schema, instructions-init, verify, or verify-status.");
   }
   if (mode === "mcp") {
     const { runLingAppServerMcp } = await import("@ling-stack/daemon/dist/server/app-server-mcp.js");
@@ -7798,6 +7806,7 @@ function shellQuote(value: string): string {
 function printCommandHelp(command: string, subcommand?: string): void {
   if (command === "app-server") {
     console.log("Usage: ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]");
+    console.log("       ling-stack app-server schema [method]");
     console.log("       ling-stack [global options] app-server instructions-init [--path <directory>] [--apply <workspace-revision>]");
     console.log("       ling-stack [global options] app-server verify [--plan] [--check <id>] [--thread <id>] [--work-item <id>]");
     console.log("       ling-stack [global options] app-server verify-status <operation-id>");

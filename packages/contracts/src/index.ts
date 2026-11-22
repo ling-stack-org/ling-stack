@@ -104,6 +104,7 @@ export * from "./marketplace.js";
 export * from "./learning-reviews.js";
 
 export * from "./app-server.js";
+export * from "./app-server-schema.js";
 
 export * from "./memory-derivatives.js";
 
