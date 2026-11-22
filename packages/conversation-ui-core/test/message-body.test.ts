@@ -152,6 +152,7 @@ test("local Markdown links retain the authored label and paths containing spaces
   assert.equal(reference.raw, "/Users/test/光明乳业/delivery/新版 工程.zip");
   assert.equal(reference.insideWorkspace, false);
   const inline = splitInlineTokens("[source](/workspace/src/main.py:12)", "/workspace").find((token) => token.kind === "local_file");
+  assert.ok(inline);
   assert.equal(inline.reference.label, "source");
   assert.equal(inline.reference.location, ":12");
 });

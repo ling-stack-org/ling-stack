@@ -1,9 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type {
+  CanonicalConversationItem,
+  CanonicalSourceRef,
+  CanonicalTerminalReportProjection,
+  CanonicalTranscriptScope,
+} from "../dist/index.js";
 import { fingerprintConversationTimeline, projectCanonicalConversationTimeline } from "../dist/index.js";
 
-const scope = { surface: "normal", threadId: "thread-1", workspaceId: "workspace-1", depth: 0 };
-const report = (id, generation, resultItemId, summary = `summary ${generation}`) => ({
+const scope: CanonicalTranscriptScope = { surface: "normal", threadId: "thread-1", workspaceId: "workspace-1", depth: 0 };
+type Mutable<T> = { -readonly [Key in keyof T]: T[Key] };
+type TerminalReport = CanonicalTerminalReportProjection["report"];
+type ReportFixture = Omit<Mutable<TerminalReport>, "outcome"> & {
+  outcome: Mutable<TerminalReport["outcome"]>;
+  synthesis?: { mode: "deterministic_fallback" };
+};
+
+const report = (id: string, generation: number, resultItemId: string, summary = `summary ${generation}`):
+  { generation: number; resultItemId: string; report: ReportFixture } => ({
   generation,
   resultItemId,
   report: {
@@ -72,7 +86,7 @@ test("terminal result preserves detailed sections and source lineage", () => {
     actions: [], turnRuns: [], terminalReports: [detailed],
   });
   const result = projection.items[0];
-  assert.equal(result.kind, "terminalReport");
+  assert.ok(result.kind === "terminalReport");
   assert.equal(result.corrections[0].correctedFact, "The parser was updated");
   assert.equal(result.changes[0].paths[0], "src/parser.ts");
   assert.equal(result.verification[0].command, "pnpm test");
@@ -133,7 +147,7 @@ test("terminal result hides internal artifacts and their conversation references
   });
 
   const result = projection.items[0];
-  assert.equal(result.kind, "terminalReport");
+  assert.ok(result.kind === "terminalReport");
   assert.equal(result.artifactCount, 1);
   assert.deepEqual(result.artifacts.map((artifact) => artifact.id), ["artifact-user-file"]);
   assert.deepEqual(result.references.map((reference) => reference.id), ["artifact-user-file"]);
@@ -179,20 +193,20 @@ test("terminal result hides internal run artifact paths from visible changes", (
   });
 
   const result = projection.items[0];
-  assert.equal(result.kind, "terminalReport");
+  assert.ok(result.kind === "terminalReport");
   assert.equal(result.changeCount, 1);
   assert.deepEqual(result.changes.map((change) => change.id), ["change-mixed"]);
   assert.deepEqual(result.changes[0].paths, ["src/parser.ts"]);
 });
-const item = (id, sequence, kind, payload) => ({
+const item = (id: string, sequence: number, kind: CanonicalConversationItem["kind"], payload: unknown): CanonicalConversationItem => ({
   id, workspaceId: "workspace-1", threadId: "thread-1", turnId: "turn-1", sequence,
   kind, status: "committed", actorType: kind === "terminal_report" ? "system" : "ling_agent",
   revision: 0, payload, domainRefs: [],
 });
 
 test("terminal result ref normalization never downgrades duplicate privacy markers", () => {
-  const privateRef = { kind: "file", id: "src/shared.ts", path: "src/shared.ts", visibility: "folded_evidence", sensitivity: "private" };
-  const publicRef = { ...privateRef, visibility: "conversation", sensitivity: "normal" };
+  const privateRef: CanonicalSourceRef = { kind: "file", id: "src/shared.ts", path: "src/shared.ts", visibility: "folded_evidence", sensitivity: "private" };
+  const publicRef: CanonicalSourceRef = { ...privateRef, visibility: "conversation", sensitivity: "normal" };
   for (const refs of [[privateRef, publicRef], [publicRef, privateRef]]) {
     const detailed = report("report-policy", 1, "result-policy");
     detailed.report.references = refs;
@@ -202,7 +216,10 @@ test("terminal result ref normalization never downgrades duplicate privacy marke
         sourceKind: "run", sourceId: "run-1", evidenceFingerprint: "fp-1", outcomeStatus: "succeeded" })],
       terminalReports: [detailed],
     });
-    const ref = projection.items[0].references.find((entry) => entry.id === privateRef.id);
+    const row = projection.items[0];
+    assert.ok(row.kind === "terminalReport");
+    const ref = row.references.find((entry) => entry.id === privateRef.id);
+    assert.ok(ref);
     assert.equal(ref.visibility, "folded_evidence");
     assert.equal(ref.sensitivity, "private");
   }
@@ -219,7 +236,9 @@ test("execute turn keeps the agent final and appends one terminal fact result", 
     actions: [], turnRuns: [], terminalReports: [report("report-1", 1, "result-1")],
   });
   assert.deepEqual(projection.items.map((entry) => entry.kind), ["userMessage", "agentMessage", "terminalReport"]);
-  assert.equal(projection.items[2].resultItemId, "result-1");
+  const result = projection.items[2];
+  assert.ok(result.kind === "terminalReport");
+  assert.equal(result.resultItemId, "result-1");
   assert.deepEqual(fingerprintConversationTimeline(projection.items).rendererKeys, ["message.document", "message.document", "result.terminal"]);
 });
 
@@ -261,7 +280,7 @@ test("normal deterministic fallback uses one compact outcome instead of repeatin
     actions: [], turnRuns: [], terminalReports: [fallback],
   });
   const result = projection.items[1];
-  assert.equal(result.kind, "terminalReport");
+  assert.ok(result.kind === "terminalReport");
   assert.equal(result.title, "任务已完成。");
   assert.equal(result.summary, "");
   assert.equal(result.reportStatus, "fallback");
@@ -279,7 +298,9 @@ test("only highest committed generation is visible", () => {
     actions: [], turnRuns: [], terminalReports: [report("report-1", 1, "result-1"), report("report-2", 2, "result-2")],
   });
   assert.deepEqual(projection.items.map((entry) => entry.kind), ["userMessage", "terminalReport"]);
-  assert.equal(projection.items[1].generation, 2);
+  const result = projection.items[1];
+  assert.ok(result.kind === "terminalReport");
+  assert.equal(result.generation, 2);
   assert.equal(projection.diagnostics.length, 0);
 });
 
@@ -333,6 +354,7 @@ test("run artifacts attach to their owning atomic action as dedicated Host refs"
     turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
   });
   const action = projection.items.find((entry) => entry.id === "action:action-1");
+  assert.ok(action);
   assert.equal(action.kind, "dynamicToolCall");
   assert.deepEqual(action.sourceRefs.find((ref) => ref.id === "artifact-1"), {
     kind: "artifact",

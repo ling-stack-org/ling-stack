@@ -4,7 +4,7 @@ import { cpus, platform, arch } from "node:os";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { projectCanonicalConversationTimeline, projectDisplayBatches, expandDisplayBatch } from "../dist/index.js";
-import { transcriptScaleFixture } from "./fixtures/transcript-scale.mjs";
+import { transcriptScaleFixture } from "./fixtures/transcript-scale.ts";
 
 const sampleCount = 20;
 const warmupCount = 3;

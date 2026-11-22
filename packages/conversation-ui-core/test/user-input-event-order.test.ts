@@ -1,31 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type {
+  CanonicalConversationItem,
+  CanonicalTranscriptScope,
+  CanonicalUserInputRequest,
+  ConversationTimelineItem,
+  ConversationTimelineItemBase,
+  ConversationTimelineUserInputAnswerItem,
+} from "../dist/index.js";
 import { interleaveUserInputRunTimeline, projectCanonicalUserInputTimeline, reconcileCanonicalUserInputs } from "../dist/index.js";
 
 const scope = { threadId: "thread", runId: "run", attemptId: "attempt", participantId: "engineer", workflowStepId: "step" };
 const source = { ...scope, workspaceId: "workspace", threadId: "thread", turnId: "turn", workUnitId: "unit", sourceItemId: "source" };
-function question(seq, after, overrides = {}) {
+function question(seq: number, after: number, overrides: Partial<CanonicalUserInputRequest> = {}) {
   const boundary = { runId: scope.runId, attemptId: scope.attemptId, afterEventSequence: after,
     ...(after ? { afterEventId: "event-" + after } : {}) };
-  const record = { kind: "user_input_request", availability: "available", itemId: "question-" + seq, requestId: "request-" + seq,
+  const record: CanonicalUserInputRequest = { kind: "user_input_request", availability: "available", itemId: "question-" + seq, requestId: "request-" + seq,
     requestVersion: 1, source, runEventPosition: boundary, status: "pending", statusRevision: 1,
     waitMode: "required", questions: [], createdAt: "time", updatedAt: "time", ...overrides };
-  const anchor = { id: record.itemId, workspaceId: source.workspaceId, threadId: source.threadId, turnId: source.turnId,
+  const anchor: CanonicalConversationItem = { id: record.itemId, workspaceId: source.workspaceId, threadId: source.threadId, turnId: source.turnId,
     sequence: seq, kind: record.kind, actorType: "teammate", actorId: scope.participantId, status: "committed", revision: 1,
     payload: { requestId: record.requestId, requestVersion: 1, runEventPosition: record.runEventPosition } };
-  const projectionScope = { surface: "child", depth: 1, ...source };
+  const projectionScope: CanonicalTranscriptScope = { surface: "child", depth: 1, ...source };
   return { record, anchor, projectionScope, row: projectCanonicalUserInputTimeline({ scope: projectionScope, items: [anchor], userInputs: [record] })[0] };
 }
-function item(id, seq, kind = "commandExecution", overrides = {}) {
+function item(id: string, seq: number | undefined, kind: ConversationTimelineItem["kind"] = "commandExecution",
+  overrides: Partial<ConversationTimelineItemBase> = {}): ConversationTimelineItem {
+  // Ordering only consumes the shared timeline identity and event position.
   return { id, kind, revision: 1, threadSequence: 1, partIndex: seq, sourceEventSequence: seq,
-    ...scope, sourceRefs: [{ kind: "conversation_item", id: "source" }], ...overrides };
+    ...scope, sourceRefs: [{ kind: "conversation_item", id: "source" }], ...overrides } satisfies Omit<ConversationTimelineItemBase, "partIndex"> & { partIndex: number | undefined } as unknown as ConversationTimelineItem;
 }
 test("Host boundary survives hydration whitelist and preserves canonical identity", () => {
   const q = question(10, 0).row;
-  assert.deepEqual(interleaveUserInputRunTimeline({ scope: { ...scope, surface: "child", depth: 1 }, items: [], userInputs: [q] }).items, [q]);
+  const childScope = { ...scope, surface: "child", depth: 1 };
+  assert.deepEqual(interleaveUserInputRunTimeline({ scope: childScope, items: [], userInputs: [q] }).items, [q]);
 });
 test("Host boundary retains exact public lineage", () => {
   const q = question(10, 5);
+  assert.ok(q.row.userInput.availability === "available");
   assert.deepEqual(q.row.userInput.runEventPosition, q.record.runEventPosition);
   assert.equal(q.row.threadSequence, 10);
   assert.equal(q.row.sourceEventSequence, undefined, "a boundary is not a new Run event");
@@ -33,8 +45,9 @@ test("Host boundary retains exact public lineage", () => {
 });
 test("narration, question, answer and subsequent tool remain interleaved by event position", () => {
   const q = question(10, 5).row;
+  // Only the answer boundary and lineage are needed to place this row.
   const a = { ...question(11, 5).row, kind: "userInputAnswer", userInput: { ...question(11, 5).record,
-    kind: "user_input_answer", answerId: "answer", answers: [], delivery: { status: "pending", revision: 1 } } };
+    kind: "user_input_answer", answerId: "answer", answers: [], delivery: { status: "pending", revision: 1 } } } as unknown as ConversationTimelineUserInputAnswerItem;
   const original = [item("narration", 1, "agentMessage"), item("tool", 6), item("final", 20, "agentMessage")];
   const result = interleaveUserInputRunTimeline({ scope, items: original, userInputs: [a, q] });
   assert.deepEqual(result.items.map(row => row.id), ["narration", q.id, a.id, "tool", "final"]);
@@ -78,8 +91,9 @@ test("conflicting or altered position cannot be laundered by a higher status rev
 });
 test("DTO boundary must exactly match its canonical payload and source", () => {
   const a = question(10, 2);
+  assert.ok(a.record.runEventPosition);
   for (const change of [{ afterEventSequence: 3 }, { runId: "other" }, { attemptId: "other" }, { afterEventId: undefined }, { claim: "SECRET" }]) {
-    const record = { ...a.record, runEventPosition: { ...a.record.runEventPosition, ...change } };
+    const record: CanonicalUserInputRequest = { ...a.record, runEventPosition: { ...a.record.runEventPosition, ...change } };
     const result = reconcileCanonicalUserInputs({ scope: source, incoming: { items: [a.anchor], userInputs: [record] }, mode: "page" });
     assert.equal(result.userInputs[0].availability, "unavailable");
   }

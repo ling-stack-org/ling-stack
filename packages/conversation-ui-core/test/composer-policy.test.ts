@@ -47,6 +47,7 @@ test("composer parser keeps adjacent natural-language text outside URL tokens", 
   const parts = parseComposerInputParts("https://github.com/QuantConnect/Lean这段文字应该继续显示");
 
   assert.deepEqual(parts.map((part) => part.type), ["url_ref", "text"]);
+  assert.ok(parts[0].type === "url_ref" && parts[1].type === "text");
   assert.equal(parts[0].raw, "https://github.com/QuantConnect/Lean");
   assert.equal(parts[1].text, "这段文字应该继续显示");
 });
@@ -59,6 +60,7 @@ test("composer parser keeps adjacent natural-language text outside workspace fil
   assert.deepEqual(parts.map((part) => part.type), ["text", "workspace_file", "text"]);
   assert.equal(parts[1].type, "workspace_file");
   assert.equal(parts[1].raw, "/private/tmp/ling-v391-qa-20260902-cdp/workspace/demo.ts");
+  assert.ok(parts[2].type === "text");
   assert.equal(parts[2].text, "。然后继续说明");
 });
 

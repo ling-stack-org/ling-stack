@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ConversationTimelineMessageInput } from "../dist/index.js";
 import { createConversationTimelineMessageItem, projectConversationMessagePresentation } from "../dist/index.js";
 
 test("waiting presentation is explicit, live-only and never inferred from model wording", () => {
-  const input = { id: "message:agent:waiting", role: "agent", markdown: "Thinking...", threadSequence: 1, status: "running" };
+  const input: ConversationTimelineMessageInput = { id: "message:agent:waiting", role: "agent", markdown: "Thinking...", threadSequence: 1, status: "running" };
   assert.equal(createConversationTimelineMessageItem(input).waitingPlaceholder, undefined);
   assert.equal(createConversationTimelineMessageItem({ ...input, waitingPlaceholder: true }).waitingPlaceholder, true);
-  for (const status of ["succeeded", "failed", "cancelled", "blocked"]) {
+  for (const status of ["succeeded", "failed", "cancelled", "blocked"] as const) {
     assert.equal(createConversationTimelineMessageItem({ ...input, status, waitingPlaceholder: true }).waitingPlaceholder, undefined);
   }
   assert.equal(createConversationTimelineMessageItem({ ...input, role: "user", waitingPlaceholder: true }).waitingPlaceholder, undefined);
