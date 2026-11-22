@@ -2,6 +2,9 @@
 
 The daemon is the local process that connects the CLI, Web UI, and desktop shell to Ling Stack runners.
 
+For local stdio, Unix socket, or loopback WebSocket access to the App Server protocol,
+see the [App Server implementation and acceptance plan](design/ling-app-server-implementation-plan.md).
+
 ## Start
 
 After following the source build prerequisites in [Getting started](getting-started.md),

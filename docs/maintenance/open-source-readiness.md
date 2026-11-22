@@ -1,11 +1,15 @@
 # Open-Source Readiness Checklist
 
-Status: active publication checklist
+Status: historical source-publication preparation record
 Owner: repository maintainers
 Last verified: 2026-10-10
 Document type: repository governance
 Code and workflow anchors: `README.md`, `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`,
 `.github/workflows/ci.yml`, `.gitleaksignore`, `scripts/check-public-repo-safety.mjs`
+
+This record describes the 2026-10-10 preparation baseline. For current requirements,
+see the [release policy](../release/README.md) and [CI maintenance guide](ci.md).
+See [GitHub Releases](https://github.com/ling-stack-org/ling-stack/releases) for publication status.
 
 ## Publication Boundary
 
@@ -38,7 +42,7 @@ Passing an earlier boundary does not authorize the next one.
 | Actions policy | File configuration present | The generic workflow has scoped permissions and pinned actions. Online organization/repository policy was not reverified. |
 | Git-history secret scan | Verified for current main and additional remote head | Complete 1,112-commit graph; 881 scanned diff commits match Git; unchanged policy and 32 fixture fingerprints. See scope below. |
 | Public UI screenshots | Ready locally | New English Ling Light homepage capture from an isolated fresh workspace with a non-secret demonstration model selected and no external model request; historical screenshots with maintainer paths were removed in earlier cleanup. |
-| Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md`; current product version is `0.1.2-alpha.1`. |
+| Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md`; the preparation version was `0.1.2-alpha.1`. |
 | Source startup | Verified locally | Frozen install, CLI/daemon/Web dependency build, fresh daemon health, homepage, and Model Workbench navigation; no live model task. |
 | Desktop development | Windows development package and runtime checks recorded; full binary acceptance pending | Mac packaging lacks the required Office review record. Windows development scope and limits are in the [test report](../release/evidence/windows-dev-20261009/README.md). |
 | Windows binary notices and SBOM | Runtime material prepared; affected plug-ins replaced in candidate; complete acceptance pending | The original 453-package inventory and its questions remain recorded. The [notices-r2 candidate](../release/evidence/windows-distribution-20261010/INSTALLER_REPLACEMENT.md) excludes all three affected plug-ins, embeds retained bootstrap licenses/source and passes final extraction checks; its full acceptance and publication approval remain pending. Releases stay Draft. |
@@ -46,9 +50,8 @@ Passing an earlier boundary does not authorize the next one.
 
 ## Online Settings And Deferred Work
 
-CI execution is paused because of Actions quota. Branch-protection and private vulnerability
-reporting verification are explicitly deferred by the maintainer for this preparation batch.
-Their deferred status is not an online success claim. Revisit them during release setup.
+Actions quota paused hosted CI during this preparation batch. The maintainer
+deferred branch-protection and private vulnerability reporting verification at that point.
 
 The following remain an online configuration checklist; they were not applied by this pass:
 
@@ -71,11 +74,9 @@ These settings are online state and cannot be proven by committed files alone.
 
 ## Native Release Boundary
 
-The public repository contains only the generic hosted CI workflow. Native Cua Driver
-builds, signing, and Desktop artifact publication are intentionally kept out of this
-repository because they require interactive, privileged platform hosts and private
-credentials. Maintain that release lane in a separately reviewed private repository or
-protected runner boundary; do not reintroduce self-hosted runner labels here.
+The preparation baseline kept native builds outside the hosted CI workflow.
+The [Desktop candidate workflows](../release/github-actions.md) document the current
+hosted build and Draft Release entry points.
 
 ## Legal And Distribution Review
 
@@ -141,10 +142,9 @@ git diff --check
 Run the test command with a disposable `LING_STACK_HOME`. Never point publication checks
 at a user's existing Ling data directory.
 
-## Public Source Go/No-Go
+## Original Source Publication Criteria
 
-The local documentation and source-startup preparation can be reviewed now. Actual source
-publication remains a separate maintainer action, with the following final requirements:
+The maintainers set the following criteria for the October 2026 source publication:
 
 - no native release workflow or self-hosted runner label remains in this repository;
 - deferred online settings and CI status are recorded accurately, with any release-time
