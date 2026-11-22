@@ -23,6 +23,34 @@ import { createDeviceSupportRuntime } from "../dist/features/device-support/runt
 import { createDaemonServer } from "../dist/index.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
+test("the Daemon registers configured Android ADB and OBD bridges as device targets", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-bridges-"));
+  const runtime = createDeviceSupportRuntime({
+    databasePath: join(root, "workspace.sqlite"),
+    androidAdbExecutor: {
+      async inventory() { return { serial: "head-unit-1", model: "Linaro P", androidVersion: "7.1.2" }; },
+      async readPackages() { return []; },
+      async readLogs() { return ""; },
+      async installArtifact() { return { accepted: true }; },
+      async reboot() { return { accepted: true }; },
+    },
+    obdExecutor: {
+      async readVehicleInfo() { return { vin: "VIN-1", make: "Test", model: "Car", protocol: "iso15765" }; },
+      async readPid(pid) { return { pid, value: 90, unit: "%" }; },
+      async readDtc() { return []; },
+    },
+  });
+  t.after(() => { runtime.close(); rmSync(root, { recursive: true, force: true }); });
+  const headUnit = await runtime.discoverAndroidAdb("adb:head-unit-1");
+  const vehicle = await runtime.discoverObd("obd:bridge-1");
+  assert.equal(headUnit.adapterId, "android-adb");
+  assert.equal(headUnit.device.kind, "head_unit");
+  assert.equal(vehicle.adapterId, "obd-diagnostics");
+  assert.equal(vehicle.device.kind, "vehicle");
+  assert.equal(runtime.store.getDevice(headUnit.device.id)?.device.ownerScope, DEFAULT_WORKSPACE_ID);
+  assert.equal(runtime.store.getDevice(vehicle.device.id)?.device.ownerScope, DEFAULT_WORKSPACE_ID);
+});
+
 test("the configured Home Assistant instance supplies PC-owned diagnosis evidence", async t => {
   const cwd = mkdtempSync(join(tmpdir(), "ling-home-assistant-"));
   const workspace = createSqliteRunStore(cwd);

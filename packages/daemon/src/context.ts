@@ -53,6 +53,8 @@ import type { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cu
 import type { RemoteAccessController } from "./features/remote-access/controller.js";
 import type { DeviceSupportRuntime } from "./features/device-support/runtime.js";
 import type { LocalProcessRunner } from "./features/device-support/adapters/local-pc-executor.js";
+import type { AndroidAdbExecutor } from "./features/device-support/adapters/android-adb.js";
+import type { ObdExecutor } from "./features/device-support/adapters/obd.js";
 import type { RemoteReplyDispatcher } from "./features/remote-access/dispatch-worker.js";
 import type { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
 import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
@@ -166,6 +168,8 @@ export interface DaemonDependencies {
   readonly storeFactory?: RunStoreFactory;
   readonly linuxSshProcessRunner?: LocalProcessRunner;
   readonly deviceProtocolTransports?: readonly HardwareProtocolLiveTransport[];
+  readonly androidAdbExecutor?: AndroidAdbExecutor;
+  readonly obdExecutor?: ObdExecutor;
   /** Optional synchronous observation of the exact production-owned Store after initialization. */
   readonly onStoreInitialized?: (cwd: string, store: RunStore) => void;
   /** Optional in-memory QA Provider authority. Absence keeps model task execution disabled. */

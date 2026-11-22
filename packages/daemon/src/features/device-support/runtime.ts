@@ -39,12 +39,14 @@ import {
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
 import type { ExternalDeviceAdapter } from "./adapters/external-process.js";
 import { HOME_ASSISTANT_ENABLE_AUTOMATION, HOME_ASSISTANT_RELOAD_CAPABILITY_ID, HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
+import { AndroidAdbAdapter, type AndroidAdbExecutor } from "./adapters/android-adb.js";
 import { assertHomeAssistantCatalogQuery, homeAssistantCatalogCapabilities, type HomeAssistantCatalogQuery } from "./adapters/home-assistant-catalog.js";
 import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { PcAdapter } from "./adapters/pc.js";
 import { bindLinuxSshTargets, type BoundLinuxSshTarget, type ConfiguredLinuxSshTarget } from "./linux-ssh-targets.js";
 import { bindModbusSerialTarget, modbusSerialAdapterId, type ConfiguredModbusSerialTarget } from "./modbus-serial-targets.js";
+import { ObdVehicleAdapter, type ObdExecutor } from "./adapters/obd.js";
 import { DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS, type DeviceDiagnosisPlanner, type DeviceDiagnosisRequest } from "./diagnosis-planner.js";
 import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 import { createDeviceApprovalQueue } from "./approval-queue.js";
@@ -81,6 +83,8 @@ export interface DeviceSupportRuntime {
   listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
   diagnoseLinuxSshTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
+  discoverAndroidAdb(connectionRef: string): Promise<DeviceProfileV1>;
+  discoverObd(connectionRef: string): Promise<DeviceProfileV1>;
   fleetHealth(workspaceId?: string): DeviceFleetHealthProjectionV1;
   getAccessGrant(deviceId: string, grantId: string): DeviceAccessGrantV1;
   saveAccessGrant(input: {
@@ -107,6 +111,8 @@ export function createDeviceSupportRuntime(options: {
   readonly modbusSerialTargets?: readonly ConfiguredModbusSerialTarget[];
   readonly createDiagnosisPlanner?: DeviceDiagnosisPlanner;
   readonly externalAdapters?: readonly ExternalDeviceAdapter[];
+  readonly androidAdbExecutor?: AndroidAdbExecutor;
+  readonly obdExecutor?: ObdExecutor;
 }): DeviceSupportRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const store = new SqliteDeviceSupportStore({ databasePath: options.databasePath });
@@ -132,6 +138,8 @@ export function createDeviceSupportRuntime(options: {
   let ssh: ReturnType<typeof bindLinuxSshTargets> | undefined;
   let linuxAdapter: LinuxSshAdapter;
   let homeAssistant: HomeAssistantAdapter | undefined;
+  let androidAdb: AndroidAdbAdapter | undefined;
+  let obd: ObdVehicleAdapter | undefined;
   const linuxTargets = new Map<string, BoundLinuxSshTarget>();
   try {
     protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
@@ -157,6 +165,14 @@ export function createDeviceSupportRuntime(options: {
     if (options.homeAssistant) {
       homeAssistant = new HomeAssistantAdapter({ ...options.homeAssistant, now });
       broker.registerAdapter(homeAssistant);
+    }
+    if (options.androidAdbExecutor) {
+      androidAdb = new AndroidAdbAdapter({ executor: options.androidAdbExecutor, now });
+      broker.registerAdapter(androidAdb);
+    }
+    if (options.obdExecutor) {
+      obd = new ObdVehicleAdapter({ executor: options.obdExecutor, now });
+      broker.registerAdapter(obd);
     }
     for (const externalAdapter of options.externalAdapters ?? []) {
       if (broker.adapters.get(externalAdapter.manifest.adapterId)) {
@@ -479,6 +495,18 @@ export function createDeviceSupportRuntime(options: {
           store.markDeviceOffline(deviceId, now());
         }
         return result;
+      });
+    },
+    async discoverAndroidAdb(connectionRef) {
+      if (!androidAdb) throw new DeviceBrokerError("missing_target", "Android ADB is not configured on this host");
+      return broker.discover(androidAdb.manifest.adapterId, {
+        ownerId: DEFAULT_WORKSPACE_ID, connectionRef, signal: AbortSignal.timeout(15_000),
+      });
+    },
+    async discoverObd(connectionRef) {
+      if (!obd) throw new DeviceBrokerError("missing_target", "OBD is not configured on this host");
+      return broker.discover(obd.manifest.adapterId, {
+        ownerId: DEFAULT_WORKSPACE_ID, connectionRef, signal: AbortSignal.timeout(15_000),
       });
     },
     fleetHealth(workspaceId = DEFAULT_WORKSPACE_ID) {

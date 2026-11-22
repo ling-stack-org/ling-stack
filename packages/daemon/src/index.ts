@@ -1050,6 +1050,8 @@ export function createDaemonServer(
   const deviceSupport = createDeviceSupportRuntime({
     databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
     protocolTransports: dependencies.deviceProtocolTransports,
+    androidAdbExecutor: dependencies.androidAdbExecutor,
+    obdExecutor: dependencies.obdExecutor,
     modbusSerialTargets,
     resourceTrust: deviceResourceTrust,
     ...(homeAssistantBaseUrl && homeAssistantTokenRef ? { homeAssistant: {
