@@ -41,13 +41,12 @@ test("documentation-only changes use the fast lane", () => {
 
 test("repository presentation assets use the fast lane and compose with source edits", () => {
   const files = ["logo.png", "assets/diagram.svg", "images/preview.webp", "resources/demo.webm",
-    "static/sans.woff2", ".github/assets/banner.avif"];
+    "static/sans.woff2", ".github/assets/banner.avif", "output/qa/screenshot.png"];
   for (const file of files) {
     const scope = classify([file]);
     assert.equal(scope.mode, "docs", file);
     assert.deepEqual(scope.packages, [], file);
   }
-  assert.equal(classify(["output/qa/screenshot.png"]).mode, "full");
   const mixed = classify([...files, "packages/providers/src/index.ts"]);
   assert.equal(mixed.mode, "affected");
   assert.deepEqual(mixed.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
@@ -254,8 +253,9 @@ test("removed dependency edges cannot erase consumers from a multi-package PR", 
 });
 
 test("dependency regressions cannot be skipped with ordinary test-only scope", () => {
-  for (const file of ["packages/daemon/test/dependency-security.test.mjs",
-    "apps/mobile/test/dependency-security-patches.test.mjs", "apps/mobile/test/dependency-security-tooling.test.mjs"]) {
+  for (const file of ["packages/daemon/test/dependency-security.test.mjs", "packages/daemon/test/dependency-security.test.ts",
+    "apps/mobile/test/dependency-security-patches.test.mjs", "apps/mobile/test/dependency-security-patches.test.ts",
+    "apps/mobile/test/dependency-security-tooling.test.mjs", "apps/mobile/test/dependency-security-tooling.test.ts"]) {
     assert.equal(classify([file]).dependencyPolicy, true, file);
   }
   assert.equal(classify(["packages/daemon/test/runtime-supervisor.test.mjs"]).dependencyPolicy, false);
@@ -373,6 +373,7 @@ function repositoryFixture(t: TestContext) {
   mkdirSync(join(root, "scripts/ci"), { recursive: true });
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
+  copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
   copyFileSync(new URL("../provider-model-catalog-format.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-format.mjs"));
   copyFileSync(new URL("../provider-model-catalog-normalization.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-normalization.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));

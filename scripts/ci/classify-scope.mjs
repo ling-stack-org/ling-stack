@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isGeneratedProviderModelCatalogRefresh, PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest } from "../provider-model-catalog-format.mjs";
+import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
@@ -31,12 +32,6 @@ const MAINTENANCE_CHECK_FILES = new Set([
   "scripts/check-markdown-links.mjs",
   "scripts/check-public-repo-safety.mjs",
   "scripts/check-public-repo-safety.test.mjs",
-]);
-
-const DEPENDENCY_CHECK_FILES = new Set([
-  "packages/daemon/test/dependency-security.test.mjs",
-  "apps/mobile/test/dependency-security-patches.test.mjs",
-  "apps/mobile/test/dependency-security-tooling.test.mjs",
 ]);
 
 const FORCE_FULL_PATTERNS = [
@@ -108,15 +103,14 @@ export function classifyChangedFiles(input) {
   const deletedOutputs = new Set(input.deletedOutputFiles?.filter(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY)));
   const scopeFiles = deletedOutputs.size === 0 ? files : normalizeFiles(input.files.filter(file => !deletedOutputs.has(file)));
 
-  if (scopeFiles.some((file) => !isDocumentationPath(file) && !isPresentationAssetPath(file)
-    && !isMaintenancePath(file) && !isAssurancePath(file)
+  if (scopeFiles.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
     && !versionPaths.has(file)
     && !(scopedLockfile && file === LOCKFILE)
     && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
 
-  if (scopeFiles.every((file) => isDocumentationPath(file) || isPresentationAssetPath(file) || isMaintenancePath(file))) {
+  if (scopeFiles.every((file) => isDocumentationPath(file) || isMaintenancePath(file))) {
     const reason = deletedOutputs.size > 0 ? "verified local output cleanup and common checks only"
       : scopeFiles.some(isMaintenancePath) ? "documentation and allowlisted maintenance checks only"
         : "documentation and documentation assets only";
@@ -177,7 +171,7 @@ export function classifyChangedFiles(input) {
   const unresolvedFiles = [];
 
   for (const file of scopeFiles) {
-    if (isDocumentationPath(file) || isPresentationAssetPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
+    if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
     if (versionPaths.has(file) || (scopedLockfile && file === LOCKFILE)) continue;
     if (NATIVE_RELEASE_REVIEW_FILES.has(file)) continue;
     if (isMacosNativePath(file)) continue;
@@ -331,12 +325,12 @@ function isDocumentationPath(file) {
 /** @param {string} file */
 function isPresentationAssetPath(file) {
   return PRESENTATION_ASSET_PATTERN.test(file)
-    && (!file.includes("/") || /^(?:assets|images?|resources|static|\.github\/assets)\//u.test(file));
+    && (!file.includes("/") || /^(?:assets|images?|resources|static|output|\.github\/assets)\//u.test(file));
 }
 
 /** @param {string} file */
 function isMaintenancePath(file) {
-  return file.startsWith(".github/ISSUE_TEMPLATE/") || MAINTENANCE_CHECK_FILES.has(file);
+  return file.startsWith(".github/ISSUE_TEMPLATE/") || MAINTENANCE_CHECK_FILES.has(file) || isPresentationAssetPath(file);
 }
 
 /** @param {string} file */
