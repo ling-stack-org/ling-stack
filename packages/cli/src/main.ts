@@ -268,18 +268,25 @@ async function handleAppServer(args: readonly string[], options: GlobalOptions):
   }
   const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
   if (mode === "codex-host") {
-    const parsed = parseCommandArgs(args.slice(1), { stringFlags: new Set(["thread", "state", "codex", "codex-thread"]) });
+    const parsed = parseCommandArgs(args.slice(1), { stringFlags: new Set(["thread", "state", "codex", "codex-thread"]),
+      booleanFlags: new Set(["view"]) });
     assertNoPositionals(parsed.positionals, "app-server codex-host --thread <id> --state <file>");
     const threadId = getFlag(parsed, "thread"), statePath = getFlag(parsed, "state");
-    if (!threadId || !statePath) throw new CliError(2, "bad_usage", "Usage: ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>]");
-    const { runLingCodexHost } = await import("@ling-stack/daemon/dist/server/app-server-codex-host.js");
+    if (!threadId || !statePath) throw new CliError(2, "bad_usage", "Usage: ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--view]");
+    const host = { ...transportOptions, threadId, statePath, codexExecutable: getFlag(parsed, "codex") ?? "codex",
+      codexThreadId: getFlag(parsed, "codex-thread") };
     const controller = new AbortController();
     const stop = () => controller.abort();
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
     try {
-      await runLingCodexHost({ ...transportOptions, threadId, statePath, codexExecutable: getFlag(parsed, "codex") ?? "codex",
-        codexThreadId: getFlag(parsed, "codex-thread") }, controller.signal);
+      if (parsed.booleans.has("view")) {
+        const { runLingCodexHostView } = await import("@ling-stack/daemon/dist/server/app-server-codex-host-view.js");
+        await runLingCodexHostView(host, controller.signal, url => console.log(url));
+      } else {
+        const { runLingCodexHost } = await import("@ling-stack/daemon/dist/server/app-server-codex-host.js");
+        await runLingCodexHost(host, controller.signal);
+      }
     } finally {
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
@@ -7826,7 +7833,7 @@ function printCommandHelp(command: string, subcommand?: string): void {
   if (command === "app-server") {
     console.log("Usage: ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]");
     console.log("       ling-stack app-server schema [method]");
-    console.log("       ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>]");
+    console.log("       ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--view]");
     console.log("       Host JSONL methods: ling/snapshot, ling/queue, ling/interrupt, codex/thread/start, codex/snapshot, codex/turn/start, codex/steer");
     console.log("       ling-stack [global options] app-server instructions-init [--path <directory>] [--apply <workspace-revision>]");
     console.log("       ling-stack [global options] app-server verify [--plan] [--check <id>] [--thread <id>] [--work-item <id>]");

@@ -108,6 +108,7 @@ export async function runLingCodexHost(
         if (state.setAuthorization(JSON.stringify([status.storeIncarnation, status.authorizationEpoch]))) {
           cursorGeneration++;
           pendingEvents.clear();
+          emit({ source: "ling", method: "thread/scope/reset" });
         }
       } catch (error) { fail(asError(error)); }
     }
@@ -207,6 +208,7 @@ export async function runLingCodexHost(
     }
     state.write("codex-thread", resultId);
     codexThreadId = resultId;
+    emit({ source: "host", method: "codex/thread/bound", params: { codexThreadId } });
     return { threadId: resultId };
   }
 

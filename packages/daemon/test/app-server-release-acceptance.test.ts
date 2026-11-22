@@ -8,6 +8,7 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
@@ -1221,6 +1222,45 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
   assert.deepEqual(await second.call("codex/steer", steer), { status: "accepted", replayed: true });
   assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 1);
   await second.stop();
+
+  const view = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
+    "app-server", "codex-host", "--thread", thread.id, "--state", statePath, "--codex", codexFixture, "--view"],
+  { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, stdio: "pipe" });
+  const closed = once(view, "close");
+  t.after(async () => { if (view.exitCode === null && view.signalCode === null) view.kill(); await closed; });
+  const lines = createInterface({ input: view.stdout });
+  const firstLine = await Promise.race([once(lines, "line"), closed.then(() => { throw new Error("Codex browser view did not start."); })]);
+  const privateUrl = new URL(String(firstLine[0]));
+  assert.equal(privateUrl.hostname, "127.0.0.1");
+  const viewOrigin = privateUrl.origin;
+  const viewAuth = { Authorization: `Bearer ${privateUrl.hash.slice(1)}` };
+  assert.equal((await fetch(`${viewOrigin}/events`)).status, 401);
+  assert.equal((await fetch(`${viewOrigin}/command`, { method: "POST", headers: { ...viewAuth, Origin: "https://example.test" } })).status, 403);
+  const hostPage = await fetch(viewOrigin);
+  assert.equal(hostPage.status, 200);
+  assert.match(hostPage.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/u);
+  assert.match(await hostPage.text(), /Send event to Codex/u);
+  const activityStream = await fetch(`${viewOrigin}/events`, { headers: viewAuth, signal: AbortSignal.timeout(5_000) });
+  assert.equal(activityStream.status, 200);
+  const reader = activityStream.body!.pipeThrough(new TextDecoderStream()).getReader();
+  try {
+    let activity = "";
+    while (!activity.includes('"method":"ready"')) {
+      const next = await reader.read();
+      assert.equal(next.done, false);
+      activity += next.value;
+    }
+    assert.match(activity, /"source":"ling"/u);
+    assert.match(activity, /"codexThreadId":"codex-host-thread"/u);
+  } finally { await reader.cancel(); }
+  const replayedView = await fetch(`${viewOrigin}/command`, { method: "POST",
+    headers: { ...viewAuth, Origin: viewOrigin, "Content-Type": "application/json" },
+    body: JSON.stringify({ method: "codex/steer", params: steer }) });
+  assert.equal(replayedView.status, 200);
+  assert.deepEqual((await replayedView.json() as { result: unknown }).result, { status: "accepted", replayed: true });
+  assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 1);
+  view.kill("SIGINT");
+  assert.deepEqual(await closed, [0, null]);
 });
 
 test("the reference control host steers installed Codex, queues a Ling intervention and replays after reconnect", {
