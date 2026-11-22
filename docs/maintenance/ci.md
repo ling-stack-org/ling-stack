@@ -11,6 +11,7 @@
 CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
 - 纯文档 PR 的主 CI 只判断范围。分类器核对完整 Git 差异及 PR 提交历史后，跳过公共检查、产品检查与计时采集，GitHub 仍收到必需质量门的 skipped 结果。维护脚本、已登记 Issue 模板和本地产物清理保留公共检查。混合代码改动按实际影响执行，手动、定时和 `full-ci` 仍执行完整验证。
+- 非纯文档 PR 的空白检查在范围任务内运行。空白错误或测试计划校验失败会阻止构建和测试矩阵启动，汇总门报告范围任务失败。
 - 仓库根目录以及 `assets/`、`images/`、`resources/`、`static/`、`output/`、`.github/assets/` 下的展示图片、音视频、字体和 PDF 进入公共检查。包内资源按归属选择包和使用方。Git 差异确认的 `output/` 产物删除也进入公共检查，路径保留在范围报告中。该目录下其他产物的新增和修改仍需全量验证。
 - 工作区源码或包内 TypeScript／构建配置变更时，[分类器](../../scripts/ci/classify-scope.mjs)选择所属包及直接、间接消费者；仅改测试时选择所属包，并补充已识别的跨包测试辅助文件使用方。Web 的目录导入器额外选择 localization 验证，实际依赖图也包含 CLI 对 Web 的依赖；为构建补齐依赖不等于选择这些依赖的测试分片。
 - 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。

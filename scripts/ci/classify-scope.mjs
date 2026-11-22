@@ -108,14 +108,15 @@ export function classifyChangedFiles(input) {
   const deletedOutputs = new Set(input.deletedOutputFiles?.filter(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY)));
   const scopeFiles = deletedOutputs.size === 0 ? files : normalizeFiles(input.files.filter(file => !deletedOutputs.has(file)));
 
-  if (scopeFiles.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
+  if (scopeFiles.some((file) => !isDocumentationPath(file) && !isPresentationAssetPath(file)
+    && !isMaintenancePath(file) && !isAssurancePath(file)
     && !versionPaths.has(file)
     && !(scopedLockfile && file === LOCKFILE)
     && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
 
-  if (scopeFiles.every((file) => isDocumentationPath(file) || isMaintenancePath(file))) {
+  if (scopeFiles.every((file) => isDocumentationPath(file) || isPresentationAssetPath(file) || isMaintenancePath(file))) {
     const reason = deletedOutputs.size > 0 ? "verified local output cleanup and common checks only"
       : scopeFiles.some(isMaintenancePath) ? "documentation and allowlisted maintenance checks only"
         : "documentation and documentation assets only";
@@ -176,7 +177,7 @@ export function classifyChangedFiles(input) {
   const unresolvedFiles = [];
 
   for (const file of scopeFiles) {
-    if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
+    if (isDocumentationPath(file) || isPresentationAssetPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
     if (versionPaths.has(file) || (scopedLockfile && file === LOCKFILE)) continue;
     if (NATIVE_RELEASE_REVIEW_FILES.has(file)) continue;
     if (isMacosNativePath(file)) continue;
@@ -310,7 +311,13 @@ function isDocumentationPath(file) {
     return true;
   }
 
-  const locale = /^README\.([A-Za-z0-9-]+)\.md$/u.exec(file)?.[1];
+  const workspaceMarkdown = /^((?:apps|packages)\/[^/]+)\/(.+\.md)$/u.exec(file);
+  const documentationPath = workspaceMarkdown && existsSync(resolve(repositoryRoot, workspaceMarkdown[1], "package.json"))
+    ? workspaceMarkdown[2]
+    : file;
+  if (documentationPath.startsWith("docs/")) return true;
+
+  const locale = /^README\.([A-Za-z0-9-]+)\.md$/u.exec(documentationPath)?.[1];
   if (locale === undefined) return false;
   try {
     Intl.getCanonicalLocales(locale);
@@ -324,12 +331,12 @@ function isDocumentationPath(file) {
 /** @param {string} file */
 function isPresentationAssetPath(file) {
   return PRESENTATION_ASSET_PATTERN.test(file)
-    && (!file.includes("/") || /^(?:assets|images?|resources|static|output|\.github\/assets)\//u.test(file));
+    && (!file.includes("/") || /^(?:assets|images?|resources|static|\.github\/assets)\//u.test(file));
 }
 
 /** @param {string} file */
 function isMaintenancePath(file) {
-  return file.startsWith(".github/ISSUE_TEMPLATE/") || MAINTENANCE_CHECK_FILES.has(file) || isPresentationAssetPath(file);
+  return file.startsWith(".github/ISSUE_TEMPLATE/") || MAINTENANCE_CHECK_FILES.has(file);
 }
 
 /** @param {string} file */

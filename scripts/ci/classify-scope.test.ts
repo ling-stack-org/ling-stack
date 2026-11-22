@@ -41,12 +41,13 @@ test("documentation-only changes use the fast lane", () => {
 
 test("repository presentation assets use the fast lane and compose with source edits", () => {
   const files = ["logo.png", "assets/diagram.svg", "images/preview.webp", "resources/demo.webm",
-    "static/sans.woff2", ".github/assets/banner.avif", "output/qa/screenshot.png"];
+    "static/sans.woff2", ".github/assets/banner.avif"];
   for (const file of files) {
     const scope = classify([file]);
     assert.equal(scope.mode, "docs", file);
     assert.deepEqual(scope.packages, [], file);
   }
+  assert.equal(classify(["output/qa/screenshot.png"]).mode, "full");
   const mixed = classify([...files, "packages/providers/src/index.ts"]);
   assert.equal(mixed.mode, "affected");
   assert.deepEqual(mixed.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
@@ -61,19 +62,36 @@ test("package-owned image resources stay with their package without selecting th
   assert.equal(scope.dependencyPolicy, false);
 });
 
-test("root localized READMEs accept BCP 47 language tags without accepting malformed names", () => {
+test("root and workspace localized READMEs accept BCP 47 language tags without accepting malformed names", () => {
   for (const file of [
     "README.en.md", "README.sr-Latn.md", "README.es-419.md", "README.zh-Hant-TW.md",
     "README.en-US-u-ca-gregory.md", "README.en-x-sample.md",
+    "packages/core/README.zh-CN.md", "apps/desktop/README.en.md",
   ]) {
     assert.equal(classify([file]).mode, "docs", file);
   }
   for (const file of [
     "README.zh_CN.md", "README.中文.md", "README.1.md", "README.en.ts",
     "README.en-foo.md", "README.en-x.md", "README.en-US-u.md", "scripts/ci/README.en.md",
+    "packages/unregistered/README.en.md",
   ]) {
     assert.equal(classify([file]).mode, "full", file);
   }
+  assert.equal(classify(["packages/core/README.zh_CN.md"]).mode, "affected");
+});
+
+test("workspace docs classify Markdown without hiding runtime inputs or unknown paths", () => {
+  const docs = ["packages/core/docs/reference/api.md", "apps/desktop/docs/start.md"];
+  const documentation = classify(docs);
+  assert.equal(documentation.mode, "docs");
+  assert.deepEqual(documentation.packages, []);
+
+  for (const file of ["packages/core/docs/example.mjs", "packages/core/docs/demo.mdx", "packages/core/src/docs/prompt.md"]) {
+    const scope = classify([...docs, file]);
+    assert.equal(scope.mode, "affected", file);
+    assert.ok(scope.packages.includes("@ling-stack/core"), file);
+  }
+  assert.equal(classify([...docs, "packages/unregistered/docs/guide.md"]).mode, "full");
 });
 
 test("review templates and nested READMEs are documentation before broad infrastructure rules", () => {
@@ -398,7 +416,8 @@ test("only a verified documentation history can skip the common job and merge ga
 
   repo.write("README.zh-CN.md", "# Ling Stack\n");
   repo.commit();
-  repo.write("docs/guide.md", "# Guide\n");
+  repo.write("packages/core/README.zh-CN.md", "# Core\n");
+  repo.write("apps/desktop/docs/guide.md", "# Guide\n");
   repo.commit();
   assert.equal(repo.classify(base).documentationOnly, true);
 

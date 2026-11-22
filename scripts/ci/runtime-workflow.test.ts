@@ -59,7 +59,10 @@ test("timings are restored once and every shard consumes one immutable plan", ()
 test("main CI publishes package outputs and excludes the Web package from build closures", () => {
   const build = job("build");
   assert.match(build, /name: Upload reusable build outputs/u);
-  assert.match(build, /--closure=true --exclude='\["@ling-stack\/web"\]'/u);
+  assert.match(build, /name: Determine selected build closure/u);
+  assert.match(build, /--closure=true[\s\S]*--exclude="\$EXCLUDED_PACKAGES"[\s\S]*--print-closure=true/u);
+  assert.match(build, /name: Set up the pinned image codec toolchain\n        if: steps\.build-closure\.outputs\.daemon == 'true'/u);
+  assert.match(build, /RUSTUP_TOOLCHAIN="\$RUST_TOOLCHAIN_VERSION"/u);
   assert.doesNotMatch(workflow, /^  web-smoke:|apps\/web\/dist|playwright (?:install|test)|--filter @ling-stack\/web/u);
 });
 
