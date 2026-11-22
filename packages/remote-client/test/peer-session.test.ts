@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
-import type { LingServerGatewayRouteV1, RemoteAuthChallengeV1, RemoteAuthProofV1, RemoteP256PublicJwkV1 } from "@ling-stack/contracts";
 import {
-  authChallengeSigningBytes, authChallengeSigningInput, authProofSigningBytes, authProofSigningInput, encodeBase64Url,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  type LingServerGatewayRouteV1, type RemoteAuthChallengeV1, type RemoteAuthProofV1, type RemoteP256PublicJwkV1,
+} from "@ling-stack/contracts";
+import {
+  authChallengeSigningBytes, authChallengeSigningInput, authProofSigningBytes, authProofSigningInput, domainSeparatedCanonicalBytes, encodeBase64Url,
   fingerprintPublicJwkSync, sha256, validateRemoteAuthProofV1, validateRemoteP256PublicJwkV1,
   type RemoteMessageChannel, type RemoteMessageReceiver,
 } from "@ling-stack/remote-protocol";
@@ -127,38 +130,45 @@ test("peer authentication binds the device proof and keeps the pairing across se
   const fixture = makeFixture();
   const first = channel();
   const second = channel();
+  const nextRoute = { ...fixture.route, routeAttemptId: "route-2", features: [...fixture.route.features, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4] };
   const paths = [first, second];
   const client = fixture.createClient(async () => {
     const next = paths.shift();
     assert.ok(next);
-    return { route: { ...fixture.route, routeAttemptId: next === first ? "route-1" : "route-2" }, transport: next.transport };
+    return { route: next === first ? fixture.route : nextRoute, transport: next.transport };
   });
-  async function connect(peer: typeof first, route: LingServerGatewayRouteV1) {
+  async function connect(peer: typeof first, route: LingServerGatewayRouteV1, subprotocol: string) {
     const connected = client.connect();
     await setImmediate();
     assert.equal(peer.subscribed, true);
     assert.deepEqual(peer.sent, []);
     const challenge = fixture.challenge(route);
+    const { gatewaySignature: _gatewaySignature, ...unsigned } = challenge;
+    const challengeInput = authChallengeSigningInput(gatewayOrigin, unsigned);
+    assert.deepEqual(authChallengeSigningBytes(challengeInput, route), domainSeparatedCanonicalBytes("ling.server.gateway.challenge.v1", {
+      subprotocol, route, input: challengeInput,
+    }));
     peer.receive(challenge);
     await setImmediate();
     const { signature, ...proof }: RemoteAuthProofV1 = validateRemoteAuthProofV1(peer.sent[0]);
-    const { gatewaySignature: _gatewaySignature, ...unsigned } = challenge;
     assert.equal(proof.candidateSessionId, challenge.candidateSessionId);
     const signingInput = await authProofSigningInput(gatewayOrigin, unsigned, proof, sha256);
-    assert.ok(verifyProof(fixture.phone.publicJwk, authProofSigningBytes(signingInput, route), signature));
+    assert.ok(verifyProof(fixture.phone.publicJwk, domainSeparatedCanonicalBytes("ling.server.gateway.proof.v1", {
+      subprotocol, route, input: signingInput,
+    }), signature));
     assert.equal(verifyProof(fixture.phone.publicJwk, authProofSigningBytes(signingInput), signature), false);
     peer.receive(ready(challenge.candidateSessionId));
     await connected;
     return proof;
   }
-  const old = await connect(first, fixture.route);
+  const old = await connect(first, fixture.route, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3);
   first.receive(frame("security.revoked", old.candidateSessionId, { reason: "replaced", revokedAt: now }, 2));
   first.transport.close();
   await setImmediate();
   assert.equal(client.state.connection, "disconnected");
   assert.equal(fixture.binding?.status, "active");
   assert.equal(fixture.keyRemovals, 0);
-  const replacement = await connect(second, { ...fixture.route, routeAttemptId: "route-2" });
+  const replacement = await connect(second, nextRoute, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4);
   assert.notEqual(replacement.candidateSessionId, old.candidateSessionId);
   assert.ok(client.state.policy?.capabilities.includes("device.journal"));
   client.disconnect();

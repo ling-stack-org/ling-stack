@@ -277,10 +277,13 @@ The application session on a verified DataChannel uses the Gateway challenge,
 device proof and application frames from Remote Access. The endpoints derive the
 route context locally from their pinned installation, binding and peer records,
 the route and signaling instance, and the SHA-256 digests of the signed offer and
-answer they installed. Both application signatures cover this context under
-Ling Server signing domains. The route uses the `ling.device-tasks.v3` capability
-profile. The Gateway issues the challenge on the ready channel and accepts its
-proof once on that channel. Challenge lifetime is bounded by the route deadline.
+answer they installed. Both application signatures cover this context and the
+device-task protocol under Ling Server signing domains. Peers include
+`ling.device-tasks.v4` in their signed signaling features to display and confirm
+device actions with an alternate recovery path. Routes without that feature use
+the `ling.device-tasks.v3` signature transcript and capability profile. The
+Gateway issues the challenge on the ready channel and accepts its proof once on
+that channel. Challenge lifetime is bounded by the route deadline.
 The Gateway rechecks the local pairing and epoch before activating the session.
 
 The Gateway starts sending application frames after authentication. A replacement

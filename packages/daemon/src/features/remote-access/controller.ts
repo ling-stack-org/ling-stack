@@ -19,7 +19,7 @@ import {
   type RemoteAuthChallengeV1,
   type RemoteCapabilityV1,
 } from "@ling-stack/contracts";
-import { parseRemoteAuthFrameV1, remoteWebSocketChannel, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
+import { lingServerGatewayDeviceTasksProtocol, parseRemoteAuthFrameV1, remoteWebSocketChannel, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
 import type { RemoteReplyDispatcher } from "./dispatch-worker.js";
 import { RemoteDispatchWorker } from "./dispatch-worker.js";
 import { RemoteConversationFacade } from "./conversation-facade.js";
@@ -147,7 +147,7 @@ export class RemoteAccessController {
     try {
       if (this.stopped || channel.readyState !== 1) throw new Error("Peer transport is unavailable.");
       const authentication = this.auth.createRoutedAuthentication(route);
-      this.acceptSessionChannel(channel, authentication.verify, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, {
+      this.acceptSessionChannel(channel, authentication.verify, lingServerGatewayDeviceTasksProtocol(route), {
         challenge: authentication.challenge,
         routeExpiresAt: route.expiresAt,
       });

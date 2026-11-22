@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
 import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
-import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerInstallationV1, type LingServerPeerBindingV1, type LingServerRouteAttemptV1 } from "@ling-stack/contracts";
 import { RemoteProtocolError } from "@ling-stack/remote-protocol";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { LingServerSignaling } from "./signaling.js";
@@ -95,7 +95,8 @@ export class LingServerControlPlane {
     this.#adminServer = adminServer;
     this.#signaling = new LingServerSignaling({
       registry: this.registry, protocolMajor: this.#transportOptions.protocolMajor ?? 1,
-      features: this.#transportOptions.features ?? [], now: this.#now, relayIssuer: this.#relayIssuer,
+      features: [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, ...(this.#transportOptions.features ?? [])],
+      now: this.#now, relayIssuer: this.#relayIssuer,
       stunUrls: this.#transportOptions.stunUrls ?? [], turnUrls: this.#transportOptions.turnUrls ?? [],
     });
     this.#signalExpiryTimer = setInterval(() => this.#signaling?.purge(), 5_000);

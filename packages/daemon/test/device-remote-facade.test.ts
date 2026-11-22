@@ -439,8 +439,20 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
     assert.ok(verify("sha256", expected, {
       key: createPublicKey({ format: "jwk", key: identity.publicKeyJwk }), dsaEncoding: "ieee-p1363",
     }, Buffer.from(gatewaySignature, "base64url")));
+    let clientSeq = 0;
+    function send<T extends "device.task.journal" | "device.task.status" | "device.task.approve" | "stream.subscribe">(
+      type: T, payload: RemoteClientCommandPayloadMapV1[T],
+    ): string {
+      const messageId = payload.commandId;
+      transport.receive(JSON.stringify({
+        version: 1, type, gatewayId: challenge.gatewayId, sessionId: challenge.candidateSessionId,
+        messageId, clientSeq: ++clientSeq, sentAt: clock, expiresAt: new Date(Date.parse(clock) + 10_000).toISOString(),
+        payload,
+      }));
+      return messageId;
+    }
     return {
-      ...transport, challenge,
+      ...transport, challenge, send,
       async proof(signedRoute: LingServerGatewayRouteV1) {
         const unsignedProof: Omit<RemoteAuthProofV1, "signature"> = {
           version: 1, gatewayId: challenge.gatewayId, challengeId: challenge.challengeId, candidateSessionId: challenge.candidateSessionId,
@@ -451,11 +463,7 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
         return JSON.stringify({ ...unsignedProof, signature });
       },
       async journal(afterSequence: number, commandId: string) {
-        transport.receive(JSON.stringify({
-          version: 1, type: "device.task.journal", gatewayId: challenge.gatewayId, sessionId: challenge.candidateSessionId,
-          messageId: commandId, clientSeq: 1, sentAt: clock, expiresAt: new Date(Date.parse(clock) + 10_000).toISOString(),
-          payload: { ...cursor, afterSequence, limit: 25, commandId },
-        }));
+        send("device.task.journal", { ...cursor, afterSequence, limit: 25, commandId });
         const completed = await waitForFrame(transport.events, "command.completed", commandId);
         assert.equal(completed.payload.commandType, "device.task.journal");
         return completed.payload.result.journal;
@@ -546,6 +554,12 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
       expiresAt: recoveryPlan.verifyBy, recoveryScope: recoveryPlan,
     },
   };
+  restartedPeer.send("stream.subscribe", { commandId: "subscribe-routed-v3-recovery", scope });
+  const legacyPeerStatus = restartedPeer.send("device.task.status", { ...recoveryTaskScope, commandId: "status-routed-v3-recovery" });
+  assert.equal((await waitForFrame(restartedPeer.events, "device.task.snapshot", legacyPeerStatus)).payload.task.pendingApproval, undefined);
+  const legacyPeerApproval = restartedPeer.send("device.task.approve", { ...approval, commandId: "approve-routed-v3-recovery" });
+  assert.equal((await waitForFrame(restartedPeer.events, "command.failed", legacyPeerApproval)).payload.error.code, "protocol_incompatible");
+
   const journalClient = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3);
   await journalClient.send("stream.subscribe", { commandId: "subscribe-v3-recovery", scope });
   const v3Status = await journalClient.send("device.task.status", { ...recoveryTaskScope, commandId: "status-v3-recovery" });
@@ -559,9 +573,31 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
   await recoveryClient.send("stream.subscribe", { commandId: "subscribe-v4-recovery", scope });
   const v4Status = await recoveryClient.send("device.task.status", { ...recoveryTaskScope, commandId: "status-v4-recovery" });
   assert.deepEqual((await waitForFrame(recoveryClient.frames, "device.task.snapshot", v4Status)).payload.task.pendingApproval?.recoveryPlan, recoveryPlan);
-  const v4Approve = await recoveryClient.send("device.task.approve", { ...approval, commandId: "approve-v4-recovery" });
-  await waitForFrame(recoveryClient.frames, "command.completed", v4Approve);
-  assert.equal((await waitForFrame(recoveryClient.frames, "device.task.snapshot", v4Approve)).payload.task.status, "succeeded");
+
+  const recoveryRoute: LingServerGatewayRouteV1 = {
+    ...afterRestart, routeAttemptId: "route-with-recovery", features: [...afterRestart.features, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4],
+  };
+  const downgraded = attach(recoveryRoute);
+  downgraded.receive(await downgraded.proof({ ...recoveryRoute, features: afterRestart.features }));
+  assert.match(await downgraded.closed, /signature is invalid/u);
+  assert.equal(probes, 0);
+
+  const recoveryPeer = attach(recoveryRoute);
+  recoveryPeer.receive(await recoveryPeer.proof(recoveryRoute));
+  const peerReady = await waitForFrame(recoveryPeer.events, "session.ready");
+  assert.ok(peerReady.payload.policy.capabilities.includes("device.journal"));
+  recoveryPeer.send("stream.subscribe", { commandId: "subscribe-routed-recovery", scope });
+  const peerStatus = recoveryPeer.send("device.task.status", { ...recoveryTaskScope, commandId: "status-routed-recovery" });
+  assert.deepEqual((await waitForFrame(recoveryPeer.events, "device.task.snapshot", peerStatus)).payload.task.pendingApproval?.recoveryPlan, recoveryPlan);
+  const peerApprove = recoveryPeer.send("device.task.approve", { ...approval, commandId: "approve-routed-recovery" });
+  await waitForFrame(recoveryPeer.events, "command.completed", peerApprove);
+  assert.equal((await waitForFrame(recoveryPeer.events, "device.task.snapshot", peerApprove)).payload.task.status, "succeeded");
+
+  const replayClient = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4);
+  await replayClient.send("stream.subscribe", { commandId: "subscribe-replayed-recovery", scope });
+  const replayApproval = await replayClient.send("device.task.approve", { ...approval, commandId: "approve-replayed-recovery" });
+  await waitForFrame(replayClient.frames, "command.completed", replayApproval);
+  assert.equal((await waitForFrame(replayClient.frames, "device.task.snapshot", replayApproval)).payload.task.status, "succeeded");
   assert.equal(probes, 1);
   assert.equal(repairCalls, 2);
   const recoveryTrace = readOwnedDeviceTaskTrace({ store: deviceStore, ...recoveryTaskScope });
@@ -571,6 +607,8 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
     kind: recoveryPlan.kind, routeRevision: recoveryPlan.routeRevision, verifyBy: recoveryPlan.verifyBy, verifiedAt: clock,
     evidenceRefs: [recoveryPlan.baselineObservationId],
   });
+  const authority = metadata as { authority?: { approval?: { principal?: unknown } } };
+  assert.deepEqual(authority.authority?.approval?.principal, { kind: "paired_mobile", deviceId, deviceEpoch: 1, sessionId: peerReady.sessionId });
 });
 
 function peerFixture() {

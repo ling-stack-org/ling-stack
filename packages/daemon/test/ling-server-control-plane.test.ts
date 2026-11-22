@@ -9,7 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import type { LingServerSignalingInputV1, LingServerSignedSignalingV1 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerSignalingInputV1, type LingServerSignedSignalingV1 } from "@ling-stack/contracts";
 import { fingerprintPublicJwkSync, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 
@@ -136,7 +136,7 @@ test("paired peers exchange signed signaling over a bounded route and reject rep
   const input = {
     version: 1, instanceId: await instance(origin), installationId: "self-hosted",
     applicationKeyFingerprint: serverKey.fingerprint, bindingId: "binding-1", routeAttemptId: "route-1", preferredRoute: "direct", peerEpoch: 1,
-    gatewayId: "pc-1", mobileDeviceId: "phone-1", protocolMajor: 1, features: ["ordered-channel"], expiresAt,
+    gatewayId: "pc-1", mobileDeviceId: "phone-1", protocolMajor: 1, features: ["ordered-channel", REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4], expiresAt,
   } as const;
   const proof = (body: LingServerSignalingInputV1, key: ReturnType<typeof peerKey>): LingServerSignedSignalingV1 => ({
     input: body, publicKeyJwk: key.jwk,
