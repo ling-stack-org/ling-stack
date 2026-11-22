@@ -1052,6 +1052,7 @@ export function createDaemonServer(
     protocolTransports: dependencies.deviceProtocolTransports,
     androidAdbExecutor: dependencies.androidAdbExecutor,
     obdExecutor: dependencies.obdExecutor,
+    developerExecutor: dependencies.developerExecutor,
     modbusSerialTargets,
     resourceTrust: deviceResourceTrust,
     ...(homeAssistantBaseUrl && homeAssistantTokenRef ? { homeAssistant: {

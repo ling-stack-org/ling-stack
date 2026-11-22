@@ -78,6 +78,16 @@ export class SqliteDeviceDeveloperStore {
     return row ? parseJson<DeviceDeveloperJobV1>(row.job_json, "developer job") : undefined;
   }
 
+  listInterruptedJobIds(owner: Pick<DeviceDeveloperSessionV1, "ownerKind" | "ownerId">): readonly string[] {
+    return this.database.prepare(`
+      SELECT job_id
+      FROM device_developer_jobs JOIN device_developer_sessions USING (session_id)
+      WHERE json_extract(session_json, '$.ownerKind') = ?
+        AND json_extract(session_json, '$.ownerId') = ?
+        AND json_extract(job_json, '$.status') IN ('queued', 'running')
+    `).all(owner.ownerKind, owner.ownerId).map(row => String(row.job_id));
+  }
+
   saveArtifact(artifact: DeviceDeveloperArtifactV1): DeviceDeveloperArtifactV1 {
     const current = this.getArtifact(artifact.artifactId);
     if (current && current.digest !== artifact.digest) throw new DeviceFabricError("revision_conflict", "artifact id is bound to another digest");

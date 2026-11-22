@@ -48,6 +48,13 @@ export interface DeviceDeveloperJobV1 {
   readonly updatedAt: string;
 }
 
+export interface DeviceDeveloperExecutorResultV1 {
+  readonly status: Extract<DeviceDeveloperJobV1["status"], "completed" | "failed" | "unknown" | "cancelled">;
+  readonly outputRef?: string;
+  readonly outputDigest?: string;
+  readonly taskStatus?: DeviceTaskStatusV1;
+}
+
 export interface DeviceDeveloperArtifactV1 {
   readonly artifactId: string;
   readonly workspaceId: string;

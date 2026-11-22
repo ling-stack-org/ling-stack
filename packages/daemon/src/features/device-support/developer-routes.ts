@@ -1,16 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { DeviceDeveloperSessionV1 } from "@ling-stack/contracts";
+import type { DeviceDeveloperJobV1, DeviceDeveloperSessionV1 } from "@ling-stack/contracts";
 import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError } from "@ling-stack/core";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
+import { assertDeveloperTargetActive, requireCurrentDeveloperTarget } from "./developer-jobs.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const developerPath = "/v1/device-support/developer/sessions";
-const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize)|\/jobs\/([^/]+))?$/u;
+const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs)(?:\/([^/]+))?)?$/u;
+const jobKinds = ["build", "deploy", "launch", "logs", "test", "retest"] as const satisfies readonly DeviceDeveloperJobV1["kind"][];
+const jobFields = new Set(["jobId", "kind", "artifactDigest", "authorizationRevision"]);
 
 export async function handleDeviceDeveloperRoute(
   url: URL,
@@ -21,8 +24,9 @@ export async function handleDeviceDeveloperRoute(
   const match = sessionPath.exec(url.pathname);
   if (!match && url.pathname !== developerPath) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
-  const [sessionId, authorize, jobId] = match?.slice(1) ?? [];
-  const method = !sessionId || authorize ? "POST" : "GET";
+  const [sessionId, operation, jobId] = match?.slice(1) ?? [];
+  if (operation === "authorize" && jobId) return false;
+  const method = !sessionId || (operation !== undefined && !jobId) ? "POST" : "GET";
   if (request.method !== method) {
     response.setHeader("Allow", method);
     writePrivateJson(response, 405, { error: "method_not_allowed" });
@@ -33,8 +37,12 @@ export async function handleDeviceDeveloperRoute(
       await createSession(request, response, runtime);
       return true;
     }
-    if (authorize) {
+    if (operation === "authorize") {
       await authorizeSession(sessionId, request, response, runtime);
+      return true;
+    }
+    if (operation === "jobs" && !jobId) {
+      await createJob(request, response, runtime, sessionId);
       return true;
     }
     const session = requireSession(runtime, sessionId);
@@ -53,6 +61,22 @@ export async function handleDeviceDeveloperRoute(
   return true;
 }
 
+async function createJob(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime, sessionId: string): Promise<void> {
+  const body = await readJsonBody(request, 4096).catch(() => undefined);
+  const kind = isRecord(body) && jobKinds.find(value => value === body.kind);
+  if (!isRecord(body) || !kind || typeof body.jobId !== "string" || !/^[a-z0-9_-]{1,128}$/iu.test(body.jobId)
+    || Object.keys(body).some(key => !jobFields.has(key))
+    || (body.artifactDigest !== undefined && !boundedReference(body.artifactDigest))
+    || !boundedReference(body.authorizationRevision)) {
+    throw new DeviceBrokerError("invalid_request", "invalid developer job");
+  }
+  const { job, admitted } = await runtime.developerJobs.submit(requireSession(runtime, sessionId), {
+    jobId: body.jobId, kind, authorizationRevision: body.authorizationRevision,
+    ...(body.artifactDigest ? { artifactDigest: body.artifactDigest } : {}),
+  });
+  if (!response.destroyed) writePrivateJson(response, admitted ? 201 : 200, { job });
+}
+
 async function createSession(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): Promise<void> {
   const body = await readJsonBody(request, 4096).catch(() => undefined);
   if (!isRecord(body) || Object.keys(body).length !== 2 || !boundedReference(body.targetDeviceId)
@@ -60,7 +84,7 @@ async function createSession(request: IncomingMessage, response: ServerResponse,
     throw new DeviceBrokerError("invalid_request", "invalid device session");
   }
   const target = runtime.store.getDeviceRetirementState(body.targetDeviceId, DEFAULT_WORKSPACE_ID);
-  assertTargetActive(target.lifecycleStatus);
+  assertDeveloperTargetActive(target.lifecycleStatus);
   const profile = runtime.store.getDevice(target.deviceId)!;
   const now = new Date().toISOString();
   const session = runtime.developerSessions.createSession({
@@ -88,24 +112,14 @@ async function authorizeSession(
   if (!session.targetBinding || session.protocolReplay) {
     throw new DeviceBrokerError("permission_denied", "session has a separate authorization flow");
   }
-  if (body.expectedRevision !== session.revision || session.status !== "created") {
+  if (body.expectedRevision !== session.revision || !["created", "completed", "failed"].includes(session.status)) {
     throw new DeviceBrokerError("target_changed", "device session authorization changed");
   }
-  const target = runtime.store.getDeviceRetirementState(session.targetDeviceId, session.workspaceId);
-  assertTargetActive(target.lifecycleStatus);
-  if (session.targetBinding.profileRevision !== target.profileRevision || session.targetBinding.connectionRevision !== target.connectionRevision) {
-    throw new DeviceBrokerError("target_changed", "device session target binding changed");
-  }
+  requireCurrentDeveloperTarget(runtime.store, session);
   const authorized = runtime.developerSessions.authorize(
     session.sessionId, `auth_${randomUUID()}`, new Date().toISOString(), body.expectedRevision,
   );
   writePrivateJson(response, 200, { session: authorized });
-}
-
-function assertTargetActive(lifecycleStatus: string): void {
-  if (["revoked", "retired", "offline"].includes(lifecycleStatus)) {
-    throw new DeviceBrokerError("target_changed", "device session target is unavailable");
-  }
 }
 
 function requireSession(runtime: DeviceSupportRuntime, encoded: string): DeviceDeveloperSessionV1 {
@@ -135,6 +149,6 @@ function writeDeveloperError(response: ServerResponse, error: unknown): void {
   const status = code === "target_missing" || code === "missing_target" ? 404
     : code === "safety_denied" || code === "permission_denied" ? 403
     : code === "target_changed" || code === "revision_conflict" ? 409
-    : code === "invalid_request" ? 400 : 503;
+    : code === "unsupported_capability" ? 422 : code === "invalid_request" ? 400 : 503;
   writePrivateJson(response, status, { error: code });
 }

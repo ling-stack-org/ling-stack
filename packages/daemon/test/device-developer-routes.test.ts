@@ -34,6 +34,11 @@ test("local developer sessions authorize the current target and expose durable w
     }
     daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
       storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+      developerExecutor: {
+        async execute({ job }) {
+          return { status: "completed", outputRef: "fixture-output:" + job.kind, outputDigest: "a".repeat(64), taskStatus: "succeeded" };
+        },
+      },
     });
     await daemon.start();
     const address = daemon.server.address();
@@ -71,9 +76,20 @@ test("local developer sessions authorize the current target and expose durable w
   assert.equal(authorized.revision, 2);
   assert.notEqual(authorized.authorizationRevision, created.authorizationRevision);
   assert.equal((await post(sessionUrl + "/authorize", { expectedRevision: 2 })).status, 409);
+  const developerJobResponse = await post(sessionUrl + "/jobs", {
+    jobId: "developer-test-1", kind: "test", authorizationRevision: authorized.authorizationRevision,
+  });
+  assert.equal(developerJobResponse.status, 201);
+  const developerJob = (await developerJobResponse.json() as { job: DeviceDeveloperJobV1 }).job;
+  assert.equal(developerJob.status, "completed");
+  assert.equal(developerJob.outputRef, "fixture-output:test");
+  assert.equal(developerJob.outputDigest, "a".repeat(64));
 
   const stale = await readSession(await post(sessions, { ...input, mode: "standard" }));
   assert.equal(stale.mode, "standard");
+  assert.equal((await post(`${sessions}/${stale.sessionId}/jobs`, {
+    jobId: "stale-test-1", kind: "test", authorizationRevision: stale.authorizationRevision,
+  })).status, 403);
   const store = new SqliteDeviceSupportStore({ databasePath: databasePath! });
   try {
     store.registerDevice({ ...profile, profileRevision: "profile-2", device: { ...profile.device, profileRevision: "profile-2" } }, at);
@@ -99,6 +115,8 @@ test("local developer sessions authorize the current target and expose durable w
   await daemon?.stop();
   daemon = undefined;
   const reopened = await start();
-  assert.deepEqual(await readSession(await get(`${reopened}/developer/sessions/${created.sessionId}`)), authorized);
+  const resumed = await readSession(await get(`${reopened}/developer/sessions/${created.sessionId}`));
+  assert.equal(resumed.status, "completed");
+  assert.equal(resumed.revision, authorized.revision + 2);
   assert.deepEqual(await (await get(reopened + jobPath)).json(), { job });
 });

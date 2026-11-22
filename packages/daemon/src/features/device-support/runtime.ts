@@ -50,6 +50,7 @@ import { ObdVehicleAdapter, type ObdExecutor } from "./adapters/obd.js";
 import { DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS, type DeviceDiagnosisPlanner, type DeviceDiagnosisRequest } from "./diagnosis-planner.js";
 import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 import { createDeviceApprovalQueue } from "./approval-queue.js";
+import { createDeviceDeveloperJobs, type DeviceDeveloperExecutor } from "./developer-jobs.js";
 
 interface LinuxSshTargetSummary {
   readonly connectionId: string;
@@ -67,6 +68,7 @@ export interface DeviceSupportRuntime {
   readonly protocolTransports: HardwareProtocolTransportRegistry;
   readonly protocolProfiles: HardwareProtocolProfileRegistry;
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
+  readonly developerJobs: ReturnType<typeof createDeviceDeveloperJobs>;
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
   readonly edgeJournal: EdgeRuntimeJournal;
@@ -113,6 +115,7 @@ export function createDeviceSupportRuntime(options: {
   readonly externalAdapters?: readonly ExternalDeviceAdapter[];
   readonly androidAdbExecutor?: AndroidAdbExecutor;
   readonly obdExecutor?: ObdExecutor;
+  readonly developerExecutor?: DeviceDeveloperExecutor;
 }): DeviceSupportRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const store = new SqliteDeviceSupportStore({ databasePath: options.databasePath });
@@ -128,6 +131,7 @@ export function createDeviceSupportRuntime(options: {
     allowedResourceLicenses: options.resourceTrust?.allowedLicenses,
   });
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
+  const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
   const protocolWorkbench = new HardwareProtocolWorkbench();
   const protocolTransports = new HardwareProtocolTransportRegistry(protocolWorkbench);
@@ -142,6 +146,7 @@ export function createDeviceSupportRuntime(options: {
   let obd: ObdVehicleAdapter | undefined;
   const linuxTargets = new Map<string, BoundLinuxSshTarget>();
   try {
+    developerSessions.recoverInterruptedJobs({ ownerKind: "daemon", ownerId: DEFAULT_WORKSPACE_ID }, now());
     protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
     protocolWorkbench.registerCodec(modbusRtuRegisterCodec);
     const modbusProfile = protocolProfiles.register({
@@ -210,7 +215,7 @@ export function createDeviceSupportRuntime(options: {
   const remoteFacade = createRemoteDeviceFacade({ store, broker, now });
   const approvalQueue = createDeviceApprovalQueue(store, broker, now);
   const planner = new DeviceRunnerPlanningBridge();
-  const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
+  const developerJobs = createDeviceDeveloperJobs({ broker, sessions: developerSessions, executor: options.developerExecutor, now });
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
   const edgeJournal = new EdgeRuntimeJournal({ persistence: fabricStore });
@@ -396,6 +401,7 @@ export function createDeviceSupportRuntime(options: {
     protocolTransports,
     protocolProfiles,
     developerSessions,
+    developerJobs,
     collaboration,
     edgeRuntimes,
     edgeJournal,

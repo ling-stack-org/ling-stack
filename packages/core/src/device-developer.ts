@@ -62,6 +62,10 @@ export class DeviceDeveloperSessionCoordinator {
   }
 
   startJob(input: DeviceDeveloperJobV1): DeviceDeveloperJobV1 {
+    return this.admitJob(input).job;
+  }
+
+  admitJob(input: DeviceDeveloperJobV1): { readonly job: DeviceDeveloperJobV1; readonly admitted: boolean } {
     return this.write(() => {
       const session = this.requireSession(input.sessionId);
       const current = this.getJob(input.jobId);
@@ -70,7 +74,7 @@ export class DeviceDeveloperSessionCoordinator {
           || current.artifactDigest !== input.artifactDigest || current.authorizationRevision !== input.authorizationRevision) {
           throw new DeviceFabricError("revision_conflict", "developer job id is bound to another job");
         }
-        return current;
+        return { job: current, admitted: false };
       }
       if (!["authorized", "running"].includes(session.status)) throw new DeviceFabricError("safety_denied", "developer session is not authorized");
       if (session.mode !== "developer") throw new DeviceFabricError("safety_denied", "developer jobs require a developer session");
@@ -90,8 +94,14 @@ export class DeviceDeveloperSessionCoordinator {
       }
       this.saveJob(input);
       this.saveSession({ ...session, status: "running", revision: session.revision + 1, updatedAt: input.updatedAt });
-      return input;
+      return { job: input, admitted: true };
     });
+  }
+
+  recoverInterruptedJobs(owner: Pick<DeviceDeveloperSessionV1, "ownerKind" | "ownerId">, now: string): void {
+    for (const jobId of this.#store?.listInterruptedJobIds(owner) ?? []) {
+      this.settleJob(jobId, "unknown", undefined, now, "unknown");
+    }
   }
 
   settleJob(
