@@ -204,3 +204,30 @@ test("developer session and job transitions commit together and restore after SQ
     secondStore.close();
   }
 });
+
+test("recovery converts daemon jobs left running by a restart into an unknown outcome", () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-developer-recovery-"));
+  const path = join(root, "developer.sqlite");
+  const session = { sessionId: "recovery-session", workspaceId: "workspace-1", ownerKind: "daemon", ownerId: "daemon-1",
+    targetDeviceId: "pc-1", targetKind: "pc", mode: "developer", authorizationRevision: "auth-1",
+    status: "running", revision: 2, createdAt: now, updatedAt: now } as const;
+  const job = { jobId: "recovery-job", sessionId: session.sessionId, kind: "logs", status: "running",
+    targetDeviceId: session.targetDeviceId, authorizationRevision: session.authorizationRevision,
+    taskStatus: "executing", revision: 1, updatedAt: now } as const;
+  const firstStore = new SqliteDeviceDeveloperStore({ databasePath: path });
+  firstStore.saveSession(session);
+  firstStore.saveJob(job);
+  firstStore.close();
+  const secondStore = new SqliteDeviceDeveloperStore({ databasePath: path });
+  try {
+    const coordinator = new DeviceDeveloperSessionCoordinator({ store: secondStore });
+    coordinator.recoverInterruptedJobs({ ownerKind: "daemon", ownerId: "daemon-1" }, "2026-11-22T00:00:00.000Z");
+    assert.equal(coordinator.getJob(job.jobId)?.status, "unknown");
+    assert.equal(coordinator.getSession(session.sessionId)?.status, "paused");
+    coordinator.recoverInterruptedJobs({ ownerKind: "daemon", ownerId: "daemon-1" }, "2026-11-22T00:01:00.000Z");
+    assert.equal(coordinator.getJob(job.jobId)?.status, "unknown");
+  } finally {
+    secondStore.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
