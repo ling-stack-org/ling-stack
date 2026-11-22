@@ -29,6 +29,7 @@ export type WorkItemStatus =
 export type WorkItemSourceType =
   | "channel_task"
   | "channel_workflow_step"
+  | "automation_run"
   | "external_work"
   | "external_work_action"
   | "approval"

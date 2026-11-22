@@ -13,6 +13,7 @@ export type WorkItemStatus =
 export type WorkItemSourceType =
   | "channel_task"
   | "channel_workflow_step"
+  | "automation_run"
   | "external_work"
   | "external_work_action"
   | "approval"
@@ -37,6 +38,7 @@ export interface WorkItem {
   readonly channelId?: string;
   readonly sourceType: WorkItemSourceType;
   readonly sourceId: string;
+  readonly linkedExecution?: WorkItemLinkedExecution;
   readonly title: string;
   readonly description?: string;
   readonly status: WorkItemStatus;
@@ -63,6 +65,13 @@ export interface WorkItem {
   readonly completedAt?: string;
   readonly failedAt?: string;
   readonly failureReason?: string;
+}
+
+export interface WorkItemLinkedExecution {
+  readonly kind: "channel_task" | "automation_run";
+  readonly id: string;
+  readonly status: string;
+  readonly runId?: string;
 }
 
 export type WorkItemView = WorkItem;

@@ -2291,6 +2291,68 @@ test("Work Item creation, acceptance, evidence and collaboration retries keep on
   assert.equal((await sdk.readWorkItem(workItem.workspaceId, workItemId)).revision, resumed.revision);
 });
 
+test("existing channel and Automation executions link once without starting another Run", { timeout: 25_000 }, async t => {
+  const provider = await startLoopbackPiProvider(async () => ({ text: "Original automation complete" }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  const [operator, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
+  const store = fixture.getStore();
+  const now = new Date().toISOString();
+  const channel = store.createChannel({ name: "Existing work", boundPath: fixture.cwd }, now);
+  const task = store.createTask({ channelId: channel.id, title: "Original channel task", prompt: "Use the original task owner." }, now);
+  const thread = store.createLingThread({ kind: "automation", title: "Original automation", objective: "Complete one check" }, now);
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const automation = store.createAutomationDefinition({
+    threadId: thread.id, title: "Original automation", kind: "custom_prompt", trigger: { type: "manual" },
+    target: { scope: "workspace", workspaceId: thread.workspaceId }, executionPolicy: { providerPresetId: preset.id },
+    promptTemplate: { templateVersion: 1, promptMarkdown: "Provide a short check result.", contextSelectors: [] },
+    outputPolicy: { artifactFormat: "markdown", destinations: [{ type: "automation_thread" }] },
+  }, now);
+  const { authToken, daemonUrl } = fixture.transportOptions();
+  const write = (path: string, body: unknown) => fetch(`${daemonUrl}${path}?cwd=${encodeURIComponent(fixture.cwd)}`, {
+    method: "POST", body: JSON.stringify(body), headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+  });
+  const runReply = await write(`/automations/${automation.id}/run`, { idempotencyKey: "source-automation-run" });
+  assert.ok(runReply.ok, await runReply.clone().text());
+  const { automationRun } = await runReply.json() as { automationRun: { id: string } };
+  const original = await waitFor(() => {
+    const run = store.getAutomationRun(automationRun.id);
+    return run?.status === "succeeded" ? run : undefined;
+  });
+  assert.ok(original.runId);
+  const link = (connection: typeof operator, sourceType: "channel_task" | "automation_run", sourceId: string, idempotencyKey: string) =>
+    connection.call<LingAppServerWorkItemResult>("workItem/create", {
+      sourceType, sourceId, idempotencyKey, title: "Track current execution", linkExistingExecution: true,
+    });
+  await assert.rejects(link(operator, "automation_run", "unknown-occurrence", "unknown-execution"), { code: "workspace_binding_invalid" });
+  const [first, duplicate] = await Promise.all([
+    link(operator, "automation_run", original.id, "automation-entry"),
+    link(peer, "automation_run", original.id, "controller-entry"),
+  ]);
+  assert.deepEqual(first, duplicate);
+  assert.deepEqual(first.workItem.linkedExecution, { kind: "automation_run", id: original.id, runId: original.runId, status: "succeeded" });
+  assert.ok(first.workItem.currentExecutionRefs.includes(original.id));
+  const linkedTask = await link(operator, "channel_task", task.id, "channel-entry");
+  assert.deepEqual(linkedTask.workItem.linkedExecution, { kind: "channel_task", id: task.id, status: "todo" });
+  const workItemId = linkedTask.workItem.workItemId;
+  const claim = await write(`/work-items/${workItemId}/claim`, { ownerId: "legacy-claim" });
+  assert.equal((await claim.json() as { blocker?: { code: string } }).blocker?.code, "control_blocked");
+  const before = { workItemId, expectedWorkItemRevision: Number(linkedTask.workItem.revision) };
+  await assert.rejects(operator.call("workItem/accept", { ...before, idempotencyKey: "try-second-owner" }), { code: "stale_revision" });
+  await assert.rejects(operator.call("workItem/cancel", {
+    ...before, expectedControlGeneration: 0, idempotencyKey: "try-cancel-source", actorId: "local-user",
+  }), { code: "resume_blocked" });
+  assert.equal(store.getTask(task.id)?.status, "todo");
+  store.updateTask(task.id, { status: "cancelled" }, new Date().toISOString());
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const taskProjection = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  assert.equal(taskProjection.workItem.linkedExecution?.status, "cancelled");
+  assert.equal((await link(restored, "automation_run", original.id, "automation-entry")).workItem.workItemId, first.workItem.workItemId);
+  assert.deepEqual(fixture.getStore().listRuns().map(run => run.id), [original.runId]);
+  assert.equal(provider.requests.length, 1);
+});
+
 test("an operator resolves a deliberation round once against its current revision", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const [operator, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
@@ -2554,6 +2616,7 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.equal(observedBrief?.status, "succeeded");
   assert.equal(observedBrief.briefBasis, undefined);
   assert.equal(observedBrief.runId, undefined);
+  assert.ok((await readBrief(observer)).workflow?.steps.every(step => step.decision === undefined));
   assert.equal(provider.requests.length, 1);
   await fixture.restart();
   const resumedClient = await fixture.connect();
@@ -2604,6 +2667,9 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.equal(readyBallot?.status, "ready");
   assert.equal(readyBallot.summary.tied, true);
   assert.deepEqual(readyBallot.summary.tally, [{ option: "Adapter", count: 1 }, { option: "Migration", count: 1 }]);
+  const readyStage = (await readBrief(decisionClient)).workflow?.steps.find(step => step.stepId === p02.id);
+  assert.equal(readyStage?.decision?.status, "ready");
+  assert.deepEqual(readyStage.decision.ballot, readyBallot.summary);
   await assert.rejects(decisionClient.call("workItem/deliberation/decide", { ...decision,
     decision: { disposition: "selected", option: "Rewrite" } }), { code: "invalid_params" });
   const selected = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", decision);
@@ -2628,6 +2694,10 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.deepEqual(body.workflow?.steps.filter(step => step.stageId?.startsWith("V-")).map(step => step.brief),
     ["Ballot received.", "Ballot received."]);
   assert.deepEqual(body.workflow?.steps.find(step => step.stepId === p01.id)?.briefBasis, brief.briefBasis);
+  assert.deepEqual(body.workflow?.steps.find(step => step.stepId === p02.id)?.decision, {
+    question: p02Preview.requiredDecision.question, status: "decided", selectedOption: "Adapter",
+    reason: decision.reason, ballot: readyBallot.summary,
+  });
   const sourceRunId = finishedStore.getChannelWorkflowStep(p02.id)?.runId;
   assert.ok(sourceRunId);
   const currentWorkItem = await decisionClient.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });

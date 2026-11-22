@@ -242,7 +242,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ status: stringSchema, channelId: stringSchema, limit: integerSchema }), result };
     case "workItem/create":
       return { params: objectWith({ ...workItemTarget, sourceId: stringSchema, title: stringSchema, gitHubSubject: objectSchema,
-        idempotencyKey: stringSchema }, ["sourceId", "title"]), result };
+        sourceType: stringSchema, linkExistingExecution: booleanSchema, idempotencyKey: stringSchema }, ["sourceId", "title"]), result };
     case "workItem/workflow/bind":
       return { params: objectWith({ ...workItemTarget, planId: stringSchema, expectedWorkItemRevision: integerSchema,
         expectedPlanRevision: integerSchema, idempotencyKey: stringSchema, previousWorkflowId: stringSchema },

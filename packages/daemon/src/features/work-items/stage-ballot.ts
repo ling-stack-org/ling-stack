@@ -1,10 +1,9 @@
 import type { LingAppServerStageBallotTally, LingAppServerWorkItemSourceRef, ProposedPlanStageDecision } from "@ling-stack/contracts";
 import { planStageBallotKey, type ChannelWorkflowStep, type RunStore } from "@ling-stack/core";
-import { HttpError } from "../errors.js";
-import { isRecord } from "../shared/validation.js";
+import { isRecord } from "../../shared/validation.js";
 
 type BallotResult =
-  | { readonly status: "waiting" }
+  | { readonly status: "waiting" | "stale" }
   | { readonly status: "ready" | "quorum_unmet"; readonly summary: LingAppServerStageBallotTally;
       readonly sourceRefs: readonly LingAppServerWorkItemSourceRef[] };
 
@@ -13,9 +12,9 @@ export function readAppServerStageBallot(
   decision: ProposedPlanStageDecision, frozenKey: unknown,
 ): BallotResult {
   const ballot = decision.ballot;
-  if (!ballot || !target.metadata?.planStageId) throw new HttpError(409, "stale_revision", "The ballot no longer belongs to this stage.");
+  if (!ballot || !target.metadata?.planStageId) return { status: "stale" };
   const key = planStageBallotKey(planId, target.metadata.planStageId, decision);
-  if (key !== frozenKey) throw new HttpError(409, "stale_revision", "The ballot options or eligible stages have changed.");
+  if (key !== frozenKey) return { status: "stale" };
   const stages = store.listChannelWorkflowSteps({ workflowId: target.workflowId, complete: true });
   const counts = new Map(decision.options.map(option => [option, 0]));
   const participants = new Set<string>();
@@ -24,7 +23,7 @@ export function readAppServerStageBallot(
   for (const stageId of ballot.voterStageIds) {
     const voter = stages.find(step => step.metadata?.planStageId === stageId);
     if (!voter || voter.metadata?.planBallotKey !== key
-      || participants.has(voter.toParticipantId)) throw new HttpError(409, "stale_revision", "An eligible ballot stage changed.");
+      || participants.has(voter.toParticipantId)) return { status: "stale" };
     participants.add(voter.toParticipantId);
     if (!["succeeded", "failed", "cancelled", "skipped"].includes(voter.status)) {
       return { status: "waiting" };

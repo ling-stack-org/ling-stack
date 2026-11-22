@@ -1061,6 +1061,16 @@ class RpcConnection {
     const sourceType = readOptionalWorkItemSourceType(record.sourceType) ?? "manual";
     const sourceId = readStringField(record, "sourceId");
     const title = readStringField(record, "title");
+    const linkExistingExecution = record.linkExistingExecution === true;
+    if (record.linkExistingExecution !== undefined && typeof record.linkExistingExecution !== "boolean") {
+      throw rpcError(-32602, "invalid_params", "linkExistingExecution must be a boolean.");
+    }
+    if (linkExistingExecution) {
+      this.workspaceParams(params, true);
+      if (sourceType !== "channel_task" && sourceType !== "automation_run" || record.gitHubSubject !== undefined) {
+        throw rpcError(-32602, "invalid_params", "Link either an existing channel Task or AutomationRun by source ID.");
+      }
+    }
     const idempotencyKey = readOptionalStringField(record, "idempotencyKey");
     if (idempotencyKey !== undefined && (!idempotencyKey.trim() || idempotencyKey.length > 200)) {
       throw rpcError(-32602, "invalid_params", "idempotencyKey must be a non-empty string of up to 200 characters.");
@@ -1084,6 +1094,7 @@ class RpcConnection {
       labels: Array.isArray(record.labels) && record.labels.every((value) => typeof value === "string") ? record.labels as string[] : undefined,
       idempotencyKey,
       verifiedTargetKey,
+      linkExistingExecution,
     };
     try {
       const { workItem, event, sourceReceipt } = store.createWorkItem(input, new Date().toISOString(), cwd);
@@ -1095,6 +1106,9 @@ class RpcConnection {
       }
       if (error instanceof Error && error.message === "work_item_creation_source_conflict") {
         throw rpcError(-32040, "workspace_binding_invalid", "The Work Item ID does not match the supplied source.");
+      }
+      if (error instanceof Error && error.message === "work_item_source_owner_unavailable") {
+        throw rpcError(-32040, "workspace_binding_invalid", "The original execution is unavailable.");
       }
       throw error;
     }
@@ -3025,6 +3039,7 @@ function projectWorkItemSnapshot(workItem: WorkItem, includeExecutionRefs = true
     workItem.workflowId,
     workItem.workflowStepId,
     workItem.approvalId,
+    ...(workItem.linkedExecution?.kind === "automation_run" ? [workItem.linkedExecution.id] : []),
   ].filter((value): value is string => typeof value === "string" && value.length > 0) : [];
   return {
     workspaceId: workItem.workspaceId,
@@ -3039,8 +3054,11 @@ function projectWorkItemSnapshot(workItem: WorkItem, includeExecutionRefs = true
       unresolvedEffectIds: workItem.control.unresolvedEffectIds,
       ...(workItem.control.recoveryOwner ? { recoveryOwner: workItem.control.recoveryOwner } : {}),
     },
-    holds: workItem.holds,
+    holds: workItem.linkedExecution && !includeExecutionRefs
+      ? workItem.holds.map(hold => hold.ownerRef === workItem.linkedExecution?.id ? { ...hold, ownerRef: workItem.id } : hold)
+      : workItem.holds,
     currentExecutionRefs,
+    ...(includeExecutionRefs && workItem.linkedExecution ? { linkedExecution: workItem.linkedExecution } : {}),
   };
 }
 
@@ -3080,7 +3098,7 @@ function readOptionalWorkItemStatus(value: unknown): WorkItemStatus | undefined 
 function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | undefined {
   if (value === undefined) return undefined;
   const sourceTypes: readonly WorkItemSourceType[] = [
-    "channel_task", "channel_workflow_step", "external_work", "external_work_action", "approval", "run", "manual",
+    "channel_task", "channel_workflow_step", "automation_run", "external_work", "external_work_action", "approval", "run", "manual",
   ];
   if (typeof value !== "string" || !sourceTypes.includes(value as WorkItemSourceType)) {
     throw rpcError(-32602, "invalid_params", "sourceType is not a supported Work Item source type.");

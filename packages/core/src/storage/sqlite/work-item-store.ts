@@ -24,6 +24,7 @@ import {
   type WorkItemConversationBinding,
   type WorkItemFailRequest,
   type WorkItemHeartbeatRequest,
+  type WorkItemHold,
   type WorkItemReleaseRequest,
   type WorkItemRouteRequest,
   type WorkItemControlState,
@@ -36,7 +37,7 @@ import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
-import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt,
+import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt, WorkItemLinkedExecution,
   LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding } from "@ling-stack/contracts";
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
@@ -52,6 +53,8 @@ export interface SqliteWorkItemStorePorts {
   readonly getChannelWorkflow: RunStore["getChannelWorkflow"];
   readonly listChannelWorkflowSteps: RunStore["listChannelWorkflowSteps"];
   readonly getWorkItemEvidence: RunStore["getWorkItemEvidence"];
+  readonly getTask: RunStore["getTask"];
+  readonly getAutomationRun: RunStore["getAutomationRun"];
   readonly getRun: RunStore["getRun"];
 }
 
@@ -100,8 +103,12 @@ export class SqliteWorkItemStore {
     database.exec("BEGIN IMMEDIATE");
     try {
       const sourceWorkItem = this.getWorkItemBySource(input.sourceType, input.sourceId);
-      const targetKey = input.verifiedTargetKey;
+      const sourceOwner = input.linkExistingExecution
+        ? this.readSourceOwner(input.sourceType, input.sourceId, DEFAULT_WORKSPACE_ID) : undefined;
+      if (input.linkExistingExecution && (!sourceOwner || input.verifiedTargetKey || input.gitHubIntake)
+        || input.sourceType === "automation_run" && !sourceOwner) throw new Error("work_item_source_owner_unavailable");
       const sourceKey = createHash("sha256").update(JSON.stringify([input.sourceType, input.sourceId])).digest("hex");
+      const targetKey = sourceOwner ? `execution:${sourceKey}` : input.verifiedTargetKey;
       const target = (targetKey ? state.get("work_item_target", targetKey)?.payload : undefined) as { workItemId: string } | undefined;
       const source = state.get("work_item_source", sourceKey)?.payload as LingAppServerWorkItemSourceReceipt | undefined;
       const boundId = target?.workItemId ?? source?.workItemId;
@@ -112,6 +119,7 @@ export class SqliteWorkItemStore {
       }
       const existing = boundId ? this.getWorkItem(boundId) : sourceWorkItem;
       if (boundId && !existing) throw new Error("work_item_creation_source_conflict");
+      if (sourceOwner && existing && !existing.linkedExecution) throw new Error("work_item_creation_source_conflict");
       const submission = input.idempotencyKey ? {
         recordId: createHash("sha256").update(input.idempotencyKey).digest("hex"),
         fingerprint: createHash("sha256").update(JSON.stringify([
@@ -126,7 +134,10 @@ export class SqliteWorkItemStore {
       if (input.id && (existing ? existing.id !== input.id : Boolean(this.getWorkItem(input.id)))) {
         throw new Error("work_item_creation_source_conflict");
       }
-      const workItem = existing ?? this.saveWorkItem(input, now);
+      const workItem = existing ?? (sourceOwner ? this.saveWorkItem({
+        ...input, initialStatus: "waiting", waitingReason: "external", channelId: sourceOwner.channelId,
+        ...(sourceOwner.execution.kind === "channel_task" ? { taskId: sourceOwner.execution.id } : {}),
+      }, now, undefined, sourceOwner.execution.id) : this.saveWorkItem(input, now));
       let sourceReceipt = source;
       if (targetKey && !source) {
         sourceReceipt = { workItemId: workItem.id, targetKey, sourceType: input.sourceType, sourceId: input.sourceId };
@@ -257,7 +268,7 @@ export class SqliteWorkItemStore {
     }
   }
 
-  private saveWorkItem(input: UpsertWorkItemInput, now: string, existing?: WorkItem): WorkItem {
+  private saveWorkItem(input: UpsertWorkItemInput, now: string, existing?: WorkItem, linkedOwnerId?: string): WorkItem {
     if (input.channelId) {
       this.ports.assertChannelExists(input.channelId);
     }
@@ -265,6 +276,10 @@ export class SqliteWorkItemStore {
       throw new Error(`AI teammate not found: ${input.assigneeTeammateId}`);
     }
     const id = existing?.id ?? input.id ?? createWorkItemId();
+    const holds: readonly WorkItemHold[] = existing?.holds ?? (linkedOwnerId ? [{
+      id: sourceOwnerHoldId(id), kind: "scope", ownerRef: linkedOwnerId, blocksNewAdmission: true,
+      reason: "The source owner controls the existing execution.",
+    }] : []);
     const createdAt = existing?.createdAt ?? now;
     const labels = input.labels ?? existing?.labels ?? [];
     const artifactIds = input.artifactIds ?? existing?.artifactIds ?? [];
@@ -373,7 +388,7 @@ export class SqliteWorkItemStore {
         existing?.control.receipt ? stringifyJson(existing.control.receipt) : null,
         stringifyJson(existing?.control.unresolvedEffectIds ?? []),
         existing?.control.recoveryOwner ?? null,
-        stringifyJson(existing?.holds ?? []),
+        stringifyJson(holds),
         existing?.claim?.ownerId ?? null,
         existing?.claim?.token ?? null,
         existing?.claim?.claimedAt ?? null,
@@ -397,7 +412,7 @@ export class SqliteWorkItemStore {
 
   getWorkItem(id: string): WorkItem | undefined {
     const row = this.context.database.prepare(workItemSelectSql("WHERE id = ?")).get(id);
-    return row ? mapWorkItem(row as Record<string, SQLOutputValue>, this.getWorkItemDependencyIds(id)) : undefined;
+    return row ? this.withLinkedExecution(mapWorkItem(row, this.getWorkItemDependencyIds(id))) : undefined;
   }
 
   listWorkItems(options: ListWorkItemsOptions = {}, now?: string): WorkItem[] {
@@ -426,7 +441,7 @@ export class SqliteWorkItemStore {
       .all(...params)
       .map((row) => {
         const typedRow = row as Record<string, SQLOutputValue>;
-        return mapWorkItem(typedRow, this.getWorkItemDependencyIds(readString(typedRow, "id")), now);
+        return this.withLinkedExecution(mapWorkItem(typedRow, this.getWorkItemDependencyIds(readString(typedRow, "id")), now));
       });
   }
 
@@ -434,6 +449,10 @@ export class SqliteWorkItemStore {
     const existing = this.getWorkItem(id);
     if (!existing) {
       return undefined;
+    }
+    if (existing.linkedExecution && (input.channelId !== undefined && input.channelId !== existing.channelId
+      || input.assigneeTeammateId !== undefined && input.assigneeTeammateId !== existing.assigneeTeammateId)) {
+      throw new Error("The source owner controls the existing execution.");
     }
     if (existing.workflowId && existing.planRevision && input.channelId !== undefined && input.channelId !== existing.channelId) {
       throw new Error("Work item is assigned to a Workflow in its current channel.");
@@ -915,6 +934,7 @@ export class SqliteWorkItemStore {
     if (existing.revision !== input.expectedRevision || existing.control.generation !== input.expectedControlGeneration) {
       return undefined;
     }
+    if (existing.linkedExecution) return existing;
     const nextState = nextWorkItemControlState(existing.control.state, action, existing.control.unresolvedEffectIds.length);
     if (!nextState) return existing;
     const generation = existing.control.generation + 1;
@@ -954,8 +974,32 @@ export class SqliteWorkItemStore {
       .prepare(workItemSelectSql("WHERE workspace_id = ? AND source_type = ? AND source_id = ?"))
       .get(DEFAULT_WORKSPACE_ID, sourceType, sourceId);
     return row
-      ? mapWorkItem(row as Record<string, SQLOutputValue>, this.getWorkItemDependencyIds(readString(row as Record<string, SQLOutputValue>, "id")))
+      ? this.withLinkedExecution(mapWorkItem(row, this.getWorkItemDependencyIds(readString(row, "id"))))
       : undefined;
+  }
+
+  private withLinkedExecution(item: WorkItem): WorkItem {
+    const { sourceType, sourceId } = item;
+    if ((sourceType !== "channel_task" && sourceType !== "automation_run")
+      || !item.holds.some(hold => hold.id === sourceOwnerHoldId(item.id) && hold.ownerRef === sourceId)) return item;
+    const linkedExecution = this.readSourceOwner(sourceType, sourceId, item.workspaceId)?.execution
+      ?? { kind: sourceType, id: sourceId, status: "unavailable" };
+    return { ...item, linkedExecution, ...(linkedExecution.runId ? { runId: linkedExecution.runId } : {}) };
+  }
+
+  private readSourceOwner(sourceType: WorkItemSourceType, id: string, workspaceId: string):
+    { readonly execution: WorkItemLinkedExecution; readonly channelId?: string } | undefined {
+    if (sourceType === "channel_task") {
+      const task = this.ports.getTask(id);
+      if (task?.workspaceId !== workspaceId) return undefined;
+      return { channelId: task.channelId, execution: { kind: sourceType, id, status: task.status, runId: task.currentRunId } };
+    }
+    if (sourceType === "automation_run") {
+      const run = this.ports.getAutomationRun(id);
+      if (run?.workspaceId !== workspaceId) return undefined;
+      return { channelId: run.channelId, execution: { kind: sourceType, id, status: run.status, runId: run.runId } };
+    }
+    return undefined;
   }
 
   private getWorkItemDependencyIds(id: string): string[] {
@@ -1009,6 +1053,10 @@ export class SqliteWorkItemStore {
 
 function sameConversationDispatch(left: WorkItemAcceptanceReceipt["dispatch"], right: WorkItemAcceptanceRequest["dispatch"]): boolean {
   return left?.threadId === right?.threadId && left?.message === right?.message && left?.providerPresetId === right?.providerPresetId;
+}
+
+function sourceOwnerHoldId(workItemId: string): string {
+  return `work_item_source_owner:${workItemId}`;
 }
 
 function nextWorkItemControlState(state: WorkItemControlState, action: WorkItemControlAction, unresolvedEffectCount: number): WorkItemControlState | undefined {

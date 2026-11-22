@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   LingAppServerGitHubDelivery, LingAppServerGitHubIntakeBudget, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemAcceptance,
   LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
+  WorkItemLinkedExecution, WorkItemSourceType,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
 
@@ -19,14 +20,7 @@ export type WorkItemStatus =
   | "superseded"
   | "archived";
 
-export type WorkItemSourceType =
-  | "channel_task"
-  | "channel_workflow_step"
-  | "external_work"
-  | "external_work_action"
-  | "approval"
-  | "run"
-  | "manual";
+export type { WorkItemSourceType } from "@ling-stack/contracts";
 
 export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resource" | "user" | "scheduler" | "provider";
 
@@ -76,6 +70,7 @@ export interface WorkItem {
   readonly channelId?: string;
   readonly sourceType: WorkItemSourceType;
   readonly sourceId: string;
+  readonly linkedExecution?: WorkItemLinkedExecution;
   readonly revision: number;
   readonly title: string;
   readonly description?: string;
@@ -142,6 +137,7 @@ export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
   /** Host-resolved target identity shared by the source occurrences. */
   readonly verifiedTargetKey?: string;
   readonly gitHubIntake?: GitHubIntakeOccurrence;
+  readonly linkExistingExecution?: boolean;
 }
 
 export interface GitHubIntakeOccurrence extends Omit<LingAppServerGitHubIntakeReceipt, "outcome" | "reasonCode" | "workItemId"> {

@@ -34,6 +34,8 @@
 - 接受绑定计划的后继 Workflow 后，旧 Workflow 停止新阶段和工具准入，后继 Workflow 等待重新绑定。操作方暂停工作项并核对旧 Run、Host 效果和租约收敛后，用 `workItem/workflow/bind` 的 `previousWorkflowId` 提交绑定。重启和并发重发复用绑定回执，原计划和阶段记录保留 Workflow ID。恢复工作项后，新 Workflow 使用自己的派发记录。
 - Work Board 与 App Server 使用同一套阶段、简报、阻塞和运行证据投影。阶段简报的来源是已提交的步骤状态迁移。看板支持分页与重试，并随 `work_items` 事件刷新。
 - 声明了裁决条件的步骤等待该 Work Item、已接受 Plan 和步骤的裁决回执。计划可指定独立的投票阶段与法定人数，也可在前置阶段完成时自动开启审议。Workflow 按原阶段负责人执行投票，各投票 Run 的工具列表为空。Host 在投票阶段全部结束后从终态 Run 核对选项和身份。协调者可以在裁决前查看票数和是否平票，裁决收据保留统计结果。回归覆盖等待票数、平票后的人工裁决、重启和派发一次。独立 QA 仍按自己的前置条件执行。
+- 浏览器连接真实 Daemon 时，Work Board 在 P02 上显示工程与 QA 的平票。裁决后通过现有 Control Plane 推送刷新同一详情，呈现选项、裁决依据和执行结果。
+- `workItem/create` 可按原生 ID 显式挂接现有频道 Task 或 AutomationRun。Host 从原执行记录确认归属和状态。并发提交及重启仍读取同一条 Work Item；原执行所有者持有开始、取消和恢复权限。验收中先运行一次 Automation，再从两个客户端挂接同一执行，Provider 总调用数为一次。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。
 
 | 工作包 | 已验证场景与证据边界 |
@@ -60,7 +62,7 @@
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入，审批和用户答复仍需按不同真实宿主与远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
 | F1、F2 | 普通会话 Handoff 的候选封存、Goal 预算承接与接手已接入。CLI `app-server codex-host` 同时连接 Ling 和安装版 Codex。联调通过受控 Provider 验证 Ling 在途排队、事件补齐、Codex 活跃 Turn 指导及重放原投递回执。可编程宿主的图形会话界面与跨 Workflow Agent 的预算承接仍待验收。 |
-| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。已接受的计划能自动开启声明的阶段审议。还需 Channel、设备和已有 AutomationRun 的统一自治接入、设备反馈、改计划时按受影响阶段暂停并承接独立成果、Workflow 交接、计划前和在途审议、跨 Run 预算与完整 O9 联合验收。 |
+| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task 和 AutomationRun 支持显式挂接，已接受的计划能自动开启声明的阶段审议。还需 Channel 与 Automation 的按策略接入、Device Fabric 桥接与反馈、改计划时按受影响阶段暂停并承接独立成果、Workflow 交接、计划前和在途审议、跨 Run 预算与完整 O9 联合验收。 |
 | G | 独立恢复日志已验证 SQLite 快照恢复、撤权、旧游标失效和 GitHub 对账后派发。上一版源码通过同一套本地兼容验收。签名安装产物、实际远程 WSS、受保护 GitHub 仓库及三个真实 Provider 自研试点仍需对应环境的证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
 
 ## 目标与开工顺序

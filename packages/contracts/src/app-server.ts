@@ -583,6 +583,7 @@ export interface LingAppServerWorkItemSnapshot {
   readonly control: LingWorkItemControlProjection;
   readonly holds: readonly LingWorkItemHold[];
   readonly currentExecutionRefs: readonly string[];
+  readonly linkedExecution?: import("./work-items.js").WorkItemLinkedExecution;
   readonly eventCursor?: string;
 }
 
@@ -595,7 +596,7 @@ export interface LingAppServerWorkItemResult {
 export interface LingAppServerWorkItemCreateParams {
   readonly cwd?: string;
   readonly workItemId?: string;
-  readonly sourceType?: "channel_task" | "channel_workflow_step" | "external_work" | "external_work_action" | "approval" | "run" | "manual";
+  readonly sourceType?: import("./work-items.js").WorkItemSourceType;
   readonly sourceId: string;
   readonly title: string;
   readonly description?: string;
@@ -603,6 +604,8 @@ export interface LingAppServerWorkItemCreateParams {
   readonly labels?: readonly string[];
   readonly idempotencyKey?: string;
   readonly gitHubSubject?: Omit<LingAppServerGitHubSubjectParams, "cwd">;
+  /** Use the selected Task or AutomationRun as the execution owner. */
+  readonly linkExistingExecution?: boolean;
 }
 
 export interface LingAppServerWorkItemConversationDispatch {
@@ -714,6 +717,7 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly runId?: string;
     readonly outputArtifactId?: string;
     readonly brief?: string;
+    readonly decision?: LingAppServerWorkItemStageDecision;
     readonly briefBasis?: {
       readonly transitionId: string;
       readonly committedAt: string;
@@ -842,8 +846,16 @@ export interface LingAppServerStageBallotTally {
   readonly tally: readonly { readonly option: string; readonly count: number }[];
 }
 
+export interface LingAppServerWorkItemStageDecision {
+  readonly question: string;
+  readonly status: "not_open" | "waiting" | "ready" | "quorum_unmet" | "decided" | "cancelled" | "stale";
+  readonly ballot?: LingAppServerStageBallotTally;
+  readonly selectedOption?: string;
+  readonly reason?: string;
+}
+
 export type LingAppServerStageBallotProgress = { readonly roundId: string } & (
-  | { readonly status: "waiting" }
+  | { readonly status: "waiting" | "stale" }
   | { readonly status: "ready" | "quorum_unmet"; readonly summary: LingAppServerStageBallotTally }
 );
 

@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
-import type { LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
+import type { LingAppServerStageBallotTally, LingAppServerWorkItemStageDecision, LingAppServerWorkItemWorkflowBinding,
+  LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
+import { readWorkItemCollaborationRecord, workItemWorkflowDecisionId } from "@ling-stack/core";
 import type { ChannelWorkflowStep, RunStore, WorkItem } from "@ling-stack/core";
 import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
+import { isRecord } from "../../shared/validation.js";
+import { readAppServerStageBallot } from "./stage-ballot.js";
 
 export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRegistry, workflowId: string): boolean {
   return store.listChannelWorkflowSteps({ workflowId, complete: true }).every(step => {
@@ -19,7 +23,11 @@ export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRe
 
 /** Work Board and App Server project the actual Workflow owner and its retained evidence. */
 export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, includeEvidence: boolean, offset = 0): LingAppServerWorkItemWorkflowStages | undefined {
-  if (!item.workflowId || !item.planRevision || !store.getAppServerState("work_item_workflow", item.workflowId)) return undefined;
+  if (!item.workflowId || !item.planRevision) return undefined;
+  const link = store.getAppServerState("work_item_workflow", item.workflowId)?.payload as {
+    readonly binding: LingAppServerWorkItemWorkflowBinding;
+  } | undefined;
+  if (!link) return undefined;
   const workflow = store.getChannelWorkflow(item.workflowId);
   if (!workflow) return undefined;
   const limit = 20;
@@ -40,9 +48,36 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       ...(includeEvidence ? {
         runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
         briefBasis: readStageBriefBasis(store, step),
+        decision: readStageDecision(store, item.id, item.planRevision!, link.binding.planId, step),
       } : {}),
     })),
   };
+}
+
+function readStageDecision(
+  store: RunStore, workItemId: string, planRevision: string, planId: string, step: ChannelWorkflowStep,
+): LingAppServerWorkItemStageDecision | undefined {
+  const decision = step.metadata?.requiredPlanDecision;
+  if (!decision) return undefined;
+  const { question } = decision;
+  const subject = { workItemId, planRevision, workflowStepId: step.id };
+  const round = readWorkItemCollaborationRecord(store, workItemId, workItemWorkflowDecisionId(subject, "round"));
+  if (!round) return { question, status: "not_open" };
+  const resolution = readWorkItemCollaborationRecord(store, workItemId, workItemWorkflowDecisionId(subject, "resolution"));
+  if (resolution && isRecord(resolution.payload)) {
+    const { reason, disposition, option, ballot } = resolution.payload;
+    return {
+      question,
+      status: resolution.action === "cancelled" ? "cancelled" : "decided",
+      ...(typeof reason === "string" ? { reason } : {}),
+      ...(disposition === "selected" && typeof option === "string" ? { selectedOption: option } : {}),
+      ...(isRecord(ballot) ? { ballot: ballot as unknown as LingAppServerStageBallotTally } : {}),
+    };
+  }
+  if (!decision.ballot) return { question, status: "ready" };
+  const frozen = isRecord(round.payload) && isRecord(round.payload.ballot) ? round.payload.ballot : undefined;
+  const result = readAppServerStageBallot(store, step, planId, decision, frozen?.ballotKey);
+  return { question, status: result.status, ...("summary" in result ? { ballot: result.summary } : {}) };
 }
 
 function readStageBriefBasis(store: RunStore, step: ChannelWorkflowStep) {

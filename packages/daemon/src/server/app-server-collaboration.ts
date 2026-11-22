@@ -27,7 +27,7 @@ import {
 import type { ControlPlaneEvent, RunStore } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
-import { readAppServerStageBallot } from "./app-server-stage-ballot.js";
+import { readAppServerStageBallot } from "../features/work-items/stage-ballot.js";
 
 export class AppServerCollaborationError extends Error {
   constructor(
@@ -197,9 +197,10 @@ export function settleAppServerDeliberation(
       } | undefined;
       if (!plan) throw new AppServerCollaborationError("stale_revision", "The ballot Plan binding is unavailable.");
       const result = readAppServerStageBallot(store, step, plan.binding.planId, step.metadata.requiredPlanDecision, frozen?.ballotKey);
+      if (result.status === "stale") throw new AppServerCollaborationError("stale_revision", "The ballot no longer applies to the accepted stage.");
       if (result.status === "waiting") throw new HttpError(409, "resume_blocked", "Wait for the assigned ballot stages to finish.");
       if (result.status === "quorum_unmet") throw new HttpError(409, "resume_blocked", "The verified ballots did not reach quorum.");
-      ballot = result;
+      if ("summary" in result) ballot = result;
     }
   }
   const action = decision ? "decided" : "cancelled";
@@ -269,8 +270,8 @@ function readOpenStageBallots(
     const frozen = isRecord(round.payload) && isRecord(round.payload.ballot) ? round.payload.ballot : undefined;
     if (!step || step.workflowId !== item.workflowId || !decision?.ballot) continue;
     const result = readAppServerStageBallot(store, step, plan.binding.planId, decision, frozen?.ballotKey);
-    ballots.push(result.status === "waiting" ? { roundId: round.id, status: result.status }
-      : { roundId: round.id, status: result.status, summary: result.summary });
+    ballots.push("summary" in result ? { roundId: round.id, status: result.status, summary: result.summary }
+      : { roundId: round.id, status: result.status });
   }
   return ballots;
 }

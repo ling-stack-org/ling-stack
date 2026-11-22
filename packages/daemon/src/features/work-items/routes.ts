@@ -43,6 +43,7 @@ const workItemStatuses = [
 const workItemSourceTypes = [
   "channel_task",
   "channel_workflow_step",
+  "automation_run",
   "external_work",
   "external_work_action",
   "approval",
@@ -116,7 +117,15 @@ export async function handleWorkItemRoute(
         return;
       }
       const stageOffset = readOptionalIntegerQuery(url, "stageOffset", 0);
-      writeJson(response, 200, { cwd, workItem: existing, workflow: readWorkItemWorkflowStages(store, existing, true, stageOffset) });
+      const detail = store.readSnapshot(() => {
+        const workItem = store.getWorkItem(workItemId);
+        return workItem && { cwd, workItem, workflow: readWorkItemWorkflowStages(store, workItem, true, stageOffset) };
+      });
+      if (!detail) {
+        writeJson(response, 404, { error: "work_item_not_found", message: `Work item not found: ${workItemId}` });
+        return;
+      }
+      writeJson(response, 200, detail);
       return;
     }
 

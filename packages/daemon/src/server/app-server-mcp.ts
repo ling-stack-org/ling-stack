@@ -106,9 +106,10 @@ export async function runLingAppServerMcp(
       annotations: { idempotentHint: true },
     }, async params => describe(await client.startTurn(params)));
     if (methods.has("workItem/create")) server.registerTool("ling_work_item_create", {
-      description: "Submit a source occurrence to the Ling task inbox. Use a structured GitHub subject to join existing work.",
+      description: "Submit a source occurrence to the task inbox. A GitHub subject joins existing work. Link a channel Task or AutomationRun by its source ID to follow that execution.",
       inputSchema: z.strictObject({ sourceId: objectId, title: z.string().min(1).max(200), idempotencyKey: requestKey,
         gitHubSubject: z.strictObject({ repository: z.string().min(3).max(201), kind: z.enum(["issue", "pull_request"]), number: z.number().int().positive() }).optional(),
+        sourceType: z.enum(["channel_task", "automation_run"]).optional(), linkExistingExecution: z.boolean().optional(),
       }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.createWorkItem(params)));
