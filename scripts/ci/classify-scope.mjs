@@ -12,6 +12,7 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
 const LOCAL_OUTPUT_DIRECTORY = "output/";
 const LOCKFILE = "pnpm-lock.yaml";
 const WEB_PACKAGE = "@ling-stack/web";
+const WORKSPACE_TEST_CONFIG = /^(?:packages|apps)\/[^/]+\/tsconfig\.tests?\.json$/u;
 const CORE_PACKAGE = "@ling-stack/core";
 
 const DOCUMENTATION_ROOT_FILES = new Set([
@@ -83,7 +84,7 @@ function isAssurancePath(file) {
  * The classifier is intentionally conservative: a path that is not recognized
  * as documentation, allowlisted maintenance, verified local output cleanup, or
  * a workspace package escalates to the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>, generatedProviderCatalog?: boolean, addedLockImporters?: string[]}} input
+ * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, generatedProviderCatalog?: boolean, addedLockImporters?: string[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -134,32 +135,39 @@ export function classifyChangedFiles(input) {
   const validationManifests = new Set();
   const validationInputs = new Set();
   const newPackages = new Set();
-  for (const file of scopeFiles.filter((file) => file.endsWith("/package.json"))) {
-    const directory = dirname(file);
-    const current = packages.find((entry) => entry.directory === directory);
-    const previous = input.basePackageEntries?.find((entry) => entry.directory === directory);
-    if (current && !previous && input.basePackageEntries
+  const testConfigDirectories = new Set(scopeFiles.filter(file => WORKSPACE_TEST_CONFIG.test(file)).map(file => dirname(file)));
+  const manifests = new Set(scopeFiles.filter(file => file.endsWith("/package.json")));
+  const validationDirectories = new Set([...Array.from(manifests, file => dirname(file)), ...testConfigDirectories]);
+  for (const directory of validationDirectories) {
+    const file = directory + "/package.json";
+    const manifestChanged = manifests.has(file);
+    const current = packages.find(entry => entry.directory === directory);
+    const previous = input.basePackageEntries?.find(entry => entry.directory === directory);
+    if (manifestChanged && current && !previous && input.basePackageEntries
       && !input.basePackageEntries.some(entry => entry.name === current.name)
       && packages.filter(entry => entry.name === current.name).length === 1
       && isStandardPackageAddition(current, scopeFiles)) {
       newPackages.add(directory);
       continue;
     }
+    const unverified = () => buildScope("full", files, packages, "unverified workspace package identity or validation scripts: " + file);
     if (!current || !previous || current.name !== previous.name
       || current.hasTestScript !== previous.hasTestScript || current.hasTypecheckScript !== previous.hasTypecheckScript
       || !current.scriptsFingerprint || !previous.scriptsFingerprint) {
-      return buildScope("full", files, packages, `unverified workspace package identity or validation scripts: ${file}`);
+      if (manifestChanged) return unverified();
+      continue;
     }
-    if (current.scriptsFingerprint !== previous.scriptsFingerprint) {
-      const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
-        directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
-        previousFiles: previous.files, changedFiles: scopeFiles });
-      if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
-        return buildScope("full", files, packages, `unverified workspace package identity or validation scripts: ${file}`);
-      }
-      validationManifests.add(file);
-      for (const input of validation.testInputs) validationInputs.add(input);
+    const scriptsChanged = current.scriptsFingerprint !== previous.scriptsFingerprint;
+    if (!scriptsChanged && !testConfigDirectories.has(directory)) continue;
+    const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
+      directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
+      previousFiles: previous.files, changedFiles: scopeFiles, previousTestConfigs: input.baseTestConfigs });
+    if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
+      if (scriptsChanged) return unverified();
+      continue;
     }
+    if (scriptsChanged) validationManifests.add(file);
+    for (const input of validation.testInputs) validationInputs.add(input);
   }
   if (scopedLockfile && input.addedLockImporters.some(directory => !newPackages.has(directory))) {
     return buildScope("full", files, packages, "lockfile changes require verified new workspace importers");
@@ -634,6 +642,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   let files;
   let deletedOutputFiles;
   let basePackageEntries;
+  const baseTestConfigs = new Map();
   let versionChange;
   let generatedProviderCatalog;
   let addedLockImporters;
@@ -647,7 +656,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       deletedOutputFiles = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
         base, args.head, "--", LOCAL_OUTPUT_DIRECTORY]).split("\0").filter(Boolean);
     }
-    if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, base);
+    const changedTestConfigs = files.filter(file => WORKSPACE_TEST_CONFIG.test(file));
+    if (changedTestConfigs.length > 0 || files.some(file => file.endsWith("/package.json"))) {
+      basePackageEntries = discoverPackages(repositoryRoot, base);
+    }
+    for (const file of changedTestConfigs) {
+      if ([base, args.head].every(ref => /^100644 blob /u.test(git(["ls-tree", ref, "--", file])))) {
+        baseTestConfigs.set(file, git(["show", base + ":" + file]));
+      }
+    }
     if (args["force-full"] !== "true" && files.includes(LOCKFILE) && basePackageEntries) {
       const directories = files.filter(file => /^packages\/[a-z0-9-]+\/package\.json$/u.test(file))
         .map(dirname).filter(directory => !basePackageEntries.some(entry => entry.directory === directory));
@@ -669,7 +686,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     files = [];
   }
   const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName,
-    forceFull: args["force-full"] === "true", basePackageEntries, versionChange, generatedProviderCatalog, addedLockImporters });
+    forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, generatedProviderCatalog, addedLockImporters });
   if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
     scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });
   }

@@ -995,6 +995,81 @@ test("validation migrations can reuse an unchanged isolated TypeScript configura
   assert.equal(scope.daemon, false);
 });
 
+test("isolated test config compiler options stay scoped with and without a test migration", t => {
+  const baselineConfig = {
+    extends: "./tsconfig.json",
+    compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", noEmit: true, target: "ES2022" },
+    include: ["test/**/*.ts"],
+  };
+  for (const { migrating, options } of [
+    { migrating: true, options: { target: "ES2024" } },
+    { migrating: false, options: { allowImportingTsExtensions: true, lib: ["ES2022"] } },
+  ]) {
+    const repo = validationMigration(t, { baselineConfig });
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+    const base = migrating ? repo.base : repo.commit();
+    const change = { ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, ...options } };
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(change));
+    repo.commit();
+    const scope = repo.classify(base);
+    assert.equal(scope.mode, "affected");
+    assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+    assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+    assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+    assert.equal(scope.dependencyPolicy, false);
+    assert.equal(scope.assurance, false);
+    assert.equal(scope.daemon, false);
+  }
+});
+
+test("test config discovery and module boundaries retain broader validation", t => {
+  const baselineConfig = {
+    extends: "./tsconfig.json",
+    compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", noEmit: true, target: "ES2022" },
+    include: ["test/**/*.ts"],
+  };
+  for (const change of [
+    { ...baselineConfig, include: ["src/**/*.ts", "test/**/*.ts"] },
+    { ...baselineConfig, files: ["test/probe.test.ts"] },
+    { ...baselineConfig, exclude: ["test/probe.test.ts"] },
+    { ...baselineConfig, references: [{ path: "../contracts" }] },
+    { ...baselineConfig, extends: "./tsconfig.other.json" },
+    { ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, moduleResolution: "Bundler" } },
+    { ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, noEmit: false } },
+  ]) {
+    const repo = validationMigration(t, { baselineConfig });
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+    const base = repo.commit();
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(change));
+    repo.commit();
+    const scope = repo.classify(base);
+    assert.equal(scope.reason, "workspace source change with transitive consumers", JSON.stringify(change));
+    assert.ok(scope.testPackages.includes("@ling-stack/daemon"), JSON.stringify(change));
+  }
+});
+
+test("an existing test config referenced from another workspace keeps its source scope", t => {
+  const baselineConfig = { compilerOptions: { noEmit: true }, include: ["test/**/*.ts"] };
+  const repo = validationMigration(t, { baselineConfig });
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+  const consumerConfig = "packages/daemon/tsconfig.json";
+  repo.write(consumerConfig, JSON.stringify({ extends: "../core/tsconfig.test" }));
+  const base = repo.commit();
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify({
+    ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, allowImportingTsExtensions: true },
+  }));
+  repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.reason, "workspace source change with transitive consumers");
+  assert.ok(scope.testPackages.includes("@ling-stack/daemon"));
+
+  repo.write(consumerConfig, JSON.stringify({ extends: "@ling-stack/core/tsconfig.test.json" }));
+  const consumerBase = repo.commit();
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+  repo.commit();
+  assert.ok(repo.classify(consumerBase).testPackages.includes("@ling-stack/daemon"));
+});
+
 test("a validation migration mixed with source or production config still selects transitive consumers", t => {
   for (const file of ["packages/core/src/probe.ts", "packages/core/tsconfig.json"]) {
     const repo = validationMigration(t);
