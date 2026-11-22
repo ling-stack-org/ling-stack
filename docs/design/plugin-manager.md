@@ -8,14 +8,9 @@ use verified cache entries. Desktop selects the installed native runtime at
 startup. The independent producers, signing, and migration gates are documented
 in [Independent Plugin Packaging](plugin-independent-packaging.md).
 
-This document records the next plugin-management slice after the implemented internal
-registry work. It deliberately targets Codex-like internal and bundled plugin governance
-first. Third-party plugin APIs, marketplace installation, and untrusted sandboxing remain
-later work.
-
-The Codex source model should be treated as a layer model to borrow gradually, not as a
-drop-in runtime replacement. Ling should keep its existing daemon, runner registry, MCP
-broker, teammate bindings, and approval policy as the execution authority.
+The daemon, runner registry, MCP broker, teammate bindings and approval policy own
+execution. The official catalog distributes reviewed Ling packages. Third-party
+plugin APIs and untrusted sandboxing remain later work.
 
 Related docs:
 
@@ -56,20 +51,18 @@ for engineers, but it hides the trust model from normal operators.
 
 Build a plugin manager in three stages:
 
-1. Internal and bundled plugin manager.
+1. Product-managed plugins and the official catalog.
 2. Isolated local plugin contract.
 3. Third-party plugin API and marketplace.
 
-Only stage 1 is in scope for the next slice.
-
-Stage 1 should support built-in, bundled, and trusted local preset capabilities. It should
-not support arbitrary third-party code loading, marketplace install, npm package install,
-or external plugin SDK APIs.
+Stage 1 supports built-in, bundled, official remote, and trusted local preset
+capabilities. The official marketplace resolves only cataloged packages from the
+Ling producers, using the signed distribution contract.
 
 Codex's plugin system splits this problem into manifest/schema, marketplace/source,
-install cache, runtime capability injection, and policy overlays for MCP servers, apps,
-and hooks. Stage 1-3 only needs the internal parts of those layers. Public source
-resolution, third-party install APIs, and remote marketplaces stay deferred.
+install cache, runtime capability injection, and policy overlays for MCP servers,
+apps, and hooks. Public source resolution, third-party installation APIs and
+third-party marketplaces remain deferred.
 
 ## Goals
 
@@ -93,7 +86,7 @@ distribution-specific contract lives in the Bundled Embedded Cua Driver document
 ## Non-Goals
 
 - No third-party plugin API.
-- No marketplace or plugin store.
+- No public third-party marketplace.
 - No arbitrary npm/GitHub/plugin install.
 - No untrusted plugin sandbox.
 - No plugin direct database access.
