@@ -46,7 +46,7 @@ validation and the boundary of what remains unverified.
 | D1 | [x] | Shared device contracts and adapter manifest | Strict schemas compile and reject invalid inputs | Contracts typecheck and contract tests |
 | D2 | [x] | Device registry and capability broker | A fake device can register, discover, refresh capabilities, lease a target, and execute a read-only capability | Core broker tests with fake adapter |
 | D3 | [~] | Task state, approval, verification, and evidence | A task keeps its approval, dispatch intent, receipt and verification through interruptions, with user-visible reconciliation and recovery | Core SQLite journal and daemon startup recovery tests |
-| D4 | [~] | Home Assistant adapter | Fixture adapter supports discovery, entity availability classification, and a low-risk service action | Daemon adapter fixture tests |
+| D4 | [~] | Home Assistant adapter | The configured Daemon diagnoses entity availability and records it in the owner journal | Daemon fixtures and a local Home Assistant Core 2026.11.2 run |
 | D5 | [~] | PC adapter and target-side executor | Typed PC inventory, network/services observations, and one reversible repair are implemented | Daemon adapter fixture tests |
 | D6 | [~] | Mobile device-task facade | Paired Mobile can inspect, approve, revoke, request readback, and resume the PC owner's journal through Gateway | Remote protocol and authenticated Gateway fixtures |
 | D7 | [~] | Playbooks and operator evidence | Bounded read-only playbook validation and replayable task attempts are implemented | Core playbook fixture tests |
@@ -142,7 +142,8 @@ D0 covers the design and the implementation plan.
 ### Scope
 
 - [x] Add durable device-task transitions from creation through verification.
-- [x] Reuse Ling approval policy. The broker validates exact approval bindings. The task
+- [~] The device broker validates exact approval bindings. The existing Ling approval
+  queue integration remains open. The task
   trace identifies the exact approval and the authenticated paired device that submitted
   it. Approval admission is recorded in the same owner journal transaction as the
   dispatch intent, so a rejected or busy admission does not create an approval fact.
@@ -190,11 +191,10 @@ D0 covers the design and the implementation plan.
   incorrect workspace and attempt bindings, renewal of an expired snapshot, unresolved
   readback followed by verification, and a request repeated after verification. The
   original write count stays at one.
-- Focused broker and Gateway fixtures reject a verification with the wrong target,
-  stale observation window, missing evidence reference or reused action evidence. A
-  paired Mobile UI fixture exposes the target, side-effect class and expected
-  verification before approval. The approval event is public-projected without the
-  paired session's private fields.
+- Focused broker and Gateway fixtures cover a wrong target, stale observation and
+  missing readback evidence. The Mobile confirmation presents the target,
+  side-effect class and supported network verification conditions. The owner trace
+  retains the exact approval and its paired session.
 - A SQLite upgrade fixture preserves the retained live snapshot and identifies missing
   earlier evidence. The Linux SSH reconnect fixture changes the configured address,
   restarts the Daemon, and reads the unchanged original task trace. The same device's
@@ -211,13 +211,13 @@ D0 covers the design and the implementation plan.
 
 - [x] Register a Home Assistant adapter with explicit URL, authentication, and instance
   health configuration.
-- [x] Discover devices, entities, services, and current availability.
-- [x] Normalize state and service metadata into Ling capabilities.
-- [x] Use a read-only Home Assistant flow to verify discovery, version selection, and
-  diagnosis for unavailable entities, stale state, integration failure, and automation
-  failure. The Daemon accepts a trusted HTTPS or loopback HTTP origin plus an env/keychain
-  secret reference and runs the same owner-journal diagnosis route without returning the
-  token or untrusted entity text.
+- [~] Discover the configured instance, its version, and the selected entity's
+  availability. Enumeration of devices, entities and services remains open.
+- [~] Normalize selected entity availability into Ling facts. Service metadata
+  projection remains open.
+- [~] The read-only flow covers available, unavailable, and missing entities. The
+  Daemon accepts an HTTPS or loopback HTTP origin and an env/keychain secret
+  reference. Separate stale-state, integration and automation diagnosis remain open.
 - [x] Add a small set of low-risk, verified actions such as reload integration or
   re-enable a bounded automation where supported.
 - [x] Preserve Home Assistant entity and service identifiers in evidence without exposing
@@ -227,6 +227,11 @@ D0 covers the design and the implementation plan.
 
 - Fixture-based tests against a fake Home Assistant API.
 - At least one real local Home Assistant acceptance run.
+  Home Assistant Core 2026.11.2 ran on macOS arm64 through the real REST API and
+  authenticated Daemon route. The three software fixture entities produced
+  available, unavailable and absent observations. Each task contained eight
+  SQLite journal events and three trace spans. Credentials and vendor attributes
+  were absent from the stored observations, event records and API report.
 - Action approval, verification, and rollback or safe-failure evidence.
 - Support matrix for Home Assistant and adapter versions.
 
@@ -530,7 +535,9 @@ only on a successful install or a model response.
 ### Scope
 
 - [~] Daemon developer sessions pin offline replay to the target, codec and profile.
-  Live capture and standard diagnosis still require a registered native transport.
+  An authenticated local session can also capture through a registered transport
+  bound to the selected target and connection revision. Native drivers and
+  standard-session diagnosis remain open.
 - [x] Keep the hardware transport, protocol codec, and versioned device profile
   independently reusable. The Core live-transport boundary accepts platform-owned
   USB, BLE, serial, RS-485, CAN, OBD or vendor bridges without importing their APIs.
@@ -843,7 +850,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D1 | `66ee1fbdb` | `corepack pnpm --filter @ling-stack/contracts typecheck` and `test` | [contracts/device.ts](../../packages/contracts/src/device.ts) | Core contracts, validators, transport deployment metadata, and fake adapter fixtures are implemented | Adapter package extraction and cross-process conformance remain |
 | D2 | `b21089541` | `corepack pnpm --filter @ling-stack/contracts build:ci`; `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-adapters.test.ts` (35 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [external-process.ts](../../packages/daemon/src/features/device-support/adapters/external-process.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Registry ownership, revocation, lease migration, refresh fencing, current capability snapshots, stable identities, broker dispatch, and crash-isolated external adapter execution are covered by fixtures | External adapter package signing, production resource activation and field acceptance remain |
 | D3 | `b21089541` | Contracts, Core and Daemon builds and typechecks. Focused device suite (47 passed), Remote Protocol (43), Remote Client (19), Mobile (98) | [Broker admission](../../packages/core/src/device-support.ts), [History store](../../packages/core/src/storage/sqlite/device-support-store.ts), [SQLite migration and stale admission](../../packages/core/test/device-support.test.ts), [Linux reconnect](../../packages/daemon/test/linux-ssh-runtime.test.ts), [Paired approval and readback](../../packages/daemon/test/device-remote-facade.test.ts), [Mobile approval view](../../apps/mobile/src/features/device-tasks/PcDeviceTasksScreen.tsx) | Target leases, restart recovery and Gateway readback keep the original attempt and approval. Approval admission is journaled with the paired principal. Verification requires fresh public evidence from the intended target, and the Mobile confirmation includes side-effect and verification details. | Recovery-plan metadata for target timers or alternate routes and supported physical recovery acceptance remain. |
-| D4 | `fd2e14c64` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/device-support-runtime.test.ts` (15 passed) | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | Fixture and loopback Daemon flows cover version-bound discovery, entity available/unavailable/absent classification, evidence observations, bounded responses, secret references and a PC-owned diagnosis report without persisting the token or untrusted entity text | Real Home Assistant instance and field action acceptance remain |
+| D4 | `fd2e14c64` | Daemon build and typecheck, adapter and runtime tests (15 passed), local Home Assistant Core 2026.11.2 on macOS arm64 | [Adapter](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts), [Daemon route](../../packages/daemon/src/features/device-support/routes.ts), [D4 acceptance](#d4-home-assistant-adapter) | Real Home Assistant REST reads produce version-bound availability, an owner journal and a task trace. Stored observations contain typed availability. | Device and service enumeration, detailed diagnosis and field action acceptance remain |
 | D5 | `56e112a84` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/local-pc-executor.test.ts packages/daemon/test/device-support-runtime.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts), [local-pc-executor.ts](../../packages/daemon/src/features/device-support/adapters/local-pc-executor.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | Typed PC executor and loopback diagnosis route expose inventory, network/services observations, a reversible repair boundary and a persisted structured report. The route checks local origin and keeps target credentials out of the response | Windows/Linux/macOS clean-machine, target-side executor install/revoke and field acceptance remain |
 | D6 | Paired readback and owner journal | Remote Protocol and Remote Client builds, typechecks and tests (43 and 13 passed). Mobile typecheck, 98 tests and both Expo JS exports passed | [Device facade](../../packages/daemon/src/features/remote-access/device-facade.ts), [Mobile journal](../../apps/mobile/src/features/device-tasks/PcDeviceTaskJournal.tsx), [Client fixtures](../../packages/remote-client/test/client.test.ts) | Paired Mobile can check status, approve, stop, request fresh readback, and page through the PC-owned journal. The client binds journal replies to the authenticated session, workspace, task and cursor | Detailed approval presentation and packaged PC/iPhone/Android acceptance remain |
 | D7 | `56e112a84` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts), [device-diagnosis.ts](../../packages/core/src/device-diagnosis.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | PC and Home Assistant templates project current typed facts, hypotheses, journaled outcomes and remaining uncertainty. The local daemon route returns a report after persisting its read-only task and observations | Model task projection and physical target verification remain |
@@ -852,7 +859,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D10 | `313886185` and durable Daemon coordination | Core and Daemon `build:ci` and `typecheck:ci`. Developer coordinator, runtime and Gateway tests plus Android adapter tests (17 passed) | [Coordinator](../../packages/core/src/device-developer.ts), [SQLite store](../../packages/core/src/storage/sqlite/device-developer-store.ts), [Android ADB adapter](../../packages/daemon/src/features/device-support/adapters/android-adb.ts) | The Daemon coordinator persists sessions and jobs atomically. Android deployment requires an explicit package identity, rejects a mismatched installer result, and verifies that exact package after dispatch. Restart restores an existing job, and replay retains its unresolved outcome | Standard and developer client entry, live job reattachment, native workbench, real PC/Mobile build and packaged target acceptance remain |
 | D11 | `9e257c618` | Core build/typecheck plus `node --test packages/core/test/device-developer.test.ts`; Daemon build/typecheck plus `node --test packages/daemon/test/device-support-runtime.test.ts` (9 passed) | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Phone-owned proposals validate their digest and expiry, owner transitions and artifact chunk metadata are durable through the shared SQLite developer store. Daemon runtime exposes the collaboration coordinator alongside the developer session coordinator | Signed peer transport, live PC assistance, chunk-byte integrity and physical head-unit acceptance remain |
 | D12 | Signed signaling, standalone TLS and routed Gateway session | Contracts, Remote Protocol, Remote Client and Daemon typechecks. Protocol (43), Remote Client (19) and Daemon Gateway/control (10) tests. Chromium with loopback Pion TURN/UDP | [Standalone service](ling-server-connectivity.md#standalone-control-service), [Endpoint negotiation](../../packages/remote-client/src/ling-server-data-channel.ts), [Gateway integration](../../packages/daemon/test/device-remote-facade.test.ts), [Peer session tests](../../packages/remote-client/test/peer-session.test.ts) | The client and Daemon authenticate on the same route-bound DataChannel. The client receives the workspace and PC task journal. Route replacement, expiry and shutdown preserve pair and task identity | Signed enrollment, packaged Desktop/Mobile transport, live conversation and artifact continuity, direct cross-device ICE, coturn allocation and TURN/TLS acceptance, and deployment packaging remain |
-| D13 | `b7cf3b76d` | Contracts/Core/Daemon builds and typechecks. Protocol profile, live transport and Daemon runtime suites pass | [Workbench](../../packages/core/src/device-protocol.ts), [Live transport boundary](../../packages/core/src/device-protocol-transport.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | The local operator imports an identified capture and resolves the recorded Modbus codec and profile. Platform-owned live transports can emit bounded USB/BLE/serial/RS-485/CAN/OBD/vendor frames. Connection loss and capture limits become replayable loss evidence, while frame digests remain validated | Developer clients, native vendor drivers, live USB/BLE/RS-485 bench devices and physical acceptance remain |
+| D13 | `98ea1e92c` | Contracts/Core/Daemon builds and typechecks. Protocol, developer coordinator and Daemon runtime tests (17 passed) | [Workbench routes](../../packages/daemon/src/features/device-support/protocol-routes.ts), [Live transport](../../packages/core/src/device-protocol-transport.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | The authenticated Daemon binds a local capture to the target, connection, codec and profile. An RS-485 fixture retains partial Modbus evidence after disconnect and reopens the same bytes and digest after Daemon restart. A retry returns the original result and does not start a second capture | Developer clients, platform drivers, standard-session diagnosis and physical acceptance remain |
 | D14 | `dac1b4edc` | Core build/typecheck plus `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` (18 passed) | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, Twin revisions, freshness projection, and persistent graph/Twin state are implemented. Graph identity merge and split now retain prior node revisions in SQLite history | Multi-domain identity evidence and field convergence remain |
 | D15 | Graph stop and admission retry | Core build/typecheck plus `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [Graph lease and persistence](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Coordinator tests](../../packages/core/test/device-fabric.test.ts) | Graph stop preserves in-flight attempts and leaves lease release to their owners. Verified terminal evidence can settle an unresolved stopped node. Failed admission before dispatch can be retried. SQLite rejects stale graph and lease writes | Cross-runtime scheduler recovery, owner receipt validation, route changes and physical graph case set remain |
 | D16 | `e1412cc76` + Edge Runtime journal | Core/Daemon builds and typechecks plus the Fabric store and Daemon runtime fixtures | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Edge enrollment, revocation, and per-owner-task journal entries use the durable Fabric store. Reopening the store resumes a contiguous lane and retains unknown outcomes without redispatch | Linux edge process, live bridge transport and physical reconnect acceptance remain |
