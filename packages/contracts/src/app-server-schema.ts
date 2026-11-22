@@ -46,6 +46,21 @@ const stringArraySchema: LingAppServerJsonSchema = { type: "array", items: strin
 
 const threadTarget = { threadId: stringSchema };
 const workItemTarget = { workItemId: stringSchema };
+const journalFields = { id: stringSchema, recordedAt: stringSchema, pending: booleanSchema };
+const journalRequired = ["id", "kind", "recordedAt", "pending"];
+const journalEntry = { oneOf: [
+  objectWith({ ...journalFields, kind: { enum: ["grant_revocation"] } }, journalRequired),
+  objectWith({ ...journalFields, ...workItemTarget, kind: { enum: ["external_agent_dispatch"] }, taskId: stringSchema, completedAt: stringSchema },
+    [...journalRequired, "workItemId", "taskId"]),
+  objectWith({ ...journalFields, ...workItemTarget, kind: { enum: ["github_delivery"] }, mergedCommit: stringSchema },
+    [...journalRequired, "workItemId", "mergedCommit"]),
+  objectWith({ ...journalFields, ...workItemTarget, kind: { enum: ["github_queue_enqueue"] }, repositoryId: stringSchema,
+    pullRequestNumber: integerSchema, headSha: stringSchema, completedAt: stringSchema },
+  [...journalRequired, "workItemId", "repositoryId", "pullRequestNumber", "headSha"]),
+] };
+const serverRecoveryResult = objectWith({ cwd: stringSchema, revision: integerSchema, status: { enum: ["ready", "reconciliation_required"] },
+  preparedAt: stringSchema, reconciledAt: stringSchema, pendingCount: integerSchema, entries: { type: "array", items: journalEntry } },
+["cwd", "revision", "status", "pendingCount", "entries"]);
 const candidate = objectWith({ workspaceId: stringSchema, candidateDigest: stringSchema, worktreeId: stringSchema,
   baseCommit: stringSchema, headCommit: stringSchema, filePaths: stringArraySchema }, ["workspaceId", "candidateDigest"]);
 const planResult = objectWith({ planId: stringSchema, planRevision: stringSchema, candidate, checks: arraySchema },
@@ -106,6 +121,13 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "server/ping":
       return { params: objectSchema, result: objectWith({ ok: { enum: [true] }, connectionId: stringSchema, serverTime: stringSchema },
         ["ok", "connectionId", "serverTime"]) };
+    case "server/recovery/read":
+      return { params: objectWith({ cwd: stringSchema }), result: serverRecoveryResult };
+    case "server/recovery/prepare":
+      return { params: objectWith({ cwd: stringSchema, expectedRevision: integerSchema, idempotencyKey: stringSchema },
+        ["expectedRevision", "idempotencyKey"]), result: serverRecoveryResult };
+    case "server/recovery/reconcile":
+      return { params: objectWith({ cwd: stringSchema, expectedRevision: integerSchema }, ["expectedRevision"]), result: serverRecoveryResult };
     case "server/capabilities":
       return { params: objectSchema, result: objectWith({ protocolVersion: { enum: [LING_APP_SERVER_PROTOCOL_VERSION] },
         capabilities: stringArraySchema, methods: stringArraySchema, notifications: stringArraySchema },
