@@ -11,11 +11,11 @@
 CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
 - 纯文档 PR 的主 CI 只判断范围。分类器核对完整 Git 差异及 PR 提交历史后，跳过公共检查、产品检查与计时采集，GitHub 仍收到必需质量门的 skipped 结果。维护脚本、已登记 Issue 模板和本地产物清理保留公共检查。混合代码改动按实际影响执行，手动、定时和 `full-ci` 仍执行完整验证。
-- 仓库根目录 `output/` 用于本地产物。Git 差异确认的产物删除进入公共检查和汇总门，路径保留在范围报告中。新增、修改和文件类型变化回退全量，混合改动按其余文件选择产品任务。
+- 仓库根目录以及 `assets/`、`images/`、`resources/`、`static/`、`output/`、`.github/assets/` 下的展示图片、音视频、字体和 PDF 进入公共检查。包内资源按归属选择包和使用方。Git 差异确认的 `output/` 产物删除也进入公共检查，路径保留在范围报告中。该目录下其他产物的新增和修改仍需全量验证。
 - 工作区源码或包内 TypeScript／构建配置变更时，[分类器](../../scripts/ci/classify-scope.mjs)选择所属包及直接、间接消费者；仅改测试时选择所属包，并补充已识别的跨包测试辅助文件使用方。Web 的目录导入器额外选择 localization 验证，实际依赖图也包含 CLI 对 Web 的依赖；为构建补齐依赖不等于选择这些依赖的测试分片。
 - 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
 - 已有包的源码和生产配置按新旧依赖边的并集选择本包和消费者。只迁移测试入口且生产清单字段、构建脚本和生命周期 hook 均不变时，CI 跑本包的完整测试、类型检查及共享测试夹具的实际使用方。分类器会核对 Node 测试发现、no-emit TypeScript 配置和已知包装命令，保留基线的测试文件和源代码类型检查。任意命令、名称过滤、未核验的脚本变化和未知路径回退全量。根清单的纯版本变更按版本消费者运行，共享构建配置、依赖解析、补丁和 CI 策略保留完整回归。
-  本地 `test` 和 `typecheck` 可以先构建声明的工作区依赖。CI 只构建一次依赖闭包，再直接执行选择到的 `typecheck:ci` 和 `test:ci`。
+  本地 `test` 和 `typecheck` 可以先构建声明的工作区依赖和[登记的测试构建依赖](../../scripts/ci/package-validation-scope.mjs)。CI 只构建一次依赖闭包，再直接执行选择到的 `typecheck:ci` 和 `test:ci`。
 
 - 两份固定发布审查清单 `native/office-local/reviewed-packaged-source-v1.json`、`native/sandbox/reviewed-codesign-source-v1.json` 选择 Daemon 构建依赖图及现有 macOS 任务中的 codesign publication、Office publication、Office daemon source-input 三个完整契约文件，不选择无关包或 Daemon 的类型检查和测试分片。`macos-native` 仍要求该任务成功；`macos-helper`、`native-release` 分别选择真实 helper smoke 和发布契约步骤。清单单独变化不编译 helper，混合原生源码改动保留两者；未识别的 Office 路径仍全量，Sandbox 目录其他文件保留 Daemon 验证与真实 helper smoke。全量回归保留原有真实 helper smoke，PR 同时修改审查清单时还执行发布契约。契约核对清单与固定源码 hash，并用明确的模拟编译／签名 fixture 检查发布边界，不生成审批记录，也不代表真实签名或打包验收。复用任务不增加完整矩阵的 runner 数。
 - [工作流](../../.github/workflows/ci.yml)由 Pull Request、手动运行和每日定时触发，没有 `main` push 触发。定时为每天 UTC 03:17，即北京时间 11:17；手动和定时运行始终走现有完整 Linux/macOS 矩阵，即使当天没有提交也执行。GitHub 定时任务可能排队或延迟，不保证准点启动。没有启用成功证据去重或每日 Linux 单独分档。

@@ -6,7 +6,7 @@ import { test } from "node:test";
 const root = resolve(import.meta.dirname, "..");
 
 test("Chrome Web Store image candidates use the required dimensions", async () => {
-  const assets = [
+  const assets: Array<[string, number, number]> = [
     ["store-assets/promo-440x280.png", 440, 280],
     ["store-assets/screenshots/plugin-manager-light-1280x800.png", 1280, 800],
     ["store-assets/screenshots/plugin-manager-dark-1280x800.png", 1280, 800],

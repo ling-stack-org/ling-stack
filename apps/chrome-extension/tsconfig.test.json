@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "declaration": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "rootDir": ".",
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node"]
+  },
+  "include": ["test/**/*.ts"]
+}

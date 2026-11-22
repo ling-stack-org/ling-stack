@@ -15,6 +15,7 @@ Mixed changes union their affected packages and required lanes.
 | Changed inputs | Selected product checks |
 | --- | --- |
 | Verified documentation-only PR, including nested READMEs and localized root READMEs | Scope only. The merge gate, common checks, telemetry and product jobs are skipped |
+| Repository presentation assets in the root or under `assets/`, `images/`, `resources/`, `static/`, `output/` or `.github/assets/` | Common fast checks. Resources inside a workspace follow their owning package |
 | Allowlisted Markdown-link and public-repository checks | Common fast checks only |
 | Verified deletions under the root `output/` | Common fast checks only for an archive cleanup |
 | Package tests and test support | Owning package; shared test-support importers are included |
@@ -67,7 +68,11 @@ Mixed source changes still expand to transitive consumers.
 Package-local tsconfig/build configuration selects the
 owner and consumers; equivalent root configuration remains full scope. Changed
 manifests propagate consumers over the union of old and current dependency edges.
-Web's catalog importer is an explicit consumer because it reads Web source,
+Build dependencies used only by validation can be registered in
+[package-validation-scope.mjs](package-validation-scope.mjs). Browser Host tests
+use Daemon's compiled broker, so CI prepares its build without selecting its
+test suite unless Daemon has an affected input. Web's catalog importer is an
+explicit consumer because it reads Web source,
 AST helpers and tsconfig without declaring a workspace dependency. The real
 manifest graph also includes CLI's dependency on Web. Selecting those consumers
 does not select core/daemon test shards just because a build needs their outputs.
