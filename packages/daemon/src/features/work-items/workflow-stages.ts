@@ -43,8 +43,7 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       stepId: step.id, stageId: step.metadata?.planStageId,
       title: step.title.slice(0, 250), status: step.status, participantLabel: step.toParticipantLabel.slice(0, 160),
       dependencyIds: step.metadata?.dependsOnStepIds?.slice(0, 20) ?? [], updatedAt: step.updatedAt,
-      ...(!admissionBlocker && (step.metadata?.requiredPlanDecision || step.metadata?.planBallotKey
-        || step.metadata?.requiredPlanHandoffStepIds?.length) && step.status === "queued"
+      ...(!admissionBlocker && step.status === "queued"
         ? { admissionBlocker: store.getWorkItemWorkflowAdmissionBlocker(workflow.id, step) } : {}),
       ...(includeEvidence ? {
         runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),

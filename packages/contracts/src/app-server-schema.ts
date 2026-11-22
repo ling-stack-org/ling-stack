@@ -246,12 +246,26 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         sourceType: stringSchema, linkExistingExecution: booleanSchema, idempotencyKey: stringSchema }, ["sourceId", "title"]), result };
     case "workItem/workflow/bind":
       return { params: objectWith({ ...workItemTarget, planId: stringSchema, expectedWorkItemRevision: integerSchema,
-        expectedPlanRevision: integerSchema, idempotencyKey: stringSchema, previousWorkflowId: stringSchema },
+        expectedPlanRevision: integerSchema, idempotencyKey: stringSchema, previousWorkflowId: stringSchema, resolvedPlanChangeIds: stringArraySchema },
       ["workItemId", "planId", "expectedWorkItemRevision", "expectedPlanRevision", "idempotencyKey"]),
       result: objectWith({ cwd: stringSchema, workItem: objectSchema, replayed: booleanSchema,
         binding: objectWith({ ...workItemTarget, ...threadTarget, workflowId: stringSchema, planId: stringSchema,
           planRevision: integerSchema, linkedAt: stringSchema, previousWorkflowId: stringSchema },
         ["workItemId", "threadId", "workflowId", "planId", "planRevision", "linkedAt"]) }, ["cwd", "workItem", "binding", "replayed"]) };
+    case "workItem/plan/change/request":
+    case "workItem/plan/change/withdraw": {
+      const change: Record<string, LingAppServerJsonSchema> = method === "workItem/plan/change/request"
+        ? { affectedStageIds: stringArraySchema, reason: stringSchema } : { changeId: stringSchema };
+      return {
+        params: objectWith({ ...workItemTarget, planRevision: stringSchema,
+          expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema, ...change },
+        ["workItemId", "planRevision", "expectedWorkItemRevision", "idempotencyKey", ...Object.keys(change)]),
+        result: objectWith({ cwd: stringSchema, workItem: objectSchema, replayed: booleanSchema,
+          receipt: objectWith({ changeId: stringSchema, status: { enum: ["pending", "withdrawn"] },
+            planRevision: stringSchema, affectedStepIds: stringArraySchema }, ["changeId", "status", "planRevision", "affectedStepIds"]),
+        }, ["cwd", "workItem", "replayed", "receipt"]),
+      };
+    }
     case "workItem/evidence/append":
       return { params: objectWith({ ...workItemTarget, actorId: stringSchema, kind: stringSchema, subjectRevision: stringSchema,
         content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arraySchema },

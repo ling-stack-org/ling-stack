@@ -48,6 +48,7 @@ import type {
   LingAppServerWorkItemControlResult,
   LingAppServerWorkItemReadResult,
   LingAppServerWorkItemFeedbackResult,
+  LingAppServerWorkItemPlanChangeResult,
   LingAppServerWorkItemResult,
   LingAppServerWorkItemWorkflowBindResult,
   LingAppServerWorkItemSnapshot,
@@ -2696,9 +2697,26 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.equal((await qaDirectStart.json() as { error: string }).error, "work_item_handoff_pending");
   const itemBeforeHandoff = await resumedClient.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
   assert.ok(itemBeforeHandoff.workItem.planRevision && qaStage);
+  const changeBasis = { workItemId, planRevision: itemBeforeHandoff.workItem.planRevision };
+  const contractChange = await resumedClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/request", {
+    ...changeBasis, expectedWorkItemRevision: Number(itemBeforeHandoff.workItem.revision),
+    affectedStageIds: ["P01"], reason: "Inspect the impact of changing the contract", idempotencyKey: "contract-scope",
+  });
+  assert.deepEqual(new Set(contractChange.receipt.affectedStepIds), new Set([p01.id, p02.id, qa.id, engineerVote.id, qaVote.id]));
+  assert.equal((await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id)?.admissionBlocker,
+    "work_item_plan_change_pending");
+  const withdrawn = await resumedClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/withdraw", {
+    ...changeBasis, expectedWorkItemRevision: Number(contractChange.workItem.revision),
+    changeId: contractChange.receipt.changeId, idempotencyKey: "withdraw-contract-scope",
+  });
+  assert.equal(withdrawn.receipt.status, "withdrawn");
+  assert.equal(withdrawn.workItem.control.state, "active");
   const offeredHandoff = { workItemId, planRevision: itemBeforeHandoff.workItem.planRevision,
     sourceStepId: p01.id, targetStepId: qa.id, expectedSourceRevision: qaHandoff.sourceRevision, expectedTargetRevision: qaStage.updatedAt,
-    expectedWorkItemRevision: Number(itemBeforeHandoff.workItem.revision), idempotencyKey: "qa-review-contract" };
+    expectedWorkItemRevision: Number(withdrawn.workItem.revision), idempotencyKey: "qa-review-contract" };
+  await assert.rejects(resumedClient.call("workItem/handoff/return", {
+    ...offeredHandoff, expectedWorkItemRevision: Number(itemBeforeHandoff.workItem.revision), reason: "required_check_incomplete",
+  }), { code: "stale_revision" });
   await assert.rejects(resumedClient.call("workItem/handoff/return", { ...offeredHandoff, expectedSourceRevision: new Date(0).toISOString(),
     reason: "candidate_stale" }), { code: "stale_revision" });
   const returnedHandoff = await resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>(
@@ -2725,8 +2743,14 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   const revisedSource = resumedStore.updateChannelWorkflowStep(p01.id,
     { metadata: { ...oldSource.metadata, outputArtifactId: revisedArtifact.id } }, repairedAt);
   assert.ok(revisedSource);
+  const implementationChange = {
+    ...changeBasis, expectedWorkItemRevision: returnedHandoff.workItemRevision,
+    affectedStageIds: ["P02"], reason: "Reconsider the implementation approach", idempotencyKey: "implementation-scope",
+  };
+  const implementationHold = await resumedClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/request", implementationChange);
+  assert.deepEqual(implementationHold.receipt.affectedStepIds, [p02.id]);
   const handoff = { ...offeredHandoff, expectedSourceRevision: revisedSource.updatedAt,
-    expectedWorkItemRevision: returnedHandoff.workItemRevision, idempotencyKey: "qa-accept-repaired-contract" };
+    expectedWorkItemRevision: Number(implementationHold.workItem.revision), idempotencyKey: "qa-accept-repaired-contract" };
   const handoffPeer = await fixture.connect();
   const [acceptedHandoff, repeatedHandoff] = await Promise.all([resumedClient, handoffPeer].map(connection =>
     connection.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff)));
@@ -2742,12 +2766,12 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   await assert.rejects(resumedClient.call("workItem/deliberation/start", {
     workItemId: item.id, workflowStepId: p02.id, expectedWorkItemRevision,
     idempotencyKey: "duplicate-decision" }), { code: "stale_revision" });
-  const decision = {
+  const heldDecision = {
     workItemId: item.id, roundId: round.id, expectedRoundRevision: round.collaborationRevision,
     expectedWorkItemRevision, idempotencyKey: "workflow-owned-selected", reason: "Keep both compatibility paths",
     decision: { disposition: "selected", option: "Adapter" },
   };
-  await assert.rejects(resumedClient.call("workItem/deliberation/decide", decision), { code: "resume_blocked" });
+  await assert.rejects(resumedClient.call("workItem/deliberation/decide", heldDecision), { code: "resume_blocked" });
   completeQaVote();
   await waitFor(() => [engineerVote, qaVote, qa].every(step => resumedStore.getChannelWorkflowStep(step.id)?.status === "succeeded") ? true : undefined);
   await fixture.restart();
@@ -2758,7 +2782,18 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.deepEqual(readyBallot.summary.tally, [{ option: "Adapter", count: 1 }, { option: "Migration", count: 1 }]);
   const readyStage = (await readBrief(decisionClient)).workflow?.steps.find(step => step.stepId === p02.id);
   assert.equal(readyStage?.decision?.status, "ready");
+  assert.equal(readyStage.admissionBlocker, "work_item_plan_change_pending");
   assert.deepEqual(readyStage.decision.ballot, readyBallot.summary);
+  assert.equal(fixture.getStore().listRuns({ workflowStepId: p02.id }).length, 0);
+  const restoredChange = await decisionClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/request", implementationChange);
+  assert.equal(restoredChange.replayed, true);
+  assert.deepEqual(restoredChange.receipt, implementationHold.receipt);
+  await assert.rejects(decisionClient.call("workItem/deliberation/decide", heldDecision), { code: "resume_blocked" });
+  const releaseImplementation = await decisionClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/withdraw", {
+    ...changeBasis, expectedWorkItemRevision: Number(restoredChange.workItem.revision),
+    changeId: restoredChange.receipt.changeId, idempotencyKey: "withdraw-implementation-scope",
+  });
+  const decision = { ...heldDecision, expectedWorkItemRevision: Number(releaseImplementation.workItem.revision) };
   const restoredHandoff = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff);
   assert.equal(restoredHandoff.status, "replayed");
   assert.equal(restoredHandoff.record.id, acceptedHandoff.record.id);
@@ -2882,7 +2917,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
     workItemId: item.id, planId: original.plan.id, expectedPlanRevision: original.plan.revision,
     expectedWorkItemRevision: Number(accept.workItem.revision), idempotencyKey: "bind-compatibility",
   };
-  const bound = await client.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", bind);
+  await client.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", bind);
   const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
   const runWorkflow = (workflowId: string) => post(`/workflows/${workflowId}/orchestrate`, {});
   const started = await runWorkflow(original.workflowId);
@@ -2897,6 +2932,11 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.equal(draft.bodyMarkdown, "Adopt the revised compatibility contract.");
   assert.ok(typeof draft.revision === "number");
   assert.equal(store.getWorkItemWorkflowAdmissionBlocker(original.workflowId), undefined);
+  assert.ok(before.workItem.planRevision);
+  const scopeChange = await client.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/request", {
+    workItemId: item.id, planRevision: before.workItem.planRevision, expectedWorkItemRevision: Number(before.workItem.revision),
+    affectedStageIds: ["P02"], reason: "Replace the accepted implementation stage", idempotencyKey: "scope-successor",
+  });
   const taskBypass = await post(planPath(draft.id, "accept"), { expectedRevision: draft.revision });
   assert.equal(taskBypass.status, 409);
   assert.equal((await taskBypass.json()).error, "work_item_workflow_replan_required");
@@ -2913,16 +2953,17 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.equal((await unbound.json()).error, "work_item_workflow_unbound");
   const superseding = await startStep(p02.id);
   assert.equal(superseding.status, 409);
-  assert.equal((await superseding.json()).error, "work_item_workflow_replan_pending");
+  assert.equal((await superseding.json()).error, "work_item_plan_change_pending");
   const control = (action: "pause" | "resume", expectedWorkItemRevision: number, expectedControlGeneration: number, connection = client) =>
     connection.call<LingAppServerWorkItemControlResult>(`workItem/${action}`, {
       workItemId: item.id, actorId: "local-user", expectedWorkItemRevision, expectedControlGeneration,
       idempotencyKey: `compatibility-${action}`, reason: "Accept the revised compatibility contract",
     });
-  const held = await control("pause", Number(bound.workItem.revision), 0);
+  const held = await control("pause", Number(scopeChange.workItem.revision), 0);
   const rebind = {
     ...bind, planId: successor.plan.id, expectedPlanRevision: successor.plan.revision,
     previousWorkflowId: original.workflowId, expectedWorkItemRevision: Number(held.workItem.revision), idempotencyKey: "bind-successor",
+    resolvedPlanChangeIds: [scopeChange.receipt.changeId],
   };
   await assert.rejects(client.call("workItem/workflow/bind", rebind), { code: "resume_blocked" });
   finishPredecessor();
@@ -2931,6 +2972,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.doesNotMatch(JSON.stringify(provider.requests[1]), /Superseded contract contents/u);
   await fixture.restart();
   const restored = await fixture.connect();
+  await assert.rejects(restored.call("workItem/workflow/bind", { ...rebind, resolvedPlanChangeIds: [] }), { code: "resume_blocked" });
   const [boundSuccessor, replay] = await Promise.all([restored, await fixture.connect()].map(connection =>
     connection.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", rebind)));
   assert.ok(boundSuccessor && replay);
@@ -2939,6 +2981,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.equal(boundSuccessor.binding.previousWorkflowId, original.workflowId);
   assert.equal(boundSuccessor.binding.workflowId, successor.workflowId);
   assert.equal(boundSuccessor.workItem.control.state, "paused");
+  assert.ok(!boundSuccessor.workItem.holds.some(hold => hold.id === scopeChange.receipt.changeId));
   await restored.call("workItem/subscribe", { workItemId: item.id, cursor: before.cursor });
   await waitFor(() => restored.notices.find(notice => notice.params?.event?.action === "work_item.workflow.linked"
     && notice.params.event.data?.previousWorkflowId === original.workflowId));

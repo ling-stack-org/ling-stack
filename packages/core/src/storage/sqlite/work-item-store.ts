@@ -25,6 +25,8 @@ import {
   type WorkItemFailRequest,
   type WorkItemHeartbeatRequest,
   type WorkItemHold,
+  type WorkItemPlanChangeInput,
+  type WorkItemPlanChangeResult,
   type WorkItemReleaseRequest,
   type WorkItemRouteRequest,
   type WorkItemControlState,
@@ -562,11 +564,71 @@ export class SqliteWorkItemStore {
     return state.get("work_item_thread", threadId)?.payload as WorkItemConversationBinding | undefined;
   }
 
+  applyPlanChange(input: WorkItemPlanChangeInput, now: string, state: SqliteAppServerStateStore,
+    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string }): WorkItemPlanChangeResult {
+    const { action, workItemId, expectedWorkItemRevision, planRevision, idempotencyKey } = input;
+    const operationId = createHash("sha256").update(JSON.stringify([workItemId, idempotencyKey])).digest("hex");
+    const changeRequest = action === "request" ? [input.affectedStageIds, input.reason] : [input.changeId];
+    const fingerprint = createHash("sha256").update(JSON.stringify([action, planRevision, expectedWorkItemRevision, changeRequest])).digest("hex");
+    const { database } = this.context;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const item = this.getWorkItem(workItemId);
+      if (!item) throw new Error("work_item_plan_change_unavailable");
+      const prior = state.get("work_item_plan_change", operationId)?.payload as {
+        readonly fingerprint: string; readonly receipt: WorkItemPlanChangeResult["receipt"];
+      } | undefined;
+      if (prior) {
+        if (prior.fingerprint !== fingerprint) throw new Error("work_item_plan_change_conflict");
+        database.exec("COMMIT");
+        return { workItem: item, receipt: prior.receipt, replayed: true };
+      }
+      if (!item.workflowId || item.planRevision !== planRevision || item.revision !== expectedWorkItemRevision) {
+        throw new Error("work_item_plan_change_stale");
+      }
+      const holds = [...item.holds];
+      let affectedStepIds: readonly string[];
+      let changeId: string;
+      if (action === "request") {
+        if (this.getWorkflowAdmissionBlocker(item.workflowId, state)) throw new Error("work_item_plan_change_unavailable");
+        const steps = this.ports.listChannelWorkflowSteps({ workflowId: item.workflowId, complete: true });
+        affectedStepIds = affectedWorkflowStages(steps, input.affectedStageIds);
+        changeId = `work_item_change_${operationId}`;
+        holds.push({ id: changeId, ownerRef: changeId, kind: "plan", reason: input.reason,
+          blocksNewAdmission: true, workflowStepIds: affectedStepIds });
+      } else {
+        changeId = input.changeId;
+        const index = holds.findIndex(hold => hold.id === changeId && hold.kind === "plan" && hold.workflowStepIds?.length);
+        if (index < 0) throw new Error("work_item_plan_change_stale");
+        affectedStepIds = holds[index]!.workflowStepIds!;
+        holds.splice(index, 1);
+      }
+      const receipt = { changeId, status: action === "request" ? "pending" as const : "withdrawn" as const, planRevision, affectedStepIds };
+      database.prepare("UPDATE work_items SET holds_json=?, revision=revision+1, updated_at=? WHERE id=?")
+        .run(stringifyJson(holds), now, workItemId);
+      if (!state.putWithinTransaction({ kind: "work_item_plan_change", recordId: operationId, expectedRevision: 0, payload: { receipt, fingerprint } }, now)) {
+        throw new Error("work_item_plan_change_conflict");
+      }
+      const event = events.store.appendControlPlaneEventWithinTransaction({
+        workspaceId: item.workspaceId, cwd: events.cwd, domain: "work_items", entityType: "work_item", entityId: workItemId,
+        action: `work_item.plan_change.${receipt.status}`,
+        data: { workItemId, changeId, planRevision, workItemRevision: item.revision + 1 },
+      }, now);
+      const workItem = this.getWorkItem(workItemId)!;
+      database.exec("COMMIT");
+      return { workItem, receipt, replayed: false, event };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(database);
+      throw error;
+    }
+  }
+
   bindWorkflow(input: LingAppServerWorkItemWorkflowBindParams, now: string, state: SqliteAppServerStateStore,
     events: { readonly store: SqliteControlPlaneStore; readonly cwd: string }, previousWorkflowSettled?: (workflowId: string) => boolean) {
-    const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey, previousWorkflowId } = input;
+    const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey, previousWorkflowId, resolvedPlanChangeIds } = input;
     const fingerprint = createHash("sha256").update(JSON.stringify([workItemId, planId, expectedPlanRevision, expectedWorkItemRevision,
-      ...(previousWorkflowId === undefined ? [] : [previousWorkflowId])])).digest("hex");
+      ...(previousWorkflowId === undefined ? [] : [previousWorkflowId]),
+      ...(resolvedPlanChangeIds?.length ? [[...resolvedPlanChangeIds].sort()] : [])])).digest("hex");
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
     try {
@@ -595,7 +657,13 @@ export class SqliteWorkItemStore {
           throw new Error("work_item_workflow_stale");
         }
       }
-      if (item.control.state !== (previousWorkflowId ? "paused" : "active") || item.holds.some(hold => hold.blocksNewAdmission)
+      const resolvedChanges = new Set(resolvedPlanChangeIds);
+      if (resolvedChanges.size && (!previousWorkflowId || [...resolvedChanges].some(id =>
+        !item.holds.some(hold => hold.id === id && hold.kind === "plan" && hold.workflowStepIds?.length)))) {
+        throw new Error("work_item_workflow_stale");
+      }
+      const retainedHolds = item.holds.filter(hold => !resolvedChanges.has(hold.id));
+      if (item.control.state !== (previousWorkflowId ? "paused" : "active") || retainedHolds.some(hold => hold.blocksNewAdmission)
         || item.control.unresolvedEffectIds.length || item.taskId || item.claim && item.claim.expiresAt > now
         || acceptance.dispatch && !this.conversationDispatchSettled(acceptance, item)
         || !["ready", "running", "waiting", "review"].includes(item.status)
@@ -607,13 +675,14 @@ export class SqliteWorkItemStore {
         planId, planRevision: plan.revision, linkedAt: now, ...(previousWorkflowId ? { previousWorkflowId } : {}) };
       state.putWithinTransaction({ kind: "work_item_workflow", recordId: workflow.id, idempotencyKey, expectedRevision: 0,
         payload: { binding, fingerprint } satisfies WorkItemWorkflowLink }, now);
-      database.prepare(`UPDATE work_items SET workflow_id=?, plan_revision=?, channel_id=?, revision=revision+1, updated_at=?,
+      database.prepare(`UPDATE work_items SET workflow_id=?, plan_revision=?, channel_id=?, holds_json=?, revision=revision+1, updated_at=?,
         claim_owner_id=NULL, claim_token=NULL, claimed_at=NULL, heartbeat_at=NULL, claim_expires_at=NULL
-        WHERE workspace_id=? AND id=?`).run(workflow.id, `${planId}:${plan.revision}`, workflow.channelId, now, item.workspaceId, item.id);
+        WHERE workspace_id=? AND id=?`).run(workflow.id, `${planId}:${plan.revision}`, workflow.channelId, stringifyJson(retainedHolds), now, item.workspaceId, item.id);
       const event = events.store.appendControlPlaneEventWithinTransaction({
         workspaceId: item.workspaceId, cwd: events.cwd, domain: "work_items", entityType: "work_item", entityId: item.id,
         action: "work_item.workflow.linked", data: { workItemId, workflowId: workflow.id, threadId: plan.threadId,
-          revision: item.revision + 1, ...(previousWorkflowId ? { previousWorkflowId } : {}) },
+          revision: item.revision + 1, ...(previousWorkflowId ? { previousWorkflowId } : {}),
+          ...(resolvedChanges.size ? { resolvedPlanChangeIds: [...resolvedChanges] } : {}) },
       }, now);
       const workItem = this.getWorkItem(workItemId)!;
       database.exec("COMMIT");
@@ -647,12 +716,17 @@ export class SqliteWorkItemStore {
     const plan = this.ports.getProposedPlanArtifact(binding.planId);
     if (!item || item.workflowId !== workflowId || item.planRevision !== `${binding.planId}:${binding.planRevision}`
       || !plan?.acceptedAt || plan.status !== "accepted" || plan.acceptedWorkflowId !== workflowId) return "work_item_workflow_stale";
-    if (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission)
+    if (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission && !hold.workflowStepIds)
       || item.control.unresolvedEffectIds.length || ["done", "cancelled", "archived", "superseded"].includes(item.status)) {
       return "work_item_workflow_held";
     }
+    const scopedHolds = item.holds.filter(hold => hold.blocksNewAdmission && hold.workflowStepIds);
+    if (step && scopedHolds.some(hold => hold.workflowStepIds!.includes(step.id))) return "work_item_plan_change_pending";
     const successor = plan.supersededByPlanId ? this.ports.getProposedPlanArtifact(plan.supersededByPlanId) : undefined;
-    if (successor?.status === "accepted" && successor.acceptedWorkflowId) return "work_item_workflow_replan_pending";
+    if (successor?.status === "accepted" && successor.acceptedWorkflowId
+      && !(scopedHolds.length && step?.runId && ["running", "waiting_for_input", "waiting_for_approval"].includes(step.status))) {
+      return "work_item_workflow_replan_pending";
+    }
     if (this.incompleteWorkItemDependencyIds(item).length) return "work_item_workflow_dependency_blocked";
     if (step?.metadata?.planBallotKey) {
       const { planBallotKey, planStageId } = step.metadata;
@@ -705,7 +779,8 @@ export class SqliteWorkItemStore {
         )
         AND item.status NOT IN ('done','cancelled','archived','superseded')
         AND json_array_length(item.control_unresolved_effect_ids_json)=0
-        AND NOT EXISTS (SELECT 1 FROM json_each(item.holds_json) WHERE json_extract(value,'$.blocksNewAdmission')=1)
+        AND NOT EXISTS (SELECT 1 FROM json_each(item.holds_json)
+          WHERE json_extract(value,'$.blocksNewAdmission')=1 AND json_type(value,'$.workflowStepIds') IS NULL)
         AND NOT EXISTS (
           SELECT 1 FROM work_item_dependencies edge
           LEFT JOIN work_items dependency ON dependency.id=edge.depends_on_work_item_id
@@ -1066,6 +1141,19 @@ function sameConversationDispatch(left: WorkItemAcceptanceReceipt["dispatch"], r
 
 function sourceOwnerHoldId(workItemId: string): string {
   return `work_item_source_owner:${workItemId}`;
+}
+
+function affectedWorkflowStages(steps: readonly ChannelWorkflowStep[], requested: readonly string[]): readonly string[] {
+  const stageIds = new Set(requested);
+  const roots = steps.filter(step => step.metadata?.planStageId && stageIds.has(step.metadata.planStageId));
+  if (!roots.length || roots.length !== stageIds.size || stageIds.size !== requested.length) throw new Error("work_item_plan_change_stage_invalid");
+  const affected = new Set(roots.map(step => step.id));
+  for (const id of affected) {
+    for (const step of steps) {
+      if (step.metadata?.dependsOnStepIds?.includes(id)) affected.add(step.id);
+    }
+  }
+  return [...affected];
 }
 
 function nextWorkItemControlState(state: WorkItemControlState, action: WorkItemControlAction, unresolvedEffectCount: number): WorkItemControlState | undefined {

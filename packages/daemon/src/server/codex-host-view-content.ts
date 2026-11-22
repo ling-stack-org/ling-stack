@@ -187,7 +187,7 @@ function showEvent(event) {
     }
     if (event.method === "connection/status") codexStatus = event.state;
   }
-  if (event.source === "ling" && /^(turn|approval|input|connection)\//.test(event.method)) {
+  if (event.source === "ling" && /^(turn|approval|input|connection|serverRequest)\//.test(event.method)) {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => void readLing().catch(() => {}), 150);
   }

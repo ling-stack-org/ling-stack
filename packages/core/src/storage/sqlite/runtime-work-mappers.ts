@@ -121,6 +121,8 @@ function mapWorkItemHolds(value: string): readonly WorkItemHold[] {
       ownerRef: record.ownerRef,
       reason: record.reason,
       blocksNewAdmission: record.blocksNewAdmission,
+      ...(record.kind === "plan" && Array.isArray(record.workflowStepIds) && record.workflowStepIds.length > 0
+        && record.workflowStepIds.every(id => typeof id === "string") ? { workflowStepIds: record.workflowStepIds as string[] } : {}),
     };
   });
 }

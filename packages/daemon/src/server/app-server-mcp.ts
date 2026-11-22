@@ -124,9 +124,22 @@ export async function runLingAppServerMcp(
       description: "Bind an accepted Plan to its converted Workflow. To replace a paused, settled Workflow, supply its ID and the accepted successor Plan. Retry with the same key.",
       inputSchema: z.strictObject({ workItemId: objectId, planId: objectId,
         expectedPlanRevision: z.number().int().nonnegative(), expectedWorkItemRevision: z.number().int().nonnegative(), idempotencyKey: requestKey,
-        previousWorkflowId: objectId.optional() }),
+        previousWorkflowId: objectId.optional(), resolvedPlanChangeIds: z.array(objectId).max(50).optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.bindWorkItemWorkflow(params)));
+    const planChange = {
+      workItemId: objectId, planRevision: objectId, expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey,
+    };
+    if (methods.has("workItem/plan/change/request")) server.registerTool("ling_work_item_plan_change_request", {
+      description: "Record an authorized change to the accepted Plan. Hold the named stages and their downstream dependencies.",
+      inputSchema: z.strictObject({ ...planChange, affectedStageIds: z.array(objectId).min(1).max(50), reason: z.string().min(1).max(2000) }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.requestWorkItemPlanChange(params)));
+    if (methods.has("workItem/plan/change/withdraw")) server.registerTool("ling_work_item_plan_change_withdraw", {
+      description: "Withdraw one pending Plan change and release its stage hold.",
+      inputSchema: z.strictObject({ ...planChange, changeId: objectId }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.withdrawWorkItemPlanChange(params)));
     const stageHandoff = {
       workItemId: objectId, planRevision: objectId, sourceStepId: objectId, targetStepId: objectId,
       expectedSourceRevision: objectId, expectedTargetRevision: objectId,

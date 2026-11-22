@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   LingAppServerGitHubDelivery, LingAppServerGitHubIntakeBudget, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemAcceptance,
   LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
+  LingAppServerWorkItemPlanChangeReceipt, LingAppServerWorkItemPlanChangeRequestParams, LingAppServerWorkItemPlanChangeWithdrawParams,
   WorkItemLinkedExecution, WorkItemSourceType,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
@@ -46,6 +47,18 @@ export interface WorkItemHold {
   readonly ownerRef: string;
   readonly reason: string;
   readonly blocksNewAdmission: boolean;
+  readonly workflowStepIds?: readonly string[];
+}
+
+export type WorkItemPlanChangeInput =
+  | ({ readonly action: "request" } & LingAppServerWorkItemPlanChangeRequestParams)
+  | ({ readonly action: "withdraw" } & LingAppServerWorkItemPlanChangeWithdrawParams);
+
+export interface WorkItemPlanChangeResult {
+  readonly workItem: WorkItem;
+  readonly receipt: LingAppServerWorkItemPlanChangeReceipt;
+  readonly replayed: boolean;
+  readonly event?: ControlPlaneEvent;
 }
 
 export interface WorkItemControlProjection {

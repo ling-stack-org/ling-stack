@@ -2710,6 +2710,8 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep): string | undefined;
   getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep): { readonly id: string; readonly option: string } | undefined;
   listActiveWorkItemWorkflowIds(limit: number): readonly string[];
+  applyWorkItemPlanChange(input: import("./work-item-types.js").WorkItemPlanChangeInput, now: string,
+    cwd?: string): import("./work-item-types.js").WorkItemPlanChangeResult;
   checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown, automaticIntakeReceiptId?: string): WorkItem | undefined;
   claimWorkItem(id: string, input: WorkItemClaimRequest, now: string): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined;
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined;

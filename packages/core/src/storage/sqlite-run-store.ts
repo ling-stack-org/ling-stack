@@ -6174,6 +6174,10 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.listActiveWorkflowIds(limit);
   }
 
+  applyWorkItemPlanChange(input: import("../work-item-types.js").WorkItemPlanChangeInput, now: string, cwd = this.paths.cwd) {
+    return this.workItems.applyPlanChange(input, now, this.appServerState, { store: this.controlPlane, cwd });
+  }
+
   checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown, automaticIntakeReceiptId?: string): WorkItem | undefined {
     return this.workItems.checkConversationAdmission(threadId, submissionKey, this.appServerState, automaticIntakeReceiptId);
   }

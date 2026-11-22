@@ -18,6 +18,7 @@ import {
   type RunStore,
   type WorkItem,
   type WorkItemControlReceipt,
+  type WorkItemPlanChangeInput,
   type WorkItemSourceType,
   type WorkItemStatus,
 } from "@ling-stack/core";
@@ -46,6 +47,7 @@ import {
   type LingAppServerWorkItemControlResult,
   type LingAppServerWorkItemAcceptResult,
   type LingAppServerWorkItemConversationDispatch,
+  type LingAppServerWorkItemPlanChangeResult,
   type LingAppServerWorkItemReadResult,
   type LingAppServerWorkItemResult,
 } from "@ling-stack/contracts";
@@ -196,6 +198,7 @@ const operatorMethods = new Set([
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
   "workItem/workflow/bind",
+  "workItem/plan/change/request", "workItem/plan/change/withdraw",
   "workItem/feedback/add",
   "workItem/deliberation/decide", "workItem/deliberation/cancel",
   "artifact/read", "model/list", "skill/read",
@@ -209,6 +212,7 @@ const recoveryGuardedMethods = new Set([
   "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
   "plan/accept", "plan/refine", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
   "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
+  "workItem/plan/change/withdraw",
   "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
   "workItem/feedback/add",
 ]);
@@ -880,6 +884,9 @@ class RpcConnection {
         return this.acceptWorkItem(params);
       case "workItem/workflow/bind":
         return this.bindWorkItemWorkflow(params);
+      case "workItem/plan/change/request":
+      case "workItem/plan/change/withdraw":
+        return this.changeWorkItemPlanScope(method === "workItem/plan/change/request" ? "request" : "withdraw", params);
       case "workItem/clarify":
         return this.clarifyWorkItem(params);
       case "workItem/evidence/read":
@@ -1166,6 +1173,7 @@ class RpcConnection {
       expectedPlanRevision: readIntegerField(record, "expectedPlanRevision", "expectedPlanRevision"),
       idempotencyKey: readStringField(record, "idempotencyKey"),
       previousWorkflowId: readOptionalStringField(record, "previousWorkflowId"),
+      resolvedPlanChangeIds: record.resolvedPlanChangeIds === undefined ? undefined : readPlanScopeIds(record.resolvedPlanChangeIds, 0),
     };
     if (input.idempotencyKey.length > 200 || /[\r\n\0]/u.test(input.idempotencyKey)) {
       throw rpcError(-32602, "invalid_params", "Supply a Work Item binding key of up to 200 characters.");
@@ -1185,6 +1193,43 @@ class RpcConnection {
         throw rpcError(-32061, "resume_blocked", "The predecessor Workflow has unsettled Runs or effects.");
       }
       if (code === "work_item_workflow_not_found") throw rpcError(-32040, "workspace_binding_invalid", "An accepted Work Item and converted Plan in this workspace are required.");
+      throw error;
+    }
+  }
+
+  private changeWorkItemPlanScope(action: "request" | "withdraw", params: unknown): LingAppServerWorkItemPlanChangeResult {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const basis = {
+      workItemId: readStringField(record, "workItemId"),
+      planRevision: readStringField(record, "planRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    if (!basis.idempotencyKey.trim() || basis.idempotencyKey.length > 200 || /[\r\n\0]/u.test(basis.idempotencyKey)
+      || basis.expectedWorkItemRevision < 1) {
+      throw rpcError(-32602, "invalid_params", "Supply the current Work Item revision and a bounded request key.");
+    }
+    const intent: WorkItemPlanChangeInput = action === "request" ? {
+      ...basis, action, affectedStageIds: readPlanScopeIds(record.affectedStageIds),
+      reason: readStringField(record, "reason").trim(),
+    } : { ...basis, action, changeId: readStringField(record, "changeId") };
+    if (intent.action === "request" && (!intent.reason || intent.reason.length > 2000)) {
+      throw rpcError(-32602, "invalid_params", "Describe the requested requirement change in up to 2,000 characters.");
+    }
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { workItem, receipt, replayed, event } = store.applyWorkItemPlanChange(intent, new Date().toISOString(), cwd);
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        if (action === "withdraw") this.context.taskSupervisor.poke(cwd);
+      }
+      return { cwd, workItem: projectWorkItemSnapshot(workItem), receipt, replayed };
+    } catch (error) {
+      const code = error instanceof Error ? error.message : undefined;
+      if (code === "work_item_plan_change_stage_invalid") throw rpcError(-32602, "invalid_params", "Choose affected stages from the current accepted Plan.");
+      if (code === "work_item_plan_change_stale") throw rpcError(-32030, "stale_revision", "The Plan change basis is stale.");
+      if (code === "work_item_plan_change_unavailable") throw rpcError(-32061, "resume_blocked", "The Work Item cannot accept this Plan change.");
+      if (code === "work_item_plan_change_conflict") throw rpcError(-32031, "idempotency_conflict", "The Plan change key was reused with different input.");
       throw error;
     }
   }
@@ -3135,6 +3180,15 @@ function readOptionalWorkItemStatus(value: unknown): WorkItemStatus | undefined 
   return value as WorkItemStatus;
 }
 
+function readPlanScopeIds(value: unknown, minimum = 1): readonly string[] {
+  if (!Array.isArray(value) || value.length < minimum || value.length > 50
+    || value.some(id => typeof id !== "string" || !id.trim() || id.length > 256)
+    || new Set(value).size !== value.length) {
+    throw rpcError(-32602, "invalid_params", "Supply a bounded list of distinct Plan stage or change IDs.");
+  }
+  return value as string[];
+}
+
 function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | undefined {
   if (value === undefined) return undefined;
   const sourceTypes: readonly WorkItemSourceType[] = [
@@ -3492,6 +3546,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   }
   if (event.entityType === "work_item") {
     if (event.action === "work_item.stage.updated") return "workItem/stage/updated";
+    if (event.action.startsWith("work_item.plan_change.")) return "workItem/plan/change/updated";
     if (event.action.startsWith("work_item.deliberation.")) return "workItem/deliberation/updated";
     if (event.action === "work_item.created") return "workItem/created";
     if (event.action === "work_item.thread.linked") return "workItem/thread/linked";

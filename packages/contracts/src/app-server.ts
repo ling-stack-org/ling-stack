@@ -149,6 +149,8 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/list",
   "workItem/accept",
   "workItem/workflow/bind",
+  "workItem/plan/change/request",
+  "workItem/plan/change/withdraw",
   "workItem/clarify",
   "workItem/pause",
   "workItem/resume",
@@ -295,6 +297,7 @@ export const LING_APP_SERVER_NOTIFICATION_METHODS = [
   "workItem/collaboration/updated",
   "workItem/deliberation/updated",
   "workItem/stage/updated",
+  "workItem/plan/change/updated",
   "workItem/brief/updated",
   "workItem/coordination/updated",
   "workItem/message/updated",
@@ -563,6 +566,36 @@ export interface LingWorkItemHold {
   readonly ownerRef: string;
   readonly reason: string;
   readonly blocksNewAdmission: boolean;
+  readonly workflowStepIds?: readonly string[];
+}
+
+interface LingAppServerWorkItemPlanChangeBasis {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly planRevision: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerWorkItemPlanChangeRequestParams extends LingAppServerWorkItemPlanChangeBasis {
+  readonly affectedStageIds: readonly string[];
+  readonly reason: string;
+}
+
+export interface LingAppServerWorkItemPlanChangeWithdrawParams extends LingAppServerWorkItemPlanChangeBasis {
+  readonly changeId: string;
+}
+
+export interface LingAppServerWorkItemPlanChangeReceipt {
+  readonly changeId: string;
+  readonly status: "pending" | "withdrawn";
+  readonly planRevision: string;
+  readonly affectedStepIds: readonly string[];
+}
+
+export interface LingAppServerWorkItemPlanChangeResult extends LingAppServerWorkItemResult {
+  readonly replayed: boolean;
+  readonly receipt: LingAppServerWorkItemPlanChangeReceipt;
 }
 
 export interface LingWorkItemControlProjection {
@@ -664,6 +697,7 @@ export interface LingAppServerWorkItemWorkflowBindParams {
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
   readonly previousWorkflowId?: string;
+  readonly resolvedPlanChangeIds?: readonly string[];
 }
 
 export interface LingAppServerWorkItemWorkflowBinding {

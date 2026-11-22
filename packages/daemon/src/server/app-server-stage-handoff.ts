@@ -33,7 +33,8 @@ export function settleAppServerStageHandoff(
     || source.updatedAt !== expectedSourceRevision || target.updatedAt !== expectedTargetRevision || target.status !== "queued") {
     throw new AppServerCollaborationError("stale_revision", "The accepted Plan, supplying stage or receiving stage changed.");
   }
-  if (store.getWorkItemWorkflowAdmissionBlocker(item.workflowId)) {
+  if (store.getWorkItemWorkflowAdmissionBlocker(item.workflowId) || item.holds.some(hold => hold.blocksNewAdmission
+    && (hold.workflowStepIds?.includes(sourceStepId) || hold.workflowStepIds?.includes(targetStepId)))) {
     throw new HttpError(409, "resume_blocked", "The Work Item is not ready to settle this handoff.");
   }
   if (source.status !== "succeeded") throw new HttpError(409, "resume_blocked", "The supplying stage needs an accepted result.");

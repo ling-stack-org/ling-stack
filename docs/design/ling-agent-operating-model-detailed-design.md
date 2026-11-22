@@ -815,6 +815,8 @@ Mutations carry `expectedWorkItemRevision` and `idempotencyKey`, plus the applic
 | `workItem/deliberation/decide` | Round ID, expected sealed outcome revision and the decision with its reason when required. The decision owner checks the current subject and commits the accepted receipt. |
 | `workItem/stage/read` | Stage ID and optional revision. Returns the accepted stage contract, owner, dependencies, status and applicable admission hold or continuation blocker. |
 | `workItem/stage/brief/read` | Stage ID and optional brief ID. Returns the currently visible projection of that brief, or the latest brief, with source revisions and applicability. |
+| `workItem/plan/change/request` | Current accepted Plan revision, Work Item revision, affected stage IDs and reason. Records the admission hold over the requested stages and their downstream dependencies. |
+| `workItem/plan/change/withdraw` | Current accepted Plan revision, Work Item revision and change ID. Releases that pending change's hold. When binding an accepted successor, `workItem/workflow/bind` can release the explicitly resolved change IDs. |
 | `workItem/coordination/start` | Kind, subject revision, stage if applicable, requested participant roles, agenda and deadline within the accepted policy. The coordinator receives the round receipt. Scheduled starts enter through the atomic Automation admission in section 5.9. |
 | `workItem/coordination/read` | Round ID. Returns the visible roster, status and revision, sealed brief and action items when published. Messages are available by round. |
 | `workItem/coordination/close` | Round ID, expected round revision and subject, plus publish or cancel disposition. Requires the coordinator grant. Publish returns the committed brief ID. Cancel takes a reason and commits the terminal receipt. |
@@ -842,6 +844,7 @@ workItem/feedback/received
 workItem/evidence/updated
 workItem/deliberation/updated
 workItem/stage/updated
+workItem/plan/change/updated
 workItem/brief/updated
 workItem/coordination/updated
 workItem/message/updated

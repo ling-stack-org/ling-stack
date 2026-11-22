@@ -105,7 +105,8 @@ export function startAppServerStageDeliberation(
   if (prior && prior.idempotencyKey !== input.idempotencyKey) {
     throw new AppServerCollaborationError("stale_revision", "The accepted decision point already has a round.");
   }
-  if (!prior && (store.getWorkItemWorkflowAdmissionBlocker(item.workflowId) || !["queued", "blocked"].includes(step.status))) {
+  if (!prior && (store.getWorkItemWorkflowAdmissionBlocker(item.workflowId) || !["queued", "blocked"].includes(step.status)
+    || item.holds.some(hold => hold.blocksNewAdmission && hold.workflowStepIds?.includes(step.id)))) {
     throw new HttpError(409, "resume_blocked", "The Work Item cannot open this decision point now.");
   }
   if (!prior && required.ballot && step.metadata?.dependsOnStepIds?.some(id => {
@@ -140,6 +141,7 @@ export function openReadyWorkItemStageDeliberations(store: RunStore, workflowId:
       || step.metadata.dependsOnStepIds?.some(id => !["succeeded", "skipped"].includes(byId.get(id)?.status ?? ""))) continue;
     const workItem = store.getWorkItem(binding.workItemId);
     if (!workItem?.planRevision) break;
+    if (workItem.holds.some(hold => hold.blocksNewAdmission && hold.workflowStepIds?.includes(step.id))) continue;
     const subject = { workItemId: workItem.id, planRevision: workItem.planRevision, workflowStepId: step.id };
     const idempotencyKey = workItemWorkflowDecisionId(subject, "round");
     if (store.getWorkItemEvidence(idempotencyKey)) continue;
@@ -179,7 +181,8 @@ export function settleAppServerDeliberation(
   if (!prior && (item.revision !== input.expectedWorkItemRevision || !workflowDecision && hasPriorResolution(store, round))) {
     throw new AppServerCollaborationError("stale_revision", "The Work Item revision changed or the deliberation round already has a resolution.");
   }
-  if (!prior && decision && (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission))) {
+  if (!prior && decision && (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission
+    && (!hold.workflowStepIds || !workflowDecision || hold.workflowStepIds.includes(workflowDecision.workflowStepId))))) {
     throw new HttpError(409, "resume_blocked", "The Work Item is held. A held round can be cancelled.");
   }
   let ballot: Extract<ReturnType<typeof readAppServerStageBallot>, { readonly summary: unknown }> | undefined;
