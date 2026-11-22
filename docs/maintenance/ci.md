@@ -45,7 +45,7 @@ Core 单独选择时使用八个 Linux shard，与 Daemon 同跑时使用五个�
 
 Core 与 Daemon 双平台同跑时，两组 Linux 分片合计十一个，加上四个 macOS 分片、类型检查、普通 packages 和 Linux 原生契约；完整回归再加独立 macOS native smoke，最多占十九个 runner、其中五个 macOS，符合 GitHub Free 的[并发上限](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners)。Linux-only Daemon 测试计划只保留六个 Linux Daemon shard 并将 Core 保持五个，Darwin-only 计划省去 Linux Daemon shard 并将 Core 恢复八个。普通 Daemon 改动省去额外的 macOS smoke runner。其他工作流仍共享组织容量，不能据此保证没有排队；分片数量不影响文件发现、覆盖或 watchdog。
 
-Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务保留检查名 `Typecheck, unit tests, and Web build`，供 GitHub 规则集识别，汇总当前适用任务的结果。
+Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务使用检查名 `Required CI lanes`，供 GitHub 规则集识别，汇总当前适用任务的结果。
 
 整合 `main@328bb10a`（#515）后，类型检查、单元测试、Daemon 及 Linux 契约／macOS helper 任务条件使用 `!cancelled()`，使手动取消或新推送的自动取消能终止长任务。只使用 `always()` 时 GitHub 重新计算条件仍为真，任务可能继续运行；汇总门保留 `always()`，明确拒绝取消或未完成的验证。
 

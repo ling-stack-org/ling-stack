@@ -219,7 +219,7 @@ test("label events never create CI runs so the latest run always publishes the r
   // The required gate resolves against the newest CI run on a head; a label run
   // without the gate job makes the ruleset report it as expected and block merges.
   assert.doesNotMatch(workflow, /labeled/u);
-  assert.match(jobSource("quality"), /^    name: Typecheck, unit tests, and Web build$/mu);
+  assert.match(jobSource("quality"), /^    name: Required CI lanes$/mu);
   assert.doesNotMatch(jobSource("quality"), /IGNORED_LABEL_EVENT/u);
   assert.doesNotMatch(jobSource("scope"), /^    if:/mu);
   assert.match(labelWorkflow, /if: github\.event\.label\.name == 'full-ci'/u);

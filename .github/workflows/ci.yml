@@ -929,7 +929,7 @@ jobs:
 
   quality:
     # The main ruleset requires this check name.
-    name: Typecheck, unit tests, and Web build
+    name: Required CI lanes
     needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
     # A skipped job publishes the required check for verified docs-only PRs.
     if: ${{ always() && (needs.scope.result != 'success' || needs.scope.outputs.documentation-only != 'true') }}
