@@ -66,6 +66,8 @@ class FakeSocket implements LingAppServerSocket {
             params: { subscriptionId: this.subscriptionId, cursor, event: seq === undefined ? undefined : { seq } },
           }));
         }
+      } else {
+        this.emit("message", JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }));
       }
     });
   }
@@ -153,6 +155,46 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
   sockets[1]!.emit("close", {});
   await waitForCondition(() => sockets.length === 3 && sockets[2]!.sent.some((request) => request.method === "workItem/subscribe"));
   assert.equal(sockets[2]!.sent.find((request) => request.method === "workItem/subscribe")?.params?.cursor, "scoped-cursor-at-6");
+  client.close();
+});
+
+test("Ling App Server client routes the development, delivery, grant, worktree and coordination methods", async () => {
+  const socket = new FakeSocket();
+  const client = new LingAppServerClient({
+    url: "ws://fixture/app-server/rpc",
+    createSocket: () => socket,
+    clientInfo: { name: "fixture-client", version: "1" },
+  });
+  await client.connect();
+  await client.createGrant({ label: "fixture", subject: { kind: "workspace" }, scopes: ["observe"],
+    expiresAt: "2099-01-01T00:00:00.000Z", credentialSha256: "0".repeat(64), idempotencyKey: "grant-1" });
+  await client.listGrants();
+  await client.revokeGrant("grant-1", 1);
+  await client.createHandoff({ threadId: "thread", turnId: "turn", idempotencyKey: "handoff-1", nextInstruction: "continue" });
+  await client.readHandoff({ handoffId: "handoff" });
+  await client.resumeHandoff({ handoffId: "handoff", providerPresetId: "provider" });
+  await client.readGitHubSubject({ repository: "ling-stack-org/ling-stack", kind: "issue", number: 1 });
+  await client.reconcileGitHubDelivery({ workItemId: "item", threadId: "thread", expectedWorkItemRevision: 1,
+    candidateDigest: "candidate", repository: "ling-stack-org/ling-stack", pullRequestNumber: 1 });
+  await client.readGitHubDelivery({ workItemId: "item" });
+  await client.readGitHubDelivery({ workItemId: "item", deliveryId: "delivery" });
+  await client.readCoordinationSchedule({ automationId: "automation", workItemId: "item" });
+  await client.setCoordinationSchedule({ automationId: "automation", workItemId: "item", expectedRevision: 0,
+    enabled: true, kind: "checkpoint", durationMs: 1000 });
+  await client.createWorkItem({ sourceId: "source", title: "Fixture" });
+  await client.acceptWorkItem({ workItemId: "item", expectedWorkItemRevision: 1, idempotencyKey: "accept" });
+  await client.captureChanges();
+  await client.listWorktrees();
+  await client.createWorktree({ ownerKind: "teammate", ownerId: "thread" });
+  await client.refreshWorktree({ ownerKind: "teammate", ownerId: "thread" });
+  await client.previewWorktreeCleanup({ ownerKind: "teammate", ownerId: "thread" });
+  await client.cleanupWorktree({ ownerKind: "teammate", ownerId: "thread", expectedRevision: "revision", confirmed: true });
+  assert.deepEqual(socket.sent.filter(request => request.id !== undefined).slice(1).map(request => request.method), [
+    "server/grants/create", "server/grants/list", "server/grants/revoke", "handoff/create", "handoff/read", "handoff/resume",
+    "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
+    "workItem/coordination/schedule/read", "workItem/coordination/schedule/set", "workItem/create", "workItem/accept",
+    "changes/capture", "worktree/list", "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
+  ]);
   client.close();
 });
 
