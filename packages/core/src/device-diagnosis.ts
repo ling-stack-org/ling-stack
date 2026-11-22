@@ -214,5 +214,13 @@ export function projectDeviceDiagnosticEvidence(
     }
     return { value: { count: fields.software.length, sources, truncated: fields.truncated }, hypotheses: [] };
   }
+  if (request.capabilityId === "protocol.read_registers" && observation.source === "modbus.rtu.read_registers"
+    && typeof fields.status === "string") {
+    const value: Record<string, JsonValue> = { status: fields.status };
+    for (const key of ["unitAddress", "table", "startAddress", "registers"] as const) {
+      if (fields[key] !== undefined) value[key] = fields[key]!;
+    }
+    return { value, hypotheses: [] };
+  }
   return undefined;
 }

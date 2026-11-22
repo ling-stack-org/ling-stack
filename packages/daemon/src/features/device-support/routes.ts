@@ -29,6 +29,7 @@ export async function handleDeviceSupportRoute(
   const deviceOperation = /^\/v1\/device-support\/devices\/([^/]+)\/(dispatch-stop|retirement)$/u.exec(url.pathname);
   const accessGrantOperation = /^\/v1\/device-support\/devices\/([^/]+)\/access-grants\/([^/]+)$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
+  const modbusDiagnosis = url.pathname === "/v1/device-support/modbus/diagnose";
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
   const homeAssistantProposal = /^\/v1\/device-support\/home-assistant\/(reload-proposals|automation-enable-proposals)$/u.exec(url.pathname)?.[1];
   const homeAssistantCatalog = url.pathname === "/v1/device-support/home-assistant/catalog";
@@ -37,7 +38,7 @@ export async function handleDeviceSupportRoute(
   const fabricGraph = url.pathname === "/v1/device-support/fabric/graph";
   const edgeRuntimes = url.pathname === "/v1/device-support/fabric/edge-runtimes";
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
-    && !linuxAction && !homeAssistant && !homeAssistantProposal && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
+    && !linuxAction && !modbusDiagnosis && !homeAssistant && !homeAssistantProposal && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
     && !fabricGraph && !edgeRuntimes) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
@@ -55,6 +56,10 @@ export async function handleDeviceSupportRoute(
   }
   if (linuxAction) {
     await handleLinuxSshRequest(linuxAction, request, response, runtime);
+    return true;
+  }
+  if (modbusDiagnosis) {
+    await handleModbusDiagnosis(request, response, runtime);
     return true;
   }
   if (homeAssistant) {
@@ -457,6 +462,25 @@ async function handleLinuxSshRequest(
     }
     const { deviceId: _deviceId, ...options } = body;
     const { status, report } = await runtime.diagnoseLinuxSshTarget(id, readDiagnosisOptions(options));
+    writePrivateJson(response, 200, { status, report });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+async function handleModbusDiagnosis(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("Allow", "POST");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const body = await readJsonBody(request, 4096).catch(() => { throw new DeviceBrokerError("invalid_request", "Invalid Modbus diagnosis request"); });
+    if (!isRecord(body) || !validBoundedText(body.deviceId, 256) || body.deviceId.trim() !== body.deviceId) {
+      throw new DeviceBrokerError("invalid_request", "Modbus diagnosis requires a device reference");
+    }
+    const { deviceId, ...options } = body;
+    const { status, report } = await runtime.diagnoseModbusTarget(deviceId, readDiagnosisOptions(options));
     writePrivateJson(response, 200, { status, report });
   } catch (error) {
     writeDeviceOperationError(response, error);

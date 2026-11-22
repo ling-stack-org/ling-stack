@@ -27,6 +27,11 @@ type SerialDriver = Pick<BindingInterface, "list"> & {
   open(options: Parameters<BindingInterface["open"]>[0]): Promise<SerialConnection>;
 };
 
+export interface BoundModbusSerialTarget {
+  readonly profile: DeviceProfileV1;
+  readonly transport: HardwareProtocolLiveTransport;
+}
+
 export function readModbusSerialTargets(path: string | undefined): readonly ConfiguredModbusSerialTarget[] {
   if (path === undefined) return [];
   let document: unknown;
@@ -77,7 +82,7 @@ function parseTarget(value: unknown, index: number): ConfiguredModbusSerialTarge
 export function bindModbusSerialTarget(
   target: ConfiguredModbusSerialTarget,
   loadDriver: () => Promise<SerialDriver> = async () => (await import("@serialport/bindings-cpp")).autoDetect(),
-): { readonly profile: DeviceProfileV1; readonly transport: HardwareProtocolLiveTransport } {
+): BoundModbusSerialTarget {
   const request = Buffer.from(encodeModbusRtuRegisterRead(target.read));
   const targetDeviceId = `modbus-rtu-${sha256(targetIdentity(target)).slice(0, 32)}`;
   const connectionRevision = sha256(JSON.stringify([

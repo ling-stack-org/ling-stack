@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { HardwareProtocolTransportRegistry, HardwareProtocolWorkbench, modbusRtuRegisterCodec } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, HardwareProtocolTransportRegistry, HardwareProtocolWorkbench,
+  modbusRtuRegisterCodec, runDeviceReadOnlyPlaybook, SqliteDeviceProtocolStore, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { ModbusSerialAdapter, modbusRegisterDiagnosis } from "../dist/features/device-support/adapters/modbus-serial.js";
 import { bindModbusSerialTarget, readModbusSerialTargets, type ConfiguredModbusSerialTarget } from "../dist/features/device-support/modbus-serial-targets.js";
 import { createDaemonServer } from "../dist/index.js";
 
@@ -51,6 +53,37 @@ test("the serial transport captures a request and fragmented register response w
     ]);
   } finally {
     await registry.close();
+  }
+});
+
+test("standard device diagnosis reads the configured Modbus register through the broker", async () => {
+  const fixture = serialFixture(["01", "0302", "000a", "3843"]);
+  const deviceStore = new SqliteDeviceSupportStore();
+  const protocolStore = new SqliteDeviceProtocolStore();
+  const adapter = new ModbusSerialAdapter({ targets: [{ profile: fixture.profile, transport: fixture.bound }], transports: fixture.registry,
+    workbench: fixture.workbench, protocolStore, now: () => "2026-11-21T00:00:00.000Z" });
+  const broker = new DeviceCapabilityBroker({ store: deviceStore, now: () => "2026-11-21T00:00:00.000Z" });
+  broker.registerAdapter(adapter);
+  try {
+    broker.registerDevice(adapter.manifest.adapterId, fixture.profile);
+    const snapshot = await broker.refreshCapabilities(fixture.profile.device.id, fixture.profile.connectionRefs[0]!);
+    const task = broker.createTask({ id: "modbus-diagnosis-task", ownerKind: "daemon", ownerId: DEFAULT_WORKSPACE_ID,
+      targetDeviceIds: [fixture.profile.device.id], status: "planning", capabilitySnapshotIds: [snapshot.snapshotId],
+      createdAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21T00:00:00.000Z" });
+    const result = await runDeviceReadOnlyPlaybook({ broker, task, targetDeviceId: fixture.profile.device.id,
+      capabilitySnapshotId: snapshot.snapshotId, playbook: modbusRegisterDiagnosis });
+    assert.equal(result.status, "succeeded");
+    const fact = result.report.facts[0]?.value as { captureId?: unknown; status?: unknown; unitAddress?: unknown; table?: unknown; startAddress?: unknown; registers?: unknown };
+    const rawObservation = deviceStore.getObservation(task.id, result.report.facts[0]!.observationId);
+    assert.match(String((rawObservation?.value as { captureId?: unknown }).captureId), /^modbus:/u);
+    assert.deepEqual({ status: fact.status, unitAddress: fact.unitAddress, table: fact.table,
+      startAddress: fact.startAddress, registers: fact.registers }, { status: "read", unitAddress: 1,
+      table: "holding", startAddress: 0, registers: [10] });
+    assert.equal(fixture.events.filter(event => typeof event === "string" && event.startsWith("write:")).length, 1);
+  } finally {
+    await fixture.registry.close();
+    protocolStore.close();
+    deviceStore.close();
   }
 });
 
@@ -128,7 +161,7 @@ test("the configured Daemon exposes a target without port details and rejects ca
 function serialFixture(chunks: readonly string[], serialNumber = target.serialNumber, openedSerialNumber = serialNumber) {
   const events: unknown[] = [];
   const pending = chunks.map(chunk => Buffer.from(chunk, "hex"));
-  const { transport: bound } = bindModbusSerialTarget(target, async () => ({
+  const { profile, transport: bound } = bindModbusSerialTarget(target, async () => ({
     async list() {
       return [{
         path: target.path, vendorId: target.vendorId, productId: target.productId, serialNumber: events.length ? openedSerialNumber : serialNumber,
@@ -156,5 +189,5 @@ function serialFixture(chunks: readonly string[], serialNumber = target.serialNu
   workbench.registerCodec(modbusRtuRegisterCodec);
   const registry = new HardwareProtocolTransportRegistry(workbench);
   registry.register(bound);
-  return { bound, workbench, registry, events };
+  return { bound, profile, workbench, registry, events };
 }
