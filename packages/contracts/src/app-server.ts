@@ -736,6 +736,7 @@ export interface LingAppServerPlanWorkflowAcceptParams {
 export interface LingAppServerWorkItemWorkflowStages {
   readonly workflowId: string;
   readonly planRevision: string;
+  readonly workItemRevision?: number;
   readonly status: import("./workflows.js").ChannelWorkflowStatus;
   readonly admissionBlocker?: string;
   readonly nextOffset?: number;
@@ -910,6 +911,7 @@ export interface LingAppServerStageHandoffParams {
 
 export interface LingAppServerStageHandoffProgress {
   readonly sourceStepId: string;
+  readonly sourceStageId?: string;
   readonly sourceRevision: string;
   readonly status: "awaiting_source" | "awaiting_acceptance" | "accepted" | "returned";
   readonly receiptId?: string;

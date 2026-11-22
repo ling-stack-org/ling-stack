@@ -280,6 +280,7 @@ import { createWorkflowParallelCapabilityResolver } from "../features/runs/workf
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import { handleCodeAssessmentRoutes } from "../features/code-assessments/routes.js";
 import { handleWorkspaceVerificationRoute } from "./workspace-verification-routes.js";
+import { handleWorkItemStageHandoff } from "./app-server-stage-handoff.js";
 import { handleWorkspaceGitHubIntake } from "./workspace-github-intake-routes.js";
 import { publishWorkItemWorkflowStep } from "../features/work-items/workflow-stages.js";
 import {
@@ -1302,13 +1303,18 @@ export async function routeRequest(
 
   const workItemRoute = parseWorkItemRoute(url.pathname);
   if (workItemRoute) {
+    const action = "action" in workItemRoute ? workItemRoute.action : undefined;
+    if (action === "handoff") {
+      await handleWorkItemStageHandoff(request, response, url, context, workItemRoute.workItemId);
+      return;
+    }
     await handleWorkItemRoute(
       request,
       response,
       config,
       storeRegistry,
       workItemRoute.workItemId,
-      "action" in workItemRoute ? workItemRoute.action : undefined,
+      action,
     );
     return;
   }

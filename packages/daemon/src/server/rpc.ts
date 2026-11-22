@@ -27,7 +27,6 @@ import {
   LING_APP_SERVER_METHODS,
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
-  LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS,
   LING_PRODUCT_VERSION,
   isLingAppServerMethod,
   parseUserInputAnswerCommandV1,
@@ -40,7 +39,6 @@ import {
   type LingAppServerGrant,
   type LingAppServerGitHubDeliveryResult,
   type LingAppServerJsonRpcId,
-  type LingAppServerStageHandoffReturnReason,
   type LingAppServerThreadEventsResult,
   type LingAppServerThreadSnapshotResult,
   type LingAppServerTurnResumeResult,
@@ -138,7 +136,7 @@ import {
   settleAppServerDeliberation,
   startAppServerStageDeliberation,
 } from "./app-server-collaboration.js";
-import { settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
+import { readStageHandoffParams, settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
 
 type JsonRpcId = string | number | null;
 
@@ -1428,21 +1426,9 @@ class RpcConnection {
     const raw = readParamsRecord(params);
     if (raw.sourceStepId === undefined && raw.targetStepId === undefined) return this.appendCollaboration("handoff", action, params);
     const { cwd, ...record } = this.workspaceParams(params, true);
-    const reason = readOptionalStringField(record, "reason") as LingAppServerStageHandoffReturnReason | undefined;
-    const detail = readOptionalStringField(record, "detail")?.trim();
-    const idempotencyKey = readStringField(record, "idempotencyKey");
-    if (action === "returned" && (!reason || !LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS.includes(reason))
-      || action === "accepted" && reason !== undefined || (detail?.length ?? 0) > 1200 || !idempotencyKey.trim() || idempotencyKey.length > 200) {
-      throw rpcError(-32602, "invalid_params", "Supply a supported handoff return reason and a bounded request key.");
-    }
     try {
       const store = this.context.storeRegistry.getStore(cwd);
-      const { event, ...result } = settleAppServerStageHandoff(store, {
-        workItemId: readStringField(record, "workItemId"), planRevision: readStringField(record, "planRevision"),
-        sourceStepId: readStringField(record, "sourceStepId"), targetStepId: readStringField(record, "targetStepId"),
-        expectedSourceRevision: readStringField(record, "expectedSourceRevision"), expectedTargetRevision: readStringField(record, "expectedTargetRevision"),
-        expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"), idempotencyKey, reason, detail,
-      }, action, new Date().toISOString());
+      const { event, ...result } = settleAppServerStageHandoff(store, readStageHandoffParams(record, action), action, new Date().toISOString());
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         if (action === "accepted") this.context.taskSupervisor.poke(cwd);

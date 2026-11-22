@@ -1,4 +1,6 @@
 import type {
+  LingAppServerStageHandoffParams,
+  LingAppServerWorkItemCollaborationAppendResult,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
   PreviewContentResponse,
@@ -123,6 +125,11 @@ export const operationEndpoints = {
   async getWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string, stageOffset?: number): Promise<WorkItemDetailResponse> {
       return this._get(`/work-items/${encodeURIComponent(workItemId)}`, { cwd, stageOffset });
     },
+
+  async settleWorkItemStageHandoff(this: LingDaemonEndpointContext, cwd: string, workItemId: string,
+    action: "accepted" | "returned", input: Omit<LingAppServerStageHandoffParams, "cwd" | "workItemId">): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    return this._post(`/work-items/${encodeURIComponent(workItemId)}/handoff`, { cwd }, { ...input, action });
+  },
 
   async routeWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string, input: WorkItemRouteRequest): Promise<WorkItemMutationResponse> {
       return this._post(`/work-items/${encodeURIComponent(workItemId)}/route`, { cwd }, input);

@@ -1,5 +1,7 @@
-import type { LingAppServerWorkItemStageDecision, LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
-import { useEffect, useState } from "react";
+import { LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, type LingAppServerStageHandoffProgress,
+  type LingAppServerStageHandoffReturnReason, type LingAppServerWorkItemStageDecision,
+  type LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
+import { useEffect, useRef, useState } from "react";
 import { daemonClient } from "../../api/client.js";
 import { useI18n } from "../../i18n.js";
 import { Button, InlineFeedback, InspectorSection, Skeleton, StatusIndicator } from "../../shared/ui/index.js";
@@ -15,6 +17,21 @@ const decisionStatus = {
   cancelled: "Cancelled",
   stale: "Blocked",
 } as const satisfies Record<LingAppServerWorkItemStageDecision["status"], string>;
+
+const handoffStatus = {
+  awaiting_source: "Waiting for source",
+  awaiting_acceptance: "Awaiting acceptance",
+  accepted: "Accepted",
+  returned: "Returned for repair",
+} as const satisfies Record<LingAppServerStageHandoffProgress["status"], string>;
+
+const handoffReasons = {
+  missing_artifact: "Missing artifact",
+  required_check_incomplete: "Required check incomplete",
+  candidate_stale: "Candidate changed",
+  scope_unavailable: "Scope unavailable",
+  upstream_effect_unknown: "Upstream result unconfirmed",
+} as const satisfies Record<LingAppServerStageHandoffReturnReason, string>;
 
 export function WorkBoardWorkflow({ cwd, workItemId, onOpenRun }: {
   readonly cwd: string;
@@ -68,6 +85,10 @@ export function WorkBoardWorkflow({ cwd, workItemId, onOpenRun }: {
               <div dir="auto">{step.participantLabel}</div>
               {step.brief ? <p dir="auto">{step.brief}</p> : null}
               {step.decision ? <StageDecision decision={step.decision} /> : null}
+              {step.handoffs?.map(handoff => <StageHandoff
+                key={JSON.stringify([handoff.sourceStepId, handoff.sourceRevision])}
+                cwd={cwd} workItemId={workItemId} workflow={workflow} step={step} handoff={handoff}
+                onRefresh={() => setRevision(value => value + 1)} />)}
               {step.runId ? <Button size="sm" variant="ghost" onClick={() => onOpenRun(step.runId!)}>{t("Open run")}</Button> : null}
             </li>;
           })}
@@ -77,6 +98,62 @@ export function WorkBoardWorkflow({ cwd, workItemId, onOpenRun }: {
           ? <Button size="sm" variant="ghost" onClick={() => showPage(workflow.nextOffset!)}>{t("Load more")}</Button> : null}
       </>}
   </InspectorSection>;
+}
+
+function StageHandoff({ cwd, workItemId, workflow, step, handoff, onRefresh }: {
+  readonly cwd: string;
+  readonly workItemId: string;
+  readonly workflow: LingAppServerWorkItemWorkflowStages;
+  readonly step: LingAppServerWorkItemWorkflowStages["steps"][number];
+  readonly handoff: LingAppServerStageHandoffProgress;
+  readonly onRefresh: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const [reason, setReason] = useState<LingAppServerStageHandoffReturnReason | "">("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  const lastRequest = useRef<{ fingerprint: string; key: string }>(undefined);
+  const canDecide = handoff.status === "awaiting_acceptance" && step.status === "queued" && !workflow.admissionBlocker
+    && step.admissionBlocker !== "work_item_plan_change_pending" && workflow.workItemRevision !== undefined;
+
+  async function settle(action: "accepted" | "returned"): Promise<void> {
+    if (busy || !canDecide || workflow.workItemRevision === undefined || action === "returned" && !reason) return;
+    const decisionReason = action === "returned" && reason ? reason : undefined;
+    const fingerprint = JSON.stringify([action, decisionReason, workflow.workItemRevision, step.updatedAt]);
+    const key = lastRequest.current?.fingerprint === fingerprint ? lastRequest.current.key : crypto.randomUUID();
+    lastRequest.current = { fingerprint, key };
+    setBusy(true);
+    setError(false);
+    try {
+      await daemonClient.settleWorkItemStageHandoff(cwd, workItemId, action, {
+        planRevision: workflow.planRevision, sourceStepId: handoff.sourceStepId, targetStepId: step.stepId,
+        expectedSourceRevision: handoff.sourceRevision, expectedTargetRevision: step.updatedAt,
+        expectedWorkItemRevision: workflow.workItemRevision, idempotencyKey: key, reason: decisionReason,
+      });
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+      onRefresh();
+    }
+  }
+
+  return <div>
+    <strong>{t("Handoff")}</strong>{handoff.sourceStageId ? <span dir="auto"> {handoff.sourceStageId}</span> : null}
+    {" "}<StatusIndicator label={t(handoffStatus[handoff.status])} tone={handoff.status === "returned" ? "warning" : "neutral"} />
+    {handoff.reason ? <p>{t(handoffReasons[handoff.reason])}</p> : null}
+    {canDecide ? <div>
+      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void settle("accepted")}>{t("Accept handoff")}</Button>
+      <select aria-label={t("Return reason")} disabled={busy} value={reason}
+        onChange={event => setReason(event.target.value as typeof reason)}>
+        <option value="">{t("Return reason")}</option>
+        {LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS.map(choice =>
+          <option key={choice} value={choice}>{t(handoffReasons[choice])}</option>)}
+      </select>
+      <Button size="sm" variant="ghost" disabled={busy || !reason} onClick={() => void settle("returned")}>{t("Return handoff")}</Button>
+    </div> : null}
+    {error ? <InlineFeedback title={t("Could not update handoff")} tone="warning" /> : null}
+  </div>;
 }
 
 function StageDecision({ decision }: { readonly decision: LingAppServerWorkItemStageDecision }): React.JSX.Element {

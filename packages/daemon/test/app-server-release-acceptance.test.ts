@@ -2751,9 +2751,20 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.deepEqual(implementationHold.receipt.affectedStepIds, [p02.id]);
   const handoff = { ...offeredHandoff, expectedSourceRevision: revisedSource.updatedAt,
     expectedWorkItemRevision: Number(implementationHold.workItem.revision), idempotencyKey: "qa-accept-repaired-contract" };
-  const handoffPeer = await fixture.connect();
-  const [acceptedHandoff, repeatedHandoff] = await Promise.all([resumedClient, handoffPeer].map(connection =>
-    connection.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff)));
+  const handoffPath = `${itemPath}/handoff`;
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const forbiddenHandoff = await fetch(new URL(`${handoffPath}?cwd=${encodeURIComponent(fixture.cwd)}`, daemonUrl), {
+    method: "POST", headers: { Origin: "https://other.example", Authorization: `Bearer ${authToken}`,
+      "Content-Type": "application/json" }, body: JSON.stringify({ ...handoff, action: "accepted" }),
+  });
+  assert.equal(forbiddenHandoff.status, 403);
+  const [acceptedHandoff, repeatedHandoff] = await Promise.all([
+    resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff),
+    request(handoffPath, { ...handoff, action: "accepted" }).then(async reply => {
+      assert.ok(reply.ok, await reply.clone().text());
+      return await reply.json() as LingAppServerWorkItemCollaborationAppendResult;
+    }),
+  ]);
   assert.deepEqual(new Set([acceptedHandoff.status, repeatedHandoff.status]), new Set(["appended", "replayed"]));
   assert.equal(acceptedHandoff.record.id, repeatedHandoff.record.id);
   assert.ok(acceptedHandoff.record.sourceRefs.some(source => source.id === revisedArtifact.id));

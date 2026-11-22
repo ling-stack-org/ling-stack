@@ -1,11 +1,84 @@
-import type { LingAppServerStageHandoffParams } from "@ling-stack/contracts";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, type LingAppServerStageHandoffParams,
+  type LingAppServerStageHandoffReturnReason } from "@ling-stack/contracts";
 import {
   appendWorkItemCollaboration, readWorkflowStageHandoff, workflowStageHandoffId,
   type RunStore, type WorkflowStageHandoffDecision,
 } from "@ling-stack/core";
+import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import { readWorkflowStepOutputPacketArtifact } from "../features/channels/workflow-step-packets.js";
+import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
+import { readJsonBody } from "../shared/request.js";
+import { writeJson } from "../shared/response.js";
+import { isRecord } from "../shared/validation.js";
 import { AppServerCollaborationError } from "./app-server-collaboration.js";
+import { appServerRecoveryFor } from "./app-server-recovery.js";
+
+export function readStageHandoffParams(record: Record<string, unknown>, action: "accepted" | "returned"): LingAppServerStageHandoffParams {
+  const invalid = () => new HttpError(400, "invalid_params", "Supply the current handoff revisions, decision and a bounded request key.");
+  const required = (field: string, limit = 256): string => {
+    const value = record[field];
+    if (typeof value !== "string" || !value.trim() || value.length > limit || /[\r\n\0]/u.test(value)) throw invalid();
+    return value;
+  };
+  const reason = record.reason as LingAppServerStageHandoffReturnReason | undefined;
+  const detail = record.detail;
+  const revision = record.expectedWorkItemRevision;
+  if (action === "returned" && (!reason || !LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS.includes(reason))
+    || action === "accepted" && reason !== undefined || detail !== undefined && (typeof detail !== "string" || detail.length > 1200)
+    || typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1) throw invalid();
+  return {
+    workItemId: required("workItemId"), planRevision: required("planRevision"),
+    sourceStepId: required("sourceStepId"), targetStepId: required("targetStepId"),
+    expectedSourceRevision: required("expectedSourceRevision"), expectedTargetRevision: required("expectedTargetRevision"),
+    idempotencyKey: required("idempotencyKey", 200), expectedWorkItemRevision: revision, reason, detail: detail?.trim(),
+  };
+}
+
+export async function handleWorkItemStageHandoff(
+  request: IncomingMessage, response: ServerResponse, url: URL, context: DaemonContext, workItemId: string,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd")?.trim();
+  if (!cwd) {
+    writeJson(response, 400, { error: "cwd_required" });
+    return;
+  }
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry: context.storeRegistry, cwd })) return;
+  const store = context.storeRegistry.getInitializedStore(cwd);
+  if (!store) {
+    writeJson(response, 404, { error: "workspace_not_loaded" });
+    return;
+  }
+  try {
+    if (context.activeRuns.isShuttingDown()) throw new HttpError(503, "server_draining", "The daemon is shutting down.");
+    const body = await readJsonBody(request, 16 * 1024);
+    if (!isRecord(body) || body.action !== "accepted" && body.action !== "returned") {
+      throw new HttpError(400, "invalid_params", "Accept or return the stage handoff.");
+    }
+    const input = readStageHandoffParams({ ...body, workItemId }, body.action);
+    if (body.action === "accepted") appServerRecoveryFor(context.config, store)?.assertReady();
+    const { event, ...result } = settleAppServerStageHandoff(store, input, body.action, new Date().toISOString());
+    if (event) {
+      context.controlPlaneEvents.publish(event);
+      if (body.action === "accepted") context.taskSupervisor.poke(store.paths.cwd);
+    }
+    writeJson(response, 200, result);
+  } catch (error) {
+    if (error instanceof HttpError) {
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+    } else if (error instanceof AppServerCollaborationError) {
+      const status = error.code === "work_item_not_found" ? 404 : error.code === "invalid_params" ? 400 : 409;
+      writeJson(response, status, { error: error.code, message: error.message });
+    } else {
+      throw error;
+    }
+  }
+}
 
 export function settleAppServerStageHandoff(
   store: RunStore, input: LingAppServerStageHandoffParams, action: "accepted" | "returned", now: string,

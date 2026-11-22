@@ -1475,6 +1475,8 @@ export class SqliteChannelWorkflowStore {
       planStageId: existing.metadata.planStageId,
       dependsOnStepIds: existing.metadata.dependsOnStepIds,
       requiredPlanDecision: existing.metadata.requiredPlanDecision,
+      planBallotKey: existing.metadata.planBallotKey,
+      requiredPlanHandoffStepIds: existing.metadata.requiredPlanHandoffStepIds,
       requiredTools: existing.metadata.requiredTools,
     } : undefined;
     const next: ChannelWorkflowStep = {

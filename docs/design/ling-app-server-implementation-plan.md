@@ -35,7 +35,7 @@
 - Work Board 与 App Server 使用同一套阶段、简报、阻塞和运行证据投影。阶段简报的来源是已提交的步骤状态迁移。看板支持分页与重试，并随 `work_items` 事件刷新。
 - 声明了裁决条件的步骤等待该 Work Item、已接受 Plan 和步骤的裁决回执。计划可指定独立的投票阶段与法定人数，也可在前置阶段完成时自动开启审议。Workflow 按原阶段负责人执行投票，各投票 Run 的工具列表为空。Host 在投票阶段全部结束后从终态 Run 核对选项和身份。协调者可以在裁决前查看票数和是否平票，裁决收据保留统计结果。回归覆盖等待票数、平票后的人工裁决、重启和派发一次。独立 QA 仍按自己的前置条件执行。
 - 浏览器连接真实 Daemon 时，Work Board 在 P02 上显示工程与 QA 的平票。裁决后通过现有 Control Plane 推送刷新同一详情，呈现选项、裁决依据和执行结果。
-- 计划可用 `handoffFromStageIds` 要求接收方先验收上游 Workflow 的结果包。App Server、SDK 和 MCP 可按当前计划、两个阶段版本及 Work Item revision 接受或退回。协调者接受后，原 Workflow 才放行该步骤。并发提交与重启使用同一交接回执。Git 候选漂移与接手人不可用仍需联合验收。
+- 计划可用 `handoffFromStageIds` 要求接收方先验收上游 Workflow 的结果包。工作看板、App Server、SDK 和 MCP 按当前计划、两个阶段版本及 Work Item revision 接受或退回。协调者接受后，原 Workflow 才放行该步骤。并发 HTTP/RPC 提交与重启复用同一交接回执。Chromium 通过真实 Daemon 接受 QA 交接并退回另一条评审交接，原 Workflow 启动一次 QA，退回的评审保持等待。Git 候选漂移与接手人不可用仍需联合验收。
 - `workItem/plan/change/request` 按已接受的阶段依赖生成准入暂停范围，`workItem/plan/change/withdraw` 可释放这一项暂停。暂停、回执和事件一起提交。联合回归覆盖 P01 改动暂停下游阶段，P02 改动期间 QA 可完成交接，重启后恢复原暂停，以及后继 Workflow 绑定时按确认的变更 ID 解除暂停。
 - `workItem/create` 可按原生 ID 显式挂接现有频道 Task 或 AutomationRun。Host 从原执行记录确认归属和状态。并发提交及重启仍读取同一条 Work Item；原执行所有者持有开始、取消和恢复权限。验收中先运行一次 Automation，再从两个客户端挂接同一执行，Provider 总调用数为一次。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。

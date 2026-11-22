@@ -36,6 +36,7 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
   return {
     workflowId: workflow.id,
     planRevision: item.planRevision,
+    workItemRevision: item.revision,
     status: workflow.status,
     admissionBlocker,
     ...(steps.length > limit ? { nextOffset: offset + limit } : {}),
@@ -61,16 +62,16 @@ function readStageHandoffs(
   return step.metadata?.requiredPlanHandoffStepIds?.flatMap((sourceStepId): LingAppServerStageHandoffProgress[] => {
     const source = store.getChannelWorkflowStep(sourceStepId);
     if (!source || source.workflowId !== step.workflowId) return [];
-    const sourceRevision = source.updatedAt;
-    const subject = { workItemId, planRevision, sourceStepId, sourceRevision, targetStepId: step.id };
+    const basis = { sourceStepId, sourceRevision: source.updatedAt, sourceStageId: source.metadata?.planStageId };
+    const subject = { workItemId, planRevision, ...basis, targetStepId: step.id };
     const handoff = readWorkflowStageHandoff(store, subject);
     if (handoff?.record.action === "returned") return [{
-      sourceStepId, sourceRevision, status: "returned", receiptId: handoff.record.id, reason: handoff.decision.reason,
+      ...basis, status: "returned", receiptId: handoff.record.id, reason: handoff.decision.reason,
     }];
     if (handoff && stageHandoffAdmitsTarget(store, subject, source, step)) return [{
-      sourceStepId, sourceRevision, status: "accepted", receiptId: handoff.record.id,
+      ...basis, status: "accepted", receiptId: handoff.record.id,
     }];
-    return [{ sourceStepId, sourceRevision, status: source.status === "succeeded" ? "awaiting_acceptance" : "awaiting_source" }];
+    return [{ ...basis, status: source.status === "succeeded" ? "awaiting_acceptance" : "awaiting_source" }];
   });
 }
 
