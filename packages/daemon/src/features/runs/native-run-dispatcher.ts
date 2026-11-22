@@ -20,6 +20,7 @@ import {
   type WorkflowStepStartOwnerV1,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import { recoveryBlocked } from "../../server/app-server-recovery.js";
 import { isDeepStrictEqual } from "node:util";
 import { resolveNativeRunnerSelection } from "../../runtime/native-runners.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
@@ -192,6 +193,7 @@ async function executeNativeRunRequest(
   let workflowStartOwner: WorkflowStepStartOwnerV1 | undefined;
 
   try {
+    if (dependencies.storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
     const delegationFeatures = dependencies.runtimeSupervisor.getHarnessFeatures().delegations;
     if (delegationFeatures.mode !== "off" && (delegationFeatures.rootBudget?.tokenBudget !== undefined
       || delegationFeatures.rootBudget?.costBudgetMicros !== undefined)) {
@@ -269,7 +271,8 @@ async function executeNativeRunRequest(
       signal: AbortSignal.timeout(15_000) });
     preparedMemory.assertCurrent();
     if (dependencies.activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
-    // Admission can await native probes. Re-read idempotency before creating any durable execution authority.
+    // Admission can await native probes. Re-read recovery and idempotency before creating durable execution authority.
+    if (dependencies.storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
     const raced = findExistingIdempotentRunRequest(store, runRequest);
     if (raced?.linkedRunId) throw new DuplicateRunRequestError(raced.linkedRunId);
     if (raced) throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${raced.id}`);
@@ -507,6 +510,7 @@ async function executeNativeRunRequest(
       }
     };
     assertCurrentAuthority();
+    if (dependencies.storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
     const onDispatchAccepted = (acceptedAt: string): void => {
       // Workflow starts consume their durable Host gate while the workflow
       // owner is linked. The native target still reports its process-level

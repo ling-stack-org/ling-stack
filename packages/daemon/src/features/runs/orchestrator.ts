@@ -348,17 +348,12 @@ export function executeRunRequest(
       writeRunPreparationFailure(sink, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
       return undefined;
     }
-    if (storeRegistry.recoveryBlocksDispatch(request.workspaceCwd ?? request.cwd)) {
-      const error = recoveryBlocked();
-      writeRunPreparationFailure(sink, error.statusCode, { error: error.code, message: error.message });
-      return undefined;
-    }
-    const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
-    if (!effectiveRequest.executionBinding && isExternalExecutionEngineId(effectiveRequest.runnerId)) {
+    if (!request.executionBinding && isExternalExecutionEngineId(request.runnerId)) {
       writeRunPreparationFailure(sink, 409, { error: "legacy_runner_migration_required",
         message: "Endpoint execution is retired. Select a native profile before starting this engine." });
       return undefined;
     }
+    const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
     if (effectiveRequest.executionBinding?.kind === "native_profile") {
       if (options.delegatedExecution) {
         writeRunPreparationFailure(sink, 409, { error: "delegation.native_execution_unsupported",
@@ -714,6 +709,7 @@ async function executeAdmittedRunRequest(
       throw new HttpError(409, "continuation_identity_conflict", "A Run cannot use two continuation owners.");
     }
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
+    if (storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
     await ensureWorkspaceStateWritableForRun(workspaceCwd);
     await ensureStartupReadyForRun({
       cwd: workspaceCwd,
