@@ -1767,6 +1767,7 @@ export class SqliteRunStore implements RunStore {
         getChannelWorkflowStep: (id) => this.getChannelWorkflowStep(id),
         listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
         getWorkItemEvidence: (id) => this.getWorkItemEvidence(id),
+        listWorkItemEvidence: (options) => this.listWorkItemEvidence(options),
         getTask: (id) => this.getTask(id),
         getAutomationRun: (id) => this.getAutomationRun(id),
         getRun: (id) => this.getRun(id),

@@ -286,9 +286,13 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       ] } }, [...deliberationSettlementFields, "decision"]), result };
     case "workItem/coordination/start":
     case "workItem/coordination/close":
-    case "workItem/question/ask":
-    case "workItem/question/reply":
       return { params: objectWith(collaborationAppend, ["workItemId"]), result };
+    case "workItem/question/ask":
+      return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, waitingStepId: stringSchema,
+        respondentStepId: stringSchema, question: stringSchema, deadlineAt: stringSchema }, ["workItemId"]), result };
+    case "workItem/question/reply":
+      return { params: objectWith({ ...collaborationAppend, questionId: stringSchema, expectedQuestionRevision: integerSchema,
+        answer: stringSchema }, ["workItemId"]), result };
     case "workItem/message/send":
       return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, targetStepId: stringSchema,
         expectedTargetRevision: stringSchema, body: stringSchema }, ["workItemId"]), result };

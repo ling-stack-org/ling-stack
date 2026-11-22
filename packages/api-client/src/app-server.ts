@@ -108,6 +108,8 @@ import type {
   LingAppServerStageDeliberationStartParams,
   LingAppServerStageHandoffParams,
   LingAppServerStageMessageSendParams,
+  LingAppServerStageQuestionAskParams,
+  LingAppServerStageQuestionReplyParams,
   LingAppServerWorkItemPlanChangeRequestParams,
   LingAppServerWorkItemPlanChangeWithdrawParams,
   LingAppServerWorkItemPlanChangeResult,
@@ -631,6 +633,16 @@ export class LingAppServerClient {
   async sendWorkItemStageMessage(params: LingAppServerStageMessageSendParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
     await this.connect();
     return await this.request("workItem/message/send", params);
+  }
+
+  async askWorkItemStageQuestion(params: LingAppServerStageQuestionAskParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/question/ask", params);
+  }
+
+  async replyToWorkItemStageQuestion(params: LingAppServerStageQuestionReplyParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/question/reply", params);
   }
 
   async requestWorkItemPlanChange(params: LingAppServerWorkItemPlanChangeRequestParams): Promise<LingAppServerWorkItemPlanChangeResult> {

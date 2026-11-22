@@ -46,6 +46,7 @@ import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
 import { stageHandoffAdmitsTarget } from "../../work-item-workflow-handoff.js";
+import { listWorkItemStageQuestions } from "../../work-item-workflow-question.js";
 import { planStageBallotKey } from "../../proposed-plan-mutation.js";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
@@ -58,6 +59,7 @@ export interface SqliteWorkItemStorePorts {
   readonly getChannelWorkflowStep: RunStore["getChannelWorkflowStep"];
   readonly listChannelWorkflowSteps: RunStore["listChannelWorkflowSteps"];
   readonly getWorkItemEvidence: RunStore["getWorkItemEvidence"];
+  readonly listWorkItemEvidence: RunStore["listWorkItemEvidence"];
   readonly getTask: RunStore["getTask"];
   readonly getAutomationRun: RunStore["getAutomationRun"];
   readonly getRun: RunStore["getRun"];
@@ -755,6 +757,11 @@ export class SqliteWorkItemStore {
     }
     const scopedHolds = item.holds.filter(hold => hold.blocksNewAdmission && hold.workflowStepIds);
     if (step && scopedHolds.some(hold => hold.workflowStepIds!.includes(step.id))) return "work_item_plan_change_pending";
+    if (step?.metadata?.planStageId && item.planRevision) {
+      const unanswered = listWorkItemStageQuestions(this.ports, item.id, item.planRevision, step.id).filter(result => !result.reply);
+      if (unanswered.some(result => Date.parse(result.question.deadlineAt) <= Date.now())) return "work_item_stage_question_overdue";
+      if (unanswered.length) return "work_item_stage_question_pending";
+    }
     if (step && binding.retainedStageResults?.some(retained => {
       if (retained.targetStepId !== step.id) return false;
       const current = this.readRetainedStageResult(retained.sourceWorkflowId, retained);

@@ -164,6 +164,18 @@ export async function runLingAppServerMcp(
       inputSchema: z.strictObject({ ...planChange, targetStepId: objectId, expectedTargetRevision: objectId, body: z.string().min(1).max(1200) }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.sendWorkItemStageMessage(params)));
+    if (methods.has("workItem/question/ask")) server.registerTool("ling_stage_question_ask", {
+      description: "Ask an assigned stage a question and hold the waiting stage's admission until the answer is recorded.",
+      inputSchema: z.strictObject({ ...planChange, waitingStepId: objectId, respondentStepId: objectId,
+        deadlineAt: objectId, question: z.string().min(1).max(1200) }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.askWorkItemStageQuestion(params)));
+    if (methods.has("workItem/question/reply")) server.registerTool("ling_stage_question_reply", {
+      description: "Record an answer for a current Plan stage question and recheck the waiting stage.",
+      inputSchema: z.strictObject({ workItemId: objectId, questionId: objectId, expectedQuestionRevision: z.number().int().positive(),
+        expectedWorkItemRevision: z.number().int().positive(), answer: z.string().min(1).max(1200), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.replyToWorkItemStageQuestion(params)));
     const plan = { threadId: objectId, planId: objectId, expectedRevision: z.number().int().positive() };
     if (methods.has("plan/refine")) server.registerTool("ling_plan_refine", {
       description: "Create the next draft from a Ling Plan at its current revision.",

@@ -6,6 +6,8 @@ import {
   DEFAULT_WORKSPACE_ID,
   WORK_ITEM_COLLABORATION_CONTENT_PREFIX,
   WORKFLOW_STAGE_HANDOFF_ID_PREFIX,
+  WORKFLOW_STAGE_QUESTION_ID_PREFIX,
+  WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX,
   UserInputStoreError,
   evaluateDeliberationTrigger,
   type ControlPlaneDomain,
@@ -117,6 +119,7 @@ import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github
 import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import { sendWorkItemStageMessage, WORKFLOW_STAGE_MESSAGE_ID_PREFIX } from "../features/work-items/stage-messages.js";
+import { askWorkItemStageQuestion, replyToWorkItemStageQuestion } from "../features/work-items/stage-questions.js";
 import { readWorkItemWorkflowBinding, readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
 import { enqueueWorkItemFeedback } from "../features/learning/work-item-feedback.js";
 import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
@@ -933,9 +936,11 @@ class RpcConnection {
       case "workItem/message/list":
         return this.readCollaboration("message", params);
       case "workItem/question/ask":
-        return this.appendCollaboration("question", "created", params);
+        return readParamsRecord(params).waitingStepId === undefined
+          ? this.appendCollaboration("question", "created", params) : this.settleStageQuestion("ask", params);
       case "workItem/question/reply":
-        return this.appendCollaboration("question", "replied", params);
+        return readParamsRecord(params).questionId === undefined
+          ? this.appendCollaboration("question", "replied", params) : this.settleStageQuestion("reply", params);
       case "workItem/question/read":
         return this.readCollaboration("question", params);
       case "workItem/handoff/accept":
@@ -1355,7 +1360,8 @@ class RpcConnection {
         limit: readOptionalIntegerField(record, "limit"),
       }));
       if (!this.grant) return { cwd, ...result };
-      const records = result.records.filter(entry => !entry.id.startsWith(WORKFLOW_STAGE_MESSAGE_ID_PREFIX)).map(entry => {
+      const privatePrefixes = [WORKFLOW_STAGE_MESSAGE_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX];
+      const records = result.records.filter(entry => !privatePrefixes.some(prefix => entry.id.startsWith(prefix))).map(entry => {
         if (this.grant?.subject.kind !== "workItem") return entry;
         if (entry.kind !== "handoff" || !entry.id.startsWith(WORKFLOW_STAGE_HANDOFF_ID_PREFIX)) return entry;
         const payload = isRecord(entry.payload) && typeof entry.payload.reason === "string"
@@ -1487,6 +1493,30 @@ class RpcConnection {
       body: readStringField(record, "body"), idempotencyKey: readStringField(record, "idempotencyKey"),
     }, new Date().toISOString());
     if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+    return { cwd, ...receipt };
+  }
+
+  private settleStageQuestion(action: "ask" | "reply", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const basis = {
+      workItemId: readStringField(record, "workItemId"), idempotencyKey: readStringField(record, "idempotencyKey"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+    };
+    const now = new Date().toISOString();
+    if (action === "reply") appServerRecoveryFor(this.context.config, store)?.assertReady();
+    const { event, ...receipt } = action === "ask" ? askWorkItemStageQuestion(store, {
+      ...basis, planRevision: readStringField(record, "planRevision"), waitingStepId: readStringField(record, "waitingStepId"),
+      respondentStepId: readStringField(record, "respondentStepId"), question: readStringField(record, "question"),
+      deadlineAt: readStringField(record, "deadlineAt"),
+    }, now) : replyToWorkItemStageQuestion(store, {
+      ...basis, questionId: readStringField(record, "questionId"), answer: readStringField(record, "answer"),
+      expectedQuestionRevision: readIntegerField(record, "expectedQuestionRevision", "expectedQuestionRevision"),
+    }, now);
+    if (event) {
+      this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (action === "reply") this.context.taskSupervisor.poke(cwd);
+    }
     return { cwd, ...receipt };
   }
 
@@ -3579,6 +3609,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     if (event.action.includes("evidence")) return "workItem/evidence/updated";
     if (event.action.includes("control")) return "workItem/control/updated";
     if (event.action === "work_item.collaboration.message.created" && event.data.visibility === "participants") return "workItem/message/updated";
+    if (event.action.startsWith("work_item.collaboration.question.") && event.data.visibility === "participants") return "workItem/question/updated";
     if (event.action.includes("collaboration")) return "workItem/collaboration/updated";
     if (event.action.includes("delivery")) return "workItem/delivery/updated";
     if (event.action.includes("feedback")) return "workItem/feedback/received";

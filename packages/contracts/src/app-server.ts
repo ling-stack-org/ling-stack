@@ -964,6 +964,28 @@ export interface LingAppServerStageMessageSendParams {
   readonly idempotencyKey: string;
 }
 
+export interface LingAppServerStageQuestionAskParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly planRevision: string;
+  readonly expectedWorkItemRevision: number;
+  readonly waitingStepId: string;
+  readonly respondentStepId: string;
+  readonly question: string;
+  readonly deadlineAt: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerStageQuestionReplyParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly questionId: string;
+  readonly expectedQuestionRevision: number;
+  readonly expectedWorkItemRevision: number;
+  readonly answer: string;
+  readonly idempotencyKey: string;
+}
+
 export interface LingAppServerWorkItemCollaborationAppendResult {
   readonly status: "appended" | "replayed";
   readonly record: LingAppServerWorkItemCollaborationRecord;
