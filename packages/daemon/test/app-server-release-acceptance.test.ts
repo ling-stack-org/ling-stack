@@ -61,7 +61,7 @@ import type {
   ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
 import { LingAppServerClient, type LingAppServerSocket, type LingDaemonClient } from "@ling-stack/api-client";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, resolveStoragePaths, toRuntimeAttemptFence, type LingThreadGoal, type RunIntervention, type SqliteRunStore } from "@ling-stack/core";
+import { createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, resolveStoragePaths, toRuntimeAttemptFence, type LingThreadGoal, type RunIntervention, type SecretResolver, type SqliteRunStore } from "@ling-stack/core";
 import { WebSocket } from "ws";
 import { createDaemonServer, createDefaultRunnerRegistry, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio, type DaemonConfig } from "../dist/index.js";
 import { prepareConversationSubmission } from "../dist/features/conversations/conversation-submission.js";
@@ -1752,6 +1752,128 @@ test("GitHub delivery keeps head checks across base changes and completes a Goal
   assert.equal((await complete(restored, fresh.deliveryId)).goal.status, "complete");
 });
 
+test("GitHub delivery requires current queue membership and a provider-attested merge group check", { timeout: 30_000 }, async t => {
+  const workflowPath = ".github/workflows/verify.yml";
+  const workflow = "name: Verify\non: merge_group\n";
+  const check = { name: "queue-verification", appId: 19, workflowId: 5, workflowPath,
+    workflowSha256: createHash("sha256").update(workflow).digest("hex"), basis: "merge_group" as const, coverageRefs: ["queue-integration"] };
+  const repository = "example/ling";
+  const originalBase = "b".repeat(40);
+  const advancedBase = "c".repeat(40);
+  const firstGroup = "d".repeat(40);
+  const secondGroup = "e".repeat(40);
+  const finalCommit = "f".repeat(40);
+  const tree = "1".repeat(40);
+  let head = "";
+  let base = originalBase;
+  let entryBase = originalBase;
+  let group = firstGroup;
+  let unrelatedHead = true;
+  let selectionChanges = false;
+  let checkedEvent = "push";
+  let merged = false;
+  let finalTree = "2".repeat(40);
+  const fixture = await releaseFixture(t, {
+    secretResolver: createEnvSecretResolver({ LING_QUEUE_FIXTURE_AUTH: "test-provider-credential" }),
+    githubSources: cwd => [{
+      workspaceRoot: cwd, repository, repositoryId: "73", secretRef: "env:LING_QUEUE_FIXTURE_AUTH",
+      deliveryPolicies: [{ baseRef: "main", requiredChecks: [check] }],
+    }],
+    externalWorkFetch: async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(url.origin, "https://api.github.com");
+      if (url.pathname === "/graphql") {
+        assert.equal(init?.method, "POST");
+        assert.equal(new Headers(init.headers).get("Authorization"), "Bearer test-provider-credential");
+        const request = JSON.parse(String(init.body));
+        assert.deepEqual(request.variables, { owner: "example", name: "ling", number: 13 });
+        assert.match(request.query, /mergeQueueEntry/);
+        const pullRequest = { number: 13, headRefOid: head, baseRefName: "main" };
+        const attributed = { ...pullRequest, headRefOid: unrelatedHead ? "9".repeat(40) : head };
+        return Response.json({ data: { repository: { fullDatabaseId: "73", nameWithOwner: repository,
+          pullRequest: { ...pullRequest, isInMergeQueue: true, mergeQueueEntry: {
+            id: "entry-13", baseCommit: { oid: entryBase }, headCommit: { oid: group, tree: { oid: tree } }, pullRequest: attributed,
+          } } } } });
+      }
+      const prefix = "/repos/" + repository;
+      assert.ok(url.pathname.startsWith(prefix));
+      const path = url.pathname.slice(prefix.length);
+      if (!path) return Response.json({ id: 73, full_name: repository });
+      if (path === "/pulls/13") return Response.json({
+        number: 13, title: "Queue changes", state: merged ? "closed" : "open", merged,
+        base: { sha: base, ref: "main", repo: { id: 73 } }, head: { sha: head },
+        ...(merged ? { merge_commit_sha: finalCommit } : {}),
+      });
+      if (path === "/git/ref/heads/main") return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha: base } });
+      if (path === `/git/commits/${finalCommit}`) return Response.json({ sha: finalCommit, parents: [{ sha: base }], tree: { sha: finalTree } });
+      if (path === "/actions/workflows/5/runs") {
+        const tested = url.searchParams.get("head_sha");
+        assert.equal(tested, group);
+        if (selectionChanges) group = secondGroup;
+        return Response.json({ total_count: 1, workflow_runs: [{ id: 15, workflow_id: 5, head_sha: tested, created_at: "2026-11-22T00:00:00Z",
+          run_attempt: 1, status: "completed", path: workflowPath, event: checkedEvent }] });
+      }
+      const checkUrl = `https://api.github.com${prefix}/check-runs/16`;
+      if (path === `/contents/${workflowPath}`) return Response.json({
+        type: "file", path: workflowPath, encoding: "base64", content: Buffer.from(workflow).toString("base64"),
+      });
+      if (path === "/actions/runs/15/attempts/1/jobs") return Response.json({ total_count: 1, jobs: [{
+        id: 17, run_id: 15, head_sha: selectionChanges ? firstGroup : group,
+        name: check.name, check_run_url: checkUrl, status: "completed", conclusion: "success",
+      }] });
+      if (path.startsWith("/commits/") && path.endsWith("/check-runs")) return Response.json({ total_count: 1, check_runs: [{
+        id: 16, name: check.name, head_sha: path.split("/")[2], status: "completed", conclusion: "success", url: checkUrl, app: { id: 19 },
+      }] });
+      if (path === "/actions/runs/15") return Response.json({ id: 15, run_attempt: 1 });
+      return Response.json({}, { status: 404 });
+    },
+  });
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
+  head = git("rev-parse", "HEAD");
+  const client = await fixture.connect();
+  const { workItem } = await client.call<LingAppServerWorkItemResult>("workItem/create", { sourceId: "queue", title: "Queue changes" });
+  const accepted = await client.call<LingAppServerWorkItemResult>("workItem/accept", {
+    workItemId: workItem.workItemId, expectedWorkItemRevision: Number(workItem.revision), idempotencyKey: "accept-queue",
+  });
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Verify merge queue" });
+  const { candidate } = await client.call<LingAppServerCaptureChangesResult>("changes/capture");
+  const reconcile = async () => (await client.call<LingAppServerGitHubDeliveryResult>("github/delivery/reconcile", {
+    workItemId: workItem.workItemId, threadId: thread.id, expectedWorkItemRevision: Number(accepted.workItem.revision),
+    candidateDigest: candidate.candidateDigest, repository, pullRequestNumber: 13,
+  })).delivery;
+  assert.equal((await reconcile()).checks[0]?.reason, "merge_group_membership_unavailable");
+  unrelatedHead = false;
+  assert.equal((await reconcile()).checks[0]?.reason, "applicable_check_missing");
+  checkedEvent = "merge_group";
+  const ready = await reconcile();
+  assert.equal(ready.mergeGroup?.testedCommit, firstGroup);
+  assert.equal(ready.checks[0]?.outcome, "passed");
+  selectionChanges = true;
+  await assert.rejects(reconcile(), { code: "stale_revision" });
+  selectionChanges = false;
+  base = advancedBase;
+  assert.equal((await reconcile()).checks[0]?.reason, "merge_group_membership_unavailable");
+  entryBase = advancedBase;
+  const replacement = await reconcile();
+  assert.equal(replacement.mergeGroup?.testedCommit, secondGroup);
+  assert.notEqual(replacement.mergeGroup?.membershipProofRef, ready.mergeGroup?.membershipProofRef);
+  merged = true;
+  assert.equal((await reconcile()).status, "ci_pending");
+  // Observe the current group again before testing the actual matching squash result.
+  merged = false;
+  await reconcile();
+  merged = true;
+  finalTree = tree;
+  const delivered = await reconcile();
+  assert.equal(delivered.status, "delivered");
+  assert.equal(delivered.mergedCommit, finalCommit);
+  assert.equal(delivered.checks[0]?.testedCommit, secondGroup);
+});
+
 test("Work Item creation, acceptance, evidence and collaboration retries keep one event per committed revision", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const client = await fixture.connect();
@@ -2736,7 +2858,7 @@ type ReleaseRuntime = {
 const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunStore, resolveStoragePaths };
 
 async function releaseFixture(t: TestContext, {
-  runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, wssConfig,
+  runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, secretResolver, wssConfig,
 }: {
   runner?: RunnerRegistrationInput;
   initialRuntime?: ReleaseRuntime;
@@ -2745,6 +2867,7 @@ async function releaseFixture(t: TestContext, {
   verificationRecipes?: (root: string, cwd: string) => Promise<DaemonConfig["appServerVerificationRecipes"]>;
   githubSources?: (cwd: string) => DaemonConfig["appServerGitHubSources"];
   externalWorkFetch?: typeof fetch;
+  secretResolver?: SecretResolver;
   wssConfig?: (root: string) => Promise<DaemonConfig["appServerWss"]>;
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
@@ -2764,6 +2887,7 @@ async function releaseFixture(t: TestContext, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,
     externalWorkFetch,
+    secretResolver,
     remoteReplyDispatcher: null,
     storeFactory(workspace) {
       const store = runtime.createSqliteRunStore(workspace, runtime.resolveStoragePaths(workspace, {

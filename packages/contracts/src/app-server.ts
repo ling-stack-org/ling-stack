@@ -1137,6 +1137,14 @@ export interface LingGitHubCiEvidence {
     | "merge_group_membership_unavailable" | "ambiguous_run" | "observation_window_exceeded" | "workflow_source_changed";
 }
 
+export interface LingGitHubMergeGroupEvidence {
+  readonly queueEntryId: string;
+  readonly baseCommit: string;
+  readonly testedCommit: string;
+  readonly testedTree?: string;
+  readonly membershipProofRef: string;
+}
+
 export interface LingAppServerGitHubDelivery {
   readonly deliveryId: string;
   readonly workItemId: string;
@@ -1147,6 +1155,7 @@ export interface LingAppServerGitHubDelivery {
   readonly subject: LingAppServerGitHubSubject;
   readonly baseCommit: string;
   readonly checks: readonly LingGitHubCiEvidence[];
+  readonly mergeGroup?: LingGitHubMergeGroupEvidence;
   readonly status: "ci_pending" | "ci_failed" | "delivery_pending" | "delivered";
   readonly mergedCommit?: string;
   readonly observedAt: string;

@@ -37,7 +37,7 @@ export async function reconcileGitHubDelivery(
   if (candidate.coverage !== "complete" || candidate.totalFileCount !== 0 || candidate.digest !== candidateDigest) {
     throw new HttpError(409, "candidate_stale", "Delivery requires the current committed candidate with full capture coverage.");
   }
-  const observation = await observeGitHubDelivery(client, pullRequestNumber);
+  const observation = await observeGitHubDelivery(client, pullRequestNumber, previous?.payload as LingAppServerGitHubDelivery | undefined);
   if (observation.subject.headSha !== candidate.headSha || (await capture()).digest !== candidateDigest) {
     throw new HttpError(409, "candidate_stale", "The committed candidate differs from the observed pull request head.");
   }

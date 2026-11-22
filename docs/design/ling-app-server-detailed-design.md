@@ -258,6 +258,8 @@ sequenceDiagram
 
 `changes/read` 按当前候选 digest 返回文件分页。`changes/apply/preview` 接受已收敛的本工作区 Turn 和 `undo` 或 `reapply`，返回原始 Turn 的不可变变更视图和预览 revision。`changes/apply` 以 operator 凭据、已确认的 revision 与幂等键进入原有工作区恢复路径，应用范围覆盖该 Turn 的原始可恢复改动。
 
+支持 `development.changeTransfer` 的 operator 可以从项目 checkout 或 `sourceWorktree` 采集候选。`changes/read` 给可应用文本差异返回 hunk ID。`changes/apply/preview` 的 `action: "apply"` 接受候选摘要、选中的 hunk ID 和目标托管工作树。预览绑定来源与目标的目录身份、候选、当前写入范围和文件摘要。创建或删除文件需要选中整份文件补丁。转移保留目标中其他未提交改动，检查目标选中文件仍符合源基线。重启后根据磁盘状态确认原回执。
+
 候选引用包括 `workspaceId`、`worktreeId`、`baseCommit`、`headCommit`、`candidateDigest`、相关文件范围与覆盖状态。Daemon 从 Git 事实及授权范围内的工作树内容计算候选，包括声明要交付的未暂存和未跟踪改动，复用 Code Assessment 的双次采集和范围保护。文件移动、截断、敏感或不可读内容有明确的覆盖原因。发布证据绑定当前候选和实际输入，审查的脱敏视图另带其自身 digest。
 
 ```ts

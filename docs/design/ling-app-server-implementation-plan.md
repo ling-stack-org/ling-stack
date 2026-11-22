@@ -20,6 +20,7 @@
 - 内置 `init-project-instructions` 和 `verify-current-changes` 技能通过 CLI 预览项目约定、捕获候选、生成计划、启动检查并读取状态。应用初始化草稿需要当前预览 revision 和 operator 授权。
 - 工作区设置可以显式登记仓库内的 `CLAUDE.md` 和带 `paths` frontmatter 的 `.claude/rules/*.md`。Host 在 Turn 准备时按目标路径读取并封存 digest，运行中同样要求规则先呈现给模型，再允许写入。
 - `changes/read` 以候选 digest 分页返回受限 diff 和排除原因。`changes/apply/preview` 与 `changes/apply` 复用 Turn 的不可变变更快照、工作区 fence、幂等收据和重启恢复，候选或工作区漂移会拒绝旧预览。
+- 候选 hunk 可从一个托管工作树转移到同仓库的另一个托管工作树。Daemon 验收覆盖选中部分修改、创建和删除文件、目标无关 WIP、目标候选漂移，以及写入后回执提交失败再重启的对账。
 - 普通 Pi 会话进入新目录时可发现并封存逐级项目规则。验收验证首次写入等待模型收到子目录规则、第二次写入生效，以及重启后从 Thread 游标读取原规则凭据。
 - Host 登记的 Verify 配方可以选择受影响路径，并把独立 verifier source 的摘要、coverage 和 producer refs 封存到每个检查结果。
 - 复核工作台的「验证」页使用和 App Server 相同的 Verify operation。浏览器验收在隔离仓库中从 Web 触发已登记的 Chromium 检查，读取实际断言输出，刷新后恢复原结果并显示候选漂移。
@@ -41,7 +42,7 @@
 | C2/F2 版本兼容 | 用 `v0.6.1@3fe77440e` 源码构建在 macOS 上创建 Thread、Turn、待决审批和游标，候选 Daemon 接手原 SQLite，旧 SDK 可读取 Thread 和处置后的审批。候选 SDK 向旧 `/rpc/stream` 尝试提交时，在协商阶段返回 `protocol_version_unsupported`。候选 Daemon 的 `/rpc/stream` 仅提供原有方法。测试覆盖 App Server 专属方法拒绝、旧客户端的 Run 启动和取消。候选 CLI probe 和本机 Codex MCP 已通过。v0.6.1 未提供 App Server 协议。发布安装包、远程连接及回退对账另行验收。 |
 | E1 Verify 与用户输入恢复 | Verify 按幂等键在 SQLite 写事务内受理。两个连接同时提交复用原操作及其事件。取消受理与停止意图一起写入，重启后可按原键读取回执。`verify/status` 记录确认退出后的 `cancelled`。执行器无法确认停止时，返回 `unknown` 并附 `verification_cancellation_unconfirmed`。已绑定工作项的 Verify 状态和 Control Plane 事件同事务提交。用户提问的 authority、答案 CAS、投递收据和 `pending/answered/cancelled` 事件也在重启后保持同一请求身份。 |
 | E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。Verify 结果用绑定当前候选的 `verification_passed` 条件完成 Goal，独立 verifier basis、coverage 和 producer refs 不匹配时会被拒绝。Review 已验证候选绑定、发现项处置和 freshness 持久化。`simplify/start` 与 `simplify/status` 支持只读简化审查及重启重放。`github_delivered` 要求当前已提交候选、同 Thread 与 Work Item、已接受的检查政策和 Host 重新核对的实际合并结果。 |
-| O4 GitHub 证据核对 | 配置注册仓库、不可变仓库 ID 与分支政策。对已受理工作项重读 PR、实时 base ref、集成提交父链、检查 App、冻结的 workflow 文件、实际测试对象和最新 attempt。夹具覆盖同名异源检查、工作流改动、保持 head 更新 base、迟到尝试和合并后重新核对。工作项保留以前的观察和稳定交付 ID。GitHub merge queue 与实际仓库合并保护仍需验收。 |
+| O4 GitHub 证据核对 | 配置注册仓库、不可变仓库 ID 与分支政策。对已受理工作项重读 PR、实时 base ref、集成提交父链、检查 App、冻结的 workflow 文件、实际测试对象和最新 attempt。队列证据同时确认 GitHub 的 Queue Entry、当前 base、PR head 与 `merge_group` 检查。夹具覆盖队列重建、实际合并树不同及匹配后对账。工作项保留以前的观察和稳定交付 ID。队列准入、实际仓库保护与执行时合并验收仍待完成。 |
 | O1/O8/O9 接单、控制和协作 | 工作项创建、控制、接单、证据和协作写入各自与对应事件同事务提交。两个客户端验证了幂等、冲突、写入失败回滚和游标回放。阶段运行、交接、裁决与恢复的联合验收仍待下方矩阵。 |
 | O7 定时协调轮次 | 已配置的 Automation 在同一事务中写入终态回执、轮次和事件。实际调度器从重启前的时段恢复。故障注入验证提交失败不会留下回执或轮次。回执重放复用原轮次。截止后生成简报和关闭事件，暂停的工作项产生跳过回执。该用例启动的 Runner 数量为零。 |
 | O1 首次会话派发 | `workItem/accept` 可选定主执行会话，接单和首发意图同事务保存。正常会话 Run 创建核对该意图并原子更新 Work Item。脚本化 Pi Provider 验证了重启、两个并发受理、暂停恢复、实际派发一次，以及当前绑定阻止删除会话。Codex MCP 已提供同一创建和受理入口。 |
@@ -53,7 +54,7 @@
 | 工作包 | 代码或验收差距 |
 | --- | --- |
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入，审批和用户答复仍需按不同真实宿主与远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
-| D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复和工作台浏览器验证报告已接入。仍需选中 hunk、跨工作树应用和各发行平台验证。 |
+| D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
 | F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。仍需跨 Agent Workflow 的执行归属和预算承接。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
 | O1、O3–O9 | 已验证 GitHub 签名 webhook、独立轮询和显式接单可以归并到同一工作项。Webhook 入箱和待处理目标同事务提交。已登记的自动接单策略适用免打扰、并发和启动额度，由现有 Automation worker 以原受理键提交 Ling Agent 只读会话。Automations 显示生效策略及评估回执。Channel、设备和已有 AutomationRun 的统一自治接入仍待完成。合并队列、经验和设备反馈、阶段简报、在途改计划、交接、审议裁决、跨 Run 预算及原 Workflow 的联合 UI 验收仍待完成。 |
 | G | 自研切换和回退日志对账、签名安装产物、远程 WSS 和三个真实 Provider 自研试点。macOS 打包预检仍缺当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检达到评审条件，真实试点仍需按 Framework Assurance 准入。 |

@@ -26,23 +26,26 @@ export function gitHubReadClient(context: Pick<DaemonContext, "config" | "secret
     throw new HttpError(403, "github_subject_unavailable", "The GitHub repository is unavailable in this workspace.");
   }
   const fetcher = context.externalWorkFetch ?? globalThis.fetch;
-  async function getJson(path: string): Promise<unknown> {
-      let response: Response;
-      try {
-        response = await fetcher(`https://api.github.com/repos/${repository}${path}`, {
-          headers: { Accept: "application/vnd.github+json", "User-Agent": "ling-stack-app-server",
-            ...(secret?.value ? { Authorization: `Bearer ${secret.value}` } : {}) },
-          redirect: "error", signal: AbortSignal.timeout(8000),
-        });
-      } catch {
-        throw new HttpError(502, "github_observation_unavailable", "GitHub could not confirm the requested object.");
-      }
-      if (!response.ok) {
-        throw new HttpError(response.status === 404 || response.status === 403 ? 404 : 502,
-          "github_observation_unavailable", "GitHub could not confirm the requested object.");
-      }
-      return await response.json().catch(() => undefined);
+  async function requestJson(url: string, body?: string): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await fetcher(url, {
+        ...(body !== undefined ? { method: "POST", body } : {}),
+        headers: { Accept: "application/vnd.github+json", "User-Agent": "ling-stack-app-server",
+          ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+          ...(secret?.value ? { Authorization: `Bearer ${secret.value}` } : {}) },
+        redirect: "error", signal: AbortSignal.timeout(8000),
+      });
+    } catch {
+      throw new HttpError(502, "github_observation_unavailable", "GitHub could not confirm the requested object.");
+    }
+    if (!response.ok) {
+      throw new HttpError(response.status === 404 || response.status === 403 ? 404 : 502,
+        "github_observation_unavailable", "GitHub could not confirm the requested object.");
+    }
+    return await response.json().catch(() => undefined);
   }
+  const getJson = (path: string) => requestJson(`https://api.github.com/repos/${repository}${path}`);
   return {
     source,
     async get(path: string): Promise<Record<string, unknown>> {
@@ -56,6 +59,11 @@ export function gitHubReadClient(context: Pick<DaemonContext, "config" | "secret
         throw new HttpError(502, "github_observation_invalid", "GitHub returned an invalid collection.");
       }
       return body;
+    },
+    async query(query: string, variables: Record<string, string | number>): Promise<Record<string, unknown> | undefined> {
+      if (!secret?.value) return undefined;
+      const response = await requestJson("https://api.github.com/graphql", JSON.stringify({ query, variables }));
+      return isRecord(response) && !response.errors && isRecord(response.data) ? response.data : undefined;
     },
   };
 }
