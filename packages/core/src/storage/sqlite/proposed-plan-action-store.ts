@@ -1,7 +1,7 @@
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { createProposedPlanArtifactId, type ProposedPlanArtifact, type RunStore } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { assertProposedPlanRevision, assertProposedPlanSnapshot, parseProposedPlanStageDecision, proposedPlanHasAcceptance, ProposedPlanMutationError,
+import { assertProposedPlanRevision, assertProposedPlanSnapshot, parseProposedPlanStageDecision, planStageBallotKey, proposedPlanHasAcceptance, ProposedPlanMutationError,
   type ApplyProposedPlanArtifactActionInput, type ProposedPlanArtifactActionResult, type ProposedPlanWorkflowStepPreviewInput } from "../../proposed-plan-mutation.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -67,7 +67,9 @@ export class SqliteProposedPlanActionStore {
       if (steps.some(step => typeof step !== "string" || !step.trim())) {
         throw new ProposedPlanMutationError("bad_workflow_steps", "Workflow steps must be nonempty strings.", 400);
       }
-      const order = orderWorkflowStages(steps, input.workflowStepPreviews ?? []);
+      const previews = input.workflowStepPreviews ?? [];
+      const order = orderWorkflowStages(steps, previews);
+      const ballots = planStageBallots(canonicalPlan.id, previews);
       const workflow = this.ports.createChannelWorkflow({ channelId: thread.channelId, title: workflowTitle,
         objective: steps.join("\n"), status: "draft", createdBy: input.createdBy || "local-user",
         metadata: { sourceMessageId: plan.sourceMessageId, sourceProposedPlanId: plan.id } }, now);
@@ -75,20 +77,27 @@ export class SqliteProposedPlanActionStore {
       let firstStepId: string | undefined;
       for (const index of order) {
         const title = steps[index]!;
-        const preview = input.workflowStepPreviews?.[index];
+        const preview = previews[index];
+        const ballot = preview?.stageId ? ballots.get(preview.stageId) : undefined;
+        const dependencies = preview?.dependsOnStageIds?.filter(id => !preview.requiredDecision?.ballot?.voterStageIds.includes(id));
         const ownerId = preview?.ownerId || input.toParticipantId || "local-user";
         const step = this.ports.createChannelWorkflowStep({ workflowId: workflow.id, position: index + 1,
           title: steps.length > 1 ? title : `Implement ${workflowTitle}`,
           prompt: [title, "", `Source proposed plan: ${canonicalPlan.id}`,
-            canonicalPlan.sourceMessageId ? `Source message: ${canonicalPlan.sourceMessageId}` : ""].filter(Boolean).join("\n"),
+            canonicalPlan.sourceMessageId ? `Source message: ${canonicalPlan.sourceMessageId}` : "",
+            ballot?.prompt].filter(Boolean).join("\n"),
           toParticipantId: ownerId, toParticipantLabel: preview?.ownerLabel || input.toParticipantLabel || "Unassigned",
           participantAuthority: createWorkflowParticipantAuthorityV1({ kind: "workflow_definition", origin: "proposed_plan",
             participantId: ownerId, sourceId: canonicalPlan.id }), status: "queued", metadata: {
               sourceMessageId: canonicalPlan.sourceMessageId,
               ...(preview?.stageId ? { planStageId: preview.stageId } : {}),
-              ...(preview?.dependsOnStageIds?.length ? { dependsOnStepIds: preview.dependsOnStageIds.map(id => stepIds.get(id)!) } : {}),
+              ...(dependencies?.length ? { dependsOnStepIds: dependencies.map(id => stepIds.get(id)!) } : {}),
               ...(preview?.requiredDecision ? { requiredPlanDecision: preview.requiredDecision } : {}),
               ...(preview?.requiredTools ? { requiredTools: preview.requiredTools } : {}),
+              ...(ballot ? { planBallotKey: ballot.key, requiredTools: [], policy: {
+                onRunFailed: "skip_if_optional", onRunCancelled: "skip_if_optional",
+                onApprovalDenied: "skip_if_optional", retryable: false,
+              } } : {}),
             } }, now);
         if (preview?.stageId) stepIds.set(preview.stageId, step.id);
         if (index === 0) firstStepId = step.id;
@@ -162,6 +171,37 @@ export class SqliteProposedPlanActionStore {
       throw error;
     }
   }
+}
+
+function planStageBallots(planId: string, previews: readonly ProposedPlanWorkflowStepPreviewInput[]) {
+  const stages = new Map(previews.map(preview => [preview.stageId, preview]));
+  const result = new Map<string, { readonly key: string; readonly prompt: string }>();
+  const invalid = () => new ProposedPlanMutationError("bad_workflow_stage_ballot",
+    "Each ballot needs distinct assigned, tool-free voter stages among the decision stage's prerequisites.", 400);
+  for (const preview of previews) {
+    const decision = preview.requiredDecision;
+    if (!preview.stageId || !decision?.ballot) continue;
+    const key = planStageBallotKey(planId, preview.stageId, decision);
+    const participantIds = new Set<string>();
+    const roster = new Set(decision.ballot.voterStageIds);
+    for (const id of roster) {
+      const voter = stages.get(id);
+      if (!voter?.ownerId || !preview.dependsOnStageIds?.includes(id) || voter.requiredTools?.length
+        || voter.requiredDecision || participantIds.has(voter.ownerId) || result.has(id)) throw invalid();
+      const predecessors = new Set(voter.dependsOnStageIds);
+      for (const predecessor of predecessors) {
+        if (roster.has(predecessor)) throw invalid();
+        for (const dependency of stages.get(predecessor)?.dependsOnStageIds ?? []) predecessors.add(dependency);
+      }
+      participantIds.add(voter.ownerId);
+      result.set(id, { key, prompt: [
+        "Record your independent vote on the accepted Plan decision.", decision.question,
+        `Options: ${JSON.stringify(decision.options)}`,
+        `Return only JSON with ballotKey "${key}", option (one exact option or null to abstain), and a brief rationale.`,
+      ].join("\n") });
+    }
+  }
+  return result;
 }
 
 function orderWorkflowStages(titles: readonly string[], previews: readonly ProposedPlanWorkflowStepPreviewInput[]): readonly number[] {

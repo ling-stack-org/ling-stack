@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ProposedPlanStageDecision, ProposedPlanWorkflowStepPreview } from "@ling-stack/contracts";
 import type { CreateProposedPlanArtifactInput, ProposedPlanArtifact, UpdateProposedPlanArtifactInput } from "./run-types.js";
 
@@ -40,9 +41,26 @@ export function parseProposedPlanStageDecision(value: unknown): ProposedPlanStag
     && Array.isArray(decision.options) && decision.options.length >= 2 && decision.options.length <= 12
     && decision.options.every(option => typeof option === "string" && option.trim() === option && option.length > 0 && option.length <= 200)
     && new Set(decision.options).size === decision.options.length) {
-    return { question: decision.question, options: decision.options };
+    const ballot = decision.ballot;
+    if (ballot !== undefined && (!ballot || !Array.isArray(ballot.voterStageIds)
+      || ballot.voterStageIds.length < 2 || ballot.voterStageIds.length > 12
+      || !ballot.voterStageIds.every(id => typeof id === "string" && id.length > 0 && id.length <= 64)
+      || new Set(ballot.voterStageIds).size !== ballot.voterStageIds.length
+      || !Number.isInteger(ballot.quorum) || ballot.quorum < 2 || ballot.quorum > ballot.voterStageIds.length)) {
+      throw new ProposedPlanMutationError("bad_workflow_stage_ballot", "A ballot needs distinct voter stages and a quorum within the voter roster.", 400);
+    }
+    if (decision.trigger !== undefined && decision.trigger !== "when_ready") {
+      throw new ProposedPlanMutationError("bad_workflow_stage_decision", "Choose when_ready for automatic opening of the decision round.", 400);
+    }
+    return { question: decision.question, options: decision.options, ...(ballot ? { ballot } : {}),
+      ...(decision.trigger ? { trigger: decision.trigger } : {}) };
   }
   throw new ProposedPlanMutationError("bad_workflow_stage_decision", "A required decision needs a question and 2–12 distinct options.", 400);
+}
+
+export function planStageBallotKey(planId: string, stageId: string, decision: ProposedPlanStageDecision): string {
+  return createHash("sha256").update(JSON.stringify([planId, stageId, decision.question, decision.options,
+    decision.ballot?.voterStageIds, decision.ballot?.quorum])).digest("hex");
 }
 
 export const proposedPlanContentFields = ["channelId", "goalId", "sourceAgentId", "ownerAgentId", "sourceTurnId",

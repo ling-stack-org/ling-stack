@@ -51,7 +51,8 @@ const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
 const planWorkflowStep = objectWith({ title: stringSchema, stageId: stringSchema, dependsOnStageIds: stringArraySchema,
   ownerId: stringSchema, ownerLabel: stringSchema, requiredTools: stringArraySchema,
-  requiredDecision: objectWith({ question: stringSchema, options: stringArraySchema }, ["question", "options"]) }, ["title"]);
+  requiredDecision: objectWith({ question: stringSchema, options: stringArraySchema, trigger: { enum: ["when_ready"] },
+    ballot: objectWith({ voterStageIds: stringArraySchema, quorum: integerSchema }, ["voterStageIds", "quorum"]) }, ["question", "options"]) }, ["title"]);
 const journalFields = { id: stringSchema, recordedAt: stringSchema, pending: booleanSchema };
 const journalRequired = ["id", "kind", "recordedAt", "pending"];
 const journalEntry = { oneOf: [

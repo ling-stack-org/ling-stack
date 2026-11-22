@@ -298,6 +298,8 @@ export interface ProposedPlanWorkflowStepPreview {
 export interface ProposedPlanStageDecision {
   readonly question: string;
   readonly options: readonly string[];
+  readonly ballot?: { readonly voterStageIds: readonly string[]; readonly quorum: number };
+  readonly trigger?: "when_ready";
 }
 
 export interface LingThread {

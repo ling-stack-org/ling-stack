@@ -1,5 +1,6 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
 import { dispatchGitHubIntake, processGitHubWebhookIntake } from "./server/app-server-github-intake.js";
+import { openReadyWorkItemStageDeliberations } from "./server/app-server-collaboration.js";
 import { HttpError } from "./errors.js";
 import { isRecord } from "./shared/validation.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
@@ -910,17 +911,21 @@ export function createDaemonServer(
     webResolveHostAddresses,
     afterRunTerminal: afterChannelRunTerminal,
   };
-  taskSupervisor = new TaskSupervisor(storeRegistry, (store, workflowId) => orchestrateChannelWorkflow({
-    store, cwd: store.paths.cwd, workflowId, secretResolver, runnerRegistry,
-    resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
-      { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
-    isolationHost: { enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
-      toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
-      maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
-        ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
-    validateRunRequest: request => { resolveProviderForRun(store, request, secretResolver); },
-    startRun: createStartOrchestratedRun(channelTurnDispatchOptions, store, store.paths.cwd),
-  }), async (store, run) => {
+  taskSupervisor = new TaskSupervisor(storeRegistry, async (store, workflowId) => {
+    if (storeRegistry.recoveryBlocksDispatch(store.paths.cwd)) return;
+    for (const event of openReadyWorkItemStageDeliberations(store, workflowId, new Date().toISOString())) controlPlaneEvents.publish(event);
+    return orchestrateChannelWorkflow({
+      store, cwd: store.paths.cwd, workflowId, secretResolver, runnerRegistry,
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+        { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+      isolationHost: { enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+        toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+        maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+          ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
+      validateRunRequest: request => { resolveProviderForRun(store, request, secretResolver); },
+      startRun: createStartOrchestratedRun(channelTurnDispatchOptions, store, store.paths.cwd),
+    });
+  }, async (store, run) => {
     const queued = maybeQueueGoalContinuation({ terminalRun: run, store, activeRuns });
     const pending = queued ?? store.listRunInterventions({ sourceRunId: run.id, status: "queued", limit: 100 })
       .find(item => item.requestedBy === "system" && item.idempotencyKey?.startsWith("goal_auto_continue:"));

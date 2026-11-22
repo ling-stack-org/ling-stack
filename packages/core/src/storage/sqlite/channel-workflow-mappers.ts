@@ -272,6 +272,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     graphNodeId: readOptionalStringValue(record.graphNodeId),
     planStageId: readOptionalStringValue(record.planStageId),
     requiredPlanDecision: record.requiredPlanDecision === undefined ? undefined : parseProposedPlanStageDecision(record.requiredPlanDecision),
+    planBallotKey: readOptionalStringValue(record.planBallotKey),
     dependsOnStepIds: readOptionalStringListValue(record.dependsOnStepIds),
     branchGroupId: readOptionalStringValue(record.branchGroupId),
     joinGroupId: readOptionalStringValue(record.joinGroupId),

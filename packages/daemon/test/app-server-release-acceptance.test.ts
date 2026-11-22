@@ -3,6 +3,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { chmod, copyFile, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
@@ -1222,7 +1223,7 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
   await second.stop();
 });
 
-test("the reference control host negotiates installed Codex, queues a Ling intervention and replays after reconnect", {
+test("the reference control host steers installed Codex, queues a Ling intervention and replays after reconnect", {
   skip: !codexExecutable, timeout: 30_000,
 }, async t => {
   let releaseSource: () => void = () => undefined;
@@ -1240,6 +1241,51 @@ test("the reference control host negotiates installed Codex, queues a Ling inter
   const statePath = join(fixture.root, "codex-host.sqlite");
   const codexHome = join(fixture.root, "codex-config");
   await mkdir(codexHome, { mode: 0o700 });
+  let releaseCodex: () => void = () => undefined;
+  const codexResponseGate = new Promise<void>(resolve => { releaseCodex = resolve; });
+  const codexRequests: unknown[] = [];
+  const responses = createHttpServer(async (request, response) => {
+    if (request.method !== "POST" || request.url !== "/v1/responses") {
+      response.writeHead(404).end();
+      return;
+    }
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    codexRequests.push(JSON.parse(Buffer.concat(chunks).toString()));
+    const attempt = codexRequests.length;
+    const item = { id: `msg_fixture_${attempt}`, type: "message", status: "completed", role: "assistant",
+      content: [{ type: "output_text", text: "Codex fixture completed.", annotations: [] }] };
+    const completed = { id: `resp_fixture_${attempt}`, object: "response", created_at: 0, model: "gpt-5",
+      status: "completed", output: [item], usage: { input_tokens: 20, output_tokens: 8, total_tokens: 28 } };
+    const send = (event: Record<string, unknown>, sequence: number) =>
+      response.write(`event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number: sequence })}\n\n`);
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    send({ type: "response.created", response: { ...completed, status: "in_progress", output: [] } }, 0);
+    if (attempt === 1) await codexResponseGate;
+    send({ type: "response.output_item.added", output_index: 0, item: { ...item, status: "in_progress", content: [] } }, 1);
+    send({ type: "response.output_text.delta", item_id: item.id, output_index: 0, content_index: 0, delta: item.content[0]!.text }, 2);
+    send({ type: "response.output_item.done", output_index: 0, item }, 3);
+    send({ type: "response.completed", response: completed }, 4);
+    response.end();
+  });
+  responses.listen(0, "127.0.0.1");
+  await once(responses, "listening");
+  t.after(async () => {
+    releaseCodex();
+    const closed = once(responses, "close");
+    responses.close();
+    responses.closeAllConnections();
+    await closed;
+  });
+  const address = responses.address();
+  assert.ok(address && typeof address === "object");
+  await writeFile(join(codexHome, "config.toml"), [
+    'model = "gpt-5"', 'model_provider = "ling_fixture"', 'approval_policy = "never"', 'sandbox_mode = "read-only"',
+    '[analytics]', 'enabled = false',
+    '[model_providers.ling_fixture]', 'name = "Ling Test"', `base_url = "http://127.0.0.1:${address.port}/v1"`,
+    'wire_api = "responses"', 'requires_openai_auth = false', 'supports_websockets = false',
+    'request_max_retries = 0', 'stream_max_retries = 0', 'stream_idle_timeout_ms = 10000',
+  ].join("\n"));
   const start = async () => {
     const running = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
       "app-server", "codex-host", "--thread", thread.id, "--state", statePath, "--codex", codexExecutable!],
@@ -1260,11 +1306,21 @@ test("the reference control host negotiates installed Codex, queues a Ling inter
     return { ...peer, stop };
   };
   const first = await start();
+  const codex = await first.call<{ threadId: string }>("codex/thread/start");
+  const codexTurn = await first.call<{ turn: { id: string } }>("codex/turn/start", { message: "Track the paired Ling work." });
+  await waitFor(() => codexRequests.length === 1 ? true : undefined);
   const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
   const { turn } = await ling.call<{ turn: { id: string } }>("turn/start", {
     threadId: thread.id, providerPresetId: preset.id, idempotencyKey: "codex-host-source", message: "Observe the committed Turn.",
   });
   const started = await waitFor(() => first.notices.find(notice => notice.method === "turn/started" && notice.params?.event?.entityId === turn.id));
+  assert.ok(started.params?.eventId);
+  const steer = { eventId: started.params.eventId, expectedTurnId: codexTurn.turn.id };
+  assert.deepEqual(await first.call("codex/steer", steer), { status: "accepted" });
+  releaseCodex();
+  await waitFor(() => codexRequests.slice(1).find(request => JSON.stringify(request).includes(steer.eventId)));
+  await waitFor(() => first.notices.find(notice => notice.method === "turn/completed"
+    && (notice.params as { threadId?: string } | undefined)?.threadId === codex.threadId));
   await waitFor(() => provider.requests.length === 1 ? true : undefined);
   const snapshot = await first.call<LingAppServerThreadSnapshotResult>("ling/snapshot");
   assert.equal(snapshot.turn?.id, turn.id);
@@ -1276,6 +1332,8 @@ test("the reference control host negotiates installed Codex, queues a Ling inter
   releaseSource();
   await waitFor(() => provider.requests.length === 2 ? true : undefined);
   const second = await start();
+  assert.equal((await second.call<ThreadRead>("codex/snapshot")).thread.id, codex.threadId);
+  assert.deepEqual(await second.call("codex/steer", steer), { status: "accepted", replayed: true });
   const finished = await waitFor(() => second.notices.find(notice => notice.method === "turn/completed"
     && notice.params?.event?.data?.turnId === turn.id));
   assert.ok(finished.params?.eventId);
@@ -2307,15 +2365,18 @@ test("an operator resolves a deliberation round once against its current revisio
   assert.equal(fixture.getStore().listRuns().length, 0);
 });
 
-test("a GitHub Work Item recovers its staged Workflow, runs independent QA and releases one decision dependency", { timeout: 40_000 }, async t => {
+test("a GitHub Work Item recovers its Workflow, gathers independent ballots and releases one decision dependency", { timeout: 40_000 }, async t => {
   let completeContract: () => void = () => undefined;
   const contractGate = new Promise<void>(resolve => { completeContract = resolve; });
+  let completeQaVote: () => void = () => undefined;
+  const qaVoteGate = new Promise<void>(resolve => { completeQaVote = resolve; });
   let implementationReadRequested = false;
   const provider = await startLoopbackPiProvider(async (body: unknown, request: number) => {
     if (request === 1) await contractGate;
-    const input = body as { stream: boolean; messages: readonly { content: string }[] };
-    if (input.stream === false && input.messages.at(-1)?.content?.includes('"workItem":')) {
-      const source = JSON.parse(input.messages.at(-1)!.content) as { items: readonly { id: string; text: string; verified: boolean }[] };
+    const input = body as { stream: boolean; tools?: readonly unknown[]; messages: readonly { content: string | readonly { text?: string }[] }[] };
+    const lastContent = input.messages.at(-1)?.content;
+    if (input.stream === false && typeof lastContent === "string" && lastContent.includes('"workItem":')) {
+      const source = JSON.parse(lastContent) as { items: readonly { id: string; text: string; verified: boolean }[] };
       const proof = source.items.find(entry => entry.verified && entry.text.includes("Verified compatibility input"));
       assert.ok(proof, "The Learning Review lacked the owned Run's read evidence.");
       return { text: JSON.stringify({ kind: "memory", title: "Compatibility input", body: "Read the verified compatibility input before implementation.",
@@ -2325,9 +2386,19 @@ test("a GitHub Work Item recovers its staged Workflow, runs independent QA and r
       implementationReadRequested = true;
       return { tool: "read", input: { path: "implementation-input.txt" } };
     }
+    const prompt = input.messages.flatMap(message => typeof message.content === "string" ? [message.content]
+      : message.content?.map(part => part.text ?? "") ?? []).join("\n");
+    const ballotKey = /ballotKey "([a-f0-9]{64})"/u.exec(prompt)?.[1];
+    if (ballotKey) {
+      assert.equal(input.tools?.length ?? 0, 0);
+      const isQa = prompt.includes("Assigned teammate: QA (");
+      if (isQa) await qaVoteGate;
+      const option = isQa ? "Migration" : "Adapter";
+      return { text: JSON.stringify({ ballotKey, option, rationale: "Prefer the compatibility trade-off for this role." }) };
+    }
     return { text: "Stage completed" };
   });
-  t.after(async () => { completeContract(); await provider.close(); });
+  t.after(async () => { completeContract(); completeQaVote(); await provider.close(); });
   const fixture = await releaseFixture(t, {
     githubSources: cwd => [{ workspaceRoot: cwd, repository: "example/ling", repositoryId: "73" }],
     externalWorkFetch: async input => {
@@ -2371,23 +2442,31 @@ test("a GitHub Work Item recovers its staged Workflow, runs independent QA and r
   };
   const conversionPath = `/threads/${thread.id}/proposed-plans/${plan.id}/convert-workflow`;
   const p01Preview = { title: "P01 accept the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" };
-  const p02Preview = { title: "P02 implement the selected approach", stageId: "P02", dependsOnStageIds: ["P01"],
+  const p02Preview = { title: "P02 implement the selected approach", stageId: "P02", dependsOnStageIds: ["P01", "V-ENGINEER", "V-QA"],
     ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer", requiredTools: ["read"],
-    requiredDecision: { question: "Which compatible approach should this stage implement?", options: ["Adapter", "Migration"] } };
+    requiredDecision: { question: "Which compatible approach should this stage implement?", options: ["Adapter", "Migration"],
+      trigger: "when_ready", ballot: { voterStageIds: ["V-ENGINEER", "V-QA"], quorum: 2 } } };
   const qaPreview = { title: "Prepare contract regression checks", stageId: "QA", dependsOnStageIds: ["P01"],
     ownerId: "teammate_builtin_qa", ownerLabel: "QA" };
+  const ballots = [
+    { title: "Review the compatibility options", stageId: "V-ENGINEER", dependsOnStageIds: ["P01"],
+      ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" },
+    { title: "Evaluate the regression impact", stageId: "V-QA", dependsOnStageIds: ["P01"],
+      ownerId: "teammate_builtin_qa", ownerLabel: "QA" },
+  ];
   const invalid = await request(conversionPath, { expectedRevision: plan.revision,
-    workflowStepPreviews: [{ ...p01Preview, dependsOnStageIds: ["P02"] }, p02Preview] });
+    workflowStepPreviews: [{ ...p01Preview, dependsOnStageIds: ["P02"] }, p02Preview, ...ballots] });
   assert.equal(invalid.status, 400);
   assert.equal((await invalid.json() as { error: string }).error, "bad_workflow_stage_dependencies");
   assert.equal(store.getProposedPlanArtifact(plan.id)?.revision, plan.revision);
-  const planResponse = await request(conversionPath, { expectedRevision: plan.revision, workflowStepPreviews: [p02Preview, p01Preview, qaPreview] });
+  const planResponse = await request(conversionPath, { expectedRevision: plan.revision,
+    workflowStepPreviews: [p02Preview, p01Preview, qaPreview, ...ballots] });
   assert.ok(planResponse.ok, await planResponse.clone().text());
   const converted = await planResponse.json() as ProposedPlanActionResponse;
   assert.ok(converted.workflowId);
   assert.equal(converted.plan.acceptedWorkflowId, converted.workflowId);
-  const [p02, p01, qa] = store.listChannelWorkflowSteps({ workflowId: converted.workflowId, complete: true });
-  assert.ok(p01 && p02 && qa);
+  const [p02, p01, qa, engineerVote, qaVote] = store.listChannelWorkflowSteps({ workflowId: converted.workflowId, complete: true });
+  assert.ok(p01 && p02 && qa && engineerVote && qaVote);
   assert.deepEqual(p02.metadata?.dependsOnStepIds, [p01.id]);
   assert.deepEqual(qa.metadata?.dependsOnStepIds, [p01.id]);
   const startImplementation = () => request(`/workflow-steps/${encodeURIComponent(p02.id)}/start`, { mode: "create_and_run_task" });
@@ -2415,8 +2494,16 @@ test("a GitHub Work Item recovers its staged Workflow, runs independent QA and r
     && notice.params.event.entityId === workItemId));
   const stages = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
   assert.equal(stages.workflow?.workflowId, converted.workflowId);
-  assert.deepEqual(stages.workflow?.steps.map(({ stageId, status }) => [stageId, status]), [["P02", "queued"], ["P01", "queued"], ["QA", "queued"]]);
+  assert.deepEqual(stages.workflow?.steps.map(({ stageId, status }) => [stageId, status]),
+    [["P02", "queued"], ["P01", "queued"], ["QA", "queued"], ["V-ENGINEER", "queued"], ["V-QA", "queued"]]);
   assert.equal(stages.workflow?.steps[0]?.admissionBlocker, "work_item_decision_pending");
+  assert.equal(stages.workflow?.steps.find(step => step.stepId === engineerVote.id)?.admissionBlocker, "work_item_ballot_pending");
+  const earlyVote = await request(`/workflow-steps/${encodeURIComponent(engineerVote.id)}/start`, { mode: "create_and_run_task" });
+  assert.equal(earlyVote.status, 409);
+  assert.equal((await earlyVote.json() as { error: string }).error, "work_item_ballot_pending");
+  await assert.rejects(client.call("workItem/deliberation/start", {
+    workItemId, workflowStepId: p02.id, expectedWorkItemRevision: Number(bound.workItem.revision), idempotencyKey: "before-contract",
+  }), { code: "resume_blocked" });
   assert.ok(stages.workflow?.steps.every(step => step.briefBasis === undefined));
   const workflowPath = `/workflows/${encodeURIComponent(converted.workflowId)}/orchestrate`;
   const itemPath = `/work-items/${encodeURIComponent(item.id)}`;
@@ -2476,10 +2563,10 @@ test("a GitHub Work Item recovers its staged Workflow, runs independent QA and r
   await waitFor(() => resumedClient.notices.find(event => event.params?.eventId === stageEvent.params?.eventId));
   const held = await resumedClient.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
   assert.equal(held.workflow?.admissionBlocker, "work_item_workflow_held");
-  assert.deepEqual(held.workflow?.steps.map(step => step.status), ["queued", "succeeded", "queued"]);
+  assert.deepEqual(held.workflow?.steps.map(step => step.status), ["queued", "succeeded", "queued", "queued", "queued"]);
   assert.deepEqual((await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === p01.id), brief);
   assert.equal(provider.requests.length, 1);
-  const resumed = await resumedClient.call<LingAppServerWorkItemControlResult>("workItem/resume", {
+  await resumedClient.call<LingAppServerWorkItemControlResult>("workItem/resume", {
     workItemId: item.id, actorId: "local-user", expectedWorkItemRevision: Number(paused.workItem.revision),
     expectedControlGeneration: 1, idempotencyKey: "workflow-owned-resume",
   });
@@ -2489,28 +2576,47 @@ test("a GitHub Work Item recovers its staged Workflow, runs independent QA and r
   const pending = await startImplementation();
   assert.equal(pending.status, 409);
   assert.equal((await pending.json() as { error: string }).error, "work_item_decision_pending");
-  const opening = { workItemId: item.id, workflowStepId: p02.id, expectedWorkItemRevision: Number(resumed.workItem.revision),
-    idempotencyKey: "workflow-owned-decision" };
-  const round = await resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/start", opening);
-  assert.deepEqual((round.record.payload as { options: readonly string[] }).options, ["Adapter", "Migration"]);
-  await assert.rejects(resumedClient.call("workItem/deliberation/start", { ...opening, expectedWorkItemRevision: round.workItemRevision,
+  const round = await waitFor(async () => {
+    const rounds = await resumedClient.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", { workItemId: item.id });
+    return rounds.records.find(record => record.action === "started");
+  });
+  assert.deepEqual((round.payload as { options: readonly string[] }).options, ["Adapter", "Migration"]);
+  assert.equal(round.actorId, "ling_agent");
+  const readBallots = (connection: typeof client) => connection.call<LingAppServerWorkItemCollaborationReadResult>(
+    "workItem/deliberation/read", { workItemId: item.id });
+  assert.deepEqual((await readBallots(resumedClient)).ballots, [{ roundId: round.id, status: "waiting" }]);
+  const current = await resumedClient.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
+  const expectedWorkItemRevision = Number(current.workItem.revision);
+  await assert.rejects(resumedClient.call("workItem/deliberation/start", {
+    workItemId: item.id, workflowStepId: p02.id, expectedWorkItemRevision,
     idempotencyKey: "duplicate-decision" }), { code: "stale_revision" });
-  await fixture.restart();
-  const decisionClient = await fixture.connect();
   const decision = {
-    workItemId: item.id, roundId: round.record.id, expectedRoundRevision: round.record.collaborationRevision,
-    expectedWorkItemRevision: round.workItemRevision, idempotencyKey: "workflow-owned-selected", reason: "Keep both compatibility paths",
+    workItemId: item.id, roundId: round.id, expectedRoundRevision: round.collaborationRevision,
+    expectedWorkItemRevision, idempotencyKey: "workflow-owned-selected", reason: "Keep both compatibility paths",
     decision: { disposition: "selected", option: "Adapter" },
   };
+  await assert.rejects(resumedClient.call("workItem/deliberation/decide", decision), { code: "resume_blocked" });
+  completeQaVote();
+  await waitFor(() => [engineerVote, qaVote].every(step => resumedStore.getChannelWorkflowStep(step.id)?.status === "succeeded") ? true : undefined);
+  await fixture.restart();
+  const decisionClient = await fixture.connect();
+  const [readyBallot] = (await readBallots(decisionClient)).ballots ?? [];
+  assert.equal(readyBallot?.status, "ready");
+  assert.equal(readyBallot.summary.tied, true);
+  assert.deepEqual(readyBallot.summary.tally, [{ option: "Adapter", count: 1 }, { option: "Migration", count: 1 }]);
   await assert.rejects(decisionClient.call("workItem/deliberation/decide", { ...decision,
     decision: { disposition: "selected", option: "Rewrite" } }), { code: "invalid_params" });
   const selected = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", decision);
+  assert.deepEqual((selected.record.payload as { ballot: { tally: unknown; tied: boolean } }).ballot.tally,
+    [{ option: "Adapter", count: 1 }, { option: "Migration", count: 1 }]);
+  assert.equal((selected.record.payload as { ballot: { tied: boolean } }).ballot.tied, true);
   const retried = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", decision);
   assert.equal(retried.status, "replayed");
   assert.equal(retried.record.id, selected.record.id);
+  assert.equal((await readBallots(decisionClient)).ballots, undefined);
   const finishedStore = fixture.getStore();
   await waitFor(() => finishedStore.getChannelWorkflow(converted.workflowId!)?.status === "succeeded" ? true : undefined);
-  for (const step of [p01, p02, qa]) assert.equal(finishedStore.listRuns({ workflowStepId: step.id }).length, 1);
+  for (const step of [p01, p02, qa, engineerVote, qaVote]) assert.equal(finishedStore.listRuns({ workflowStepId: step.id }).length, 1);
   assert.ok(provider.requests.some(body => {
     const input = JSON.stringify(body);
     return input.includes("Accepted Plan decision:") && input.includes(selected.record.id);
@@ -2518,7 +2624,9 @@ test("a GitHub Work Item recovers its staged Workflow, runs independent QA and r
   const detail = await request(itemPath);
   assert.equal(detail.status, 200);
   const body = await detail.json() as { workflow?: LingAppServerWorkItemCollaborationReadResult["workflow"] };
-  assert.deepEqual(body.workflow?.steps.map(step => step.status), ["succeeded", "succeeded", "succeeded"]);
+  assert.deepEqual(body.workflow?.steps.map(step => step.status), ["succeeded", "succeeded", "succeeded", "succeeded", "succeeded"]);
+  assert.deepEqual(body.workflow?.steps.filter(step => step.stageId?.startsWith("V-")).map(step => step.brief),
+    ["Ballot received.", "Ballot received."]);
   assert.deepEqual(body.workflow?.steps.find(step => step.stepId === p01.id)?.briefBasis, brief.briefBasis);
   const sourceRunId = finishedStore.getChannelWorkflowStep(p02.id)?.runId;
   assert.ok(sourceRunId);

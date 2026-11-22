@@ -3,6 +3,7 @@ import type {
   LingAppServerCollaborationKind,
   LingAppServerDeliberationDecideParams,
   LingAppServerDeliberationSettlementParams,
+  LingAppServerStageBallotProgress,
   LingAppServerStageDeliberationStartParams,
   LingAppServerWorkItemCollaborationAppendParams,
   LingAppServerWorkItemCollaborationAppendResult,
@@ -12,17 +13,21 @@ import type {
 import {
   appendWorkItemCollaboration,
   fromAppServerCollaborationParams,
+  LING_AGENT_ID,
   listWorkItemCollaboration,
+  planStageBallotKey,
   readWorkItemCollaborationRecord,
   toAppServerCollaborationRecord,
   workItemWorkflowDecisionId,
   type WorkItemWorkflowDecisionSubject,
   WORK_ITEM_COLLABORATION_CONTENT_PREFIX,
   type WorkItemCollaborationRecord,
+  type WorkItem,
 } from "@ling-stack/core";
 import type { ControlPlaneEvent, RunStore } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
+import { readAppServerStageBallot } from "./app-server-stage-ballot.js";
 
 export class AppServerCollaborationError extends Error {
   constructor(
@@ -45,10 +50,12 @@ export function readAppServerWorkItemCollaboration(
     afterRevision: params.afterRevision,
     limit: params.limit,
   });
+  const ballots = params.kind === "deliberation" ? readOpenStageBallots(store, workItem, page.records) : undefined;
   return {
     workItemId: params.workItemId,
     records: page.records.map(toAppServerCollaborationRecord),
     nextAfterRevision: page.nextAfterRevision,
+    ...(ballots?.length ? { ballots } : {}),
   };
 }
 
@@ -81,7 +88,7 @@ export function readAppServerWorkItemCollaborationKind(
 }
 
 export function startAppServerStageDeliberation(
-  store: RunStore, input: LingAppServerStageDeliberationStartParams, now: string, cwd: string,
+  store: RunStore, input: LingAppServerStageDeliberationStartParams, now: string, cwd: string, actorId = "local-user",
 ): LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent } {
   if (input.expectedWorkItemRevision < 1 || !input.idempotencyKey.trim() || input.idempotencyKey.length > 200) {
     throw new AppServerCollaborationError("invalid_params", "Supply the current Work Item revision and a bounded request key.");
@@ -101,14 +108,47 @@ export function startAppServerStageDeliberation(
   if (!prior && (store.getWorkItemWorkflowAdmissionBlocker(item.workflowId) || !["queued", "blocked"].includes(step.status))) {
     throw new HttpError(409, "resume_blocked", "The Work Item cannot open this decision point now.");
   }
+  if (!prior && required.ballot && step.metadata?.dependsOnStepIds?.some(id => {
+    const dependency = store.getChannelWorkflowStep(id);
+    return dependency?.status !== "succeeded" && dependency?.status !== "skipped";
+  })) throw new HttpError(409, "resume_blocked", "Wait for the ballot's preceding stages.");
+  const plan = store.getAppServerState("work_item_workflow", item.workflowId)?.payload as {
+    binding: { planId: string };
+  } | undefined;
+  const ballot = required.ballot && step.metadata?.planStageId && plan
+    ? { ...required.ballot, ballotKey: planStageBallotKey(plan.binding.planId, step.metadata.planStageId, required) } : undefined;
   const result = appendWorkItemCollaboration(store, {
     id, workItemId: item.id, expectedWorkItemRevision: input.expectedWorkItemRevision,
-    kind: "deliberation", action: "started", actorId: "local-user", idempotencyKey: input.idempotencyKey,
-    payload: { decisionPoint: required.question, options: required.options, workflowDecision: subject },
+    kind: "deliberation", action: "started", actorId, idempotencyKey: input.idempotencyKey,
+    payload: { decisionPoint: required.question, options: required.options, workflowDecision: subject, ...(ballot ? { ballot } : {}) },
     sourceRefs: [{ type: "workflow_step", id: step.id, revision: item.planRevision }],
   }, now, cwd);
   if (!result || result.record.id !== id) throw new AppServerCollaborationError("stale_revision", "The decision point changed before the round opened.");
   return result;
+}
+
+export function openReadyWorkItemStageDeliberations(store: RunStore, workflowId: string, now: string): readonly ControlPlaneEvent[] {
+  const binding = (store.getAppServerState("work_item_workflow", workflowId)?.payload as {
+    binding: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBinding;
+  } | undefined)?.binding;
+  if (!binding || store.getWorkItemWorkflowAdmissionBlocker(workflowId)) return [];
+  const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
+  const byId = new Map(steps.map(step => [step.id, step]));
+  const events: ControlPlaneEvent[] = [];
+  for (const step of steps) {
+    if (step.status !== "queued" || step.metadata?.requiredPlanDecision?.trigger !== "when_ready"
+      || step.metadata.dependsOnStepIds?.some(id => !["succeeded", "skipped"].includes(byId.get(id)?.status ?? ""))) continue;
+    const workItem = store.getWorkItem(binding.workItemId);
+    if (!workItem?.planRevision) break;
+    const subject = { workItemId: workItem.id, planRevision: workItem.planRevision, workflowStepId: step.id };
+    const idempotencyKey = workItemWorkflowDecisionId(subject, "round");
+    if (store.getWorkItemEvidence(idempotencyKey)) continue;
+    const result = startAppServerStageDeliberation(store, {
+      workItemId: workItem.id, workflowStepId: step.id, expectedWorkItemRevision: workItem.revision, idempotencyKey,
+    }, now, store.paths.cwd, LING_AGENT_ID);
+    if (result.event) events.push(result.event);
+  }
+  return events;
 }
 
 export function settleAppServerDeliberation(
@@ -142,6 +182,7 @@ export function settleAppServerDeliberation(
   if (!prior && decision && (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission))) {
     throw new HttpError(409, "resume_blocked", "The Work Item is held. A held round can be cancelled.");
   }
+  let ballot: Extract<ReturnType<typeof readAppServerStageBallot>, { readonly summary: unknown }> | undefined;
   if (!prior && decision && workflowDecision) {
     const step = store.getChannelWorkflowStep(workflowDecision.workflowStepId);
     if (item.planRevision !== workflowDecision.planRevision || !step?.metadata?.requiredPlanDecision || step.workflowId !== item.workflowId
@@ -149,10 +190,30 @@ export function settleAppServerDeliberation(
       || decision.disposition === "selected" && !step.metadata.requiredPlanDecision.options.includes(decision.option)) {
       throw new AppServerCollaborationError("stale_revision", "The accepted decision point no longer applies to this Workflow.");
     }
+    if (decision.disposition === "selected" && step.metadata.requiredPlanDecision.ballot) {
+      const frozen = isRecord(round.payload) && isRecord(round.payload.ballot) ? round.payload.ballot : undefined;
+      const plan = store.getAppServerState("work_item_workflow", step.workflowId)?.payload as {
+        binding: { planId: string };
+      } | undefined;
+      if (!plan) throw new AppServerCollaborationError("stale_revision", "The ballot Plan binding is unavailable.");
+      const result = readAppServerStageBallot(store, step, plan.binding.planId, step.metadata.requiredPlanDecision, frozen?.ballotKey);
+      if (result.status === "waiting") throw new HttpError(409, "resume_blocked", "Wait for the assigned ballot stages to finish.");
+      if (result.status === "quorum_unmet") throw new HttpError(409, "resume_blocked", "The verified ballots did not reach quorum.");
+      ballot = result;
+    }
   }
   const action = decision ? "decided" : "cancelled";
-  const payload = decision ? { ...decision, reason: input.reason } : { reason: input.reason };
-  const sourceRefs = [{ type: "deliberation_round", id: round.id, revision: String(round.collaborationRevision) }];
+  const payload = decision ? { ...decision, reason: input.reason, ...(ballot ? { ballot: ballot.summary } : {}) } : { reason: input.reason };
+  const sourceRefs = [{ type: "deliberation_round", id: round.id, revision: String(round.collaborationRevision) }, ...(ballot?.sourceRefs ?? [])];
+  const saved = prior && readWorkItemCollaborationRecord(store, item.id, prior.id);
+  if (saved) {
+    const { ballot: _ballot, ...request } = isRecord(saved.payload) ? saved.payload : {};
+    const { ballot: _tally, ...current } = payload as typeof payload & { ballot?: unknown };
+    if (saved.action !== action || JSON.stringify(request) !== JSON.stringify(current)) {
+      throw new AppServerCollaborationError("idempotency_conflict", "The deliberation key was used with a different decision.");
+    }
+    return { status: "replayed", record: { ...saved, workItemRevision: item.revision }, workItemRevision: item.revision };
+  }
   const resolution = store.appendWorkItemEvidence({
     id,
     workItemId: item.id,
@@ -190,6 +251,28 @@ export function settleAppServerDeliberation(
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
   } };
+}
+
+function readOpenStageBallots(
+  store: RunStore, item: WorkItem, records: readonly WorkItemCollaborationRecord[],
+): readonly LingAppServerStageBallotProgress[] {
+  if (!item.workflowId || !item.planRevision) return [];
+  const plan = store.getAppServerState("work_item_workflow", item.workflowId)?.payload as { binding: { planId: string } } | undefined;
+  if (!plan) return [];
+  const ballots: LingAppServerStageBallotProgress[] = [];
+  for (const round of records) {
+    if (round.action !== "started") continue;
+    const subject = readWorkflowDecisionSubject(round);
+    if (subject?.planRevision !== item.planRevision || store.getWorkItemEvidence(workItemWorkflowDecisionId(subject, "resolution"))) continue;
+    const step = store.getChannelWorkflowStep(subject.workflowStepId);
+    const decision = step?.metadata?.requiredPlanDecision;
+    const frozen = isRecord(round.payload) && isRecord(round.payload.ballot) ? round.payload.ballot : undefined;
+    if (!step || step.workflowId !== item.workflowId || !decision?.ballot) continue;
+    const result = readAppServerStageBallot(store, step, plan.binding.planId, decision, frozen?.ballotKey);
+    ballots.push(result.status === "waiting" ? { roundId: round.id, status: result.status }
+      : { roundId: round.id, status: result.status, summary: result.summary });
+  }
+  return ballots;
 }
 
 function readWorkflowDecisionSubject(round: WorkItemCollaborationRecord): WorkItemWorkflowDecisionSubject | undefined {

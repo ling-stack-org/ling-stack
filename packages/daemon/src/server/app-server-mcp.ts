@@ -144,6 +144,8 @@ export async function runLingAppServerMcp(
           requiredTools: z.array(z.enum(["read", "grep", "find", "ls", "bash", "edit", "write"])).max(7).optional(),
           requiredDecision: z.strictObject({
             question: z.string().min(1).max(500), options: z.array(z.string().min(1).max(200)).min(2).max(12),
+            trigger: z.literal("when_ready").optional(),
+            ballot: z.strictObject({ voterStageIds: z.array(objectId).min(2).max(12), quorum: z.number().int().min(2).max(12) }).optional(),
           }).optional(),
         })).min(1).max(50),
       }),

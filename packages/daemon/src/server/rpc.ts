@@ -1277,12 +1277,13 @@ class RpcConnection {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     try {
-      const result = readAppServerWorkItemCollaboration(this.context.storeRegistry.getStore(cwd), {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const result = store.readSnapshot(() => readAppServerWorkItemCollaboration(store, {
         workItemId: readStringField(record, "workItemId"),
         ...(kind ? { kind } : {}),
         afterRevision: readOptionalIntegerField(record, "afterRevision"),
         limit: readOptionalIntegerField(record, "limit"),
-      });
+      }));
       return { cwd, ...result };
     } catch (error) {
       throw collaborationRpcError(error);
@@ -1328,7 +1329,10 @@ class RpcConnection {
     try {
       const store = this.context.storeRegistry.getStore(cwd);
       const { event, ...result } = startAppServerStageDeliberation(store, input, new Date().toISOString(), cwd);
-      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        this.context.taskSupervisor.poke(cwd);
+      }
       return { cwd, ...result };
     } catch (error) {
       throw collaborationRpcError(error);

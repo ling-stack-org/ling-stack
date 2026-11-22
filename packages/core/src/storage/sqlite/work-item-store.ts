@@ -40,7 +40,8 @@ import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, Lin
   LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding } from "@ling-stack/contracts";
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
-import { readSelectedWorkflowDecision } from "../../work-item-workflow-decision.js";
+import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
+import { planStageBallotKey } from "../../proposed-plan-mutation.js";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
 
@@ -49,6 +50,7 @@ export interface SqliteWorkItemStorePorts {
   readonly hasAiTeammate: (id: string) => boolean;
   readonly getProposedPlanArtifact: RunStore["getProposedPlanArtifact"];
   readonly getChannelWorkflow: RunStore["getChannelWorkflow"];
+  readonly listChannelWorkflowSteps: RunStore["listChannelWorkflowSteps"];
   readonly getWorkItemEvidence: RunStore["getWorkItemEvidence"];
   readonly getRun: RunStore["getRun"];
 }
@@ -615,7 +617,7 @@ export class SqliteWorkItemStore {
       const planId = this.ports.getChannelWorkflow(workflowId)?.metadata?.sourceProposedPlanId;
       const parentId = planId ? this.ports.getProposedPlanArtifact(planId)?.parentPlanId : undefined;
       const previousWorkflowId = parentId ? this.ports.getProposedPlanArtifact(parentId)?.acceptedWorkflowId : undefined;
-      return step?.metadata?.requiredPlanDecision || previousWorkflowId && state.get("work_item_workflow", previousWorkflowId)
+      return step?.metadata?.requiredPlanDecision || step?.metadata?.planBallotKey || previousWorkflowId && state.get("work_item_workflow", previousWorkflowId)
         ? "work_item_workflow_unbound" : undefined;
     }
     const binding = link.binding;
@@ -630,6 +632,19 @@ export class SqliteWorkItemStore {
     const successor = plan.supersededByPlanId ? this.ports.getProposedPlanArtifact(plan.supersededByPlanId) : undefined;
     if (successor?.status === "accepted" && successor.acceptedWorkflowId) return "work_item_workflow_replan_pending";
     if (this.incompleteWorkItemDependencyIds(item).length) return "work_item_workflow_dependency_blocked";
+    if (step?.metadata?.planBallotKey) {
+      const { planBallotKey, planStageId } = step.metadata;
+      const target = this.ports.listChannelWorkflowSteps({ workflowId, complete: true }).find(candidate => {
+        const stageId = candidate.metadata?.planStageId;
+        const decision = candidate.metadata?.requiredPlanDecision;
+        return stageId && planStageId && decision?.ballot?.voterStageIds.includes(planStageId)
+          && planStageBallotKey(binding.planId, stageId, decision) === planBallotKey;
+      });
+      if (!target) return "work_item_ballot_pending";
+      const subject = { workItemId: item.id, planRevision: item.planRevision, workflowStepId: target.id };
+      if (this.ports.getWorkItemEvidence(workItemWorkflowDecisionId(subject, "resolution"))) return "work_item_ballot_closed";
+      if (!this.ports.getWorkItemEvidence(workItemWorkflowDecisionId(subject, "round"))) return "work_item_ballot_pending";
+    }
     if (step?.metadata?.requiredPlanDecision && !this.getWorkflowStepDecision(step, state)) return "work_item_decision_pending";
     return undefined;
   }

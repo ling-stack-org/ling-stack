@@ -830,7 +830,22 @@ export interface LingAppServerWorkItemCollaborationReadResult {
   readonly records: readonly LingAppServerWorkItemCollaborationRecord[];
   readonly nextAfterRevision: number;
   readonly workflow?: LingAppServerWorkItemWorkflowStages;
+  readonly ballots?: readonly LingAppServerStageBallotProgress[];
 }
+
+export interface LingAppServerStageBallotTally {
+  readonly ballotKey: string;
+  readonly quorum: number;
+  readonly cast: number;
+  readonly abstained: number;
+  readonly tied: boolean;
+  readonly tally: readonly { readonly option: string; readonly count: number }[];
+}
+
+export type LingAppServerStageBallotProgress = { readonly roundId: string } & (
+  | { readonly status: "waiting" }
+  | { readonly status: "ready" | "quorum_unmet"; readonly summary: LingAppServerStageBallotTally }
+);
 
 export interface LingAppServerWorkItemCollaborationAppendParams {
   readonly cwd?: string;
