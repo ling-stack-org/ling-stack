@@ -148,11 +148,16 @@ function writeFabricGraph(request: IncomingMessage, response: ServerResponse, ru
       .filter(relationship => nodeIds.has(relationship.fromNodeId) && nodeIds.has(relationship.toNodeId));
     const twins = [...registry.keys()].flatMap(deviceId => {
       const twin = runtime.fabricStore.getTwin(deviceId);
+      const current = registry.get(deviceId);
       return twin ? [{
         deviceId, revision: twin.revision, updatedAt: twin.updatedAt,
         values: twin.values.map(value => ({
           key: value.key, observedAt: value.observedAt, freshnessUntil: value.freshnessUntil,
-          quality: Date.parse(value.freshnessUntil) > now ? value.quality : "stale",
+          quality: Date.parse(value.freshnessUntil) <= now
+            || (value.reportedEvidence && (value.reportedEvidence.connectionRevision !== current?.connectionRevision
+              || value.reportedEvidence.profileRevision !== current.profileRevision
+              || current.lifecycleStatus !== "healthy")) ? "stale" : value.quality,
+          ...(value.reportedEvidence ? { reportedEvidence: value.reportedEvidence } : {}),
           hasReported: value.reported !== undefined, hasDesired: value.desired !== undefined,
           hasPending: value.pending !== undefined, hasVerified: value.verified !== undefined,
         })),

@@ -92,6 +92,7 @@ export * from "./remote-device.js";
 export * from "./device.js";
 export * from "./device-capability-schema.js";
 export * from "./device-attempt-conformance.js";
+export * from "./device-observation-binding.js";
 export * from "./device-diagnosis.js";
 export * from "./device-linux-ssh.js";
 export * from "./device-fabric.js";

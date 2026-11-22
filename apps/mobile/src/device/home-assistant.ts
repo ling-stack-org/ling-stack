@@ -135,7 +135,7 @@ export function prepareHomeAssistantDevice(input: HomeAssistantDeviceInput & {
     request: DeviceActionRequestV1, state: HomeAssistantEntityState, readAt: string, verify: boolean, evidenceId?: string,
   ): DeviceObservationV1 => ({
     id: evidenceId ?? `${request.taskId}:${request.actionId}:${verify ? "readback" : "entity"}`,
-    subjectId: verify ? targetId : entityId,
+    subjectId: targetId,
     source: "home_assistant",
     value: { entityId, ...state },
     observedAt: readAt,

@@ -22,6 +22,7 @@ import {
   type DeviceTaskGraphNodeReceiptV1,
   type DeviceTraceSpanV1,
   type DeviceTwinV1,
+  type DeviceTwinReportedValueV1,
   type EdgeRuntimeEnrollmentGrantV1,
   type EdgeRuntimeEnrollmentV1,
   type EdgeRuntimeJournalEntryV1,
@@ -492,6 +493,25 @@ export class SqliteDeviceFabricStore {
   getTwin(deviceId: string): DeviceTwinV1 | undefined {
     const row = this.database.prepare("SELECT twin_json FROM device_fabric_twins WHERE device_id=?").get(deviceId) as Row | undefined;
     return row ? parseJson<DeviceTwinV1>(row.twin_json, "device twin") : undefined;
+  }
+
+  recordReportedTwinValue(input: {
+    readonly deviceId: string;
+    readonly value: DeviceTwinReportedValueV1;
+    readonly recordedAt: string;
+  }): DeviceTwinV1 {
+    return this.withWriteTransaction(() => {
+      const { deviceId, value, recordedAt } = input;
+      const current = this.getTwin(deviceId);
+      const previous = current?.values.find(candidate => candidate.key === value.key);
+      if (current && previous && (previous.reportedEvidence?.observationId === value.reportedEvidence.observationId
+        || Date.parse(previous.observedAt) > Date.parse(value.observedAt))) return current;
+      const values = current?.values ?? [];
+      const next = previous
+        ? values.map(item => item.key === value.key ? { ...item, ...value } : item)
+        : [...values, value];
+      return this.saveTwin({ deviceId, revision: (current?.revision ?? 0) + 1, values: next, updatedAt: recordedAt });
+    });
   }
 
   saveTaskGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1 {

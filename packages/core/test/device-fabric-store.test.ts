@@ -316,6 +316,31 @@ test("fabric store persists graph, twin, and task graph revisions", () => {
   store.close();
 });
 
+test("reported twin values retain their evidence and preserve pending and verified values", t => {
+  const store = new SqliteDeviceFabricStore();
+  t.after(() => store.close());
+  const deviceId = "home-fixture";
+  const property = { key: "sensor.garage", source: "home_assistant", quality: "good", freshnessUntil: "2026-11-21T00:05:00.000Z" } as const;
+  store.saveTwin({ deviceId, revision: 1, updatedAt: now, values: [
+    { ...property, observedAt: now, desired: "available", verified: "unavailable", pending: true },
+  ] });
+  const observedAt = "2026-11-21T00:01:00.000Z";
+  const value = {
+    ...property, reported: "available", observedAt, reportedEvidence: {
+      taskId: "observe", attemptId: "read", observationId: "observation-1", profileRevision: "profile-1", connectionRevision: "connection-1",
+    },
+  };
+  const update = { deviceId, value, recordedAt: observedAt };
+  const reported = store.recordReportedTwinValue(update);
+  assert.equal(reported.revision, 2);
+  assert.deepEqual(reported.values, [{ ...value, desired: "available", verified: "unavailable", pending: true }]);
+  assert.deepEqual(store.recordReportedTwinValue(update), reported);
+  assert.deepEqual(store.recordReportedTwinValue({
+    ...update, value: { ...value, observedAt: now, reported: "unavailable",
+      reportedEvidence: { ...value.reportedEvidence, observationId: "older-observation" } },
+  }), reported);
+});
+
 test("fabric store records identity evidence and replays the original graph revision after reopen", t => {
   const root = mkdtempSync(join(tmpdir(), "ling-identity-history-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

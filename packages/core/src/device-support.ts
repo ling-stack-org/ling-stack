@@ -28,10 +28,10 @@ import {
   isDeviceActionResultV1,
   isDeviceCapabilitySchemaV1,
   isDeviceCapabilitySnapshotV1,
-  isDeviceObservationV1,
   isDeviceProfileV1,
   isDeviceVerificationResultV1,
   matchesDeviceCapabilitySchemaV1,
+  observationsMatchDeviceReceipt,
 } from "@ling-stack/contracts";
 
 import type { SqliteDeviceSupportStore } from "./storage/sqlite/device-support-store.js";
@@ -975,11 +975,12 @@ function hasBoundedObservationBatch(
   targetDeviceId: string,
   maxBytes: number,
 ): boolean {
-  return (observations === undefined || (Array.isArray(observations)
-    && observations.every(item => isDeviceObservationV1(item) && item.subjectId === targetDeviceId
-      && receipt.observationIds.includes(item.id))
-    && new Set(observations.map(item => item.id)).size === observations.length))
-    && Buffer.byteLength(JSON.stringify({ receipt, observations })) <= maxBytes;
+  try {
+    return observationsMatchDeviceReceipt(observations, receipt.observationIds, targetDeviceId)
+      && Buffer.byteLength(JSON.stringify({ receipt, observations })) <= maxBytes;
+  } catch {
+    return false;
+  }
 }
 
 function uncertainActionResult(actionId: string, now: string, error: unknown): DeviceActionResultV1 {

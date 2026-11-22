@@ -107,11 +107,11 @@ operations may retry within this budget under the adapter's retry policy. Verifi
 has its own deadline within the budget, allowing the UI to identify a failed
 observation separately from an action failure.
 
-The Daemon applies the action deadline to dispatch and its immediate readback.
-It accepts a bounded receipt and the associated observations for the selected
-target. A late valid receipt remains in the journal with an unknown outcome.
-The broker signals the adapter to stop work and holds its target lease until the
-adapter settles.
+The Daemon and Mobile apply the action deadline to dispatch and its immediate
+readback. Each owner checks the response size and binds the receipt observations
+to the selected target. A late valid receipt remains in the journal with an
+unknown outcome. The owner signals the adapter to stop work and holds the target
+until the adapter settles.
 
 ## 3. Approval and dispatch
 

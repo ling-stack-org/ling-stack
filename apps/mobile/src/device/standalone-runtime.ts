@@ -304,7 +304,8 @@ function readHomeAssistantAttempt(evidence: MobileTaskEvidence) {
   const reconciliation = record.reconciliations?.find(item => item.reconciliationId === evidence.task?.lastVerificationId);
   const observationIds = (recovery ? reconciliation?.verification ?? record.attempt.verification : record.attempt.receipt)?.observationIds;
   const observation = evidence.observations.find(item => observationIds?.includes(item.id)
-    && item.subjectId === (recovery ? targetId : entityId) && item.provenance.includes(targetId));
+    && (item.subjectId === targetId || (!recovery && item.subjectId === entityId))
+    && item.provenance.includes(targetId) && item.provenance.includes(entityId));
   return {
     record, entityId, observation, state: observation && homeAssistantEntityState(observation),
     operation: recovery ? "enable_automation" as const : "diagnosis" as const,

@@ -64,6 +64,13 @@ export interface DeviceTwinValueV1 {
   readonly quality: "good" | "degraded" | "stale" | "unknown";
   readonly observedAt: string;
   readonly freshnessUntil: string;
+  readonly reportedEvidence?: {
+    readonly taskId: string;
+    readonly attemptId: string;
+    readonly observationId: string;
+    readonly profileRevision: string;
+    readonly connectionRevision: string;
+  };
 }
 
 export interface DeviceTwinV1 {
@@ -72,6 +79,9 @@ export interface DeviceTwinV1 {
   readonly values: readonly DeviceTwinValueV1[];
   readonly updatedAt: string;
 }
+
+export type DeviceTwinReportedValueV1 = Pick<DeviceTwinValueV1, "key" | "quality" | "source" | "observedAt" | "freshnessUntil">
+  & Required<Pick<DeviceTwinValueV1, "reported" | "reportedEvidence">>;
 
 export type DeviceSemanticCapabilityV1 = Pick<CapabilityDescriptorV1,
   "id" | "schemaVersion" | "semanticVerb" | "sideEffect" | "approvalClass" | "prerequisites" | "verificationCapabilityId">;

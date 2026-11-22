@@ -29,7 +29,7 @@ const time = "2026-11-21T10:00:00.000Z";
 const options = { randomId: async (prefix: string) => `${prefix}_${randomUUID()}`, now: () => time };
 const target = { origin: "https://ha.fixture.example", token: "fixture-credential", entityId: "light.kitchen" };
 
-test("a phone-owned write checks its alternate route and journals a fresh target readback", { timeout: 5_000 }, async t => {
+test("phone receipts and alternate-route verification remain scoped to the target", { timeout: 5_000 }, async t => {
   const profile: DeviceProfileV1 = {
     device: { id: "fixture-board", ownerScope: "owner", displayName: "Fixture board", kind: "hardware", lifecycleStatus: "healthy", profileRevision: "1" },
     adapterId: "fixture-ble", adapterVersion: "1", transports: ["ble"], connectionRefs: ["primary"],
@@ -68,7 +68,7 @@ test("a phone-owned write checks its alternate route and journals a fresh target
     capabilitySnapshotId: snapshot.snapshotId, connectionRevision: snapshot.connectionRevision, policyRevision: "device-policy-v1",
     normalizedInputDigest: digestDeviceRequest(proposal), expiresAt, recoveryScope: recoveryPlan,
   };
-  for (const scenario of ["foreign readback", "fresh readback", "suspended route check"]) {
+  for (const scenario of ["foreign receipt", "oversized receipt", "foreign readback", "fresh readback", "suspended route check"]) {
     await t.test(scenario, async () => {
       const sameTarget = scenario !== "foreign readback";
       const suspends = scenario === "suspended route check";
@@ -86,7 +86,11 @@ test("a phone-owned write checks its alternate route and journals a fresh target
           if (!reading) writes += 1;
           return {
             action: { actionId: request.actionId, status: "completed", observationIds: reading ? [baseline.id] : [], startedAt: time },
-            ...(reading ? { observations: [baseline] } : {}),
+            ...(reading ? { observations: [{
+              ...baseline,
+              ...(scenario === "foreign receipt" ? { subjectId: "other-device" } : {}),
+              ...(scenario === "oversized receipt" ? { value: "x".repeat(2_048) } : {}),
+            }] } : {}),
           };
         },
         async verifyRecoveryPath(input) {
@@ -105,7 +109,14 @@ test("a phone-owned write checks its alternate route and journals a fresh target
         },
       };
       const context = { profile, snapshot, task, transport };
-      await execution.execute({ ...context, request: readRequest, finalizeTask: false });
+      const initial = await execution.execute({ ...context, request: readRequest, finalizeTask: false });
+      if (scenario === "foreign receipt" || scenario === "oversized receipt") {
+        assert.equal(initial.attempt.status, "unknown");
+        assert.equal(initial.attempt.receipt?.status, "uncertain");
+        assert.deepEqual(await journal.listObservations(task.id), []);
+        assert.equal(writes, 0);
+        return;
+      }
       await journal.saveTask({ ...task, status: "awaiting_approval" });
       const approved = { ...proposal, approvalId: approval.approvalId, approval };
       await assert.rejects(() => execution.execute({ ...context, request: { ...approved, approval: { ...approval, recoveryScope: undefined } } }), /exact current approval/u);

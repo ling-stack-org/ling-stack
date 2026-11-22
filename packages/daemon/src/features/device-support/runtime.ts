@@ -53,6 +53,7 @@ import { DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS, type DeviceDiagnosisPlanner, type De
 import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 import { createDeviceApprovalQueue } from "./approval-queue.js";
 import { createDeviceDeveloperJobs, type DeviceDeveloperExecutor } from "./developer-jobs.js";
+import { homeAssistantReportedValue } from "./home-assistant-twin.js";
 
 interface ConfiguredDeviceTargetSummary {
   readonly connectionId: string;
@@ -459,7 +460,13 @@ export function createDeviceSupportRuntime(options: {
       const playbook = request.entryId === undefined
         ? createHomeAssistantOfflinePlaybook(entityId, { maxReportAgeMs: request.maxReportAgeMs })
         : createHomeAssistantIntegrationDiagnosisPlaybook(request.entryId, entityId);
-      return withHomeAssistant(target => runDiagnosis(target, target.device.id, playbook, request));
+      return withHomeAssistant(async target => {
+        const { id: deviceId } = target.device;
+        const result = await runDiagnosis(target, deviceId, playbook, request);
+        const value = homeAssistantReportedValue(result, store.getCurrentCapabilitySnapshot(deviceId));
+        if (value) fabricStore.recordReportedTwinValue({ deviceId, value, recordedAt: now() });
+        return result;
+      });
     },
     async proposeHomeAssistantReload({ entryId, entityId }) {
       return withHomeAssistant(async (target, adapter) => {

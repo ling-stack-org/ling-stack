@@ -415,9 +415,16 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
       fabric.addGraphRelationship({ relationshipId: "foreign-link", fromNodeId: "integration", toNodeId: "foreign",
         type: "connects", provenance: [], revision: 1 });
       const past = "2025-01-01T00:00:00.000Z";
+      const live = fabric.getTwin(deviceId);
+      assert.ok(live);
+      const reported = live.values.find(value => value.key === "sensor.garage");
+      assert.deepEqual(reported?.reported, { availability: "unavailable" });
+      assert.equal(reported?.reportedEvidence?.observationId, report.facts[0]?.observationId);
+      assert.equal(reported?.reportedEvidence?.taskId, report.taskId);
       fabric.saveTwin({
-        deviceId, revision: 1, updatedAt: past,
-        values: [{ key: "availability", reported: "private-twin-value", quality: "good", source: "fixture", observedAt: past, freshnessUntil: past }],
+        ...live, revision: live.revision + 1,
+        values: [...live.values, { key: "fixture.property", reported: "private-twin-value", quality: "good",
+          source: "fixture", observedAt: past, freshnessUntil: past }],
       });
       fabric.saveEdgeRuntime({ runtimeId: "bench-edge", displayName: "Bench Edge", publicKeyFingerprint: "fixture-edge-fingerprint",
         contractMajor: 1, supportedTransports: ["rs485"], status: "offline", revision: 1 });
@@ -430,7 +437,7 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
       generatedAt: string;
       nodes: { nodeId: string; deviceId: string; connectionRevision?: string }[];
       relationships: { relationshipId: string }[];
-      twins: { deviceId: string; values: { quality: string; hasReported: boolean }[] }[];
+      twins: { deviceId: string; values: { key: string; quality: string; hasReported: boolean; reportedEvidence?: { taskId: string } }[] }[];
     };
     assert.ok(Number.isFinite(Date.parse(graph.generatedAt)));
     assert.deepEqual(graph.nodes.map(node => [node.nodeId, node.deviceId]), [["component", deviceId], ["integration", deviceId]]);
@@ -439,8 +446,10 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
     assert.deepEqual(graph.relationships.map(link => link.relationshipId), ["contains-component"]);
     assert.equal(graph.twins.length, 1);
     assert.equal(graph.twins[0]?.deviceId, deviceId);
-    assert.equal(graph.twins[0]?.values[0]?.quality, "stale");
-    assert.equal(graph.twins[0]?.values[0]?.hasReported, true);
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "fixture.property")?.quality, "stale");
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "sensor.garage")?.hasReported, true);
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "sensor.garage")?.reportedEvidence?.taskId, report.taskId);
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "sensor.reporting")?.quality, "stale");
     assert.doesNotMatch(JSON.stringify(graph), /foreign-node|foreign-link|private-/u);
     const edgeResponse = await fetch(base + "/fabric/edge-runtimes", { headers });
     assert.equal(edgeResponse.status, 200);
@@ -464,6 +473,11 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
       assert.deepEqual(store.listObservations(page.taskId)[0]?.value, page.catalog);
       assert.doesNotMatch(JSON.stringify([page, store.listEvents(page.taskId)]), /private device output|fixture-ha-access-token/u);
     }
+    store.markDeviceOffline(deviceId, new Date().toISOString());
+    const afterDisconnect = await (await fetch(base + "/fabric/graph", { headers })).json() as typeof graph;
+    const retained = afterDisconnect.twins[0]?.values.find(value => value.key === "sensor.garage");
+    assert.equal(retained?.quality, "stale");
+    assert.equal(retained?.reportedEvidence?.taskId, report.taskId);
   } finally {
     store.close();
   }

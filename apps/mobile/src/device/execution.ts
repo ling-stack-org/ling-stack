@@ -4,7 +4,7 @@ import {
   isDeviceApprovalBindingV1,
   isDeviceCapabilitySnapshotV1,
   matchesDeviceCapabilitySchemaV1,
-  isDeviceObservationV1,
+  observationsMatchDeviceReceipt,
   isDeviceProfileV1,
   isDeviceTaskV1,
   isDeviceVerificationResultV1,
@@ -22,7 +22,7 @@ import {
   type DeviceTaskV1,
   type DeviceVerificationResultV1,
 } from "@ling-stack/contracts";
-import { canonicalJsonBytes, encodeBase64Url, sha256 } from "@ling-stack/remote-protocol";
+import { canonicalJsonBytes, encodeBase64Url, encodeUtf8, sha256 } from "@ling-stack/remote-protocol";
 
 export interface MobileDeviceExecutionResult {
   readonly action: DeviceActionResultV1;
@@ -306,7 +306,7 @@ export class MobileDeviceExecution {
       throw error;
     }
 
-    const execution = await this.runTransport(transport, request, signal);
+    const execution = await this.runTransport(transport, request, signal, capability.responseBytesLimit);
     const action = execution.action;
     const attemptStatus = signal.aborted ? "unknown" : action.status === "completed" ? "completed" : action.status === "rejected" ? "failed" : "unknown";
     let received: MobileAttemptRecord = { ...record, attempt: { ...attempt, status: attemptStatus, receipt: action } };
@@ -319,7 +319,9 @@ export class MobileDeviceExecution {
     if (outcome === "succeeded" && (capability.sideEffect !== "read_only"
       || capability.verificationCapabilityId !== undefined || request.expectedVerification !== undefined)) {
       await saveStatus("verifying");
-      const verification = await this.readBack(transport, request, action, signal, input.requireFreshVerificationEvidence === true);
+      const verification = await this.readBack(transport, request, action, signal, {
+        requireFreshEvidence: input.requireFreshVerificationEvidence === true, responseBytesLimit: capability.responseBytesLimit,
+      });
       received = { ...received, attempt: { ...received.attempt, verification } };
       await this.#journal.saveAttempt(received);
       lastVerificationId = `${request.actionId}:verification`;
@@ -413,7 +415,9 @@ export class MobileDeviceExecution {
       const receipt = record.attempt.receipt ?? {
         actionId: request.actionId, status: "uncertain" as const, startedAt: record.attempt.dispatchIntentAt, observationIds: [],
       };
-      const verification = await this.readBack(transport, request, receipt, controller.signal, true, reconciliationId);
+      const verification = await this.readBack(transport, request, receipt, controller.signal, {
+        requireFreshEvidence: true, responseBytesLimit: reader.responseBytesLimit, evidenceId: reconciliationId,
+      });
       const at = this.#now();
       const verified = verification.status === "verified" && !controller.signal.aborted && snapshotIsCurrent()
         && Date.parse(verification.checkedAt) >= Date.parse(receipt.finishedAt ?? record.attempt.dispatchIntentAt);
@@ -487,12 +491,15 @@ export class MobileDeviceExecution {
     }
   }
 
-  private async runTransport(transport: MobileDeviceTransport, request: DeviceActionRequestV1, signal: AbortSignal): Promise<MobileDeviceExecutionResult> {
+  private async runTransport(
+    transport: MobileDeviceTransport, request: DeviceActionRequestV1, signal: AbortSignal, responseBytesLimit: number,
+  ): Promise<MobileDeviceExecutionResult> {
     try {
       const result = await transport.execute({ request, signal });
       if (isDeviceActionResultV1(result?.action) && result.action.actionId === request.actionId
-        && (!result.observations || result.observations.every(observation => isDeviceObservationV1(observation)
-          && result.action.observationIds.includes(observation.id)))) return result;
+        && observationsMatchDeviceReceipt(result.observations, result.action.observationIds, request.targetDeviceId)
+        && (result.observations?.length ?? 0) === result.action.observationIds.length
+        && encodeUtf8(JSON.stringify(result)).length <= responseBytesLimit) return result;
     } catch {
       // The dispatch intent is already durable, so transport failures need readback.
     }
@@ -505,7 +512,12 @@ export class MobileDeviceExecution {
 
   private async readBack(
     transport: MobileDeviceTransport, request: DeviceActionRequestV1, action: DeviceActionResultV1,
-    signal: AbortSignal, requireFreshEvidence: boolean, evidenceId?: string,
+    signal: AbortSignal,
+    { requireFreshEvidence, responseBytesLimit, evidenceId }: {
+      readonly requireFreshEvidence: boolean;
+      readonly responseBytesLimit: number;
+      readonly evidenceId?: string;
+    },
   ): Promise<DeviceVerificationResultV1> {
     if (transport.verify && !signal.aborted) {
       const startedAt = Date.parse(this.#now());
@@ -513,19 +525,19 @@ export class MobileDeviceExecution {
         const result = await transport.verify({ request, action, signal, evidenceId });
         const evidence = result && "verification" in result ? result : undefined;
         const verification = evidence?.verification ?? result;
+        const observations = evidence?.observations;
         if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId
+          && observationsMatchDeviceReceipt(observations, verification.observationIds, request.targetDeviceId)
+          && encodeUtf8(JSON.stringify(result)).length <= responseBytesLimit
           && (request.expectedVerification === undefined
             || encodeBase64Url(canonicalJsonBytes(verification.rule)) === encodeBase64Url(canonicalJsonBytes(request.expectedVerification)))) {
           if (!requireFreshEvidence && (!request.recoveryPlan || verification.status === "not_evaluable")) return verification;
           const now = this.#now();
           const checkedAt = Date.parse(verification.checkedAt);
-          const observations = evidence?.observations;
           if (!signal.aborted && checkedAt >= startedAt && checkedAt <= Date.parse(now)
             && Array.isArray(observations) && observations.length > 0
             && (evidenceId === undefined || (observations.length === 1 && observations[0]!.id === evidenceId))
-            && observations.every(observation => isDeviceObservationV1(observation)
-              && verification.observationIds.includes(observation.id)
-              && Date.parse(observation.observedAt) >= startedAt && Date.parse(observation.observedAt) <= checkedAt
+            && observations.every(observation => Date.parse(observation.observedAt) >= startedAt && Date.parse(observation.observedAt) <= checkedAt
               && isCurrentTargetObservation(observation, request.targetDeviceId, now))) {
             const ids = new Set(observations.map(observation => observation.id));
             if (ids.size === observations.length && verification.observationIds.every(id => ids.has(id))) {
