@@ -107,6 +107,7 @@ import type {
   LingAppServerDeliberationSettlementParams,
   LingAppServerStageDeliberationStartParams,
   LingAppServerStageHandoffParams,
+  LingAppServerStageMessageSendParams,
   LingAppServerWorkItemPlanChangeRequestParams,
   LingAppServerWorkItemPlanChangeWithdrawParams,
   LingAppServerWorkItemPlanChangeResult,
@@ -625,6 +626,11 @@ export class LingAppServerClient {
   async settleWorkItemStageHandoff(action: "accept" | "return", params: LingAppServerStageHandoffParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
     await this.connect();
     return await this.request(action === "accept" ? "workItem/handoff/accept" : "workItem/handoff/return", params);
+  }
+
+  async sendWorkItemStageMessage(params: LingAppServerStageMessageSendParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/message/send", params);
   }
 
   async requestWorkItemPlanChange(params: LingAppServerWorkItemPlanChangeRequestParams): Promise<LingAppServerWorkItemPlanChangeResult> {

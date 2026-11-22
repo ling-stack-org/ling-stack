@@ -135,12 +135,14 @@ export class SqliteWorkItemEvidenceStore {
   listWorkItemEvidence(options: ListWorkItemEvidenceOptions): WorkItemEvidenceEntry[] {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     const afterSequence = options.afterSequence ?? 0;
+    const prefix = options.recordIdPrefix;
     return this.context.database.prepare(`
       SELECT * FROM work_item_evidence
       WHERE workspace_id = ? AND work_item_id = ? AND sequence > ?
+      ${prefix ? "AND substr(id, 1, length(?)) = ?" : ""}
       ORDER BY sequence ASC
       LIMIT ?
-    `).all(DEFAULT_WORKSPACE_ID, options.workItemId, afterSequence, limit)
+    `).all(DEFAULT_WORKSPACE_ID, options.workItemId, afterSequence, ...(prefix ? [prefix, prefix] : []), limit)
       .map((row) => mapWorkItemEvidence(row as Record<string, SQLOutputValue>));
   }
 }

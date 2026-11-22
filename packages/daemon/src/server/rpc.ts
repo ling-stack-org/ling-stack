@@ -115,6 +115,7 @@ import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
+import { sendWorkItemStageMessage, WORKFLOW_STAGE_MESSAGE_ID_PREFIX } from "../features/work-items/stage-messages.js";
 import { readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
 import { enqueueWorkItemFeedback } from "../features/learning/work-item-feedback.js";
 import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
@@ -925,7 +926,8 @@ class RpcConnection {
       case "workItem/coordination/schedule/set":
         return this.coordinationSchedule(method, params);
       case "workItem/message/send":
-        return this.appendCollaboration("message", "created", params);
+        return readParamsRecord(params).targetStepId === undefined
+          ? this.appendCollaboration("message", "created", params) : this.sendStageMessage(params);
       case "workItem/message/read":
       case "workItem/message/list":
         return this.readCollaboration("message", params);
@@ -1279,7 +1281,8 @@ class RpcConnection {
     if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
     const afterSequence = readOptionalIntegerField(record, "afterSequence") ?? 0;
     const evidence = store.listWorkItemEvidence({ workItemId, afterSequence, limit: readOptionalIntegerField(record, "limit") });
-    return { cwd, workItemId, evidence, nextAfterSequence: evidence.at(-1)?.sequence ?? afterSequence };
+    return { cwd, workItemId, evidence: this.grant ? evidence.filter(entry => entry.visibility === "work_item") : evidence,
+      nextAfterSequence: evidence.at(-1)?.sequence ?? afterSequence };
   }
 
   private coordinationSchedule(method: "workItem/coordination/schedule/read" | "workItem/coordination/schedule/set", params: unknown): unknown {
@@ -1346,8 +1349,9 @@ class RpcConnection {
         afterRevision: readOptionalIntegerField(record, "afterRevision"),
         limit: readOptionalIntegerField(record, "limit"),
       }));
-      if (this.grant?.subject.kind !== "workItem") return { cwd, ...result };
-      const records = result.records.map(entry => {
+      if (!this.grant) return { cwd, ...result };
+      const records = result.records.filter(entry => !entry.id.startsWith(WORKFLOW_STAGE_MESSAGE_ID_PREFIX)).map(entry => {
+        if (this.grant?.subject.kind !== "workItem") return entry;
         if (entry.kind !== "handoff" || !entry.id.startsWith(WORKFLOW_STAGE_HANDOFF_ID_PREFIX)) return entry;
         const payload = isRecord(entry.payload) && typeof entry.payload.reason === "string"
           ? { reason: entry.payload.reason } : {};
@@ -1466,6 +1470,19 @@ class RpcConnection {
     } catch (error) {
       throw collaborationRpcError(error);
     }
+  }
+
+  private sendStageMessage(params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const { event, ...receipt } = sendWorkItemStageMessage(store, {
+      workItemId: readStringField(record, "workItemId"), planRevision: readStringField(record, "planRevision"),
+      targetStepId: readStringField(record, "targetStepId"), expectedTargetRevision: readStringField(record, "expectedTargetRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      body: readStringField(record, "body"), idempotencyKey: readStringField(record, "idempotencyKey"),
+    }, new Date().toISOString());
+    if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+    return { cwd, ...receipt };
   }
 
   private appendCollaboration(
@@ -3539,6 +3556,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     if (event.action === "work_item.thread.linked") return "workItem/thread/linked";
     if (event.action.includes("evidence")) return "workItem/evidence/updated";
     if (event.action.includes("control")) return "workItem/control/updated";
+    if (event.action === "work_item.collaboration.message.created" && event.data.visibility === "participants") return "workItem/message/updated";
     if (event.action.includes("collaboration")) return "workItem/collaboration/updated";
     if (event.action.includes("delivery")) return "workItem/delivery/updated";
     if (event.action.includes("feedback")) return "workItem/feedback/received";

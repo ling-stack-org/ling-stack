@@ -937,6 +937,17 @@ export interface LingAppServerWorkItemCollaborationAppendParams {
   readonly idempotencyKey: string;
 }
 
+export interface LingAppServerStageMessageSendParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly planRevision: string;
+  readonly targetStepId: string;
+  readonly expectedTargetRevision: string;
+  readonly expectedWorkItemRevision: number;
+  readonly body: string;
+  readonly idempotencyKey: string;
+}
+
 export interface LingAppServerWorkItemCollaborationAppendResult {
   readonly status: "appended" | "replayed";
   readonly record: LingAppServerWorkItemCollaborationRecord;

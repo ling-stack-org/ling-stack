@@ -156,6 +156,11 @@ export async function runLingAppServerMcp(
       inputSchema: z.strictObject({ ...stageHandoff, reason: z.enum(LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS) }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.settleWorkItemStageHandoff("return", params)));
+    if (methods.has("workItem/message/send")) server.registerTool("ling_stage_message_send", {
+      description: "Queue coordination context for one receiving stage of the accepted Plan.",
+      inputSchema: z.strictObject({ ...planChange, targetStepId: objectId, expectedTargetRevision: objectId, body: z.string().min(1).max(1200) }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.sendWorkItemStageMessage(params)));
     const plan = { threadId: objectId, planId: objectId, expectedRevision: z.number().int().positive() };
     if (methods.has("plan/refine")) server.registerTool("ling_plan_refine", {
       description: "Create the next draft from a Ling Plan at its current revision.",

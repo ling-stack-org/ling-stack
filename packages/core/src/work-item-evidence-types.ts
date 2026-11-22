@@ -66,6 +66,7 @@ export interface WorkItemEvidenceEventOptions {
 
 export interface ListWorkItemEvidenceOptions {
   readonly workItemId: string;
+  readonly recordIdPrefix?: string;
   readonly afterSequence?: number;
   readonly limit?: number;
 }

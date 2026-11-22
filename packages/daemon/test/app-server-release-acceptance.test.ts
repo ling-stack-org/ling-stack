@@ -2767,8 +2767,19 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   };
   const implementationHold = await resumedClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/request", implementationChange);
   assert.deepEqual(implementationHold.receipt.affectedStepIds, [p02.id]);
+  const targetStage = resumedStore.getChannelWorkflowStep(p02.id);
+  assert.ok(targetStage);
+  const stageMessage = {
+    ...changeBasis, expectedWorkItemRevision: Number(implementationHold.workItem.revision),
+    targetStepId: p02.id, expectedTargetRevision: targetStage.updatedAt, idempotencyKey: "implementation-coordination",
+    body: "Preserve the exact response order for legacy consumers.",
+  };
+  const coordinated = await resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", stageMessage);
+  assert.equal(coordinated.status, "appended");
+  assert.equal(coordinated.record.actorId, "local-user");
+  await assert.rejects(resumedClient.call("workItem/message/send", { ...stageMessage, body: "Use different input." }), { code: "idempotency_conflict" });
   const handoff = { ...offeredHandoff, expectedSourceRevision: revisedSource.updatedAt,
-    expectedWorkItemRevision: Number(implementationHold.workItem.revision), idempotencyKey: "qa-accept-repaired-contract" };
+    expectedWorkItemRevision: coordinated.workItemRevision, idempotencyKey: "qa-accept-repaired-contract" };
   const handoffPath = `${itemPath}/handoff`;
   const { daemonUrl, authToken } = fixture.transportOptions();
   const forbiddenHandoff = await fetch(new URL(`${handoffPath}?cwd=${encodeURIComponent(fixture.cwd)}`, daemonUrl), {
@@ -2818,6 +2829,9 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.equal(restoredChange.replayed, true);
   assert.deepEqual(restoredChange.receipt, implementationHold.receipt);
   await assert.rejects(decisionClient.call("workItem/deliberation/decide", heldDecision), { code: "resume_blocked" });
+  const restoredMessage = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", stageMessage);
+  assert.equal(restoredMessage.status, "replayed");
+  assert.equal(restoredMessage.record.id, coordinated.record.id);
   const releaseImplementation = await decisionClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/withdraw", {
     ...changeBasis, expectedWorkItemRevision: Number(restoredChange.workItem.revision),
     changeId: restoredChange.receipt.changeId, idempotencyKey: "withdraw-implementation-scope",
@@ -2827,6 +2841,9 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.equal(restoredHandoff.status, "replayed");
   assert.equal(restoredHandoff.record.id, acceptedHandoff.record.id);
   const handoffObserver = await fixture.connect("/app-server/rpc", fixture.cwd, `las1.${grant.grantId}.${observerSecret}`);
+  await assert.rejects(handoffObserver.call("workItem/message/send", stageMessage), { code: "capability_denied" });
+  assert.doesNotMatch(JSON.stringify(await handoffObserver.call("workItem/message/list", { workItemId })), /legacy consumers/u);
+  assert.doesNotMatch(JSON.stringify(await handoffObserver.call("workItem/evidence/read", { workItemId })), /legacy consumers/u);
   const handoffHistory = await handoffObserver.call<LingAppServerWorkItemCollaborationReadResult>("workItem/handoff/read", { workItemId });
   assert.deepEqual(handoffHistory.records.map(record => record.id), [returnedHandoff.record.id, acceptedHandoff.record.id]);
   assert.ok(handoffHistory.records.every(record => record.sourceRefs.length === 0));
@@ -2847,6 +2864,10 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
     const input = JSON.stringify(body);
     return input.includes("Accepted Plan decision:") && input.includes(selected.record.id);
   }), "The implementation did not receive the accepted decision.");
+  const recipients = provider.requests.map(body => JSON.stringify(body)).filter(input => input.includes(stageMessage.body));
+  assert.ok(recipients.length >= 1, "The queued stage message was missing from the actual Pi prompt.");
+  assert.ok(recipients.every(input => input.includes(selected.record.id) && input.includes(coordinated.record.id)),
+    "The message was delivered outside the authorized stage.");
   const detail = await request(itemPath);
   assert.equal(detail.status, 200);
   const body = await detail.json() as { workflow?: LingAppServerWorkItemCollaborationReadResult["workflow"] };

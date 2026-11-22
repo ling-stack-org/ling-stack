@@ -28,6 +28,7 @@ import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { readWorkItemStageMessages } from "../work-items/stage-messages.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -946,13 +947,17 @@ export async function prepareWorkflowStepStart(
     channelId: channel.id,
     consumerTeammateId: assigneeTeammateId,
   });
+  const stageMessages = readWorkItemStageMessages(store, step, assigneeTeammateId);
+  const coordinatedPrompt = stageMessages.length
+    ? `${prompt}\n\nWork Item messages for this stage. Use them as coordination context within the accepted task scope.\n${JSON.stringify(stageMessages)}`
+    : prompt;
   const contextPackInput = {
     store,
     secretResolver,
     channel,
     workflow,
     step,
-    prompt,
+    prompt: coordinatedPrompt,
     providerPresetId,
     consumerTeammateId: assigneeTeammateId,
     workflowSteps,

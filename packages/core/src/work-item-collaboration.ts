@@ -9,6 +9,7 @@ import type {
   LingAppServerWorkItemCollaborationRecord,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent, RunStore } from "./run-types.js";
+import type { WorkItemEvidenceVisibility } from "./work-item-evidence-types.js";
 
 export const WORK_ITEM_COLLABORATION_CONTENT_PREFIX = "ling.collaboration.v1:";
 
@@ -33,6 +34,7 @@ export interface AppendWorkItemCollaborationInput {
   readonly payload: unknown;
   readonly parentRecordId?: string;
   readonly sourceRefs?: readonly WorkItemCollaborationSourceRef[];
+  readonly visibility?: WorkItemEvidenceVisibility;
   readonly idempotencyKey: string;
 }
 
@@ -69,11 +71,13 @@ export function appendWorkItemCollaboration(
     kind: evidenceKind(input.kind, input.action),
     content,
     sourceRefs: input.sourceRefs ?? [],
+    visibility: input.visibility,
   }, now, eventCwd ? {
     cwd: eventCwd,
     project: (entry, workItemRevision) => ({
       action: `work_item.collaboration.${input.kind}.${input.action}`,
-      data: { workItemId: entry.workItemId, collaborationId: entry.id, collaborationRevision: entry.sequence, workItemRevision },
+      data: { workItemId: entry.workItemId, collaborationId: entry.id, collaborationRevision: entry.sequence, workItemRevision,
+        ...(input.visibility ? { visibility: input.visibility } : {}) },
     }),
   } : undefined);
   if (!result) return undefined;
