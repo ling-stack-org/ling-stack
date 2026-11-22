@@ -943,11 +943,6 @@ only on a successful install or a model response.
   changes planners. Rebuild the context pack for the selected provider. Acceptance
   rejects a foreign owner, target, snapshot, runner revision or planning reference,
   and the owner journal keeps the accepted graph before dispatch.
-- [x] Project phone-owned task journals into the shared trace contract after
-  restart. The Mobile export preserves attempt, adapter, profile, transport,
-  connection, verification, and public evidence references while omitting raw
-  inputs and sensitive observations. The standalone screen offers an explicit
-  share action for completed Linux and Home Assistant records.
 - [x] Treat device output, logs, captures, and vendor text as untrusted observations.
   Only current public observations with a matching typed capability projection enter
   model facts. Other output remains an untrusted reference or uncertainty.
@@ -981,6 +976,10 @@ only on a successful install or a model response.
 - [x] Project the Daemon task trace from the durable owner journal. The local
   workspace-scoped read preserves interrupted attempts and links any later
   readback to the same attempt.
+- [x] Project phone-owned task journals into the shared trace contract after
+  restart. The Mobile export preserves attempt, adapter, profile, transport,
+  connection, verification, and public evidence references. The standalone
+  screen offers an explicit share action for Linux and Home Assistant records.
 - [~] Add simulator, protocol replay, hardware-in-loop, network interruption, process
   restart, resource rollback, and physical acceptance reports.
 - [~] Capture reproducible conformance reports from Daemon attempts. The report
