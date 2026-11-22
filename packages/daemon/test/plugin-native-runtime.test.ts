@@ -18,9 +18,8 @@ const pluginId = "official:office-documents";
 const executable = "runtime/ling-office-driver";
 const manifestPath = ".ling-plugin/plugin.json";
 const checksumPath = ".ling-plugin/checksums.json";
-const platform: LingPluginArtifactDescriptor["platform"] = process.platform === "darwin" || process.platform === "win32"
-  ? process.platform : "linux";
-const arch: LingPluginArtifactDescriptor["arch"] = process.arch === "arm64" ? "arm64" : "x64";
+const platform = process.platform as LingPluginArtifactDescriptor["platform"];
+const arch = process.arch as LingPluginArtifactDescriptor["arch"];
 
 test("native plugin installs from a clean workspace and can roll back offline from a second workspace", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-native-plugin-"));
