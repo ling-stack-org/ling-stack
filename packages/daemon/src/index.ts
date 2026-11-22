@@ -1,4 +1,5 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
+import { processGitHubWebhookIntake } from "./server/app-server-github-intake.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
@@ -563,7 +564,8 @@ export function createDaemonServer(
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     companionSchedulers?.start(cwd);
     worktreeMaintenance.registerStore(cwd, store);
-    if (store.listAutomationEventSources().some(source => source.enabled)) automationEvents?.start(cwd);
+    if (store.listAutomationEventSources().some(source => source.enabled)
+      || store.listAppServerState("github_intake_pending").length) automationEvents?.start(cwd);
     taskSupervisor?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
     if (!memorySemanticServices.has(store)) {
@@ -743,7 +745,9 @@ export function createDaemonServer(
       runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
         onRunReady: (id, info) => { hooks.onRunReady?.(id, info); onReady(id); },
         afterRunTerminal: hooks.afterRunTerminal, controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher,
-      })));
+      })), (store, signal) => processGitHubWebhookIntake({
+        config: resolvedConfig, secretResolver, externalWorkFetch, controlPlaneEvents,
+      }, store, signal));
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,

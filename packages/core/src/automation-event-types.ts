@@ -31,6 +31,17 @@ export interface AutomationEventEnvelope {
   readonly payloadDigest: string;
   readonly payload: Readonly<Record<string, unknown>>;
 }
+export interface AutomationGitHubIntakeTarget {
+  readonly repository: string;
+  readonly kind: "issue" | "pull_request";
+  readonly number: number;
+  readonly policyRevision: string;
+}
+export interface AutomationGitHubIntakePending extends AutomationGitHubIntakeTarget {
+  readonly sourceId: string;
+  readonly sourceRevision: number;
+  readonly sourceEventId: string;
+}
 export interface AutomationEventDispatch {
   readonly id: string;
   readonly eventId: string;
@@ -62,7 +73,8 @@ export interface AutomationEventStore {
   putAutomationEventSource(input: PutAutomationEventSource, expectedRevision: number | undefined, now: string): AutomationEventSource;
   getAutomationEventSource(id: string): AutomationEventSource | undefined;
   listAutomationEventSources(): AutomationEventSource[];
-  acceptAutomationEvent(input: Omit<AutomationEventEnvelope, "id" | "receivedAt">, sourceRevision: number, now: string): { event: AutomationEventEnvelope; duplicate: boolean };
+  acceptAutomationEvent(input: Omit<AutomationEventEnvelope, "id" | "receivedAt">, sourceRevision: number, now: string,
+    gitHubIntake?: AutomationGitHubIntakeTarget): { event: AutomationEventEnvelope; duplicate: boolean };
   listAutomationEvents(limit?: number): AutomationEventEnvelope[];
   getAutomationEvent(id: string): AutomationEventEnvelope | undefined;
   claimAutomationEventDispatch(now: string): AutomationEventDispatch | undefined;

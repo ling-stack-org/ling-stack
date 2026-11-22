@@ -4,7 +4,8 @@ export type AppServerStateKind = "verify_plan" | "verify_operation" | "review_su
   | "simplify_submission" | "external_federation" | "work_item_creation" | "work_item_acceptance" | "work_item_control"
   | "replay_identity" | "handoff" | "authorization_grant" | "work_item_target" | "work_item_source"
   | "github_delivery" | "github_delivery_current" | "work_item_thread"
-  | "automation_coordination" | "coordination_round" | "coordination_automation_run" | "project_instruction_update";
+  | "automation_coordination" | "coordination_round" | "coordination_automation_run" | "project_instruction_update"
+  | "change_recovery_request" | "github_intake_pending" | "github_intake_receipt";
 
 export interface AppServerStateRecord {
   readonly workspaceId: string;

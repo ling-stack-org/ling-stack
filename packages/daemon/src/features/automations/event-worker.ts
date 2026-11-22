@@ -10,7 +10,8 @@ export class AutomationEventWorker {
   private readonly pending = new Set<Promise<void>>();
   private closed = false;
   constructor(private readonly stores: RunStoreRegistry, private readonly destinations: ImDestinationRegistry,
-    private readonly startRun: StartAutomationRunExecution) {}
+    private readonly startRun: StartAutomationRunExecution,
+    private readonly processIntake?: (store: RunStore, signal: AbortSignal) => Promise<void>) {}
 
   start(cwd: string): void {
     if (this.closed) throw new Error("automation_event_worker_closed");
@@ -66,6 +67,8 @@ export class AutomationEventWorker {
           { status: signal.aborted ? "queued" : "failed", error: error instanceof Error && /^automation_[a-z_]+$/.test(error.message) ? error.message : "automation_event_dispatch_failed" }, new Date().toISOString());
       }
     }
+    if (signal.aborted) return;
+    await this.processIntake?.(store, signal);
     if (signal.aborted) return;
     store.reconcileAutomationDeliveries(new Date().toISOString());
     await this.destinations.ensureLoaded();

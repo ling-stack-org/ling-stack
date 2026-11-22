@@ -47,3 +47,17 @@ test("only the exact signed-ingress POST path uses source authentication", () =>
   }
   assert.equal(isAutomationEventIngress("/automation-event-sources/source/events", "GET"), false);
 });
+
+test("GitHub pull request and review events preserve their subject identity", () => {
+  const github = { ...source, adapter: "github" as const, repository: "org/repo" };
+  for (const [type, action, extra] of [
+    ["pull_request", "opened", { pull_request: { number: 13, updated_at: now } }],
+    ["pull_request_review", "submitted", { pull_request: { number: 13 }, review: { id: 4, submitted_at: now } }],
+    ["pull_request_review_comment", "created", { pull_request: { number: 13 }, comment: { id: 5, updated_at: now } }],
+  ] as const) {
+    const body = Buffer.from(JSON.stringify({ action, repository: { full_name: "org/repo" }, ...extra }));
+    const headers = { "x-github-event": type, "x-github-delivery": `delivery-${type}`,
+      "x-hub-signature-256": `sha256=${createHmac("sha256", "new-key").update(body).digest("hex")}` };
+    assert.equal(authenticateAutomationEvent({ source: github, headers, body, secretResolver, now }).type, `github.${type}.${action}`);
+  }
+});

@@ -252,7 +252,11 @@ sequenceDiagram
 
 普通 Pi 会话根据结构化文件工具的目标路径发现新增目录规则。规则内容随 Run 封存，并在下一次任务模型请求进入 Provider 适配器前参与上下文容量计算。新范围内的 `edit` 和 `write` 会等到这次模型请求受理再重试。相同 Run 使用首次发现的规则版本。`context/inspect` 返回开工规则和运行中增加的来源摘要，Thread 事件分别报告发现和模型请求受理。 [运行中的项目规则](../../packages/daemon/src/features/conversations/runtime-project-instructions.ts)
 
+通过 `PATCH /workspace-settings` 的 `claudeProjectRules` 显式登记根目录 `CLAUDE.md` 或 `.claude/rules/` 下的 Markdown 文件。带 `paths` frontmatter 的目录规则只对匹配的仓库相对路径生效，执行清单保留文件、匹配模式和 digest。规则内容参与上下文预算，适用的 `AGENTS.md` 决定冲突时遵循的仓库约定。
+
 ### 3.2 候选、验证计划和结果
+
+`changes/read` 按当前候选 digest 返回文件分页。`changes/apply/preview` 接受已收敛的本工作区 Turn 和 `undo` 或 `reapply`，返回原始 Turn 的不可变变更视图和预览 revision。`changes/apply` 以 operator 凭据、已确认的 revision 与幂等键进入原有工作区恢复路径，应用范围覆盖该 Turn 的原始可恢复改动。
 
 候选引用包括 `workspaceId`、`worktreeId`、`baseCommit`、`headCommit`、`candidateDigest`、相关文件范围与覆盖状态。Daemon 从 Git 事实及授权范围内的工作树内容计算候选，包括声明要交付的未暂存和未跟踪改动，复用 Code Assessment 的双次采集和范围保护。文件移动、截断、敏感或不可读内容有明确的覆盖原因。发布证据绑定当前候选和实际输入，审查的脱敏视图另带其自身 digest。
 

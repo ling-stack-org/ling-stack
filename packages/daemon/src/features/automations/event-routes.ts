@@ -6,6 +6,7 @@ import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js
 import { readJsonBody, readRequestBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { authenticateAutomationEvent } from "./event-ingress.js";
+import { gitHubIntakeReceiptId, gitHubWebhookIntakeTarget } from "../../server/app-server-github-intake.js";
 
 export const isAutomationEventIngress = (pathname: string, method?: string): boolean =>
   method === "POST" && /^\/automation-event-sources\/[a-zA-Z0-9_.:-]{1,160}\/events$/.test(pathname);
@@ -29,9 +30,14 @@ export async function handleAutomationEventRoute(request: IncomingMessage, respo
       catch { throw new HttpError(413, "automation_event_body_limit", "Event body exceeds its limit."); }
       const now = new Date().toISOString();
       const envelope = authenticateAutomationEvent({ source, headers: request.headers, body, secretResolver: context.secretResolver, now });
-      const accepted = store.acceptAutomationEvent(envelope, source.revision, now);
+      const intake = gitHubWebhookIntakeTarget(context, store.paths.cwd, source, envelope);
+      const accepted = store.acceptAutomationEvent(envelope, source.revision, now, intake);
       context.automationEvents.start(cwd); context.automationEvents.poke(cwd);
-      writeJson(response, accepted.duplicate ? 200 : 202, { eventId: accepted.event.id, duplicate: accepted.duplicate });
+      const intakeReceiptId = gitHubIntakeReceiptId("webhook", accepted.event.id);
+      const tracked = store.getAppServerState("github_intake_pending", accepted.event.id)
+        || store.getAppServerState("github_intake_receipt", intakeReceiptId);
+      writeJson(response, accepted.duplicate ? 200 : 202, { eventId: accepted.event.id, duplicate: accepted.duplicate,
+        ...(tracked ? { intakeReceiptId } : {}) });
     } else if (sourceRoute && !sourceRoute[2]) {
       if (request.method === "GET") {
         writeJson(response, 200, sourceRoute[1] ? { source: store.getAutomationEventSource(sourceRoute[1]) ?? null }

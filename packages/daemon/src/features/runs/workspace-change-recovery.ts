@@ -28,6 +28,7 @@ import {
   assertNoInternalPatchPaths,
   assertNoSymlinkEscapes,
   assertPatchPathsWithinAllowedWritePaths,
+  atomicCreateWorkspaceTextFile,
   atomicWriteWorkspaceTextFile,
   deleteWorkspaceFile,
   readWorkspaceTextFile,
@@ -192,6 +193,10 @@ export async function recoverTurnWorkspaceChanges(
   turn: import("@ling-stack/core").LingTurn,
   action: RecoveryAction,
   idempotencyKey: string,
+  confirmation?: {
+    readonly validate: (cwd: string) => Promise<void>;
+    readonly assertCurrent: (cwd: string) => void;
+  },
 ): Promise<TurnWorkspaceChangesResponse> {
   if (!idempotencyKey.trim()) throw new RunWorkspaceRecoveryError(400, "idempotency_key_required", "A recovery idempotency key is required.");
   const links = store.listLingTurnRuns(turn.id);
@@ -348,6 +353,10 @@ export async function recoverTurnWorkspaceChanges(
         updatedAt: new Date().toISOString(),
       });
       throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", "Workspace changed after the recovery request was validated; retry with a new idempotency key.");
+    }
+    if (confirmation) {
+      await confirmation.validate(cwd);
+      confirmation.assertCurrent(cwd);
     }
     const recoveryRecord = durableRecord ?? store.createPostCompactionUndoRecord({
       idempotencyKey,
@@ -878,14 +887,14 @@ export function commitRecovery(cwd: string, preflight: RecoveryPreflight): void 
       if (readWorkspaceTextFile(cwd, path) !== before) {
         throw new ApplyPatchError(`Workspace file changed after recovery preflight: ${path}`);
       }
-      writeWorkspaceState(cwd, path, after);
+      writeWorkspaceState(cwd, path, before, after);
       committed.push(path);
     }
   } catch (error) {
     for (const path of committed.reverse()) {
       try {
         if (readWorkspaceTextFile(cwd, path) === preflight.after.get(path)) {
-          writeWorkspaceState(cwd, path, preflight.before.get(path));
+          writeWorkspaceState(cwd, path, preflight.after.get(path), preflight.before.get(path));
         }
       } catch {
         // Best-effort rollback preserves the original error while limiting partial recovery.
@@ -900,9 +909,11 @@ export function commitRecovery(cwd: string, preflight: RecoveryPreflight): void 
   }
 }
 
-function writeWorkspaceState(cwd: string, path: string, content: string | undefined): void {
+function writeWorkspaceState(cwd: string, path: string, current: string | undefined, content: string | undefined): void {
   if (content === undefined) {
     deleteWorkspaceFile(cwd, path);
+  } else if (current === undefined) {
+    atomicCreateWorkspaceTextFile(cwd, path, content, true);
   } else {
     atomicWriteWorkspaceTextFile(cwd, path, content);
   }

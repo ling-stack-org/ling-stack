@@ -15,7 +15,8 @@ export function parseAutomationEventSource(value: unknown): PutAutomationEventSo
     || source.secretRefs.some(ref => typeof ref !== "string" || ref.length > 256 || !isSupportedSecretRef(ref))
     || source.repository !== undefined && (typeof source.repository !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(source.repository))
     || source.adapter === "github" && source.repository === undefined
-    || !Array.isArray(source.rules) || !source.rules.length || source.rules.length > 32) throw new Error("automation_event_configuration_invalid");
+    || !Array.isArray(source.rules) || !source.rules.length && source.adapter !== "github"
+    || source.rules.length > 32) throw new Error("automation_event_configuration_invalid");
   const ids = new Set<string>();
   for (const value of source.rules) {
     const rule = object(value, ["automationId", "types", "predicates", "destinationIds"]);

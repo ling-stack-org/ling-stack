@@ -55,7 +55,8 @@ export async function prepareConversationSubmission(options: {
     attachments, attachmentMaterializations, normalConversationContext: prepared.context,
     normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
   });
-  const runRequest = saveNormalConversationPreparedRequest(store, await withProjectInstructions(workspaceCwd, request), now);
+  const runRequest = saveNormalConversationPreparedRequest(store,
+    await withProjectInstructions(workspaceCwd, request, store.getWorkspaceSettings().claudeProjectRules), now);
   return { thread, turn, attachments, runRequest, replayed: accepted?.status === "accepted" };
 }
 

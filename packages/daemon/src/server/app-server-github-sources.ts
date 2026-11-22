@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { LingGitHubRequiredCheck } from "@ling-stack/contracts";
+import type { LingAppServerGitHubIntakePolicy, LingGitHubRequiredCheck } from "@ling-stack/contracts";
+import { isRecord } from "../shared/validation.js";
 
 export interface AppServerGitHubDeliveryPolicy {
   readonly baseRef: string;
@@ -17,6 +18,7 @@ export interface AppServerGitHubSourceConfig {
   readonly repositoryId: string;
   readonly secretRef?: string;
   readonly deliveryPolicies?: readonly AppServerGitHubDeliveryPolicy[];
+  readonly intake?: LingAppServerGitHubIntakePolicy;
 }
 
 export const githubRepositoryPattern = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/u;
@@ -48,8 +50,23 @@ export function resolveAppServerGitHubSources(
     return {
       workspaceRoot, repository, repositoryId: config.repositoryId, secretRef: config.secretRef,
       deliveryPolicies: resolveDeliveryPolicies(config.deliveryPolicies),
+      intake: resolveIntakePolicy(config.intake),
     };
   });
+}
+
+function resolveIntakePolicy(policy: unknown): LingAppServerGitHubIntakePolicy | undefined {
+  if (policy === undefined) return undefined;
+  if (!isRecord(policy) || policy.mode !== "manual" && policy.mode !== "suggest" || typeof policy.enabled !== "boolean"
+    || policy.requiredLabel !== undefined && (typeof policy.requiredLabel !== "string" || !policy.requiredLabel.trim()
+      || policy.requiredLabel.length > 50 || /[,\r\n\0]/u.test(policy.requiredLabel))
+    || policy.webhookSourceId !== undefined && (typeof policy.webhookSourceId !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/u.test(policy.webhookSourceId))
+    || policy.priority !== undefined && policy.priority !== "low" && policy.priority !== "normal"
+      && policy.priority !== "high" && policy.priority !== "urgent") {
+    throw new Error("Invalid App Server GitHub intake policy.");
+  }
+  return { mode: policy.mode, enabled: policy.enabled, requiredLabel: policy.requiredLabel,
+    webhookSourceId: policy.webhookSourceId, priority: policy.priority };
 }
 
 function resolveDeliveryPolicies(policies: readonly AppServerGitHubDeliveryPolicy[] | undefined): readonly AppServerGitHubDeliveryPolicy[] {

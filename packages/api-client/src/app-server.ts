@@ -1,4 +1,10 @@
 import type {
+  LingAppServerApplyChangesParams,
+  LingAppServerApplyChangesResult,
+  LingAppServerChangeRecoveryPreview,
+  LingAppServerPreviewChangeRecoveryParams,
+  LingAppServerReadChangesParams,
+  LingAppServerReadChangesResult,
   LingAppServerDoctorRunParams,
   LingAppServerDoctorRunResult,
   LingAppServerCapability,
@@ -24,6 +30,10 @@ import type {
   LingAppServerGitHubSubjectParams,
   LingAppServerGitHubSubjectResult,
   LingAppServerGitHubDeliveryResult,
+  LingAppServerGitHubIntakePollParams,
+  LingAppServerGitHubIntakePollResult,
+  LingAppServerGitHubIntakeReadParams,
+  LingAppServerGitHubIntakeReceipt,
   LingAppServerReconcileGitHubDeliveryParams,
   LingAppServerCoordinationSchedule,
   LingAppServerCoordinationScheduleParams,
@@ -315,6 +325,32 @@ export class LingAppServerClient {
   async captureChanges(): Promise<LingAppServerCaptureChangesResult> {
     await this.connect();
     return await this.request("changes/capture", {});
+  }
+
+  async pollGitHubIntake(params: LingAppServerGitHubIntakePollParams): Promise<LingAppServerGitHubIntakePollResult> {
+    await this.connect();
+    return await this.request("github/intake/poll", params);
+  }
+
+  async readGitHubIntake(params: LingAppServerGitHubIntakeReadParams): Promise<LingAppServerGitHubIntakeReceipt> {
+    await this.connect();
+    const result = await this.request<{ receipt: LingAppServerGitHubIntakeReceipt }>("github/intake/read", params);
+    return result.receipt;
+  }
+
+  async readChanges(params: LingAppServerReadChangesParams): Promise<LingAppServerReadChangesResult> {
+    await this.connect();
+    return await this.request("changes/read", params);
+  }
+
+  async previewChangeRecovery(params: LingAppServerPreviewChangeRecoveryParams): Promise<LingAppServerChangeRecoveryPreview> {
+    await this.connect();
+    return await this.request("changes/apply/preview", params);
+  }
+
+  async applyChanges(params: LingAppServerApplyChangesParams): Promise<LingAppServerApplyChangesResult> {
+    await this.connect();
+    return await this.request("changes/apply", params);
   }
 
   async listWorktrees(): Promise<ManagedWorktreeListResponse> {

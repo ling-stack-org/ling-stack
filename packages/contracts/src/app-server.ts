@@ -1,4 +1,4 @@
-import type { CodeAssessmentFinding, CodeAssessmentReviewRules, CodeFindingCloseReason } from "./code-assessments.js";
+import type { CodeAssessmentFinding, CodeAssessmentReviewRules, CodeAssessmentSnapshot, CodeFindingCloseReason } from "./code-assessments.js";
 import type { ApprovalSummary, ControlPlaneEventsResponse, ControlPlaneReplayWindow } from "./control-plane.js";
 import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
 import type { RunSession } from "./runtime.js";
@@ -7,6 +7,7 @@ import type { LingTurn, LingTurnRun } from "./turns.js";
 import type { ManagedWorktreeEntry, ManagedWorktreeOwnerKind, WorktreeRecoverySnapshot } from "./worktrees.js";
 import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "./user-input.js";
 import type { UserInputRequestTranscriptV1 } from "./user-input-transcript.js";
+import type { TurnWorkspaceChangesResponse } from "./workspace-changes.js";
 
 /** Public Ling App Server protocol contract. Transport implementations may add
  * framing, authentication and backpressure, but they must preserve these names
@@ -28,6 +29,7 @@ export const LING_APP_SERVER_CAPABILITIES = [
   "development.review",
   "development.simplify",
   "development.instructions",
+  "development.changes",
   "workItem.read",
   "workItem.control",
   "workItem.evidence",
@@ -49,6 +51,7 @@ export const LING_APP_SERVER_IMPLEMENTED_CAPABILITIES = [
   "development.review",
   "development.simplify",
   "development.instructions",
+  "development.changes",
   "workItem.read",
   "workItem.control",
   "workItem.evidence",
@@ -145,6 +148,8 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/feedback/add",
   "delivery/read",
   "github/subject/read",
+  "github/intake/poll",
+  "github/intake/read",
   "github/delivery/reconcile",
   "workItem/evidence/read",
   "workItem/evidence/append",
@@ -744,6 +749,51 @@ export interface LingAppServerCaptureChangesResult {
   readonly headCommit: string;
 }
 
+export interface LingAppServerReadChangesParams {
+  readonly cwd?: string;
+  readonly candidateDigest: string;
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
+export interface LingAppServerReadChangesResult extends LingAppServerCaptureChangesResult {
+  readonly files: readonly (Omit<CodeAssessmentSnapshot["files"][number], "diff"> & {
+    readonly diff?: string;
+    readonly diffOmitted?: "frame_limit";
+  })[];
+  readonly exclusions: CodeAssessmentSnapshot["exclusions"];
+  readonly exclusionCount: number;
+  readonly totalFileCount: number;
+  readonly nextOffset?: number;
+}
+
+export interface LingAppServerPreviewChangeRecoveryParams {
+  readonly cwd?: string;
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly action: "undo" | "reapply";
+}
+
+export interface LingAppServerChangeRecoveryPreview extends LingAppServerCaptureChangesResult {
+  readonly expectedRevision: string;
+  readonly action: LingAppServerPreviewChangeRecoveryParams["action"];
+  readonly changes: TurnWorkspaceChangesResponse;
+}
+
+export interface LingAppServerApplyChangesParams extends LingAppServerPreviewChangeRecoveryParams {
+  readonly expectedRevision: string;
+  readonly idempotencyKey: string;
+  readonly confirmed: true;
+}
+
+export interface LingAppServerApplyChangesResult {
+  readonly cwd: string;
+  readonly turnId: string;
+  readonly action: LingAppServerPreviewChangeRecoveryParams["action"];
+  readonly receiptId: string;
+  readonly state: TurnWorkspaceChangesResponse["state"];
+}
+
 export interface LingAppServerWorktreeTarget {
   readonly cwd?: string;
   readonly ownerKind: ManagedWorktreeOwnerKind;
@@ -829,6 +879,7 @@ export interface LingAppServerGitHubSubject extends Omit<LingAppServerGitHubSubj
   readonly githubInstanceId: "github.com";
   readonly repositoryId: string;
   readonly title: string;
+  readonly labels?: readonly string[];
   readonly state: "open" | "closed";
   readonly sourceRevision: string;
   readonly baseRef?: string;
@@ -836,6 +887,44 @@ export interface LingAppServerGitHubSubject extends Omit<LingAppServerGitHubSubj
   readonly headSha?: string;
   readonly mergeSha?: string;
   readonly merged?: boolean;
+}
+
+export interface LingAppServerGitHubIntakePolicy {
+  readonly mode: "manual" | "suggest";
+  readonly enabled: boolean;
+  readonly requiredLabel?: string;
+  readonly webhookSourceId?: string;
+  readonly priority?: "low" | "normal" | "high" | "urgent";
+}
+
+export interface LingAppServerGitHubIntakeReceipt {
+  readonly receiptId: string;
+  readonly sourceEventId: string;
+  readonly origin: "webhook" | "poll";
+  readonly repository: string;
+  readonly policyRevision: string;
+  readonly subject: { readonly kind: "issue" | "pull_request"; readonly number: number };
+  readonly outcome: "manual" | "suggested" | "suppressed" | "paused" | "deduplicated";
+  readonly reasonCode: string;
+  readonly workItemId?: string;
+  readonly evaluatedAt: string;
+}
+
+export interface LingAppServerGitHubIntakePollParams {
+  readonly cwd?: string;
+  readonly repository: string;
+  readonly page?: number;
+}
+
+export interface LingAppServerGitHubIntakePollResult {
+  readonly cwd: string;
+  readonly receipts: readonly LingAppServerGitHubIntakeReceipt[];
+  readonly nextPage?: number;
+}
+
+export interface LingAppServerGitHubIntakeReadParams {
+  readonly cwd?: string;
+  readonly receiptId: string;
 }
 
 export interface LingAppServerGitHubSubjectResult {
@@ -1143,6 +1232,8 @@ export interface LingAppServerInstructionSource {
   readonly scope: string;
   readonly applicable: boolean;
   readonly textBytes?: number;
+  readonly origin?: "claude";
+  readonly pathPatterns?: readonly string[];
 }
 
 export interface LingAppServerProjectInstructionManifest {
@@ -1150,6 +1241,7 @@ export interface LingAppServerProjectInstructionManifest {
   readonly digest: string;
   readonly sources: readonly LingAppServerInstructionSource[];
   readonly omitted: readonly string[];
+  readonly claudeProjectRules?: readonly string[];
 }
 
 export interface LingAppServerThreadSnapshotParams {

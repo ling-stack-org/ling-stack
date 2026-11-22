@@ -107,7 +107,9 @@ function validatePayload(value: unknown, expected: { threadId: string; turnId: s
   readNativeResponsePreferences(request.nativeResponsePreferences);
   const manifest = request.projectInstructionManifest;
   if (manifest !== undefined && (!isRecord(manifest) || manifest.version !== 1 || !Array.isArray(manifest.sources)
-    || !Array.isArray(manifest.omitted) || manifest.digest !== textDigest(JSON.stringify([manifest.sources, manifest.omitted])))) {
+    || !Array.isArray(manifest.omitted) || (manifest.digest !== textDigest(JSON.stringify(
+      Array.isArray(manifest.claudeProjectRules) && manifest.claudeProjectRules.length
+        ? [manifest.sources, manifest.omitted, manifest.claudeProjectRules] : [manifest.sources, manifest.omitted]))))) {
     throw new Error("Invalid prepared project instruction manifest.");
   }
   if (Object.keys(request).some((key) => !requestKeys.has(key))) throw new Error("Invalid prepared request fields");

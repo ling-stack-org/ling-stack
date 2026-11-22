@@ -507,6 +507,7 @@ export function createChannelWorkspaceSnapshot(channel: Channel, workspaceCwd: s
 
 export interface WorkspaceSettings {
   readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy;
+  readonly claudeProjectRules?: readonly string[];
   readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
@@ -529,6 +530,7 @@ export interface WorkspaceSettings {
 
 export interface UpdateWorkspaceSettingsInput {
   readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy | null;
+  readonly claudeProjectRules?: readonly string[] | null;
   readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy | null;
   readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;

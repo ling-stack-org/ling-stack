@@ -85,8 +85,9 @@ import { submitAuthorizedUserInputAnswer } from "../features/runs/user-input-ans
 import { publishUserInputAnswerAcceptance } from "../features/runs/user-input-events.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 import { AppServerDevelopmentService } from "./app-server-development.js";
+import { applyAppServerChanges, captureAppServerChanges, previewAppServerChangeRecovery, readAppServerChanges } from "./app-server-changes.js";
+import { RunWorkspaceRecoveryError } from "../features/runs/workspace-change-recovery.js";
 import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
-import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
 import { listManagedWorktrees, WorktreeActionError } from "../features/workspaces/worktree-management.js";
 import { cleanupAppServerWorktree, createAppServerWorktree, previewAppServerWorktreeCleanup, refreshAppServerWorktree } from "./app-server-worktrees.js";
 import { checkAppServerHandoff, createAppServerHandoff, handoffInstruction, readAppServerHandoff } from "./app-server-handoff.js";
@@ -96,6 +97,7 @@ import {
   grantAllowsMethod, grantAllowsRequest, listAppServerGrants, revokeAppServerGrant,
 } from "./app-server-authorization.js";
 import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
+import { pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import {
@@ -153,8 +155,7 @@ const legacyRpcMethods = new Set([
 ]);
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "turn/retry", "turn/steer", "thread/compact/start", "thread/revert",
-  "changes/read",
-  "changes/apply/preview", "changes/apply", "artifact/read",
+  "artifact/read",
   "model/list", "skill/read", "permissionProfile/list",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
@@ -168,8 +169,10 @@ const operatorMethods = new Set([
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
   "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
+  "github/intake/poll", "github/intake/read",
   "workItem/accept",
   "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
+  "changes/read", "changes/apply/preview", "changes/apply",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
@@ -620,13 +623,19 @@ class RpcConnection {
         return await this.development.planVerification(this.workspaceParams(params) as never);
       case "changes/capture": {
         const { cwd } = this.workspaceParams(params);
-        const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
-        return {
-          cwd,
-          candidate: { workspaceId: cwd, candidateDigest: snapshot.digest, filePaths: snapshot.files.map(file => file.path) },
-          coverage: snapshot.coverage,
-          headCommit: snapshot.headSha,
-        };
+        return await captureAppServerChanges(cwd);
+      }
+      case "changes/read": {
+        const record = this.workspaceParams(params, true);
+        return await readAppServerChanges(record.cwd, record);
+      }
+      case "changes/apply/preview":
+      case "changes/apply": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        return method === "changes/apply/preview"
+          ? await previewAppServerChangeRecovery(store, record)
+          : await applyAppServerChanges(store, record);
       }
       case "verify/start":
         return await this.development.startVerification(params as never);
@@ -714,6 +723,15 @@ class RpcConnection {
         const subjectParams = parseGitHubSubjectParams(record);
         const subject = await readAppServerGitHubSubject(gitHubReadClient(this.context, record.cwd, subjectParams.repository), subjectParams);
         return { cwd: record.cwd, subject };
+      }
+      case "github/intake/poll": {
+        const record = this.workspaceParams(params, true);
+        return await pollGitHubIntake(this.context, this.context.storeRegistry.getStore(record.cwd), record);
+      }
+      case "github/intake/read": {
+        const record = this.workspaceParams(params, true);
+        const receipt = readGitHubIntake(this.context.storeRegistry.getStore(record.cwd), record.receiptId);
+        return { cwd: record.cwd, receipt };
       }
       case "github/delivery/reconcile": {
         const record = this.workspaceParams(params, true);
@@ -828,7 +846,7 @@ class RpcConnection {
     }
     return LING_APP_SERVER_IMPLEMENTED_CAPABILITIES.filter(capability =>
       this.authenticated || (capability !== "turn.control" && capability !== "approval.respond"
-        && capability !== "input.respond" && capability !== "development.simplify"));
+        && capability !== "input.respond" && capability !== "development.simplify" && capability !== "development.changes"));
   }
 
   private replayIdentity(cwd: string, store = this.context.storeRegistry.getStore(cwd)) {
@@ -2855,6 +2873,9 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
       : error.code === "workspace_binding_invalid" || error.code === "worktree_not_found" ? -32040
       : error.code === "unknown_outcome" ? -32060 : -32041;
     return { jsonRpcCode, code: error.code, message: error.message };
+  }
+  if (error instanceof RunWorkspaceRecoveryError) {
+    return { jsonRpcCode: error.statusCode === 400 ? -32602 : -32061, code: error.code, message: error.message };
   }
   if (error instanceof UserInputStoreError) {
     const message = "The answer could not be accepted for the current question.";

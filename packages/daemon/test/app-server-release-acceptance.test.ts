@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
@@ -22,6 +22,8 @@ import type {
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartResult,
   LingAppServerGitHubSubjectResult,
+  LingAppServerGitHubIntakePollResult,
+  LingAppServerGitHubIntakeReceipt,
   LingAppServerGitHubDeliveryResult,
   LingAppServerCoordinationSchedule,
   LingAppServerWorkItemCollaborationReadResult,
@@ -449,6 +451,137 @@ test("Pi receives scoped project instructions before editing a newly discovered 
   assert.deepEqual(reconnected.notices.filter(notice => notice.method === "turn/projectInstructions/updated").map(notice => notice.params?.event?.action), [
     "turn.project_instructions.discovered", "turn.project_instructions.presented",
   ]);
+});
+
+test("an operator previews and recovers a Turn patch against the current candidate", { timeout: 30_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const statusFile = join(fixture.cwd, "status.txt");
+  const extraFile = join(fixture.cwd, "local.txt");
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(statusFile, "pending\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  git("init", "-q");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Recovery baseline");
+  const provider = await startLoopbackPiProvider((_body: unknown, count: number) => count === 1
+    ? { tool: "edit", input: { path: "status.txt", edits: [{ oldText: "pending", newText: "ready" }] } }
+    : { text: "Status updated." });
+  t.after(() => provider.close());
+  const startClient = () => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const client = new LingAppServerClient({
+      url: daemonUrl.replace("http:", "ws:") + `/app-server/rpc?cwd=${encodeURIComponent(fixture.cwd)}`,
+      createSocket: url => new WebSocket(url, { headers: { Authorization: `Bearer ${authToken}` } }) as unknown as LingAppServerSocket,
+      clientInfo: { name: "patch-recovery-test", version: "1" },
+    });
+    t.after(() => client.close());
+    return client;
+  };
+  const peer = await fixture.connect();
+  const { thread } = await peer.call<ThreadRead>("thread/start", { title: "Recover reviewed status change" });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const { turn, run } = await peer.call<{ turn: { id: string }; run: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Update the status", idempotencyKey: "change-status",
+    providerPresetId: preset.id, tools: ["edit"], authorizationMode: "always", workspaceAccessMode: "workspace_write",
+  });
+  await waitFor(() => fixture.getStore().getRun(run.id)?.endedAt);
+  assert.equal(await readFile(statusFile, "utf8"), "ready\n");
+  const client = startClient();
+  const scope = { threadId: thread.id, turnId: turn.id };
+  const undo = { ...scope, action: "undo" } as const;
+  const preview = await client.previewChangeRecovery(undo);
+  assert.equal(preview.changes.review?.state, "exact");
+  assert.match(preview.changes.review?.files[0]?.diff ?? "", /-pending\n\+ready/u);
+  const captured = await client.captureChanges();
+  const changes = await client.readChanges({ candidateDigest: captured.candidate.candidateDigest, limit: 1 });
+  assert.equal(changes.files[0]?.path, "status.txt");
+  assert.equal(changes.nextOffset, undefined);
+
+  const confirm = { ...undo, expectedRevision: preview.expectedRevision, idempotencyKey: "undo-status", confirmed: true } as const;
+  await writeFile(extraFile, "local work\n");
+  await assert.rejects(client.readChanges({ candidateDigest: captured.candidate.candidateDigest }), { code: "stale_revision" });
+  await assert.rejects(client.applyChanges(confirm), { code: "stale_revision" });
+  assert.equal(await readFile(statusFile, "utf8"), "ready\n");
+  const refreshed = await client.previewChangeRecovery(undo);
+  const accepted = { ...confirm, expectedRevision: refreshed.expectedRevision };
+  const [first, duplicate] = await Promise.all([client.applyChanges(accepted), client.applyChanges(accepted)]);
+  assert.deepEqual(duplicate, first);
+  assert.equal(first.state, "undone");
+  assert.equal(await readFile(statusFile, "utf8"), "pending\n");
+  assert.equal(await readFile(extraFile, "utf8"), "local work\n");
+  await assert.rejects(client.applyChanges(confirm), { code: "idempotency_conflict" });
+
+  client.close();
+  await fixture.restart();
+  const reconnected = startClient();
+  assert.deepEqual(await reconnected.applyChanges(accepted), first);
+  const reapply = { ...scope, action: "reapply" } as const;
+  const redo = await reconnected.previewChangeRecovery(reapply);
+  const recovered = await reconnected.applyChanges({ ...reapply, expectedRevision: redo.expectedRevision, idempotencyKey: "redo-status", confirmed: true });
+  assert.equal(recovered.state, "applied");
+  assert.equal(await readFile(statusFile, "utf8"), "ready\n");
+  assert.equal(await readFile(extraFile, "utf8"), "local work\n");
+});
+
+test("configured Claude project rules are scoped, presented and sealed with the Turn", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const target = join(fixture.cwd, "feature/status.txt");
+  await mkdir(join(fixture.cwd, "feature"));
+  await mkdir(join(fixture.cwd, ".claude/rules"), { recursive: true });
+  await writeFile(join(fixture.cwd, "CLAUDE.md"), "Use the workspace verification recipe.\n");
+  await writeFile(join(fixture.cwd, ".claude/rules/feature.md"), [
+    "---", "paths:", '  - "feature/**/*.txt"', "---", "Feature files must be marked ready.", "",
+  ].join("\n"));
+  await writeFile(target, "pending\n");
+  const configured = ["CLAUDE.md", ".claude/rules/feature.md"];
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const configure = (claudeProjectRules: readonly string[]) => fetch(
+    `${daemonUrl}/workspace-settings?cwd=${encodeURIComponent(fixture.cwd)}`, {
+      method: "PATCH", body: JSON.stringify({ claudeProjectRules }),
+      headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+    },
+  );
+  const invalid = await configure([".claude/rules/../private.md"]);
+  assert.equal(invalid.status, 400);
+  const adopted = await configure(configured);
+  assert.equal(adopted.status, 200, adopted.ok ? "Workspace rules adopted" : await adopted.text());
+  const provider = await startLoopbackPiProvider(async (body: unknown, count: number) => {
+    const payload = JSON.stringify(body);
+    assert.match(payload, /Use the workspace verification recipe/u);
+    const edit = (newText: string) => ({ tool: "edit", input: { path: "feature/status.txt", edits: [{ oldText: "pending", newText }] } });
+    if (count === 1) {
+      assert.doesNotMatch(payload, /Feature files must be marked ready/u);
+      return edit("premature");
+    }
+    assert.match(payload, /Feature files must be marked ready/u);
+    if (count === 2) {
+      assert.match(payload, /project_instructions_pending/u);
+      assert.equal(await readFile(target, "utf8"), "pending\n");
+      return edit("ready");
+    }
+    return { text: "Status file updated." };
+  });
+  t.after(() => provider.close());
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Claude rules" });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const { turn, run } = await client.call<{ turn: { id: string }; run: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Update the feature status", idempotencyKey: "claude-rule-turn",
+    providerPresetId: preset.id, tools: ["edit"], authorizationMode: "always", workspaceAccessMode: "workspace_write",
+  });
+  const settled = await waitFor(() => {
+    const current = fixture.getStore().getRun(run.id);
+    return current?.endedAt ? current : undefined;
+  });
+  assert.equal(settled.status, "succeeded", settled.errorMessage ?? "The configured rules should allow the second edit.");
+  assert.equal(provider.requests.length, 3);
+  assert.equal(await readFile(target, "utf8"), "ready\n");
+  const context = await client.call<LingAppServerContextInspectResult>("context/inspect", { threadId: thread.id, turnId: turn.id });
+  assert.deepEqual(context.projectInstructions?.sources.map(source => [source.path, source.origin]), [["CLAUDE.md", "claude"]]);
+  assert.deepEqual(context.projectInstructions?.claudeProjectRules, configured);
+  const update = context.projectInstructionUpdates?.[0];
+  assert.deepEqual(update?.manifest.sources[0]?.pathPatterns, ["feature/**/*.txt"]);
+  assert.equal(update?.presentedSourceCount, 1);
 });
 
 test("a sealed Handoff resumes one new conversation from the current candidate", { timeout: 30_000 }, async t => {
@@ -1138,6 +1271,75 @@ test("authorized GitHub occurrences converge on one Work Item and retain their o
   const { gitHubSubject: _, idempotencyKey: __, ...bareSource } = codex;
   assert.deepEqual(await restored.call("workItem/create", bareSource), replay);
   assert.equal(fixture.getStore().listWorkItems().length, 1);
+});
+
+test("signed GitHub webhooks and polling converge on one work item across restart", { timeout: 30_000 }, async t => {
+  const signingKey = randomUUID();
+  const secretName = "LING_APP_SERVER_FIXTURE_GITHUB_INTAKE";
+  process.env[secretName] = signingKey;
+  t.after(() => { delete process.env[secretName]; });
+  const repo = { id: 710, full_name: "example/ling" };
+  const issue = { number: 12, title: "Review inbox behavior", state: "open", labels: [{ name: "triage" }],
+    updated_at: new Date().toISOString() };
+  const unlabelled = { ...issue, number: 13, labels: [] };
+  let unavailable = true;
+  const fixture = await releaseFixture(t, {
+    githubSources: cwd => [{ workspaceRoot: cwd, repository: repo.full_name, repositoryId: String(repo.id),
+      intake: { enabled: true, mode: "suggest", requiredLabel: "triage", webhookSourceId: "fixture-github", priority: "high" } }],
+    externalWorkFetch: async input => {
+      const url = new URL(String(input));
+      if (url.pathname === "/repos/example/ling/issues/12") return unavailable
+        ? new Response(null, { status: 502 }) : Response.json(issue);
+      if (url.pathname === "/repos/example/ling/issues") return Response.json([issue, unlabelled]);
+      if (url.pathname === "/repos/example/ling") return Response.json(repo);
+      return new Response(null, { status: 404 });
+    },
+  });
+  const client = await fixture.connect();
+  const github = fixture.getStore().putAutomationEventSource({
+    id: "fixture-github", label: "GitHub triage", adapter: "github", enabled: true,
+    repository: repo.full_name, secretRefs: [`env:${secretName}`], rules: [],
+  }, 0, new Date().toISOString());
+  assert.equal(github.revision, 1);
+  async function webhook(repository: typeof repo, deliveryId: string) {
+    const { daemonUrl } = fixture.transportOptions();
+    const body = JSON.stringify({ action: "opened", repository, issue });
+    return await fetch(`${daemonUrl}/automation-event-sources/fixture-github/events?cwd=${encodeURIComponent(fixture.cwd)}`, {
+      method: "POST", body,
+      headers: { "X-GitHub-Event": "issues", "X-GitHub-Delivery": deliveryId,
+        "X-Hub-Signature-256": `sha256=${createHmac("sha256", signingKey).update(body).digest("hex")}` },
+    });
+  }
+  const rejected = await webhook({ ...repo, id: 711 }, "wrong-identity");
+  assert.equal(rejected.status, 403);
+  const accepted = await webhook(repo, "opened-issue");
+  assert.equal(accepted.status, 202, accepted.ok ? "Webhook accepted" : await accepted.text());
+  const acceptedBody = await accepted.json() as { eventId: string; intakeReceiptId: string };
+  assert.ok(acceptedBody.intakeReceiptId);
+  await waitFor(() => {
+    const pending = fixture.getStore().getAppServerState("github_intake_pending", acceptedBody.eventId);
+    return pending && pending.revision > 1 ? pending : undefined;
+  });
+  const poll = await client.call<LingAppServerGitHubIntakePollResult>("github/intake/poll", { repository: repo.full_name });
+  assert.equal(poll.receipts[0]?.outcome, "suggested");
+  assert.equal(poll.receipts[1]?.reasonCode, "required_label_missing");
+  assert.ok(poll.receipts[0]?.workItemId);
+  assert.equal(fixture.getStore().getWorkItem(poll.receipts[0].workItemId)?.priority, "high");
+  await fixture.restart();
+  unavailable = false;
+  const after = await fixture.connect();
+  const receipt = await waitFor(() => fixture.getStore().getAppServerState("github_intake_receipt", acceptedBody.intakeReceiptId));
+  assert.ok(receipt);
+  const observed = await after.call<{ receipt: LingAppServerGitHubIntakeReceipt }>("github/intake/read", { receiptId: acceptedBody.intakeReceiptId });
+  assert.equal(observed.receipt.outcome, "deduplicated");
+  assert.equal(observed.receipt.workItemId, poll.receipts[0].workItemId);
+  const duplicate = await webhook(repo, "opened-issue");
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(await duplicate.json(), { ...acceptedBody, duplicate: true });
+  const repeatedPoll = await after.call<LingAppServerGitHubIntakePollResult>("github/intake/poll", { repository: repo.full_name });
+  assert.deepEqual(repeatedPoll.receipts, poll.receipts);
+  assert.equal(fixture.getStore().listWorkItems({ sourceType: "external_work" }).length, 1);
+  assert.equal(fixture.getStore().listWorkItems({ sourceType: "external_work" })[0]?.status, "intake");
 });
 
 test("a reserved Work Item dispatch recovers once through the conversation owner and obeys pause and deletion fences", { timeout: 25_000 }, async t => {

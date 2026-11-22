@@ -167,7 +167,8 @@ export async function startConversationReplacementRun(input: {
     }),
     permissionConfirmation: input.permissionConfirmation,
   };
-  const runRequest = saveNormalConversationPreparedRequest(input.store, await withProjectInstructions(input.workspaceCwd, request), now);
+  const runRequest = saveNormalConversationPreparedRequest(input.store, await withProjectInstructions(
+    input.workspaceCwd, request, input.store.getWorkspaceSettings().claudeProjectRules), now);
   const runId = await startRunAndWaitUntilReady(runRequest, input.startRun);
   return { turn, runId };
 }

@@ -1,4 +1,4 @@
-import { parseDesktopBrowserPolicy } from "@ling-stack/contracts";
+import { parseClaudeProjectRules, parseDesktopBrowserPolicy } from "@ling-stack/contracts";
 import type { SQLOutputValue } from "node:sqlite";
 import { isSupportedLocale } from "@ling-stack/localization";
 import {
@@ -45,6 +45,8 @@ export class SqliteWorkspaceSettingsStore {
     const next: WorkspaceSettings = omitUndefined({
       schemaVersion: 1 as const,
       worktreePolicy: nullableUpdate(input.worktreePolicy, current.worktreePolicy),
+      claudeProjectRules: input.claudeProjectRules === undefined ? current.claudeProjectRules
+        : input.claudeProjectRules === null ? undefined : parseClaudeProjectRules(input.claudeProjectRules),
       workspaceCwd: nullableUpdate(input.workspaceCwd, current.workspaceCwd),
       theme: nullableUpdate(input.theme, current.theme),
       locale: nullableUpdate(input.locale, current.locale),
@@ -124,6 +126,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
   return omitUndefined({
     schemaVersion: 1 as const,
     worktreePolicy: parseWorktreePolicy(parsed.worktreePolicy),
+    claudeProjectRules: parsed.claudeProjectRules === undefined ? undefined : parseClaudeProjectRules(parsed.claudeProjectRules),
     workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
     theme: parsedTheme,
     locale: isSupportedLocale(parsed.locale) ? parsed.locale : undefined,

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
-  LingAppServerGitHubDelivery, LingAppServerWorkItemAcceptance, LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
+  LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemAcceptance,
+  LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
 
@@ -140,12 +141,14 @@ export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
   readonly idempotencyKey?: string;
   /** Host-resolved target identity shared by the source occurrences. */
   readonly verifiedTargetKey?: string;
+  readonly gitHubIntake?: Omit<LingAppServerGitHubIntakeReceipt, "outcome" | "reasonCode" | "workItemId">;
 }
 
 export interface CreateWorkItemResult {
   readonly workItem: WorkItem;
   readonly event?: ControlPlaneEvent;
   readonly sourceReceipt?: LingAppServerWorkItemSourceReceipt;
+  readonly gitHubIntakeReceipt?: LingAppServerGitHubIntakeReceipt;
 }
 
 export interface CommitWorkItemGitHubDeliveryInput {

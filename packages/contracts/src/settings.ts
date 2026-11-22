@@ -26,6 +26,7 @@ export interface SkillGovernancePolicy {
 
 export interface WorkspaceSettings {
   readonly worktreePolicy?: import("./worktrees.js").WorktreePolicy;
+  readonly claudeProjectRules?: readonly string[];
   readonly desktopBrowserPolicy?: import("./desktop-browser-policy.js").DesktopBrowserPolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
@@ -48,6 +49,7 @@ export interface WorkspaceSettings {
 
 export interface UpdateWorkspaceSettingsRequest {
   readonly worktreePolicy?: import("./worktrees.js").WorktreePolicy | null;
+  readonly claudeProjectRules?: readonly string[] | null;
   readonly desktopBrowserPolicy?: import("./desktop-browser-policy.js").DesktopBrowserPolicy | null;
   /** v2 writes only accept the independent authorization/access axes. */
   readonly schemaVersion?: 2;
@@ -66,6 +68,16 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly channelNotifications?: Record<string, string> | null;
   readonly channelActivityViews?: Record<string, unknown> | null;
   readonly skillGovernancePolicy?: SkillGovernancePolicy | null;
+}
+
+export function parseClaudeProjectRules(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > 16 || value.some(path => typeof path !== "string"
+    || path.length > 250 || path !== "CLAUDE.md" && (
+      !/^\.claude\/rules\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.md$/u.test(path)
+      || path.split("/").some(part => part === "." || part === "..")))) {
+    throw new Error("claudeProjectRules accepts up to 16 repository-relative CLAUDE.md or .claude/rules Markdown files.");
+  }
+  return [...new Set(value as string[])];
 }
 
 export interface WorkspaceSettingsResponse {

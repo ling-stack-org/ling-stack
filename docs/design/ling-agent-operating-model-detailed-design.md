@@ -168,6 +168,10 @@ Qualification and dispatch recheck the source policy and revision. Paused source
 
 ### 3.2 Work Item Target Identity
 
+A registered App Server GitHub repository can set an `intake` policy with `mode`, `enabled`, optional `requiredLabel` and `priority`, and a signed Automation `webhookSourceId`. The local operator can poll a page of open subjects using `github/intake/poll`. Without an explicit mode the poll records a manual evaluation. A suggested subject uses the existing intake Work Item and waits for acceptance.
+
+The signed webhook route validates the immutable repository ID and commits its inbox event with the pending intake target. The Automation event worker rechecks its source revision and registered repository, reads the current subject from GitHub, and records the evaluation. Suggestions bind the Work Item, source occurrence and evaluation in one transaction. `github/intake/read` can recover the occurrence receipt by ID. Poll and webhook receipts have separate occurrence IDs and share the verified target identity.
+
 Each workspace has one default Work Item binding for an exact target. The target is either a resolved Work Item ID or a GitHub subject identified by the verified GitHub instance, immutable repository ID, subject kind and number. An existing Work Item ID addresses that item directly. For GitHub, the adapter resolves an authorized repository-qualified URL, structured submission or an explicit Issue/PR number in a conversation with a single repository binding. An unresolved or ambiguous target uses clarification or an authorization outcome before implementation dispatch. Titles, matching descriptions, labels, branches and references copied from issue bodies are context for a proposal. Automatic binding requires an explicit target from authorized input or a verified source event.
 
     type WorkItemTarget =

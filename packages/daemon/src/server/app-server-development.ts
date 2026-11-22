@@ -424,7 +424,8 @@ export class AppServerDevelopmentService {
     }
     checks.push({ id: "feature_flags", category: "config", status: "ok", summary: "Feature configuration loaded", details: `channels.autoRoute: ${this.options.context.config.channels.autoRoute === true}` });
     if (input.scope === "project") {
-      const { manifest } = await collectProjectInstructions(cwd);
+      const { claudeProjectRules } = this.storeRegistry().getStore(cwd).getWorkspaceSettings();
+      const { manifest } = await collectProjectInstructions(cwd, [], { claudeProjectRules });
       checks.push({ id: "project_instructions", category: "instructions", status: manifest.omitted.length ? "warning" : "ok",
         summary: manifest.sources.length ? "Project instruction sources discovered" : "No project instruction files found",
         details: JSON.stringify(manifest) });

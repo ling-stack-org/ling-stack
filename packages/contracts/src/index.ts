@@ -76,6 +76,7 @@ export type * from "./companions.js";
 export * from "./companion-attention.js";
 export type * from "./ai-councils.js";
 export type * from "./settings.js";
+export { parseClaudeProjectRules } from "./settings.js";
 export type * from "./worktrees.js";
 export { WORKTREE_CONFIGURATION_PLACEHOLDER } from "./worktrees.js";
 export type * from "./workspace-directory.js";

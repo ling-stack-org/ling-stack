@@ -34,7 +34,7 @@ import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
-import type { LingAppServerGitHubDelivery, LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
+import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 
 export interface SqliteWorkItemStorePorts {
@@ -129,8 +129,19 @@ export class SqliteWorkItemStore {
         entityType: "work_item", entityId: workItem.id, action,
         data: { workItemId: workItem.id, revision: workItem.revision, status: workItem.status },
       }, now) : undefined;
+      let gitHubIntakeReceipt: LingAppServerGitHubIntakeReceipt | undefined;
+      if (input.gitHubIntake) {
+        const intake = input.gitHubIntake;
+        const prior = state.get("github_intake_receipt", intake.receiptId)?.payload as LingAppServerGitHubIntakeReceipt | undefined;
+        if (prior && prior.workItemId !== workItem.id) throw new Error("github_intake_conflict");
+        gitHubIntakeReceipt = prior ?? { ...intake, workItemId: workItem.id, outcome: existing ? "deduplicated" : "suggested",
+          reasonCode: existing ? "existing_target" : "suggested_for_acceptance" };
+        if (!prior && !state.putWithinTransaction({
+          kind: "github_intake_receipt", recordId: intake.receiptId, expectedRevision: 0, payload: gitHubIntakeReceipt,
+        }, now)) throw new Error("github_intake_conflict");
+      }
       database.exec("COMMIT");
-      return { workItem, event, sourceReceipt };
+      return { workItem, event, sourceReceipt, gitHubIntakeReceipt };
     } catch (error) {
       rollbackOwnedSqliteTransaction(database);
       throw error;
