@@ -1,6 +1,10 @@
 # Exact historical false positives reviewed on 2026-08-03 with Gitleaks v8.30.1.
 # Keep entries fingerprint-scoped. Do not replace these with broad path or rule exclusions.
 
+# D12 loopback coturn secret was a synthetic test value and was replaced with
+# a non-secret fixture representation in the follow-up commit.
+a4963f502d377f0d83b6139dad720ae9373ba3c2:packages/daemon/test/ling-server-control-plane.test.ts:generic-api-key:130
+
 # App Server collaboration tests use synthetic idempotency labels, not credentials.
 22ecf2ee9c68265770dfcdf46b063af13981f7ee:packages/daemon/test/app-server-collaboration.test.mjs:generic-api-key:47
 22ecf2ee9c68265770dfcdf46b063af13981f7ee:packages/daemon/test/app-server-collaboration.test.mjs:generic-api-key:61
