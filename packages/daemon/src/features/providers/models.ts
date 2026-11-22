@@ -1,4 +1,5 @@
 import {
+  bundledProviderModelCatalog,
   builtinMediaModelCandidates,
   enrichProviderModelOption,
   knownProviderModelThinkingSupport,
@@ -14,6 +15,7 @@ import {
   type ProviderModelListRequest,
   type ProviderModelListResponse,
   type ProviderModelOption,
+  type ProviderModelCatalogSnapshot,
   type ProviderPreset,
   type ProviderThinkingSupport,
   type ProviderThinkingMode,
@@ -48,11 +50,12 @@ export async function listProviderModels(
   store: ProviderStoreFacet,
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
+  catalog: ProviderModelCatalogSnapshot = bundledProviderModelCatalog,
 ): Promise<ProviderModelListResponse> {
   const authority = captureProviderModelDiscoveryAuthority(store, input.providerPresetId);
   const preset = providerModelListInputToPreset(input, authority.savedPreset);
   try {
-    const result = await discoverProviderModels(store, preset, input, secretResolver, authority.assertCurrent);
+    const result = await discoverProviderModels(store, preset, input, secretResolver, authority.assertCurrent, catalog);
     authority.assertCurrent();
     return result;
   } catch (error) {
@@ -68,12 +71,13 @@ async function discoverProviderModels(
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
   assertCurrent: () => void,
+  catalog: ProviderModelCatalogSnapshot,
 ): Promise<ProviderModelListResponse> {
   if (preset.baseUrl) {
     validateUrl(preset.baseUrl, "baseUrl");
   }
   if (preset.api === "media-job") {
-    return await listMediaProviderModels(store, preset, input, secretResolver, assertCurrent);
+    return await listMediaProviderModels(store, preset, input, secretResolver, assertCurrent, catalog);
   }
   if (!supportsProviderModelDiscovery(preset)) {
     throw new HttpError(400, "unsupported_capability", `Model discovery is not implemented for ${preset.api}.`);
@@ -106,7 +110,7 @@ async function discoverProviderModels(
         );
       }
       const body = await response.json() as unknown;
-      models.push(...parseProviderModelsResponse(body, preset, PROVIDER_MODEL_DISCOVERY_LIMIT - models.length, seenModelIds));
+      models.push(...parseProviderModelsResponse(body, preset, catalog, PROVIDER_MODEL_DISCOVERY_LIMIT - models.length, seenModelIds));
       const nextPageToken = providerModelDiscoveryNextPageToken(body, preset);
       if (models.length >= PROVIDER_MODEL_DISCOVERY_LIMIT || !nextPageToken) break;
       if (seenPageTokens.has(nextPageToken) || seenPageTokens.size >= PROVIDER_MODEL_DISCOVERY_PAGE_LIMIT - 1) {
@@ -117,7 +121,7 @@ async function discoverProviderModels(
       nextPageUrl.searchParams.set("pageToken", nextPageToken);
       pageSource = nextPageUrl.toString();
     }
-    return providerModelListResponse(request.source, models);
+    return providerModelListResponse(request.source, models, catalog);
   } catch (error) {
     if (error instanceof HttpError) {
       throw error;
@@ -136,13 +140,14 @@ async function listMediaProviderModels(
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
   assertCurrent: () => void,
+  catalog: ProviderModelCatalogSnapshot,
 ): Promise<ProviderModelListResponse> {
   const mediaKind = providerMediaKind(preset);
   const builtin = builtinMediaModelCandidates(mediaKind);
   const materialized = materializeProviderModelListSecrets(store, preset, input, secretResolver);
   assertCurrent();
   if (preset.authHeader === false && !materialized.apiKeySecret.configured) {
-    return providerModelListResponse("builtin:generation-models", builtin);
+    return providerModelListResponse("builtin:generation-models", builtin, catalog);
   }
   if ((preset.authHeader !== false || preset.apiKeyRef) && !materialized.apiKeySecret.configured) {
     throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
@@ -157,7 +162,7 @@ async function listMediaProviderModels(
     });
     if (!response.ok) {
       if (builtin.length > 0) {
-        return providerModelListResponse("builtin:generation-models", builtin);
+        return providerModelListResponse("builtin:generation-models", builtin, catalog);
       }
       throw new HttpError(
         response.status === 401 || response.status === 403 ? 401 : 400,
@@ -166,14 +171,14 @@ async function listMediaProviderModels(
       );
     }
     const body = await response.json() as unknown;
-    const models = parseProviderModelsResponse(body, preset);
-    return providerModelListResponse(request.source, models.length > 0 ? models : builtin);
+    const models = parseProviderModelsResponse(body, preset, catalog);
+    return providerModelListResponse(request.source, models.length > 0 ? models : builtin, catalog);
   } catch (error) {
     if (error instanceof HttpError) {
       throw error;
     }
     if (builtin.length > 0) {
-      return providerModelListResponse("builtin:generation-models", builtin);
+      return providerModelListResponse("builtin:generation-models", builtin, catalog);
     }
     throw new HttpError(
       400,
@@ -274,13 +279,14 @@ async function providerModelListFailureMessage(response: Response, redactionValu
 function parseProviderModelsResponse(
   body: unknown,
   preset: ProviderPreset,
+  catalog: ProviderModelCatalogSnapshot,
   limit = PROVIDER_MODEL_DISCOVERY_LIMIT,
   seen = new Set<string>(),
 ): readonly ProviderModelOption[] {
   const data = providerModelDiscoveryItems(body, preset);
   const models: ProviderModelOption[] = [];
   for (const item of data) {
-    const model = parseProviderModelOption(item, preset);
+    const model = parseProviderModelOption(item, preset, catalog);
     if (!model || seen.has(model.id)) {
       continue;
     }
@@ -296,19 +302,20 @@ function parseProviderModelsResponse(
 function providerModelListResponse(
   source: string,
   models: readonly ProviderModelOption[],
+  catalog: ProviderModelCatalogSnapshot,
 ): ProviderModelListResponse {
   return {
     source,
     fetchedAt: new Date().toISOString(),
-    catalog: providerModelCatalogInfo(),
-    models,
+    catalog: providerModelCatalogInfo(new Date(), catalog),
+    models: models.map(model => ({ ...model, catalogVersion: catalog.manifest.version })),
   };
 }
 
-function parseProviderModelOption(value: unknown, preset: ProviderPreset): ProviderModelOption | undefined {
+function parseProviderModelOption(value: unknown, preset: ProviderPreset, catalog: ProviderModelCatalogSnapshot): ProviderModelOption | undefined {
   if (typeof value === "string") {
     const id = value.trim();
-    return id ? enrichProviderModelOption({ id }, preset) : undefined;
+    return id ? enrichProviderModelOption({ id }, preset, catalog) : undefined;
   }
   if (!isRecord(value)) {
     return undefined;
@@ -354,7 +361,7 @@ function parseProviderModelOption(value: unknown, preset: ProviderPreset): Provi
     supportedParameters: parseProviderModelLooseStringArray(value.supported_parameters ?? value.supportedParameters),
     capabilitySource: hasUpstreamCapabilityMetadata ? "upstream" as const : undefined,
     capabilityConfidence: hasUpstreamCapabilityMetadata ? "known" as const : undefined,
-  }), preset);
+  }), preset, catalog);
 }
 
 function readProviderModelCreatedAt(value: Record<string, unknown>): string | undefined {

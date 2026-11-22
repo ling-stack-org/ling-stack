@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isGeneratedProviderModelCatalogRefresh, PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest } from "../provider-model-catalog-format.mjs";
 import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
@@ -13,7 +12,6 @@ const LOCAL_OUTPUT_DIRECTORY = "output/";
 const LOCKFILE = "pnpm-lock.yaml";
 const WEB_PACKAGE = "@ling-stack/web";
 const WORKSPACE_TEST_CONFIG = /^(?:packages|apps)\/[^/]+\/tsconfig\.tests?\.json$/u;
-const CORE_PACKAGE = "@ling-stack/core";
 
 const DOCUMENTATION_ROOT_FILES = new Set([
   "AGENTS.md",
@@ -84,7 +82,7 @@ function isAssurancePath(file) {
  * The classifier is intentionally conservative: a path that is not recognized
  * as documentation, allowlisted maintenance, verified local output cleanup, or
  * a workspace package escalates to the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, generatedProviderCatalog?: boolean, addedLockImporters?: string[]}} input
+ * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -116,20 +114,6 @@ export function classifyChangedFiles(input) {
       : scopeFiles.some(isMaintenancePath) ? "documentation and allowlisted maintenance checks only"
         : "documentation and documentation assets only";
     return buildScope("docs", files, packages, reason);
-  }
-
-  if (input.generatedProviderCatalog && scopeFiles.includes(PROVIDER_MODEL_CATALOG_PATH)
-    && scopeFiles.every(file => file === PROVIDER_MODEL_CATALOG_PATH || isDocumentationPath(file) || isMaintenancePath(file))) {
-    if (!packages.some(entry => entry.directory === "packages/core" && entry.name === CORE_PACKAGE
-      && entry.hasTestScript && entry.hasTypecheckScript)) {
-      return buildScope("full", files, packages, "provider catalog requires the Core package");
-    }
-    return {
-      ...buildScope("affected", files, packages, "verified generated provider model catalog refresh"),
-      packages: [CORE_PACKAGE],
-      typecheckPackages: [CORE_PACKAGE],
-      providerModelCatalog: true,
-    };
   }
 
   const validationManifests = new Set();
@@ -291,7 +275,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, providerModelCatalog?: boolean, documentationOnly?: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, documentationOnly?: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -644,7 +628,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   let basePackageEntries;
   const baseTestConfigs = new Map();
   let versionChange;
-  let generatedProviderCatalog;
   let addedLockImporters;
   if (args.files) {
     files = JSON.parse(args.files);
@@ -675,18 +658,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
     }
     versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
-    if (args["force-full"] !== "true" && /^[a-f0-9]{64}$/u.test(args["catalog-proof"])
-      && files.includes(PROVIDER_MODEL_CATALOG_PATH) && [base, args.head].every(ref =>
-        /^100644 blob /u.test(git(["ls-tree", ref, "--", PROVIDER_MODEL_CATALOG_PATH])))) {
-      const after = git(["show", `${args.head}:${PROVIDER_MODEL_CATALOG_PATH}`]);
-      generatedProviderCatalog = args["catalog-proof"] === providerModelCatalogDigest(after)
-        && isGeneratedProviderModelCatalogRefresh(git(["show", `${base}:${PROVIDER_MODEL_CATALOG_PATH}`]), after);
-    }
+
   } else {
     files = [];
   }
   const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName,
-    forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, generatedProviderCatalog, addedLockImporters });
+    forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, addedLockImporters });
   if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
     scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });
   }

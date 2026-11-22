@@ -138,7 +138,7 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 | `.github/ISSUE_TEMPLATE/**` | 公共检查 | 修改 CI 工作流本身仍全量 |
 | 已登记的文档／检查脚本 | 对应脚本、其测试和公共检查 | 未登记脚本、分类器、任务执行器仍全量 |
 | 普通包源码 | 所属包、直接和间接使用方 | 构建继续补齐依赖闭包 |
-| 生成的 Provider 模型目录 `packages/core/src/provider-model-catalog.generated.ts` | 生成格式及版本摘要、Core 构建、类型检查和目录相关测试 | 目录格式无法验证，或同时改动解析器、生成器及其他源码时，按依赖范围选择任务 |
+| 内置 Provider 模型目录 `packages/core/src/provider-model-catalog.generated.ts` | 按 Core 源码依赖范围选择构建、测试及其消费者 | 不再对自动生成目录 PR 另设收窄规则 |
 | 测试与共享夹具 | 所属包和夹具使用方 | 无法识别共享关系时扩大范围 |
 | `native/` 和已登记原生接线 | native、相关 Daemon／Host 测试与平台契约 | 涉及共享启动、权限、运行时契约时扩大；未知 native 路径仍全量 |
 | 包内 TypeScript／构建配置、可核验且全部 scripts 不变的包 manifest（已实现） | 所属包及消费者；manifest 另选依赖策略 | manifest 身份变化、未识别的 scripts 变化或无法核验时全量；新旧依赖边并集不能丢失消费者 |

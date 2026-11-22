@@ -4,7 +4,6 @@ import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest, providerModelCatalogVersion, renderProviderModelCatalog } from "../provider-model-catalog-format.mjs";
 import { classifyChangedFiles } from "./classify-scope.mjs";
 
 type ScopeInput = Parameters<typeof classifyChangedFiles>[0];
@@ -389,8 +388,6 @@ function repositoryFixture(t: TestContext) {
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
   copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
-  copyFileSync(new URL("../provider-model-catalog-format.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-format.mjs"));
-  copyFileSync(new URL("../provider-model-catalog-normalization.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-normalization.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
   copyFileSync(new URL("./secret-scan.mjs", import.meta.url), join(root, "scripts/ci/secret-scan.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
@@ -577,71 +574,11 @@ test("the real package graph keeps Web's CLI and catalog consumers without build
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
 });
 
-test("Git verifies provider catalog data before selecting focused Core validation", t => {
-  const repo = repositoryFixture(t);
-  const render = (id: string, providerId = "openai", capabilities = ["chat"], updatedAt = "2026-11-20") => {
-    const records = [{ providerId: "google", id: "tts", input: ["text"], capabilities: [] }, { providerId, id, capabilities, updatedAt }];
-    return renderProviderModelCatalog({ records, version: providerModelCatalogVersion(records),
-      generatedAt: "2026-11-21T00:00:00.000Z" });
-  };
-  repo.write(PROVIDER_MODEL_CATALOG_PATH, render("baseline"));
-  const base = repo.commit();
-  const refreshed = render("candidate");
-  repo.write(PROVIDER_MODEL_CATALOG_PATH, refreshed);
-  repo.write("docs/ci.md", "# Catalog refresh\n");
-  repo.commit();
-  const proof = (source: string) => `--catalog-proof=${providerModelCatalogDigest(source)}`;
-  const scope = repo.classify(base, proof(refreshed));
+test("bundled provider catalog edits retain their transitive consumers", () => {
+  const scope = classify(["packages/core/src/provider-model-catalog.generated.ts"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
-  assert.deepEqual(scope.testPackages, []);
-  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
-  assert.equal(scope.providerModelCatalog, true);
-  assert.equal(scope.dependencyPolicy, false);
-  assert.equal(scope.assurance, false);
-  assert.equal(scope.daemon, false);
-  assert.deepEqual(scope.daemonPlatforms, []);
-  assert.equal(scope.macosNative, false);
-  assert.match(scope.reason, /generated provider model catalog/u);
-  assert.equal(repo.classify(base).providerModelCatalog, undefined);
-  assert.equal(repo.classify(base, proof(render("baseline"))).providerModelCatalog, undefined);
-
-  const bulkRecords = ["new-a", "new-b", "new-c"].map(id => ({ providerId: "openai", id, capabilities: ["chat"] }));
-  const bulkRefresh = renderProviderModelCatalog({ records: bulkRecords, version: providerModelCatalogVersion(bulkRecords),
-    generatedAt: "2026-11-21T00:00:00.000Z" });
-
-  for (const candidate of [
-    refreshed.replace('"candidate"', '"digest-mismatch"'),
-    refreshed.replace("export const providerModelCatalogRecords", "void 0;\nexport const providerModelCatalogRecords"),
-    render("candidate", "untrusted-provider"),
-    render("candidate", "openai", ["chat", "web_search"]),
-    render("candidate", "openai", []),
-    render("baseline", "openai", []),
-    refreshed.replace('"updatedAt": "2026-11-20"', '"updatedAt": "2026-11-21"'),
-    render("candidate", "openai", ["chat"], "2026-11-31"),
-    render("candidate", "openai", ["chat"], "2026-11-22"),
-    bulkRefresh,
-  ]) {
-    repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
-    repo.commit();
-    const rejected = repo.classify(base, proof(candidate));
-    assert.equal(rejected.providerModelCatalog, undefined);
-    assert.equal(rejected.daemon, true);
-    assert.equal(rejected.assurance, true);
-  }
-});
-
-test("provider catalog refreshes mixed with resolver source retain transitive consumers", () => {
-  const scope = classify([
-    PROVIDER_MODEL_CATALOG_PATH,
-    "packages/core/src/provider-model-catalog.ts",
-  ], { generatedProviderCatalog: true });
-  assert.equal(scope.mode, "affected");
-  for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli"]) {
-    assert.ok(scope.packages.includes(name), name);
-  }
+  for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli"]) assert.ok(scope.packages.includes(name), name);
   assert.equal(scope.daemon, true);
-  assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
   assert.equal(scope.assurance, true);
 });
 

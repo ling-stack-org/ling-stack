@@ -345,6 +345,8 @@
     "test/provider-persistence.test.mjs",
     "test/provider-preflight-response.test.mjs",
     "test/provider-reference-inspector.test.mjs",
+    "test/provider-runtime-catalog.test.ts",
+    "test/provider-runtime-catalog-normalization.test.ts",
     "test/provider-runtime-consumers.test.mjs",
     "test/provider-runtime-failure-observations.test.mjs",
     "test/provider-runtime-invocations.test.mjs",
