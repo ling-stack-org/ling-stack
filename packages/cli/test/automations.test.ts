@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import type { CliResult } from "./fixtures/cli-result.js";
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 
@@ -18,10 +19,10 @@ test("automations scheduler start, status, and stop render human and json output
     assert.match(humanStart.stdout, /Automation scheduler started: automation_scheduler_1/);
     assert.match(humanStart.stdout, /Status: running/);
     assert.match(humanStart.stdout, /Automations: 2/);
-    assert.equal(daemon.requests.at(-1).method, "POST");
-    assert.equal(daemon.requests.at(-1).path, "/automations/scheduler/start");
-    assert.equal(daemon.requests.at(-1).cwd, cwd);
-    assert.deepEqual(daemon.requests.at(-1).body, {});
+    assert.equal(daemon.requests.at(-1)!.method, "POST");
+    assert.equal(daemon.requests.at(-1)!.path, "/automations/scheduler/start");
+    assert.equal(daemon.requests.at(-1)!.cwd, cwd);
+    assert.deepEqual(daemon.requests.at(-1)!.body, {});
 
     const jsonStart = await runCli(daemon.url, cwd, ["--json", "automations", "scheduler", "start"]);
     assert.equal(jsonStart.code, 0, jsonStart.stderr);
@@ -32,8 +33,8 @@ test("automations scheduler start, status, and stop render human and json output
     assert.match(humanStatus.stdout, /Automation schedulers:/);
     assert.match(humanStatus.stdout, /automation_scheduler_1/);
     assert.match(humanStatus.stdout, /Daily Brief/);
-    assert.equal(daemon.requests.at(-1).method, "GET");
-    assert.equal(daemon.requests.at(-1).path, "/automations/scheduler");
+    assert.equal(daemon.requests.at(-1)!.method, "GET");
+    assert.equal(daemon.requests.at(-1)!.path, "/automations/scheduler");
 
     const jsonStatus = await runCli(daemon.url, cwd, ["--json", "automations", "scheduler", "status"]);
     assert.equal(jsonStatus.code, 0, jsonStatus.stderr);
@@ -43,9 +44,9 @@ test("automations scheduler start, status, and stop render human and json output
     assert.equal(humanStop.code, 0, humanStop.stderr);
     assert.match(humanStop.stdout, /Automation scheduler stopped: automation_scheduler_1/);
     assert.match(humanStop.stdout, /Status: stopped/);
-    assert.equal(daemon.requests.at(-1).method, "POST");
-    assert.equal(daemon.requests.at(-1).path, "/automations/scheduler/stop");
-    assert.deepEqual(daemon.requests.at(-1).body, {});
+    assert.equal(daemon.requests.at(-1)!.method, "POST");
+    assert.equal(daemon.requests.at(-1)!.path, "/automations/scheduler/stop");
+    assert.deepEqual(daemon.requests.at(-1)!.body, {});
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -58,14 +59,15 @@ test("automations list/create/run/runs use the daemon API and keep JSON stdout p
   try {
     const list = await runCli(daemon.url, cwd, ["--json", "automations", "list", "--status", "enabled", "--scheduled-only"]);
     assert.equal(list.code, 0, list.stderr);
-    assert.deepEqual(JSON.parse(list.stdout).automations.map((item) => item.id), ["automation_daily"]);
-    assert.equal(daemon.requests.at(-1).path, "/automations");
-    assert.equal(daemon.requests.at(-1).query.status, "enabled");
-    assert.equal(daemon.requests.at(-1).query.scheduledOnly, "true");
+    const payload: { automations: { id: string }[] } = JSON.parse(list.stdout);
+    assert.deepEqual(payload.automations.map((item) => item.id), ["automation_daily"]);
+    assert.equal(daemon.requests.at(-1)!.path, "/automations");
+    assert.equal(daemon.requests.at(-1)!.query!.status, "enabled");
+    assert.equal(daemon.requests.at(-1)!.query!.scheduledOnly, "true");
 
     const create = await runCli(daemon.url, cwd, ["--json", "automations", "create", "daily-brief", "--channel", "channel_engineering", "--time", "09:00", "--timezone", "Asia/Shanghai"]);
     assert.equal(create.code, 0, create.stderr);
-    const createBody = daemon.requests.at(-1).body;
+    const createBody = daemon.requests.at(-1)!.body!;
     assert.equal(createBody.kind, "daily_brief");
     assert.equal(createBody.channelId, "channel_engineering");
     assert.deepEqual(createBody.trigger, {
@@ -76,13 +78,13 @@ test("automations list/create/run/runs use the daemon API and keep JSON stdout p
 
     const run = await runCli(daemon.url, cwd, ["--json", "automations", "run", "automation_daily", "--idempotency-key", "manual-key"]);
     assert.equal(run.code, 0, run.stderr);
-    assert.deepEqual(daemon.requests.at(-1).body, { triggerType: "manual", idempotencyKey: "manual-key" });
+    assert.deepEqual(daemon.requests.at(-1)!.body, { triggerType: "manual", idempotencyKey: "manual-key" });
     assert.equal(JSON.parse(run.stdout).automationRun.idempotencyKey, "manual-key");
 
     const runs = await runCli(daemon.url, cwd, ["--json", "automations", "runs", "--automation", "automation_daily", "--status", "succeeded"]);
     assert.equal(runs.code, 0, runs.stderr);
-    assert.equal(daemon.requests.at(-1).path, "/automation-runs");
-    assert.equal(daemon.requests.at(-1).query.automationId, "automation_daily");
+    assert.equal(daemon.requests.at(-1)!.path, "/automation-runs");
+    assert.equal(daemon.requests.at(-1)!.query!.automationId, "automation_daily");
     assert.equal(JSON.parse(runs.stdout).automationRuns[0].id, "automation_run_1");
   } finally {
     await rm(cwd, { recursive: true, force: true });
@@ -90,8 +92,8 @@ test("automations list/create/run/runs use the daemon API and keep JSON stdout p
   }
 });
 
-function runCli(daemonUrl, cwd, args) {
-  return new Promise((resolveResult) => {
+function runCli(daemonUrl: string, cwd: string, args: readonly string[]) {
+  return new Promise<CliResult>((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
@@ -103,7 +105,13 @@ function runCli(daemonUrl, cwd, args) {
 }
 
 async function startAutomationsDaemon() {
-  const requests = [];
+  const requests: {
+    method: "GET" | "POST";
+    path: string;
+    cwd: string | null;
+    query?: Record<string, string>;
+    body?: Record<string, unknown>;
+  }[] = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "GET" && url.pathname === "/automations") {
@@ -112,13 +120,13 @@ async function startAutomationsDaemon() {
       return;
     }
     if (request.method === "POST" && url.pathname === "/automations") {
-      const body = JSON.parse(await readRequestBody(request));
+      const body: Record<string, unknown> = JSON.parse(await readRequestBody(request));
       requests.push({ method: request.method, path: url.pathname, cwd: url.searchParams.get("cwd"), body });
       writeJson(response, 201, { cwd: url.searchParams.get("cwd"), automation: { ...automationDefinition(), id: "automation_created", title: body.title } });
       return;
     }
     if (request.method === "POST" && url.pathname === "/automations/automation_daily/run") {
-      const body = JSON.parse(await readRequestBody(request));
+      const body: { idempotencyKey: string } = JSON.parse(await readRequestBody(request));
       requests.push({ method: request.method, path: url.pathname, cwd: url.searchParams.get("cwd"), body });
       writeJson(response, 202, { cwd: url.searchParams.get("cwd"), automation: automationDefinition(), automationRun: automationRun(body.idempotencyKey) });
       return;
@@ -155,7 +163,7 @@ async function startAutomationsDaemon() {
     writeJson(response, 404, { error: "not_found" });
   });
 
-  await new Promise((resolveListen) => {
+  await new Promise<void>((resolveListen) => {
     server.listen(0, "127.0.0.1", resolveListen);
   });
   const address = server.address();
@@ -163,7 +171,7 @@ async function startAutomationsDaemon() {
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
-    close: () => new Promise((resolveClose) => server.close(resolveClose)),
+    close: () => new Promise<Error | undefined>((resolveClose) => server.close(resolveClose)),
   };
 }
 
@@ -177,7 +185,7 @@ function automationDefinition() {
   };
 }
 
-function automationRun(idempotencyKey) {
+function automationRun(idempotencyKey: string) {
   return {
     id: "automation_run_1", automationId: "automation_daily", workspaceId: "workspace_default", threadId: "thread_automation",
     triggerType: "manual", firedAt: "2026-06-06T09:00:00.000Z", status: "succeeded", idempotencyKey, outputArtifactIds: [],
@@ -191,7 +199,7 @@ function automationSchedulerListResponse() {
   };
 }
 
-function automationScheduler(status) {
+function automationScheduler(status: "running" | "stopped") {
   return {
     id: "automation_scheduler_1",
     cwd: "/tmp/workspace",
@@ -214,15 +222,15 @@ function automationScheduler(status) {
   };
 }
 
-async function readRequestBody(request) {
-  const chunks = [];
+async function readRequestBody(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
   for await (const chunk of request) {
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString("utf8") || "{}";
 }
 
-function writeJson(response, statusCode, body) {
+function writeJson(response: ServerResponse, statusCode: number, body: unknown) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }
