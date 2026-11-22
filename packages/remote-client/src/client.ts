@@ -8,6 +8,7 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteDeviceApprovalPreviewV1,
+  type RemoteDeviceApkVerificationV1,
   type RemoteDeviceArtifactActionV1,
   type RemoteDeviceArtifactManifestV1,
   type RemoteDeviceArtifactOfferV1,
@@ -361,11 +362,14 @@ export class RemoteSessionClient {
     return bytes;
   }
 
-  async confirmDeviceArtifactReceived(offer: RemoteDeviceArtifactOfferV1, digest: string): Promise<RemoteDeviceArtifactOfferV1> {
+  async confirmDeviceArtifactReceived(
+    offer: RemoteDeviceArtifactOfferV1, digest: string, apkVerification?: RemoteDeviceApkVerificationV1,
+  ): Promise<RemoteDeviceArtifactOfferV1> {
     await this.verifyDeviceArtifactOffer(offer);
     const { manifest } = offer;
     if (offer.status !== "accepted" || digest !== manifest.digest) throw new Error("remote_device_artifact_digest_mismatch");
-    const receipt = { digest, verifiedAt: this.options.clock.now() };
+    if (!!apkVerification !== !!manifest.androidApk) throw new Error("remote_device_artifact_verification_mismatch");
+    const receipt = { digest, verifiedAt: this.options.clock.now(), ...(apkVerification ? { apkVerification } : {}) };
     const signature = await this.options.keys.sign(this.binding.deviceKeyId, deviceArtifactReceiptBytes(manifest, receipt));
     this.assertDeviceArtifactBinding(manifest);
     const result = await this.requestDeviceArtifact(manifest.shareId, manifest.revision, {

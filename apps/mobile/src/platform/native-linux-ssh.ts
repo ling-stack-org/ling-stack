@@ -1,7 +1,7 @@
-import { linuxSshNativeModule } from "../../modules/ling-device-transport";
+import { lingDeviceTransport } from "../../modules/ling-device-transport";
 import type { OpenLinuxSshConnection } from "../device/linux-ssh";
 
-const module = linuxSshNativeModule;
+const module = lingDeviceTransport;
 
 export const openNativeLinuxSsh: OpenLinuxSshConnection | undefined = module
   ? async (target, fingerprintHex, password, signal) => {

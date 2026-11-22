@@ -2,9 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
+import { isAndroidPackageId, isAndroidVersionCode } from "@ling-stack/contracts";
 import { DeviceBrokerError } from "@ling-stack/core";
-import { isAndroidPackageId, isAndroidVersionCode, type AndroidAdbInventory, type AndroidAdbTarget,
-  type AndroidAdbTargetExecutor, type AndroidPackageInfo } from "./adapters/android-adb.js";
+import type { AndroidAdbInventory, AndroidAdbTarget, AndroidAdbTargetExecutor, AndroidPackageInfo } from "./adapters/android-adb.js";
 import { localProcessRunner, type LocalProcessInput, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { AndroidApkLibrary, type AndroidApkTools } from "./android-apks.js";
 import { isRecord } from "../../shared/validation.js";

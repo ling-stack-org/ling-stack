@@ -1,5 +1,6 @@
 import { Directory, File, Paths } from "expo-file-system";
 import { isRemoteDeviceArtifactName } from "@ling-stack/contracts";
+import { lingDeviceTransport } from "../../modules/ling-device-transport";
 import type { OpenPhoneTaskArtifactFile } from "../device/phone-task-artifacts";
 
 export const openPhoneTaskArtifactFile: OpenPhoneTaskArtifactFile = (id, name) => {
@@ -9,6 +10,7 @@ export const openPhoneTaskArtifactFile: OpenPhoneTaskArtifactFile = (id, name) =
   const verifiedDirectory = new Directory(directory, "verified");
   const verified = () => new File(verifiedDirectory, name);
   const current = () => verified().exists ? verified() : temporary();
+  const inspectAndroidApk = lingDeviceTransport?.inspectAndroidApk?.bind(lingDeviceTransport);
   return {
     async size() { return current().size; },
     async append(offset, bytes) {
@@ -26,6 +28,7 @@ export const openPhoneTaskArtifactFile: OpenPhoneTaskArtifactFile = (id, name) =
       }
     },
     async digest() { return `sha256:${await current().digest("SHA-256")}`; },
+    ...(inspectAndroidApk ? { inspectAndroidApk: () => inspectAndroidApk(current().uri) } : {}),
     async reset() {
       for (const file of [temporary(), verified()]) {
         if (file.exists) file.delete();

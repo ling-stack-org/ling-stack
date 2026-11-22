@@ -4,9 +4,11 @@ import { lstat, mkdir, open, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { isDeepStrictEqual } from "node:util";
 import {
   REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_ARTIFACT_MAX_BYTES, REMOTE_DEVICE_COLLABORATION_MAX_MS,
-  REMOTE_DEVICE_COLLABORATION_MAX_PROPOSALS, REMOTE_PROTOCOL_LIMITS, isRemoteDeviceArtifactName,
+  REMOTE_DEVICE_COLLABORATION_MAX_PROPOSALS, REMOTE_PROTOCOL_LIMITS, isAndroidApkFileName, isRemoteDeviceArtifactName,
+  type AndroidApkIdentityV1,
   type DeviceCollaborationProposalV1, type RemoteDeviceArtifactCommandV1, type RemoteDeviceArtifactManifestV1,
   type RemoteDeviceArtifactOfferInputV1, type RemoteDeviceArtifactOfferV1, type RemoteDeviceArtifactResultV1,
 } from "@ling-stack/contracts";
@@ -14,6 +16,7 @@ import { digestCollaborationPayload, type PhoneTaskShareRecord, type SqliteDevic
 import {
   deviceArtifactChunkBytes, deviceArtifactManifestBytes, deviceArtifactReceiptBytes, phoneTaskProjectionDigest, validateDeviceArtifactOffer,
 } from "@ling-stack/remote-protocol";
+import type { AndroidApkLibrary } from "../device-support/android-apks.js";
 import { RemoteAccessError } from "./errors.js";
 import type { PhoneTaskCollaboration, PhoneTaskCollaborationPrincipal } from "./phone-task-collaboration.js";
 
@@ -36,6 +39,7 @@ export class PhoneTaskArtifacts {
     private readonly store: SqliteDeviceDeveloperStore,
     private readonly collaboration: PhoneTaskCollaboration,
     private readonly directory: string,
+    private readonly androidApks?: AndroidApkLibrary,
   ) {}
 
   listForPc(principal: PhoneTaskCollaborationPrincipal, input: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">, now: string) {
@@ -55,16 +59,25 @@ export class PhoneTaskArtifacts {
       throw new RemoteAccessError("payload_too_large", "Artifact size is outside the allowed range.");
     }
     this.collaboration.currentShare(initialPrincipal, input, context.now());
+    const isApk = isAndroidApkFileName(input.name);
+    if (isApk && !this.androidApks) {
+      throw new RemoteAccessError("pc_unavailable", "Configure Android APK tools on this PC before sharing an APK.");
+    }
     if (this.uploading) throw new RemoteAccessError("rate_limited", "The PC is already staging an artifact.", true);
     this.uploading = true;
     let staged: StagedArtifact | undefined;
     let retained = false;
     try {
       staged = await this.stage(source, input.sizeBytes);
+      let androidApk: AndroidApkIdentityV1 | undefined;
+      if (isApk) {
+        const verified = await this.androidApks!.verifyStaged(this.blobPath(staged.blobId), staged.digest);
+        androidApk = { packageId: verified.packageId, ...verified.androidApk };
+      }
       const now = context.now();
       const principal = context.currentPrincipal();
       if (!principal) throw new RemoteAccessError("binding_changed", "The phone pairing changed during the upload.");
-      const published = this.publish(principal, input, staged, now, context.sign);
+      const published = this.publish(principal, input, staged, now, context.sign, androidApk);
       retained = published.retained;
       return published.offer;
     } finally {
@@ -75,7 +88,13 @@ export class PhoneTaskArtifacts {
 
   async fromPhone(
     principal: PhoneTaskCollaborationPrincipal, command: RemoteDeviceArtifactCommandV1,
-    authority: { readonly now: () => string; readonly sign: SignArtifact; readonly verifyReceipt: VerifyArtifact; readonly assertCurrent: () => void },
+    authority: {
+      readonly now: () => string;
+      readonly sign: SignArtifact;
+      readonly verifyReceipt: VerifyArtifact;
+      readonly assertCurrent: () => void;
+      readonly supportsApkIdentity: boolean;
+    },
   ): Promise<RemoteDeviceArtifactResultV1> {
     if (command.workspaceId !== principal.workspaceId) {
       throw new RemoteAccessError("workspace_not_allowed", "This artifact belongs to another workspace.");
@@ -84,11 +103,16 @@ export class PhoneTaskArtifacts {
     const share = this.collaboration.currentShare(principal, command, now);
     const common = { kind: "device_artifact", shareId: share.shareId, revision: share.revision } as const;
     const { action } = command;
-    if (action.kind === "list") return { ...common, operation: "list", offers: this.list(share) };
+    if (action.kind === "list") return { ...common, operation: "list", offers: this.list(share, authority.supportsApkIdentity) };
 
+    const proposal = this.requireProposal(share, action.proposalId);
+    const offer = this.offer(proposal);
+    const { manifest } = offer;
+    if (manifest.androidApk && !authority.supportsApkIdentity) {
+      throw new RemoteAccessError("capability_not_allowed", "Update Ling Mobile to receive verified APKs.");
+    }
     if (action.kind === "decide") {
       return this.store.withWriteTransaction(() => {
-        const proposal = this.requireProposal(share, action.proposalId);
         if (proposal.status !== "proposed" && proposal.status !== action.decision) {
           throw new RemoteAccessError("idempotency_conflict", "This artifact's decision has already been recorded.");
         }
@@ -97,15 +121,13 @@ export class PhoneTaskArtifacts {
       });
     }
 
-    const proposal = this.requireProposal(share, action.proposalId);
     if (proposal.status !== "accepted") throw new RemoteAccessError("capability_not_allowed", "The phone must accept the artifact first.");
-    const offer = this.offer(proposal);
-    const { manifest } = offer;
     if (action.kind === "receipt") {
       const { receipt } = action;
       const verifiedAt = Date.parse(receipt.verifiedAt);
       if (receipt.digest !== manifest.digest || verifiedAt > Date.parse(now) + REMOTE_PROTOCOL_LIMITS.maxClockSkewMs
         || verifiedAt < Date.parse(proposal.createdAt) - REMOTE_PROTOCOL_LIMITS.maxClockSkewMs || receipt.verifiedAt >= manifest.expiresAt
+        || !!receipt.apkVerification !== !!manifest.androidApk
         || !authority.verifyReceipt(deviceArtifactReceiptBytes(manifest, receipt), receipt.signature)) {
         throw new RemoteAccessError("signature_invalid", "Artifact verification receipt is outside the current offer.");
       }
@@ -147,7 +169,7 @@ export class PhoneTaskArtifacts {
       },
     });
     try {
-      await pipeline(source, meter, createWriteStream(path, { flags: "wx", mode: 0o600 }), { signal: AbortSignal.timeout(180_000) });
+      await pipeline(source, meter, createWriteStream(path, { flags: "wx", mode: 0o600, flush: true }), { signal: AbortSignal.timeout(180_000) });
       if (count !== sizeBytes) throw new Error("Artifact length differed from the upload");
       return { blobId, sizeBytes, digest: `sha256:${hash.digest("hex")}` };
     } catch {
@@ -158,7 +180,7 @@ export class PhoneTaskArtifacts {
 
   private publish(
     principal: PhoneTaskCollaborationPrincipal, input: RemoteDeviceArtifactOfferInputV1 & { readonly name: string },
-    artifact: StagedArtifact, now: string, sign: SignArtifact,
+    artifact: StagedArtifact, now: string, sign: SignArtifact, androidApk?: AndroidApkIdentityV1,
   ): { readonly offer: RemoteDeviceArtifactOfferV1; readonly retained: boolean } {
     return this.store.withWriteTransaction(() => {
       const share = this.collaboration.currentShare(principal, input, now);
@@ -170,10 +192,12 @@ export class PhoneTaskArtifacts {
         projectionDigest: phoneTaskProjectionDigest(projection),
         targetDeviceId: projection.targetDeviceId, attemptId: projection.attempt.attemptId, connectionRevision: projection.attempt.connectionRevision,
         name: input.name, sizeBytes: artifact.sizeBytes, digest: artifact.digest, chunkBytes: REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, expiresAt: share.expiresAt,
+        ...(androidApk ? { androidApk } : {}),
       };
       if (this.store.getProposal(input.proposalId)) {
         const offer = this.offer(this.requireProposal(share, input.proposalId));
-        if (offer.manifest.digest !== manifest.digest || offer.manifest.sizeBytes !== manifest.sizeBytes || offer.manifest.name !== manifest.name) {
+        if (offer.manifest.digest !== manifest.digest || offer.manifest.sizeBytes !== manifest.sizeBytes || offer.manifest.name !== manifest.name
+          || !isDeepStrictEqual(offer.manifest.androidApk, manifest.androidApk)) {
           throw new RemoteAccessError("idempotency_conflict", "The proposal already refers to another artifact.");
         }
         return { offer, retained: false };
@@ -212,11 +236,11 @@ export class PhoneTaskArtifacts {
     }
   }
 
-  private list(share: PhoneTaskShareRecord): readonly RemoteDeviceArtifactOfferV1[] {
+  private list(share: PhoneTaskShareRecord, supportsApkIdentity = true): readonly RemoteDeviceArtifactOfferV1[] {
     return share.proposalIds.flatMap(id => {
       const proposal = this.store.getProposal(id);
       return proposal?.kind === "artifact" && proposal.status !== "expired" ? [this.offer(proposal)] : [];
-    });
+    }).filter(offer => supportsApkIdentity || !offer.manifest.androidApk);
   }
 
   private requireProposal(share: PhoneTaskShareRecord, proposalId: string): DeviceCollaborationProposalV1 {

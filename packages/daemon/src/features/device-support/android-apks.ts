@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-import { REMOTE_DEVICE_ARTIFACT_MAX_BYTES, type DeviceDeveloperArtifactV1 } from "@ling-stack/contracts";
+import {
+  REMOTE_DEVICE_ARTIFACT_MAX_BYTES, isAndroidPackageId, isAndroidVersionCode, type DeviceDeveloperArtifactV1,
+} from "@ling-stack/contracts";
 import { DeviceBrokerError } from "@ling-stack/core";
-import { isAndroidPackageId, isAndroidVersionCode } from "./adapters/android-adb.js";
 import { type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 
 export interface AndroidApkTools {
@@ -55,8 +56,7 @@ export class AndroidApkLibrary {
       if (count !== sizeBytes) throw new DeviceBrokerError("invalid_request", "APK size differs from the upload");
       const digest = "sha256:" + hash.digest("hex");
       const toolSignal = AbortSignal.any([uploadSignal, AbortSignal.timeout(30_000)]);
-      const metadata = await this.inspect(staging, toolSignal);
-      await this.withVerifiedFile(staging, digest, toolSignal, async () => undefined);
+      const metadata = await this.verifyStaged(staging, digest, toolSignal);
       authorize();
       const path = this.apkPath(digest);
       try {
@@ -74,6 +74,14 @@ export class AndroidApkLibrary {
 
   async withApk<T>(digest: string, signal: AbortSignal, send: (bytes: Readable, sizeBytes: number) => Promise<T>): Promise<T> {
     return await this.withVerifiedFile(this.apkPath(digest), digest, signal, send);
+  }
+
+  async verifyStaged(
+    path: string, digest: string, signal = AbortSignal.timeout(30_000),
+  ): Promise<Pick<VerifiedAndroidApk, "packageId" | "androidApk">> {
+    const metadata = await this.inspect(path, signal);
+    await this.withVerifiedFile(path, digest, signal, async () => undefined);
+    return metadata;
   }
 
   private async inspect(path: string, signal: AbortSignal): Promise<Pick<VerifiedAndroidApk, "packageId" | "androidApk">> {

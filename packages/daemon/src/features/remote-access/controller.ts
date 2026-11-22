@@ -17,6 +17,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8,
   REMOTE_PROTOCOL_LIMITS,
   isRemoteDeviceArtifactOfferInputV1,
   isRemoteDeviceAnalysisDraftInputV1,
@@ -46,6 +47,7 @@ import { LingServerGatewayPeer } from "./ling-server-gateway-peer.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "./pion-peer-worker.js";
 
 const deviceTaskProtocols = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
@@ -547,7 +549,8 @@ export class RemoteAccessController {
       throw new Error("Authentication no longer current.");
     }
     const deviceFacade = deviceTaskProtocols.includes(protocol) ? this.options.deviceFacade : undefined;
-    const supportsArtifacts = protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7;
+    const supportsApkIdentity = protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8;
+    const supportsArtifacts = supportsApkIdentity || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7;
     const phoneTaskCollaboration = supportsArtifacts || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 ? this.options.phoneTaskCollaboration : undefined;
     const phoneTaskArtifacts = supportsArtifacts ? this.options.phoneTaskArtifacts : undefined;
     const capabilities = this.capabilities(deviceFacade ? protocol : "", !!phoneTaskCollaboration, !!phoneTaskArtifacts);
@@ -567,7 +570,8 @@ export class RemoteAccessController {
       facade,
       deviceFacade,
       phoneTaskCollaboration,
-      artifactAuthority: phoneTaskArtifacts ? { service: phoneTaskArtifacts, sign: bytes => this.signArtifact(bytes) } : undefined,
+      artifactAuthority: phoneTaskArtifacts
+        ? { service: phoneTaskArtifacts, supportsApkIdentity, sign: bytes => this.signArtifact(bytes) } : undefined,
       recoveryApprovals: protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4 || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5
         || protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 || supportsArtifacts,
       isPairedDeviceCurrent: () => {
@@ -645,7 +649,8 @@ export class RemoteAccessController {
 
   private capabilities(deviceTaskProtocol: string, supportsCollaboration: boolean, supportsArtifacts: boolean): readonly RemoteCapabilityV1[] {
     const supportsJournalWatch = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5
-      || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7;
+      || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7
+      || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8;
     const supportsJournal = supportsJournalWatch || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3
       || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4;
     return [

@@ -1,6 +1,7 @@
 import {
   REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_ARTIFACT_MAX_BYTES, REMOTE_DEVICE_COLLABORATION_MAX_PROPOSALS,
-  isRemoteDeviceArtifactName, type RemoteDeviceArtifactActionV1, type RemoteDeviceArtifactCommandV1,
+  isAndroidApkFileName, isAndroidPackageId, isAndroidVersionCode, isRemoteDeviceArtifactName,
+  type AndroidApkIdentityV1, type RemoteDeviceArtifactActionV1, type RemoteDeviceArtifactCommandV1,
   type RemoteDeviceArtifactManifestV1, type RemoteDeviceArtifactOfferV1, type RemoteDeviceArtifactReceiptV1, type RemoteDeviceArtifactResultV1,
 } from "@ling-stack/contracts";
 import { RemoteProtocolError } from "../errors.js";
@@ -81,7 +82,7 @@ export function validateDeviceArtifactOffer(value: unknown, path: string): Remot
   const manifest = readManifest(row.manifest, `${path}.manifest`);
   const status = expectEnum(row.status, ["proposed", "accepted", "rejected"] as const, `${path}.status`);
   const receipt = row.receipt === undefined ? undefined : readReceipt(row.receipt, `${path}.receipt`);
-  if (receipt && (status !== "accepted" || receipt.digest !== manifest.digest)) {
+  if (receipt && (status !== "accepted" || receipt.digest !== manifest.digest || !!receipt.apkVerification !== !!manifest.androidApk)) {
     throw new RemoteProtocolError("invalid_field", "Artifact receipt is outside the accepted offer", `${path}.receipt`);
   }
   return { manifest, signature: expectEs256Signature(row.signature, `${path}.signature`), status, ...(receipt ? { receipt } : {}) };
@@ -93,9 +94,13 @@ function readManifest(value: unknown, path: string): RemoteDeviceArtifactManifes
     "version", "gatewayId", "mobileDeviceId", "deviceEpoch", "workspaceId", "workspaceBindingId", "policyVersion",
     "shareId", "revision", "proposalId", "taskId", "projectionDigest", "ownerId", "targetDeviceId", "attemptId", "connectionRevision",
     "name", "sizeBytes", "digest", "chunkBytes", "expiresAt",
-  ], [], path);
+  ], ["androidApk"], path);
   const name = expectString(row.name, `${path}.name`, { minBytes: 1, maxBytes: 320 });
   if (!isRemoteDeviceArtifactName(name)) throw new RemoteProtocolError("invalid_field", "Artifact name is invalid", `${path}.name`);
+  const androidApk = row.androidApk === undefined ? undefined : readApkIdentity(row.androidApk, `${path}.androidApk`);
+  if (androidApk && !isAndroidApkFileName(name)) {
+    throw new RemoteProtocolError("invalid_field", "APK identity requires an APK file name", `${path}.name`);
+  }
   return {
     version: expectLiteral(row.version, 1, `${path}.version`),
     gatewayId: expectIdentifier(row.gatewayId, `${path}.gatewayId`),
@@ -117,16 +122,42 @@ function readManifest(value: unknown, path: string): RemoteDeviceArtifactManifes
     sizeBytes: expectSafeInteger(row.sizeBytes, `${path}.sizeBytes`, { minimum: 1, maximum: REMOTE_DEVICE_ARTIFACT_MAX_BYTES }),
     chunkBytes: expectLiteral(row.chunkBytes, REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, `${path}.chunkBytes`),
     digest: readDigest(row.digest, `${path}.digest`),
+    ...(androidApk ? { androidApk } : {}),
     expiresAt: expectRfc3339(row.expiresAt, `${path}.expiresAt`),
   };
 }
 
+function readApkIdentity(value: unknown, path: string): AndroidApkIdentityV1 {
+  const row = expectRecord(value, path);
+  assertStrictKeys(row, ["packageId", "versionCode", "signerCertificateSha256"], ["legacyVersionCode"], path);
+  const { packageId, versionCode } = row;
+  if (!isAndroidPackageId(packageId)) throw new RemoteProtocolError("invalid_field", "Invalid Android package ID", `${path}.packageId`);
+  if (!isAndroidVersionCode(versionCode)) throw new RemoteProtocolError("invalid_field", "Invalid Android version code", `${path}.versionCode`);
+  const full = BigInt(versionCode);
+  const legacyVersionCode = full > 0xffffffffn ? (full & 0xffffffffn).toString() : undefined;
+  if (row.legacyVersionCode !== legacyVersionCode) {
+    throw new RemoteProtocolError("invalid_field", "Legacy version code does not match the Android version", `${path}.legacyVersionCode`);
+  }
+  const signerCertificateSha256 = expectArray(row.signerCertificateSha256, `${path}.signerCertificateSha256`, (value, at) => {
+    const digest = expectString(value, at, { minBytes: 64, maxBytes: 64 });
+    if (!/^[a-f0-9]{64}$/u.test(digest)) throw new RemoteProtocolError("invalid_field", "Invalid signer certificate digest", at);
+    return digest;
+  }, { maxItems: 32 });
+  if (!signerCertificateSha256.length || signerCertificateSha256.some((digest, index) => index > 0 && signerCertificateSha256[index - 1]! >= digest)) {
+    throw new RemoteProtocolError("invalid_field", "Expected distinct, sorted signer certificate digests", `${path}.signerCertificateSha256`);
+  }
+  return { packageId, versionCode, ...(legacyVersionCode === undefined ? {} : { legacyVersionCode }), signerCertificateSha256 };
+}
+
 function readReceipt(value: unknown, path: string): RemoteDeviceArtifactReceiptV1 {
   const row = expectRecord(value, path);
-  assertStrictKeys(row, ["digest", "verifiedAt", "signature"], [], path);
+  assertStrictKeys(row, ["digest", "verifiedAt", "signature"], ["apkVerification"], path);
+  const apkVerification = row.apkVerification === undefined ? undefined
+    : expectEnum(row.apkVerification, ["paired_gateway", "android_package_manager"] as const, `${path}.apkVerification`);
   return {
     digest: readDigest(row.digest, `${path}.digest`),
     verifiedAt: expectRfc3339(row.verifiedAt, `${path}.verifiedAt`),
+    ...(apkVerification ? { apkVerification } : {}),
     signature: expectEs256Signature(row.signature, `${path}.signature`),
   };
 }

@@ -1,7 +1,7 @@
 import {
   LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, LING_SERVER_SIGNAL_LANE_LIMIT_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
-  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8,
   type LingServerGatewayRouteV1, type LingServerSignalingResponseV1,
 } from "@ling-stack/contracts";
 import { encodeBase64Url, encodeUtf8, sha256, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
@@ -13,6 +13,7 @@ const channelProtocol = "ling-peer.v1";
 const deviceTaskSdpFeatures = [
   { feature: REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6, attribute: "a=ling-device-tasks:6" },
   { feature: REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7, attribute: "a=ling-device-tasks:7" },
+  { feature: REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8, attribute: "a=ling-device-tasks:8" },
 ] as const;
 const pollIntervalMs = 350;
 
@@ -27,6 +28,7 @@ export interface LingServerDataChannelOptions extends LingServerSignalingClientO
   readonly timeoutMs?: number;
   readonly deviceCollaboration?: boolean;
   readonly deviceArtifacts?: boolean;
+  readonly androidApkArtifacts?: boolean;
 }
 
 export interface LingServerDataChannel {
@@ -61,7 +63,8 @@ export async function connectLingServerDataChannel(options: LingServerDataChanne
     const createPeer = options.createPeerConnection ?? (configuration => new RTCPeerConnection(configuration));
     peer = createPeer(iceConfiguration(config));
     const negotiatedChannel = options.features?.includes(LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1) === true;
-    const features = deviceTaskSdpFeatures.slice(0, options.deviceArtifacts ? 2 : options.deviceCollaboration ? 1 : 0);
+    const features = deviceTaskSdpFeatures.slice(0, options.androidApkArtifacts ? 3
+      : options.deviceArtifacts ? 2 : options.deviceCollaboration ? 1 : 0);
     return await negotiate(peer, signaling, options.role, controller, negotiatedChannel, features);
   };
   try {

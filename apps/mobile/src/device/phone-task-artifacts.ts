@@ -1,6 +1,10 @@
-import type { RemoteDeviceArtifactManifestV1, RemoteDeviceArtifactOfferV1, RemotePhoneTaskProjectionV1 } from "@ling-stack/contracts";
+import type {
+  AndroidApkIdentityV1, RemoteDeviceApkVerificationV1, RemoteDeviceArtifactManifestV1, RemoteDeviceArtifactOfferV1, RemotePhoneTaskProjectionV1,
+} from "@ling-stack/contracts";
 import type { RemoteSessionClient } from "@ling-stack/remote-client";
-import { deviceArtifactManifestBytes, encodeBase64Url, phoneTaskProjectionDigest, sha256, validateDeviceArtifactOffer } from "@ling-stack/remote-protocol";
+import {
+  canonicalizeJson, deviceArtifactManifestBytes, encodeBase64Url, phoneTaskProjectionDigest, sha256, validateDeviceArtifactOffer,
+} from "@ling-stack/remote-protocol";
 import type { MobileStorageLike } from "./journal.js";
 
 export type PhoneTaskArtifactPeer = Pick<RemoteSessionClient,
@@ -11,6 +15,7 @@ export interface PhoneTaskArtifactFile {
   append(offset: number, bytes: Uint8Array): Promise<void>;
   digest(): Promise<string>;
   reset(): Promise<void>;
+  inspectAndroidApk?(): Promise<AndroidApkIdentityV1>;
   seal(): Promise<void>;
   export(): Promise<void>;
 }
@@ -21,6 +26,7 @@ export interface SavedPhoneTaskArtifact {
   readonly fileId: string;
   readonly offer: RemoteDeviceArtifactOfferV1;
   readonly verifiedAt: string;
+  readonly apkVerification?: RemoteDeviceApkVerificationV1;
 }
 
 export function createPhoneTaskArtifactReceiver(options: {
@@ -47,7 +53,12 @@ export function createPhoneTaskArtifactReceiver(options: {
       if (offer.status !== "accepted" || offer.manifest.ownerId !== options.ownerId || offer.manifest.taskId !== taskId) {
         throw new Error("phone_task_artifact_binding_changed");
       }
-      return { fileId: artifactFileId(offer.manifest), offer, verifiedAt: value.verifiedAt };
+      const verification = "apkVerification" in value ? value.apkVerification : undefined;
+      const apkVerification = verification === "paired_gateway" || verification === "android_package_manager" ? verification : undefined;
+      if (verification !== apkVerification || !!apkVerification !== !!offer.manifest.androidApk) {
+        throw new Error("phone_task_artifact_journal_invalid");
+      }
+      return { fileId: artifactFileId(offer.manifest), offer, verifiedAt: value.verifiedAt, ...(apkVerification ? { apkVerification } : {}) };
     });
   };
 
@@ -117,6 +128,8 @@ export function createPhoneTaskArtifactReceiver(options: {
           await file.reset();
           throw new Error("phone_task_artifact_digest_mismatch");
         }
+        assertForeground(signal);
+        const apkVerification = manifest.androidApk ? await verifyAndroidApk(file, manifest.androidApk) : undefined;
         await assertProjection(manifest);
         assertForeground(signal);
         await file.seal();
@@ -124,11 +137,14 @@ export function createPhoneTaskArtifactReceiver(options: {
         const verifiedAt = previous.find(artifact => artifact.fileId === fileId)?.verifiedAt ?? options.now();
         async function remember(received: RemoteDeviceArtifactOfferV1) {
           await options.storage.setItem(journalKey(manifest.taskId), JSON.stringify([
-            ...previous.filter(artifact => artifact.fileId !== fileId), { offer: received, verifiedAt },
+            ...previous.filter(artifact => artifact.fileId !== fileId),
+            { offer: received, verifiedAt, ...(apkVerification ? { apkVerification } : {}) },
           ]));
         }
         await remember(offer);
-        const received = await peer.confirmDeviceArtifactReceived(offer, digest);
+        assertForeground(signal);
+        if (offer.receipt) return offer;
+        const received = await peer.confirmDeviceArtifactReceived(offer, digest, apkVerification);
         await remember(received);
         return received;
       } finally {
@@ -145,6 +161,13 @@ export function createPhoneTaskArtifactReceiver(options: {
       await file.export();
     },
   };
+}
+
+async function verifyAndroidApk(file: PhoneTaskArtifactFile, expected: AndroidApkIdentityV1): Promise<RemoteDeviceApkVerificationV1> {
+  if (!file.inspectAndroidApk) return "paired_gateway";
+  const actual = await file.inspectAndroidApk().catch(cause => { throw new Error("phone_task_apk_verification_failed", { cause }); });
+  if (canonicalizeJson(actual) !== canonicalizeJson(expected)) throw new Error("phone_task_apk_identity_mismatch");
+  return "android_package_manager";
 }
 
 function artifactFileId(manifest: RemoteDeviceArtifactManifestV1): string {

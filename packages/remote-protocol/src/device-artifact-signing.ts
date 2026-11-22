@@ -20,7 +20,10 @@ export function deviceArtifactChunkBytes(manifest: RemoteDeviceArtifactManifestV
 
 export function deviceArtifactReceiptBytes(
   manifest: RemoteDeviceArtifactManifestV1,
-  receipt: Pick<RemoteDeviceArtifactReceiptV1, "digest" | "verifiedAt">,
+  receipt: Omit<RemoteDeviceArtifactReceiptV1, "signature">,
 ): Uint8Array {
-  return domainSeparatedCanonicalBytes("ling.remote.device-artifact.receipt.v1", { manifest, digest: receipt.digest, verifiedAt: receipt.verifiedAt });
+  const { digest, verifiedAt, apkVerification } = receipt;
+  return domainSeparatedCanonicalBytes("ling.remote.device-artifact.receipt.v1", {
+    manifest, digest, verifiedAt, ...(apkVerification ? { apkVerification } : {}),
+  });
 }

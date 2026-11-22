@@ -1,8 +1,9 @@
 import { requireOptionalNativeModule } from "expo";
-import type { LinuxSshReadOperation, LinuxSshReadResult } from "@ling-stack/contracts";
+import type { AndroidApkIdentityV1, LinuxSshReadOperation, LinuxSshReadResult } from "@ling-stack/contracts";
 export type { LinuxSshReadOperation } from "@ling-stack/contracts";
 
-interface LinuxSshNativeModule {
+interface LingDeviceTransportNativeModule {
+  inspectAndroidApk?(fileUri: string): Promise<AndroidApkIdentityV1>;
   reserve(): string;
   connect(
     sessionId: string, host: string, port: number, user: string, fingerprintHex: string, password: string,
@@ -11,4 +12,4 @@ interface LinuxSshNativeModule {
   close(sessionId: string): void;
 }
 
-export const linuxSshNativeModule = requireOptionalNativeModule<LinuxSshNativeModule>("LingDeviceTransport");
+export const lingDeviceTransport = requireOptionalNativeModule<LingDeviceTransportNativeModule>("LingDeviceTransport");

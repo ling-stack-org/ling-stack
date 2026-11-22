@@ -1,12 +1,13 @@
-import type {
-  AdapterManifestV1,
-  DeviceActionRequestV1,
-  DeviceCapabilitySnapshotV1,
-  DeviceObservationV1,
-  DeviceProfileV1,
-  DeviceActionResultV1,
-  DeviceVerificationResultV1,
-  JsonValue,
+import {
+  isAndroidPackageId, isAndroidVersionCode,
+  type AdapterManifestV1,
+  type DeviceActionRequestV1,
+  type DeviceCapabilitySnapshotV1,
+  type DeviceObservationV1,
+  type DeviceProfileV1,
+  type DeviceActionResultV1,
+  type DeviceVerificationResultV1,
+  type JsonValue,
 } from "@ling-stack/contracts";
 import { DeviceBrokerError, type DeviceAdapter, type DeviceAdapterDiscoveryInput, type DeviceAdapterExecutionResult,
   type DeviceAdapterVerificationInput, type DeviceAdapterVerificationResult } from "@ling-stack/core";
@@ -258,13 +259,4 @@ function androidObservation(deviceId: string, id: string, observedAt: string, va
 function asObject(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Android ADB input must be an object");
   return value as Record<string, unknown>;
-}
-
-export function isAndroidPackageId(value: unknown): value is string {
-  return typeof value === "string" && value.length <= 255 && /^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$/u.test(value);
-}
-
-export function isAndroidVersionCode(value: unknown): value is string {
-  return typeof value === "string" && /^(?:0|[1-9][0-9]{0,18})$/u.test(value)
-    && (value.length < 19 || value <= "9223372036854775807");
 }

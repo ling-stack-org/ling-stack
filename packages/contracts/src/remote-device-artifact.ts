@@ -1,4 +1,7 @@
+import type { AndroidApkIdentityV1 } from "./device-developer.js";
+
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7 = "ling.device-tasks.v7";
+export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8 = "ling.device-tasks.v8";
 export const REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES = 40 * 1024;
 export const REMOTE_DEVICE_ARTIFACT_MAX_BYTES = 256 * 1024 * 1024;
 
@@ -28,13 +31,17 @@ export interface RemoteDeviceArtifactManifestV1 {
   readonly name: string;
   readonly sizeBytes: number;
   readonly digest: string;
+  readonly androidApk?: AndroidApkIdentityV1;
   readonly chunkBytes: typeof REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES;
   readonly expiresAt: string;
 }
 
+export type RemoteDeviceApkVerificationV1 = "paired_gateway" | "android_package_manager";
+
 export interface RemoteDeviceArtifactReceiptV1 {
   readonly digest: string;
   readonly verifiedAt: string;
+  readonly apkVerification?: RemoteDeviceApkVerificationV1;
   readonly signature: string;
 }
 
@@ -87,4 +94,8 @@ export function isRemoteDeviceArtifactOfferInputV1(value: unknown): value is Rem
 export function isRemoteDeviceArtifactName(value: string): boolean {
   return value.length > 0 && value.length <= 160 && value !== "." && value !== ".." && value.trim() === value
     && !/[<>:"/\\|?*\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/u.test(value);
+}
+
+export function isAndroidApkFileName(name: string): boolean {
+  return name.toLowerCase().endsWith(".apk");
 }

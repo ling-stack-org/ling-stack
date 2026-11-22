@@ -11,20 +11,23 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import type {
-  LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceArtifactOfferV1, RemoteDeviceCollaborationViewV1, RemoteP256PublicJwkV1,
+  AndroidApkIdentityV1, LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceArtifactOfferV1,
+  RemoteDeviceCollaborationViewV1, RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
-import { REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8 } from "@ling-stack/contracts";
 import { createEnvSecretResolver, createSqliteRunStore } from "@ling-stack/core";
 import {
   RemoteSessionClient, createFetchRemoteHttpClient, type RemoteBindingV1, type RemoteDeviceKeyAdapter,
 } from "@ling-stack/remote-client";
-import { fingerprintPublicJwkSync, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
+import { deviceArtifactReceiptBytes, fingerprintPublicJwkSync, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
 import { connectMobileLingServerPeer } from "../../../apps/mobile/src/remote/mobile-ling-server-peer.ts";
 import { createStandaloneDeviceRuntime } from "../../../apps/mobile/src/device/standalone-runtime.ts";
 import type { HomeAssistantFetch } from "../../../apps/mobile/src/device/home-assistant.ts";
 import type { PhoneTaskCollaborationPeer } from "../../../apps/mobile/src/device/phone-task-collaboration.ts";
 import type { OpenPhoneTaskArtifactFile } from "../../../apps/mobile/src/device/phone-task-artifacts.ts";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
+import { localProcessRunner, type LocalProcessRunner } from "../dist/features/device-support/adapters/local-pc-executor.js";
+import { AndroidApkLibrary } from "../dist/features/device-support/android-apks.js";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createPhoneTaskAnalysisDrafter } from "../dist/features/device-support/diagnosis-planner.js";
 import { createDefaultRunnerRegistry } from "../dist/index.js";
@@ -41,6 +44,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
   { timeout: 60_000, skip: !worker && !process.env.CI && "build the Pion peer worker to run the native transport test" }, async t => {
     assert.ok(worker);
     const root = await mkdtemp(join(tmpdir(), "ling-native-peer-"));
+    const apkFixture = await createApkFixture(root);
     const certificatePath = join(root, "tls.pem");
     const privateKeyPath = join(root, "tls.key");
     execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
@@ -135,7 +139,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
       return new RemoteAccessController({ store: workspace, stateDir, listenerPort, workspaceDisplayName: "Native fixture",
         managementCapability, managementAllowedOrigins: [managementOrigin], now, deviceFacade: devices.remoteFacade,
         phoneTaskCollaboration, draftPhoneTaskAnalysis,
-        phoneTaskArtifacts: new PhoneTaskArtifacts(devices.developerStore, phoneTaskCollaboration, join(root, "pc-artifacts")),
+        phoneTaskArtifacts: new PhoneTaskArtifacts(devices.developerStore, phoneTaskCollaboration, join(root, "pc-artifacts"), apkFixture.library),
       });
     };
     gateway = createGateway();
@@ -203,7 +207,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
         assert.equal(activeBinding.lingServerRoutingProfile?.bindingId, publication.binding.bindingId);
         const connection = await connectMobileLingServerPeer(activeBinding, signal, peerOptions);
         assert.ok(connection);
-        assert.ok(connection.route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7));
+        assert.ok(connection.route.features.includes(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8));
         routes.push({ id: connection.route.routeAttemptId, expiresAt: connection.route.expiresAt });
         return connection;
       },
@@ -315,12 +319,12 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     assert.ok([...phoneStorage.values()].some(value => value.includes('"decision":"accepted"')));
     const artifactBytes = randomBytes(REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES * 126 + 19);
     const artifactQuery = new URLSearchParams({ shareId: share.shareId, expectedRevision: String(share.revision) });
-    const offerArtifact = () => fetch(collaborationUrl + "/artifacts?" + new URLSearchParams({
-      ...Object.fromEntries(artifactQuery), proposalId: "pc-build-artifact", name: "build-fixture.bin",
-    }), {
-      method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": gateway!.csrfToken, "Content-Type": "application/octet-stream" },
-      body: new Blob([artifactBytes]),
-    });
+    const offerArtifact = (proposalId = "pc-build-artifact", name = "build-fixture.bin", bytes: Uint8Array = artifactBytes) => fetch(
+      collaborationUrl + "/artifacts?" + new URLSearchParams({ ...Object.fromEntries(artifactQuery), proposalId, name }), {
+        method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": gateway!.csrfToken, "Content-Type": "application/octet-stream" },
+        body: new Blob([new Uint8Array(bytes)]),
+      },
+    );
     const upload = await offerArtifact();
     assert.equal(upload.status, 201);
     const offer = await upload.json() as RemoteDeviceArtifactOfferV1;
@@ -377,6 +381,53 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     assert.equal(roundTrip.status, 200);
     assert.deepEqual(await roundTrip.json(), { offers: [receivedArtifact] });
     assert.equal(devices.developerStore.getPhoneArtifactReceipt("pc-build-artifact")?.digest, sha256Digest(artifactBytes));
+    const unsigned = await offerArtifact("unsigned-apk", "unsigned.apk", apkFixture.unsigned);
+    assert.equal(unsigned.status, 400);
+    assert.match(await unsigned.text(), /APK signature could not be verified/u);
+    const apkUpload = await offerArtifact("signed-apk", "signed.APK", apkFixture.signed);
+    assert.equal(apkUpload.status, 201);
+    const apkOffer = await apkUpload.json() as RemoteDeviceArtifactOfferV1;
+    assert.equal(apkOffer.manifest.digest, sha256Digest(apkFixture.signed));
+    assert.deepEqual(apkOffer.manifest.androidApk, apkFixture.identity);
+    assert.deepEqual(await client.listDeviceArtifacts(share.shareId, share.revision), [receivedArtifact, apkOffer]);
+    await assert.rejects(client.decideDeviceArtifact({
+      ...apkOffer, manifest: { ...apkOffer.manifest, androidApk: { ...apkFixture.identity, versionCode: "4294967339", legacyVersionCode: "43" } },
+    }, "accepted"), /artifact_signature_invalid/u);
+    const approvedApk = await phone.artifacts.decide(apkOffer, "accepted", client);
+    const receivedApk = await phone.artifacts.receive({ offer: approvedApk, peer: client });
+    const receipt = receivedApk.receipt;
+    assert.ok(receipt);
+    assert.equal(receipt.apkVerification, "paired_gateway");
+    assert.deepEqual(devices.developerStore.getPhoneArtifactReceipt("signed-apk"), receipt);
+    assert.ok(await keys.verify(mobile.jwk, deviceArtifactReceiptBytes(apkOffer.manifest, receipt), receipt.signature));
+    assert.equal(await keys.verify(mobile.jwk, deviceArtifactReceiptBytes(apkOffer.manifest, {
+      ...receipt, apkVerification: "android_package_manager",
+    }), receipt.signature), false);
+    client.disconnect();
+    for (const protocol of [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8]) {
+      let socket: WebSocket | undefined;
+      const compat = new RemoteSessionClient({
+        binding, keys, clock,
+        http: createFetchRemoteHttpClient((input, init) => fetch("http://127.0.0.1:" + listenerPort + new URL(String(input)).pathname, init)),
+        bindingStore: { async read() { return binding; }, async write() {}, async remove() {} },
+        cacheStore: { async read() { return undefined; }, async write() {}, async remove() {} },
+        entropy: { randomBytes, randomId: prefix => prefix + "_" + randomUUID() },
+        autoReconnect: false,
+        webSocketFactory: () => (socket = new WebSocket(`ws://127.0.0.1:${listenerPort}/v1/session`, protocol)),
+      });
+      try {
+        await compat.connect();
+        assert.equal(socket?.protocol, protocol);
+        const offers = await compat.listDeviceArtifacts(share.shareId, share.revision);
+        if (protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7) {
+          assert.deepEqual(offers, [receivedArtifact]);
+          await assert.rejects(compat.readDeviceArtifactChunk(apkOffer.manifest, 0), /Update Ling Mobile/u);
+        } else assert.deepEqual(offers, [receivedArtifact, receivedApk]);
+      } finally {
+        compat.disconnect();
+      }
+    }
+    await client.connect();
     const savedArtifact = (await phone.artifacts.listSaved(phoneRecovery.taskId))[0];
     assert.ok(savedArtifact);
     shared = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "sync" });
@@ -411,6 +462,47 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     await waitFor(() => client?.state.connection !== "connected", 12_000);
     await assert.rejects(client.connect(), { status: 403 });
   });
+
+async function createApkFixture(root: string) {
+  const native = process.env.LING_TEST_ANDROID_FIXTURE_DIR;
+  const tools = {
+    javaPath: process.env.LING_TEST_ANDROID_JAVA ?? process.execPath,
+    apkSignerJar: native ? join(native, "apksigner.jar") : process.execPath,
+    aapt2Path: native ? join(native, "aapt2") : process.execPath,
+  };
+  const signed = native ? await readFile(join(native, "fixture-major.apk")) : Buffer.from("signed apk fixture");
+  const unsigned = native ? await readFile(join(native, "fixture-major-unsigned.apk")) : Buffer.from("unsigned apk fixture");
+  let signer = "b".repeat(64);
+  if (native) {
+    const output = execFileSync(tools.javaPath, ["-jar", tools.apkSignerJar, "verify", "--print-certs", join(native, "fixture-major.apk")],
+      { encoding: "utf8" });
+    const match = /^Signer #1 certificate SHA-256 digest: ([0-9a-f]{64})$/mu.exec(output);
+    assert.ok(match?.[1]);
+    signer = match[1];
+  }
+  const identity: AndroidApkIdentityV1 = {
+    packageId: "org.lingstack.majorfixture", versionCode: "4294967338", legacyVersionCode: "42", signerCertificateSha256: [signer],
+  };
+  const fixtureRunner: LocalProcessRunner = {
+    async run(_file, args) {
+      if (args[0] === "-jar") {
+        const bytes = await readFile(args.at(-1)!);
+        if (bytes.equals(unsigned)) return { stdout: "", stderr: "", exitCode: 1 };
+        assert.deepEqual(bytes, signed);
+        return { stdout: `Verifies\nSigner #1 certificate SHA-256 digest: ${signer}\n`, stderr: "", exitCode: 0 };
+      }
+      assert.deepEqual(await readFile(args[2]!), signed);
+      return { stdout: [
+        "E: manifest (line=2)",
+        "  A: http://schemas.android.com/apk/res/android:versionCode(0x0101021b)=42",
+        "  A: http://schemas.android.com/apk/res/android:versionCodeMajor(0x01010576)=1",
+        `  A: package="${identity.packageId}"`,
+        "  E: application",
+      ].join("\n"), stderr: "", exitCode: 0 };
+    },
+  };
+  return { identity, signed, unsigned, library: new AndroidApkLibrary(join(root, "apk-library"), tools, native ? localProcessRunner : fixtureRunner) };
+}
 
 function pairedKey() {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });

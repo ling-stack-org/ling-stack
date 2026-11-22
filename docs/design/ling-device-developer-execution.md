@@ -455,8 +455,28 @@ offer. If interrupted, reopen the same task and choose **继续接收**. The pho
 verifies each signed chunk and the final SHA-256, records the file on the task,
 and returns its signed receipt. The Desktop task shows **File verified by phone**.
 Choose **导出已校验文件** on the phone to save a verified copy to a selected folder,
-including after the share ends. Package identity, signer validation, target
-installation and device readback have their own evidence.
+including after the share ends.
+
+For a file named `.apk`, configure the PC's `apkTools` in the
+[ADB targets file](#pc-owned-signed-apk-deployment). A PC preparing APKs for the
+phone can use an empty `targets` array. The Gateway verifies the staged APK with
+Android SDK Build Tools, then signs the manifest with the APK's SHA-256,
+package ID, decimal long version code, optional legacy version code, and
+sorted SHA-256 certificate fingerprints. The package must be a signed
+standalone APK. Both WebSocket and the signed Ling Server SDP negotiate
+`ling.device-tasks.v8` for offers carrying this identity. A `v7` session can
+continue to receive ordinary file offers.
+
+Mobile compares the assembled SHA-256 with the signed manifest. A build
+with the Android native transport also verifies the archive through Android's
+package manager and compares the package, version and current signer
+fingerprints. Other Mobile builds verify the paired Gateway's signed
+attestation and the exact file digest. The signed receipt includes the method
+used. Mobile retains its verification record before publishing the receipt,
+so a lost connection can resume from the verified bytes. A target-side
+installation has its own approval and readback evidence.
+[Offer service](../../packages/daemon/src/features/remote-access/phone-task-artifacts.ts)
+[Mobile verification](../../apps/mobile/src/device/phone-task-artifacts.ts)
 
 ## 5. Case flow: install DiPlay on an older head unit
 
@@ -568,7 +588,8 @@ requires this digest as well as the approved package ID and version.
 ### PC-owned signed APK deployment
 
 Add `apkTools` to the authorized ADB targets file to enable APK import and
-installation. Set `javaPath`, `apkSignerJar`, and `aapt2Path` to absolute paths
+installation for enrolled targets and APK offers for a paired phone.
+Set `javaPath`, `apkSignerJar`, and `aapt2Path` to absolute paths
 to Java and the Android SDK Build Tools. The daemon verifies the staged APK
 with `apksigner.jar` and reads the standalone package manifest with AAPT2.
 It retains the SHA-256, package ID, version code and certificate fingerprints

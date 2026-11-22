@@ -56,6 +56,22 @@ export interface DeviceDeveloperExecutorResultV1 {
   readonly taskStatus?: DeviceTaskStatusV1;
 }
 
+export type AndroidApkIdentityV1 = {
+  readonly packageId: string;
+  readonly versionCode: string;
+  readonly legacyVersionCode?: string;
+  readonly signerCertificateSha256: readonly string[];
+};
+
+export function isAndroidPackageId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 255 && /^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$/u.test(value);
+}
+
+export function isAndroidVersionCode(value: unknown): value is string {
+  return typeof value === "string" && /^(?:0|[1-9][0-9]{0,18})$/u.test(value)
+    && (value.length < 19 || value <= "9223372036854775807");
+}
+
 export interface DeviceDeveloperArtifactV1 {
   readonly artifactId: string;
   readonly workspaceId: string;
@@ -63,11 +79,7 @@ export interface DeviceDeveloperArtifactV1 {
   readonly digest: string;
   readonly sizeBytes: number;
   readonly packageId?: string;
-  readonly androidApk?: {
-    readonly versionCode: string;
-    readonly legacyVersionCode?: string;
-    readonly signerCertificateSha256: readonly string[];
-  };
+  readonly androidApk?: Omit<AndroidApkIdentityV1, "packageId">;
   readonly createdAt: string;
 }
 

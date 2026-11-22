@@ -62,7 +62,11 @@ export interface RemoteGatewaySessionOptions {
   readonly facade: RemoteConversationFacade;
   readonly deviceFacade?: RemoteDeviceFacade;
   readonly phoneTaskCollaboration?: PhoneTaskCollaboration;
-  readonly artifactAuthority?: { readonly service: PhoneTaskArtifacts; readonly sign: (bytes: Uint8Array) => string };
+  readonly artifactAuthority?: {
+    readonly service: PhoneTaskArtifacts;
+    readonly supportsApkIdentity: boolean;
+    readonly sign: (bytes: Uint8Array) => string;
+  };
   readonly recoveryApprovals?: boolean;
   readonly isPairedDeviceCurrent?: () => boolean;
   readonly policy: RemoteAccessPolicySummaryV1;
@@ -421,6 +425,7 @@ export class RemoteGatewaySession {
         const result = await authority.service.fromPhone(this.collaborationPrincipal(), frame.payload, {
           now: this.now,
           sign: authority.sign,
+          supportsApkIdentity: authority.supportsApkIdentity,
           assertCurrent: () => this.assertCurrentDevicePrincipal(),
           verifyReceipt: (input, signature) => verify("sha256", input, {
             key: createPublicKey({ key: this.options.authenticated.device.publicKeyJwk, format: "jwk" }),

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1, type RemotePairingQrV1 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1, type RemotePairingQrV1 } from "@ling-stack/contracts";
 import test from "node:test";
 import {
   decodeRemotePairingQrV1,
+  deviceArtifactManifestBytes,
+  deviceArtifactReceiptBytes,
   encodePairingQrV1,
   evaluateClientSequenceV1,
   evaluateCumulativeAckV1,
@@ -14,6 +16,7 @@ import {
   validateRemotePairingChallengeV1,
   validateRemotePairingProofV1,
   validateRemotePairingQrV1,
+  validateDeviceArtifactOffer,
 } from "../dist/index.js";
 import { fixture } from "./canonical-signing-fixture.ts";
 
@@ -88,6 +91,38 @@ test("artifact requests bind the revision and one bounded index or receipt", () 
   ]) {
     assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({ ...frame, payload: { ...payload, action } }), { nowMs }));
   }
+});
+
+test("an APK offer and receipt sign the exact package identity and verification method", () => {
+  const digest = "sha256:" + "0".repeat(64);
+  const plain = {
+    version: 1, gatewayId: "gateway", mobileDeviceId: "phone", deviceEpoch: 1, workspaceId: "workspace",
+    workspaceBindingId: "binding", policyVersion: 1, shareId: "share", revision: 1, proposalId: "proposal", taskId: "task",
+    projectionDigest: digest, ownerId: "owner", targetDeviceId: "target", attemptId: "attempt", connectionRevision: "conn",
+    name: "fixture.APK", sizeBytes: 42, digest, chunkBytes: REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, expiresAt: "2026-07-19T10:20:00.000Z",
+  };
+  const androidApk = { packageId: "org.lingstack.fixture", versionCode: "4294967338", legacyVersionCode: "42",
+    signerCertificateSha256: ["1".repeat(64), "2".repeat(64)] };
+  const legacy = validateDeviceArtifactOffer({ manifest: plain, status: "accepted", signature }, "$");
+  const receipt = { digest, signature, verifiedAt: now, apkVerification: "android_package_manager" as const };
+  const offer = { manifest: { ...plain, androidApk }, status: "accepted", signature, receipt };
+  const validated = validateDeviceArtifactOffer(offer, "$");
+  assert.deepEqual(validated, offer);
+  assert.notDeepEqual(deviceArtifactManifestBytes(validated.manifest), deviceArtifactManifestBytes(legacy.manifest));
+  assert.notDeepEqual(deviceArtifactReceiptBytes(validated.manifest, receipt), deviceArtifactReceiptBytes(validated.manifest, {
+    ...receipt, apkVerification: "paired_gateway",
+  }));
+  for (const invalid of [
+    { ...androidApk, packageId: "invalid" }, { ...androidApk, versionCode: "092" },
+    { ...androidApk, legacyVersionCode: "43" }, { ...androidApk, legacyVersionCode: undefined },
+    { ...androidApk, signerCertificateSha256: [] }, { ...androidApk, signerCertificateSha256: ["1".repeat(64), "1".repeat(64)] },
+    { ...androidApk, signerCertificateSha256: [...androidApk.signerCertificateSha256].reverse() },
+  ]) {
+    assert.throws(() => validateDeviceArtifactOffer({ ...offer, manifest: { ...offer.manifest, androidApk: invalid } }, "$"));
+  }
+  assert.throws(() => validateDeviceArtifactOffer({ ...offer, manifest: { ...offer.manifest, name: "archive.zip" } }, "$"));
+  assert.throws(() => validateDeviceArtifactOffer({ ...offer, receipt: { digest, signature, verifiedAt: now } }, "$"));
+  assert.throws(() => validateDeviceArtifactOffer({ ...offer, manifest: plain }, "$"));
 });
 
 test("device journal frames bind cursor ranges to public events from the task owner", () => {

@@ -59,8 +59,14 @@ export function PhoneTaskArtifactOffers({ share, peer, artifacts, styles, refres
         if (!controller.signal.aborted) replace(received);
       }
     } catch (cause) {
-      if (!controller.signal.aborted) setError(cause instanceof Error && cause.message === "phone_task_artifact_digest_mismatch"
-        ? "文件校验失败，请重新接收。" : "未能完成文件接收。可以重新同步后继续。");
+      if (!controller.signal.aborted) {
+        const code = cause instanceof Error ? cause.message : undefined;
+        setError(code === "phone_task_apk_verification_failed" || code === "phone_task_apk_identity_mismatch"
+          ? "手机未能确认 APK 的包名、版本和签名。"
+          : code === "phone_task_artifact_digest_mismatch"
+            ? "文件校验失败，请重新接收。"
+            : "未能完成文件接收。可以重新同步后继续。");
+      }
     } finally {
       active.current = undefined;
       if (!controller.signal.aborted) { setBusy(undefined); refreshSaved(); }
@@ -72,6 +78,7 @@ export function PhoneTaskArtifactOffers({ share, peer, artifacts, styles, refres
       <View key={offer.manifest.proposalId} style={styles.row}>
         <Text style={styles.backText}>{offer.manifest.name}</Text>
         <Text style={styles.note}>{formatArtifactSize(offer.manifest.sizeBytes)}</Text>
+        <ApkIdentity offer={offer} styles={styles} />
         {offer.status === "proposed" ? <>
           <ArtifactButton label="接受并接收" styles={styles} disabled={Boolean(busy)}
             onPress={() => Alert.alert("接收电脑上的文件", `${offer.manifest.name}\n${offer.manifest.targetDeviceId}`, [
@@ -121,10 +128,21 @@ export function SavedPhoneTaskArtifacts({ taskId, refresh, artifacts, styles }: 
     {saved.map(item => <View key={item.fileId} style={styles.row}>
       <Text style={styles.backText}>{item.offer.manifest.name}</Text>
       <Text style={styles.note}>已校验 · {formatArtifactSize(item.offer.manifest.sizeBytes)}</Text>
+      <ApkIdentity offer={item.offer} styles={styles} />
+      {item.apkVerification ? <Text style={styles.note}>{item.apkVerification === "android_package_manager"
+        ? "本机 Android 已核验 APK 签名和证书" : "已核验配对电脑的 APK 签名证明和文件摘要"}</Text> : null}
       <ArtifactButton label="导出已校验文件" styles={styles} disabled={exporting} onPress={() => void exportFile(item.fileId)} />
     </View>)}
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
   </>;
+}
+
+function ApkIdentity({ offer, styles }: { readonly offer: RemoteDeviceArtifactOfferV1; readonly styles: ArtifactStyles }) {
+  const apk = offer.manifest.androidApk;
+  return apk ? <>
+    <Text selectable style={styles.note}>{apk.packageId} · 版本 {apk.versionCode}</Text>
+    <Text selectable style={styles.note}>签名证书 SHA-256{"\n"}{apk.signerCertificateSha256.join("\n")}</Text>
+  </> : null;
 }
 
 function ArtifactButton({ label, styles, disabled, onPress }: {

@@ -1100,7 +1100,7 @@ export function createDaemonServer(
     deviceFacade: deviceSupport.remoteFacade,
     phoneTaskCollaboration,
     phoneTaskArtifacts: new PhoneTaskArtifacts(deviceSupport.developerStore, phoneTaskCollaboration,
-      join(dirname(defaultWorkspaceStore.paths.databasePath), "phone-task-artifacts")),
+      join(dirname(defaultWorkspaceStore.paths.databasePath), "phone-task-artifacts"), deviceSupport.androidApks),
     draftPhoneTaskAnalysis: createPhoneTaskAnalysisDrafter({ store: defaultWorkspaceStore, runnerRegistry, secretResolver }),
   });
   const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
