@@ -1,5 +1,7 @@
-import type { DeviceDeveloperExecutorResultV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1 } from "@ling-stack/contracts";
+import type { DeviceDeveloperExecutorResultV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceProfileV1 } from "@ling-stack/contracts";
 import { DeviceBrokerError, type DeviceCapabilityBroker, type DeviceDeveloperSessionCoordinator, type SqliteDeviceSupportStore } from "@ling-stack/core";
+
+import { androidAdbAdapterId, androidAdbLogCapability } from "./adapters/android-adb.js";
 
 export interface DeviceDeveloperExecutor {
   execute(input: {
@@ -38,8 +40,8 @@ export function createDeviceDeveloperJobs(options: {
       const target = requireCurrentDeveloperTarget(store, session);
       const profile = store.getDevice(target.deviceId)!;
       const executor = options.executor;
-      if (!executor && (request.kind !== "logs" || profile.adapterId !== "pc-target-executor"
-        || !profile.transports.includes("local_process"))) {
+      const logCapabilityId = request.kind === "logs" ? resolveDefaultLogCapability(broker, profile) : undefined;
+      if (!executor && !logCapabilityId) {
         throw new DeviceBrokerError("unsupported_capability", "the target does not provide this developer job");
       }
       const { job, admitted } = sessions.admitJob(input);
@@ -49,7 +51,7 @@ export function createDeviceDeveloperJobs(options: {
       let result: DeviceDeveloperExecutorResultV1 | undefined;
       try {
         result = executor ? await executor.execute({ session, job, signal })
-          : await capturePcLogs(broker, session, job, signal);
+          : await captureDeviceLogs(broker, session, job, logCapabilityId!, signal);
         signal.throwIfAborted();
         requireCurrentDeveloperTarget(store, session);
       } catch {
@@ -77,8 +79,15 @@ export function requireCurrentDeveloperTarget(store: SqliteDeviceSupportStore, s
   return target;
 }
 
-async function capturePcLogs(
-  broker: DeviceCapabilityBroker, session: DeviceDeveloperSessionV1, job: DeviceDeveloperJobV1, signal: AbortSignal,
+function resolveDefaultLogCapability(broker: DeviceCapabilityBroker, profile: DeviceProfileV1): string | undefined {
+  if (profile.adapterId === "pc-target-executor" && profile.transports.includes("local_process")) return "pc.inspect.logs";
+  const snapshot = broker.store.getCurrentCapabilitySnapshot(profile.device.id);
+  return profile.adapterId === androidAdbAdapterId && snapshot?.capabilities.some(item => item.id === androidAdbLogCapability
+    && item.sideEffect === "read_only" && item.approvalClass === "allow") ? androidAdbLogCapability : undefined;
+}
+
+async function captureDeviceLogs(
+  broker: DeviceCapabilityBroker, session: DeviceDeveloperSessionV1, job: DeviceDeveloperJobV1, capabilityId: string, signal: AbortSignal,
 ): Promise<DeviceDeveloperExecutorResultV1> {
   const { store } = broker;
   const target = requireCurrentDeveloperTarget(store, session);
@@ -87,8 +96,8 @@ async function capturePcLogs(
   const snapshot = saved && Date.parse(saved.freshnessUntil) > Date.parse(now) ? saved
     : await broker.refreshCapabilities(target.deviceId, target.connectionRevision, signal);
   requireCurrentDeveloperTarget(store, session);
-  const capability = snapshot.capabilities.find(item => item.id === "pc.inspect.logs" && item.sideEffect === "read_only");
-  if (!capability) throw new DeviceBrokerError("unsupported_capability", "PC logs are unavailable on this target");
+  const capability = snapshot.capabilities.find(item => item.id === capabilityId && item.sideEffect === "read_only" && item.approvalClass === "allow");
+  if (!capability) return { status: "failed", taskStatus: "failed" };
   const taskId = `developer-logs:${job.jobId}`;
   broker.createTask({
     id: taskId, ownerKind: "daemon", ownerId: target.deviceId, targetDeviceIds: [target.deviceId],

@@ -23,7 +23,7 @@ export interface AndroidAdbInventory {
 export interface AndroidAdbTargetExecutor {
   inventory(signal?: AbortSignal): Promise<AndroidAdbInventory>;
   readPackages(signal?: AbortSignal, connectionRevision?: string): Promise<readonly AndroidPackageInfo[]>;
-  readLogs?(input: { readonly tag?: string; readonly signal?: AbortSignal }): Promise<string>;
+  readLogs?(input: { readonly tag?: string; readonly signal?: AbortSignal; readonly connectionRevision?: string }): Promise<string>;
   installArtifact?(input: { readonly artifactDigest: string; readonly packageId?: string; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly packageId?: string; readonly versionName?: string }>;
   reboot?(signal?: AbortSignal): Promise<{ readonly accepted: boolean }>;
 }
@@ -36,9 +36,12 @@ export interface AndroidAdbTarget {
   readonly executor: AndroidAdbTargetExecutor;
 }
 
+export const androidAdbAdapterId = "android-adb";
+export const androidAdbLogCapability = "android.capture.logs";
+
 const androidAdbManifest: AdapterManifestV1 = {
-  adapterId: "android-adb",
-  adapterVersion: "1.0.0",
+  adapterId: androidAdbAdapterId,
+  adapterVersion: "1.1.0",
   contractMajor: 1,
   supportedDeviceKinds: ["android", "head_unit"],
   supportedTransports: ["adb"],
@@ -48,7 +51,7 @@ const androidAdbManifest: AdapterManifestV1 = {
   capabilities: [
     { id: "android.inspect.device", schemaVersion: "1.0", semanticVerb: "inspect.device", inputSchema: { type: "object" }, outputSchema: { type: "object" }, sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["adb.read"], prerequisites: [], timeoutMs: 10_000, responseBytesLimit: 64 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
     { id: "android.inspect.packages", schemaVersion: "1.0", semanticVerb: "inspect.packages", inputSchema: { type: "object" }, outputSchema: { type: "array" }, sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["adb.read"], prerequisites: [], timeoutMs: 15_000, responseBytesLimit: 256 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
-    { id: "android.capture.logs", schemaVersion: "1.0", semanticVerb: "capture.logs", inputSchema: { type: "object" }, outputSchema: { type: "object" }, sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["adb.read"], prerequisites: [], timeoutMs: 15_000, responseBytesLimit: 256 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
+    { id: androidAdbLogCapability, schemaVersion: "1.0", semanticVerb: "capture.logs", inputSchema: { type: "object" }, outputSchema: { type: "object" }, sideEffect: "read_only", approvalClass: "allow", requiredPermissions: ["adb.read"], prerequisites: [], timeoutMs: 15_000, responseBytesLimit: 256 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
     { id: "android.install.artifact", schemaVersion: "1.0", semanticVerb: "deploy.artifact", inputSchema: { type: "object", required: ["artifactDigest", "packageId"] }, outputSchema: { type: "object" }, sideEffect: "reversible", approvalClass: "ask", requiredPermissions: ["adb.install"], prerequisites: [], timeoutMs: 60_000, responseBytesLimit: 64 * 1024, idempotency: "target_revision", verificationCapabilityId: "android.inspect.packages", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
     { id: "android.reboot", schemaVersion: "1.0", semanticVerb: "restart.device", inputSchema: { type: "object" }, outputSchema: { type: "object" }, sideEffect: "mutating", approvalClass: "ask", requiredPermissions: ["adb.reboot"], prerequisites: [], timeoutMs: 30_000, responseBytesLimit: 16 * 1024, idempotency: "request", supportedDeviceKinds: ["android", "head_unit"], supportedTransports: ["adb"] },
   ],
@@ -95,7 +98,7 @@ export class AndroidAdbAdapter implements DeviceAdapter {
     const snapshot = createAdapterCapabilitySnapshot(this.manifest, input, this.#now());
     return { ...snapshot, capabilities: snapshot.capabilities.filter(({ id }) =>
       id === "android.inspect.device" || id === "android.inspect.packages"
-      || (id === "android.capture.logs" && executor.readLogs)
+      || (id === androidAdbLogCapability && executor.readLogs)
       || (id === "android.install.artifact" && executor.installArtifact)
       || (id === "android.reboot" && executor.reboot)) };
   }
@@ -104,10 +107,11 @@ export class AndroidAdbAdapter implements DeviceAdapter {
     const startedAt = this.#now();
     const args = asObject(input.request.normalizedInput);
     const executor = this.#connection(input.profile.connectionRefs[0]).executor;
-    if (input.capability.id === "android.inspect.device" || input.capability.id === "android.inspect.packages") {
+    const id = input.capability.id;
+    if (id === "android.inspect.device" || id === "android.inspect.packages") {
       try {
         const { model, androidVersion } = await this.#inventory(input.profile, executor, input.signal);
-        if (input.capability.id === "android.inspect.device") {
+        if (id === "android.inspect.device") {
           return completedObservation(input, startedAt, { model, ...(androidVersion ? { androidVersion } : {}) }, "android.device");
         }
         const packages = await executor.readPackages(input.signal, input.profile.device.profileRevision);
@@ -118,9 +122,12 @@ export class AndroidAdbAdapter implements DeviceAdapter {
           startedAt, finishedAt: this.#now(), observationIds: [] };
       }
     }
-    if (input.capability.id === "android.capture.logs" && executor.readLogs) {
-      await this.#inventory(input.profile, executor, input.signal);
-      const logs = await executor.readLogs({ tag: typeof args.tag === "string" ? args.tag : undefined, signal: input.signal });
+    if (id === androidAdbLogCapability && executor.readLogs) {
+      if (args.tag !== undefined && typeof args.tag !== "string") {
+        return { actionId: input.request.actionId, status: "rejected", errorCode: "invalid_request", startedAt, finishedAt: this.#now(), observationIds: [] };
+      }
+      const inventory = await this.#inventory(input.profile, executor, input.signal);
+      const logs = await executor.readLogs({ tag: args.tag, signal: input.signal, connectionRevision: inventoryRevision(inventory) });
       return completedObservation(input, startedAt, { text: logs.slice(0, 200_000) }, "android.logcat");
     }
     if (input.capability.id === "android.install.artifact" && executor.installArtifact) {

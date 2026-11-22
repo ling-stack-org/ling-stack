@@ -96,6 +96,15 @@ a merge so historical receipts still identify their original target. Refresh aff
 bindings before executing new writes. Keep scopes and credential references attached
 to the authorities that issued them.
 
+The local Daemon serves enrolled devices through
+`GET /v1/device-support/fabric/graph`. For a registered device awaiting its
+semantic graph record, the response derives a device node from its stable ID.
+The node carries the current profile revision, connection revision, and
+lifecycle status. A reconnect updates these bindings while retaining the node
+ID. A stored graph node supplies its own labels, relationships, and revisions
+alongside the current registry binding. The graph view is scoped to the
+Daemon's default workspace.
+
 Relationships answer questions such as which room contains a device, which controller
 reports it, what network it uses, and which host reaches it. A relationship can help
 choose an observation. Authority comes from the current identity, connection and

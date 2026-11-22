@@ -12,6 +12,7 @@ interface AdbTargetConfig {
   readonly adbSerial: string;
   readonly hardwareSerial: string;
   readonly kind: AndroidAdbTarget["kind"];
+  readonly logTag?: string;
 }
 
 export interface BoundAndroidAdbTarget extends AndroidAdbTarget {
@@ -19,7 +20,7 @@ export interface BoundAndroidAdbTarget extends AndroidAdbTarget {
   readonly deviceId: string;
 }
 
-const targetFields = new Set(["connectionId", "adbSerial", "hardwareSerial", "kind"]);
+const targetFields = new Set(["connectionId", "adbSerial", "hardwareSerial", "kind", "logTag"]);
 const hardwareSerialCommand = [
   "serial=$(getprop ro.serialno)",
   '[ -n "$serial" ] || serial=$(getprop ro.boot.serialno)',
@@ -69,17 +70,28 @@ function parseTarget(value: unknown, index: number): AdbTargetConfig {
     || typeof value.connectionId !== "string" || !/^[a-z0-9][a-z0-9_-]{0,63}$/u.test(value.connectionId)
     || typeof value.adbSerial !== "string" || !/^[a-zA-Z0-9:._%\-\[\]]{1,256}$/u.test(value.adbSerial)
     || typeof value.hardwareSerial !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u.test(value.hardwareSerial)
-    || (value.kind !== "android" && value.kind !== "head_unit")) {
+    || (value.kind !== "android" && value.kind !== "head_unit")
+    || (value.logTag !== undefined && (typeof value.logTag !== "string" || !/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/u.test(value.logTag)))) {
     throw new Error(`Invalid Android ADB target at index ${index}`);
   }
-  return { connectionId: value.connectionId, adbSerial: value.adbSerial, hardwareSerial: value.hardwareSerial, kind: value.kind };
+  return { connectionId: value.connectionId, adbSerial: value.adbSerial, hardwareSerial: value.hardwareSerial, kind: value.kind, logTag: value.logTag };
 }
 
 class AndroidAdbProcessExecutor implements AndroidAdbTargetExecutor {
   readonly #connectionEpoch = randomUUID();
+  readonly readLogs?: AndroidAdbTargetExecutor["readLogs"];
 
   constructor(private readonly target: AdbTargetConfig, private readonly identity: string,
-    private readonly file: string, private readonly runner: LocalProcessRunner) {}
+    private readonly file: string, private readonly runner: LocalProcessRunner) {
+    const tag = target.logTag;
+    if (tag !== undefined) {
+      this.readLogs = async input => {
+        if (input.tag !== undefined && input.tag !== tag) throw new DeviceBrokerError("permission_denied", "ADB log tag differs from the configured application tag");
+        const lines = await this.#query(`logcat -b main -b crash -d -t 200 -v threadtime '${tag}:V' '*:S'`, input.connectionRevision, input.signal);
+        return lines.join("\n");
+      };
+    }
+  }
 
   async inventory(parent?: AbortSignal): Promise<AndroidAdbInventory> {
     const { inventory } = await this.#read(parent);
@@ -87,17 +99,26 @@ class AndroidAdbProcessExecutor implements AndroidAdbTargetExecutor {
   }
 
   async readPackages(parent?: AbortSignal, revision?: string): Promise<readonly AndroidPackageInfo[]> {
+    return parsePackages(await this.#query("pm list packages", revision, parent));
+  }
+
+  async #query(command: string, revision: string | undefined, parent?: AbortSignal): Promise<readonly string[]> {
     const { inventory, selector, signal, fingerprint } = await this.#read(parent);
     if (inventory.connectionRevision !== revision) {
-      throw new DeviceBrokerError("target_changed", "Android ADB transport changed before package readback");
+      throw new DeviceBrokerError("target_changed", "Android ADB transport changed before the operation");
     }
-    // Check identity in the same shell as the package query. ADB transport IDs
-    // can be reassigned when the ADB server restarts.
-    const script = `${hardwareSerialCommand}; getprop ro.build.fingerprint; if [ "$serial" = '${this.target.hardwareSerial}' ]; then pm list packages; fi`;
-    const [serial, currentFingerprint, ...lines] = (await this.#run([...selector, script], signal)).split(/\r?\n/u);
+    // The query and identity check share a shell because the server can reassign transport IDs.
+    const expectedFingerprint = "'" + fingerprint.replaceAll("'", "'\\''") + "'";
+    const script = [
+      hardwareSerialCommand,
+      "fingerprint=$(getprop ro.build.fingerprint)",
+      'printf "%s\\n" "$fingerprint"',
+      `if [ "$serial" = '${this.target.hardwareSerial}' ] && [ "$fingerprint" = ${expectedFingerprint} ]; then ${command}; fi`,
+    ].join("; ");
+    const [serial, actualFingerprint, ...lines] = (await this.#run([...selector, script], signal)).split(/\r?\n/u);
     this.#assertSerial(serial);
-    if (fingerprint !== currentFingerprint) throw new DeviceBrokerError("target_changed", "Android build changed during package readback");
-    return parsePackages(lines);
+    if (actualFingerprint !== fingerprint) throw new DeviceBrokerError("target_changed", "Android build changed during the operation");
+    return lines;
   }
 
   async #read(parent?: AbortSignal) {
@@ -136,6 +157,9 @@ class AndroidAdbProcessExecutor implements AndroidAdbTargetExecutor {
     const result = await this.runner.run(this.file, [...adbServer, ...args], signal);
     signal.throwIfAborted();
     if (result.exitCode !== 0) throw new DeviceBrokerError("connection_failed", "the local ADB tool did not complete the operation");
+    if (Buffer.byteLength(result.stdout, "utf8") > 256 * 1024) {
+      throw new DeviceBrokerError("connection_failed", "Android ADB output exceeded its size limit");
+    }
     return result.stdout;
   }
 }

@@ -2,16 +2,17 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { DeviceDeveloperJobV1, DeviceDeveloperSessionV1 } from "@ling-stack/contracts";
-import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, requireWorkspaceDeviceTask } from "@ling-stack/core";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
+import { androidAdbAdapterId, androidAdbLogCapability } from "./adapters/android-adb.js";
 import { assertDeveloperTargetActive, requireCurrentDeveloperTarget } from "./developer-jobs.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const developerPath = "/v1/device-support/developer/sessions";
-const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs)(?:\/([^/]+))?)?$/u;
+const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs)(?:\/([^/]+)(?:\/(logcat))?)?)?$/u;
 const jobKinds = ["build", "deploy", "launch", "logs", "test", "retest"] as const satisfies readonly DeviceDeveloperJobV1["kind"][];
 const jobFields = new Set(["jobId", "kind", "artifactDigest", "authorizationRevision"]);
 
@@ -24,7 +25,7 @@ export async function handleDeviceDeveloperRoute(
   const match = sessionPath.exec(url.pathname);
   if (!match && url.pathname !== developerPath) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
-  const [sessionId, operation, jobId] = match?.slice(1) ?? [];
+  const [sessionId, operation, jobId, projection] = match?.slice(1) ?? [];
   if (operation === "authorize" && jobId) return false;
   const method = !sessionId || (operation !== undefined && !jobId) ? "POST" : "GET";
   if (request.method !== method) {
@@ -54,11 +55,34 @@ export async function handleDeviceDeveloperRoute(
     if (!job || job.sessionId !== session.sessionId || job.targetDeviceId !== session.targetDeviceId) {
       throw new DeviceBrokerError("missing_target", "developer job is unavailable");
     }
-    writePrivateJson(response, 200, { job });
+    writePrivateJson(response, 200, projection === "logcat" ? readDeveloperLogcat(runtime, session, job) : { job });
   } catch (error) {
     writeDeveloperError(response, error);
   }
   return true;
+}
+
+function readDeveloperLogcat(runtime: DeviceSupportRuntime, session: DeviceDeveloperSessionV1, job: DeviceDeveloperJobV1) {
+  const { store } = runtime;
+  const taskId = `developer-logs:${job.jobId}`;
+  if (session.mode !== "developer" || job.kind !== "logs" || job.status !== "completed" || job.outputRef !== taskId) {
+    throw new DeviceBrokerError("missing_target", "developer log capture is unavailable");
+  }
+  const task = requireWorkspaceDeviceTask(store, taskId, session.workspaceId);
+  if (task.status !== "succeeded" || task.ownerId !== job.targetDeviceId
+    || task.targetDeviceIds.length !== 1 || task.targetDeviceIds[0] !== job.targetDeviceId) {
+    throw new DeviceBrokerError("missing_target", "developer log capture is unavailable");
+  }
+  const record = store.listAttempts(taskId).find(({ attempt, request }) =>
+    attempt.targetDeviceId === job.targetDeviceId && attempt.ownerId === task.ownerId && attempt.status === "completed"
+    && attempt.adapterBinding?.adapterId === androidAdbAdapterId && request.capabilityId === androidAdbLogCapability);
+  const capture = store.listObservations(taskId).find(observation => record?.attempt.receipt?.observationIds.includes(observation.id)
+    && observation.subjectId === job.targetDeviceId && observation.source === "android.logcat" && observation.redactionClass === "sensitive");
+  const evidence = capture?.value;
+  if (!capture || !isRecord(evidence) || typeof evidence.text !== "string") {
+    throw new DeviceBrokerError("missing_target", "developer log capture is unavailable");
+  }
+  return { jobId: job.jobId, taskId, observationId: capture.id, capturedAt: capture.observedAt, text: evidence.text };
 }
 
 async function createJob(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime, sessionId: string): Promise<void> {

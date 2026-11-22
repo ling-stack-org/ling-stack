@@ -36,7 +36,6 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Shared Component And Theme Validation Evidence](component-theme-presentation-validation.md)
 - [Breeze, Ocean And Night Refinement Directions](scene-theme-refinement-directions.md)
 - [Photographic And Summer Manga Scene Theme Validation](photographic-scene-themes-validation.md)
-- [Full-Window Theme Background Research](full-window-theme-background-research.md)
 - [Product Design](../product-design.md)
 - [Architecture](../architecture.md)
 - [Platform Architecture](platform-architecture.md)

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +19,7 @@ import {
   type PcProcessInfo,
   type PcServiceStatus,
 } from "../dist/features/device-support/adapters/index.js";
+import { readAndroidAdbTargets } from "../dist/features/device-support/android-adb-targets.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 
@@ -413,6 +417,51 @@ test("Android ADB adapter exposes fixed head-unit operations and verifies artifa
   serial = "another-head-unit";
   await assert.rejects(() => adapter.execute({ profile, capability, request }), { code: "target_changed" });
   assert.deepEqual(operations, ["inventory", "inventory", "install", "inventory", "packages", "inventory", "install", "inventory"]);
+});
+
+test("configured ADB log captures bind the tag, connection and readback to one target", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-adb-operations-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const path = join(root, "targets.json");
+  writeFileSync(path, JSON.stringify({ version: 1, targets: [{
+    connectionId: "bench", adbSerial: "fixture-head-unit", hardwareSerial: "fixture-hardware-id", kind: "head_unit", logTag: "DiPlay",
+  }] }));
+  let transportId = "17";
+  let logReads = 0;
+  let captureFingerprint = "fixture/fingerprint";
+  let output = "I/DiPlay: ready\n";
+  const runner = {
+    async run(_file: string, args: readonly string[]) {
+      const operation = args.slice(4);
+      if (operation[0] === "devices") {
+        return { stdout: `List of devices attached\nfixture-head-unit device transport_id:${transportId}\n`, stderr: "", exitCode: 0 };
+      }
+      assert.deepEqual(operation.slice(0, 4), ["-t", transportId, "shell", "-T"]);
+      const command = operation[4] ?? "";
+      if (command.includes("logcat")) {
+        logReads += 1;
+        assert.match(command, /'DiPlay:V' '\*:S'/u);
+        return { stdout: `fixture-hardware-id\n${captureFingerprint}\n${output}`, stderr: "", exitCode: 0 };
+      }
+      return { stdout: "fixture-hardware-id\nLinaro P\n7.1.2\nfixture/fingerprint\n", stderr: "", exitCode: 0 };
+    },
+  };
+  const [target] = readAndroidAdbTargets(path, runner);
+  assert.ok(target?.executor.readLogs);
+  const readLogs = target.executor.readLogs;
+  const { connectionRevision } = await target.executor.inventory();
+  assert.ok(connectionRevision);
+  assert.equal(await readLogs({ connectionRevision }), "I/DiPlay: ready\n");
+  await assert.rejects(() => readLogs({ tag: "anotherTag", connectionRevision }), { code: "permission_denied" });
+  transportId = "18";
+  await assert.rejects(() => readLogs({ connectionRevision }), { code: "target_changed" });
+  assert.equal(logReads, 1);
+  transportId = "17";
+  captureFingerprint = "unexpected/build";
+  await assert.rejects(() => readLogs({ connectionRevision }), { code: "target_changed" });
+  captureFingerprint = "fixture/fingerprint";
+  output = "x".repeat(256 * 1024);
+  await assert.rejects(() => readLogs({ connectionRevision }), { code: "connection_failed" });
 });
 
 test("OBD adapter exposes typed vehicle info, PID and DTC reads", async () => {

@@ -51,7 +51,7 @@ test("the Daemon registers configured Android ADB and OBD bridges as device targ
   assert.equal(runtime.store.getDevice(vehicle.device.id)?.device.ownerScope, DEFAULT_WORKSPACE_ID);
 });
 
-test("the configured PC ADB route enrolls one authorized target and journals typed package diagnosis", { timeout: 15_000 }, async t => {
+test("the configured PC ADB target journals diagnosis and developer log capture under the same owner", { timeout: 15_000 }, async t => {
   const cwd = mkdtempSync(join(tmpdir(), "ling-adb-diagnosis-"));
   const targetsFile = join(cwd, "android-targets.json");
   const workspace = createSqliteRunStore(cwd);
@@ -59,12 +59,13 @@ test("the configured PC ADB route enrolls one authorized target and journals typ
   const serial = "fixture-hardware-id";
   const adbSerial = "fixture-head-unit";
   writeFileSync(targetsFile, JSON.stringify({ version: 1, targets: [
-    { connectionId: "bench", adbSerial, hardwareSerial: serial, kind: "head_unit" },
+    { connectionId: "bench", adbSerial, hardwareSerial: serial, kind: "head_unit", logTag: "DiPlay" },
   ] }));
   let adbState = "unauthorized";
   let transportId = "17";
   let reportedSerial = "different-fixture-target";
   let packageReads = 0;
+  let logReads = 0;
   let substitutePackageTarget = false;
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd,
     deviceSupport: { androidAdbTargetsFile: targetsFile } }, {
@@ -79,6 +80,10 @@ test("the configured PC ADB route enrolls one authorized target and journals typ
       }
       assert.deepEqual(operation.slice(0, 4), ["-t", transportId, "shell", "-T"]);
       const command = operation[4] ?? "";
+      if (command.includes("logcat")) {
+        logReads += 1;
+        return { stdout: `${reportedSerial}\nfixture/board/build\nI/DiPlay: ready\n`, stderr: "", exitCode: 0 };
+      }
       if (command.includes("pm list packages")) {
         packageReads += 1;
         assert.ok(command.includes(`if [ "$serial" = '${serial}' ]`));
@@ -93,27 +98,67 @@ test("the configured PC ADB route enrolls one authorized target and journals typ
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
-  const base = `http://127.0.0.1:${address.port}/v1/device-support/android`;
+  const base = `http://127.0.0.1:${address.port}/v1/device-support`;
   const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
   const post = (route: string, body: object) => fetch(base + route, { method: "POST", headers, body: JSON.stringify(body) });
-  assert.equal((await fetch(base + "/targets")).status, 401);
-  const candidates = await (await fetch(base + "/targets", { headers })).json();
+  assert.equal((await fetch(base + "/android/targets")).status, 401);
+  const candidates = await (await fetch(base + "/android/targets", { headers })).json();
   assert.equal(candidates.targets[0].status, "candidate");
   assert.doesNotMatch(JSON.stringify(candidates), /fixture-hardware-id|fixture-head-unit/u);
-  assert.equal((await post("/enroll", { connectionId: "bench", adbSerial: "other" })).status, 400);
-  const unauthorized = await post("/enroll", { connectionId: "bench" });
+  assert.equal((await post("/android/enroll", { connectionId: "bench", adbSerial: "other" })).status, 400);
+  const unauthorized = await post("/android/enroll", { connectionId: "bench" });
   assert.deepEqual(await unauthorized.json(), { error: "authentication_required" });
   adbState = "device";
-  assert.equal((await post("/enroll", { connectionId: "bench" })).status, 409);
+  assert.equal((await post("/android/enroll", { connectionId: "bench" })).status, 409);
   assert.equal(packageReads, 0);
   reportedSerial = serial;
-  const enrollment = await post("/enroll", { connectionId: "bench" });
+  const enrollment = await post("/android/enroll", { connectionId: "bench" });
   assert.equal(enrollment.status, 200);
   const { profile } = await enrollment.json() as { profile: DeviceProfileV1 };
   assert.equal(profile.device.id, candidates.targets[0].deviceId);
   assert.equal(profile.device.kind, "head_unit");
+  const readGraphNode = async () => {
+    const response = await fetch(base + "/fabric/graph", { headers });
+    assert.equal(response.status, 200);
+    const graph = await response.json() as {
+      nodes: { nodeId: string; deviceId: string; source?: string; connectionRevision?: string; lifecycleStatus?: string }[];
+    };
+    assert.doesNotMatch(JSON.stringify(graph), /fixture-hardware-id|fixture-head-unit/u);
+    const matches = graph.nodes.filter(node => node.deviceId === profile.device.id);
+    assert.equal(matches.length, 1);
+    return matches[0]!;
+  };
+  const enrolledNode = await readGraphNode();
+  assert.equal(enrolledNode.source, "registry");
+  assert.equal(enrolledNode.lifecycleStatus, "healthy");
+  assert.equal(enrolledNode.connectionRevision, profile.device.profileRevision);
+  const sessions = "/developer/sessions";
+  const developerSession = await post(sessions, { targetDeviceId: profile.device.id, mode: "developer" });
+  assert.equal(developerSession.status, 201);
+  const { session: created } = await developerSession.json() as { session: DeviceDeveloperSessionV1 };
+  const sessionPath = `${sessions}/${created.sessionId}`;
+  const developerAuthorization = await post(sessionPath + "/authorize", { expectedRevision: created.revision });
+  assert.equal(developerAuthorization.status, 200);
+  const { session: authorized } = await developerAuthorization.json() as { session: DeviceDeveloperSessionV1 };
+  const logJob = { jobId: "adb-log-capture", kind: "logs", authorizationRevision: authorized.authorizationRevision };
+  const developerLogs = await post(sessionPath + "/jobs", logJob);
+  assert.equal(developerLogs.status, 201);
+  const { job } = await developerLogs.json() as { job: DeviceDeveloperJobV1 };
+  assert.equal(job.status, "completed");
+  assert.equal(job.taskStatus, "succeeded");
+  assert.equal(job.outputRef, "developer-logs:adb-log-capture");
+  assert.deepEqual(await (await post(sessionPath + "/jobs", logJob)).json(), { job });
+  const logPath = base + sessionPath + "/jobs/adb-log-capture/logcat";
+  assert.equal((await fetch(logPath)).status, 401);
+  const rawLogResponse = await fetch(logPath, { headers });
+  assert.equal(rawLogResponse.status, 200);
+  assert.equal((await rawLogResponse.json()).text, "I/DiPlay: ready\n");
+  const traceResponse = await fetch(base + "/tasks/" + encodeURIComponent(job.outputRef) + "/trace", { headers });
+  assert.equal(traceResponse.status, 200);
+  assert.doesNotMatch(await traceResponse.text(), /DiPlay: ready/u);
+  assert.equal(logReads, 1);
   const diagnosis = async () => {
-    const response = await post("/diagnose", { deviceId: profile.device.id });
+    const response = await post("/android/diagnose", { deviceId: profile.device.id });
     assert.equal(response.status, 200);
     return await response.json() as { status: DeviceTaskStatusV1; report: DeviceDiagnosisReportV1 };
   };
@@ -124,6 +169,9 @@ test("the configured PC ADB route enrolls one authorized target and journals typ
   transportId = "18";
   const reconnected = await diagnosis();
   assert.equal(reconnected.status, "succeeded");
+  const reconnectedNode = await readGraphNode();
+  assert.equal(reconnectedNode.nodeId, enrolledNode.nodeId);
+  assert.notEqual(reconnectedNode.connectionRevision, enrolledNode.connectionRevision);
   const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     const original = store.listAttempts(first.report.taskId)[0]?.attempt;
@@ -131,7 +179,7 @@ test("the configured PC ADB route enrolls one authorized target and journals typ
     assert.equal(original?.targetDeviceId, next?.targetDeviceId);
     assert.notEqual(original?.connectionRevision, next?.connectionRevision);
     assert.deepEqual(store.getCurrentCapabilitySnapshot(profile.device.id)?.capabilities.map(capability => capability.id),
-      ["android.inspect.device", "android.inspect.packages"]);
+      ["android.inspect.device", "android.inspect.packages", "android.capture.logs"]);
   } finally {
     store.close();
   }
@@ -299,12 +347,14 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
     assert.equal(graphResponse.status, 200);
     const graph = await graphResponse.json() as {
       generatedAt: string;
-      nodes: { nodeId: string; deviceId: string }[];
+      nodes: { nodeId: string; deviceId: string; connectionRevision?: string }[];
       relationships: { relationshipId: string }[];
       twins: { deviceId: string; values: { quality: string; hasReported: boolean }[] }[];
     };
     assert.ok(Number.isFinite(Date.parse(graph.generatedAt)));
     assert.deepEqual(graph.nodes.map(node => [node.nodeId, node.deviceId]), [["component", deviceId], ["integration", deviceId]]);
+    assert.equal(graph.nodes.find(node => node.nodeId === "integration")?.connectionRevision,
+      store.getDeviceRetirementState(deviceId, DEFAULT_WORKSPACE_ID).connectionRevision);
     assert.deepEqual(graph.relationships.map(link => link.relationshipId), ["contains-component"]);
     assert.equal(graph.twins.length, 1);
     assert.equal(graph.twins[0]?.deviceId, deviceId);
