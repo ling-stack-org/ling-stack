@@ -250,7 +250,7 @@ test("software inspection uses bounded native package inventories and redacts pa
     ["win32", '[{"name":"Example App","version":"1.2.3"}]\r\n', [
       { name: "Example App", version: "1.2.3", source: "registry" },
     ]],
-    ["darwin", JSON.stringify({ SPApplicationsDataType: [{ _name: "Example", version: "4.5", path: "/Users/secret/Example.app" }] }), [
+    ["darwin", JSON.stringify({ SPApplicationsDataType: [{ _name: "Example", version: "4.5", path: "/Applications/Example.app" }] }), [
       { name: "Example", version: "4.5", source: "system_profiler" },
     ]],
   ] as const) {
@@ -272,7 +272,7 @@ test("software inspection uses bounded native package inventories and redacts pa
       });
       const inventory = await executor.readSoftware();
       assert.deepEqual(inventory, { entries: expected, truncated: false });
-      assert.doesNotMatch(JSON.stringify(inventory), /secret/u);
+      assert.doesNotMatch(JSON.stringify(inventory), /Applications\/Example\.app/u);
     });
   }
   const malformed = new LocalPcTargetExecutor({ platform: "linux", runner: {
