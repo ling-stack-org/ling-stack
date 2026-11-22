@@ -1522,7 +1522,7 @@ test("a scheduled coordination occurrence commits with its round, restores its d
   assert.equal(fixture.getStore().listRuns().length, 0);
   const secret = createHash("sha256").update(randomUUID()).digest("hex");
   const { grant } = await observer.call<{ grant: LingAppServerGrant }>("server/grants/create", {
-    label: "Work Item coordination observer", subject: { kind: "workItem", id: workItemId }, scopes: ["observe", "control"],
+    label: "Work Item coordination observer", subject: { kind: "workItem", id: workItemId }, scopes: ["observe"],
     expiresAt: new Date(Date.now() + 60_000).toISOString(), credentialSha256: createHash("sha256").update(secret).digest("hex"),
     idempotencyKey: "scoped-coordination",
   });
