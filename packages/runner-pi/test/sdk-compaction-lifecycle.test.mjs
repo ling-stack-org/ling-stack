@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { setImmediate as nextTick } from "node:timers/promises";
 import test from "node:test";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
-import { compactionFixture, response } from "./support/pi-compaction-fixture.mjs";
+import { compactionFixture, response } from "./support/pi-compaction-fixture.ts";
 import { createPiTaskBoundary, createPiSessionStopper } from "../dist/task-boundary.js";
 import { translatePiEvent } from "../dist/events.js";
 

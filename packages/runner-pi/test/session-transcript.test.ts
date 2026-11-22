@@ -3,26 +3,28 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { getCurrentSystemPrompt, getCurrentTools, normalizeContext } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools, normalizeContext, type Model, type TranscriptContext, type UserMessage } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { convertToLlm } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, type AgentSession, type AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { frozenPiConversation } from "../dist/session-transcript.js";
 import { continuePiSession, isPiHostResumeControl } from "../dist/session-continuation.js";
 import { installApprovedToolContinuation, readApprovedToolContinuation } from "../dist/approved-tool-continuation.js";
 import { assertCompactionRecoveryModelContext } from "../dist/compaction-recovery.js";
 import { capturePreparedPiInput } from "../dist/prepared-input.js";
 import { createInitializedPiSession } from "../dist/session-factory.js";
-import { PiRunnerAdapter } from "../dist/adapter.js";
+import type { PiRunnerCompactionRecovery, PiRunnerRunOptions } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
 
 const tool = { name: "read", description: "Frozen read", parameters: { type: "object" } };
 const authority = { systemPrompt: "Frozen prompt", tools: [tool] };
-const user = { role: "user", content: [{ type: "text", text: "accepted" }], timestamp: 0 };
+const user: UserMessage = { role: "user", content: [{ type: "text", text: "accepted" }], timestamp: 0 };
 
 test("conversation-only checkpoints discard only proven frozen SDK authority", () => {
   const head = normalizeContext({ systemPrompt: authority.systemPrompt, tools: [tool], messages: [] }).messages[0];
-  const conversation = [head, user, { role: "system", content: "", toolsAdded: [tool], timestamp: 1 }];
+  const delta = { role: "system", content: "", toolsAdded: [tool], timestamp: 1 };
+  const conversation = [head, user, delta];
   assert.deepEqual(frozenPiConversation(conversation, authority), [user]);
-  assert.deepEqual(conversation[2].toolsAdded, [tool], "the canonical delta remains unchanged");
+  assert.deepEqual(delta.toolsAdded, [tool], "the canonical delta remains unchanged");
 });
 
 test("an omitted leading system cannot become a conversation-only checkpoint", () => {
@@ -45,15 +47,23 @@ test("restored compaction first-request validation locks summary content and eve
     { role: "compactionSummary", summary: "sealed progress", timestamp: 0, tokensBefore: 100 }, user,
     { role: "assistant", content: [{ type: "toolCall", id: "saved", name: "read", arguments: {} }] },
     { role: "toolResult", toolCallId: "saved", toolName: "read", content: [{ type: "text", text: "saved result" }], timestamp: 0 },
-  ] };
+  ] } satisfies PiRunnerCompactionRecovery;
   const context = normalizeContext({ systemPrompt: "Frozen", messages: convertToLlm([
     { ...recovery.modelView[0], timestamp: 42 }, ...structuredClone(recovery.modelView.slice(1)),
-  ]) });
+  ] as Parameters<typeof convertToLlm>[0]) });
   assert.doesNotThrow(() => assertCompactionRecoveryModelContext(recovery, context));
-  context.messages.at(-1).content[0].text = "drift";
+  const toolResult = context.messages.at(-1);
+  assert.ok(toolResult && "content" in toolResult && Array.isArray(toolResult.content));
+  const toolText = toolResult.content[0];
+  assert.ok(toolText?.type === "text");
+  toolText.text = "drift";
   assert.throws(() => assertCompactionRecoveryModelContext(recovery, context), /compaction recovery changed/);
-  context.messages.at(-1).content[0].text = "saved result";
-  context.messages[1].content[0].text += " drift";
+  toolText.text = "saved result";
+  const summary = context.messages[1];
+  assert.ok("content" in summary && Array.isArray(summary.content));
+  const summaryText = summary.content[0];
+  assert.ok(summaryText?.type === "text");
+  summaryText.text += " drift";
   assert.throws(() => assertCompactionRecoveryModelContext(recovery, context), /compaction recovery changed/);
 });
 
@@ -62,7 +72,7 @@ for (const [label, replacement] of [
   ["undefined details", { result: { content: [], details: { absent: undefined } } }],
   ["non-finite arguments", { args: { bad: NaN } }],
   ["non-JSON arguments", { args: { date: new Date(0) } }],
-]) {
+] as const) {
   test(`SDK JsonObject evidence rejects ${label} without lossy normalization`, () => {
     const evidence = { schemaVersion: 1, kind: "approved_tool_result", approvalId: "approval",
       sideEffectFingerprint: "effect", toolCallId: "saved", toolName: "read", args: {}, result: { content: [] }, ...replacement };
@@ -82,17 +92,18 @@ test("SDK JsonObject validation never invokes a nested argument accessor", () =>
 test("the public resume driver canonically omits its control and preserves the existing transform chain and SDK settlement", async t => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-transcript-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
-  const options = { cwd, tools: [], task: { id: "restore", title: "Restore", prompt: "Finish" },
+  const options: PiRunnerRunOptions = { cwd, tools: [], task: { id: "restore", title: "Restore", prompt: "Finish" },
     provider: { provider: "transcript-fixture", model: "fixture", baseUrl: "https://fixture.invalid/v1",
       api: "openai-completions", apiKey: "fixture", reasoning: false } };
   let requests = 0, transforms = 0;
-  const contexts = [], settled = [];
-  const adapter = new PiRunnerAdapter();
+  const contexts: TranscriptContext["messages"][] = [];
+  const settled: Extract<AgentSessionEvent, { type: "agent_settled" }>[] = [];
+  const adapter = new FixtureRunnerBase();
   const session = await createInitializedPiSession(options, runtime => {
     adapter.registerCustomProviderIfNeeded(runtime, options.provider);
     runtime.registerProvider(options.provider.provider, { api: "openai-completions", streamSimple: (model, context, settings) => {
       contexts.push(structuredClone(context.messages));
-      return stream(model, context, { ...settings, fetch: async () => {
+      return stream(model as Model<"openai-completions">, context, { ...settings, fetch: async () => {
         requests += 1;
         return new Response('data: {"choices":[{"index":0,"delta":{"content":"Done"},"finish_reason":null}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
           { headers: { "content-type": "text/event-stream" } });
@@ -105,7 +116,7 @@ test("the public resume driver canonically omits its control and preserves the e
     kind: "approved_tool_result", approvalId: "approval", sideEffectFingerprint: "effect", toolCallId: "saved",
     toolName: "read", args: {}, result: { content: [{ type: "text", text: "saved" }] } });
   const original = session.agent.transformContext;
-  const existingChain = async (messages, signal) => {
+  const existingChain: NonNullable<AgentSession["agent"]["transformContext"]> = async (messages, signal) => {
     transforms += 1;
     assert.equal(messages.some(isPiHostResumeControl), false);
     return original ? original(messages, signal) : messages;
@@ -123,7 +134,7 @@ test("the public resume driver canonically omits its control and preserves the e
   assert.ok(entries.some(entry => entry.type === "context_edit" && entry.targetId === control.id && entry.replacement === null));
   assert.equal(session.sessionManager.buildSessionProjection().messages.some(isPiHostResumeControl), false);
   assert.equal(session.messages.some(isPiHostResumeControl), false);
-  assert.equal(contexts[0].some(message => message.role === "custom"), false);
+  assert.equal(contexts[0].some((message: { role: string }) => message.role === "custom"), false);
   assert.equal(getCurrentSystemPrompt(contexts[0]), prepared.systemPrompt);
   assert.deepEqual(getCurrentTools(contexts[0]), prepared.tools);
 });

@@ -8,7 +8,7 @@ import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { PiRunnerAdapter } from "../dist/adapter.js";
 import { assertPiModelContextCapacity } from "../dist/prepared-input.js";
-import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.mjs";
+import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.ts";
 
 async function fixture(t, overrides = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-n03-runner-prepared-"));

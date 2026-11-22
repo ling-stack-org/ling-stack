@@ -7,16 +7,16 @@ import {
 } from "../dist/extensions/tool-hydration.js";
 
 test("tool hydration extension loads schemas and preserves MCP approval", async () => {
-  const events = [];
-  const approvals = [];
-  const mcpCalls = [];
-  const registered = new Map();
-  createLingStackToolHydrationExtension({
+  const events: any[] = [];
+  const approvals: any[] = [];
+  const mcpCalls: any[] = [];
+  const registered = new Map<string, any>();
+  (createLingStackToolHydrationExtension as any)({
     ...baseOptions(),
     runId: "run_hydrated",
     runnerAttemptId: "attempt_hydrated",
-    onEvent: (event) => events.push(event),
-    async onToolHydrationRequest(request) {
+    onEvent: (event: any) => events.push(event),
+    async onToolHydrationRequest(request: any): Promise<any> {
       assert.deepEqual(request.scope, { kind: "namespace", namespaceId: "mcp:mcp_files" });
       return {
         ok: true,
@@ -47,18 +47,18 @@ test("tool hydration extension loads schemas and preserves MCP approval", async 
         generatedAt: "2026-06-19T05:00:00.000Z",
       };
     },
-    async onApprovalRequired(request) {
+    async onApprovalRequired(request: any) {
       approvals.push(request);
       return { approved: true, approvalId: "approval_hydrated" };
     },
-    async onMcpToolCall(request) {
+    async onMcpToolCall(request: any) {
       mcpCalls.push(request);
       return {
         content: [{ type: "text", text: "wrote file" }],
         details: { ok: true },
       };
     },
-  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.set(tool.name, tool) } as any);
 
   assert.equal(registered.has(TOOL_HYDRATION_LOAD_TOOL_NAME), true);
   assert.equal(registered.has(TOOL_HYDRATION_CALL_TOOL_NAME), true);
@@ -89,12 +89,12 @@ test("tool hydration extension loads schemas and preserves MCP approval", async 
 });
 
 test("tool hydration discards a successful MCP result after runner cancellation", async () => {
-  const registered = new Map();
+  const registered = new Map<string, any>();
   const controller = new AbortController();
   const abortReason = new Error("hydrated call cancelled");
-  createLingStackToolHydrationExtension({
+  (createLingStackToolHydrationExtension as any)({
     ...baseOptions(),
-    async onToolHydrationRequest(request) {
+    async onToolHydrationRequest(request: any): Promise<any> {
       return {
         ok: true,
         materialization: {
@@ -128,7 +128,7 @@ test("tool hydration discards a successful MCP result after runner cancellation"
       controller.abort(abortReason);
       return { content: [{ type: "text", text: "late" }] };
     },
-  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.set(tool.name, tool) } as any);
 
   await registered.get(TOOL_HYDRATION_LOAD_TOOL_NAME).execute("tool_load_cancel", {
     scopeKind: "namespace",
@@ -145,13 +145,13 @@ test("tool hydration discards a successful MCP result after runner cancellation"
 });
 
 test("tool hydration stops after approval when the runner is cancelled", async () => {
-  const registered = new Map();
+  const registered = new Map<string, any>();
   const controller = new AbortController();
   const abortReason = new Error("hydrated call cancelled during approval");
   let toolCalls = 0;
-  createLingStackToolHydrationExtension({
+  (createLingStackToolHydrationExtension as any)({
     ...baseOptions(),
-    async onToolHydrationRequest(request) {
+    async onToolHydrationRequest(request: any): Promise<any> {
       return askToolHydrationResponse(request, "tool_materialization_approval_cancel");
     },
     async onApprovalRequired() {
@@ -162,7 +162,7 @@ test("tool hydration stops after approval when the runner is cancelled", async (
       toolCalls += 1;
       return { content: [{ type: "text", text: "must not run" }] };
     },
-  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.set(tool.name, tool) } as any);
 
   await registered.get(TOOL_HYDRATION_LOAD_TOOL_NAME).execute("tool_load_approval_cancel", {
     scopeKind: "tool",
@@ -180,8 +180,8 @@ test("tool hydration stops after approval when the runner is cancelled", async (
 });
 
 test("tool hydration extension rejects hydrated tool calls before load", async () => {
-  const registered = new Map();
-  createLingStackToolHydrationExtension(baseOptions())({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
+  const registered = new Map<string, any>();
+  (createLingStackToolHydrationExtension as any)(baseOptions())({ on: () => () => undefined, registerTool: (tool: any) => registered.set(tool.name, tool) } as any);
 
   await assert.rejects(
     registered.get(TOOL_HYDRATION_CALL_TOOL_NAME).execute("tool_call", {
@@ -193,10 +193,10 @@ test("tool hydration extension rejects hydrated tool calls before load", async (
 });
 
 test("tool hydration extension fails closed when approval is missing for ask tools", async () => {
-  const registered = new Map();
-  createLingStackToolHydrationExtension({
+  const registered = new Map<string, any>();
+  (createLingStackToolHydrationExtension as any)({
     ...baseOptions(),
-    async onToolHydrationRequest(request) {
+    async onToolHydrationRequest(request: any): Promise<any> {
       return {
         ok: true,
         materialization: {
@@ -225,7 +225,7 @@ test("tool hydration extension fails closed when approval is missing for ask too
         generatedAt: "2026-06-19T05:00:00.000Z",
       };
     },
-  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.set(tool.name, tool) } as any);
 
   await registered.get(TOOL_HYDRATION_LOAD_TOOL_NAME).execute("tool_load", {
     scopeKind: "tool",
@@ -249,7 +249,7 @@ function baseOptions() {
   };
 }
 
-function baseBudget() {
+function baseBudget(): any {
   return {
     decision: "within_budget",
     estimatedTokens: 100,
@@ -263,7 +263,7 @@ function baseBudget() {
   };
 }
 
-function askToolHydrationResponse(request, id) {
+function askToolHydrationResponse(request: any, id: string): any {
   return {
     ok: true,
     materialization: {

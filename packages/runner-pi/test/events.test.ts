@@ -6,13 +6,13 @@ import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 for (const [name, deltas] of [
   ["Markdown whitespace", ["说明。", "\n", "\n", "### 检查结果", "\n\n", "- 已读取", "\n\n", "```ts\n", "  const x = 1;", "\n\t", "console.log(x);", "\n```"]],
   ["a missing provider newline without inventing one", ["说明。", "###", " 检查结果", "\n\n", "- 已读取"]],
-]) {
+] as [string, string[]][]) {
   test(`SSE parsing and Ling translation preserve ${name}`, async () => {
-    const records = deltas.map((content) => ({ choices: [{ index: 0, delta: { content }, finish_reason: null }] }));
+    const records: any[] = deltas.map((content) => ({ choices: [{ index: 0, delta: { content }, finish_reason: null }] }));
     records.push({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
     const bytes = new TextEncoder().encode(records.map((record) => `data: ${JSON.stringify(record)}\n\n`).join("") + "data: [DONE]\n\n");
     let fetchCount = 0;
-    const model = {
+    const model: any = {
       id: "markdown-fixture", name: "Markdown fixture", provider: "fixture",
       api: "openai-completions", baseUrl: "https://fixture.invalid/v1",
       reasoning: false, input: ["text"], contextWindow: 8192, maxTokens: 1024,
@@ -20,7 +20,7 @@ for (const [name, deltas] of [
     };
     const response = stream(model, {
       messages: [{ role: "user", content: "Return Markdown.", timestamp: 0 }],
-    }, {
+    } as any, {
       apiKey: "fixture-no-network",
       fetch: async () => {
         fetchCount += 1;
@@ -33,17 +33,17 @@ for (const [name, deltas] of [
         }), { headers: { "content-type": "text/event-stream" } });
       },
     });
-    const translated = [];
+    const translated: string[] = [];
     for await (const entry of response) {
-      assert.notEqual(entry.type, "error", entry.error?.errorMessage);
+      assert.notEqual(entry.type, "error", (entry as any).error?.errorMessage);
       if (entry.type === "text_delta") {
-        translated.push(translatePiEvent({ type: "message_update", assistantMessageEvent: entry }).text);
+        translated.push((translatePiEvent({ type: "message_update", message: {} as any, assistantMessageEvent: entry } as any) as any).text);
       }
     }
     const finalMessage = await response.result();
     assert.equal(fetchCount, 1);
     assert.deepEqual(translated, deltas);
-    assert.equal(translatePiEvent({ type: "message_end", message: finalMessage }).text, deltas.join(""));
+    assert.equal((translatePiEvent({ type: "message_end", message: finalMessage } as any) as any).text, deltas.join(""));
   });
 }
 
@@ -58,7 +58,7 @@ test("message_end preserves final assistant text when a provider emits no text d
         { type: "text", text: "answer" },
       ],
     },
-  });
+  } as any);
 
   assert.deepEqual(translated, {
     type: "message_end",
@@ -77,7 +77,7 @@ test("message_end exposes only bounded terminal metadata and never reasoning tex
       finish_reason: "length",
       error: { message: "contains provider internals" },
     },
-  }), {
+  } as any), {
     type: "message_end",
     role: "assistant",
     stopReason: "length",
@@ -91,7 +91,7 @@ test("message_end does not project user or tool content as assistant output", ()
   assert.deepEqual(translatePiEvent({
     type: "message_end",
     message: { role: "user", content: "User prompt" },
-  }), {
+  } as any), {
     type: "message_end",
     role: "user",
   });
@@ -101,12 +101,12 @@ test("compaction abort and malformed usage stay bounded and cannot become instal
   assert.deepEqual(translatePiEvent({
     type: "compaction_end", reason: "overflow", result: undefined, aborted: true,
     willRetry: false, errorMessage: "PRIVATE_PROVIDER_DETAIL",
-  }), {
+  } as any), {
     type: "context_compaction_end", reason: "overflow", policyVersion: "pi_sdk_lifecycle_v1",
     outcome: "aborted", willRetry: false,
   });
   assert.deepEqual(translatePiEvent({
     type: "message_end",
     message: { role: "assistant", content: [], usage: { input: Infinity, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 1 } },
-  }), { type: "message_end", role: "assistant" });
+  } as any), { type: "message_end", role: "assistant" });
 });
