@@ -58,6 +58,31 @@ const collaborationAppend = { ...workItemTarget, idempotencyKey: stringSchema, a
   expectedWorkItemRevision: integerSchema, expectedCollaborationRevision: integerSchema, parentRecordId: stringSchema,
   sourceRefs: arraySchema, payload: {} };
 const worktreeTarget = { ownerKind: { enum: ["channel", "teammate"] }, ownerId: stringSchema };
+const changeWorktree = objectWith(worktreeTarget, ["ownerKind", "ownerId"]);
+const changeSource = { cwd: stringSchema, sourceWorktree: changeWorktree };
+const candidateResult = { cwd: stringSchema, candidate, coverage: { enum: ["complete", "partial"] }, headCommit: stringSchema };
+const candidateResultFields = ["cwd", "candidate", "coverage", "headCommit"];
+const recoveryAction = { enum: ["undo", "reapply"] };
+const transferAction = { enum: ["apply"] };
+const recoveryTarget = { cwd: stringSchema, ...threadTarget, turnId: stringSchema, action: recoveryAction };
+const transferTarget = {
+  ...changeSource, action: transferAction, targetWorktree: changeWorktree, candidateDigest: stringSchema, hunkIds: stringArraySchema,
+};
+const confirmation = { expectedRevision: stringSchema, idempotencyKey: stringSchema, confirmed: { enum: [true] } };
+const recoveryFields = ["action", "threadId", "turnId"];
+const transferFields = ["action", "targetWorktree", "candidateDigest", "hunkIds"];
+const confirmationFields = ["expectedRevision", "idempotencyKey", "confirmed"];
+const queueEvidence = objectWith({
+  queueEntryId: stringSchema, baseCommit: stringSchema, testedCommit: stringSchema, testedTree: stringSchema, membershipProofRef: stringSchema,
+}, ["queueEntryId", "baseCommit", "testedCommit", "membershipProofRef"]);
+const deliveryResult = objectWith({
+  cwd: stringSchema,
+  delivery: objectWith({ deliveryId: stringSchema, workItemId: stringSchema, acceptanceId: stringSchema, threadId: stringSchema,
+    candidateDigest: stringSchema, policyRevision: stringSchema, subject: objectSchema, baseCommit: stringSchema, checks: arraySchema,
+    mergeGroup: queueEvidence, status: { enum: ["ci_pending", "ci_failed", "delivery_pending", "delivered"] },
+    mergedCommit: stringSchema, observedAt: stringSchema },
+  ["deliveryId", "workItemId", "acceptanceId", "threadId", "candidateDigest", "policyRevision", "subject", "baseCommit", "checks", "status", "observedAt"]),
+}, ["cwd", "delivery"]);
 
 function objectWith(
   properties: Readonly<Record<string, LingAppServerJsonSchema>>,
@@ -165,7 +190,6 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ subscriptionId: stringSchema }, ["subscriptionId"]), result };
     case "workItem/read":
     case "workItem/clarify":
-    case "workItem/delivery/read":
     case "workItem/evidence/read":
     case "workItem/collaboration/read":
     case "workItem/deliberation/read":
@@ -252,16 +276,36 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "externalAgent/capabilities/read":
       return { params: objectWith({ registrationId: stringSchema }, ["registrationId"]), result };
     case "changes/capture":
-      return { params: objectSchema, result: objectWith({ candidate, coverage: stringSchema }, ["candidate", "coverage"]) };
+      return { params: objectWith(changeSource), result: objectWith(candidateResult, candidateResultFields) };
     case "changes/read":
-      return { params: objectWith({ candidateDigest: stringSchema }, ["candidateDigest"]), result };
+      return { params: objectWith({ ...changeSource, candidateDigest: stringSchema, offset: integerSchema, limit: integerSchema }, ["candidateDigest"]),
+        result: objectWith({ ...candidateResult, files: arraySchema, exclusions: arraySchema, exclusionCount: integerSchema,
+          totalFileCount: integerSchema, nextOffset: integerSchema }, [...candidateResultFields, "files", "exclusions", "exclusionCount", "totalFileCount"]) };
     case "changes/apply/preview":
-      return { params: objectWith({ threadId: stringSchema, turnId: stringSchema, action: stringSchema, candidateDigest: stringSchema,
-        sourceWorktreeId: stringSchema, targetWorktreeId: stringSchema, hunkIds: stringArraySchema }), result };
+      return {
+        params: { oneOf: [objectWith(recoveryTarget, recoveryFields), objectWith(transferTarget, transferFields)] },
+        result: { oneOf: [
+          objectWith({ ...candidateResult, action: recoveryAction, expectedRevision: stringSchema, changes: objectSchema },
+            [...candidateResultFields, "action", "expectedRevision", "changes"]),
+          objectWith({ ...candidateResult, action: transferAction, expectedRevision: stringSchema, targetWorktree: changeWorktree,
+            targetCandidateDigest: stringSchema, targetHeadCommit: stringSchema, selection: arraySchema },
+          [...candidateResultFields, "action", "expectedRevision", "targetWorktree", "targetCandidateDigest", "targetHeadCommit", "selection"]),
+        ] },
+      };
     case "changes/apply":
-      return { params: objectWith({ threadId: stringSchema, turnId: stringSchema, action: stringSchema,
-        expectedRevision: stringSchema, idempotencyKey: stringSchema, confirmed: booleanSchema, candidateDigest: stringSchema,
-        sourceWorktreeId: stringSchema, targetWorktreeId: stringSchema, hunkIds: stringArraySchema }), result };
+      return {
+        params: { oneOf: [
+          objectWith({ ...recoveryTarget, ...confirmation }, [...recoveryFields, ...confirmationFields]),
+          objectWith({ ...transferTarget, ...confirmation }, [...transferFields, ...confirmationFields]),
+        ] },
+        result: { oneOf: [
+          objectWith({ cwd: stringSchema, action: recoveryAction, turnId: stringSchema, receiptId: stringSchema, state: stringSchema },
+            ["cwd", "action", "turnId", "receiptId", "state"]),
+          objectWith({ cwd: stringSchema, action: transferAction, targetWorktree: changeWorktree, receiptId: stringSchema,
+            state: { enum: ["applied", "not_applied", "unknown"] }, paths: stringArraySchema },
+          ["cwd", "action", "targetWorktree", "receiptId", "state", "paths"]),
+        ] },
+      };
     case "artifact/read":
       return { params: objectWith({ artifactId: stringSchema, ...threadTarget, ...workItemTarget, runId: stringSchema,
         offset: integerSchema, limit: integerSchema }, ["artifactId"]), result };
@@ -310,9 +354,12 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       ["repository", "kind", "number"]), result };
     case "github/delivery/reconcile":
       return { params: objectWith({ ...threadTarget, ...workItemTarget, repository: stringSchema, pullRequestNumber: integerSchema,
-        candidateDigest: stringSchema, expectedWorkItemRevision: integerSchema }, ["threadId", "workItemId", "repository", "pullRequestNumber", "candidateDigest"]), result };
+        candidateDigest: stringSchema, expectedWorkItemRevision: integerSchema, expectedRevision: integerSchema },
+      ["threadId", "workItemId", "repository", "pullRequestNumber", "candidateDigest"]), result: deliveryResult };
+    case "workItem/delivery/read":
+      return { params: objectWith(workItemTarget, ["workItemId"]), result: deliveryResult };
     case "delivery/read":
-      return { params: objectWith({ ...workItemTarget, deliveryId: stringSchema }, ["workItemId", "deliveryId"]), result };
+      return { params: objectWith({ ...workItemTarget, deliveryId: stringSchema }, ["workItemId", "deliveryId"]), result: deliveryResult };
     case "turn/retry":
     case "turn/steer":
     case "thread/compact/start":
