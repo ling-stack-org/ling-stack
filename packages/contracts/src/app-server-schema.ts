@@ -258,8 +258,15 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "workItem/question/reply":
     case "workItem/handoff/accept":
     case "workItem/handoff/return":
-    case "workItem/feedback/add":
       return { params: objectWith(collaborationAppend, ["workItemId"]), result };
+    case "workItem/feedback/add":
+      return { params: objectWith({ ...collaborationAppend, sourceRunId: stringSchema, providerPresetId: stringSchema }, ["workItemId"]),
+        result: { oneOf: [
+          objectWith({ cwd: stringSchema, job: objectSchema, replayed: booleanSchema }, ["cwd", "job", "replayed"]),
+          objectWith({ status: { enum: ["appended", "replayed"] }, record: objectSchema, workItemRevision: integerSchema },
+            ["status", "record", "workItemRevision"]),
+        ] },
+      };
     case "workItem/coordination/schedule/read":
     case "workItem/coordination/schedule/set":
       return { params: objectWith({ ...workItemTarget, automationId: stringSchema, expectedRevision: integerSchema,

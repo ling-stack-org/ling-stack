@@ -98,6 +98,8 @@ import type {
   LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemCollaborationReadParams,
   LingAppServerWorkItemCollaborationReadResult,
+  LingAppServerWorkItemFeedbackParams,
+  LingAppServerWorkItemFeedbackResult,
   LingAppServerDeliberationDecideParams,
   LingAppServerDeliberationSettlementParams,
   LingAppServerStageDeliberationStartParams,
@@ -605,6 +607,11 @@ export class LingAppServerClient {
 
   async readWorkItemCoordination(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
     return await this.readWorkItemCollaboration({ ...params, kind: "coordination" });
+  }
+
+  async addWorkItemFeedback(params: LingAppServerWorkItemFeedbackParams): Promise<LingAppServerWorkItemFeedbackResult> {
+    await this.connect();
+    return await this.request("workItem/feedback/add", params);
   }
 
   async subscribe(params: LingAppServerSubscriptionParams): Promise<LingAppServerSubscriptionResult> {

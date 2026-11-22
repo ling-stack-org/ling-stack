@@ -831,6 +831,21 @@ export interface LingAppServerWorkItemCollaborationAppendResult {
   readonly workItemRevision: number;
 }
 
+export interface LingAppServerWorkItemFeedbackParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly sourceRunId: string;
+  readonly providerPresetId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerWorkItemFeedbackResult {
+  readonly cwd: string;
+  readonly job: import("./learning-reviews.js").LearningReviewJob;
+  readonly replayed: boolean;
+}
+
 export interface LingAppServerDeliberationTriggerPolicyV1 {
   readonly enabled: boolean;
   readonly onPlanFormation: boolean;

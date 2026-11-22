@@ -45,6 +45,7 @@ import type {
   LingAppServerWorkItemAcceptResult,
   LingAppServerWorkItemControlResult,
   LingAppServerWorkItemReadResult,
+  LingAppServerWorkItemFeedbackResult,
   LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
   ProposedPlanActionResponse,
@@ -2418,6 +2419,19 @@ test("a staged Work Item recovers its original Workflow, runs independent QA and
   const body = await detail.json() as { workflow?: LingAppServerWorkItemCollaborationReadResult["workflow"] };
   assert.deepEqual(body.workflow?.steps.map(step => step.status), ["succeeded", "succeeded", "succeeded"]);
   assert.deepEqual(body.workflow?.steps.find(step => step.stepId === p01.id)?.briefBasis, brief.briefBasis);
+  const sourceRunId = finishedStore.getChannelWorkflowStep(p02.id)?.runId;
+  assert.ok(sourceRunId);
+  const currentWorkItem = await decisionClient.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
+  const feedbackInput = {
+    workItemId: item.id, sourceRunId, providerPresetId: preset.id,
+    expectedWorkItemRevision: Number(currentWorkItem.workItem.revision), idempotencyKey: "workflow-experience",
+  };
+  const feedback = await decisionClient.call<LingAppServerWorkItemFeedbackResult>("workItem/feedback/add", feedbackInput);
+  assert.equal(feedback.replayed, false);
+  assert.equal(feedback.job.evidence.workItem?.id, item.id);
+  const feedbackReplay = await decisionClient.call<LingAppServerWorkItemFeedbackResult>("workItem/feedback/add", feedbackInput);
+  assert.equal(feedbackReplay.replayed, true);
+  assert.equal(feedbackReplay.job.id, feedback.job.id);
 });
 
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {

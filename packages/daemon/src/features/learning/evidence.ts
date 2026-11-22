@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { redactSecrets, DEFAULT_WORKSPACE_ID, type RunStore, type LearningEvidenceBundle, type LearningEvidenceItem } from "@ling-stack/core";
 import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
 import { isRecord } from "../../shared/validation.js";
+import { HttpError } from "../../errors.js";
 
 /** Only selected durable lineage is read. A bounded window is explicit, never a claim of complete evidence. */
 export function captureLearningEvidence(store: RunStore, runId: string, correction?: string): LearningEvidenceBundle {
@@ -61,6 +62,62 @@ export function captureDecisionLearningEvidence(store: RunStore, decisionId: str
   return { ...basis, digest: createHash("sha256").update(JSON.stringify(basis)).digest("hex") };
 }
 
+export function captureWorkItemLearningEvidence(
+  store: RunStore, runId: string, workItem: NonNullable<LearningEvidenceBundle["workItem"]>,
+): LearningEvidenceBundle {
+  const item = store.getWorkItem(workItem.id);
+  if (!item || item.revision !== workItem.revision) {
+    throw new HttpError(409, "stale_revision", "The Work Item changed before its experience could be collected.");
+  }
+  const run = store.getRun(runId);
+  const step = run?.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const workflow = item.workflowId && item.planRevision ? store.getChannelWorkflow(item.workflowId) : undefined;
+  const finishedStage = workflow?.status === "succeeded" && step?.workflowId === workflow.id
+    && step.runId === runId && step.status === "succeeded";
+  if (run?.status !== "succeeded" || item.control.state !== "active" || ["cancelled", "archived", "superseded"].includes(item.status)
+    || item.control.unresolvedEffectIds.length
+    || item.holds.some(hold => hold.blocksNewAdmission) || !(finishedStage || item.status === "done" && item.runId === runId)) {
+    throw new HttpError(409, "learning_work_item_source_unavailable", "Select a successful Run owned by this completed Work Item.");
+  }
+  let captured: LearningEvidenceBundle;
+  try {
+    captured = captureLearningEvidence(store, runId);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "learning_source_scope_unavailable") throw error;
+    captured = captureBoundedWorkItemRunEvidence(store, runId, item.workspaceId);
+  }
+  const { digest, ...runEvidence } = captured;
+  return { ...runEvidence, workItem, digest: createHash("sha256").update(JSON.stringify([digest, workItem])).digest("hex") };
+}
+
+function captureBoundedWorkItemRunEvidence(store: RunStore, runId: string, workspaceId: string): LearningEvidenceBundle {
+  const run = store.getRun(runId);
+  if (!run || !["succeeded", "failed", "cancelled"].includes(run.status)) throw new Error("learning_source_not_terminal");
+  const task = store.getTask(run.taskId);
+  const eventCount = store.countEvents(run.id);
+  const events = store.listEvents(run.id, { afterSeq: Math.max(0, eventCount - 62), limit: 62 });
+  const items: LearningEvidenceItem[] = [];
+  const missing: string[] = eventCount > 62 ? ["earlier_events_omitted"] : [];
+  let available = 6000;
+  const append = (item: Omit<LearningEvidenceItem, "text">, value: unknown, maxBytes: number): void => {
+    const text = clipUtf8(JSON.stringify(redactSecrets(value)), Math.min(maxBytes, available));
+    if (!text) { missing.push(`omitted:${item.id}`); return; }
+    available -= Buffer.byteLength(text);
+    items.push({ ...item, text });
+  };
+  if (task) append({ id: `task:${task.id}`, kind: "task", verified: false }, { title: task.title, prompt: task.prompt }, 1200);
+  for (const event of events) {
+    if (!["tool_start", "tool_end", "run_end", "message_end"].includes(event.type)) continue;
+    if (event.type === "message_end" && event.data.role !== undefined && event.data.role !== "assistant") continue;
+    append({ id: event.id, kind: event.type === "message_end" ? "assistant_message" : event.type as LearningEvidenceItem["kind"],
+      verified: event.type === "tool_end" && event.data.isError === false }, event.data, 600);
+  }
+  const basis = { schemaVersion: 1 as const, workspaceId, runId: run.id, taskId: task?.id,
+    channelId: run.channelId, teammateId: run.teammateId, runStatus: run.status as LearningEvidenceBundle["runStatus"],
+    sourceUpdatedAt: run.updatedAt, eventCount, items, missing };
+  return { ...basis, digest: createHash("sha256").update(JSON.stringify(basis)).digest("hex") };
+}
+
 export function learningEvidenceCurrent(store: RunStore, evidence: LearningEvidenceBundle): boolean {
   try {
     // Keep the Run's revision immutable while invalidating work whose target definition has since changed.
@@ -68,7 +125,8 @@ export function learningEvidenceCurrent(store: RunStore, evidence: LearningEvide
       store.getSkillDefinitionRevision(evidence.selectedSkillId)?.id !== evidence.selectedSkillRevisionId)) return false;
     const correction = evidence.items.find(item => item.kind === "correction");
     const text = correction?.text;
-    return (evidence.decisionId ? captureDecisionLearningEvidence(store, evidence.decisionId) :
+    return (evidence.workItem && evidence.runId ? captureWorkItemLearningEvidence(store, evidence.runId, evidence.workItem) :
+      evidence.decisionId ? captureDecisionLearningEvidence(store, evidence.decisionId) :
       evidence.runId ? captureLearningEvidence(store, evidence.runId, text) : undefined)?.digest === evidence.digest;
   } catch { return false; }
 }

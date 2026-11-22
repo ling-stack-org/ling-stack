@@ -110,6 +110,7 @@ import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github
 import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
 import { readWorkItemWorkflowStages } from "../features/work-items/workflow-stages.js";
+import { enqueueWorkItemFeedback } from "../features/learning/work-item-feedback.js";
 import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
 import { isPrivateHostRecoveryArtifact, toPublicArtifactMetadata } from "../features/runs/public-artifacts.js";
 import { listEffectiveSkillRegistryEntries } from "../features/skills/registry.js";
@@ -188,6 +189,7 @@ const operatorMethods = new Set([
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
   "workItem/workflow/bind",
+  "workItem/feedback/add",
   "workItem/deliberation/decide", "workItem/deliberation/cancel",
   "artifact/read", "model/list", "skill/read",
   "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
@@ -201,6 +203,7 @@ const recoveryGuardedMethods = new Set([
   "plan/accept", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
   "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
   "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
+  "workItem/feedback/add",
 ]);
 export function attachRpcWebSocketServer(
   server: Pick<Server, "on" | "off" | "once">, context: DaemonContext,
@@ -925,7 +928,7 @@ class RpcConnection {
       case "workItem/handoff/read":
         return this.readCollaboration("handoff", params);
       case "workItem/feedback/add":
-        return this.appendCollaboration("message", "updated", params);
+        return this.addWorkItemFeedback(params);
       case "externalAgent/register":
         return this.registerExternalAgent(params);
       case "externalAgent/capabilities/read":
@@ -1321,6 +1324,21 @@ class RpcConnection {
     } catch (error) {
       throw collaborationRpcError(error);
     }
+  }
+
+  private addWorkItemFeedback(params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    if (record.sourceRunId === undefined) return this.appendCollaboration("message", "updated", params);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const result = enqueueWorkItemFeedback(store, {
+      workItemId: readStringField(record, "workItemId"),
+      sourceRunId: readStringField(record, "sourceRunId"),
+      providerPresetId: readStringField(record, "providerPresetId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    }, cwd);
+    this.context.learningReviewCoordinator?.wake(store);
+    return result;
   }
 
   private settleWorkItemDeliberation(action: "decided" | "cancelled", params: unknown): unknown {
