@@ -1763,6 +1763,7 @@ export class SqliteRunStore implements RunStore {
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
         getProposedPlanArtifact: (id) => this.getProposedPlanArtifact(id),
         getChannelWorkflow: (id) => this.getChannelWorkflow(id),
+        getWorkItemEvidence: (id) => this.getWorkItemEvidence(id),
         getRun: (id) => this.getRun(id),
       },
     );
@@ -6154,9 +6155,13 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.bindWorkflow(input, now, this.appServerState, { store: this.controlPlane, cwd: this.paths.cwd });
   }
 
-  getWorkItemWorkflowAdmissionBlocker(workflowId: string): string | undefined {
+  getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep): string | undefined {
     if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
-    return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState);
+    return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState, step);
+  }
+
+  getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep) {
+    return this.workItems.getWorkflowStepDecision(step, this.appServerState);
   }
 
   listActiveWorkItemWorkflowIds(limit: number): readonly string[] {

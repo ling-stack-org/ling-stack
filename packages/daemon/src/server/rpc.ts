@@ -125,9 +125,9 @@ import { continuationSourceReady } from "../runtime/continuation-source-barrier.
 import {
   AppServerCollaborationError,
   appendAppServerWorkItemCollaboration,
-  bindAppServerStageBriefs,
   readAppServerWorkItemCollaboration,
   settleAppServerDeliberation,
+  startAppServerStageDeliberation,
 } from "./app-server-collaboration.js";
 
 type JsonRpcId = string | number | null;
@@ -199,7 +199,7 @@ const recoveryGuardedMethods = new Set([
   "github/delivery/enqueue",
   "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
   "plan/accept", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
-  "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/handoff/accept",
+  "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
   "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
 ]);
 export function attachRpcWebSocketServer(
@@ -888,7 +888,7 @@ class RpcConnection {
       case "workItem/cancel":
         return this.controlWorkItem("cancel", params);
       case "workItem/deliberation/start":
-        return this.appendCollaboration("deliberation", "started", params);
+        return this.startWorkItemDeliberation(params);
       case "workItem/deliberation/decide":
         return this.settleWorkItemDeliberation("decided", params);
       case "workItem/deliberation/cancel":
@@ -1290,8 +1290,7 @@ class RpcConnection {
         afterRevision: readOptionalIntegerField(record, "afterRevision"), limit: readOptionalIntegerField(record, "limit") });
       const includeEvidence = this.grant?.subject.kind !== "workItem";
       const workflow = readWorkItemWorkflowStages(store, workItem, includeEvidence, offset);
-      return { cwd, ...collaboration, workflow: workflow && includeEvidence
-        ? bindAppServerStageBriefs(store, workflow) : workflow };
+      return { cwd, ...collaboration, workflow };
     });
   }
 
@@ -1303,6 +1302,25 @@ class RpcConnection {
       return this.settleWorkItemDeliberation(action, params);
     }
     return this.appendCollaboration(kind, action, params);
+  }
+
+  private startWorkItemDeliberation(params: unknown): unknown {
+    if (readParamsRecord(params).workflowStepId === undefined) return this.appendCollaboration("deliberation", "started", params);
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const input = {
+      workItemId: readStringField(record, "workItemId"),
+      workflowStepId: readStringField(record, "workflowStepId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { event, ...result } = startAppServerStageDeliberation(store, input, new Date().toISOString(), cwd);
+      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
   }
 
   private settleWorkItemDeliberation(action: "decided" | "cancelled", params: unknown): unknown {
@@ -1323,7 +1341,10 @@ class RpcConnection {
     try {
       const store = this.context.storeRegistry.getStore(cwd);
       const { event, ...result } = settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
-      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        if (decision?.disposition === "selected") this.context.taskSupervisor.poke(cwd);
+      }
       return { cwd, ...result };
     } catch (error) {
       throw collaborationRpcError(error);
@@ -3046,6 +3067,8 @@ function recoveryAdmissionRequest(method: string, params: unknown): boolean {
   if (recoveryGuardedMethods.has(method)) return true;
   const record = readParamsRecord(params);
   return method === "instructions/init" && record.mode === "apply"
+    || method === "workItem/collaboration/append" && (record.kind === "deliberation" && (record.action === "started" || record.action === "decided")
+      || record.kind === "coordination" && record.action === "started" || record.kind === "handoff" && record.action === "accepted")
     || method === "turn/interrupt" && typeof record.message === "string";
 }
 

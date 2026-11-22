@@ -100,6 +100,7 @@ import type {
   LingAppServerWorkItemCollaborationReadResult,
   LingAppServerDeliberationDecideParams,
   LingAppServerDeliberationSettlementParams,
+  LingAppServerStageDeliberationStartParams,
   LingAppServerWorktreeTarget,
   LingAppServerWorktreeCreateParams,
   LingAppServerWorktreeResult,
@@ -585,6 +586,11 @@ export class LingAppServerClient {
   async readWorkItemDeliberation(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
     await this.connect();
     return await this.request("workItem/deliberation/read", params);
+  }
+
+  async startStageDeliberation(params: LingAppServerStageDeliberationStartParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/start", params);
   }
 
   async decideWorkItemDeliberation(params: LingAppServerDeliberationDecideParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {

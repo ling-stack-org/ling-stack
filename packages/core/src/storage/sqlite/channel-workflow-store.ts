@@ -1471,6 +1471,11 @@ export class SqliteChannelWorkflowStore {
       throw new Error(`Workflow participant provider binding is immutable for workflow step ${id}`);
     }
     const metadata = input.metadata === null ? null : normalizeChannelWorkflowStepMetadata(input.metadata);
+    const planStage = existing.metadata?.planStageId ? {
+      planStageId: existing.metadata.planStageId,
+      dependsOnStepIds: existing.metadata.dependsOnStepIds,
+      requiredPlanDecision: existing.metadata.requiredPlanDecision,
+    } : undefined;
     const next: ChannelWorkflowStep = {
       ...existing,
       sourceHandoffId,
@@ -1492,6 +1497,7 @@ export class SqliteChannelWorkflowStore {
         : metadata
           ? {
               ...metadata,
+              ...planStage,
               participantAuthority: existing.participantAuthority,
               ...(existingProviderBinding ? { providerBinding: existingProviderBinding } : {}),
             }

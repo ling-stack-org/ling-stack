@@ -23,6 +23,7 @@ export interface WorkItemCollaborationRecord extends Omit<LingAppServerWorkItemC
 }
 
 export interface AppendWorkItemCollaborationInput {
+  readonly id?: string;
   readonly workItemId: string;
   readonly expectedWorkItemRevision?: number;
   readonly expectedCollaborationRevision?: number;
@@ -56,6 +57,7 @@ export function appendWorkItemCollaboration(
   const content = encodeCollaborationContent(input);
   const expectedEvidenceRevision = input.expectedCollaborationRevision;
   const result = store.appendWorkItemEvidence({
+    id: input.id,
     workItemId: input.workItemId,
     expectedWorkItemRevision: input.expectedWorkItemRevision,
     expectedEvidenceRevision,
@@ -77,6 +79,20 @@ export function appendWorkItemCollaboration(
   if (!result) return undefined;
   const record = decodeCollaborationRecord(result.entry.content, result.entry, result.workItemRevision);
   return { status: result.status, record, workItemRevision: result.workItemRevision, ...(result.event ? { event: result.event } : {}) };
+}
+
+export function readWorkItemCollaborationRecord(
+  store: Pick<RunStore, "getWorkItemEvidence">,
+  workItemId: string,
+  recordId: string,
+): WorkItemCollaborationRecord | undefined {
+  const entry = store.getWorkItemEvidence(recordId);
+  if (!entry || entry.workItemId !== workItemId || entry.subjectRevision !== `work-item-collaboration:${entry.idempotencyKey}`) return undefined;
+  try {
+    return decodeCollaborationRecord(entry.content, entry);
+  } catch {
+    return undefined;
+  }
 }
 
 export function listWorkItemCollaboration(

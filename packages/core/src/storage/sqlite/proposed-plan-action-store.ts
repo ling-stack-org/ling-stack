@@ -1,8 +1,8 @@
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { createProposedPlanArtifactId, type ProposedPlanArtifact, type RunStore } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { assertProposedPlanRevision, assertProposedPlanSnapshot, proposedPlanHasAcceptance, ProposedPlanMutationError,
-  type ApplyProposedPlanArtifactActionInput, type ProposedPlanArtifactActionResult } from "../../proposed-plan-mutation.js";
+import { assertProposedPlanRevision, assertProposedPlanSnapshot, parseProposedPlanStageDecision, proposedPlanHasAcceptance, ProposedPlanMutationError,
+  type ApplyProposedPlanArtifactActionInput, type ProposedPlanArtifactActionResult, type ProposedPlanWorkflowStepPreviewInput } from "../../proposed-plan-mutation.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 type Ports = Pick<RunStore, "getLingThread" | "getProposedPlanArtifact" | "upsertProposedPlanArtifact"
@@ -60,24 +60,35 @@ export class SqliteProposedPlanActionStore {
       if (steps.some(step => typeof step !== "string" || !step.trim())) {
         throw new ProposedPlanMutationError("bad_workflow_steps", "Workflow steps must be nonempty strings.", 400);
       }
+      const order = orderWorkflowStages(steps, input.workflowStepPreviews ?? []);
       const workflow = this.ports.createChannelWorkflow({ channelId: thread.channelId, title: workflowTitle,
         objective: steps.join("\n"), status: "draft", createdBy: input.createdBy || "local-user",
         metadata: { sourceMessageId: plan.sourceMessageId } }, now);
-      const createdSteps = steps.map((title, index) => {
+      const stepIds = new Map<string, string>();
+      let firstStepId: string | undefined;
+      for (const index of order) {
+        const title = steps[index]!;
         const preview = input.workflowStepPreviews?.[index];
         const ownerId = preview?.ownerId || input.toParticipantId || "local-user";
-        return this.ports.createChannelWorkflowStep({ workflowId: workflow.id,
+        const step = this.ports.createChannelWorkflowStep({ workflowId: workflow.id, position: index + 1,
           title: steps.length > 1 ? title : `Implement ${workflowTitle}`,
           prompt: [title, "", `Source proposed plan: ${canonicalPlan.id}`,
             canonicalPlan.sourceMessageId ? `Source message: ${canonicalPlan.sourceMessageId}` : ""].filter(Boolean).join("\n"),
           toParticipantId: ownerId, toParticipantLabel: preview?.ownerLabel || input.toParticipantLabel || "Unassigned",
           participantAuthority: createWorkflowParticipantAuthorityV1({ kind: "workflow_definition", origin: "proposed_plan",
-            participantId: ownerId, sourceId: canonicalPlan.id }), status: "queued", metadata: { sourceMessageId: canonicalPlan.sourceMessageId } }, now);
-      });
+            participantId: ownerId, sourceId: canonicalPlan.id }), status: "queued", metadata: {
+              sourceMessageId: canonicalPlan.sourceMessageId,
+              ...(preview?.stageId ? { planStageId: preview.stageId } : {}),
+              ...(preview?.dependsOnStageIds?.length ? { dependsOnStepIds: preview.dependsOnStageIds.map(id => stepIds.get(id)!) } : {}),
+              ...(preview?.requiredDecision ? { requiredPlanDecision: preview.requiredDecision } : {}),
+            } }, now);
+        if (preview?.stageId) stepIds.set(preview.stageId, step.id);
+        if (index === 0) firstStepId = step.id;
+      }
       return { plan: this.update(plan, { status: "accepted",
         acceptedAt: plan.acceptedAt ?? now, convertedAt: plan.convertedAt ?? now,
-        acceptedWorkflowId: workflow.id, acceptedWorkflowStepId: createdSteps[0]?.id }, now),
-      workflowId: workflow.id, workflowStepId: createdSteps[0]?.id };
+        acceptedWorkflowId: workflow.id, acceptedWorkflowStepId: firstStepId }, now),
+      workflowId: workflow.id, workflowStepId: firstStepId };
     });
   }
 
@@ -139,6 +150,40 @@ export class SqliteProposedPlanActionStore {
       throw error;
     }
   }
+}
+
+function orderWorkflowStages(titles: readonly string[], previews: readonly ProposedPlanWorkflowStepPreviewInput[]): readonly number[] {
+  const positions = titles.map((_, index) => index);
+  if (!previews.some(stage => stage.stageId !== undefined || stage.dependsOnStageIds !== undefined || stage.requiredDecision !== undefined)) return positions;
+  const invalid = (message: string) => new ProposedPlanMutationError("bad_workflow_stage_dependencies", message, 400);
+  if (titles.length !== previews.length || titles.length > 50) throw invalid("Provide one preview per stage, up to 50 stages.");
+  const stages = new Map<string, number>();
+  for (const [index, stage] of previews.entries()) {
+    if (!stage.stageId || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u.test(stage.stageId) || stages.has(stage.stageId)
+      || stage.title !== titles[index]) throw invalid("Workflow stages require unique identifiers and matching titles.");
+    if (stage.requiredDecision !== undefined) parseProposedPlanStageDecision(stage.requiredDecision);
+    stages.set(stage.stageId, index);
+  }
+  const ordered = new Set<number>();
+  const visiting = new Set<number>();
+  const visit = (index: number): void => {
+    if (ordered.has(index)) return;
+    if (visiting.has(index)) throw invalid("Workflow stage dependencies must be acyclic.");
+    visiting.add(index);
+    const dependencies = previews[index]?.dependsOnStageIds ?? [];
+    if (dependencies.length > 20 || new Set(dependencies).size !== dependencies.length) {
+      throw invalid("Each stage can depend on up to 20 different stages.");
+    }
+    for (const id of dependencies) {
+      const dependency = stages.get(id);
+      if (dependency === undefined) throw invalid(`Unknown prerequisite stage: ${id}`);
+      visit(dependency);
+    }
+    visiting.delete(index);
+    ordered.add(index);
+  };
+  positions.forEach(visit);
+  return [...ordered];
 }
 
 const actionColumns = { status: "status", savedAt: "saved_at", archivedAt: "archived_at", acceptedAt: "accepted_at",

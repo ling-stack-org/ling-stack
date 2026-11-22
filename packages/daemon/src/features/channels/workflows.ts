@@ -739,7 +739,7 @@ export async function prepareWorkflowStepStart(
   if (!workflow) {
     return { kind: "error", statusCode: 404, code: "workflow_not_found", message: `Channel workflow not found: ${step.workflowId}` };
   }
-  const workItemBlocker = store.getWorkItemWorkflowAdmissionBlocker(workflow.id);
+  const workItemBlocker = store.getWorkItemWorkflowAdmissionBlocker(workflow.id, step);
   if (workItemBlocker) {
     return { kind: "error", statusCode: 409, code: workItemBlocker, message: "The Work Item cannot start a Workflow step." };
   }
@@ -925,7 +925,12 @@ export async function prepareWorkflowStepStart(
     providerPresetId = providerBinding.providerPresetId;
   }
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
-  const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
+  const selectedDecision = step.metadata?.requiredPlanDecision && store.getWorkItemWorkflowStepDecision(step);
+  const prompt = [
+    input.taskPrompt ?? step.prompt,
+    ...(selectedDecision ? [`Accepted Plan decision: ${JSON.stringify(selectedDecision)}`] : []),
+  ].join("\n\n");
+  const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${prompt}`;
   const memoryRecall = await recallMemory(store, {
     teammateId: assigneeTeammateId,
     channelId: channel.id,
@@ -947,7 +952,7 @@ export async function prepareWorkflowStepStart(
     channel,
     workflow,
     step,
-    prompt: input.taskPrompt ?? step.prompt,
+    prompt,
     providerPresetId,
     consumerTeammateId: assigneeTeammateId,
     workflowSteps,

@@ -50,7 +50,11 @@ export function WorkBoardWorkflow({ cwd, workItemId, onOpenRun }: {
           {workflow.steps.map(step => {
             const state = channelWorkflowStepStatusPresentation(step.status);
             return <li key={step.stepId}>
-              <div><strong dir="auto">{step.title}</strong> <StatusIndicator label={t(state.labelKey)} tone={state.tone} /></div>
+              <div><strong dir="auto">{step.title}</strong>{" "}
+                {step.admissionBlocker
+                  ? <StatusIndicator label={t("Blocked")} tone="warning" />
+                  : <StatusIndicator label={t(state.labelKey)} tone={state.tone} />}
+              </div>
               <div dir="auto">{step.participantLabel}</div>
               {step.brief ? <p dir="auto">{step.brief}</p> : null}
               {step.runId ? <Button size="sm" variant="ghost" onClick={() => onOpenRun(step.runId!)}>{t("Open run")}</Button> : null}

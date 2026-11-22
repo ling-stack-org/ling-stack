@@ -10,6 +10,7 @@ import {
   lingThreadKinds,
   normalizeRunnerId,
   permissionPresets,
+  parseProposedPlanStageDecision,
   ProposedPlanMutationError,
   redactSecrets,
   sessionPermissionModes,
@@ -35,6 +36,7 @@ import {
   type PermissionPreset,
   type ProposedPlanArtifact,
   type ProposedPlanArtifactStatus,
+  type ProposedPlanWorkflowStepPreviewInput,
   type RunEventEnvelope,
   type RunSession,
   type RunStore,
@@ -2311,15 +2313,6 @@ interface ProposedPlanActionInput {
   readonly workflowStepPreviews?: readonly ProposedPlanWorkflowStepPreviewInput[];
 }
 
-interface ProposedPlanWorkflowStepPreviewInput {
-  readonly title: string;
-  readonly ownerId?: string;
-  readonly ownerLabel?: string;
-  readonly ownerConfidence?: "high" | "medium" | "low" | "none";
-  readonly ownerReason?: string;
-  readonly sourceSignals?: readonly string[];
-}
-
 function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): CreateProposedPlanArtifactInput {
   if (!isRecord(value)) {
     throw new HttpError(400, "bad_request", "Proposed plan request must be a JSON object.");
@@ -2527,6 +2520,9 @@ function readOptionalWorkflowStepPreviews(
       }
       return {
         title,
+        stageId: readOptionalString(item, "stageId"),
+        dependsOnStageIds: readOptionalWorkflowStageDependencies(item),
+        requiredDecision: item.requiredDecision === undefined ? undefined : parseProposedPlanStageDecision(item.requiredDecision),
         ownerId: readOptionalString(item, "ownerId")?.trim() || undefined,
         ownerLabel: readOptionalString(item, "ownerLabel")?.trim() || undefined,
         ownerConfidence: readOptionalWorkflowOwnerConfidence(item, "ownerConfidence"),
@@ -2536,6 +2532,15 @@ function readOptionalWorkflowStepPreviews(
     })
     .slice(0, 50);
   return previews.length > 0 ? previews : undefined;
+}
+
+function readOptionalWorkflowStageDependencies(record: Record<string, unknown>): readonly string[] | undefined {
+  const ids = record.dependsOnStageIds;
+  if (ids === undefined) return undefined;
+  if (!Array.isArray(ids) || !ids.every(id => typeof id === "string")) {
+    throw new HttpError(400, "bad_workflow_stage_dependencies", "dependsOnStageIds must be an array of stage identifiers.");
+  }
+  return ids;
 }
 
 function readOptionalWorkflowOwnerConfidence(

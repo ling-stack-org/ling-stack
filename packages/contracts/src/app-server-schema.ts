@@ -72,6 +72,9 @@ const subscriptionResult = objectWith({ disposition: { enum: ["complete", "snaps
 const collaborationAppend = { ...workItemTarget, idempotencyKey: stringSchema, actorId: stringSchema,
   expectedWorkItemRevision: integerSchema, expectedCollaborationRevision: integerSchema, parentRecordId: stringSchema,
   sourceRefs: arraySchema, payload: {} };
+const deliberationSettlement = { ...workItemTarget, roundId: stringSchema, expectedRoundRevision: integerSchema,
+  expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema, reason: stringSchema };
+const deliberationSettlementFields = ["workItemId", "roundId", "expectedRoundRevision", "expectedWorkItemRevision", "idempotencyKey", "reason"];
 const worktreeTarget = { ownerKind: { enum: ["channel", "teammate"] }, ownerId: stringSchema };
 const changeWorktree = objectWith(worktreeTarget, ["ownerKind", "ownerId"]);
 const changeSource = { cwd: stringSchema, sourceWorktree: changeWorktree };
@@ -240,8 +243,14 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "workItem/collaboration/append":
       return { params: objectWith({ ...collaborationAppend, kind: stringSchema, action: stringSchema }, ["workItemId", "kind", "action"]), result };
     case "workItem/deliberation/start":
+      return { params: objectWith({ ...collaborationAppend, workflowStepId: stringSchema }, ["workItemId"]), result };
     case "workItem/deliberation/cancel":
+      return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result };
     case "workItem/deliberation/decide":
+      return { params: objectWith({ ...deliberationSettlement, decision: { oneOf: [
+        objectWith({ disposition: { enum: ["selected"] }, option: stringSchema }, ["disposition", "option"]),
+        objectWith({ disposition: { enum: ["deferred", "replan_required"] } }, ["disposition"]),
+      ] } }, [...deliberationSettlementFields, "decision"]), result };
     case "workItem/coordination/start":
     case "workItem/coordination/close":
     case "workItem/message/send":

@@ -47,6 +47,7 @@ import type {
   LingAppServerWorkItemReadResult,
   LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
+  ProposedPlanActionResponse,
   LingAppServerWorktreeCleanupPreview,
   LingAppServerWorktreeCleanupResult,
   LingAppServerWorktreeResult,
@@ -2239,12 +2240,12 @@ test("an operator resolves a deliberation round once against its current revisio
   assert.equal(fixture.getStore().listRuns().length, 0);
 });
 
-test("an accepted Work Item resumes the original Workflow once after a paused stage and daemon restart", { timeout: 30_000 }, async t => {
+test("a staged Work Item recovers its original Workflow, runs independent QA and releases one decision dependency", { timeout: 40_000 }, async t => {
   let completeContract: () => void = () => undefined;
   const contractGate = new Promise<void>(resolve => { completeContract = resolve; });
   const provider = await startLoopbackPiProvider(async (_input: unknown, request: number) => {
     if (request === 1) await contractGate;
-    return { text: request === 1 ? "Contract verified" : "Implementation verified" };
+    return { text: "Stage completed" };
   });
   t.after(async () => { completeContract(); await provider.close(); });
   const fixture = await releaseFixture(t);
@@ -2257,18 +2258,38 @@ test("an accepted Work Item resumes the original Workflow once after a paused st
     title: "Workflow plan", objective: "Bind an accepted plan to staged execution" }, now);
   const plan = store.upsertProposedPlanArtifact({ id: "plan_workflow_owned", threadId: thread.id, channelId: channel.id,
     title: "Staged implementation", bodyMarkdown: "Implement the staged change", status: "draft" }, now);
-  const converted = store.applyProposedPlanArtifactAction(plan.id, {
-    threadId: thread.id, action: "convert-workflow", expectedRevision: plan.revision, createdBy: "local-user",
-    workflowStepPreviews: [
-      { title: "P01 accept the contract", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" },
-      { title: "P02 review the implementation", ownerId: "teammate_builtin_qa", ownerLabel: "QA" },
-    ],
-  }, now);
+  const request = async (path: string, body?: object) => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    return fetch(`${daemonUrl}${path}?cwd=${encodeURIComponent(fixture.cwd)}`, {
+      ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
+      headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
+    });
+  };
+  const conversionPath = `/threads/${thread.id}/proposed-plans/${plan.id}/convert-workflow`;
+  const p01Preview = { title: "P01 accept the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" };
+  const p02Preview = { title: "P02 implement the selected approach", stageId: "P02", dependsOnStageIds: ["P01"],
+    ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer",
+    requiredDecision: { question: "Which compatible approach should this stage implement?", options: ["Adapter", "Migration"] } };
+  const qaPreview = { title: "Prepare contract regression checks", stageId: "QA", dependsOnStageIds: ["P01"],
+    ownerId: "teammate_builtin_qa", ownerLabel: "QA" };
+  const invalid = await request(conversionPath, { expectedRevision: plan.revision,
+    workflowStepPreviews: [{ ...p01Preview, dependsOnStageIds: ["P02"] }, p02Preview] });
+  assert.equal(invalid.status, 400);
+  assert.equal((await invalid.json() as { error: string }).error, "bad_workflow_stage_dependencies");
+  assert.equal(store.getProposedPlanArtifact(plan.id)?.revision, plan.revision);
+  const planResponse = await request(conversionPath, { expectedRevision: plan.revision, workflowStepPreviews: [p02Preview, p01Preview, qaPreview] });
+  assert.ok(planResponse.ok, await planResponse.clone().text());
+  const converted = await planResponse.json() as ProposedPlanActionResponse;
   assert.ok(converted.workflowId);
   assert.equal(converted.plan.acceptedWorkflowId, converted.workflowId);
-  const [p01, p02] = store.listChannelWorkflowSteps({ workflowId: converted.workflowId, complete: true });
-  assert.ok(p01 && p02);
-  store.updateChannelWorkflowStep(p02.id, { metadata: { ...p02.metadata, dependsOnStepIds: [p01.id] } }, now);
+  const [p02, p01, qa] = store.listChannelWorkflowSteps({ workflowId: converted.workflowId, complete: true });
+  assert.ok(p01 && p02 && qa);
+  assert.deepEqual(p02.metadata?.dependsOnStepIds, [p01.id]);
+  assert.deepEqual(qa.metadata?.dependsOnStepIds, [p01.id]);
+  const startImplementation = () => request(`/workflow-steps/${encodeURIComponent(p02.id)}/start`, { mode: "create_and_run_task" });
+  const unbound = await startImplementation();
+  assert.equal(unbound.status, 409);
+  assert.equal((await unbound.json() as { error: string }).error, "work_item_workflow_unbound");
   const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "workflow-owned-work", title: "Staged implementation",
     channelId: channel.id, initialStatus: "ready" }, now);
   const client = await fixture.connect();
@@ -2292,15 +2313,9 @@ test("an accepted Work Item resumes the original Workflow once after a paused st
   assert.equal(bound.binding.planRevision, converted.plan.revision);
   const stages = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
   assert.equal(stages.workflow?.workflowId, converted.workflowId);
-  assert.deepEqual(stages.workflow?.steps.map(step => step.status), ["queued", "queued"]);
+  assert.deepEqual(stages.workflow?.steps.map(({ stageId, status }) => [stageId, status]), [["P02", "queued"], ["P01", "queued"], ["QA", "queued"]]);
+  assert.equal(stages.workflow?.steps[0]?.admissionBlocker, "work_item_decision_pending");
   assert.ok(stages.workflow?.steps.every(step => step.briefBasis === undefined));
-  const request = async (path: string, body?: object) => {
-    const { daemonUrl, authToken } = fixture.transportOptions();
-    return fetch(`${daemonUrl}${path}?cwd=${encodeURIComponent(fixture.cwd)}`, {
-      ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
-      headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
-    });
-  };
   const workflowPath = `/workflows/${encodeURIComponent(converted.workflowId)}/orchestrate`;
   const itemPath = `/work-items/${encodeURIComponent(item.id)}`;
   const start = await request(workflowPath, {});
@@ -2317,7 +2332,7 @@ test("an accepted Work Item resumes the original Workflow once after a paused st
   const orchestration = await response.json() as { status: string; blocker?: string };
   assert.equal(orchestration.status, "blocked");
   assert.equal(orchestration.blocker, "work_item_workflow_held");
-  const direct = await request(`/workflow-steps/${encodeURIComponent(p02.id)}/start`, { mode: "create_and_run_task" });
+  const direct = await startImplementation();
   assert.equal(direct.status, 409);
   assert.equal((await direct.json()).error, "work_item_workflow_held");
   const legacyClaim = await request(`${itemPath}/claim`, { ownerId: "legacy-claim" });
@@ -2359,22 +2374,50 @@ test("an accepted Work Item resumes the original Workflow once after a paused st
   await waitFor(() => resumedClient.notices.find(event => event.params?.eventId === stageEvent.params?.eventId));
   const held = await resumedClient.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
   assert.equal(held.workflow?.admissionBlocker, "work_item_workflow_held");
-  assert.deepEqual(held.workflow?.steps.map(step => step.status), ["succeeded", "queued"]);
+  assert.deepEqual(held.workflow?.steps.map(step => step.status), ["queued", "succeeded", "queued"]);
   assert.deepEqual((await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === p01.id), brief);
   assert.equal(provider.requests.length, 1);
-  await resumedClient.call("workItem/resume", {
+  const resumed = await resumedClient.call<LingAppServerWorkItemControlResult>("workItem/resume", {
     workItemId: item.id, actorId: "local-user", expectedWorkItemRevision: Number(paused.workItem.revision),
     expectedControlGeneration: 1, idempotencyKey: "workflow-owned-resume",
   });
   const resumedStore = fixture.getStore();
-  await waitFor(() => resumedStore.getChannelWorkflow(converted.workflowId!)?.status === "succeeded" ? true : undefined);
-  assert.equal(provider.requests.length, 2);
-  assert.equal(resumedStore.listRuns({ workflowStepId: p01.id }).length, 1);
-  assert.equal(resumedStore.listRuns({ workflowStepId: p02.id }).length, 1);
+  await waitFor(() => resumedStore.getChannelWorkflowStep(qa.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(resumedStore.listRuns({ workflowStepId: p02.id }).length, 0);
+  const pending = await startImplementation();
+  assert.equal(pending.status, 409);
+  assert.equal((await pending.json() as { error: string }).error, "work_item_decision_pending");
+  const opening = { workItemId: item.id, workflowStepId: p02.id, expectedWorkItemRevision: Number(resumed.workItem.revision),
+    idempotencyKey: "workflow-owned-decision" };
+  const round = await resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/start", opening);
+  assert.deepEqual((round.record.payload as { options: readonly string[] }).options, ["Adapter", "Migration"]);
+  await assert.rejects(resumedClient.call("workItem/deliberation/start", { ...opening, expectedWorkItemRevision: round.workItemRevision,
+    idempotencyKey: "duplicate-decision" }), { code: "stale_revision" });
+  await fixture.restart();
+  const decisionClient = await fixture.connect();
+  const decision = {
+    workItemId: item.id, roundId: round.record.id, expectedRoundRevision: round.record.collaborationRevision,
+    expectedWorkItemRevision: round.workItemRevision, idempotencyKey: "workflow-owned-selected", reason: "Keep both compatibility paths",
+    decision: { disposition: "selected", option: "Adapter" },
+  };
+  await assert.rejects(decisionClient.call("workItem/deliberation/decide", { ...decision,
+    decision: { disposition: "selected", option: "Rewrite" } }), { code: "invalid_params" });
+  const selected = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", decision);
+  const retried = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", decision);
+  assert.equal(retried.status, "replayed");
+  assert.equal(retried.record.id, selected.record.id);
+  const finishedStore = fixture.getStore();
+  await waitFor(() => finishedStore.getChannelWorkflow(converted.workflowId!)?.status === "succeeded" ? true : undefined);
+  for (const step of [p01, p02, qa]) assert.equal(finishedStore.listRuns({ workflowStepId: step.id }).length, 1);
+  assert.ok(provider.requests.some(body => {
+    const input = JSON.stringify(body);
+    return input.includes("Accepted Plan decision:") && input.includes(selected.record.id);
+  }), "The implementation did not receive the accepted decision.");
   const detail = await request(itemPath);
   assert.equal(detail.status, 200);
   const body = await detail.json() as { workflow?: LingAppServerWorkItemCollaborationReadResult["workflow"] };
-  assert.deepEqual(body.workflow?.steps.map(step => step.status), ["succeeded", "succeeded"]);
+  assert.deepEqual(body.workflow?.steps.map(step => step.status), ["succeeded", "succeeded", "succeeded"]);
+  assert.deepEqual(body.workflow?.steps.find(step => step.stepId === p01.id)?.briefBasis, brief.briefBasis);
 });
 
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {

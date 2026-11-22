@@ -40,7 +40,7 @@ export class SqliteChannelWorkflowStartStore {
     return this.transaction(() => {
       const step = this.ports.getChannelWorkflowStep(input.workflowStepId);
       if (!step || !sameExpected(step, input.expected)) return { status: "stale", code: "workflow_start_basis_stale" };
-      const workItemBlocker = this.ports.getWorkItemWorkflowAdmissionBlocker(step.workflowId);
+      const workItemBlocker = this.ports.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step);
       if (workItemBlocker) return { status: "invalid", code: workItemBlocker };
       if (!workflowIsolationSelectionReady(this.context.database, step.workflowId)) {
         return { status: "invalid", code: "workflow_isolation_selection_not_ready" };
@@ -167,7 +167,7 @@ export class SqliteChannelWorkflowStartStore {
         && (!hasAdmission || this.admissions.isTransferredWithinTransaction(step.id, input.owner, run.id, toRuntimeAttemptFence(attempt)))
         ? { status: "duplicate" } : { status: "stale", code: "workflow_start_run_stale" };
       if (owner?.phase !== "preparing" || step.runId) return { status: "stale", code: "workflow_start_run_stale" };
-      const workItemBlocker = this.ports.getWorkItemWorkflowAdmissionBlocker(step.workflowId);
+      const workItemBlocker = this.ports.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step);
       if (workItemBlocker) return { status: "invalid", code: workItemBlocker };
       if (task.currentRunId || this.context.database.prepare("SELECT id FROM run_sessions WHERE task_id=? AND id<>? LIMIT 1").get(task.id, run.id)) {
         return { status: "stale", code: "workflow_start_task_run_stale" };

@@ -283,11 +283,19 @@ export interface ProposedPlanActionRequest {
 
 export interface ProposedPlanWorkflowStepPreview {
   readonly title: string;
+  readonly stageId?: string;
+  readonly dependsOnStageIds?: readonly string[];
+  readonly requiredDecision?: ProposedPlanStageDecision;
   readonly ownerId?: string;
   readonly ownerLabel?: string;
   readonly ownerConfidence?: "high" | "medium" | "low" | "none";
   readonly ownerReason?: string;
   readonly sourceSignals?: readonly string[];
+}
+
+export interface ProposedPlanStageDecision {
+  readonly question: string;
+  readonly options: readonly string[];
 }
 
 export interface LingThread {

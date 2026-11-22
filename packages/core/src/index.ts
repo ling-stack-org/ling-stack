@@ -151,6 +151,7 @@ export * from "./external-work-source-registry.js";
 export * from "./work-item-types.js";
 export * from "./work-item-evidence-types.js";
 export * from "./work-item-collaboration.js";
+export * from "./work-item-workflow-decision.js";
 export * from "./work-item-deliberation-policy.js";
 export * from "./app-server-state-types.js";
 export * from "./work-item-evidence-types.js";

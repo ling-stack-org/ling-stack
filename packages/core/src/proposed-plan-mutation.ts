@@ -1,15 +1,9 @@
+import type { ProposedPlanStageDecision, ProposedPlanWorkflowStepPreview } from "@ling-stack/contracts";
 import type { CreateProposedPlanArtifactInput, ProposedPlanArtifact, UpdateProposedPlanArtifactInput } from "./run-types.js";
 
 export type ProposedPlanArtifactAction = "accept" | "refine" | "save" | "archive" | "convert-workflow";
 
-export interface ProposedPlanWorkflowStepPreviewInput {
-  readonly title: string;
-  readonly ownerId?: string;
-  readonly ownerLabel?: string;
-  readonly ownerConfidence?: "high" | "medium" | "low" | "none";
-  readonly ownerReason?: string;
-  readonly sourceSignals?: readonly string[];
-}
+export type ProposedPlanWorkflowStepPreviewInput = ProposedPlanWorkflowStepPreview;
 
 export interface ApplyProposedPlanArtifactActionInput {
   readonly threadId: string;
@@ -37,6 +31,17 @@ export class ProposedPlanMutationError extends Error {
     super(message);
     this.name = "ProposedPlanMutationError";
   }
+}
+
+export function parseProposedPlanStageDecision(value: unknown): ProposedPlanStageDecision {
+  const decision = value as Partial<ProposedPlanStageDecision> | null;
+  if (decision && typeof decision.question === "string" && decision.question.trim() && decision.question.length <= 500
+    && Array.isArray(decision.options) && decision.options.length >= 2 && decision.options.length <= 12
+    && decision.options.every(option => typeof option === "string" && option.trim() === option && option.length > 0 && option.length <= 200)
+    && new Set(decision.options).size === decision.options.length) {
+    return { question: decision.question, options: decision.options };
+  }
+  throw new ProposedPlanMutationError("bad_workflow_stage_decision", "A required decision needs a question and 2–12 distinct options.", 400);
 }
 
 export const proposedPlanContentFields = ["channelId", "goalId", "sourceAgentId", "ownerAgentId", "sourceTurnId",

@@ -683,10 +683,12 @@ export interface LingAppServerWorkItemWorkflowStages {
   readonly nextOffset?: number;
   readonly steps: readonly {
     readonly stepId: string;
+    readonly stageId?: string;
     readonly title: string;
     readonly status: import("./workflows.js").ChannelWorkflowStepStatus;
     readonly participantLabel: string;
     readonly dependencyIds: readonly string[];
+    readonly admissionBlocker?: string;
     readonly updatedAt: string;
     readonly runId?: string;
     readonly outputArtifactId?: string;
@@ -870,6 +872,14 @@ export interface LingAppServerDeliberationSettlementParams {
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
   readonly reason: string;
+}
+
+export interface LingAppServerStageDeliberationStartParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly workflowStepId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
 }
 
 export interface LingAppServerDeliberationDecideParams extends LingAppServerDeliberationSettlementParams {

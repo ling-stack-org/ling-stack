@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { parseProposedPlanStageDecision } from "../../proposed-plan-mutation.js";
 import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
 import { isWorkflowStepSafetyPlanV1 } from "../../workflow-safety-plan.js";
 import { workflowIsolationIdentity } from "../../workflow-isolation.js";
@@ -269,6 +270,8 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     templateStepId: readOptionalStringValue(record.templateStepId),
     graphId: readOptionalStringValue(record.graphId),
     graphNodeId: readOptionalStringValue(record.graphNodeId),
+    planStageId: readOptionalStringValue(record.planStageId),
+    requiredPlanDecision: record.requiredPlanDecision === undefined ? undefined : parseProposedPlanStageDecision(record.requiredPlanDecision),
     dependsOnStepIds: readOptionalStringListValue(record.dependsOnStepIds),
     branchGroupId: readOptionalStringValue(record.branchGroupId),
     joinGroupId: readOptionalStringValue(record.joinGroupId),

@@ -873,6 +873,8 @@ export interface ChannelWorkflowStepMetadata {
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
+  readonly planStageId?: string;
+  readonly requiredPlanDecision?: import("./threads.js").ProposedPlanStageDecision;
   readonly dependsOnStepIds?: readonly string[];
   readonly branchGroupId?: string;
   readonly joinGroupId?: string;

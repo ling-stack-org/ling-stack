@@ -39,6 +39,8 @@ import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt,
   LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding } from "@ling-stack/contracts";
 import type { RunStore } from "../../run-types.js";
+import type { ChannelWorkflowStep } from "../../workspace-types.js";
+import { readSelectedWorkflowDecision } from "../../work-item-workflow-decision.js";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 
 export interface SqliteWorkItemStorePorts {
@@ -46,6 +48,7 @@ export interface SqliteWorkItemStorePorts {
   readonly hasAiTeammate: (id: string) => boolean;
   readonly getProposedPlanArtifact: RunStore["getProposedPlanArtifact"];
   readonly getChannelWorkflow: RunStore["getChannelWorkflow"];
+  readonly getWorkItemEvidence: RunStore["getWorkItemEvidence"];
   readonly getRun: RunStore["getRun"];
 }
 
@@ -591,9 +594,9 @@ export class SqliteWorkItemStore {
         AND status IN ('queued','running','waiting_for_approval','waiting_for_input') LIMIT 1`).get(threadId));
   }
 
-  getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore): string | undefined {
+  getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore, step?: ChannelWorkflowStep): string | undefined {
     const link = state.get("work_item_workflow", workflowId)?.payload as WorkItemWorkflowLink | undefined;
-    if (!link) return undefined;
+    if (!link) return step?.metadata?.requiredPlanDecision ? "work_item_workflow_unbound" : undefined;
     const binding = link.binding;
     const item = this.getWorkItem(binding.workItemId);
     const plan = this.ports.getProposedPlanArtifact(binding.planId);
@@ -604,7 +607,18 @@ export class SqliteWorkItemStore {
       return "work_item_workflow_held";
     }
     if (this.incompleteWorkItemDependencyIds(item).length) return "work_item_workflow_dependency_blocked";
+    if (step?.metadata?.requiredPlanDecision && !this.getWorkflowStepDecision(step, state)) return "work_item_decision_pending";
     return undefined;
+  }
+
+  getWorkflowStepDecision(step: ChannelWorkflowStep, state: SqliteAppServerStateStore) {
+    const required = step.metadata?.requiredPlanDecision;
+    if (!required) return undefined;
+    const link = state.get("work_item_workflow", step.workflowId)?.payload as WorkItemWorkflowLink | undefined;
+    if (!link) return undefined;
+    const { workItemId, planId, planRevision } = link.binding;
+    const selected = readSelectedWorkflowDecision(this.ports, { workItemId, planRevision: `${planId}:${planRevision}`, workflowStepId: step.id });
+    return selected && required.options.includes(selected.option) ? selected : undefined;
   }
 
   listActiveWorkflowIds(limit: number): readonly string[] {

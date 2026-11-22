@@ -1786,6 +1786,7 @@ function isWorkflowStepEligible(step: ChannelWorkflowStep, steps: readonly Chann
 function eligibleWorkflowSteps(store: RunStore, steps: readonly ChannelWorkflowStep[]): ChannelWorkflowStep[] {
   return steps.filter(step => step.metadata?.autoStart !== false
     && (step.status === "queued" || isApprovedPreStartStep(store, step))
+    && (!step.metadata?.requiredPlanDecision || !store.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step))
     && isWorkflowStepEligible(step, steps)).sort(compareWorkflowStepForScheduling);
 }
 
