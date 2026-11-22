@@ -3,7 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isGeneratedProviderModelCatalogRefresh, PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest } from "../provider-model-catalog-format.mjs";
-import { packageValidationScope } from "./package-validation-scope.mjs";
+import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
 
@@ -14,6 +14,7 @@ const WEB_PACKAGE = "@ling-stack/web";
 const CORE_PACKAGE = "@ling-stack/core";
 
 const DOCUMENTATION_ROOT_FILES = new Set([
+  "AGENTS.md",
   "README.md",
   "CHANGELOG.md",
   "CODE_OF_CONDUCT.md",
@@ -47,6 +48,7 @@ const FORCE_FULL_PATTERNS = [
 
 const TEST_PATH_PATTERN = /(?:^|\/)(?:test|tests|__tests__|e2e)(?:\/|$)|(?:^|\/)[^/]+\.test\.(?:[cm]?[jt]s|[jt]sx)$/u;
 const TEST_SUPPORT_PATTERN = /(?:fixture|fixtures|helper|helpers|support|setup|util|utils)/iu;
+const PRESENTATION_ASSET_PATTERN = /\.(?:avif|bmp|gif|icns|ico|jpe?g|png|svg|webp|mp3|mp4|ogg|wav|webm|otf|ttf|woff2?|pdf)$/iu;
 const SUPPORTED_TEST_PACKAGE_PREFIXES = ["packages/"];
 const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-extension", "apps/mobile"]);
 const NATIVE_RELEASE_REVIEW_FILES = new Set([
@@ -250,6 +252,11 @@ export function classifyChangedFiles(input) {
     .filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
+  const validationBuildDependencies = [...new Set([...testPackages, ...typecheckPackages]
+    .flatMap(name => VALIDATION_BUILD_DEPENDENCIES.get(name) ?? []))];
+  if (validationBuildDependencies.some(name => !packages.some(entry => entry.name === name))) {
+    return buildScope("full", files, packages, "a workspace validation build dependency could not be verified");
+  }
   const daemonPlatforms = affectedNames.has("@ling-stack/daemon")
     ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters })
     : [];
@@ -258,7 +265,7 @@ export function classifyChangedFiles(input) {
   return {
     mode: "affected",
     files,
-    packages: [...new Set([...affectedEntries.map((entry) => entry.name),
+    packages: [...new Set([...affectedEntries.map((entry) => entry.name), ...validationBuildDependencies,
       ...(nativeRelease ? ["@ling-stack/daemon"] : [])])].sort(),
     testPackages,
     typecheckPackages,
@@ -315,8 +322,14 @@ function isDocumentationPath(file) {
 }
 
 /** @param {string} file */
+function isPresentationAssetPath(file) {
+  return PRESENTATION_ASSET_PATTERN.test(file)
+    && (!file.includes("/") || /^(?:assets|images?|resources|static|output|\.github\/assets)\//u.test(file));
+}
+
+/** @param {string} file */
 function isMaintenancePath(file) {
-  return file.startsWith(".github/ISSUE_TEMPLATE/") || MAINTENANCE_CHECK_FILES.has(file);
+  return file.startsWith(".github/ISSUE_TEMPLATE/") || MAINTENANCE_CHECK_FILES.has(file) || isPresentationAssetPath(file);
 }
 
 /** @param {string} file */
