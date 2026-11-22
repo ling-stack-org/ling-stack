@@ -8,6 +8,7 @@ import type {
   ProviderCapability,
   ProviderKind,
   ProviderModelCatalogInfo,
+  ProviderModelCatalogManifest,
   ProviderModelCatalogRecord,
   ProviderModelOption,
   ProviderModelOptionCapabilityConfidence,
@@ -67,10 +68,32 @@ const kindCatalogProviderAliases: Partial<Record<ProviderKind, readonly string[]
   minimax: ["minimax"],
   openai: ["openai"],
 };
-const generatedCatalogByProviderAndModel = new Map<string, ProviderModelCatalogRecord>(
-  providerModelCatalogRecords.map((record) => [catalogRecordKey(record.providerId, record.id), record]),
-);
-const generatedCatalogByModel = buildGeneratedCatalogModelIndex(providerModelCatalogRecords);
+export interface ProviderModelCatalogSnapshot {
+  readonly manifest: ProviderModelCatalogManifest;
+  readonly records: readonly ProviderModelCatalogRecord[];
+}
+
+export const bundledProviderModelCatalog: ProviderModelCatalogSnapshot = {
+  manifest: providerModelCatalogManifest,
+  records: providerModelCatalogRecords,
+};
+
+const catalogIndexes = new WeakMap<ProviderModelCatalogSnapshot, {
+  readonly byProviderAndModel: Map<string, ProviderModelCatalogRecord>;
+  readonly byModel: Map<string, readonly ProviderModelCatalogRecord[]>;
+}>();
+
+function catalogIndex(snapshot: ProviderModelCatalogSnapshot) {
+  let index = catalogIndexes.get(snapshot);
+  if (!index) {
+    index = {
+      byProviderAndModel: new Map(snapshot.records.map((record) => [catalogRecordKey(record.providerId, record.id), record])),
+      byModel: buildGeneratedCatalogModelIndex(snapshot.records),
+    };
+    catalogIndexes.set(snapshot, index);
+  }
+  return index;
+}
 
 const FULL_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ProviderThinkingMode[];
 const STANDARD_REASONING_LEVELS = ["off", "low", "medium", "high"] as const satisfies readonly ProviderThinkingMode[];
@@ -162,6 +185,7 @@ const providerModelCatalog: readonly ProviderModelCatalogEntry[] = [
 export function enrichProviderModelOption(
   model: ProviderModelOption,
   context: ProviderModelCatalogContext,
+  snapshot: ProviderModelCatalogSnapshot = bundledProviderModelCatalog,
 ): ProviderModelOption {
   const upstreamThinkingSupport = normalizeProviderThinkingSupport(model.thinkingSupport);
   const upstreamThinkingModes = normalizeProviderThinkingModes(model.thinkingModes ?? upstreamThinkingSupport?.levels)
@@ -173,7 +197,7 @@ export function enrichProviderModelOption(
   const familyEntry = generationFamily ? undefined : findProviderModelFamilyEntry(model.id, context);
   const catalogEntry = generationFamily
     ? undefined
-    : findExactProviderModelCatalogEntry(model.id, context) ?? familyEntry;
+    : findExactProviderModelCatalogEntry(model.id, context, snapshot) ?? familyEntry;
   const thinkingFamilyEntry = catalogEntry?.capabilities.includes("reasoning") ? familyEntry : undefined;
   const hasExplicitThinking = model.thinkingModes !== undefined || model.thinkingSupport !== undefined;
   const thinkingSupport = upstreamThinkingSupport ?? (hasExplicitThinking
@@ -205,12 +229,12 @@ export function enrichProviderModelOption(
   });
 }
 
-export function providerModelCatalogInfo(now: Date = new Date()): ProviderModelCatalogInfo {
+export function providerModelCatalogInfo(now: Date = new Date(), snapshot: ProviderModelCatalogSnapshot = bundledProviderModelCatalog): ProviderModelCatalogInfo {
   return {
-    source: providerModelCatalogManifest.source,
-    version: providerModelCatalogManifest.version,
-    updatedAt: providerModelCatalogManifest.updatedAt,
-    stale: isProviderModelCatalogStale(providerModelCatalogManifest.updatedAt, now),
+    source: snapshot === bundledProviderModelCatalog ? "ling-builtin" : snapshot.manifest.source,
+    version: snapshot.manifest.version,
+    updatedAt: snapshot.manifest.updatedAt,
+    stale: isProviderModelCatalogStale(snapshot.manifest.generatedAt, now),
   };
 }
 
@@ -222,14 +246,16 @@ export function isProviderModelCatalogStale(updatedAt: string, now: Date = new D
 export function findProviderModelCatalogRecord(
   modelId: string,
   context: ProviderModelCatalogContext,
+  snapshot: ProviderModelCatalogSnapshot = bundledProviderModelCatalog,
 ): ProviderModelCatalogRecord | undefined {
+  const index = catalogIndex(snapshot);
   const aliases = catalogProviderIds(context);
   for (const providerId of aliases) {
-    const record = generatedCatalogByProviderAndModel.get(catalogRecordKey(providerId, modelId));
+    const record = index.byProviderAndModel.get(catalogRecordKey(providerId, modelId));
     if (record) return record;
   }
   if (aliases.length > 0) return undefined;
-  const uniqueMatches = generatedCatalogByModel.get(normalizeCatalogLookupValue(modelId));
+  const uniqueMatches = index.byModel.get(normalizeCatalogLookupValue(modelId));
   return uniqueMatches?.length === 1 ? uniqueMatches[0] : undefined;
 }
 
@@ -285,8 +311,8 @@ export function providerThinkingModesToLevelMap(
   return map;
 }
 
-function findExactProviderModelCatalogEntry(modelId: string, context: ProviderModelCatalogContext): ProviderModelCatalogEntry | undefined {
-  const record = findProviderModelCatalogRecord(modelId, context);
+function findExactProviderModelCatalogEntry(modelId: string, context: ProviderModelCatalogContext, snapshot: ProviderModelCatalogSnapshot): ProviderModelCatalogEntry | undefined {
+  const record = findProviderModelCatalogRecord(modelId, context, snapshot);
   if (!record) return undefined;
   const thinkingModes = normalizeProviderThinkingModes(record.thinkingModes);
   return omitUndefined({

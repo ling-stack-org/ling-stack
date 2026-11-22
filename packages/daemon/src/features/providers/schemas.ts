@@ -347,8 +347,13 @@ function parseProviderImportModel(value: unknown, index: number): ProviderModelO
   if (!id) {
     throw new Error(`models[${index}].id must be a non-empty string`);
   }
+  const catalogVersion = readOptionalString(value, "catalogVersion");
+  if (catalogVersion !== undefined && !/^models\.dev:[0-9a-f]{12}$/.test(catalogVersion)) {
+    throw new Error(`models[${index}].catalogVersion is invalid`);
+  }
   return {
     id,
+    catalogVersion,
     displayName: readOptionalString(value, "displayName"),
     ownedBy: readOptionalString(value, "ownedBy"),
     createdAt: readOptionalString(value, "createdAt"),
