@@ -321,6 +321,12 @@ continues to serve its existing session and the owner journal retains the origin
 receipts.
 [Gateway migration entry point](../../packages/daemon/src/features/remote-access/controller.ts)
 
+The paired PC's Mobile Access settings show the exact server origin, public-key
+fingerprint, installation revision, binding ID and retained command IDs for local
+confirmation. The operator can export the raw signed record for Mobile or the
+publication JSON that includes the Gateway public key for the server administrator.
+[PC Mobile Access settings](../../apps/web/src/features/settings/mobile-access/MobileAccessSettingsPage.tsx)
+
 On the Ling Server admin listener, `POST /v1/pairing-migrations` accepts the
 confirmed record as `confirmation` and the existing Gateway's P-256 public key as
 `gatewayPublicKeyJwk`. It checks the Gateway signature, the confirmation lifetime,
@@ -328,8 +334,19 @@ and the active installation's origin, application key fingerprint and revision.
 The signed peer keys and epoch become the new binding. The control plane commits
 the binding and publication receipt in one SQLite transaction. An exact retry
 returns the original receipt while the binding and installation stay current.
-Phone pin verification and route activation follow publication.
 [Ling Server control plane](../../packages/daemon/src/features/ling-server/control-plane.ts)
+
+On the phone, open **My → Ling Server**, paste the signed record and check the
+origin, fingerprint and binding against the PC confirmation. When the user confirms,
+the Remote Client validates the record against the paired Gateway key, workspace,
+device epoch and local key. It then signs a fresh nonce with the existing Mobile key
+and sends it to `POST /v1/pairing-migrations/verify` at the confirmed HTTPS origin.
+Ling Server checks that the publication, binding and installation are current, then
+signs the nonce, exact profile, and binding with the configured application key.
+The app verifies the response and stores the profile in the existing secure binding.
+The current session continues using the paired Gateway connection until route activation.
+[Mobile confirmation](../../apps/mobile/src/features/pairing/LingServerPairingScreen.tsx) ·
+[Remote Client verification](../../packages/remote-client/src/ling-server-pairing-pin.ts)
 
 ### 6.2 Reconnect and cursors
 
@@ -396,6 +413,7 @@ building that package. Configuration paths below resolve relative to the JSON fi
   "adminPort": 17894,
   "databasePath": "state/ling-server.sqlite",
   "authTokenFile": "secrets/operator-token",
+  "applicationIdentityKeyFile": "secrets/application-identity.pem",
   "tls": {
     "certFile": "tls/fullchain.pem",
     "keyFile": "tls/private-key.pem"
@@ -413,6 +431,11 @@ installations and routes using the bearer-token API on the separate
 `127.0.0.1` listener. Configure coturn on the advertised STUN/TURN addresses and
 supply its REST shared secret through the named file. SQLite preserves the control
 metadata across process restart.
+
+Mobile pin verification uses `applicationIdentityKeyFile` with an unencrypted P-256
+PEM private key. Register the fingerprint of its canonical public JWK with the active
+installation and use the same fingerprint in the PC migration profile. The TLS
+certificate and application key identify their respective protocol layers.
 [CLI and configuration](../../packages/daemon/src/ling-server-cli.ts)
 
 ### Deployment topology

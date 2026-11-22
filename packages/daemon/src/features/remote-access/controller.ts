@@ -255,6 +255,10 @@ export class RemoteAccessController {
         writeManagementJson(response, 200, migration, origin);
         return true;
       }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/pairing-migration/gateway-key` && request.method === "GET") {
+        writeManagementJson(response, 200, { gatewayPublicKeyJwk: this.auth.identity.publicKeyJwk }, origin);
+        return true;
+      }
       if (url.pathname === `${MANAGEMENT_PREFIX}/revoke` && request.method === "POST") {
         this.auth.revokeDevice();
         writeManagementJson(response, 200, this.status(), origin);

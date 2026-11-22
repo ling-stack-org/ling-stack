@@ -147,6 +147,28 @@ export interface LingServerPairingMigrationPublicationV1 {
   readonly publishedAt: string;
 }
 
+export interface LingServerPairingPinChallengeV1 {
+  readonly version: 1;
+  readonly migrationId: string;
+  readonly confirmationDigest: string;
+  readonly nonce: string;
+}
+
+export interface LingServerPairingPinRequestV1 {
+  readonly challenge: LingServerPairingPinChallengeV1;
+  readonly mobilePublicKeyJwk: RemoteP256PublicJwkV1;
+  readonly mobileSignature: string;
+}
+
+export interface LingServerPairingPinProofV1 {
+  readonly challenge: LingServerPairingPinChallengeV1;
+  readonly routingProfile: LingServerRoutingProfileV1;
+  readonly binding: LingServerPeerBindingV1;
+  readonly issuedAt: string;
+  readonly applicationPublicKeyJwk: RemoteP256PublicJwkV1;
+  readonly applicationSignature: string;
+}
+
 export type LingServerPeerRoleV1 = "gateway" | "mobile";
 export type LingServerTransportRouteV1 = "lan" | "direct" | "relay";
 

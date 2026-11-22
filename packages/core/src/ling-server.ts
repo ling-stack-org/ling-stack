@@ -12,6 +12,7 @@ import {
   type LingServerPeerRoleV1,
   type LingServerPeerSessionV1,
   type LingServerRouteAttemptV1,
+  type LingServerRoutingProfileV1,
 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "./device-fabric.js";
 import type { SqliteLingServerStore } from "./storage/sqlite/ling-server-store.js";
@@ -64,13 +65,9 @@ export class LingServerPeerRegistry {
   publishPairingMigration(confirmation: LingServerConfirmedPairingMigrationV1, now: string): LingServerPairingMigrationPublicationV1 {
     return this.write(() => {
       const { migrationId, routingProfile: profile, oldPairing } = confirmation;
-      const installation = this.getInstallation(profile.installationId);
-      if (installation?.status !== "active" || installation.revision !== profile.installationRevision
-        || installation.serverOrigin !== profile.serverOrigin || installation.applicationKeyFingerprint !== profile.applicationKeyFingerprint) {
-        throw new DeviceFabricError("safety_denied", "pairing migration is outside the active installation");
-      }
+      this.assertPairingInstallation(profile);
       const binding = this.getBinding(profile.bindingId);
-      const prior = this.#store ? this.#store.getPairingPublication(migrationId) : this.#pairingPublications.get(migrationId);
+      const prior = this.getPairingPublication(migrationId);
       if (prior) {
         if (!isDeepStrictEqual(prior.confirmation, confirmation) || !isDeepStrictEqual(prior.binding, binding)) {
           throw new DeviceFabricError("revision_conflict", "published pairing or its active binding changed");
@@ -93,6 +90,20 @@ export class LingServerPeerRegistry {
       else this.#pairingPublications.set(migrationId, publication);
       return publication;
     });
+  }
+
+  requireActivePairingPublication(migrationId: string, confirmationDigest: string): LingServerPairingMigrationPublicationV1 {
+    const publication = this.getPairingPublication(migrationId);
+    if (!publication || publication.confirmation.confirmationDigest !== confirmationDigest) {
+      throw new DeviceFabricError("safety_denied", "pairing migration publication is unavailable");
+    }
+    const { routingProfile } = publication.confirmation;
+    this.assertPairingInstallation(routingProfile);
+    const binding = this.requireActiveBinding(routingProfile.bindingId, publication.binding.epoch);
+    if (!isDeepStrictEqual(publication.binding, binding)) {
+      throw new DeviceFabricError("safety_denied", "published pairing binding changed");
+    }
+    return publication;
   }
 
   revokeBinding(bindingId: string, revision: number): LingServerPeerBindingV1 {
@@ -168,6 +179,18 @@ export class LingServerPeerRegistry {
     if (!route) throw new DeviceFabricError("target_missing", "route attempt is missing");
     this.requireActiveBinding(route.bindingId, route.peerEpoch ?? 1);
     return route;
+  }
+
+  private getPairingPublication(migrationId: string): LingServerPairingMigrationPublicationV1 | undefined {
+    return this.#store ? this.#store.getPairingPublication(migrationId) : this.#pairingPublications.get(migrationId);
+  }
+
+  private assertPairingInstallation(profile: LingServerRoutingProfileV1): void {
+    const installation = this.getInstallation(profile.installationId);
+    if (installation?.status !== "active" || installation.revision !== profile.installationRevision
+      || installation.serverOrigin !== profile.serverOrigin || installation.applicationKeyFingerprint !== profile.applicationKeyFingerprint) {
+      throw new DeviceFabricError("safety_denied", "pairing migration is outside the active installation");
+    }
   }
 
   private bindPeerRevision(binding: LingServerPeerBindingV1): LingServerPeerBindingV1 {

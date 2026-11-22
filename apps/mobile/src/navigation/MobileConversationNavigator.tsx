@@ -5,6 +5,7 @@ import { ConversationDetailScreen } from "../features/conversations/screens/Conv
 import { ConversationIndexScreen } from "../features/conversations/screens/ConversationIndexScreen";
 import { PcDeviceTasksScreen } from "../features/device-tasks/PcDeviceTasksScreen";
 import { StandaloneDeviceScreen } from "../features/device-tasks/StandaloneDeviceScreen";
+import { LingServerPairingScreen } from "../features/pairing/LingServerPairingScreen";
 import { MyScreen } from "../features/profile/MyScreen";
 import { useMobileTheme } from "../theme/mobile-theme-provider";
 import type { MobileStackParamList } from "./types";
@@ -31,6 +32,11 @@ export function MobileConversationNavigator() {
         <Stack.Screen component={ConversationIndexScreen} name="Conversations" />
         <Stack.Screen component={ConversationDetailScreen} name="ConversationDetail" />
         <Stack.Screen component={MyScreen} name="My" />
+        <Stack.Screen
+          component={LingServerPairingScreen}
+          name="LingServerPairing"
+          options={{ headerShown: true, title: "Ling Server", headerBackTitle: "返回" }}
+        />
         <Stack.Screen
           component={PcDeviceTasksScreen}
           name="PcDeviceTasks"

@@ -1,14 +1,15 @@
-import { createPublicKey, timingSafeEqual, verify } from "node:crypto";
+import { createPrivateKey, createPublicKey, sign, timingSafeEqual, verify } from "node:crypto";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
 import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
-  type LingServerPeerBindingV1, type LingServerRouteAttemptV1,
+  type LingServerPairingPinProofV1, type LingServerPeerBindingV1, type LingServerRouteAttemptV1, type RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
 import {
-  decodeBase64Url, lingServerPairingMigrationSigningBytes, matchesPublicJwkFingerprint, RemoteProtocolError,
-  validateLingServerPairingMigrationPublicationRequestV1,
+  decodeBase64Url, encodeBase64Url, fingerprintPublicJwkSync, lingServerPairingMigrationSigningBytes,
+  lingServerPairingPinChallengeBytes, lingServerPairingPinProofBytes, matchesPublicJwkFingerprint, RemoteProtocolError,
+  validateLingServerPairingMigrationPublicationRequestV1, validateLingServerPairingPinRequestV1, validateRemoteP256PublicJwkV1,
 } from "@ling-stack/remote-protocol";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { LingServerSignaling } from "./signaling.js";
@@ -23,6 +24,7 @@ export interface LingServerControlPlaneOptions {
   readonly registry?: LingServerPeerRegistry;
   readonly databasePath?: string;
   readonly store?: SqliteLingServerStore;
+  readonly applicationIdentityPrivateKeyPem?: string;
   readonly tls?: Pick<ServerOptions, "cert" | "key">;
   readonly adminPort?: number;
   readonly transport?: {
@@ -42,6 +44,7 @@ export class LingServerControlPlane {
   readonly #host: string;
   readonly #port: number;
   readonly #authToken: string;
+  readonly #applicationIdentity?: ReturnType<typeof createApplicationIdentity>;
   readonly #now: () => string;
   readonly #store?: SqliteLingServerStore;
   readonly #ownsStore: boolean;
@@ -57,6 +60,9 @@ export class LingServerControlPlane {
 
   constructor(options: LingServerControlPlaneOptions) {
     if (!options.authToken.trim()) throw new Error("Ling Server control auth token is required");
+    if (options.applicationIdentityPrivateKeyPem !== undefined) {
+      this.#applicationIdentity = createApplicationIdentity(options.applicationIdentityPrivateKeyPem);
+    }
     this.#store = options.store ?? (options.databasePath ? new SqliteLingServerStore({ databasePath: options.databasePath }) : undefined);
     this.#ownsStore = options.store === undefined && this.#store !== undefined;
     this.registry = options.registry ?? new LingServerPeerRegistry({ store: this.#store });
@@ -146,6 +152,10 @@ export class LingServerControlPlane {
     }
     if (request.method === "POST" && url.pathname === "/v1/signaling") {
       await this.exchangeSignaling(request, response);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/pairing-migrations/verify") {
+      await this.issuePairingPinProof(request, response);
       return;
     }
     if (!admin) {
@@ -257,7 +267,8 @@ export class LingServerControlPlane {
   private publishPairingMigration(body: unknown, response: ServerResponse): void {
     try {
       const publication = validateLingServerPairingMigrationPublicationRequestV1(body);
-      if (!verifyPairingMigration(publication)) {
+      if (!verifyPairingMigration(publication) || (this.#applicationIdentity
+        && this.#applicationIdentity.fingerprint !== publication.confirmation.routingProfile.applicationKeyFingerprint)) {
         writeJson(response, 403, { error: "pairing_migration_denied" });
         return;
       }
@@ -267,6 +278,36 @@ export class LingServerControlPlane {
       else if (error instanceof DeviceFabricError && error.code === "revision_conflict") writeJson(response, 409, { error: error.code });
       else if (error instanceof DeviceFabricError) writeJson(response, 403, { error: "pairing_migration_denied" });
       else writeJson(response, 500, { error: "pairing_migration_unavailable" });
+    }
+  }
+
+  private async issuePairingPinProof(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    try {
+      const body = await readJson(request).catch(() => undefined);
+      const { challenge, mobilePublicKeyJwk, mobileSignature } = validateLingServerPairingPinRequestV1(body);
+      const identity = this.#applicationIdentity;
+      if (!identity) {
+        writeJson(response, 503, { error: "pairing_pin_unavailable" });
+        return;
+      }
+      const { confirmation, binding } = this.registry.requireActivePairingPublication(challenge.migrationId, challenge.confirmationDigest);
+      if (identity.fingerprint !== confirmation.routingProfile.applicationKeyFingerprint
+        || !matchesPublicJwkFingerprint(mobilePublicKeyJwk, binding.mobileKeyFingerprint)
+        || !verifyPeerSignature(mobilePublicKeyJwk, lingServerPairingPinChallengeBytes(challenge), mobileSignature)) {
+        throw new DeviceFabricError("safety_denied", "pairing pin proof is outside the active pairing");
+      }
+      const proof: Omit<LingServerPairingPinProofV1, "applicationSignature"> = {
+        challenge, routingProfile: confirmation.routingProfile, binding,
+        issuedAt: this.#now(), applicationPublicKeyJwk: identity.publicJwk,
+      };
+      const applicationSignature = encodeBase64Url(sign("sha256", lingServerPairingPinProofBytes(proof), {
+        key: identity.privateKey, dsaEncoding: "ieee-p1363",
+      }));
+      writeJson(response, 200, { ...proof, applicationSignature } satisfies LingServerPairingPinProofV1);
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_pairing_pin_request" });
+      else if (error instanceof DeviceFabricError) writeJson(response, 403, { error: "pairing_pin_denied" });
+      else writeJson(response, 503, { error: "pairing_pin_unavailable" });
     }
   }
 
@@ -292,12 +333,26 @@ export class LingServerControlPlane {
   }
 }
 
+function createApplicationIdentity(pem: string) {
+  try {
+    const privateKey = createPrivateKey({ key: pem, format: "pem" });
+    const publicJwk = validateRemoteP256PublicJwkV1(createPublicKey(privateKey).export({ format: "jwk" }));
+    return { privateKey, publicJwk, fingerprint: fingerprintPublicJwkSync(publicJwk) };
+  } catch {
+    throw new Error("Invalid Ling Server P-256 application identity private key");
+  }
+}
+
 function verifyPairingMigration(publication: LingServerPairingMigrationPublicationRequestV1): boolean {
   const { confirmation: { status: _status, gatewaySignature, ...unsigned }, gatewayPublicKeyJwk } = publication;
-  if (!matchesPublicJwkFingerprint(gatewayPublicKeyJwk, unsigned.oldPairing.gatewayKeyFingerprint)) return false;
+  return matchesPublicJwkFingerprint(gatewayPublicKeyJwk, unsigned.oldPairing.gatewayKeyFingerprint)
+    && verifyPeerSignature(gatewayPublicKeyJwk, lingServerPairingMigrationSigningBytes(unsigned), gatewaySignature);
+}
+
+function verifyPeerSignature(publicKeyJwk: RemoteP256PublicJwkV1, bytes: Uint8Array, signature: string): boolean {
   try {
-    const key = createPublicKey({ format: "jwk", key: gatewayPublicKeyJwk });
-    return verify("sha256", lingServerPairingMigrationSigningBytes(unsigned), { key, dsaEncoding: "ieee-p1363" }, decodeBase64Url(gatewaySignature));
+    const key = createPublicKey({ format: "jwk", key: publicKeyJwk });
+    return verify("sha256", bytes, { key, dsaEncoding: "ieee-p1363" }, decodeBase64Url(signature));
   } catch {
     return false;
   }

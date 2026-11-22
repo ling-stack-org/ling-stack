@@ -1,5 +1,12 @@
 import { createRequire } from "node:module";
-import type { BrowserWindow, IpcMain } from "electron";
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
+import {
+  LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1,
+  REMOTE_PROTOCOL_LIMITS,
+  REMOTE_PROTOCOL_VERSION,
+  type LingServerPairingMigrationConfirmationV1,
+  type LingServerPairingMigrationRequestV1,
+} from "@ling-stack/contracts";
 import {
   COMPUTER_USE_HOST_OBSTACLE_KINDS,
   COMPUTER_USE_PIP_SURFACE_KINDS,
@@ -173,6 +180,20 @@ export function registerDesktopIpc(input: {
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessRevoke, async (event) => {
     assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
     return await input.mobileAccess!.revoke();
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationPrepare, async (event, request: unknown) => {
+    const isTrustedSender = () => isPairingMigrationSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    const preview = await input.mobileAccess.preparePairingMigration(readPairingMigrationRequest(request));
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return preview;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationConfirm, async (event, request: unknown) => {
+    const isTrustedSender = () => isPairingMigrationSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    const publication = await input.mobileAccess.confirmPairingMigration(readPairingMigrationConfirmation(request));
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return publication;
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentGet, async (event) =>
     isMainWindowSender(event) ? navigationIntents.getPendingIntent() : undefined);
@@ -702,6 +723,58 @@ function assertMobileAccessSender(
   if (!authorized || !mobileAccess) {
     throw new Error("mobile_access_unauthorized_or_unavailable");
   }
+}
+
+function isPairingMigrationSender(event: IpcMainInvokeEvent, window: BrowserWindow | undefined, trustedDocumentUrl: string | undefined): boolean {
+  const owner = window?.webContents;
+  if (!window || window.isDestroyed() || !owner || owner.isDestroyed() || event.sender !== owner || !trustedDocumentUrl
+    || !event.senderFrame || event.senderFrame !== owner.mainFrame || event.senderFrame.detached) return false;
+  const actualUrl = owner.getURL();
+  if (event.senderFrame.url !== actualUrl) return false;
+  try {
+    const actual = new URL(actualUrl);
+    const expected = new URL(trustedDocumentUrl);
+    actual.hash = expected.hash = actual.search = expected.search = "";
+    return actual.protocol === "file:" && actual.href === expected.href;
+  } catch {
+    return false;
+  }
+}
+
+function readPairingMigrationRequest(value: unknown): LingServerPairingMigrationRequestV1 {
+  if (!isRecord(value) || Object.keys(value).length !== 2 || !isRecord(value.routingProfile)) {
+    throw new Error("invalid_pairing_migration_request");
+  }
+  const profile = value.routingProfile;
+  const { applicationKeyFingerprint, bindingId, installationId, installationRevision, serverOrigin } = profile;
+  const { retainedCommandIds } = value;
+  if (Object.keys(profile).length !== 8 || profile.schemaVersion !== 1 || profile.signalingProtocolMajor !== 1
+    || profile.gatewayProtocolMajor !== REMOTE_PROTOCOL_VERSION || !isHttpsOrigin(serverOrigin)
+    || !isPairingIdentifier(bindingId) || !isPairingIdentifier(installationId) || !isPositiveSafeInteger(installationRevision)
+    || typeof applicationKeyFingerprint !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(applicationKeyFingerprint)
+    || !Array.isArray(retainedCommandIds) || retainedCommandIds.length > LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1
+    || !retainedCommandIds.every(isPairingIdentifier) || new Set(retainedCommandIds).size !== retainedCommandIds.length) {
+    throw new Error("invalid_pairing_migration_request");
+  }
+  return {
+    routingProfile: {
+      schemaVersion: 1, bindingId, installationId, installationRevision, serverOrigin, applicationKeyFingerprint,
+      signalingProtocolMajor: 1, gatewayProtocolMajor: REMOTE_PROTOCOL_VERSION,
+    },
+    retainedCommandIds,
+  };
+}
+
+function readPairingMigrationConfirmation(value: unknown): LingServerPairingMigrationConfirmationV1 {
+  if (!isRecord(value) || Object.keys(value).length !== 2 || !isPairingIdentifier(value.migrationId)
+    || typeof value.confirmationDigest !== "string" || !/^[a-f0-9]{64}$/u.test(value.confirmationDigest)) {
+    throw new Error("invalid_pairing_migration_confirmation");
+  }
+  return { migrationId: value.migrationId, confirmationDigest: value.confirmationDigest };
+}
+
+function isPairingIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length <= REMOTE_PROTOCOL_LIMITS.maxIdentifierBytes && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value);
 }
 
 function isHttpsOrigin(value: unknown): value is string {

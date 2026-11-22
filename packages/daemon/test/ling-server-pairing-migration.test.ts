@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -9,11 +9,12 @@ import test from "node:test";
 
 import type {
   LingServerPairingMigrationPublicationRequestV1, LingServerPairingMigrationPublicationV1,
-  LingServerPairingMigrationRequestV1, LingServerPairingMigrationV1,
+  LingServerPairingMigrationRequestV1, LingServerPairingMigrationV1, LingServerPairingPinChallengeV1,
 } from "@ling-stack/contracts";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, SqliteLingServerStore } from "@ling-stack/core";
 import {
-  domainSeparatedCanonicalBytes, encodeBase64Url, fingerprintPublicJwkSync, sha256, validateRemoteP256PublicJwkV1,
+  domainSeparatedCanonicalBytes, encodeBase64Url, fingerprintPublicJwkSync, lingServerPairingPinChallengeBytes,
+  lingServerPairingPinProofBytes, sha256, validateLingServerPairingPinProofV1, validateRemoteP256PublicJwkV1,
 } from "@ling-stack/remote-protocol";
 import { RemoteAccessController } from "../dist/features/remote-access/controller.js";
 import { createRemoteGatewayIdentity } from "../dist/features/remote-access/pairing-auth-service.js";
@@ -54,7 +55,7 @@ test("local Gateway management confirms a server profile against the current pai
     });
 
   const state = new RemoteAccessStateStore({ stateDir, listenerPort, createIdentity: createRemoteGatewayIdentity, now: () => now });
-  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const publicKeyJwk = validateRemoteP256PublicJwkV1(publicKey.export({ format: "jwk" }));
   const pairedDevice = {
     deviceId: "phone-1", deviceEpoch: 4, displayName: "Fixture phone", platform: "ios" as const, pairedAt: now,
@@ -63,6 +64,13 @@ test("local Gateway management confirms a server profile against the current pai
   const oldState = { ...state.readState(), enabled: true, gatewayOrigin: "https://pc.example", deviceEpoch: 4, pairedDevice };
   state.writeState(oldState);
   const identity = state.readOrCreateIdentity();
+  const gatewayKeyUrl = `http://127.0.0.1:${address.port}/v1/mobile-access/pairing-migration/gateway-key`;
+  assert.equal((await fetch(gatewayKeyUrl, { headers: { Origin: origin } })).status, 401);
+  const gatewayKeyHeaders = { "X-Ling-Mobile-Management-Capability": capability };
+  assert.equal((await fetch(gatewayKeyUrl, { headers: { ...gatewayKeyHeaders, Origin: "https://other.example" } })).status, 403);
+  const gatewayKey = await fetch(gatewayKeyUrl, { headers: { ...gatewayKeyHeaders, Origin: origin } });
+  assert.equal(gatewayKey.status, 200);
+  assert.deepEqual(await gatewayKey.json(), { gatewayPublicKeyJwk: identity.publicKeyJwk });
   const channel = store.createChannel({ name: "Fixture channel", boundPath: root }, now);
   const body = "Existing message in the owner journal";
   const message = {
@@ -71,10 +79,13 @@ test("local Gateway management confirms a server profile against the current pai
     conversationId: channel.id, body, issuedAt: now, retryUntil: "2026-11-22T00:10:00.000Z",
   };
   const original = store.commitRemoteConversationSend(message, now);
+  const applicationKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const applicationPublicKeyJwk = validateRemoteP256PublicJwkV1(applicationKey.publicKey.export({ format: "jwk" }));
+  const applicationIdentityPrivateKeyPem = applicationKey.privateKey.export({ format: "pem", type: "pkcs8" });
   const request: LingServerPairingMigrationRequestV1 = {
     routingProfile: {
       schemaVersion: 1, bindingId: "first-party-binding", installationId: "installation-1", installationRevision: 2,
-      serverOrigin: "https://ling.example", applicationKeyFingerprint: encodeBase64Url(sha256(Uint8Array.of(1))),
+      serverOrigin: "https://ling.example", applicationKeyFingerprint: fingerprintPublicJwkSync(applicationPublicKeyJwk),
       signalingProtocolMajor: 1, gatewayProtocolMajor: 1,
     },
     retainedCommandIds: [message.commandId],
@@ -121,11 +132,13 @@ test("local Gateway management confirms a server profile against the current pai
   assert.equal(replay.idempotentReplay, true);
   assert.equal(replay.messageId, original.messageId);
 
-  await t.test("the control plane publishes the exact signed binding and receipt atomically", async t => {
+  await t.test("the control plane publishes the exact signed binding and proves its active pin", async t => {
     const databasePath = join(root, "control.sqlite");
     const token = "fixture-server-operator";
     let clock = now;
-    const makeServer = () => new LingServerControlPlane({ authToken: token, databasePath, now: () => clock });
+    const makeServer = (applicationIdentityPrivateKeyPem?: string, database = databasePath) => new LingServerControlPlane({
+      authToken: token, databasePath: database, now: () => clock, applicationIdentityPrivateKeyPem,
+    });
     let control = makeServer();
     t.after(async () => await control.stop());
     let address = await control.start();
@@ -141,6 +154,17 @@ test("local Gateway management confirms a server profile against the current pai
     };
     const publication: LingServerPairingMigrationPublicationRequestV1 = { confirmation: record, gatewayPublicKeyJwk: identity.publicKeyJwk };
     const publish = (input: unknown = publication) => send("pairing-migrations", input);
+    const challenge: LingServerPairingPinChallengeV1 = {
+      version: 1, ...confirmation, nonce: encodeBase64Url(new Uint8Array(32).fill(1)),
+    };
+    const signChallenge = (input = challenge) => ({
+      challenge: input, mobilePublicKeyJwk: pairedDevice.publicKeyJwk,
+      mobileSignature: encodeBase64Url(sign("sha256", lingServerPairingPinChallengeBytes(input), {
+        key: privateKey, dsaEncoding: "ieee-p1363",
+      })),
+    });
+    const pinRequest = signChallenge();
+    const provePin = (input: unknown = pinRequest) => send("pairing-migrations/verify", input, false);
 
     assert.equal((await send("pairing-migrations", publication, false)).status, 401);
     assert.equal((await send("installations", { ...installation, revision: 1 })).status, 200);
@@ -175,14 +199,51 @@ test("local Gateway management confirms a server profile against the current pai
       gatewayKeyFingerprint: identity.publicKeyFingerprint, mobileKeyFingerprint: pairedDevice.publicKeyFingerprint,
     } });
     assert.deepEqual(control.registry.requireActiveBinding(routingProfile.bindingId, pairedDevice.deviceEpoch), receipt.binding);
+    assert.equal((await provePin()).status, 503);
     await control.stop();
     clock = record.expiresAt;
-    control = makeServer();
+    control = makeServer(privateKey.export({ format: "pem", type: "pkcs8" }));
+    address = await control.start();
+    assert.equal((await provePin()).status, 403);
+    assert.equal((await publish()).status, 403);
+    await control.stop();
+    control = makeServer(applicationIdentityPrivateKeyPem);
     address = await control.start();
     assert.deepEqual(await (await publish()).json(), receipt);
+    assert.equal((await provePin({})).status, 400);
+    assert.equal((await provePin({ ...pinRequest, mobilePublicKeyJwk: applicationPublicKeyJwk })).status, 403);
+    assert.equal((await provePin(signChallenge({ ...challenge, confirmationDigest: "f".repeat(64) }))).status, 403);
+    assert.equal((await provePin(signChallenge({ ...challenge, migrationId: "foreign-migration" }))).status, 403);
+    assert.equal((await provePin({
+      ...pinRequest, challenge: { ...challenge, nonce: encodeBase64Url(new Uint8Array(32).fill(2)) },
+    })).status, 403);
+    const pinResponse = await provePin();
+    assert.equal(pinResponse.status, 200);
+    assert.equal(pinResponse.headers.get("cache-control"), "no-store");
+    const { applicationSignature, ...proof } = validateLingServerPairingPinProofV1(await pinResponse.json());
+    assert.deepEqual(proof, {
+      routingProfile, binding: receipt.binding, challenge, issuedAt: clock, applicationPublicKeyJwk,
+    });
+    const proofKey = { key: applicationKey.publicKey, dsaEncoding: "ieee-p1363" as const };
+    assert.ok(verify("sha256", lingServerPairingPinProofBytes(proof), proofKey, Buffer.from(applicationSignature, "base64url")));
+    assert.equal(verify("sha256", lingServerPairingPinProofBytes({
+      ...proof, challenge: { ...challenge, nonce: encodeBase64Url(new Uint8Array(32).fill(2)) },
+    }), proofKey, Buffer.from(applicationSignature, "base64url")), false);
     assert.equal((await send(`bindings/${routingProfile.bindingId}/revoke`, { revision: 2 })).status, 200);
+    assert.equal((await provePin()).status, 403);
     assert.equal((await publish()).status, 409);
     assert.equal(control.registry.getBinding(routingProfile.bindingId)?.status, "revoked");
+
+    await control.stop();
+    clock = now;
+    control = makeServer(applicationIdentityPrivateKeyPem, ":memory:");
+    address = await control.start();
+    assert.equal((await send("installations", installation)).status, 200);
+    assert.equal((await publish()).status, 200);
+    assert.equal((await provePin()).status, 200);
+    assert.equal((await send("installations", { ...installation, revision: installation.revision + 1 })).status, 200);
+    assert.equal(control.registry.getBinding(routingProfile.bindingId)?.status, "active");
+    assert.equal((await provePin()).status, 403);
   });
 
   assert.equal((await post("revoke", {})).status, 200);

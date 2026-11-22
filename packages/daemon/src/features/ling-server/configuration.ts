@@ -12,7 +12,7 @@ export function readLingServerConfiguration(configPath: string): LingServerContr
   } catch {
     throw new Error("Could not read the Ling Server JSON configuration");
   }
-  const config = readRecord(raw, ["host", "port", "adminPort", "databasePath", "authTokenFile", "tls", "transport"], "configuration");
+  const config = readRecord(raw, ["host", "port", "adminPort", "databasePath", "authTokenFile", "applicationIdentityKeyFile", "tls", "transport"], "configuration");
   const host = config.host === undefined ? "127.0.0.1" : readString(config.host, "host");
   const authToken = readSecret(folder, config.authTokenFile, "authTokenFile");
   const databasePath = resolve(folder, readString(config.databasePath, "databasePath"));
@@ -24,6 +24,9 @@ export function readLingServerConfiguration(configPath: string): LingServerContr
   return {
     host, port: readPort(config.port, tls ? 443 : 17894), authToken, databasePath, tls,
     ...(tls ? { adminPort: readPort(config.adminPort, 17894) } : {}),
+    ...(config.applicationIdentityKeyFile !== undefined ? {
+      applicationIdentityPrivateKeyPem: readFileSync(resolve(folder, readString(config.applicationIdentityKeyFile, "applicationIdentityKeyFile")), "utf8"),
+    } : {}),
     ...(config.transport !== undefined ? { transport: readTransport(folder, config.transport) } : {}),
   };
 }

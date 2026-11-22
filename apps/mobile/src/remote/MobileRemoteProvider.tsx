@@ -42,6 +42,7 @@ export interface MobileRemoteContextValue {
   readonly openScanner: () => void;
   readonly cancelPairing: () => void;
   readonly pairFromQr: (encodedQr: string) => Promise<void>;
+  readonly confirmLingServerPairingPin: (confirmation: unknown, signal: AbortSignal) => Promise<void>;
   readonly retryConnection: () => Promise<void>;
   readonly unpair: () => Promise<void>;
 }
@@ -114,6 +115,8 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
     let observedWorkspaceBindingId = nextBinding.workspaceBindingId;
     unsubscribeClient.current = nextClient.subscribe((nextState) => {
       observedWorkspaceBindingId = nextState.workspaceBindingId ?? observedWorkspaceBindingId;
+      const activeBinding = nextClient.activeBinding;
+      if (activeBinding) setBinding(activeBinding);
       setRemoteState(nextState);
       if (nextState.connection === "revoked" && !userUnpairing.current) {
         void finishRemoteRevocation(observedWorkspaceBindingId);
@@ -187,6 +190,13 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
         setError(userFacingError(pairingError));
         setPhase("error");
       }
+    },
+    confirmLingServerPairingPin: async (confirmation, signal) => {
+      const generation = pairingGeneration.current;
+      if (!client || userUnpairing.current) throw new Error("remote_pairing_unavailable");
+      const nextBinding = await client.confirmLingServerPairingPin(confirmation, { signal });
+      if (generation !== pairingGeneration.current || userUnpairing.current) throw new Error("remote_pairing_changed");
+      setBinding(nextBinding);
     },
     retryConnection: async () => {
       setError(undefined);

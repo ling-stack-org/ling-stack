@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useI18n } from "../../../i18n.js";
 import { Badge, Button, Field, InlineFeedback, Input, Skeleton } from "../../../shared/ui/index.js";
+import { LingServerPairingMigrationCard } from "./LingServerPairingMigrationCard.js";
 
 type BusyAction = "enable" | "disable" | "pair" | "confirm" | "reject" | "revoke" | "refresh";
 
@@ -150,6 +151,16 @@ export function MobileAccessSettingsPage(): React.JSX.Element {
           </div>
         </section>
       )}
+      {status?.enabled && status.pairedDevice && capability ? (
+        <LingServerPairingMigrationCard
+          key={`${status.gatewayId}:${status.workspaceBindingId}:${status.pairedDevice.deviceId}:${status.pairedDevice.pairedAt}`}
+          access={capability}
+          disabled={Boolean(busy)}
+          gatewayId={status.gatewayId}
+          mobileDeviceId={status.pairedDevice.deviceId}
+          workspaceBindingId={status.workspaceBindingId}
+        />
+      ) : null}
     </div>
   );
 

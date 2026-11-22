@@ -10,7 +10,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerSignalingInputV1, type LingServerSignedSignalingV1 } from "@ling-stack/contracts";
-import { fingerprintPublicJwkSync, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
+import { fingerprintPublicJwkSync, lingServerPairingPinChallengeBytes, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 
 test("self-hosted Ling Server control plane requires auth and preserves route fallback", async () => {
@@ -212,8 +212,11 @@ test("the standalone Ling Server starts a TLS peer listener and private administ
   const confPath = join(root, "server.json");
   const token = "fixture-operator-token";
   writeFileSync(join(root, "operator.txt"), token + "\n", { mode: 0o600 });
+  const applicationKey = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  writeFileSync(join(root, "application.pem"), applicationKey.privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600 });
   writeFileSync(confPath, JSON.stringify({
     host: "127.0.0.1", port: 0, adminPort: 0, authTokenFile: "operator.txt", databasePath: "server.sqlite",
+    applicationIdentityKeyFile: "application.pem",
     tls: { certFile: "tls.crt", keyFile: "tls.key" },
   }));
   const cli = fileURLToPath(new URL("../dist/ling-server-cli.js", import.meta.url));
@@ -238,16 +241,26 @@ test("the standalone Ling Server starts a TLS peer listener and private administ
   child.stderr.on("data", chunk => { stderr += String(chunk); });
   const { peerPort, adminPort } = await Promise.race([ready, exited.then(() => { throw new Error(stderr || "Ling Server exited before listening"); })]);
   const options = { hostname: "127.0.0.1", port: peerPort, servername: "localhost", ca: readFileSync(certPath), signal: AbortSignal.timeout(3000) };
-  const status = (path: string, method = "GET") => new Promise<number | undefined>((resolve, reject) => {
-    const request = httpsRequest({ ...options, path, method, headers: { Authorization: `Bearer ${token}` } }, response => {
+  const status = (path: string, method = "GET", body?: unknown, authenticated = true) => new Promise<number | undefined>((resolve, reject) => {
+    const request = httpsRequest({ ...options, path, method, headers: {
+      ...(authenticated ? { Authorization: `Bearer ${token}` } : {}),
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    } }, response => {
       response.resume();
       resolve(response.statusCode);
     });
     request.on("error", reject);
-    request.end();
+    request.end(body === undefined ? undefined : JSON.stringify(body));
   });
   assert.equal(await status("/healthz"), 200);
   assert.equal(await status("/v1/signaling/instance"), 200);
+  const challenge = { version: 1 as const, migrationId: "unpublished", confirmationDigest: "0".repeat(64), nonce: randomBytes(32).toString("base64url") };
+  assert.equal(await status("/v1/pairing-migrations/verify", "POST", {
+    challenge, mobilePublicKeyJwk: applicationKey.publicKey.export({ format: "jwk" }),
+    mobileSignature: sign("sha256", lingServerPairingPinChallengeBytes(challenge), {
+      key: applicationKey.privateKey, dsaEncoding: "ieee-p1363",
+    }).toString("base64url"),
+  }, false), 403);
   assert.equal(await status("/v1/installations", "POST"), 404);
   const adminUrl = `http://127.0.0.1:${adminPort}/v1/installations`;
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };

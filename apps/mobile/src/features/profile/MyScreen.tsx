@@ -14,7 +14,7 @@ type Props = NativeStackScreenProps<MobileStackParamList, "My">;
 
 export function MyScreen({ navigation }: Props) {
   const { theme, preference, setPreference } = useMobileTheme();
-  const { client, remoteState, unpair } = useMobileRemote();
+  const { binding, client, remoteState, unpair } = useMobileRemote();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const profile = remoteState.profile;
   const [displayName, setDisplayName] = useState(profile?.displayName ?? "");
@@ -181,6 +181,19 @@ export function MyScreen({ navigation }: Props) {
               style={[styles.settingsRow, styles.settingsRowBorder]}
             >
               <Text style={styles.settingsLabel}>设备与任务</Text>
+              <Ionicons color={theme.text.muted} name="chevron-forward" size={15} />
+            </Pressable>
+          ) : null}
+          {binding?.status === "active" ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => navigation.navigate("LingServerPairing")}
+              style={[styles.settingsRow, styles.settingsRowBorder]}
+            >
+              <View style={styles.settingsCopy}>
+                <Text style={styles.settingsLabel}>Ling Server</Text>
+                <Text numberOfLines={1} style={styles.settingsHint}>{binding.lingServerRoutingProfile?.serverOrigin ?? "确认服务器身份"}</Text>
+              </View>
               <Ionicons color={theme.text.muted} name="chevron-forward" size={15} />
             </Pressable>
           ) : null}
