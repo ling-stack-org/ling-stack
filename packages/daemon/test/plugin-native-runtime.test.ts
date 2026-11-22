@@ -13,12 +13,12 @@ import {
 import type { LingPluginArtifactDescriptor } from "@ling-stack/plugin-sdk";
 import { installRemotePluginArtifact, rollbackRemotePluginArtifact } from "../dist/features/plugins/remote-package.js";
 
-// The Cua and native-host cache contract is platform-neutral. The test uses
-// fixture bytes and never starts an operating-system process.
 const pluginId = "official:chrome-browser";
 const executable = "runtime/ling-browser-host";
 const manifestPath = ".ling-plugin/plugin.json";
 const checksumPath = ".ling-plugin/checksums.json";
+const platform: LingPluginArtifactDescriptor["platform"] = "linux";
+const arch: LingPluginArtifactDescriptor["arch"] = "x64";
 
 test("verified host runtime survives an offline restart, upgrades and rolls back", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-native-plugin-"));
@@ -44,7 +44,7 @@ test("verified host runtime survives an offline restart, upgrades and rolls back
     fetchImpl: async () => new Response(new Uint8Array(asset.bytes)),
   });
   const readRuntime = () => readVerifiedOfficialPluginRuntime({
-    pluginId, executable, lingVersion: "0.6.1", platform: "darwin", arch: "arm64", publicKey: pem,
+    pluginId, executable, lingVersion: "0.6.1", platform, arch, publicKey: pem,
   });
 
   assert.equal(await readRuntime(), undefined);
@@ -71,11 +71,11 @@ test("verified host runtime survives an offline restart, upgrades and rolls back
 });
 
 async function createArtifact(key: KeyObject, version: string, payload: string) {
-  const artifactId = `${pluginId}-${version}-darwin-arm64`;
+  const artifactId = `${pluginId}-${version}-${platform}-${arch}`;
   const manifest = JSON.stringify({
     id: pluginId, displayName: "Chrome", trustSummary: "Test plugin.",
     version, sourceKind: "official-remote", trustLevel: "official",
-    manifestVersion: 2, lingInterfaceVersion: "2", artifactId, platform: "darwin", arch: "arm64",
+    manifestVersion: 2, lingInterfaceVersion: "2", artifactId, platform, arch,
     contributions: [{ kind: "mcp-server", id: "mcp:chrome", path: "./mcp-server.json" }],
   });
   const files = { [manifestPath]: manifest, [executable]: payload, "mcp-server.json": "{}" };
@@ -91,7 +91,7 @@ async function createArtifact(key: KeyObject, version: string, payload: string) 
   zip.file(".ling-plugin/provenance.json", JSON.stringify({ schemaVersion: 1, artifactId }));
   const bytes = await zip.generateAsync({ type: "nodebuffer", platform: "UNIX" });
   const artifact: LingPluginArtifactDescriptor = {
-    artifactId, pluginId, version, platform: "darwin", arch: "arm64", channel: "stable",
+    artifactId, pluginId, version, platform, arch, channel: "stable",
     url: `https://github.com/ling-stack-org/ling-plugin-chrome-browser/releases/download/v${version}/plugin.zip`,
     sizeBytes: bytes.length, sha256: sha256(bytes),
     signature: `ed25519:${sign(null, bytes, key).toString("base64")}`,
