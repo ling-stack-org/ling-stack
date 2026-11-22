@@ -1,5 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type {
+  AlarmOptions,
+  ChromeFixture,
+  ChromeFixtureGlobals,
+  MessageListener,
+  PopupListener,
+  PopupMessage,
+  PopupResponse,
+  RuntimeListeners,
+  StoredValues,
+  TimeoutEntry,
+  WireMessage,
+} from "./background-fixture-types.ts";
 
 const RECONNECT_ALARM = "ling.chrome.reconnect";
 const RECONNECT_ATTEMPT_KEY = "ling.chrome.reconnectAttempt";
@@ -7,7 +20,7 @@ const RECONNECT_PERIOD_MINUTES = 0.5;
 
 test("Native disconnect leaves a durable Alarm that reconnects without opening the popup", async () => {
   const original = {
-    chrome: globalThis.chrome,
+    chrome: (globalThis as ChromeFixtureGlobals).chrome,
     clearInterval: globalThis.clearInterval,
     clearTimeout: globalThis.clearTimeout,
     navigator: globalThis.navigator,
@@ -15,26 +28,30 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
     setTimeout: globalThis.setTimeout,
     WebSocket: globalThis.WebSocket,
   };
-  const alarms = new Map();
-  const localStored = {};
-  const sessionStored = {};
-  const ports = [];
-  const timeouts = new Map();
+  const alarms = new Map<string, AlarmOptions>();
+  const localStored: StoredValues = {};
+  const sessionStored: StoredValues = {};
+  const ports: FakeNativePort[] = [];
+  const timeouts = new Map<number, TimeoutEntry>();
   let nextTimeoutId = 1;
-  let heldAlarmClear;
-  const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
+  let heldAlarmClear: ReturnType<typeof deferred> | undefined;
+  const runtimeListeners: RuntimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
 
   class FakeNativePort {
+    declare messages: WireMessage[];
+    declare messageListeners: MessageListener[];
+    declare disconnectListeners: Array<() => void>;
+
     constructor() {
       this.messages = [];
       this.messageListeners = [];
       this.disconnectListeners = [];
     }
 
-    onMessage = { addListener: (listener) => this.messageListeners.push(listener) };
-    onDisconnect = { addListener: (listener) => this.disconnectListeners.push(listener) };
+    onMessage = { addListener: (listener: MessageListener) => this.messageListeners.push(listener) };
+    onDisconnect = { addListener: (listener: () => void) => this.disconnectListeners.push(listener) };
 
-    postMessage(message) {
+    postMessage(message: WireMessage) {
       this.messages.push(message);
     }
 
@@ -42,13 +59,15 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
       this.emitDisconnect("");
     }
 
-    emitDisconnect(errorMessage) {
-      globalThis.chrome.runtime.lastError = errorMessage ? { message: errorMessage } : undefined;
+    emitDisconnect(errorMessage: string) {
+      const chrome = (globalThis as ChromeFixtureGlobals).chrome;
+      assert.ok(chrome);
+      chrome.runtime.lastError = errorMessage ? { message: errorMessage } : undefined;
       for (const listener of this.disconnectListeners) listener();
-      delete globalThis.chrome.runtime.lastError;
+      delete chrome.runtime.lastError;
     }
 
-    emitMessage(message) {
+    emitMessage(message: WireMessage) {
       for (const listener of this.messageListeners) listener(message);
     }
   }
@@ -83,7 +102,7 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
         session: storageArea(sessionStored),
       },
       tabs: { query: async () => [] },
-    },
+    } satisfies ChromeFixture,
   });
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
@@ -97,14 +116,14 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
       }
     },
   });
-  globalThis.setInterval = () => ({ type: "interval" });
+  globalThis.setInterval = (() => ({ type: "interval" })) as unknown as typeof globalThis.setInterval;
   globalThis.clearInterval = () => undefined;
-  globalThis.setTimeout = (callback, delay) => {
+  globalThis.setTimeout = ((callback: () => void, delay?: number) => {
     const id = nextTimeoutId++;
     timeouts.set(id, { callback, delay });
     return id;
-  };
-  globalThis.clearTimeout = (id) => { timeouts.delete(id); };
+  }) as unknown as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((id: number) => { timeouts.delete(id); }) as unknown as typeof globalThis.clearTimeout;
 
   try {
     await import(`../src/background.js?durable-reconnect-test=${Date.now()}`);
@@ -127,6 +146,7 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
     assert.equal(sessionStored[RECONNECT_ATTEMPT_KEY], 1);
     assert.equal([...timeouts.values()][0]?.delay, 1_000);
 
+    assert.ok(runtimeListeners.alarm, "expected the alarm listener to be registered");
     runtimeListeners.alarm({ name: "unrelated.alarm" });
     await settle();
     assert.equal(ports.length, 1);
@@ -144,6 +164,7 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
       migratedLegacyCredential: false,
     });
     await settle();
+    assert.ok(runtimeListeners.startup, "expected the startup listener to be registered");
     runtimeListeners.startup();
     await settle();
     assert.equal(ports.length, 3);
@@ -151,6 +172,7 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
     heldAlarmClear = undefined;
     await settle();
 
+    assert.ok(runtimeListeners.message, "expected the popup listener to be registered");
     let status = await sendPopupMessage(runtimeListeners.message, { type: "status" });
     assert.equal(status.connected, false);
     ports[2].emitMessage({
@@ -211,20 +233,20 @@ test("Native disconnect leaves a durable Alarm that reconnects without opening t
   }
 });
 
-function storageArea(stored) {
+function storageArea(stored: StoredValues) {
   return {
-    get: async (keys) => Object.fromEntries(
+    get: async (keys: string[]) => Object.fromEntries(
       keys.filter((key) => key in stored).map((key) => [key, stored[key]]),
     ),
-    remove: async (keys) => {
+    remove: async (keys: string[]) => {
       for (const key of keys) delete stored[key];
     },
-    set: async (values) => Object.assign(stored, values),
+    set: async (values: StoredValues) => Object.assign(stored, values),
   };
 }
 
-function sendPopupMessage(listener, message) {
-  return new Promise((resolve, reject) => {
+function sendPopupMessage(listener: PopupListener, message: PopupMessage): Promise<PopupResponse> {
+  return new Promise<PopupResponse>((resolve, reject) => {
     const keepAlive = listener(message, {}, (response) => {
       if (response?.ok === false) reject(new Error(response.error));
       else resolve(response);
@@ -237,16 +259,17 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function fireNextTimeout(timeouts) {
-  const [id, timeout] = timeouts.entries().next().value ?? [];
-  assert.ok(timeout, "expected an active reconnect timeout");
+async function fireNextTimeout(timeouts: Map<number, TimeoutEntry>) {
+  const next = timeouts.entries().next().value;
+  assert.ok(next, "expected an active reconnect timeout");
+  const [id, timeout] = next;
   timeouts.delete(id);
   timeout.callback();
   await settle();
 }
 
 function deferred() {
-  let resolve;
-  const promise = new Promise((settle) => { resolve = settle; });
+  let resolve!: () => void;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
   return { promise, resolve };
 }
