@@ -1,4 +1,5 @@
 import {
+  bundledProviderModelCatalog,
   builtinMediaModelCandidates,
   enrichProviderModelOption,
   knownProviderModelThinkingSupport,
@@ -49,7 +50,7 @@ export async function listProviderModels(
   store: ProviderStoreFacet,
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
-  catalog: ProviderModelCatalogSnapshot,
+  catalog: ProviderModelCatalogSnapshot = bundledProviderModelCatalog,
 ): Promise<ProviderModelListResponse> {
   const authority = captureProviderModelDiscoveryAuthority(store, input.providerPresetId);
   const preset = providerModelListInputToPreset(input, authority.savedPreset);
