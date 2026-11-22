@@ -2398,7 +2398,7 @@ test("App Server reads bounded artifact ranges without exposing private metadata
 });
 
 test("a scheduled coordination occurrence commits with its round, restores its deadline and skips a paused Work Item", { timeout: 25_000 }, async t => {
-  const fixture = await releaseFixture(t);
+  const fixture = await releaseFixture(t, { recoveryJournal: true });
   const client = await fixture.connect();
   const { workItem } = await client.call<LingAppServerWorkItemResult>("workItem/create", { sourceId: "coordination", title: "Review the stage" });
   const { workItemId, workspaceId } = workItem;
@@ -2440,9 +2440,21 @@ test("a scheduled coordination occurrence commits with its round, restores its d
   } finally {
     database.close();
   }
+  const recovery = await client.call<LingAppServerRecoveryResult>("server/recovery/prepare", {
+    expectedRevision: 0, idempotencyKey: "hold-coordination-occurrence",
+  });
   await fixture.restart();
   const restored = await fixture.connect();
-  await restored.call("workItem/subscribe", { workItemId, cursor: before.cursor });
+  assert.equal((await restored.call<LingAppServerSubscriptionResult>("workItem/subscribe", { workItemId, cursor: before.cursor })).disposition, "snapshot_required");
+  const currentCursor = (await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId })).cursor;
+  await restored.call("workItem/subscribe", { workItemId, cursor: currentCursor });
+  const blocked = await runAutomation(occurrence);
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json() as { error: string }).error, "resume_blocked");
+  assert.equal(fixture.getStore().listAutomationRuns({ automationId: automation.id }).length, 0);
+  assert.equal(fixture.getStore().getAutomationDefinition(automation.id)?.nextRunAt, due);
+  const reconciled = await restored.call<LingAppServerRecoveryResult>("server/recovery/reconcile", { expectedRevision: recovery.revision });
+  assert.equal(reconciled.status, "ready");
   const scheduled = await waitFor(() => fixture.getStore().listAutomationRuns({ automationId: automation.id })[0]);
   assert.equal(scheduled.scheduledFor, due);
   assert.equal(scheduled.status, "succeeded");
@@ -3118,6 +3130,14 @@ test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observ
   assert.ok(blocked.entries.some(entry => entry.kind === "grant_revocation" && entry.id === revocable.grant.grantId));
   const request = { threadId: newWork.id, message: "Proceed after reconciliation", providerPresetId: preset.id, idempotencyKey: "after-rollback" };
   await assert.rejects(restored.call("turn/start", request), { code: "resume_blocked" });
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const blockedHttp = await fetch(`${daemonUrl}/runs`, {
+    method: "POST", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ cwd: fixture.cwd, providerPresetId: preset.id,
+      task: { id: "http-during-recovery", title: "Try to start during recovery", prompt: "Wait for recovery" }, tools: ["read"] }),
+  });
+  assert.equal(blockedHttp.status, 409);
+  assert.equal((await blockedHttp.json() as { error: string }).error, "resume_blocked");
   assert.equal(provider.requests.length, 0);
 
   assert.equal((await reconcileDelivery(restored)).deliveryId, observed.deliveryId);
