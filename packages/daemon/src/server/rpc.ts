@@ -159,10 +159,11 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
   let draining = false;
   const handleUpgrade: Parameters<Server["on"]>[1] = (request, socket, head) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
-    if (url.pathname !== "/rpc/stream" && url.pathname !== APP_SERVER_RPC_PATH) {
+    const appServer = url.pathname === APP_SERVER_RPC_PATH;
+    if (url.pathname !== "/rpc/stream" && !appServer) {
       return;
     }
-    if (draining && url.pathname === APP_SERVER_RPC_PATH) {
+    if (draining && appServer) {
       rejectUpgrade(socket, 503, "App Server is draining.");
       return;
     }
@@ -174,40 +175,38 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
       rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
       return;
     }
-    if (url.pathname === APP_SERVER_RPC_PATH && !context.config.authToken && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
+    if (appServer && !context.config.authToken && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
       rejectUpgrade(socket, 403, "WebSocket RPC access requires a direct loopback Ling page or bearer token.");
       return;
     }
-    if (!url.searchParams.get("cwd")) {
+    const cwd = url.searchParams.get("cwd");
+    if (!cwd) {
       rejectUpgrade(socket, 400, "cwd query parameter is required");
       return;
     }
-    if (url.pathname === APP_SERVER_RPC_PATH && !context.storeRegistry.isTrustedWorkspaceRoot(url.searchParams.get("cwd")!)) {
-      rejectUpgrade(socket, 403, "App Server access is limited to daemon-authorized workspaces.");
-      return;
+    let workspaceCwd = cwd;
+    if (appServer) {
+      try {
+        workspaceCwd = realpathSync(cwd);
+      } catch {
+        rejectUpgrade(socket, 403, "The App Server workspace could not be resolved.");
+        return;
+      }
+      if (!context.storeRegistry.isTrustedWorkspaceRoot(workspaceCwd)) {
+        rejectUpgrade(socket, 403, "App Server access is limited to daemon-authorized workspaces.");
+        return;
+      }
     }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
+      const connection = new RpcConnection(ws, workspaceCwd, context, appServer, Boolean(context.config.authToken), () => draining);
+      if (appServer) {
+        appServerConnections.add(connection);
+        ws.once("close", () => appServerConnections.delete(connection));
+      }
+      connection.start();
     });
   };
   server.on("upgrade", handleUpgrade);
-  wss.on("connection", (ws, request) => {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
-    const appServer = url.pathname === APP_SERVER_RPC_PATH;
-    const connection = new RpcConnection(
-      ws,
-      url.searchParams.get("cwd") ?? context.config.defaultWorkspaceCwd,
-      context,
-      appServer,
-      Boolean(context.config.authToken),
-      () => draining,
-    );
-    if (appServer) {
-      appServerConnections.add(connection);
-      ws.once("close", () => appServerConnections.delete(connection));
-    }
-    connection.start();
-  });
   const beginShutdown = (): void => {
     if (draining) return;
     draining = true;
@@ -683,12 +682,11 @@ class RpcConnection {
     let canonical: string;
     try {
       canonical = realpathSync(cwd);
-      if (canonical !== realpathSync(this.defaultCwd)) {
-        throw rpcError(-32040, "workspace_binding_invalid", "The requested workspace differs from the connection workspace.");
-      }
-    } catch (error) {
-      if (error instanceof Error && "jsonRpcCode" in error) throw error;
+    } catch {
       throw rpcError(-32040, "workspace_binding_invalid", "The connection workspace could not be resolved.");
+    }
+    if (canonical !== this.defaultCwd) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The requested workspace differs from the connection workspace.");
     }
     if (operator && !this.context.storeRegistry.isTrustedWorkspaceRoot(canonical)) {
       throw rpcError(-32020, "authorization_required", "This operation requires a daemon-known workspace.");

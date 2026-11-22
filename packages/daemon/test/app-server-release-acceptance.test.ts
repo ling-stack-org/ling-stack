@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
@@ -1191,7 +1191,13 @@ test("App Server replay cursors survive restart and stay bound to the workspace,
 
   const secondCwd = join(fixture.cwd, "other-workspace");
   await mkdir(secondCwd);
-  const secondWorkspace = await fixture.connect("/app-server/rpc", secondCwd);
+  const alias = join(fixture.root, "workspace-link");
+  await symlink(secondCwd, alias, "dir");
+  const secondWorkspace = await fixture.connect("/app-server/rpc", alias);
+  await unlink(alias);
+  await symlink(fixture.cwd, alias, "dir");
+  assert.equal((await secondWorkspace.call<{ cwd: string }>("workspace/read")).cwd, secondCwd);
+  await assert.rejects(secondWorkspace.call("workspace/read", { cwd: alias }), { code: "workspace_binding_invalid" });
   await secondWorkspace.call("thread/start", { threadId: thread.id, title: "Same ID in another workspace" });
   const differentWorkspace = await secondWorkspace.call<LingAppServerThreadEventsResult>("thread/events/read", read);
   assert.equal(differentWorkspace.window.disposition, "snapshot_required");
