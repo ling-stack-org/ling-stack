@@ -161,5 +161,8 @@ export function projectDeviceDiagnosticEvidence(
     }
     return { value: counts, hypotheses: counts.failed ? ["service_issue"] : [] };
   }
+  if (request.capabilityId === "pc.inspect.processes" && observation.source === "pc.processes" && Array.isArray(fields.processes)) {
+    return { value: { count: fields.processes.length }, hypotheses: [] };
+  }
   return undefined;
 }

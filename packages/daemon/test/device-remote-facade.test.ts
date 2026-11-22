@@ -135,6 +135,7 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
       async inventory() { return { hostname: "fixture-pc", os: "linux" }; },
       async readNetwork() { networkReads += 1; return { connected: networkConnected, gatewayReachable: true, dnsReachable: true }; },
       async readServices() { throw new Error("unexpected service read"); },
+      async readProcesses() { throw new Error("unexpected process read"); },
       async repairNetwork({ signal }) {
         repairCalls += 1;
         repairSignal = signal;

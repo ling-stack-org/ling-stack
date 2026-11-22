@@ -2,22 +2,32 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
-import { PC_SERVICE_INSPECTION_TIMEOUT_MS, type PcNetworkStatus, type PcServiceStatus, type PcTargetExecutor } from "./pc.js";
+import { PC_INSPECTION_TIMEOUT_MS, type PcNetworkStatus, type PcProcessInfo, type PcServiceStatus, type PcTargetExecutor } from "./pc.js";
 
 const execFile = promisify(nodeExecFile);
 
+const windowsPowerShell = win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+const windowsQueryArgs = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"];
 const windowsServiceQuery = [
   "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
   "ConvertTo-Json -Compress -InputObject @(Get-Service -ErrorAction Stop | ForEach-Object {",
   "  @{ name = $_.ServiceName; state = $_.Status.ToString() }",
   "})",
 ].join("\n");
+const windowsProcessQuery = [
+  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+  "ConvertTo-Json -Compress -InputObject @(Get-Process -ErrorAction Stop | ForEach-Object {",
+  "  @{ pid = $_.Id; name = $_.ProcessName }",
+  "})",
+].join("\n");
 
-const serviceInspection: Partial<Record<NodeJS.Platform, {
+interface PcInspection<T> {
   readonly file: string;
   readonly args: readonly string[];
-  readonly parse: (output: string) => readonly PcServiceStatus[] | undefined;
-}>> = {
+  readonly parse: (output: string) => readonly T[] | undefined;
+}
+
+const serviceInspection: Partial<Record<NodeJS.Platform, PcInspection<PcServiceStatus>>> = {
   linux: {
     file: "systemctl",
     args: ["list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager", "--full"],
@@ -25,10 +35,16 @@ const serviceInspection: Partial<Record<NodeJS.Platform, {
   },
   darwin: { file: "/bin/launchctl", args: ["list"], parse: parseLaunchdServices },
   win32: {
-    file: win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsServiceQuery],
+    file: windowsPowerShell,
+    args: [...windowsQueryArgs, windowsServiceQuery],
     parse: parseWindowsServices,
   },
+};
+
+const processInspection: Partial<Record<NodeJS.Platform, PcInspection<PcProcessInfo>>> = {
+  linux: { file: "/bin/ps", args: ["-ww", "-axo", "pid=,comm="], parse: parsePosixProcesses },
+  darwin: { file: "/bin/ps", args: ["-ww", "-axo", "pid=,ucomm="], parse: parsePosixProcesses },
+  win32: { file: windowsPowerShell, args: [...windowsQueryArgs, windowsProcessQuery], parse: parseWindowsProcesses },
 };
 
 export interface LocalProcessRunner {
@@ -82,14 +98,11 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
   }
 
   async readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[] | undefined> {
-    signal?.throwIfAborted();
-    const inspection = serviceInspection[this.#platform];
-    if (!inspection) return undefined;
-    const deadline = AbortSignal.timeout(PC_SERVICE_INSPECTION_TIMEOUT_MS);
-    const querySignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-    const result = await this.#runner.run(inspection.file, inspection.args, querySignal);
-    signal?.throwIfAborted();
-    return result.exitCode === 0 && !deadline.aborted ? inspection.parse(result.stdout) : undefined;
+    return this.#readInspection(serviceInspection[this.#platform], signal);
+  }
+
+  async readProcesses(signal?: AbortSignal): Promise<readonly PcProcessInfo[] | undefined> {
+    return this.#readInspection(processInspection[this.#platform], signal);
   }
 
   async repairNetwork(input: { readonly mode: "refresh_dhcp" | "restart_network"; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly changed: boolean }> {
@@ -105,6 +118,16 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
     }
     return { accepted: false, changed: false };
   }
+
+  async #readInspection<T>(inspection: PcInspection<T> | undefined, signal?: AbortSignal): Promise<readonly T[] | undefined> {
+    signal?.throwIfAborted();
+    if (!inspection) return undefined;
+    const deadline = AbortSignal.timeout(PC_INSPECTION_TIMEOUT_MS);
+    const querySignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    const result = await this.#runner.run(inspection.file, inspection.args, querySignal);
+    signal?.throwIfAborted();
+    return result.exitCode === 0 && !deadline.aborted ? inspection.parse(result.stdout) : undefined;
+  }
 }
 
 function parseSystemdServices(text: string): readonly PcServiceStatus[] | undefined {
@@ -114,7 +137,7 @@ function parseSystemdServices(text: string): readonly PcServiceStatus[] | undefi
     const match = /^\s*(\S+)\.service\s+\S+\s+(\S+)\s+\S+(?:\s|$)/u.exec(line);
     if (!match) return undefined;
     const [, name, activeState] = match;
-    if (!isServiceName(name)) return undefined;
+    if (!isInspectionName(name)) return undefined;
     const state = activeState === "failed" ? "failed"
       : activeState === "inactive" ? "stopped"
       : activeState === "active" || activeState === "reloading" || activeState === "refreshing" ? "running"
@@ -132,7 +155,7 @@ function parseLaunchdServices(text: string): readonly PcServiceStatus[] | undefi
     const match = /^\s*(-|[1-9]\d*)\s+(-?\d+)\s+(.+)$/u.exec(line);
     if (!match) return undefined;
     const [, pid, exitStatus, name] = match;
-    if (!isServiceName(name)) return undefined;
+    if (!isInspectionName(name)) return undefined;
     const code = Number(exitStatus);
     const state = pid !== "-" ? "running" : code > 0 ? "failed" : code === 0 ? "stopped" : "unknown";
     services.push({ name, state });
@@ -141,22 +164,54 @@ function parseLaunchdServices(text: string): readonly PcServiceStatus[] | undefi
 }
 
 function parseWindowsServices(text: string): readonly PcServiceStatus[] | undefined {
-  let rows: unknown;
-  try {
-    rows = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(rows)) return undefined;
+  const rows = parseWindowsInspection(text);
+  if (!rows) return undefined;
   const services: PcServiceStatus[] = [];
   for (const row of rows) {
-    if (!isServiceName(row?.name) || typeof row.state !== "string") return undefined;
+    if (!row || typeof row !== "object" || !("name" in row) || !("state" in row)
+      || !isInspectionName(row.name) || typeof row.state !== "string") return undefined;
     const state = row.state === "Running" ? "running" : row.state === "Stopped" ? "stopped" : "unknown";
     services.push({ name: row.name, state });
   }
   return services;
 }
 
-function isServiceName(value: unknown): value is string {
+function parsePosixProcesses(text: string): readonly PcProcessInfo[] | undefined {
+  const processes: PcProcessInfo[] = [];
+  for (const line of text.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    const match = /^(\d+)[ \t]+(.+)$/u.exec(line.trim());
+    if (!match) return undefined;
+    const [, pidText, name] = match;
+    const pid = Number(pidText);
+    if (!Number.isSafeInteger(pid) || !isInspectionName(name)) return undefined;
+    processes.push({ pid, name });
+  }
+  return processes;
+}
+
+function parseWindowsProcesses(text: string): readonly PcProcessInfo[] | undefined {
+  const rows = parseWindowsInspection(text);
+  if (!rows) return undefined;
+  const processes: PcProcessInfo[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || !("pid" in row) || !("name" in row)) return undefined;
+    const { pid, name } = row;
+    if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid < 0 || !isInspectionName(name)) return undefined;
+    processes.push({ pid, name });
+  }
+  return processes;
+}
+
+function parseWindowsInspection(text: string): readonly unknown[] | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    return Array.isArray(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isInspectionName(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 256 && !/[\p{Cc}\p{Cf}]/u.test(value);
 }

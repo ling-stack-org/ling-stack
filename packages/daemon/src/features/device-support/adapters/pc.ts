@@ -32,13 +32,19 @@ export interface PcServiceStatus {
   readonly state: "running" | "stopped" | "failed" | "unknown";
 }
 
-export const PC_SERVICE_INSPECTION_TIMEOUT_MS = 10_000;
-const PC_SERVICE_RESPONSE_BYTES_LIMIT = 256 * 1024;
+export interface PcProcessInfo {
+  readonly pid: number;
+  readonly name: string;
+}
+
+export const PC_INSPECTION_TIMEOUT_MS = 10_000;
+const PC_INVENTORY_RESPONSE_BYTES_LIMIT = 256 * 1024;
 
 export interface PcTargetExecutor {
   inventory(signal?: AbortSignal): Promise<{ readonly hostname: string; readonly os: string; readonly version?: string }>;
   readNetwork(signal?: AbortSignal): Promise<PcNetworkStatus>;
   readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[] | undefined>;
+  readProcesses(signal?: AbortSignal): Promise<readonly PcProcessInfo[] | undefined>;
   repairNetwork(input: { readonly mode: "refresh_dhcp" | "restart_network"; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly changed: boolean }>;
 }
 
@@ -49,7 +55,7 @@ export interface PcAdapterOptions {
 
 const pcManifest: AdapterManifestV1 = {
   adapterId: "pc-target-executor",
-  adapterVersion: "1.0.0",
+  adapterVersion: "1.1.0",
   contractMajor: 1,
   supportedDeviceKinds: ["pc"],
   supportedTransports: ["local_process", "ssh", "winrm"],
@@ -88,12 +94,29 @@ const pcManifest: AdapterManifestV1 = {
       approvalClass: "allow",
       requiredPermissions: ["pc.services.read"],
       prerequisites: [],
-      timeoutMs: PC_SERVICE_INSPECTION_TIMEOUT_MS,
-      responseBytesLimit: PC_SERVICE_RESPONSE_BYTES_LIMIT,
+      timeoutMs: PC_INSPECTION_TIMEOUT_MS,
+      responseBytesLimit: PC_INVENTORY_RESPONSE_BYTES_LIMIT,
       idempotency: "request",
       supportedDeviceKinds: ["pc"],
       supportedTransports: ["local_process", "ssh", "winrm"],
       displayMetadata: { label: "Inspect services", category: "diagnostics" },
+    },
+    {
+      id: "pc.inspect.processes",
+      schemaVersion: "1.0",
+      semanticVerb: "inspect.processes",
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      sideEffect: "read_only",
+      approvalClass: "allow",
+      requiredPermissions: ["pc.processes.read"],
+      prerequisites: [],
+      timeoutMs: PC_INSPECTION_TIMEOUT_MS,
+      responseBytesLimit: PC_INVENTORY_RESPONSE_BYTES_LIMIT,
+      idempotency: "request",
+      supportedDeviceKinds: ["pc"],
+      supportedTransports: ["local_process"],
+      displayMetadata: { label: "Inspect processes", category: "diagnostics" },
     },
     {
       id: "pc.repair.network",
@@ -166,10 +189,12 @@ export class PcAdapter implements DeviceAdapter {
     if (input.capability.id === "pc.inspect.services") {
       const services = await this.#executor.readServices(input.signal);
       const evidence = services && { services: services.map(({ name, state }) => ({ name, state })) };
-      if (!evidence || Buffer.byteLength(JSON.stringify(evidence)) > PC_SERVICE_RESPONSE_BYTES_LIMIT) {
-        return completedObservation(input, startedAt, { status: "unavailable" }, "pc.services", "unknown");
-      }
-      return completedObservation(input, startedAt, evidence, "pc.services");
+      return completedInventory(input, startedAt, evidence, "pc.services");
+    }
+    if (input.capability.id === "pc.inspect.processes") {
+      const processes = await this.#executor.readProcesses(input.signal);
+      const evidence = processes && { processes: processes.map(({ pid, name }) => ({ pid, name })) };
+      return completedInventory(input, startedAt, evidence, "pc.processes");
     }
     if (input.capability.id === "pc.repair.network") {
       const mode = isNetworkRepairMode(input.request.normalizedInput);
@@ -199,6 +224,18 @@ export class PcAdapter implements DeviceAdapter {
       observations: [observation],
     };
   }
+}
+
+function completedInventory(
+  input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1 },
+  startedAt: string,
+  evidence: JsonValue | undefined,
+  source: "pc.services" | "pc.processes",
+): DeviceAdapterExecutionResult {
+  if (!evidence || Buffer.byteLength(JSON.stringify(evidence)) > PC_INVENTORY_RESPONSE_BYTES_LIMIT) {
+    return completedObservation(input, startedAt, { status: "unavailable" }, source, "unknown");
+  }
+  return completedObservation(input, startedAt, evidence, source);
 }
 
 function completedObservation(

@@ -100,3 +100,55 @@ test("an empty PC service inspection requires a successful query with valid outp
   assert.equal(await inspect("darwin", "42\t0\tcom.example.running", 0), undefined);
   assert.equal(await inspect("win32", '[{"name":"test","state":null}]', 0), undefined);
 });
+
+test("PC process inspection reads PIDs and native names without command arguments", async t => {
+  for (const [platform, output, rows] of [
+    ["linux", "  1 systemd\n 42 Sample Worker\n", [{ pid: 1, name: "systemd" }, { pid: 42, name: "Sample Worker" }]],
+    ["darwin", "  1 launchd \n 42 Sample Worker \n", [{ pid: 1, name: "launchd" }, { pid: 42, name: "Sample Worker" }]],
+    ["win32", '[{"pid":0,"name":"Idle"},{"pid":42,"name":"示例"}]\r\n', [{ pid: 0, name: "Idle" }, { pid: 42, name: "示例" }]],
+  ] as const) {
+    await t.test(platform, async () => {
+      const executor = new LocalPcTargetExecutor({
+        platform,
+        runner: {
+          async run(file, args) {
+            if (platform === "win32") {
+              assert.match(file, /\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u);
+              assert.deepEqual(args.slice(0, 4), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
+              assert.match(args[4] ?? "", /Get-Process.*\n\s+@\{ pid = \$_\.Id; name = \$_\.ProcessName \}/u);
+            } else {
+              assert.equal(file, "/bin/ps");
+              assert.deepEqual(args, ["-ww", "-axo", platform === "darwin" ? "pid=,ucomm=" : "pid=,comm="]);
+            }
+            return { stdout: output, stderr: "", exitCode: 0 };
+          },
+        },
+      });
+      assert.deepEqual(await executor.readProcesses(), rows);
+    });
+  }
+});
+
+test("PC process inspection distinguishes empty, malformed, unavailable and cancelled results", async () => {
+  const inspect = (platform: NodeJS.Platform, stdout: string, exitCode: number) =>
+    new LocalPcTargetExecutor({ platform, runner: { async run() { return { stdout, stderr: "", exitCode }; } } });
+  assert.deepEqual(await inspect("linux", "", 0).readProcesses(), []);
+  assert.deepEqual(await inspect("win32", "[]", 0).readProcesses(), []);
+  assert.equal(await inspect("darwin", "1 launchd\n", 1).readProcesses(), undefined);
+  assert.equal(await inspect("linux", "1 systemd\n2\n", 0).readProcesses(), undefined);
+  assert.equal(await inspect("linux", "9999999999999999999 fake\n", 0).readProcesses(), undefined);
+  assert.equal(await inspect("win32", '[{"pid":"42","name":"Process"}]', 0).readProcesses(), undefined);
+  assert.equal(await inspect("win32", '[{"pid":42,"name":"bad\\u0000name"}]', 0).readProcesses(), undefined);
+  assert.equal(await inspect("freebsd", "", 0).readProcesses(), undefined);
+
+  const stop = new AbortController();
+  const stopped = new Error("operator stopped the task");
+  const cancelled = new LocalPcTargetExecutor({ platform: "darwin", runner: {
+    async run(_file, _args, signal) {
+      stop.abort(stopped);
+      assert.equal(signal?.aborted, true);
+      return { stdout: "1 launchd\n", stderr: "", exitCode: 0 };
+    },
+  } });
+  await assert.rejects(() => cancelled.readProcesses(stop.signal), stopped);
+});

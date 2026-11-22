@@ -503,7 +503,7 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   const { status, report } = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
   assert.equal(status, "succeeded");
   assert.equal(report.playbookId, "pc-software-diagnosis");
-  assert.deepEqual(report.actions.map(action => action.capabilityId), ["pc.inspect.network", "pc.inspect.services"]);
+  assert.deepEqual(report.actions.map(action => action.capabilityId), ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes"]);
   const network = report.facts.find(fact => fact.source === "pc.network");
   assert.ok(network);
   assert.equal(typeof (network.value as { connected?: unknown }).connected, "boolean");
@@ -598,7 +598,22 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.deepEqual(tasks.map(task => task.id), [report.taskId]);
     assert.equal(tasks[0]?.status, "succeeded");
     assert.equal(tasks[0]?.ownerId, tasks[0]?.targetDeviceIds[0]);
-    assert.equal(journal.listObservations(report.taskId).length, 2);
+    const observations = journal.listObservations(report.taskId);
+    assert.equal(observations.length, 3);
+    const processes = observations.find(observation => observation.source === "pc.processes");
+    assert.ok(processes);
+    const processFact = report.facts.find(fact => fact.observationId === processes.id);
+    if (processes.quality === "good") {
+      const inventory = processes.value as { processes: { pid: number; name: string }[] };
+      assert.ok(inventory.processes.length > 0);
+      assert.ok(inventory.processes.every(entry => Object.keys(entry).length === 2
+        && Number.isSafeInteger(entry.pid) && typeof entry.name === "string"));
+      assert.deepEqual(processFact?.value, { count: inventory.processes.length });
+    } else {
+      assert.deepEqual(processes.value, { status: "unavailable" });
+      assert.equal(processFact, undefined);
+      assert.ok(report.remainingUncertainty.some(entry => entry.ref === processes.id && entry.code === "unusable_observation"));
+    }
     const events = journal.listEvents(report.taskId);
     const planIndex = events.findIndex(event => event.type === "device_plan_accepted");
     const firstDispatch = events.findIndex(event => event.type === "attempt_prepared");
@@ -654,6 +669,51 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.ok(reopened.getRecordedCapabilitySnapshot(deviceId, snapshotEvidence.snapshotId));
   } finally {
     reopened.close();
+  }
+});
+
+test("a PC adapter upgrade refreshes the enrolled target while retaining its historical capability snapshot", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-pc-upgrade-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const databasePath = join(cwd, "device.sqlite");
+  const initial = createDeviceSupportRuntime({ databasePath });
+  const adapterId = "pc-target-executor";
+  let deviceId: string;
+  const snapshotId = "pc-before-process-inventory";
+  try {
+    const pc = await initial.broker.discover(adapterId, { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
+    deviceId = pc.device.id;
+    const snapshot = initial.store.getCurrentCapabilitySnapshot(deviceId);
+    assert.ok(snapshot);
+    const legacyVersion = "1.0.0";
+    const at = new Date().toISOString();
+    assert.equal(initial.store.registerDevice({ ...pc, adapterVersion: legacyVersion }, at), true);
+    initial.store.saveCapabilitySnapshot({
+      ...snapshot, snapshotId, adapterVersion: legacyVersion,
+      capabilities: snapshot.capabilities.filter(capability => capability.id !== "pc.inspect.processes"),
+    }, at);
+  } finally {
+    initial.close();
+  }
+
+  const upgraded = createDeviceSupportRuntime({ databasePath });
+  try {
+    assert.equal(upgraded.store.getCurrentCapabilitySnapshot(deviceId), undefined);
+    const result = await upgraded.diagnoseLocalPc();
+    assert.equal(result.status, "succeeded");
+    assert.equal(upgraded.store.listDevices().length, 1);
+    assert.deepEqual(result.attempts.map(attempt => attempt.request.targetDeviceId), [deviceId, deviceId, deviceId]);
+    assert.equal(result.report.playbookVersion, "1.1.0");
+    const current = upgraded.store.getCurrentCapabilitySnapshot(deviceId);
+    assert.equal(current?.adapterVersion, "1.1.0");
+    assert.ok(current?.capabilities.some(capability => capability.id === "pc.inspect.processes"));
+    const historical = upgraded.store.getRecordedCapabilitySnapshot(deviceId, snapshotId);
+    assert.equal(historical?.snapshot.adapterVersion, "1.0.0");
+    assert.deepEqual(historical?.snapshot.capabilities.map(capability => capability.id), [
+      "pc.inspect.network", "pc.inspect.services", "pc.repair.network",
+    ]);
+  } finally {
+    upgraded.close();
   }
 });
 
@@ -740,7 +800,7 @@ test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback 
   }
   await secondProvider.close();
   secondOnline = false;
-  const fallback = await checkDiagnosis(secondPreset, ["pc.inspect.network", "pc.inspect.services"], "graph");
+  const fallback = await checkDiagnosis(secondPreset, ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes"], "graph");
   assert.match(JSON.stringify(fallback.planning.metadata), /runner_unavailable/u);
   const switched = await checkDiagnosis(secondPreset, ["pc.inspect.services"], "model", firstPreset);
   assert.equal(switched.adapters.length, 1);

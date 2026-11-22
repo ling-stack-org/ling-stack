@@ -11,6 +11,7 @@ import {
   LinuxSshAdapter,
   ObdVehicleAdapter,
   PcAdapter,
+  type PcProcessInfo,
   type PcServiceStatus,
 } from "../dist/features/device-support/adapters/index.js";
 
@@ -115,6 +116,7 @@ test("PC adapter uses typed executor operations for diagnosis and repair", async
       async inventory() { operations.push("inventory"); return { hostname: "test-pc", os: "linux", version: "6.1" }; },
       async readNetwork() { operations.push("readNetwork"); return { connected: false, gatewayReachable: false }; },
       async readServices() { operations.push("readServices"); return [{ name: "network", state: "failed" }]; },
+      async readProcesses() { operations.push("readProcesses"); return []; },
       async repairNetwork() { operations.push("repairNetwork"); return { accepted: true, changed: true }; },
     },
   });
@@ -138,28 +140,34 @@ test("PC adapter uses typed executor operations for diagnosis and repair", async
   assert.deepEqual(operations, ["inventory", "repairNetwork"]);
 });
 
-test("PC diagnosis distinguishes an observed empty service inventory from unavailable evidence", async t => {
+test("PC diagnosis distinguishes empty service and process inventories from unavailable evidence", async t => {
   const store = new SqliteDeviceSupportStore();
   t.after(() => store.close());
   const broker = new DeviceCapabilityBroker({ store, now: () => now });
   let services: readonly PcServiceStatus[] | undefined;
+  let processes: readonly PcProcessInfo[] | undefined;
   const adapter = new PcAdapter({
     now: () => now,
     executor: {
       async inventory() { return { hostname: "test-pc", os: "linux" }; },
       async readNetwork() { return { connected: true }; },
       async readServices() { return services; },
+      async readProcesses() { return processes; },
       async repairNetwork() { throw new Error("unexpected write"); },
     },
   });
   broker.registerAdapter(adapter);
   const target = await broker.discover(adapter.manifest.adapterId, { connectionRef: "local:test-pc", ownerId: "workspace" });
   const snapshot = store.getCurrentCapabilitySnapshot(target.device.id)!;
-  const overBudget: PcServiceStatus[] = Array.from({ length: 1024 }, (_, index) => ({ name: `${index}-${"x".repeat(250)}`, state: "running" }));
-  for (const [taskId, reading, expectedQuality] of [
-    ["empty", [], "good"], ["failed", undefined, "unknown"], ["oversize", overBudget, "unknown"],
+  const oversizedServices: PcServiceStatus[] = Array.from({ length: 1024 }, (_, index) => ({ name: `${index}-${"x".repeat(250)}`, state: "running" }));
+  const oversizedProcesses: PcProcessInfo[] = oversizedServices.map(({ name }, pid) => ({ pid, name }));
+  for (const [taskId, serviceResult, processResult, expectedQuality] of [
+    ["empty", [], [], "good"],
+    ["failed", undefined, undefined, "unknown"],
+    ["oversize", oversizedServices, oversizedProcesses, "unknown"],
   ] as const) {
-    services = reading;
+    services = serviceResult;
+    processes = processResult;
     const task = broker.createTask({
       id: taskId, ownerKind: "daemon", ownerId: "pc-1", targetDeviceIds: [target.device.id],
       status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now,
@@ -168,18 +176,24 @@ test("PC diagnosis distinguishes an observed empty service inventory from unavai
       broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
       playbook: createPcSoftwareDiagnosisPlaybook(),
     });
-    const observation = store.listObservations(task.id).find(item => item.source === "pc.services");
-    assert.ok(observation);
-    assert.equal(observation.quality, expectedQuality);
-    const fact = run.report.facts.find(item => item.source === "pc.services");
-    if (expectedQuality === "good") {
-      assert.deepEqual(observation.value, { services: [] });
-      assert.deepEqual(fact?.value, { running: 0, stopped: 0, failed: 0, unknown: 0 });
-      assert.deepEqual(run.report.remainingUncertainty, []);
-    } else {
-      assert.deepEqual(observation.value, { status: "unavailable" });
-      assert.equal(fact, undefined);
-      assert.deepEqual(run.report.remainingUncertainty, [{ code: "unusable_observation", ref: observation.id }]);
+    const observations = store.listObservations(task.id);
+    for (const [source, emptyReading, emptyFact] of [
+      ["pc.services", { services: [] }, { running: 0, stopped: 0, failed: 0, unknown: 0 }],
+      ["pc.processes", { processes: [] }, { count: 0 }],
+    ] as const) {
+      const observation = observations.find(item => item.source === source);
+      assert.ok(observation);
+      assert.equal(observation.quality, expectedQuality);
+      const fact = run.report.facts.find(item => item.source === source);
+      if (expectedQuality === "good") {
+        assert.deepEqual(observation.value, emptyReading);
+        assert.deepEqual(fact?.value, emptyFact);
+        assert.deepEqual(run.report.remainingUncertainty, []);
+      } else {
+        assert.deepEqual(observation.value, { status: "unavailable" });
+        assert.equal(fact, undefined);
+        assert.ok(run.report.remainingUncertainty.some(entry => entry.code === "unusable_observation" && entry.ref === observation.id));
+      }
     }
   }
 });

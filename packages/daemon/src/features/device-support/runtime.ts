@@ -145,6 +145,11 @@ export function createDeviceSupportRuntime(options: {
     store.withWriteTransaction(() => {
       for (const profile of store.listDevices()) {
         if (profile.device.ownerScope !== DEFAULT_WORKSPACE_ID) continue;
+        if (profile.adapterId === adapter.manifest.adapterId && profile.transports.includes("local_process")
+          && profile.adapterVersion !== adapter.manifest.adapterVersion
+          && profile.device.lifecycleStatus !== "revoked" && profile.device.lifecycleStatus !== "retired") {
+          broker.registerDevice(adapter.manifest.adapterId, { ...profile, adapterVersion: adapter.manifest.adapterVersion });
+        }
         if ((profile.adapterId === linuxAdapter.manifest.adapterId && !hasCurrentLinuxConnection(profile))
           || (profile.adapterId === homeAssistantAdapterManifest().adapterId && profile.device.id !== homeAssistant?.deviceId)) {
           store.markDeviceOffline(profile.device.id, now());
