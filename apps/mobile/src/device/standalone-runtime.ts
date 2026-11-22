@@ -2,7 +2,7 @@ import type { DeviceApprovalBindingV1, DeviceErrorCodeV1, DeviceTaskV1, LinuxNet
 
 import { digestDeviceRequest, MobileDeviceExecution, type MobileDeviceJournal } from "./execution.ts";
 import {
-  entityIdFromRequest, HomeAssistantInputError, homeAssistantEntityState, prepareHomeAssistantDevice,
+  automationIdentityFromRequest, entityIdFromRequest, HomeAssistantInputError, homeAssistantEntityState, prepareHomeAssistantDevice,
   type HomeAssistantAvailability, type HomeAssistantDeviceInput, type HomeAssistantFetch,
 } from "./home-assistant.ts";
 import { createAsyncStorageMobileDeviceJournal, type MobileStorageLike, type MobileTaskEvidence } from "./journal.ts";
@@ -140,6 +140,38 @@ export async function createStandaloneDeviceRuntime(options: {
       return run;
     },
 
+    async verifyHomeAssistantRecovery(input: HomeAssistantDeviceInput & {
+      readonly recoveryTaskId: string;
+      readonly signal?: AbortSignal;
+    }): Promise<PhoneHomeAssistantRun> {
+      const expectedRecovery = recovery;
+      await expectedRecovery;
+      const evidence = await journal.readTaskEvidence(input.recoveryTaskId);
+      const original = readHomeAssistantAttempt(evidence);
+      const automationIdentity = original && automationIdentityFromRequest(original.record.request);
+      if (original?.operation !== "enable_automation" || !automationIdentity) {
+        throw new HomeAssistantInputError("找不到这次自动化恢复的记录。");
+      }
+      const connectionRevision = await options.randomId("ha_connection");
+      const reconciliationId = await options.randomId("device_reconciliation");
+      const { profile, snapshot, transport, entityId } = prepareHomeAssistantDevice({
+        ...input, ownerId, connectionRevision, now, fetch: options.fetch, automationIdentity,
+      });
+      if (profile.device.id !== original.record.request.targetDeviceId || entityId !== original.entityId) {
+        throw new HomeAssistantInputError("填写恢复记录中的 Home Assistant 地址和自动化实体。");
+      }
+      if (!foreground || expectedRecovery !== recovery || input.signal?.aborted) {
+        throw new HomeAssistantInputError("请在手机前台读取恢复结果。");
+      }
+      await execution.reconcile({
+        taskId: input.recoveryTaskId, attemptId: original.record.attempt.attemptId, reconciliationId,
+        profile, snapshot, transport, signal: input.signal,
+      });
+      const run = projectHomeAssistantRun(await journal.readTaskEvidence(input.recoveryTaskId));
+      if (!run) throw new Error("手机未能读取本次恢复记录。");
+      return run;
+    },
+
     async listHomeAssistantRuns(): Promise<readonly PhoneHomeAssistantRun[]> {
       await recovery;
       return listRecentRuns(journal, ownerId, async task => projectHomeAssistantRun(await journal.readTaskEvidence(task.id)));
@@ -263,7 +295,8 @@ function readHomeAssistantAttempt(evidence: MobileTaskEvidence) {
   if (!record || !entityId) return undefined;
   const recovery = record.request.actionId.startsWith(`${homeAssistantRecoveryPlaybookId}:`);
   const targetId = record.request.targetDeviceId;
-  const observationIds = (recovery ? record.attempt.verification : record.attempt.receipt)?.observationIds;
+  const reconciliation = record.reconciliations?.find(item => item.reconciliationId === evidence.task?.lastVerificationId);
+  const observationIds = (recovery ? reconciliation?.verification ?? record.attempt.verification : record.attempt.receipt)?.observationIds;
   const observation = evidence.observations.find(item => observationIds?.includes(item.id)
     && item.subjectId === (recovery ? targetId : entityId) && item.provenance.includes(targetId));
   return {
@@ -283,6 +316,6 @@ function projectHomeAssistantRun(evidence: MobileTaskEvidence): PhoneHomeAssista
     automationEnabled: state?.automationEnabled,
     canEnableAutomation: task.status === "succeeded" && operation === "diagnosis"
       && state?.automationEnabled === false && !!state.automationIdentity,
-    errorCode: record.attempt.receipt?.errorCode,
+    errorCode: task.status === "succeeded" ? undefined : record.attempt.receipt?.errorCode,
   };
 }
