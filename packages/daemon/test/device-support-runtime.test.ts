@@ -102,6 +102,17 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
   assert.ok(address && typeof address === "object");
   const base = `http://127.0.0.1:${address.port}/v1/device-support`;
   const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const graphResponse = await fetch(base + "/fabric/graph", { headers });
+  assert.equal(graphResponse.status, 200);
+  const graphProjection = await graphResponse.json() as { generatedAt: string; nodes: unknown[]; relationships: unknown[]; twins: unknown[] };
+  assert.match(graphProjection.generatedAt, /^2026-/u);
+  assert.deepEqual(graphProjection.nodes, []);
+  assert.deepEqual(graphProjection.relationships, []);
+  assert.deepEqual(graphProjection.twins, []);
+  const edgeProjection = await fetch(base + "/fabric/edge-runtimes", { headers });
+  assert.equal(edgeProjection.status, 200);
+  assert.deepEqual((await edgeProjection.json() as { runtimes: unknown[] }).runtimes, []);
+
   const post = (body: object, extraHeaders: Record<string, string> = {}) => fetch(base + "/home-assistant/diagnose", {
     method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
   });

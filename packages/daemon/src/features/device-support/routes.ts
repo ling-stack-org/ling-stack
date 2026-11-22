@@ -34,8 +34,11 @@ export async function handleDeviceSupportRoute(
   const homeAssistantCatalog = url.pathname === "/v1/device-support/home-assistant/catalog";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
+  const fabricGraph = url.pathname === "/v1/device-support/fabric/graph";
+  const edgeRuntimes = url.pathname === "/v1/device-support/fabric/edge-runtimes";
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
-    && !linuxAction && !homeAssistant && !homeAssistantReload && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
+    && !linuxAction && !homeAssistant && !homeAssistantReload && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
+    && !fabricGraph && !edgeRuntimes) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
@@ -70,6 +73,14 @@ export async function handleDeviceSupportRoute(
     writeSemanticTargets(url, request, response, runtime);
     return true;
   }
+  if (fabricGraph) {
+    writeFabricGraph(request, response, runtime);
+    return true;
+  }
+  if (edgeRuntimes) {
+    writeEdgeRuntimeProjection(request, response, runtime);
+    return true;
+  }
   if (fleetHealth) {
     if (request.method !== "GET") {
       response.setHeader("Allow", "GET");
@@ -101,6 +112,43 @@ export async function handleDeviceSupportRoute(
     writeDeviceOperationError(response, error);
   }
   return true;
+}
+
+function writeFabricGraph(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): void {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const ownedDeviceIds = new Set(runtime.store.listDevices()
+      .filter(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID)
+      .map(profile => profile.device.id));
+    const nodes = runtime.fabricStore.listGraphNodes().filter(node => node.deviceId !== undefined && ownedDeviceIds.has(node.deviceId));
+    const nodeIds = new Set(nodes.map(node => node.nodeId));
+    const relationships = runtime.fabricStore.listGraphRelationships().filter(relationship =>
+      nodeIds.has(relationship.fromNodeId) && nodeIds.has(relationship.toNodeId));
+    const twins = nodes.flatMap(node => {
+      const twin = runtime.fabricStore.getTwin(node.nodeId);
+      return twin ? [twin] : [];
+    });
+    writePrivateJson(response, 200, { generatedAt: new Date().toISOString(), nodes, relationships, twins });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+function writeEdgeRuntimeProjection(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): void {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    writePrivateJson(response, 200, { generatedAt: new Date().toISOString(), runtimes: runtime.edgeRuntimes.list() });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
 }
 
 function writeSemanticTargets(url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): void {
