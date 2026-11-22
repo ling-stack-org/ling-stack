@@ -70,6 +70,18 @@ export function PcDeviceTaskJournal({ client, taskId, connected, updatedAt, them
     return () => { active = false; };
   }, [client, connected, navigation, refresh, taskId, updatedAt]);
 
+  useEffect(() => {
+    if (!connected) return;
+    return client.watchDeviceTaskJournal(taskId, {
+      onUpdate: page => {
+        retained.current = { view: page, navigation: undefined };
+        setView(page);
+        setFailed(false);
+      },
+      onError: () => setFailed(true),
+    });
+  }, [client, connected, taskId]);
+
   const button = (label: string, onPress: () => void) => (
     <Pressable accessibilityRole="button" accessibilityState={{ disabled: !connected || loading }}
       disabled={!connected || loading} onPress={onPress} style={styles.button}>

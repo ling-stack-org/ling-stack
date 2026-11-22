@@ -365,6 +365,42 @@ test("device journal pages resume after reconnect and must match the requested t
   client.disconnect();
 });
 
+test("device journal watch resumes its cursor and stops polling when unsubscribed", async () => {
+  const harness = createHarness();
+  const client = harness.createClient();
+  const socket = await harness.connect(client, [...legacyCapabilities, "device.read", "device.journal"]);
+  const page = (sequence: number): RemoteDeviceTaskJournalV1 => ({
+    workspaceId: "default", task: { taskId: "task-1", ownerId: "pc-runtime", status: "succeeded", updatedAt: now },
+    streamId: "device-task:task-1", generation: 1, afterSequence: sequence - 1, latestSequence: sequence,
+    events: sequence === 0 ? [] : [{
+      eventId: `device-task:task-1:${sequence}`, traceId: "device-task:task-1", streamId: "device-task:task-1",
+      generation: 1, sourceId: "pc-runtime", sourceKind: "runtime", sequence, occurredAt: now,
+      kind: "task_transition", payload: { from: "executing", to: "succeeded" }, redactionClass: "public", retentionClass: "durable",
+    }], hasMore: false, requiresSnapshot: false,
+  });
+  const updates: number[] = [];
+  const errors: unknown[] = [];
+  const stop = client.watchDeviceTaskJournal("task-1", {
+    intervalMs: 1_000,
+    onUpdate: value => updates.push(value.latestSequence),
+    onError: error => errors.push(error),
+  });
+  await waitFor(() => socket.frames().filter(frame => frame.type === "device.task.journal").length >= 1);
+  const firstFrame = socket.frames().find(frame => frame.type === "device.task.journal")!;
+  socket.message("command.completed", {
+    commandId: firstFrame.payload.commandId, commandType: "device.task.journal", completedAt: now,
+    result: { kind: "device_task_journal_read", journal: page(1) },
+  }, 2);
+  await waitFor(() => updates.length === 1 || errors.length > 0);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(updates, [1]);
+  stop();
+  const frameCount = socket.frames().filter(frame => frame.type === "device.task.journal").length;
+  await delay(1_050);
+  assert.equal(socket.frames().filter(frame => frame.type === "device.task.journal").length, frameCount);
+  client.disconnect();
+});
+
 async function waitFor(predicate: () => boolean) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;

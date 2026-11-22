@@ -51,6 +51,12 @@ export interface RemoteCommandHandle<TResult> {
   readonly completion: Promise<TResult>;
 }
 
+export interface RemoteDeviceTaskJournalWatchOptions {
+  readonly intervalMs?: number;
+  readonly onUpdate: (journal: RemoteDeviceTaskJournalV1) => void;
+  readonly onError?: (error: unknown) => void;
+}
+
 interface PendingCommand<TResult = unknown> {
   readonly commandId: string;
   readonly messageId: string;
@@ -279,6 +285,50 @@ export class RemoteSessionClient {
       throw new Error("remote_device_journal_binding_mismatch");
     }
     return result.journal;
+  }
+
+  watchDeviceTaskJournal(taskId: string, options: RemoteDeviceTaskJournalWatchOptions): () => void {
+    const intervalMs = options.intervalMs ?? 3_000;
+    if (!Number.isSafeInteger(intervalMs) || intervalMs < 1_000 || intervalMs > 60_000) {
+      throw new Error("remote_device_journal_watch_interval_invalid");
+    }
+    let active = true;
+    let inFlight = false;
+    let generation = 1;
+    let afterSequence = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const schedule = () => {
+      if (!active) return;
+      timer = setTimeout(() => { void poll(); }, intervalMs);
+    };
+    const poll = async (): Promise<void> => {
+      if (!active || inFlight) return;
+      inFlight = true;
+      try {
+        let page = await this.readDeviceTaskJournal(taskId, { generation, afterSequence });
+        if (page.requiresSnapshot) {
+          generation = page.generation;
+          afterSequence = 0;
+          page = await this.readDeviceTaskJournal(taskId, { generation, afterSequence });
+          if (page.requiresSnapshot) throw new Error("remote_device_journal_snapshot_unavailable");
+        }
+        if (!active) return;
+        generation = page.generation;
+        afterSequence = page.latestSequence;
+        options.onUpdate(page);
+      } catch (error) {
+        if (active) options.onError?.(error);
+      } finally {
+        inFlight = false;
+        schedule();
+      }
+    };
+    void poll();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
   }
 
   async approveDeviceTask(taskId: string, preview: RemoteDeviceApprovalPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.approve"]>> {
