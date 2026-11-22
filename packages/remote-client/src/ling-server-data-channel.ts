@@ -27,21 +27,31 @@ export async function connectLingServerDataChannel(options: LingServerDataChanne
     throw new Error("ling_server_negotiation_deadline_invalid");
   }
   const controller = new AbortController();
+  const signal = controller.signal;
+  const aborted = new Promise<never>((_, reject) => {
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
   const cancel = () => controller.abort(new Error("ling_server_negotiation_cancelled"));
   options.signal?.addEventListener("abort", cancel, { once: true });
   if (options.signal?.aborted) cancel();
   const timer = setTimeout(() => controller.abort(new Error("ling_server_negotiation_timed_out")), Math.min(timeoutMs, remainingMs));
 
   let peer: RTCPeerConnection | undefined;
-  try {
-    const signaling = await LingServerSignalingClient.open({ ...options, signal: controller.signal });
+  const open = async () => {
+    const signaling = await LingServerSignalingClient.open({ ...options, signal });
     const config = await signaling.transportConfig();
+    signal.throwIfAborted();
     const createPeer = options.createPeerConnection ?? (configuration => new RTCPeerConnection(configuration));
     peer = createPeer(iceConfiguration(config));
     return await negotiate(peer, signaling, options.role, controller);
+  };
+  try {
+    const connected = await Promise.race([aborted, open()]);
+    signal.throwIfAborted();
+    return connected;
   } catch (error) {
     peer?.close();
-    throw controller.signal.aborted ? controller.signal.reason : error;
+    throw signal.aborted ? signal.reason : error;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", cancel);
@@ -55,6 +65,7 @@ async function negotiate(
   controller: AbortController,
 ): Promise<LingServerDataChannel> {
   const signal = controller.signal;
+  signal.throwIfAborted();
   const gateway = role === "gateway";
   let channel: RTCDataChannel | undefined;
   let transport: RemoteMessageChannel | undefined;
@@ -94,6 +105,7 @@ async function negotiate(
     nextSequence += 1;
   };
   const describe = async (description: RTCSessionDescriptionInit) => {
+    signal.throwIfAborted();
     await peer.setLocalDescription(description);
     if (!description.sdp || (description.type !== "offer" && description.type !== "answer")) {
       throw new Error("ling_server_local_description_invalid");
@@ -101,10 +113,16 @@ async function negotiate(
     await publish(description.type, description.sdp);
     descriptionDigests[description.type] = digestDescription(description.sdp);
   };
+  const detach = () => {
+    peer.removeEventListener("icecandidate", gatherCandidate);
+    peer.removeEventListener("datachannel", receiveChannel);
+    peer.removeEventListener("connectionstatechange", checkState);
+  };
 
   peer.addEventListener("icecandidate", gatherCandidate);
   peer.addEventListener("datachannel", receiveChannel);
   peer.addEventListener("connectionstatechange", checkState);
+  signal.addEventListener("abort", detach, { once: true });
   try {
     if (gateway) {
       channel = peer.createDataChannel(channelLabel, { ordered: true, protocol: channelProtocol });
@@ -130,12 +148,14 @@ async function negotiate(
       for (const candidate of localCandidates.splice(0)) await publish("ice_candidate", JSON.stringify(candidate));
       const page = await signaling.poll(remoteSequence);
       for (const message of page.messages) {
+        signal.throwIfAborted();
         if (message.messageType === "ice_candidate") {
           if (!hasRemoteDescription) throw new Error("ling_server_peer_description_required");
           await peer.addIceCandidate(readIceCandidate(message.payload));
         } else {
           if (hasRemoteDescription) throw new Error("ling_server_peer_description_duplicate");
           await peer.setRemoteDescription({ type: message.messageType, sdp: message.payload });
+          signal.throwIfAborted();
           descriptionDigests[message.messageType] = digestDescription(message.payload);
           hasRemoteDescription = true;
           if (!gateway) await describe(await peer.createAnswer());
@@ -145,9 +165,8 @@ async function negotiate(
       if (!page.hasMore) await waitForNextPoll(signal);
     }
   } finally {
-    peer.removeEventListener("icecandidate", gatherCandidate);
-    peer.removeEventListener("datachannel", receiveChannel);
-    peer.removeEventListener("connectionstatechange", checkState);
+    signal.removeEventListener("abort", detach);
+    detach();
   }
 }
 
@@ -158,9 +177,10 @@ function digestDescription(sdp: string): string {
 function iceConfiguration(config: Extract<LingServerSignalingResponseV1, { kind: "transport_config" }>): RTCConfiguration {
   const relay = config.relayCredential;
   if (relay) {
+    const urls = [...new Set([relay.url, ...config.turnUrls])];
     return {
       iceTransportPolicy: "relay",
-      iceServers: [{ urls: relay.url, username: relay.username, credential: relay.credential }],
+      iceServers: [{ urls, username: relay.username, credential: relay.credential }],
     };
   }
   return { iceServers: config.route === "lan" || config.stunUrls.length === 0 ? [] : [{ urls: [...config.stunUrls] }] };

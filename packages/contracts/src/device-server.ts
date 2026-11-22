@@ -130,11 +130,13 @@ export type LingServerSignalingResponseV1 =
       readonly kind: "transport_config";
       readonly route: LingServerTransportRouteV1;
       readonly stunUrls: readonly string[];
+      /** TURN listeners in the installation's shared relay credential domain. */
       readonly turnUrls: readonly string[];
       readonly relayCredential?: LingServerRelayCredentialV1;
     };
 
 export interface LingServerRelayCredentialV1 {
+  /** Default listener for consumers that use a single TURN endpoint. */
   readonly url: string;
   readonly username: string;
   readonly credential: string;

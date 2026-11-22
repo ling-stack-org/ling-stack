@@ -2,7 +2,7 @@
 
 Status: proposed design, implementation and device acceptance pending
 Owner: Ling platform maintainers
-Last verified: 2026-11-20
+Last verified: 2026-11-22
 Document type: enrollment, peer transport, relay, and synchronization contract
 
 Related documents:
@@ -167,7 +167,9 @@ service keeps the signed payloads in memory until expiration. Restart, revoke an
 relay fallback invalidate the earlier signaling scope.
 A signed `transport_config` request retrieves the configured STUN endpoints.
 During relay checks it also retrieves a short-lived coturn credential for its
-own role.
+own role and the configured TURN listeners. Each listed TURN listener uses the
+same relay credential secret. The credential's `url` identifies the default
+listener for a single-endpoint consumer.
 [Signaling protocol](../../packages/remote-protocol/src/ling-server-signaling.ts)
 
 The Remote Client verifies each polled message against the pinned peer key and
@@ -176,7 +178,10 @@ It releases a page to the WebRTC adapter after every message verifies. The adapt
 applies the signed SDP and ICE candidates, bounds negotiation time, and creates
 one reliable, ordered `ling-peer.v1` DataChannel. The LAN path uses host candidates,
 the direct path can use the configured STUN services, and the relay path uses the
-issued TURN credential. Cancellation closes an incomplete connection.
+issued credential across the configured TURN endpoints. ICE can select a reachable
+TURN/TLS listener when TURN/UDP is unavailable. At cancellation or timeout, the
+adapter closes an incomplete connection and stops processing signaling for that
+negotiation even if a platform operation is still pending.
 [Endpoint negotiation](../../packages/remote-client/src/ling-server-data-channel.ts)
 
 After the DataChannel opens, authenticate again at the Remote Gateway using the

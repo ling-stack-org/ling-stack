@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
+import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 
 import type { LingServerSignalingInputV1, RemoteP256PublicJwkV1 } from "@ling-stack/contracts";
@@ -33,7 +34,7 @@ function harness(preferred: "lan" | "direct" | "relay" = "lan") {
   const origin = "https://ling.example";
   const instanceId = "instance-1";
   const requests: LingServerSignalingInputV1[] = [];
-  let response: unknown;
+  let respond: (input: LingServerSignalingInputV1) => unknown = () => undefined;
   const options: LingServerSignalingClientOptions = {
     installation: {
       installationId: "installation-1", serverOrigin: origin, applicationKeyFingerprint: createKey().fingerprint, revision: 1, status: "active",
@@ -70,7 +71,7 @@ function harness(preferred: "lan" | "direct" | "relay" = "lan") {
         assert.deepEqual(proof.publicKeyJwk, mobile.publicJwk);
         assert.ok(verifySignature(mobile.publicJwk, lingServerSignalingSigningBytes(proof.input), proof.signature));
         requests.push(proof.input);
-        return { status: 200, body: response as T };
+        return { status: 200, body: respond(proof.input) as T };
       },
     },
   };
@@ -89,7 +90,8 @@ function harness(preferred: "lan" | "direct" | "relay" = "lan") {
   return {
     options, offer, requests,
     unpairedKey: createKey(),
-    setResponse(value: unknown) { response = value; },
+    setResponse(value: unknown) { respond = () => value; },
+    setResponder(responder: typeof respond) { respond = responder; },
     setNow(value: string) { now = value; },
   };
 }
@@ -200,4 +202,90 @@ test("cancelling negotiation interrupts signaling before any peer connection is 
   assert.equal(requestOpened, true);
   abort.abort();
   await assert.rejects(connection, /negotiation_cancelled/u);
+});
+
+test("relay negotiation offers UDP and TLS to ICE and can cancel while the peer is preparing its answer", { timeout: 5_000 }, async t => {
+  const fixture = harness("relay");
+  const abort = new AbortController();
+  const udpUrl = "turn:relay.ling.example:3478?transport=udp";
+  const tlsUrl = "turns:relay.ling.example:443?transport=tcp";
+  const relayCredential = {
+    url: udpUrl, username: "fixture-user", credential: "fixture-credential", expiresAt: fixture.options.route.expiresAt,
+  };
+  const offer = fixture.offer();
+  assert.equal(offer.input.operation.kind, "publish");
+  fixture.setResponder(({ operation }) => {
+    if (operation.kind === "transport_config") {
+      return {
+        kind: "transport_config", route: "relay", stunUrls: ["stun:ling.example"],
+        turnUrls: [udpUrl, udpUrl, tlsUrl], relayCredential,
+      };
+    }
+    assert.equal(operation.kind, "poll");
+    return { kind: "signals", messages: [offer], latestSequence: 1, hasMore: false };
+  });
+
+  let describe!: (description: RTCSessionDescriptionInit) => void;
+  const descriptionStarted = new Promise<RTCSessionDescriptionInit>(resolve => { describe = resolve; });
+  let finishDescription!: () => void;
+  const descriptionFinished = new Promise<void>(resolve => { finishDescription = resolve; });
+  let closeCount = 0;
+  let answerCount = 0;
+  const peer = Object.assign(new EventTarget(), {
+    setRemoteDescription(description: RTCSessionDescriptionInit) {
+      describe(description);
+      return descriptionFinished;
+    },
+    createAnswer() { answerCount += 1; },
+    close() { closeCount += 1; },
+  });
+  t.after(() => {
+    abort.abort();
+    finishDescription();
+  });
+  const connection = connectLingServerDataChannel({
+    ...fixture.options,
+    signal: abort.signal,
+    createPeerConnection(configuration) {
+      assert.deepEqual(configuration, {
+        iceTransportPolicy: "relay",
+        iceServers: [{ urls: [udpUrl, tlsUrl], username: relayCredential.username, credential: relayCredential.credential }],
+      });
+      return peer as unknown as RTCPeerConnection;
+    },
+  });
+  const description = await Promise.race([
+    descriptionStarted,
+    connection.then(() => assert.fail("peer opened before processing the offer")),
+  ]);
+  assert.deepEqual(description, { type: "offer", sdp: offer.input.operation.payload });
+  abort.abort();
+  await assert.rejects(connection, /ling_server_negotiation_cancelled/u);
+  assert.equal(closeCount, 1);
+  finishDescription();
+  await setImmediate();
+  assert.equal(answerCount, 0);
+  assert.deepEqual(fixture.requests.map(request => request.operation.kind), ["transport_config", "poll"]);
+});
+
+test("the negotiation deadline bounds a signaling request that ignores cancellation", { timeout: 5_000 }, async () => {
+  const fixture = harness("direct");
+  let requestStarted = false;
+  let requestSignal: AbortSignal | undefined;
+  await assert.rejects(connectLingServerDataChannel({
+    ...fixture.options,
+    timeoutMs: 10,
+    http: {
+      ...fixture.options.http,
+      getJson(_, __, requestOptions) {
+        requestStarted = true;
+        requestSignal = requestOptions?.signal ?? undefined;
+        return new Promise<never>(() => {});
+      },
+    },
+    createPeerConnection: () => assert.fail("unexpected peer connection"),
+  }), /ling_server_negotiation_timed_out/u);
+  assert.equal(requestStarted, true);
+  assert.equal(requestSignal?.aborted, true);
+  assert.deepEqual(fixture.requests, []);
 });
