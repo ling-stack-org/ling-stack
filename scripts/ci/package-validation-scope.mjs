@@ -13,8 +13,12 @@ const testCompilerOptions = ["allowImportingTsExtensions", "lib", "target"];
 const workspacePackageName = /^@ling-stack\/[a-z0-9-]+$/u;
 const browserHostTestRunner = "node scripts/test.mjs";
 const browserHostTestPatterns = ["test/*.test.mjs", "test/*.test.ts"];
-// Browser Host tests use the Daemon broker built for the A01 fixture.
-export const VALIDATION_BUILD_DEPENDENCIES = new Map([["@ling-stack/browser-host", ["@ling-stack/daemon"]]]);
+export const VALIDATION_BUILD_DEPENDENCIES = new Map([
+  // The A01 fixture uses the built Daemon broker.
+  ["@ling-stack/browser-host", ["@ling-stack/daemon"]],
+  // The suspension activation suite uses the Daemon replay package and the Pi prompt formatter.
+  ["@ling-stack/core", ["@ling-stack/daemon", "@ling-stack/runner-pi"]],
+]);
 const localizationTestDeclarations = [
   "scripts/catalog-locales.d.mts",
   "scripts/catalog-utils.d.mts",

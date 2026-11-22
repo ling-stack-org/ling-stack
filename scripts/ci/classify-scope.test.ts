@@ -14,6 +14,7 @@ const packageEntries: PackageEntry[] = [
   entry("@ling-stack/plugin-sdk", "packages/plugin-sdk", [], true, true),
   entry("@ling-stack/core", "packages/core", ["@ling-stack/contracts", "@ling-stack/plugin-sdk"], true, true),
   entry("@ling-stack/providers", "packages/providers", ["@ling-stack/plugin-sdk"], true, true),
+  entry("@ling-stack/runner-pi", "packages/runner-pi", ["@ling-stack/contracts"], true, true),
   entry("@ling-stack/daemon", "packages/daemon", ["@ling-stack/core", "@ling-stack/providers"], true, true),
   entry("@ling-stack/cli", "packages/cli", ["@ling-stack/daemon"], true, true),
   entry("@ling-stack/ui-react", "packages/ui-react", [], true, true),
@@ -23,6 +24,7 @@ const packageEntries: PackageEntry[] = [
   entry("@ling-stack/desktop", "apps/desktop", ["@ling-stack/ui-react"], true, true),
   entry("@ling-stack/mobile", "apps/mobile", [], true, true),
 ];
+const coreValidationBuildPackages = ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/runner-pi"];
 
 function entry(name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean): PackageEntry {
   return { name, directory, dependencies, hasTestScript, hasTypecheckScript, scriptsFingerprint: "[]" };
@@ -57,7 +59,7 @@ test("repository presentation assets use the fast lane and compose with source e
 test("package-owned image resources stay with their package without selecting the full lane", () => {
   const scope = classify(["packages/core/assets/provider-logo.png"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.deepEqual(scope.packages, ["@ling-stack/cli", ...coreValidationBuildPackages]);
   assert.equal(scope.dependencyPolicy, false);
 });
 
@@ -201,7 +203,7 @@ test("package-local manifests and tooling configurations select their own consum
   }
   const core = classify(["packages/core/package.json"]);
   assert.equal(core.mode, "affected");
-  assert.deepEqual(core.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.deepEqual(core.packages, ["@ling-stack/cli", ...coreValidationBuildPackages]);
   assert.equal(core.daemon, true);
   assert.equal(core.dependencyPolicy, true);
   const desktop = classify(["apps/desktop/package.json"]);
@@ -272,8 +274,21 @@ test("mixed changes union all affected packages without disabling a dependency l
 test("core changes include daemon, CLI, and Web consumers", () => {
   const scope = classify(["packages/core/src/index.ts"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.deepEqual(scope.packages, ["@ling-stack/cli", ...coreValidationBuildPackages]);
   assert.equal(scope.daemon, true);
+});
+
+test("Core test changes build cross-package fixtures and run only Core validation", () => {
+  const scope = classify(["packages/core/test/provider-configuration-snapshot.test.ts"]);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, coreValidationBuildPackages);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+  assert.deepEqual(scope.daemonPlatforms, []);
+  assert.equal(scope.linuxContract, false);
+  assert.equal(scope.macosNative, false);
 });
 
 test("daemon source changes include CLI but do not pull Web", () => {
@@ -725,7 +740,7 @@ test("a verified Node/TypeScript test migration retains complete owner validatio
   repo.commit();
   const scope = repo.classify(repo.base);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.packages, coreValidationBuildPackages);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
   assert.equal(scope.dependencyPolicy, false);
@@ -743,7 +758,7 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   repo.commit();
   const scope = repo.classify(repo.base);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.packages, coreValidationBuildPackages);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
   assert.equal(scope.dependencyPolicy, false);
@@ -940,13 +955,13 @@ test("workspace dependency builds and the owning package build closure retain pa
     baselineTypecheck: "corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
   });
   repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
-  for (const name of ["@ling-stack/core", "@ling-stack/contracts"]) {
+  for (const name of ["@ling-stack/core", "@ling-stack/contracts", "@ling-stack/daemon"]) {
     repo.manifest.scripts.typecheck = "corepack pnpm --filter " + name + "... run build:ci && corepack pnpm typecheck:ci";
     repo.saveManifest();
     repo.commit();
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "affected");
-    assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+    assert.deepEqual(scope.packages, coreValidationBuildPackages);
     assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
     assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
     assert.equal(scope.dependencyPolicy, false);
@@ -1013,7 +1028,7 @@ test("isolated test config compiler options stay scoped with and without a test 
     repo.commit();
     const scope = repo.classify(base);
     assert.equal(scope.mode, "affected");
-    assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+    assert.deepEqual(scope.packages, coreValidationBuildPackages);
     assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
     assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
     assert.equal(scope.dependencyPolicy, false);
@@ -1102,7 +1117,7 @@ test("opaque commands, build hooks, metadata changes and incomplete test discove
     repo => { repo.manifest.scripts["test:ci"] = "echo omitted"; },
     repo => { repo.manifest.scripts.typecheck = "echo omitted"; },
     repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/daemon build && corepack pnpm typecheck:ci"; },
-    repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/daemon... run build:ci && corepack pnpm typecheck:ci"; },
+    repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/mobile... run build:ci && corepack pnpm typecheck:ci"; },
     repo => {
       repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
       repo.manifest.scripts.typecheck = "corepack pnpm test && corepack pnpm typecheck:ci";
