@@ -32,6 +32,7 @@ export interface DeviceGraphRelationshipV1 {
   readonly revision: number;
 }
 
+/** Reference to evidence accepted by the owner of the identity workflow. */
 export interface DeviceIdentityEvidenceV1 {
   readonly kind: "adapter" | "operator";
   readonly source: string;

@@ -46,6 +46,10 @@ export class DeviceSemanticGraph {
     if (!node.nodeId || node.revision < 0) throw new DeviceFabricError("revision_conflict", "graph node identity is invalid");
     const previous = this.#nodes.get(node.nodeId);
     if (previous && node.revision < previous.revision) throw new DeviceFabricError("revision_conflict", "graph node revision regressed");
+    if (previous && node.revision === previous.revision) {
+      if (!isDeepStrictEqual(node, previous)) throw new DeviceFabricError("revision_conflict", "graph node revision is bound to different state");
+      return previous;
+    }
     if (node.parentNodeId && !this.#nodes.has(node.parentNodeId)) throw new DeviceFabricError("target_missing", "graph parent node is missing");
     this.#nodes.set(node.nodeId, node);
     return node;
@@ -64,31 +68,32 @@ export class DeviceSemanticGraph {
     if (!node) throw new DeviceFabricError("target_missing", "graph node is missing");
     if (revision < node.revision) throw new DeviceFabricError("revision_conflict", "identity merge revision regressed");
     const next = { ...node, revision, identityRefs: [...new Set([...node.identityRefs, identityRef])] };
-    this.#nodes.set(nodeId, next);
-    return next;
+    return this.upsertNode(next);
   }
 
   mergeIdentityWithEvidence(change: DeviceIdentityChangeV1): DeviceGraphNodeV1 {
     assertIdentityChange(change, "merge");
     const node = this.#nodes.get(change.nodeId);
     if (!node) throw new DeviceFabricError("target_missing", "graph node is missing");
-    if (change.revision === node.revision && node.identityRefs.includes(change.identityRef)) return node;
-    if (change.revision <= node.revision) throw new DeviceFabricError("revision_conflict", "identity merge revision must advance");
+    if (change.revision !== node.revision + 1) throw new DeviceFabricError("revision_conflict", "identity merge revision is stale");
     return this.mergeIdentity(change.nodeId, change.identityRef, change.revision);
   }
 
   splitIdentity(nodeId: string, identityRef: string, newNode: DeviceGraphNodeV1): DeviceGraphNodeV1 {
     const node = this.#nodes.get(nodeId);
     if (!node || !node.identityRefs.includes(identityRef)) throw new DeviceFabricError("target_missing", "identity reference is not attached");
-    this.#nodes.set(nodeId, { ...node, identityRefs: node.identityRefs.filter(ref => ref !== identityRef), revision: Math.max(node.revision, newNode.revision) });
-    return this.upsertNode(newNode);
+    assertIdentitySplitDestination(nodeId, identityRef, newNode, this.#nodes.has(newNode.nodeId));
+    if (newNode.revision <= node.revision) throw new DeviceFabricError("revision_conflict", "identity split revision must advance");
+    const added = this.upsertNode(newNode);
+    this.#nodes.set(nodeId, { ...node, identityRefs: node.identityRefs.filter(ref => ref !== identityRef), revision: newNode.revision });
+    return added;
   }
 
   splitIdentityWithEvidence(change: DeviceIdentityChangeV1, newNode: DeviceGraphNodeV1): DeviceGraphNodeV1 {
     assertIdentityChange(change, "split");
     const node = this.#nodes.get(change.nodeId);
     if (!node || !node.identityRefs.includes(change.identityRef)) throw new DeviceFabricError("target_missing", "identity reference is not attached");
-    if (change.newNodeId !== newNode.nodeId || change.revision <= node.revision || newNode.revision !== change.revision) {
+    if (change.newNodeId !== newNode.nodeId || change.revision !== node.revision + 1 || newNode.revision !== change.revision) {
       throw new DeviceFabricError("revision_conflict", "identity split revision is inconsistent");
     }
     return this.splitIdentity(change.nodeId, change.identityRef, newNode);
@@ -714,19 +719,27 @@ export function assertEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1):
 
 export function assertIdentityChange(change: DeviceIdentityChangeV1, operation: DeviceIdentityChangeV1["operation"]): void {
   const evidence = change.evidence;
+  const isBoundedId = (value: unknown): value is string =>
+    typeof value === "string" && value.trim().length > 0 && value.length <= 512;
   if (Object.keys(change).some(key => !["changeId", "operation", "nodeId", "identityRef", "newNodeId", "evidence", "authority", "revision", "changedAt"].includes(key))
     || change.operation !== operation
-    || [change.changeId, change.nodeId, change.identityRef, change.authority].some(value => !value.trim() || value.length > 512)
-    || (operation === "split" && (!change.newNodeId || !change.newNodeId.trim()))
+    || ![change.changeId, change.nodeId, change.identityRef, change.authority].every(isBoundedId)
+    || (operation === "split" ? !isBoundedId(change.newNodeId) || change.newNodeId === change.nodeId : change.newNodeId !== undefined)
     || !Number.isSafeInteger(change.revision) || change.revision < 1
     || !Number.isFinite(Date.parse(change.changedAt))
     || !evidence || Object.keys(evidence).some(key => !["kind", "source", "evidenceRef", "observedAt", "confirmationDigest"].includes(key))
     || !["adapter", "operator"].includes(evidence.kind)
-    || [evidence.source, evidence.evidenceRef].some(value => !value.trim() || value.length > 512)
-    || !Number.isFinite(Date.parse(evidence.observedAt))
+    || ![evidence.source, evidence.evidenceRef].every(isBoundedId)
+    || !Number.isFinite(Date.parse(evidence.observedAt)) || Date.parse(evidence.observedAt) > Date.parse(change.changedAt)
     || evidence.kind === "operator" && (!evidence.confirmationDigest || !/^[0-9a-f]{64}$/u.test(evidence.confirmationDigest))
     || evidence.kind === "adapter" && evidence.confirmationDigest !== undefined) {
     throw new DeviceFabricError("safety_denied", "identity change evidence is invalid");
+  }
+}
+
+export function assertIdentitySplitDestination(sourceNodeId: string, identityRef: string, destination: DeviceGraphNodeV1, exists: boolean): void {
+  if (sourceNodeId === destination.nodeId || exists || destination.identityRefs.length !== 1 || destination.identityRefs[0] !== identityRef) {
+    throw new DeviceFabricError("revision_conflict", "identity split requires a new node carrying the selected identity");
   }
 }
 

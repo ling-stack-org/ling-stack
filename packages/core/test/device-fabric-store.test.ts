@@ -219,8 +219,11 @@ test("fabric store persists graph, twin, and task graph revisions", () => {
   store.close();
 });
 
-test("fabric store records identity evidence with graph history and replays the exact change", () => {
-  const store = new SqliteDeviceFabricStore();
+test("fabric store records identity evidence and replays the original graph revision after reopen", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-identity-history-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const databasePath = join(root, "fabric.sqlite");
+  const store = new SqliteDeviceFabricStore({ databasePath });
   const device: DeviceGraphNodeV1 = { nodeId: "device-evidence", kind: "device", label: "Board", identityRefs: ["ssh:board"], properties: {}, revision: 1 };
   store.upsertGraphNode(device);
   const change = {
@@ -228,7 +231,8 @@ test("fabric store records identity evidence with graph history and replays the 
     evidence: { kind: "adapter", source: "ble", evidenceRef: "observation-1", observedAt: now },
     authority: "adapter-session", revision: 2, changedAt: now,
   } as const;
-  assert.deepEqual(store.mergeGraphIdentityWithEvidence(change).identityRefs, ["ssh:board", "ble:board"]);
+  const merged = store.mergeGraphIdentityWithEvidence(change);
+  assert.deepEqual(merged.identityRefs, ["ssh:board", "ble:board"]);
   assert.deepEqual(store.listIdentityChanges(device.nodeId), [change]);
   assert.deepEqual(store.mergeGraphIdentityWithEvidence(change), store.getGraphNode(device.nodeId));
   assert.throws(() => store.mergeGraphIdentityWithEvidence({
@@ -240,12 +244,27 @@ test("fabric store records identity evidence with graph history and replays the 
     evidence: { kind: "operator", source: "mobile", evidenceRef: "confirmation", confirmationDigest: "b".repeat(64), observedAt: now },
     authority: "operator", revision: 3, changedAt: now,
   } as const;
-  store.splitGraphIdentityWithEvidence(split, {
+  const destination = {
     nodeId: split.newNodeId, kind: "device", label: "BLE board", identityRefs: ["ble:board"], properties: {}, revision: 3,
-  });
+  } as const;
+  assert.throws(() => store.splitGraphIdentityWithEvidence(split, { ...destination, identityRefs: ["vendor:other"] }), /selected identity/u);
+  assert.deepEqual(store.getGraphNode(device.nodeId), merged);
+  assert.deepEqual(store.splitGraphIdentityWithEvidence(split, destination), destination);
   assert.equal(store.listIdentityChanges().length, 2);
   assert.deepEqual(store.getGraphNode(device.nodeId)?.identityRefs, ["ssh:board"]);
   store.close();
+
+  const reopened = new SqliteDeviceFabricStore({ databasePath });
+  try {
+    assert.deepEqual(reopened.mergeGraphIdentityWithEvidence(change), merged);
+    assert.deepEqual(reopened.splitGraphIdentityWithEvidence(split, destination), destination);
+    assert.throws(() => reopened.splitGraphIdentityWithEvidence(split, { ...destination, label: "Changed label" }), /another split destination/u);
+    assert.throws(() => reopened.upsertGraphNode({ ...destination, identityRefs: ["vendor:other"] }), /revision is bound/u);
+    assert.deepEqual(reopened.getGraphNode(device.nodeId)?.identityRefs, ["ssh:board"]);
+    assert.deepEqual(reopened.listIdentityChanges(device.nodeId), [change, split]);
+  } finally {
+    reopened.close();
+  }
 });
 
 test("fabric store persists edge enrollment and trace spans", () => {
