@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import type { ExternalWorkBackgroundScheduler } from "@ling-stack/contracts";
+import type { CliResult } from "./fixtures/cli-result.js";
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 
@@ -83,8 +85,8 @@ test("external-work github import supports json output and inline workflow markd
     assert.equal(response.workflow.id, "workflow_1");
     assert.equal(response.workflowStep.id, "step_1");
     assert.equal(response.duplicate, false);
-    assert.equal(daemon.requests[0].body.workflowMarkdown, "Review {{ item.identifier }}.\n");
-    assert.equal("workflowPath" in daemon.requests[0].body, false);
+    assert.equal(daemon.requests[0].body!.workflowMarkdown, "Review {{ item.identifier }}.\n");
+    assert.equal("workflowPath" in daemon.requests[0].body!, false);
   } finally {
     await rm(cwd, { recursive: true, force: true });
     await daemon.close();
@@ -208,7 +210,7 @@ test("external-work github poll renders human and json output", async () => {
     ]);
     assert.equal(json.code, 0, json.stderr);
     assert.equal(JSON.parse(json.stdout).claimed, 1);
-    assert.equal(daemon.requests.at(-1).path, "/external-work/github/poll");
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/github/poll");
     assert.deepEqual(daemon.requests[0].body, {
       channelId: "channel_1",
       workflowPath: "WORKFLOW.md",
@@ -246,8 +248,8 @@ test("external-work linear import and poll render human and json output", async 
     assert.equal(imported.code, 0, imported.stderr);
     assert.match(imported.stdout, /External work imported: LIN-123/);
     assert.match(imported.stdout, /Kind: linear_issue/);
-    assert.equal(daemon.requests.at(-1).path, "/external-work/linear/import");
-    assert.deepEqual(daemon.requests.at(-1).body, {
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/linear/import");
+    assert.deepEqual(daemon.requests.at(-1)!.body, {
       channelId: "channel_1",
       eventType: "issue.created",
       payload: linearIssuePayload(),
@@ -270,8 +272,8 @@ test("external-work linear import and poll render human and json output", async 
     ]);
     assert.equal(jsonImport.code, 0, jsonImport.stderr);
     assert.equal(JSON.parse(jsonImport.stdout).externalWorkItem.kind, "linear_issue");
-    assert.equal(daemon.requests.at(-1).body.workflowMarkdown, "Review {{ item.identifier }}.\n");
-    assert.equal("workflowPath" in daemon.requests.at(-1).body, false);
+    assert.equal(daemon.requests.at(-1)!.body!.workflowMarkdown, "Review {{ item.identifier }}.\n");
+    assert.equal("workflowPath" in daemon.requests.at(-1)!.body!, false);
 
     const poll = await runCli(daemon.url, cwd, [
       "external-work",
@@ -288,8 +290,8 @@ test("external-work linear import and poll render human and json output", async 
     assert.equal(poll.code, 0, poll.stderr);
     assert.match(poll.stdout, /External work poll:/);
     assert.match(poll.stdout, /LIN-123/);
-    assert.equal(daemon.requests.at(-1).path, "/external-work/linear/poll");
-    assert.deepEqual(daemon.requests.at(-1).body, {
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/linear/poll");
+    assert.deepEqual(daemon.requests.at(-1)!.body, {
       channelId: "channel_1",
       workflowPath: "WORKFLOW.md",
       limit: 5,
@@ -376,8 +378,8 @@ test("external-work github background start, list, and stop render human and jso
     assert.match(humanStart.stdout, /External work background scheduler started: external_work_background_1/);
     assert.match(humanStart.stdout, /Status: running/);
     assert.match(humanStart.stdout, /Repository: openclaw\/openclaw/);
-    assert.equal(daemon.requests.at(-1).path, "/external-work/github/background/start");
-    assert.deepEqual(daemon.requests.at(-1).body, {
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/github/background/start");
+    assert.deepEqual(daemon.requests.at(-1)!.body, {
       channelId: "channel_1",
       workflowPath: "WORKFLOW.md",
       limit: 5,
@@ -406,8 +408,8 @@ test("external-work github background start, list, and stop render human and jso
     assert.equal(humanList.code, 0, humanList.stderr);
     assert.match(humanList.stdout, /External work background schedulers:/);
     assert.match(humanList.stdout, /external_work_background_1/);
-    assert.equal(daemon.requests.at(-1).method, "GET");
-    assert.equal(daemon.requests.at(-1).path, "/external-work/background");
+    assert.equal(daemon.requests.at(-1)!.method, "GET");
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/background");
 
     const jsonList = await runCli(daemon.url, cwd, [
       "--json",
@@ -429,9 +431,9 @@ test("external-work github background start, list, and stop render human and jso
     assert.equal(humanStop.code, 0, humanStop.stderr);
     assert.match(humanStop.stdout, /External work background scheduler stopped: external_work_background_1/);
     assert.match(humanStop.stdout, /Status: stopped/);
-    assert.equal(daemon.requests.at(-1).method, "POST");
-    assert.equal(daemon.requests.at(-1).path, "/external-work/background/external_work_background_1/stop");
-    assert.deepEqual(daemon.requests.at(-1).body, {});
+    assert.equal(daemon.requests.at(-1)!.method, "POST");
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/background/external_work_background_1/stop");
+    assert.deepEqual(daemon.requests.at(-1)!.body, {});
 
     const missingChannel = await runCli(daemon.url, cwd, [
       "external-work",
@@ -477,9 +479,9 @@ test("external-work status renders human and json output", async () => {
     assert.match(human.stdout, /Workflow valid: true/);
     assert.match(human.stdout, /Target: openclaw\/openclaw/);
     assert.match(human.stdout, /Background: running/);
-    assert.equal(daemon.requests.at(-1).method, "GET");
-    assert.equal(daemon.requests.at(-1).path, "/external-work/status");
-    assert.equal(daemon.requests.at(-1).query.channelId, "channel_1");
+    assert.equal(daemon.requests.at(-1)!.method, "GET");
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/status");
+    assert.equal(daemon.requests.at(-1)!.query!.channelId, "channel_1");
 
     const json = await runCli(daemon.url, cwd, [
       "--json",
@@ -534,13 +536,13 @@ test("external-work github ci triage renders human and json output", async () =>
     ]);
     assert.equal(json.code, 0, json.stderr);
     assert.equal(JSON.parse(json.stdout).records[0].triage.checkName, "web e2e");
-    assert.equal(daemon.requests.at(-1).path, "/external-work/github/ci/triage");
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/github/ci/triage");
     assert.deepEqual(daemon.requests[0].body, {
       externalWorkId: "external_work_1",
       workflowPath: "WORKFLOW.md",
       limit: 5,
     });
-    assert.deepEqual(daemon.requests.at(-1).body, {
+    assert.deepEqual(daemon.requests.at(-1)!.body, {
       externalWorkId: "external_work_1",
       createTask: false,
     });
@@ -593,9 +595,9 @@ test("external-work github ci run streams an explicit local fix run", async () =
     ]);
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stderr, /Run: run_ci_fix_1/);
-    assert.equal(daemon.requests.at(-1).method, "POST");
-    assert.equal(daemon.requests.at(-1).path, "/external-work/github/ci/triage/external_work_ci_triage_1/run");
-    assert.deepEqual(daemon.requests.at(-1).body, {
+    assert.equal(daemon.requests.at(-1)!.method, "POST");
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/github/ci/triage/external_work_ci_triage_1/run");
+    assert.deepEqual(daemon.requests.at(-1)!.body, {
       providerPresetId: "provider_1",
       skipProviderPreflight: true,
       tools: ["read"],
@@ -707,8 +709,8 @@ test("external-work list and show render local scheduler state", async () => {
     assert.match(list.stdout, /ready/);
     assert.equal(daemon.requests[0].method, "GET");
     assert.equal(daemon.requests[0].path, "/external-work");
-    assert.equal(daemon.requests[0].query.status, "ready");
-    assert.equal(daemon.requests[0].query.workItemKind, "github_pull_request");
+    assert.equal(daemon.requests[0].query!.status, "ready");
+    assert.equal(daemon.requests[0].query!.workItemKind, "github_pull_request");
 
     const show = await runCli(daemon.url, cwd, [
       "external-work",
@@ -761,9 +763,9 @@ test("external-work actions propose, list, show, cancel, and execute render acti
     assert.equal(proposed.code, 0, proposed.stderr);
     assert.match(proposed.stdout, /External work action proposed: external_work_action_1/);
     assert.match(proposed.stdout, /waiting_for_approval/);
-    assert.equal(daemon.requests.at(-1).path, "/external-work/actions/propose");
-    assert.equal(daemon.requests.at(-1).body.actionKind, "github_comment");
-    assert.equal(daemon.requests.at(-1).body.payload.body, "Ready for review.\n");
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/actions/propose");
+    assert.equal(daemon.requests.at(-1)!.body!.actionKind, "github_comment");
+    assert.equal(daemon.requests.at(-1)!.body!.payload!.body, "Ready for review.\n");
 
     const labels = await runCli(daemon.url, cwd, [
       "external-work",
@@ -777,8 +779,8 @@ test("external-work actions propose, list, show, cancel, and execute render acti
       "needs-review",
     ]);
     assert.equal(labels.code, 0, labels.stderr);
-    assert.equal(daemon.requests.at(-1).body.actionKind, "github_label");
-    assert.deepEqual(daemon.requests.at(-1).body.payload.labels, ["agent-ready", "needs-review"]);
+    assert.equal(daemon.requests.at(-1)!.body!.actionKind, "github_label");
+    assert.deepEqual(daemon.requests.at(-1)!.body!.payload!.labels, ["agent-ready", "needs-review"]);
 
     const reviewFile = resolve(cwd, "review.md");
     await writeFile(reviewFile, "Please fix CI before merge.\n", "utf8");
@@ -795,9 +797,9 @@ test("external-work actions propose, list, show, cancel, and execute render acti
     ]);
     assert.equal(review.code, 0, review.stderr);
     assert.match(review.stdout, /External work action proposed: external_work_action_1/);
-    assert.equal(daemon.requests.at(-1).body.actionKind, "github_pr_review");
-    assert.equal(daemon.requests.at(-1).body.approvalRequirement, "strict");
-    assert.deepEqual(daemon.requests.at(-1).body.payload, {
+    assert.equal(daemon.requests.at(-1)!.body!.actionKind, "github_pr_review");
+    assert.equal(daemon.requests.at(-1)!.body!.approvalRequirement, "strict");
+    assert.deepEqual(daemon.requests.at(-1)!.body!.payload, {
       type: "github_pr_review",
       event: "REQUEST_CHANGES",
       body: "Please fix CI before merge.\n",
@@ -849,8 +851,8 @@ test("external-work actions propose, list, show, cancel, and execute render acti
     assert.equal(execute.code, 0, execute.stderr);
     assert.match(execute.stdout, /External work action executed: external_work_action_1/);
     assert.match(execute.stdout, /succeeded/);
-    assert.equal(daemon.requests.at(-1).path, "/external-work/actions/external_work_action_1/execute");
-    assert.deepEqual(daemon.requests.at(-1).body, { workflowPath: "WORKFLOW.md" });
+    assert.equal(daemon.requests.at(-1)!.path, "/external-work/actions/external_work_action_1/execute");
+    assert.deepEqual(daemon.requests.at(-1)!.body, { workflowPath: "WORKFLOW.md" });
 
     const invalidApproval = await runCli(daemon.url, cwd, [
       "external-work",
@@ -887,8 +889,8 @@ test("external-work actions propose, list, show, cancel, and execute render acti
   }
 });
 
-function runCli(daemonUrl, cwd, args) {
-  return new Promise((resolveResult) => {
+function runCli(daemonUrl: string, cwd: string, args: readonly string[]) {
+  return new Promise<CliResult>((resolveResult) => {
     const child = execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
@@ -900,8 +902,19 @@ function runCli(daemonUrl, cwd, args) {
   });
 }
 
+interface ExternalWorkRequestBody extends Record<string, unknown> {
+  actionKind?: string;
+  payload?: { body?: string; labels?: string[] };
+}
+
 async function startExternalWorkDaemon() {
-  const requests = [];
+  const requests: {
+    method: "GET" | "POST";
+    path: string;
+    cwd: string | null;
+    query?: Record<string, string>;
+    body?: ExternalWorkRequestBody;
+  }[] = [];
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "GET" && url.pathname === "/external-work") {
@@ -981,7 +994,7 @@ async function startExternalWorkDaemon() {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
-    const body = JSON.parse(await readRequestBody(request));
+    const body: ExternalWorkRequestBody = JSON.parse(await readRequestBody(request));
     requests.push({
       method: request.method,
       path: url.pathname,
@@ -1035,7 +1048,7 @@ async function startExternalWorkDaemon() {
     writeJson(response, 201, externalWorkImportResponse(url.pathname.includes("/linear/") ? "linear" : "github"));
   });
 
-  await new Promise((resolveListen) => {
+  await new Promise<void>((resolveListen) => {
     server.listen(0, "127.0.0.1", resolveListen);
   });
   const address = server.address();
@@ -1043,7 +1056,7 @@ async function startExternalWorkDaemon() {
   return {
     requests,
     url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise((resolveClose, rejectClose) => {
+    close: () => new Promise<void>((resolveClose, rejectClose) => {
       server.close((error) => {
         if (error) {
           rejectClose(error);
@@ -1055,7 +1068,7 @@ async function startExternalWorkDaemon() {
   };
 }
 
-function readRequestBody(request) {
+function readRequestBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolveRead, rejectRead) => {
     let body = "";
     request.setEncoding("utf8");
@@ -1067,12 +1080,12 @@ function readRequestBody(request) {
   });
 }
 
-function writeJson(response, statusCode, body) {
+function writeJson(response: ServerResponse, statusCode: number, body: unknown) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }
 
-function writeSseRun(response) {
+function writeSseRun(response: ServerResponse) {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -1222,7 +1235,7 @@ function externalWorkReconcileResponse() {
   };
 }
 
-function externalWorkBackgroundScheduler(status = "running") {
+function externalWorkBackgroundScheduler(status: ExternalWorkBackgroundScheduler["status"] = "running"): ExternalWorkBackgroundScheduler {
   const scheduler = {
     id: "external_work_background_1",
     cwd: "/repo",
@@ -1236,16 +1249,13 @@ function externalWorkBackgroundScheduler(status = "running") {
     status,
     startedAt: "2026-06-01T00:00:00.000Z",
     tickCount: 1,
-  };
-  if (status === "stopped") {
-    scheduler.stoppedAt = "2026-06-01T00:01:00.000Z";
-  } else {
-    scheduler.nextPollAt = "2026-06-01T00:00:30.000Z";
-  }
-  return scheduler;
+  } satisfies ExternalWorkBackgroundScheduler;
+  return status === "stopped"
+    ? { ...scheduler, stoppedAt: "2026-06-01T00:01:00.000Z" }
+    : { ...scheduler, nextPollAt: "2026-06-01T00:00:30.000Z" };
 }
 
-function externalWorkBackgroundMutationResponse(status = "running") {
+function externalWorkBackgroundMutationResponse(status: ExternalWorkBackgroundScheduler["status"] = "running") {
   return {
     cwd: "/repo",
     scheduler: externalWorkBackgroundScheduler(status),

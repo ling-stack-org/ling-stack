@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import type { CliResult } from "./fixtures/cli-result.js";
 
 const cliDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = resolve(cliDir, "dist/index.js");
@@ -37,8 +38,8 @@ test("package exposes the short ling binary alias", async () => {
   assert.equal(pkg.bin["ling-stack"], "./dist/index.js");
 });
 
-function runCli(args) {
-  return new Promise((resolveResult) => {
+function runCli(args: readonly string[]) {
+  return new Promise<CliResult>((resolveResult) => {
     execFile(process.execPath, [cliPath, ...args], (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
