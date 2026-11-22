@@ -264,6 +264,8 @@ export {
 export { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
 export { createChromeBrowserNativeBroker } from "./features/browser-extension/native-broker.js";
 export { handleChromeBrowserPair } from "./features/browser-extension/routes.js";
+export { listenLingAppServerSocket, probeLingAppServer, runLingAppServerStdio } from "./server/app-server-local-transport.js";
+export { runLingAppServerMcp } from "./server/app-server-mcp.js";
 export { ChromeBrowserPluginService, createChromeBrowserDescriptor, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
 export { createChromeBrowserGenerationBroker, chromeBrowserTools } from "./features/plugins/chrome-browser-generation-broker.js";
 export { OfficeDriverController } from "./features/office-documents/driver-controller.js";
@@ -831,6 +833,29 @@ export function createDaemonServer(
       nativeRunDispatcher,
     },
   );
+  const startCodeAssessmentRun = (
+    runRequest: import("./features/runs/schemas.js").RunRequest,
+    afterRunTerminal: (run: import("@ling-stack/core").RunSession) => Promise<void>,
+    onRunReady: (runId: string) => void,
+  ): Promise<string | undefined> => executeRunRequest(
+    runRequest,
+    createDetachedRunExecutionSink(),
+    runnerRegistry,
+    storeRegistry,
+    activeRuns,
+    runtimeSupervisor,
+    secretResolver,
+    mcpBroker,
+    {
+      onRunReady,
+      afterRunTerminal,
+      controlPlaneEvents,
+      startupState,
+      computerUsePreviews,
+      hostCapabilityBridge,
+      nativeRunDispatcher,
+    },
+  );
   const companionReplyService = new CompanionReplyService({
     startRun: startCompanionRun,
     activeRuns,
@@ -879,6 +904,9 @@ export function createDaemonServer(
     const pending = queued ?? store.listRunInterventions({ sourceRunId: run.id, status: "queued", limit: 100 })
       .find(item => item.requestedBy === "system" && item.idempotencyKey?.startsWith("goal_auto_continue:"));
     if (pending) await maybeStartNextRunInterventionContinuation({ sourceRunId: run.id, store, runnerRegistry, storeRegistry,
+      activeRuns, runtimeSupervisor, secretResolver, mcpBroker, computerUsePreviews, controlPlaneEvents, startupState, nativeRunDispatcher });
+  }, async (store, sourceRunId) => {
+    await maybeStartNextRunInterventionContinuation({ sourceRunId, store, runnerRegistry, storeRegistry,
       activeRuns, runtimeSupervisor, secretResolver, mcpBroker, computerUsePreviews, controlPlaneEvents, startupState, nativeRunDispatcher });
   });
   // Explicit typed Host startup selection. No HTTP/model request can add an
@@ -1121,6 +1149,7 @@ export function createDaemonServer(
     humanEvaluations,
     companionReplyService,
     companionSchedulers: companionSchedulers!,
+    startCodeAssessmentRun,
   };
   const server = createServer((request, response) => {
     if (harnessShuttingDown || activeRuns.isShuttingDown()) {
@@ -1174,6 +1203,7 @@ export function createDaemonServer(
   const harnessLifecycle = new HarnessLifecycleCoordinator({
     stopExternalAdmission: () => {
       harnessShuttingDown = true;
+      rpcWebSocketServer.beginShutdown();
       learningReviewCoordinator?.beginShutdown();
       for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();

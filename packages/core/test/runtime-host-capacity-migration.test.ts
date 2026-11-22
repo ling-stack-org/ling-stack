@@ -9,6 +9,8 @@ import { pathToFileURL } from "node:url";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore, resolveStoragePaths } from "../dist/index.js";
 import { applyRuntimeRunQueueMigration } from "../dist/storage/sqlite/runtime-run-queue-migration.js";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
+import { rewindAppServerFixture } from "./support/remaining-work-predecessor.ts";
+import { createSqliteRunStoreFixture } from "./support/sqlite-run-store-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 const migrationUrl = process.env.LING_CORE_MIGRATION_DIST
@@ -72,7 +74,7 @@ const insert = (db: Database, table: string, row: SqlRow) => db.prepare(`INSERT 
 const update = (db: Database, table: string, row: SqlRow) => db.prepare(`UPDATE ${table} SET ${Object.keys(row).map(column => `${column}=?`).join(",")}`)
   .run(...Object.values(row));
 
-function fixture(t: TestContext, { installed = false } = {}) {
+function fixture(t: TestContext, { installed = false, fresh = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-host-capacity-migration-"))), cwd = join(root, "workspace");
   mkdirSync(cwd);
   const paths = resolveStoragePaths(cwd, { homeDir: join(root, "home"), env: {}, workspaceStateLocation: "repo-local" }).workspace;
@@ -83,8 +85,9 @@ function fixture(t: TestContext, { installed = false } = {}) {
     if (store && testDatabase(store).isOpen) store.close();
     rmSync(root, { recursive: true, force: true });
   });
-  store = createSqliteRunStore(cwd, paths);
+  store = fresh ? createSqliteRunStore(cwd, paths) : createSqliteRunStoreFixture(cwd, paths);
   const db = testDatabase(store);
+  rewindAppServerFixture(db);
   dropCodeAssessmentOverlay(db);
   applyRuntimeRunQueueMigration(input(db));
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=217").get()!.name, predecessor);
@@ -141,6 +144,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
       store!.close(); store = undefined;
       const next = createSqliteRunStore(cwd, paths);
       const nextDb = testDatabase(next);
+      rewindAppServerFixture(nextDb);
       dropCodeAssessmentOverlay(nextDb);
       nextDb.exec("PRAGMA foreign_keys=OFF");
       try {
@@ -190,7 +194,7 @@ function rejectUnchanged(f: Fixture, pattern = migrationError, extra: MigrationO
 }
 
 test("218 installs exactly two journal tables, five foreign keys and only the specified implicit unique indexes", t => {
-  const f = fixture(t), before = snapshot(f.db), count = changes(f.db);
+  const f = fixture(t, { fresh: true }), before = snapshot(f.db), count = changes(f.db);
   assert.equal(RUNTIME_HOST_CAPACITY_MIGRATION_VERSION, 218);
   assert.equal(RUNTIME_HOST_CAPACITY_MIGRATION_NAME, name);
   migrate(f.db);

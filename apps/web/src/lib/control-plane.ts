@@ -12,6 +12,7 @@ import type {
 
 export const controlPlaneSummaryDomains = [
   "runs",
+  "work_items",
   "work_units",
   "memory",
   "skills",

@@ -11,6 +11,7 @@ import { parseRunRequest, type RunRequest } from "../runs/schemas.js";
 import { readNormalConversationRequestContext } from "./normal-conversation-context.js";
 import { inlineProviderDescriptor, restorePreparedInlineProvider } from "./normal-conversation-prepared-provider.js";
 import { readNativeResponsePreferences } from "./native-response-preferences.js";
+import { textDigest } from "./project-instructions.js";
 
 const requestKeys = new Set([
   "executionBinding", "workspaceCwd", "cwd", "task", "providerPresetId", "provider", "threadId", "turnId", "teammateId",
@@ -19,10 +20,11 @@ const requestKeys = new Set([
   "conversationAttachmentIds", "conversationFileRefs", "normalConversationContext", "normalConversationAcceptedSnapshotId",
   "contextProjection", "idempotencyKey", "runnerId", "requestedSkillId", "skipProviderPreflight", "approvalProfile",
   "systemPrompt", "agentDir", "skipMemoryRecall", "sourceMessageId", "linkedMessageId", "parentRunId",
-  "interventionId", "continuationReason", "runtimeToolFeatures", "nativeResponsePreferences",
+  "interventionId", "continuationReason", "runtimeToolFeatures", "nativeResponsePreferences", "projectInstructionManifest",
 ]);
 const internalKeys = new Set(["normalConversationContext", "normalConversationAcceptedSnapshotId", "contextProjection",
-  "conversationAttachmentIds", "conversationFileRefs", "createdByActor", "skipMemoryRecall", "sourceMessageId", "linkedMessageId", "nativeResponsePreferences"]);
+  "conversationAttachmentIds", "conversationFileRefs", "createdByActor", "skipMemoryRecall", "sourceMessageId", "linkedMessageId", "nativeResponsePreferences",
+  "projectInstructionManifest"]);
 
 interface PreparedRequestPayload {
   readonly schemaVersion: 1;
@@ -103,6 +105,11 @@ function validatePayload(value: unknown, expected: { threadId: string; turnId: s
   }
   const request = value.request;
   readNativeResponsePreferences(request.nativeResponsePreferences);
+  const manifest = request.projectInstructionManifest;
+  if (manifest !== undefined && (!isRecord(manifest) || manifest.version !== 1 || !Array.isArray(manifest.sources)
+    || !Array.isArray(manifest.omitted) || manifest.digest !== textDigest(JSON.stringify([manifest.sources, manifest.omitted])))) {
+    throw new Error("Invalid prepared project instruction manifest.");
+  }
   if (Object.keys(request).some((key) => !requestKeys.has(key))) throw new Error("Invalid prepared request fields");
   const parsed = parseRunRequest(request);
   for (const [key, item] of Object.entries(request)) {

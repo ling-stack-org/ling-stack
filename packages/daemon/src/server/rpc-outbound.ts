@@ -1,4 +1,5 @@
 import { redactSecrets } from "@ling-stack/core";
+import type { LingAppServerJsonRpcId, LingAppServerThreadSnapshotResult } from "@ling-stack/contracts";
 import { WebSocket } from "ws";
 
 export const RPC_OUTBOUND_MAX_FRAME_BYTES = 128 * 1024;
@@ -66,9 +67,28 @@ export class RpcOutboundWriter {
 
   /** Encode once before retention; a large fact closes this consumer, never truncates it. */
   prepare(value: unknown): RpcOutboundFrame | undefined {
+    return this.encode(() => redactSecrets(value));
+  }
+
+  /** The authenticated snapshot carries Host answer authority as a wire field. */
+  sendThreadSnapshot(id: LingAppServerJsonRpcId, snapshot: LingAppServerThreadSnapshotResult): boolean {
+    const frame = this.encode(() => {
+      const result = redactSecrets(snapshot) as LingAppServerThreadSnapshotResult;
+      const pendingInputs = result.pendingInputs.map((input, index) => {
+        const authority = snapshot.pendingInputs[index]?.answerAuthority;
+        return authority && input.answerAuthority && /^[a-f0-9]{64}$/u.test(authority.token)
+          ? { ...input, answerAuthority: { ...input.answerAuthority, token: authority.token } }
+          : input;
+      });
+      return { jsonrpc: "2.0", id, result: { ...result, pendingInputs } };
+    });
+    return frame !== undefined && this.enqueue(frame);
+  }
+
+  private encode(project: () => unknown): RpcOutboundFrame | undefined {
     if (this.closed) return undefined;
     try {
-      const text = JSON.stringify(redactSecrets(value));
+      const text = JSON.stringify(project());
       if (typeof text !== "string") throw new Error("RPC frame must be JSON serializable");
       const bytes = Buffer.byteLength(text, "utf8");
       if (bytes > this.limits.maxFrameBytes) {

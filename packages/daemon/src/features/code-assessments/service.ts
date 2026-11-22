@@ -9,6 +9,7 @@ import { ensureRunCancelled } from "../runs/cancellation.js";
 import { HttpError } from "../../errors.js";
 import { captureCodeAssessmentSnapshot } from "./snapshot.js";
 import { codeAssessmentRunRequest } from "./prompt.js";
+import { readBaselineReviewRules } from "./review-rules.js";
 
 export type StartCodeAssessmentRun = (request: RunRequest, afterRunTerminal: (run: RunSession) => Promise<void>, onRunReady: (runId: string) => void) => Promise<string | undefined>;
 const pendingByStore = new WeakMap<RunStore, Map<string, number>>();
@@ -87,7 +88,8 @@ export function finishCodeAssessmentRun(store: RunStore, assessmentId: string, r
       title: safeText(finding.title), body: safeText(finding.body), evidence: safeText(finding.evidence),
       id: `finding_${randomUUID()}`, assessmentId, snapshotDigest: detail.snapshot.digest,
       fingerprint: createHash("sha256").update(JSON.stringify(finding)).digest("hex"), validation: "unverified", disposition: "open", freshnessState: "current" }));
-    const report = { snapshotDigest: detail.snapshot.digest, summary, findings };
+    const report = { snapshotDigest: detail.snapshot.digest, summary, findings,
+      ...(detail.assessment.reviewRules ? { reviewRules: detail.assessment.reviewRules } : {}) };
     const artifact = store.createArtifact({ runId: run.id, type: "json", path: `code-assessments/${assessmentId}/report.json`,
       title: "Local Diff assessment report", contentType: "application/json", sealedPayload: report, createdAt: now() });
     store.finishCodeAssessment(assessmentId, { runId: run.id, status: detail.snapshot.coverage === "complete" ? "completed" : "partial",
@@ -114,7 +116,21 @@ export function reconcileCodeAssessments(store: RunStore, activeRuns: ActiveRunR
   }
 }
 
-export async function startCodeAssessment(store: RunStore, input: CreateCodeAssessmentRequest, startRun: StartCodeAssessmentRun): Promise<CodeAssessmentDetail> {
+interface ReviewSubmission {
+  readonly assessmentId: string;
+  readonly candidateDigest: string;
+  readonly idempotencyKey: string;
+  readonly fingerprint: string;
+  readonly rulesRefs: readonly string[];
+  readonly reviewFocus?: CodeAssessmentDetail["assessment"]["reviewFocus"];
+}
+
+export async function startCodeAssessment(
+  store: RunStore,
+  input: CreateCodeAssessmentRequest,
+  startRun: StartCodeAssessmentRun,
+  submission?: ReviewSubmission,
+): Promise<CodeAssessmentDetail> {
   const provider = store.getProviderPreset(input.providerPresetId);
   if (!provider?.enabled || !provider.capabilities.includes("chat") || provider.api === "media-job") {
     throw new HttpError(400, "assessment_provider_unavailable", "Choose an enabled chat model before starting an assessment.");
@@ -126,15 +142,24 @@ export async function startCodeAssessment(store: RunStore, input: CreateCodeAsse
   const captureStartedAt = now();
   try {
     const snapshot = await captureCodeAssessmentSnapshot(store.paths.cwd, input.target);
+    if (submission && snapshot.digest !== submission.candidateDigest) {
+      throw new HttpError(409, "candidate_stale", "The review candidate differs from the submitted digest.");
+    }
     for (const status of ["queued", "analyzing"] as const) {
       const active = store.listCodeAssessments({ status, limit: 1 }).assessments[0];
       if (!active) continue;
-      if (active.snapshotDigest === snapshot.digest && active.kind === input.kind && active.providerPresetId === input.providerPresetId
+      if (!submission && !active.reviewFocus && active.snapshotDigest === snapshot.digest && active.kind === input.kind && active.providerPresetId === input.providerPresetId
         && active.instructions === input.instructions) return store.getCodeAssessment(active.id)!;
       throw new HttpError(409, "assessment_busy", "An assessment is already running in this workspace.");
     }
-    detail = store.createCodeAssessment({ id: `assessment_${randomUUID()}`, kind: input.kind, providerPresetId: input.providerPresetId, instructions: input.instructions, snapshot,
-      preparedAt, captureStartedAt, metrics: { captureDurationMs: Math.max(0, Date.now() - Date.parse(captureStartedAt)) }, now: now() });
+    const reviewRules = input.kind === "review"
+      ? await readBaselineReviewRules(store.paths.cwd, snapshot, submission?.rulesRefs) : undefined;
+    detail = store.createCodeAssessment({
+      id: submission?.assessmentId ?? `assessment_${randomUUID()}`, kind: input.kind,
+      providerPresetId: input.providerPresetId, instructions: input.instructions, snapshot, reviewRules, reviewFocus: submission?.reviewFocus,
+      ...(submission ? { submission: { idempotencyKey: submission.idempotencyKey, fingerprint: submission.fingerprint } } : {}),
+      preparedAt, captureStartedAt, metrics: { captureDurationMs: Math.max(0, Date.now() - Date.parse(captureStartedAt)) }, now: now(),
+    });
     let scanned = 0;
     for (let offset = 0; scanned < maxFreshnessRows; offset += 100) {
       const page = store.listCodeAssessments({ targetType: snapshot.target.type, limit: 100, offset });

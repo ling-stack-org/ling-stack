@@ -1,5 +1,5 @@
 import type { RunStore, LingThreadStatus } from "../../run-types.js";
-import { UserInputStoreError, type UserInputRequest } from "../../user-input-store-types.js";
+import { UserInputStoreError, userInputRequestEventKey, type UserInputRequest } from "../../user-input-store-types.js";
 import type { CancelUserInputWait, CancelUserInputWaitResult, UserInputWait } from "../../user-input-wait-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
@@ -12,7 +12,7 @@ import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 type CancellationPorts = Pick<RunStore, "getUserInputRequest" | "getUserInputWait" | "getRun" | "getTask"
   | "getWorkUnit" | "getWorkUnitAttempt" | "getLingThread" | "getLingTurnForRun" | "getChannelWorkflowStep"
   | "transitionTaskStatus" | "transitionWorkUnitStatus" | "transitionChannelWorkflowStepStatus"
-  | "appendRuntimeEvent" | "reconcileLingTurnStatus" | "updateLingThread">;
+  | "appendRuntimeEvent" | "reconcileLingTurnStatus" | "updateLingThread" | "paths">;
 
 /** Cancels durable logical waiting in one transaction; never reopens or cancels a yielded execution. */
 export class SqliteUserInputWaitCancellationStore {
@@ -73,10 +73,10 @@ export class SqliteUserInputWaitCancellationStore {
       const updatedRequest = this.ports.getUserInputRequest(input.threadId, requestId)!;
       const updatedWait = this.ports.getUserInputWait(input.threadId, requestId)!;
       if (request.status === "pending") {
-        this.events.appendControlPlaneEventWithinTransaction({ workspaceId: source.workspaceId, cwd: source.cwd, domain: "runs",
+        this.events.appendControlPlaneEventWithinTransaction({ workspaceId: source.workspaceId, cwd: this.ports.paths.cwd, domain: "runs",
           entityType: "user_input_request", entityId: requestId, action: "cancelled",
-          idempotencyKey: "user-input:" + requestId + ":" + updatedRequest.statusRevision,
-          data: { threadId: source.threadId, requestId, requestVersion: request.requestVersion,
+          idempotencyKey: userInputRequestEventKey(updatedRequest),
+          data: { threadId: source.threadId, turnId: source.turnId, runId: source.runId, requestId, requestVersion: request.requestVersion,
             statusRevision: updatedRequest.statusRevision, itemId: request.itemId } }, now);
       }
       this.events.appendControlPlaneEventWithinTransaction({ workspaceId: source.workspaceId, cwd: source.cwd, domain: "runs",

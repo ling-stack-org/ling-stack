@@ -3,9 +3,11 @@ import { UserInputStoreError, type RunStore, type RuntimeAttemptFenceV1, type Co
 import { PiRunnerYielded, type PiRunnerUserInputRequestReceipt, type PiRunnerUserInputYieldDirective } from "@ling-stack/runner-pi";
 import { AttemptExecutorGroup, type HostExecutorDrainResult } from "../../runtime/attempt-execution-quiescence.js";
 import { HttpError } from "../../errors.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { publishUserInputRequestChange } from "./user-input-events.js";
 
 type PauseStore = Pick<RunStore, "createUserInputRequest" | "findRequiredUserInputForAttempt"
-  | "commitUserInputYield" | "isCurrentRunExecutionOwner" | "listEvents" | "countEvents">;
+  | "commitUserInputYield" | "isCurrentRunExecutionOwner" | "listEvents" | "countEvents" | "getControlPlaneEventByIdempotency">;
 export type UserInputPauseResult =
   | { readonly kind: "committed"; readonly result: CommitUserInputYieldResult }
   | { readonly kind: "source_obsolete" }
@@ -27,13 +29,14 @@ export class UserInputPauseCoordinator {
   readonly #group: AttemptExecutorGroup;
   readonly #signal?: AbortSignal;
   readonly #now: () => string;
+  readonly #controlPlaneEvents?: ControlPlaneEventHub;
   #required?: PiRunnerUserInputYieldDirective;
   #flight?: Promise<UserInputPauseResult>;
   #committed?: UserInputPauseResult;
 
   constructor(options: { readonly store: PauseStore; readonly runId: string; readonly sourceItemId: string;
     readonly sourceFence: RuntimeAttemptFenceV1; readonly runnerId: string; readonly executorGroup: AttemptExecutorGroup;
-    readonly signal?: AbortSignal; readonly now?: () => string }) {
+    readonly signal?: AbortSignal; readonly now?: () => string; readonly controlPlaneEvents?: ControlPlaneEventHub }) {
     if (!(options.executorGroup instanceof AttemptExecutorGroup)
       || !isDeepStrictEqual(options.executorGroup.source, { runId: options.runId, ...options.sourceFence })
       || !options.sourceItemId || !options.runnerId) throw invalid("user_input_pause_source_invalid");
@@ -46,6 +49,7 @@ export class UserInputPauseCoordinator {
     this.#group = options.executorGroup;
     this.#signal = options.signal;
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#controlPlaneEvents = options.controlPlaneEvents;
   }
 
   /** Synchronous Core create and Host close share one callback, with no await window. */
@@ -54,7 +58,7 @@ export class UserInputPauseCoordinator {
     this.#group.assertAdmissionOpen();
     // Durable required intent from another callback/recovered source takes priority.
     if (this.beforeBoundary()) throw invalid("user_input_pause_already_required");
-    const { request } = this.#store.createUserInputRequest({ sourceRunId: this.#runId,
+    const { request, replayed } = this.#store.createUserInputRequest({ sourceRunId: this.#runId,
       sourceItemId: this.#itemId, sourceFence: this.#fence, toolCallId,
       idempotencyKey: "user-input-tool:" + toolCallId, toolInput: input }, this.#now());
     // Core idempotent create returns the original record, including a cancelled
@@ -68,8 +72,10 @@ export class UserInputPauseCoordinator {
       const receipt = Object.freeze({ kind: "user_input_required" as const,
         requestId: request.requestId, requestVersion: request.requestVersion });
       this.#close(receipt);
+      if (!replayed) publishUserInputRequestChange(this.#store, this.#controlPlaneEvents, request);
       return receipt;
     }
+    if (!replayed) publishUserInputRequestChange(this.#store, this.#controlPlaneEvents, request);
     return Object.freeze({ kind: "user_input_optional", requestId: request.requestId, requestVersion: request.requestVersion });
   }
 

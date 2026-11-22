@@ -9,6 +9,8 @@ import { applyRuntimeConcurrencyPolicyMigration } from "../dist/storage/sqlite/r
 import { applyRuntimeConcurrencyPolicyActivationMigration, RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_VERSION,
   RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-concurrency-policy-activation-migration.js";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
+import { rewindAppServerFixture } from "./support/remaining-work-predecessor.ts";
+import { createSqliteRunStoreFixture } from "./support/sqlite-run-store-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -48,7 +50,7 @@ const snapshot = (db: Database) => ({ schema: schema(db), markers: markers(db), 
   policies: db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table) ? rows(db, table) : undefined });
 const migrationError = /runtime_concurrency_policy(?:_activation)?\.migration_/u;
 
-function fixture(t: TestContext, { installed = false } = {}) {
+function fixture(t: TestContext, { installed = false, fresh = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-policy-activation-"))), cwd = join(root, "workspace");
   mkdirSync(cwd);
   const paths = resolveStoragePaths(cwd, { homeDir: join(root, "home"), env: {}, workspaceStateLocation: "repo-local" }).workspace;
@@ -59,7 +61,8 @@ function fixture(t: TestContext, { installed = false } = {}) {
     if (store && testDatabase(store).isOpen) store.close();
     rmSync(root, { recursive: true, force: true });
   });
-  store = createSqliteRunStore(cwd, paths);
+  store = fresh ? createSqliteRunStore(cwd, paths) : createSqliteRunStoreFixture(cwd, paths);
+  rewindAppServerFixture(testDatabase(store));
   dropCodeAssessmentOverlay(testDatabase(store));
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=214").get()!.name, table);
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=215").get()!.name, name);
@@ -91,6 +94,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     reopen() {
       store.close();
       store = createSqliteRunStore(cwd, paths);
+      rewindAppServerFixture(testDatabase(store));
       dropCodeAssessmentOverlay(testDatabase(store));
       return store;
     } };
@@ -159,7 +163,7 @@ function rejectUnchanged(f: Fixture, { extra = {}, reopen = true }: {
 }
 
 test("fresh Core installs215 with an exact integer boolean gate and read-only214/215 reinspection", t => {
-  const f = fixture(t, { installed: true });
+  const f = fixture(t, { installed: true, fresh: true });
   assert.equal(RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_VERSION, 215);
   assert.equal(RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_NAME, name);
   assert.deepEqual(f.db.prepare("SELECT version,name FROM schema_migrations WHERE version=215 OR name=?").all(name).map(row => ({ ...row })),

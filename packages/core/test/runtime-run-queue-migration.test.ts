@@ -13,6 +13,7 @@ import { applyRuntimeDelegationCapacityAdmissionMigration } from "../dist/storag
 import { applyRuntimeDelegationSpawnAdmissionMigration } from "../dist/storage/sqlite/runtime-delegation-spawn-admission-migration.js";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
+import { createSqliteRunStoreFixture } from "./support/sqlite-run-store-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Connection = Pick<DatabaseSync, "exec" | "prepare"> & Partial<Pick<DatabaseSync, "isTransaction">>;
@@ -63,7 +64,7 @@ const insert = (db: Connection, row: Record<string, SQLInputValue>) => db.prepar
 const update = (db: Connection, row: Record<string, SQLInputValue>) => db.prepare(`UPDATE ${table} SET ${Object.keys(row).map(name => `${name}=?`).join(",")}`)
   .run(...Object.values(row));
 
-function fixture(t: TestContext, { installed = false } = {}) {
+function fixture(t: TestContext, { installed = false, fresh = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-runtime-queue-migration-"))), cwd = join(root, "workspace");
   mkdirSync(cwd);
   const paths = resolveStoragePaths(cwd, { homeDir: join(root, "home"), env: {}, workspaceStateLocation: "repo-local" }).workspace;
@@ -74,7 +75,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     if (store && testDatabase(store).isOpen) store.close();
     rmSync(root, { recursive: true, force: true });
   });
-  store = createSqliteRunStore(cwd, paths);
+  store = fresh ? createSqliteRunStore(cwd, paths) : createSqliteRunStoreFixture(cwd, paths);
   const db = testDatabase(store);
   dropCodeAssessmentOverlay(db);
   // Rewind later migrations before taking the historical 217/218 schema snapshot.
@@ -220,7 +221,7 @@ function rejectUnchanged(f: Fixture, pattern = migrationError, extra: Partial<Mi
 }
 
 test("217 installs the exact queue schema, four real foreign keys and three unique execution identities on a fresh Core database", t => {
-  const f = fixture(t), before = snapshot(f.db), count = changes(f.db);
+  const f = fixture(t, { fresh: true }), before = snapshot(f.db), count = changes(f.db);
   assert.equal(RUNTIME_RUN_QUEUE_MIGRATION_VERSION, 217);
   assert.equal(RUNTIME_RUN_QUEUE_MIGRATION_NAME, table);
   migrate(f.db);

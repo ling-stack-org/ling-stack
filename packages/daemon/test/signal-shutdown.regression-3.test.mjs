@@ -13,7 +13,7 @@ import { observeDaemonShutdown } from "@ling-stack/core/daemon-shutdown-observer
 // why_new=regression-1 sees only stderr and regression-2 only callback order;
 // seam=none; no_claim=packaged Desktop/UI acceptance (server startup is stubbed).
 for (const outcome of ["blocked", "closed", "late-drain", "lost-observer"]) {
-  test(`actual CLI private shutdown observation: ${outcome}`, { timeout: 15000 }, async t => {
+  test(`actual CLI private shutdown observation: ${outcome}`, { timeout: 25_000 }, async t => {
     const child = spawn(process.execPath, [fileURLToPath(new URL("./support/signal-shutdown-worker.mjs", import.meta.url)),
       outcome === "lost-observer" ? "blocked" : outcome], {
       env: { PATH: process.env.PATH, LING_STACK_HOST: "127.0.0.1", LING_STACK_PORT: "0", LING_STACK_SHUTDOWN_OBSERVER_FD: "5" },
@@ -35,11 +35,8 @@ for (const outcome of ["blocked", "closed", "late-drain", "lost-observer"]) {
         await delay(5);
       }
     }
-    // macOS CI can be heavily loaded while the real CLI fixture starts. Keep
-    // the lifecycle assertions strict, but give startup its own bounded
-    // window so a slow runner does not turn a valid observation into a flaky
-    // failure before the signal path is exercised.
-    await until(() => stdout.includes("Ling Stack daemon listening"), 8000);
+    // The cold CLI import on macOS CI has a separate readiness deadline from signal observation.
+    await until(() => stdout.includes("Ling Stack daemon listening"), 18_000);
     if (outcome === "lost-observer") dispose();
     child.kill("SIGTERM");
     if (outcome === "closed" || outcome === "late-drain") {

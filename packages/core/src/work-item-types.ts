@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ControlPlaneEvent } from "./run-types.js";
 
 export type WorkItemStatus =
   | "intake"
@@ -10,6 +11,8 @@ export type WorkItemStatus =
   | "review"
   | "blocked"
   | "done"
+  | "cancelled"
+  | "superseded"
   | "archived";
 
 export type WorkItemSourceType =
@@ -25,6 +28,36 @@ export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resou
 
 export type WorkItemPriority = "low" | "normal" | "high" | "urgent";
 
+export type WorkItemControlState = "active" | "pausing" | "paused" | "cancelling" | "cancelled" | "blocked";
+export type WorkItemControlAction = "pause" | "resume" | "cancel";
+
+export interface WorkItemControlReceipt {
+  readonly id: string;
+  readonly action: WorkItemControlAction;
+  readonly generation: number;
+  readonly requestedAt: string;
+  readonly actorId: string;
+  readonly reason?: string;
+  readonly idempotencyKey: string;
+  readonly outcome: "accepted" | "settling" | "settled" | "blocked";
+}
+
+export interface WorkItemHold {
+  readonly id: string;
+  readonly kind: "plan" | "control" | "approval" | "unknown_effect" | "scope" | "dependency";
+  readonly ownerRef: string;
+  readonly reason: string;
+  readonly blocksNewAdmission: boolean;
+}
+
+export interface WorkItemControlProjection {
+  readonly state: WorkItemControlState;
+  readonly generation: number;
+  readonly receipt?: WorkItemControlReceipt;
+  readonly unresolvedEffectIds: readonly string[];
+  readonly recoveryOwner?: string;
+}
+
 export interface WorkItemClaim {
   readonly ownerId: string;
   readonly token: string;
@@ -39,6 +72,7 @@ export interface WorkItem {
   readonly channelId?: string;
   readonly sourceType: WorkItemSourceType;
   readonly sourceId: string;
+  readonly revision: number;
   readonly title: string;
   readonly description?: string;
   readonly status: WorkItemStatus;
@@ -56,6 +90,9 @@ export interface WorkItem {
   readonly artifactIds: readonly string[];
   readonly proofArtifactIds: readonly string[];
   readonly dependencyIds: readonly string[];
+  readonly planRevision?: string;
+  readonly control: WorkItemControlProjection;
+  readonly holds: readonly WorkItemHold[];
   readonly claim?: WorkItemClaim;
   readonly attemptCount: number;
   readonly retryBudget: number;
@@ -76,6 +113,7 @@ export interface UpsertWorkItemInput {
   readonly title: string;
   readonly description?: string;
   readonly status?: WorkItemStatus;
+  readonly initialStatus?: WorkItemStatus;
   readonly waitingReason?: WorkItemWaitingReason;
   readonly priority?: WorkItemPriority;
   readonly labels?: readonly string[];
@@ -93,6 +131,17 @@ export interface UpsertWorkItemInput {
   readonly retryBudget?: number;
 }
 
+export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
+  "id" | "sourceType" | "sourceId" | "title" | "description" | "initialStatus" | "priority" | "labels"
+> {
+  readonly idempotencyKey?: string;
+}
+
+export interface CreateWorkItemResult {
+  readonly workItem: WorkItem;
+  readonly event?: ControlPlaneEvent;
+}
+
 export interface ListWorkItemsOptions {
   readonly channelId?: string;
   readonly status?: WorkItemStatus;
@@ -107,6 +156,34 @@ export interface WorkItemRouteRequest {
   readonly assigneeTeammateId?: string | null;
 }
 
+export interface WorkItemAcceptanceRequest {
+  readonly expectedRevision: number;
+  readonly actorId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface WorkItemAcceptanceReceipt {
+  readonly id: string;
+  readonly workItemId: string;
+  readonly acceptedRevision: number;
+  readonly workItemRevision: number;
+  readonly actorId: string;
+  readonly idempotencyKey: string;
+  readonly acceptedAt: string;
+}
+
+export interface WorkItemAcceptanceResult {
+  readonly workItem: WorkItem;
+  readonly receipt: WorkItemAcceptanceReceipt;
+  readonly replayed: boolean;
+  readonly event?: ControlPlaneEvent;
+}
+
+export type WorkItemControlResult =
+  | { readonly status: "not_found" | "stale_revision" | "idempotency_conflict" }
+  | { readonly status: "blocked"; readonly workItem: WorkItem }
+  | { readonly status: "applied" | "replayed"; readonly workItem: WorkItem; readonly receipt: WorkItemControlReceipt; readonly event?: ControlPlaneEvent };
+
 export interface WorkItemClaimRequest {
   readonly ownerId: string;
   readonly leaseMs?: number;
@@ -118,7 +195,7 @@ export interface WorkItemHeartbeatRequest {
 }
 
 export interface WorkItemClaimBlocker {
-  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal";
+  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal" | "control_blocked";
   readonly message: string;
   readonly dependencyIds?: readonly string[];
   readonly claimedBy?: string;
@@ -158,6 +235,14 @@ export interface WorkItemFailRequest {
   readonly claimToken: string;
   readonly reason: string;
   readonly retry?: boolean;
+}
+
+export interface WorkItemControlRequest {
+  readonly expectedRevision: number;
+  readonly expectedControlGeneration: number;
+  readonly actorId: string;
+  readonly reason?: string;
+  readonly idempotencyKey: string;
 }
 
 export function createWorkItemId(): string {

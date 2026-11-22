@@ -74,7 +74,17 @@ export function CodeAssessmentDetail({ cwd, detail, busy, freshness, canRunAgain
     <p className="code-assessment-muted">{t("Findings are unverified candidates. Dismissing a finding does not fix it.")}</p>
     {assessment.errorMessage ? <InlineFeedback tone="danger" title={t("Assessment did not complete")}>{assessment.errorMessage}</InlineFeedback> : null}
     {exportError ? <InlineFeedback tone="danger" title={t("Export unavailable")}>{exportError}</InlineFeedback> : null}
-    {assessment.instructions ? <details><summary>{t("Review instructions")}</summary><p>{assessment.instructions}</p></details> : null}
+    {assessment.instructions || assessment.reviewRules?.sources.length ? <details>
+      <summary>{t("Review instructions")}</summary>
+      {assessment.instructions ? <p>{assessment.instructions}</p> : null}
+      {assessment.reviewRules?.sources.length ? <>
+        <p>{t("Base commit")} <code>{assessment.reviewRules.baseSha}</code></p>
+        <ul>{assessment.reviewRules.sources.map(source => <li key={source.path}>
+          <code>{source.path}</code>
+          <p>{source.guidance}</p>
+        </li>)}</ul>
+      </> : null}
+    </details> : null}
     {assessment.summary ? <section className="code-assessment-summary"><h3>{t("Summary")}</h3><p>{assessment.summary}</p></section> : null}
     <div className="code-assessment-actions"><Button size="sm" disabled={busy} onClick={onCheckFreshness}>{t("Check for changes")}</Button>
       {freshness ? <Badge tone={freshness.state === "stale" ? "warning" : "neutral"}>{freshness.state === "current" ? t("Snapshot matches") : freshness.state === "stale" ? t("Snapshot is outdated") : t("Freshness unknown")}</Badge> : <span className="code-assessment-muted">{t("Freshness not checked")}</span>}

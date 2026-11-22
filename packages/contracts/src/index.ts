@@ -110,6 +110,8 @@ export * from "./marketplace.js";
 
 export * from "./learning-reviews.js";
 
+export * from "./app-server.js";
+
 export * from "./memory-derivatives.js";
 
 export * from "./memory-wiki.js";

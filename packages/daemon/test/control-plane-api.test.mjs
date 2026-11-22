@@ -742,7 +742,7 @@ test("local WebSocket RPC returns control-plane data and subscriptions", async (
 
 test("local WebSocket RPC returns snapshot-required without retaining a subscription", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-snapshot-required-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest({ config: { defaultWorkspaceCwd: cwd } });
   const rpc = await openRpcClient(daemon.url, cwd);
   try {
     rpc.send(1, "initialize", {});

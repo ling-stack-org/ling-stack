@@ -283,5 +283,7 @@ export interface DaemonContext {
   readonly humanEvaluations: HumanEvaluationService;
   readonly companionReplyService: CompanionReplyService;
   readonly companionSchedulers: CompanionSchedulerRegistry;
+  /** Shared detached-run owner used by App Server verification/review operations. */
+  readonly startCodeAssessmentRun?: import("./features/code-assessments/service.js").StartCodeAssessmentRun;
 }
 import type { AutomationEventWorker } from "./features/automations/event-worker.js";

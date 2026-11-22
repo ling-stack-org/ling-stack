@@ -41,3 +41,25 @@ test("restart supervision continues beyond three only under explicit bounds and 
   assert.equal(maybeQueueGoalContinuation({ terminalRun: store.getRun(run.id)!, store, activeRuns })?.id, pending.id);
   assert.equal(store.getLingThreadGoal(thread.id)?.continuationDepth, 4);
 });
+
+test("startup supervision wakes queued user interventions whose source Run is already terminal", async t => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-task-supervisor-intervention-"));
+  const store = createSqliteRunStore(cwd);
+  const thread = store.createLingThread({ kind: "conversation", title: "Queued input", objective: "Resume queued input" }, now);
+  const run = store.createRun({ id: "queued-input-source", cwd, threadId: thread.id, taskId: "queued-input", providerName: "fixture", providerModel: "fixture",
+    taskSnapshot: {}, requestSnapshot: {}, providerSnapshot: {}, createdAt: now });
+  store.markRunStarted(run.id, now); store.markRunSucceeded(run.id, later);
+  store.updateLingThread(thread.id, { lastRunId: run.id }, later);
+  store.createRunIntervention({ sourceRunId: run.id, mode: "queue_followup", instruction: "Continue after restart", requestedBy: "local-user", idempotencyKey: "restart-queued-input" }, later);
+  const stores = new RunStoreRegistry(() => store, { recoverOnOpen: false }); stores.getStore(cwd);
+  let recovered = 0;
+  const supervisor = new TaskSupervisor(stores, async () => assert.fail("no rerun is pending"), async () => undefined,
+    async (sourceStore, sourceRunId) => {
+      assert.equal(sourceStore.getRun(sourceRunId)?.status, "succeeded");
+      recovered += 1;
+    });
+  t.after(async () => { supervisor.stopAll(); await supervisor.waitForIdle(); stores.closeAll(); await rm(cwd, { recursive: true, force: true }); });
+  supervisor.start(cwd);
+  await supervisor.waitForIdle();
+  assert.equal(recovered, 1);
+});
