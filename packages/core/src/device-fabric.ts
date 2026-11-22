@@ -24,6 +24,7 @@ import type {
   DeviceSafetyControllerEvidenceV1,
   DeviceSafetyDecisionV1,
   DeviceTaskGraphNodeV1,
+  DeviceTaskGraphNodeReceiptV1,
   DeviceTaskGraphV1,
   DeviceTraceSpanV1,
   DeviceTransportDeploymentV1,
@@ -214,6 +215,31 @@ export class DeviceTaskGraphCoordinator {
     const next = { ...currentGraph, revision: currentGraph.revision + 1, status: graphStatus, nodes, updatedAt: this.#now() };
     this.#persistence?.saveTaskGraph(next);
     return next;
+  }
+
+  recordNodeReceipt(
+    graph: DeviceTaskGraphV1,
+    receipt: DeviceTaskGraphNodeReceiptV1,
+    authenticatedOwner: Pick<DeviceTaskGraphNodeReceiptV1, "ownerKind" | "ownerId" | "routeGeneration">,
+  ): DeviceTaskGraphV1 {
+    const currentGraph = this.#persistence ? this.#persistence.getTaskGraph(graph.graphId) : graph;
+    if (!currentGraph) throw new DeviceFabricError("target_missing", "task graph is missing");
+    if (receipt.graphId !== currentGraph.graphId || receipt.graphRevision !== graph.revision || graph.revision !== currentGraph.revision
+      || receipt.routeGeneration !== authenticatedOwner.routeGeneration || receipt.routeGeneration < 1
+      || !Number.isSafeInteger(receipt.routeGeneration) || !Number.isFinite(Date.parse(receipt.receivedAt))) {
+      throw new DeviceFabricError("revision_conflict", "task graph node receipt is stale or malformed");
+    }
+    const node = currentGraph.nodes.find(item => item.nodeId === receipt.nodeId);
+    if (!node || !["executing", "verifying", "unknown"].includes(node.status)
+      || receipt.ownerKind !== authenticatedOwner.ownerKind || receipt.ownerId !== authenticatedOwner.ownerId
+      || node.ownerKind !== authenticatedOwner.ownerKind || node.ownerId !== authenticatedOwner.ownerId
+      || node.targetDeviceId !== receipt.targetDeviceId || node.capabilitySnapshotId !== receipt.capabilitySnapshotId
+      || !node.attemptId || receipt.attemptId !== node.attemptId
+      || !["succeeded", "failed", "cancelled", "unknown"].includes(receipt.status)
+      || typeof receipt.resultRef !== "string" || !receipt.resultRef.trim() || receipt.resultRef.length > 512) {
+      throw new DeviceFabricError("safety_denied", "task graph node receipt does not match its owner and attempt");
+    }
+    return this.recordNodeResult(currentGraph, receipt.nodeId, receipt.status, receipt.resultRef);
   }
 
   cancelGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1 {

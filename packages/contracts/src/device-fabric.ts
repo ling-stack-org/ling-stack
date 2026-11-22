@@ -114,6 +114,21 @@ export interface DeviceTaskGraphV1 {
   readonly updatedAt: string;
 }
 
+export interface DeviceTaskGraphNodeReceiptV1 {
+  readonly graphId: string;
+  readonly graphRevision: number;
+  readonly nodeId: string;
+  readonly ownerKind: DeviceTaskGraphNodeV1["ownerKind"];
+  readonly ownerId: string;
+  readonly targetDeviceId: string;
+  readonly capabilitySnapshotId: string;
+  readonly attemptId: string;
+  readonly routeGeneration: number;
+  readonly status: "succeeded" | "failed" | "cancelled" | "unknown";
+  readonly resultRef: string;
+  readonly receivedAt: string;
+}
+
 export interface EdgeRuntimeEnrollmentV1 {
   readonly runtimeId: string;
   readonly displayName: string;

@@ -78,6 +78,37 @@ test("cross-device task graph exposes ready nodes, leases owners, and aggregates
   assert.deepEqual(coordinator.readyNodes(afterA).map(node => node.nodeId), ["node-b"]);
 });
 
+test("cross-runtime receipts match the current route and persisted node attempt", t => {
+  const store = new SqliteDeviceFabricStore();
+  t.after(() => store.close());
+  const coordinator = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
+  const graph = {
+    graphId: "receipt-graph", revision: 1, status: "executing", createdAt: now, updatedAt: now,
+    nodes: [{ nodeId: "edge-node", targetDeviceId: "edge-device", ownerKind: "edge", ownerId: "edge-1",
+      capabilityId: "linux.inspect.network", capabilitySnapshotId: "snapshot-1", dependencies: [], status: "executing",
+      attemptId: "attempt-1" }],
+  } as const;
+  const authority = { ownerKind: "edge", ownerId: "edge-1", routeGeneration: 2 } as const;
+  const receipt = {
+    ...authority,
+    graphId: graph.graphId, graphRevision: 1, nodeId: "edge-node",
+    attemptId: "attempt-1", targetDeviceId: "edge-device", capabilitySnapshotId: "snapshot-1",
+    status: "succeeded", resultRef: "result-1", receivedAt: now,
+  } as const;
+  assert.throws(() => coordinator.recordNodeReceipt(graph, receipt, authority), /graph is missing/u);
+  store.saveTaskGraph(graph);
+  assert.throws(() => coordinator.recordNodeReceipt(graph, { ...receipt, routeGeneration: 1 }, authority), /stale/u);
+  assert.throws(() => coordinator.recordNodeReceipt(graph, { ...receipt, targetDeviceId: "other-device" }, authority), /does not match/u);
+  assert.throws(() => coordinator.recordNodeReceipt(graph, receipt, { ...authority, ownerKind: "mobile" }), /does not match/u);
+  assert.throws(() => coordinator.recordNodeReceipt(graph, { ...receipt, attemptId: "other-attempt" }, authority), /does not match/u);
+  assert.deepEqual(store.getTaskGraph(graph.graphId), graph);
+  const settled = coordinator.recordNodeReceipt(graph, receipt, authority);
+  assert.equal(settled.status, "succeeded");
+  assert.equal(settled.nodes[0]?.resultRef, "result-1");
+  assert.deepEqual(store.getTaskGraph(graph.graphId), settled);
+  assert.throws(() => coordinator.recordNodeReceipt(graph, receipt, authority), /stale/u);
+});
+
 test("expired in-memory task graph leases can be acquired by a new owner", () => {
   let current = now;
   const coordinator = new DeviceTaskGraphCoordinator({ now: () => current, leaseMs: 1_000 });
