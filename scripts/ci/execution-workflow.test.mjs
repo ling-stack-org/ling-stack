@@ -64,13 +64,15 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, testPackages = packages, documentationOnly = false, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, testPackages = packages, typecheckPackages = packages,
+  documentationOnly = false, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [],
+  daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
     mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(testPackages),
-    "typecheck-packages": JSON.stringify(packages), "dependency-policy": String(dependency),
+    "typecheck-packages": JSON.stringify(typecheckPackages), "dependency-policy": String(dependency),
     "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
-    "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
+    "typecheck-selected": String(typecheckPackages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
     "linux-contract": String(daemonPlatforms.includes("linux")), "macos-native": String(macosNative),
     "macos-helper": String(macosNative), "native-release": "false",
     "documentation-only": String(documentationOnly),
@@ -89,7 +91,7 @@ async function assertScopeOutputs(scope, { mode, packages, testPackages = packag
   // Expected lanes are independent of the emitted selectors: a false selector
   // must not turn a selected lane's skipped result into a passing quality gate.
   const required = ["SCOPE", "COMMON", ...(assurance ? ["ASSURANCE"] : []), ...(packages.length ? ["BUILD"] : []),
-    ...(dependency ? ["DEPENDENCY"] : []), ...(packages.length ? ["TYPECHECK"] : []),
+    ...(dependency ? ["DEPENDENCY"] : []), ...(typecheckPackages.length ? ["TYPECHECK"] : []),
     ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON"] : []), ...(daemonPlatforms.includes("linux") ? ["LINUX_CONTRACT"] : []), ...(macosNative ? ["MACOS_NATIVE"] : [])];
   for (const lane of required) gate[`${lane}_RESULT`] = "success";
   const passed = runQuality(gate);
@@ -129,7 +131,8 @@ test("workflow transformations keep daemon test-only work outside the unit matri
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations select the eight core shards for core test-only work", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/core/test/example.test.ts"] }), {
-    mode: "affected", packages: ["@ling-stack/core"], daemon: false, macosNative: false,
+    mode: "affected", packages: ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/runner-pi"],
+    testPackages: ["@ling-stack/core"], typecheckPackages: ["@ling-stack/core"], daemon: false, macosNative: false,
     matrix: Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard, shardCount: 8, concurrency: 2 })),
   });
 });
