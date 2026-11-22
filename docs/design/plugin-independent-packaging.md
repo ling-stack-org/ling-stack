@@ -50,6 +50,12 @@ Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容�
 
 发布记录应包含平台签名、实际运行、第三方许可及源码证据。Cua Driver 只接受对应平台已提升的锁定构建和生产签名载荷，并随包保存 seal、锁文件和许可证。Windows 还需要经过验证的完整性 catalog。
 
+## 候选构建证据
+
+- Windows x64 的两个未签名开发包使用同一源码 `6e5ab9b99cf87288341ea8362adad95278220c01` 和同一 Electron 版本。安装程序从 789,003,385 减到 743,372,482 字节，降幅 5.78%。解包后常规文件从 2,667,153,787 减到 2,531,662,000 字节，降幅 5.08%。两次构建使用同版 gstack，其清单摘要不同，安装后的体积差集中在插件资源和 `app.asar`。两组均通过 runner 安装、同版本覆盖安装和卸载。兼容包包含 Cua Driver 的插件元数据。真实 GUI、Excel、Chrome、Cua Driver 和用户配置迁移仍需安装版验收。[瘦包运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45060119665) · [兼容包运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45061861558)
+- macOS arm64 的同源码开发对照固定在 `e3eb23bcee73a614e02c1b2fd48c6b38c1995bfb`。两组通过 App 的 ad-hoc 代码签名、DMG 校验和与 ZIP 完整性检查。DMG 从 271,297,948 减到 270,888,791 字节，ZIP 从 261,662,802 减到 261,263,318 字节，解包后常规文件从 780,023,183 减到 778,940,565 字节。开发对照未纳入包内 gstack，也未纳入生产 Cua Driver provider。采用完整发布资源的 macOS 候选仍需 Office 打包源码闭包的独立复核。15 项 Office addon 原生输入摘要均匹配，GitHub runner 的受限命令运行时记录也通过复核。[macOS 开发对照](https://github.com/ling-stack-org/ling-stack/actions/runs/45073421597) · [macOS 发布候选](https://github.com/ling-stack-org/ling-stack/actions/runs/45060119665)
+- Cua Driver 的 macOS A/B 都完成原生测试。两边观察到相同的两个 Mach-O 摘要，均未命中已审核的锁定摘要。Windows 原生构建与托管会话验证的进度记录在生产者 PR 中。[macOS A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45061741519) · [Cua Driver 原生构建](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/1)
+
 ## 瘦包对照和切换
 
 1. 在相同的已独立审核源码提交和工具链上，分别构建兼容基线和 `LING_PLUGIN_EXTERNAL_ONLY=1` 的瘦包。仍需通过平台原有的 Desktop 发布前置检查。
