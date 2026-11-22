@@ -32,7 +32,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 519 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。仅修改已登记 Daemon 测试入口时，分类器按清单选择对应平台，Linux-only 或 Darwin-only 改动不会排另一平台的整套分片；源码、共享 fixture、验证导入、未知路径和完整回归仍保留双平台。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约随 Linux Daemon 分片选择，明确只改 Darwin 测试时跳过；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
+[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将通用测试文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；包含原生／平台约束的文件分到四个 `macos-26` shard，每个使用三个 worker。仅修改已登记 Daemon 测试入口时，分类器按清单选择对应平台，Linux-only 或 Darwin-only 改动不会排另一平台的整套分片；源码、共享 fixture、验证导入、未知路径和完整回归仍保留双平台。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约随 Linux Daemon 分片选择，明确只改 Darwin 测试时跳过；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 
@@ -95,7 +95,7 @@ CLI 的 Linux 包测试运行真实 daemon 生命周期和新工作区 doctor �
 | CodeQL / Copilot Autofix | 工作区已包含上节的 PR 范围过滤、每小时检查和手动工作流；GitHub default setup 当前状态及扫描上传验收仍须单独核验。Autofix 建议仍须审查与测试，不自动合并 |
 | 仓库级密钥扫描／推送保护 | GitHub 仓库设置管理。主 CI 的完整执行档位扫描 Git 历史，确认纯文档改动和历史后只执行范围判定。Draft preview 延后历史扫描 |
 | 新披露的依赖漏洞 | 历史评估记录 Dependabot 告警及安全更新已配置，本次未核验服务端状态；仓库 `.github/dependabot.yml` 仍声明每周版本更新。CI 另测安全补丁与许可策略；新增严重性阻断前须核对现存告警、补丁及无上游修复的基线，不能将旧告警直接当作本次改动引入 |
-| 浏览器与桌面交互 | 选中 Web 时执行当前工作流中的 6 项筛选回归、17 项 Companion 回归和 9 项 conversation change summary 回归，使用模拟 daemon 数据并保留截图；Desktop 主要只有类型检查。后续可逐步扩大交互覆盖；不把每日现有矩阵成功视为桌面打包或设备验收 |
+| 浏览器与桌面交互 | 主 CI 不运行 Web 浏览器回归。Web 交互通过本地 E2E 命令验证，桌面安装包和设备交互按对应发布与验收流程验证 |
 
 本次文档整合未变更或核验 GitHub 安全设置、分支保护及服务端状态，也未修改 Dependabot 配置或发布流程。2026-10-19 的调度调整及其回退说明属于历史记录；当前主 CI 仍按上文每日完整矩阵运行，不能据此恢复每周运行。CodeQL 的切换、验收和回退按上节单独执行。
 

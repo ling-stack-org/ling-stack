@@ -169,9 +169,9 @@ a requested package via `--if-present`.
 - Other packages: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 519 portable
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns portable
   files to eight Linux shards without Core or six alongside Core, with two workers,
-  and 166 native/platform files to
+  and native/platform files to
   four `macos-26` shards with three workers. Full-scope runs add the separate
   native smoke as a fifth macOS job; ordinary Daemon changes use four macOS jobs,
   while direct test-only edits can omit the untouched platform. Source and shared

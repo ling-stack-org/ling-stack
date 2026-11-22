@@ -147,7 +147,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 
 | 项目 | 状态 |
 | --- | --- |
-| 隔离开发分支 | `codex/ling-app-server-implementation` 已合入 `origin/main@4eb8798b0`。 |
+| 隔离开发分支 | 源码通过 [PR #747](https://github.com/ling-stack-org/ling-stack/pull/747) 合入 `main`（`4b357d2b5`）。 |
 | 目标态、协议、验收与索引 | 本组设计文档，按上表的真实代码入口接入。 |
 | 重叠工作搜索 | 核对主线的 Ling Server Connectivity、Ling Device Fabric、原生执行引擎和现有 RPC，GitHub 开放 Issue/PR 的 “app server” 搜索均为空。 |
 | 依赖及源码基线 | macOS arm64，Node 24.22.1、pnpm 10.0.0、Rust 1.97.1。完整锁文件安装后，Contracts、API Client、Daemon 和 CLI 的 `build:ci`/`typecheck:ci` 通过。 |

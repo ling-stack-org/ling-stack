@@ -258,8 +258,8 @@ complete only after its implementation and relevant acceptance checks pass.
   test typechecks, browser visual checks, a real-provider multi-turn session, a sustained
   runtime check, and local desktop packaging/runtime checks.
 
-Integration is tracked in [PR #717](https://github.com/ling-stack-org/ling-stack/pull/717),
-which records the final source revision, CI gates, review threads and merge status.
+The Companion character chat and Desktop surface merged in
+[PR #717](https://github.com/ling-stack-org/ling-stack/pull/717) as `9ba748f12`.
 
 ## Acceptance evidence and limits
 
