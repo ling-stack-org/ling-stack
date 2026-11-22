@@ -672,3 +672,10 @@ c3b2c4c5b3b4eff9f67de3948aca6b1e036d65d1:packages/daemon/test/conversation-summa
 
 # Synthetic conversation summary redaction fixture introduced by the main sync commit.
 7e5e998ca0b281de433c807362392724195ed9a9:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
+
+# Fixed synthetic TURN shared secrets in historical Ling Server tests.
+4b35180dda12f586b24792690c157301d62e0b17:packages/daemon/test/ling-server-control-plane.test.ts:generic-api-key:19
+51c48dd84b0b426b1ac8965af3cfd3e50aff9ada:packages/daemon/test/ling-server-control-plane.test.ts:generic-api-key:104
+c561ad21cc5eace2a11cd65bb81c02f74d64cb94:packages/core/test/ling-server-protocol.test.ts:generic-api-key:121
+aff17cc2c337a646d5dcd8d919682c5aa65e9792:packages/daemon/test/ling-server-control-plane.test.ts:generic-api-key:10
+aff17cc2c337a646d5dcd8d919682c5aa65e9792:packages/core/test/ling-server-protocol.test.ts:generic-api-key:120
