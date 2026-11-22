@@ -301,7 +301,7 @@ export function isActionableWorkItem(item: WorkItemView): boolean {
     item.status === "review" ||
     Boolean(item.approvalId) ||
     Boolean(item.claim) ||
-    Boolean(item.durable && !item.claim) ||
+    Boolean(item.durable && !item.claim && !item.planRevision) ||
     Boolean(!item.channelId && !item.assigneeTeammateId && !item.claim);
 }
 
@@ -342,6 +342,9 @@ export function workItemNextActionLabel(item: WorkItemView): string {
   }
   if (item.status === "blocked") {
     return item.runId ? "View failure" : "Review blocker";
+  }
+  if (item.durable && item.workflowId && item.planRevision) {
+    return "Open workflow";
   }
   if (item.durable && !item.claim && !isTerminalWorkItemView(item)) {
     return "Claim to handle";

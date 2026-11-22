@@ -290,6 +290,7 @@ export interface WorkspaceClientViewProps {
     proposedRuleFingerprint?: string,
   ) => void;
   readonly onClaimWorkItem: (workItemId: string) => void;
+  readonly onInspectWorkItem?: (workItemId: string) => void;
   readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
   readonly onReleaseWorkItem: (workItemId: string, claimToken: string) => void;
   readonly onCompleteWorkItem: (workItemId: string, claimToken: string) => void;
