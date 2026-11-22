@@ -1204,7 +1204,7 @@ test("the reference control host negotiates installed Codex and streams an actua
   const { daemonUrl, authToken } = fixture.transportOptions();
   const cli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
   const running = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
-    "app-server", "codex-host", "--thread", thread.id, "--state", join(fixture.root, "native-host.sqlite"),
+    "app-server", "codex-host", "--thread", thread.id, "--state", join(fixture.root, "codex-host.sqlite"),
     "--codex", codexExecutable!], { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, stdio: "pipe" });
   const peer = jsonLines(running.stdin, running.stdout);
   const stopped = once(running, "close");
