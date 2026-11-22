@@ -115,8 +115,7 @@ export class LingServerRelayCredentialIssuer {
     if (!this.#issued.has(username) && activeCount >= this.#maxActiveCredentialsPerBinding) {
       throw new DeviceFabricError("lease_busy", "relay credential quota is exhausted for this binding");
     }
-    // lgtm[js/weak-cryptographic-algorithm] Coturn's REST API requires HMAC-SHA1
-    // for the temporary credential over this public, expiring username.
+    // The coturn REST password format uses HMAC-SHA1 over the public, expiring username.
     const credential = createHmac("sha1", this.#sharedSecret).update(username, "utf8").digest("base64");
     this.#issued.set(username, { bindingId: binding.bindingId, expiresAtMs });
     return { url: this.#turnUrls[0]!, username, credential, expiresAt: new Date(expiresAtMs).toISOString() };
