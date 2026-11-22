@@ -386,6 +386,71 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
     && notice.params?.subject?.threadId === request.threadId));
 });
 
+test("Pi receives scoped project instructions before editing a newly discovered directory", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const instructions = join(fixture.cwd, "feature/AGENTS.override.md");
+  const target = join(fixture.cwd, "feature/status.txt");
+  await mkdir(join(fixture.cwd, "feature"));
+  await writeFile(join(fixture.cwd, "AGENTS.md"), "Run the root verification.\n");
+  await writeFile(join(fixture.cwd, "feature/AGENTS.md"), "Unused local fallback.\n");
+  await writeFile(instructions, "Feature status must read ready.\n");
+  await writeFile(target, "pending\n");
+  const provider = await startLoopbackPiProvider(async (body: unknown, count: number) => {
+    const payload = JSON.stringify(body);
+    const edit = (newText: string) => ({ tool: "edit", input: {
+      path: "feature/status.txt", edits: [{ oldText: "pending", newText }],
+    } });
+    if (count === 1) {
+      assert.doesNotMatch(payload, /Feature status must read ready/u);
+      return edit("premature");
+    }
+    assert.match(payload, /Feature status must read ready/u);
+    assert.doesNotMatch(payload, /Unused local fallback|Changed during execution/u);
+    if (count === 2) {
+      assert.match(payload, /project_instructions_pending/u);
+      assert.equal(await readFile(target, "utf8"), "pending\n");
+      await writeFile(instructions, "Changed during execution.\n");
+      return edit("ready");
+    }
+    assert.equal(await readFile(target, "utf8"), "ready\n");
+    return { text: "Feature status is ready." };
+  });
+  t.after(() => provider.close());
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Scoped project rules" });
+  const { cursor } = await client.call<LingAppServerSubscriptionResult>("thread/subscribe", { threadId: thread.id });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const { turn, run } = await client.call<{ turn: { id: string }; run: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Prepare the status file", idempotencyKey: "scoped-project-rules",
+    providerPresetId: preset.id, tools: ["edit"], authorizationMode: "always", workspaceAccessMode: "workspace_write",
+  });
+  const settled = await waitFor(() => {
+    const current = fixture.getStore().getRun(run.id);
+    return current?.endedAt ? current : undefined;
+  });
+  assert.equal(settled.status, "succeeded", settled.errorMessage ?? "The scoped edit should succeed after the model receives the rules.");
+  assert.equal(provider.requests.length, 3);
+  assert.equal(await readFile(target, "utf8"), "ready\n");
+  const query = { threadId: thread.id, turnId: turn.id };
+  const context = await client.call<LingAppServerContextInspectResult>("context/inspect", query);
+  assert.deepEqual(context.projectInstructions?.sources.map(source => source.path), ["AGENTS.md"]);
+  const [update] = context.projectInstructionUpdates ?? [];
+  assert.equal(update?.runId, run.id);
+  assert.equal(update?.presentedSourceCount, 1);
+  assert.deepEqual(update?.manifest.sources.map(source => source.path), ["feature/AGENTS.override.md"]);
+  assert.equal(update?.manifest.sources[0]?.digest, createHash("sha256").update("Feature status must read ready.\n").digest("hex"));
+  assert.equal("prompt" in update!, false);
+
+  await fixture.restart();
+  const reconnected = await fixture.connect();
+  await reconnected.call("thread/subscribe", { threadId: thread.id, cursor });
+  await waitFor(() => reconnected.notices.find(notice => notice.method === "thread/replay/ready"));
+  assert.deepEqual(await reconnected.call("context/inspect", query), context);
+  assert.deepEqual(reconnected.notices.filter(notice => notice.method === "turn/projectInstructions/updated").map(notice => notice.params?.event?.action), [
+    "turn.project_instructions.discovered", "turn.project_instructions.presented",
+  ]);
+});
+
 test("a sealed Handoff resumes one new conversation from the current candidate", { timeout: 30_000 }, async t => {
   const provider = await startLoopbackPiProvider(() => ({ text: "Work recorded." }));
   t.after(() => provider.close());
@@ -1455,6 +1520,17 @@ test("a scheduled coordination occurrence commits with its round, restores its d
   assert.equal(skipReceipt.status, "skipped");
   assert.equal(skipReceipt.skipReason, "coordination_policy_denied");
   assert.equal(fixture.getStore().listRuns().length, 0);
+  const secret = createHash("sha256").update(randomUUID()).digest("hex");
+  const { grant } = await observer.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+    label: "Work Item coordination observer", subject: { kind: "workItem", id: workItemId }, scopes: ["observe", "control"],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(), credentialSha256: createHash("sha256").update(secret).digest("hex"),
+    idempotencyKey: "scoped-coordination",
+  });
+  const scoped = await fixture.connect("/app-server/rpc", fixture.cwd, `las1.${grant.grantId}.${secret}`);
+  assert.deepEqual(await scoped.call("workItem/coordination/schedule/read", { workItemId, automationId: automation.id }), configured);
+  await assert.rejects(scoped.call("workItem/coordination/schedule/set", { ...policy, expectedRevision: 1 }), { code: "capability_denied" });
+  await assert.rejects(scoped.call("workItem/accept", { workItemId, expectedWorkItemRevision: Number(current.workItem.revision),
+    dispatch: { threadId: home.id, message: "Start on another thread" }, idempotencyKey: "scoped-accept" }), { code: "capability_denied" });
 });
 
 test("Work Item controls commit state, receipt and event together and replay after a later control", { timeout: 20_000 }, async t => {

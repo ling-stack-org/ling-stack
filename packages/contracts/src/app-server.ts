@@ -222,6 +222,7 @@ export const LING_APP_SERVER_NOTIFICATION_METHODS = [
   "turn/status/changed",
   "turn/completed",
   "turn/plan/updated",
+  "turn/projectInstructions/updated",
   "turn/diff/updated",
   "item/started",
   "item/delta",
@@ -1141,6 +1142,7 @@ export interface LingAppServerInstructionSource {
   readonly digest: string;
   readonly scope: string;
   readonly applicable: boolean;
+  readonly textBytes?: number;
 }
 
 export interface LingAppServerProjectInstructionManifest {
@@ -1193,7 +1195,14 @@ export interface LingAppServerContextInspectParams extends LingAppServerThreadSn
 export interface LingAppServerContextInspectResult extends Omit<LingAppServerContextInspectParams, "cwd"> {
   readonly cwd: string;
   readonly projectInstructions: LingAppServerProjectInstructionManifest | null;
+  readonly projectInstructionUpdates?: readonly LingAppServerProjectInstructionUpdate[];
   readonly context: ConversationContextProjectionMetadata | null;
+}
+
+export interface LingAppServerProjectInstructionUpdate {
+  readonly runId: string;
+  readonly manifest: LingAppServerProjectInstructionManifest;
+  readonly presentedSourceCount: number;
 }
 
 export interface LingAppServerInstructionsInitResult {

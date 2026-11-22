@@ -55,6 +55,7 @@ import { prepareConversationSubmission } from "../features/conversations/convers
 import { parseConversationStreamRequest } from "../features/conversations/routes.js";
 import { readConversationSubmission } from "../features/conversations/submission-receipts.js";
 import { readNormalConversationPreparedRequest } from "../features/conversations/normal-conversation-prepared-request.js";
+import { readRuntimeProjectInstructions } from "../features/conversations/runtime-project-instructions.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
   CONTROL_PLANE_POLL_MAX_LIMIT,
@@ -1469,7 +1470,9 @@ class RpcConnection {
     const turn = store.getLingTurn(turnId);
     if (!turn || turn.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", "Turn is outside the supplied Thread.");
     const request = turn.sourceItemId ? readNormalConversationPreparedRequest(store, turn.sourceItemId) : undefined;
+    const projectInstructionUpdates = readRuntimeProjectInstructions(store, turnId);
     return { cwd, threadId, turnId, projectInstructions: request?.projectInstructionManifest ?? null,
+      ...(projectInstructionUpdates.length ? { projectInstructionUpdates } : {}),
       context: request?.normalConversationContext?.projection ?? null };
   }
 
@@ -3004,6 +3007,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   if (event.entityType === "turn") {
     if (event.action === "turn.started") return "turn/started";
     if (event.action === "turn.completed") return "turn/completed";
+    if (event.action.startsWith("turn.project_instructions.")) return "turn/projectInstructions/updated";
     if (event.action.includes("plan")) return "turn/plan/updated";
     if (event.action.includes("diff")) return "turn/diff/updated";
     if (event.action.startsWith("turn.")) return "turn/status/changed";

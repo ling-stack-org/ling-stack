@@ -551,6 +551,8 @@ export interface PiRunnerRunOptions {
   readonly reasoningSummary?: PiRunnerReasoningSummaryMode;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
+  /** Host-owned scoped rules for a task model request, with a receipt at local payload admission. */
+  readonly projectInstructionContext?: () => { readonly prompt: string; readonly onAdmitted: () => void } | undefined;
   readonly agentDir?: string;
   readonly runtimePaths?: PiRunnerRuntimePaths;
   readonly runtimeToolFeatures?: PiRunnerRuntimeToolFeatures;

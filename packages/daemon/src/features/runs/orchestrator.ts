@@ -193,6 +193,7 @@ import type { RunExecutionSink } from "./run-execution-sink.js";
 export { createDetachedRunExecutionSink, createSseRunExecutionSink, type RunExecutionSink } from "./run-execution-sink.js";
 import { prepareNormalConversationExecution, readNormalConversationPreparedExecution,
   restoreNormalConversationExecutionOptions, assertPreparedExecutionMemoryCurrent } from "../conversations/normal-conversation-prepared-execution.js";
+import { createRuntimeProjectInstructions } from "../conversations/runtime-project-instructions.js";
 import {
   assertPreparedRunnerMemoryCurrent,
   capturePreparedRunnerInput,
@@ -3495,8 +3496,20 @@ async function executeAdmittedRunRequest(
           signal: abortController.signal,
         })
       : undefined;
+    const projectInstructions = runRequest.normalConversationContext && thread.kind === "conversation" && !delegatedExecution
+      && runnerResolution.runner.adapter instanceof PiRunnerAdapter ? createRuntimeProjectInstructions({
+        store, run, cwd: workspaceCwd, threadId: thread.id, turnId: turn.id, prepared: runRequest.projectInstructionManifest,
+        events: options.controlPlaneEvents, extraSecrets: resolvedSecretValues,
+        assertCurrent() {
+          assertCurrentRunAdmission();
+          if (!store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence)) {
+            throw new Error("The project instruction discovery no longer owns the Run.");
+          }
+        },
+      }) : undefined;
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
+      ...(projectInstructions ? { projectInstructionContext: projectInstructions.projectContext } : {}),
       ...(!isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
         && (!run.parentRunId || delegatedExecution) ? { providerBudget: bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) } : {}),
       ...(delegationRunnerToolHandler ? { onDelegationToolCall: delegationRunnerToolHandler } : {}),
@@ -3551,7 +3564,7 @@ async function executeAdmittedRunRequest(
           const hostRejection = hostCapabilityAuthority?.check({ ...request, task: runnerRequest.task });
           if (hostRejection) return { allowed: false, code: hostRejection.code, reason: hostRejection.reason };
         }
-        return { allowed: true };
+        return projectInstructions?.checkTool(request) ?? { allowed: true };
       },
       onApprovalRequired: async (request) => {
         const definition = mcpTools.find((tool) => tool.registeredName === request.toolName);

@@ -340,17 +340,20 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         } : undefined;
         verifyInitialInput?.();
         let modelContext: typeof context;
+        let projectInstructions: ReturnType<NonNullable<PiRunnerRunOptions["projectInstructionContext"]>>;
         try {
           const taskContext = readTaskContext?.();
           if (taskContext && taskContext.sessionId !== undefined && streamOptions?.sessionId === taskContext.sessionId) {
             assertPreparedPiModelContext(taskContext.preparedInput, model, context, { allowRestoredMessages: true });
             if (firstRequest && options.compactionRecovery) assertCompactionRecoveryModelContext(options.compactionRecovery, context);
             if (firstRequest && options.ordinaryProgressRecovery) assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, context);
+            projectInstructions = options.projectInstructionContext?.();
           }
           if (taskContext && getCurrentSystemPrompt(piTranscript(context).messages) === taskContext.systemPrompt && hasCompactionSummary(taskContext.messages)) {
             assertAcceptedTaskAnchor(context.messages, taskContext.acceptedTaskPrompt);
           }
-          modelContext = assertPiModelContextCapacity(model, context);
+          modelContext = assertPiModelContextCapacity(model, projectInstructions
+            ? appendProjectInstructions(context, projectInstructions.prompt) : context);
           if (firstRequest && options.ordinaryProgressRecovery) {
             // No lossy extra capacity projection may silently change the committed ordinary view.
             assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, modelContext);
@@ -399,6 +402,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
             const candidate = next ?? payload;
             const summaryPayload = applyReasoningSummaryModeToPayload(candidate, requestModel.api, options.reasoningSummary);
             const reservedPayload = budget.authorize(summaryPayload ?? candidate, requestModel);
+            projectInstructions?.onAdmitted();
             // This wrapper also covers SDK summary streams without an Agent
             // extension hook. It observes logical admission, not network I/O.
             invocation.admit(requestModel);
@@ -424,6 +428,12 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
       };
     },
   };
+}
+
+function appendProjectInstructions(context: Parameters<typeof piTranscript>[0], prompt: string) {
+  const [system, ...messages] = piTranscript(context).messages;
+  if (system?.role !== "system") throw new Error("The task's system instructions are unavailable.");
+  return { messages: [{ ...system, sections: { ...system.sections, lingProjectInstructions: prompt } }, ...messages] };
 }
 
 function directiveKind(value: unknown): unknown {

@@ -18,6 +18,7 @@
 ### 项目约定与验证
 
 - 内置 `init-project-instructions` 和 `verify-current-changes` 技能通过 CLI 预览项目约定、捕获候选、生成计划、启动检查并读取状态。应用初始化草稿需要当前预览 revision 和 operator 授权。
+- 普通 Pi 会话进入新目录时可发现并封存逐级项目规则。验收验证首次写入等待模型收到子目录规则、第二次写入生效，以及重启后从 Thread 游标读取原规则凭据。
 - Host 登记的 Verify 配方可以选择受影响路径，并把独立 verifier source 的摘要、coverage 和 producer refs 封存到每个检查结果。
 - Goal 的 `verification_passed` 条件要求同一 Thread 的已完成 Verify operation、当前候选摘要、匹配的 verifier basis、coverage 和 producer refs。候选漂移、检查来源漂移、缺少独立证据和过期的接受版本都会阻止完成。
 - App Server 可以为已绑定的频道或队友会话创建、刷新和归档托管工作树。归档按检视过的候选和目录身份校验，恢复日志保留同一预览请求的归档快照。
@@ -47,7 +48,7 @@
 | 工作包 | 代码或验收差距 |
 | --- | --- |
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入，审批和用户答复仍需按不同真实宿主与远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
-| D1、D2、E1、E2 | 开工时的项目规则加载、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理和外部 GitHub 合并结果验收已接入。仍需运行中进入新目录的局部规则、候选补丁的应用预览和提交、浏览器/平台配方，以及 UI 运行报告。 |
+| D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理和外部 GitHub 合并结果验收已接入。仍需显式导入 Claude 规则、候选补丁的应用预览和提交、浏览器/平台配方，以及 UI 运行报告。 |
 | F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。仍需跨 Agent Workflow 的执行归属和预算承接。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
 | O1、O3–O9 | GitHub webhook/poll 归并与派发、自治接单、合并队列、经验和设备反馈、阶段简报、在途改计划、交接、审议裁决和跨 Run 预算。现有工作项状态、会话首发、定时轮次和 GitHub 实际合并核对已有对应回归。仍需接入原 Workflow 并完成联合 UI 验收。 |
 | G | 自研切换和回退日志对账、签名安装产物、远程 WSS 和三个真实 Provider 自研试点。macOS 打包预检仍缺当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检达到评审条件，真实试点仍需按 Framework Assurance 准入。 |

@@ -250,6 +250,8 @@ sequenceDiagram
 4. Skill 显式调用或建议调用都经过现有有效绑定检查。记录定义 revision、来源 checksum、工具和能力要求以及配方引用。带副作用的动作走对应工具或工作流授权。可信 Hook 使用现有 workspace digest pin 和规划策略，记录失败、阻塞和执行时序。
 5. `instructions/init` 使用当前仓库资料提案，含来源和可预览补丁。只读 Doctor 报规则优先级、配置冲突、受信配方、工具缺失和状态。初始化补丁经现有改动应用服务处理。独立模型审查从基线 SHA 取适用 `Code Review Rules` 或选定的 `REVIEW.md`，记录版本并覆盖变更位置。
 
+普通 Pi 会话根据结构化文件工具的目标路径发现新增目录规则。规则内容随 Run 封存，并在下一次任务模型请求进入 Provider 适配器前参与上下文容量计算。新范围内的 `edit` 和 `write` 会等到这次模型请求受理再重试。相同 Run 使用首次发现的规则版本。`context/inspect` 返回开工规则和运行中增加的来源摘要，Thread 事件分别报告发现和模型请求受理。 [运行中的项目规则](../../packages/daemon/src/features/conversations/runtime-project-instructions.ts)
+
 ### 3.2 候选、验证计划和结果
 
 候选引用包括 `workspaceId`、`worktreeId`、`baseCommit`、`headCommit`、`candidateDigest`、相关文件范围与覆盖状态。Daemon 从 Git 事实及授权范围内的工作树内容计算候选，包括声明要交付的未暂存和未跟踪改动，复用 Code Assessment 的双次采集和范围保护。文件移动、截断、敏感或不可读内容有明确的覆盖原因。发布证据绑定当前候选和实际输入，审查的脱敏视图另带其自身 digest。

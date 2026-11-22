@@ -91,6 +91,10 @@ export class SqliteLingThreadCleanupStore {
           stringifyJson(tombstone.deletedCounts),
           tombstone.createdAt,
         );
+      this.context.database.prepare(`DELETE FROM app_server_state WHERE workspace_id = ?
+        AND kind = 'project_instruction_update' AND record_id IN (
+          SELECT id FROM run_sessions WHERE thread_id = ?
+        )`).run(thread.workspaceId, threadId);
       this.context.database.prepare("UPDATE run_sessions SET thread_id = NULL, updated_at = ? WHERE thread_id = ?").run(now, threadId);
       this.context.database.prepare("DELETE FROM ling_thread_proposed_plans WHERE workspace_id = ? AND thread_id = ?").run(DEFAULT_WORKSPACE_ID, threadId);
       this.context.database.prepare("DELETE FROM ling_thread_goals WHERE workspace_id = ? AND thread_id = ?").run(DEFAULT_WORKSPACE_ID, threadId);

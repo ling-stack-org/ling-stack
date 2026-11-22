@@ -111,10 +111,7 @@ const workItemReads = new Set([
   "workItem/message/read", "workItem/message/list", "workItem/question/read", "workItem/handoff/read",
   "workItem/coordination/schedule/read",
 ]);
-const workItemControls = new Set([
-  "workItem/pause", "workItem/resume", "workItem/cancel", "workItem/accept",
-  "workItem/coordination/schedule/set",
-]);
+const workItemControls = new Set(["workItem/pause", "workItem/resume", "workItem/cancel"]);
 
 export function grantAllowsMethod(grant: LingAppServerGrant, method: string): boolean {
   if (serverMethods.has(method)) return true;

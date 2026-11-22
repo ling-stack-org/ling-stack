@@ -8,8 +8,8 @@ import { HttpError } from "../../errors.js";
 import type { RunRequest } from "../runs/schemas.js";
 
 const maxSourceBytes = 24 * 1024;
-const maxManifestBytes = 48 * 1024;
-const maxScopes = 32;
+export const maxProjectInstructionBytes = 48 * 1024;
+export const maxProjectInstructionScopes = 32;
 
 export async function withProjectInstructions(workspaceCwd: string, request: RunRequest): Promise<RunRequest> {
   const rules = await collectProjectInstructions(workspaceCwd, [resolve(request.cwd),
@@ -25,7 +25,11 @@ export async function withProjectInstructions(workspaceCwd: string, request: Run
     appendSystemPrompt: [...(request.appendSystemPrompt ?? []), ...prompt] };
 }
 
-export async function collectProjectInstructions(workspaceCwd: string, scopePaths: readonly string[] = []) {
+export async function collectProjectInstructions(workspaceCwd: string, scopePaths: readonly string[] = [], limits?: {
+  readonly frozenScopes: ReadonlySet<string>;
+  readonly remainingBytes: number;
+  readonly remainingSources: number;
+}) {
   const root = await realpath(workspaceCwd);
   const openedPath = resolve(workspaceCwd);
   const scopes = new Set([root]);
@@ -38,7 +42,7 @@ export async function collectProjectInstructions(workspaceCwd: string, scopePath
     for (let directory = candidate; directory !== root; directory = dirname(directory)) lineage.push(directory);
     for (const directory of lineage.reverse()) {
       if (scopes.has(directory)) continue;
-      if (scopes.size >= maxScopes || await realpath(directory).catch(() => undefined) !== directory) {
+      if (scopes.size >= maxProjectInstructionScopes || await realpath(directory).catch(() => undefined) !== directory) {
         omitted.push(relative(root, directory));
         break;
       }
@@ -48,29 +52,35 @@ export async function collectProjectInstructions(workspaceCwd: string, scopePath
 
   const sources: LingAppServerInstructionSource[] = [];
   const prompt: string[] = [];
-  let availableBytes = maxManifestBytes;
+  let availableBytes = limits?.remainingBytes ?? maxProjectInstructionBytes;
   for (const scope of scopes) {
+    const relativeScope = relative(root, scope) || ".";
+    if (limits?.frozenScopes.has(relativeScope)) continue;
     for (const basename of ["AGENTS.override.md", "AGENTS.md"]) {
       const path = relative(root, resolve(scope, basename));
       const source = await readProjectText(root, path);
       if (source === undefined) continue;
-      const applicable = typeof source === "string" && Buffer.byteLength(source, "utf8") <= availableBytes;
-      if (typeof source === "string") {
-        sources.push({ path, scope: relative(root, scope) || ".", digest: textDigest(source), applicable });
+      const textBytes = typeof source === "string" ? Buffer.byteLength(source, "utf8") : undefined;
+      const canRecord = !limits || sources.length < limits.remainingSources;
+      const applicable = textBytes !== undefined && textBytes <= availableBytes && canRecord;
+      if (typeof source === "string" && canRecord) {
+        sources.push({ path, scope: relativeScope, digest: textDigest(source), applicable, textBytes });
         if (applicable) {
-          availableBytes -= Buffer.byteLength(source, "utf8");
-          prompt.push(`Project conventions from ${JSON.stringify(path)}, applicable within ${JSON.stringify(relative(root, scope) || ".")}. Follow the user's request and workspace policy.\n${redactSecrets(source)}`);
+          availableBytes -= textBytes;
+          prompt.push(`Project conventions from ${JSON.stringify(path)}, applicable within ${JSON.stringify(relativeScope)}. Follow the user's request and workspace policy.\n${redactSecrets(source)}`);
         }
       }
       if (!applicable) omitted.push(path);
       break;
     }
   }
-  const uniqueOmissions = [...new Set(omitted)];
-  const manifest: LingAppServerProjectInstructionManifest = {
-    version: 1, sources, omitted: uniqueOmissions, digest: textDigest(JSON.stringify([sources, uniqueOmissions])),
-  };
+  const manifest = projectInstructionManifest(sources, [...new Set(omitted)]);
   return { root, manifest, prompt };
+}
+
+export function projectInstructionManifest(sources: readonly LingAppServerInstructionSource[],
+  omitted: readonly string[]): LingAppServerProjectInstructionManifest {
+  return { version: 1, sources, omitted, digest: textDigest(JSON.stringify([sources, omitted])) };
 }
 
 export async function projectInstructionDirectory(workspaceCwd: string, taskPath?: string): Promise<string> {
@@ -116,7 +126,7 @@ export function textDigest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function isInside(root: string, path: string): boolean {
+export function isInside(root: string, path: string): boolean {
   const child = relative(root, path);
   return child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 }
