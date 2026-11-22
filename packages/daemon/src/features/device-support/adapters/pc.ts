@@ -32,10 +32,13 @@ export interface PcServiceStatus {
   readonly state: "running" | "stopped" | "failed" | "unknown";
 }
 
+export const PC_SERVICE_INSPECTION_TIMEOUT_MS = 10_000;
+const PC_SERVICE_RESPONSE_BYTES_LIMIT = 256 * 1024;
+
 export interface PcTargetExecutor {
   inventory(signal?: AbortSignal): Promise<{ readonly hostname: string; readonly os: string; readonly version?: string }>;
   readNetwork(signal?: AbortSignal): Promise<PcNetworkStatus>;
-  readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[]>;
+  readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[] | undefined>;
   repairNetwork(input: { readonly mode: "refresh_dhcp" | "restart_network"; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly changed: boolean }>;
 }
 
@@ -80,13 +83,13 @@ const pcManifest: AdapterManifestV1 = {
       schemaVersion: "1.0",
       semanticVerb: "inspect.services",
       inputSchema: { type: "object" },
-      outputSchema: { type: "array" },
+      outputSchema: { type: "object" },
       sideEffect: "read_only",
       approvalClass: "allow",
       requiredPermissions: ["pc.services.read"],
       prerequisites: [],
-      timeoutMs: 10_000,
-      responseBytesLimit: 256 * 1024,
+      timeoutMs: PC_SERVICE_INSPECTION_TIMEOUT_MS,
+      responseBytesLimit: PC_SERVICE_RESPONSE_BYTES_LIMIT,
       idempotency: "request",
       supportedDeviceKinds: ["pc"],
       supportedTransports: ["local_process", "ssh", "winrm"],
@@ -161,8 +164,12 @@ export class PcAdapter implements DeviceAdapter {
       return completedObservation(input, startedAt, networkObservationValue(value), "pc.network");
     }
     if (input.capability.id === "pc.inspect.services") {
-      const value = await this.#executor.readServices(input.signal);
-      return completedObservation(input, startedAt, { services: value } as unknown as JsonValue, "pc.services");
+      const services = await this.#executor.readServices(input.signal);
+      const evidence = services && { services: services.map(({ name, state }) => ({ name, state })) };
+      if (!evidence || Buffer.byteLength(JSON.stringify(evidence)) > PC_SERVICE_RESPONSE_BYTES_LIMIT) {
+        return completedObservation(input, startedAt, { status: "unavailable" }, "pc.services", "unknown");
+      }
+      return completedObservation(input, startedAt, evidence, "pc.services");
     }
     if (input.capability.id === "pc.repair.network") {
       const mode = isNetworkRepairMode(input.request.normalizedInput);
@@ -199,13 +206,17 @@ function completedObservation(
   startedAt: string,
   value: JsonValue,
   source: string,
+  quality: DeviceObservationV1["quality"] = "good",
 ): DeviceAdapterExecutionResult {
   const observationId = `${input.request.actionId}:result`;
-  const observation = pcObservation(input.profile, observationId, startedAt, value, source);
+  const observation = pcObservation(input.profile, observationId, startedAt, value, source, quality);
   return { action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [observationId] }, observations: [observation] };
 }
 
-function pcObservation(profile: DeviceProfileV1, id: string, observedAt: string, value: JsonValue, source: string): DeviceObservationV1 {
+function pcObservation(
+  profile: DeviceProfileV1, id: string, observedAt: string, value: JsonValue, source: string,
+  quality: DeviceObservationV1["quality"] = "good",
+): DeviceObservationV1 {
   return {
     id,
     subjectId: profile.device.id,
@@ -214,7 +225,7 @@ function pcObservation(profile: DeviceProfileV1, id: string, observedAt: string,
     observedAt,
     receivedAt: observedAt,
     freshnessUntil: new Date(Date.parse(observedAt) + 30_000).toISOString(),
-    quality: "good",
+    quality,
     provenance: [source, profile.device.id],
     redactionClass: "public",
   };

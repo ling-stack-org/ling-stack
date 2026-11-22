@@ -1,9 +1,35 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { networkInterfaces } from "node:os";
+import { win32 } from "node:path";
 import { promisify } from "node:util";
-import type { PcNetworkStatus, PcServiceStatus, PcTargetExecutor } from "./pc.js";
+import { PC_SERVICE_INSPECTION_TIMEOUT_MS, type PcNetworkStatus, type PcServiceStatus, type PcTargetExecutor } from "./pc.js";
 
 const execFile = promisify(nodeExecFile);
+
+const windowsServiceQuery = [
+  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+  "ConvertTo-Json -Compress -InputObject @(Get-Service -ErrorAction Stop | ForEach-Object {",
+  "  @{ name = $_.ServiceName; state = $_.Status.ToString() }",
+  "})",
+].join("\n");
+
+const serviceInspection: Partial<Record<NodeJS.Platform, {
+  readonly file: string;
+  readonly args: readonly string[];
+  readonly parse: (output: string) => readonly PcServiceStatus[] | undefined;
+}>> = {
+  linux: {
+    file: "systemctl",
+    args: ["list-units", "--type=service", "--all", "--no-legend", "--plain", "--no-pager", "--full"],
+    parse: parseSystemdServices,
+  },
+  darwin: { file: "/bin/launchctl", args: ["list"], parse: parseLaunchdServices },
+  win32: {
+    file: win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", windowsServiceQuery],
+    parse: parseWindowsServices,
+  },
+};
 
 export interface LocalProcessRunner {
   run(file: string, args: readonly string[], signal?: AbortSignal): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }>;
@@ -12,7 +38,7 @@ export interface LocalProcessRunner {
 export const localProcessRunner: LocalProcessRunner = {
   async run(file, args, signal) {
     try {
-      const result = await execFile(file, [...args], { signal, maxBuffer: 256 * 1024 });
+      const result = await execFile(file, [...args], { signal, maxBuffer: 256 * 1024, windowsHide: true });
       return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
     } catch (error) {
       const failure = error as { readonly stdout?: string; readonly stderr?: string; readonly code?: number };
@@ -55,17 +81,15 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
     return { connected: false };
   }
 
-  async readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[]> {
-    if (this.#platform === "linux") {
-      const result = await this.#runner.run("systemctl", ["list-units", "--type=service", "--no-legend", "--plain"], signal);
-      return parseSystemdServices(result.stdout);
-    }
-    if (this.#platform === "darwin") {
-      const result = await this.#runner.run("launchctl", ["list"], signal);
-      return result.exitCode === 0 ? [{ name: "launchd", state: "running" }] : [{ name: "launchd", state: "unknown" }];
-    }
-    const result = await this.#runner.run("sc.exe", ["query", "state=", "all"], signal);
-    return result.exitCode === 0 ? [{ name: "Service Control Manager", state: "running" }] : [{ name: "Service Control Manager", state: "unknown" }];
+  async readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[] | undefined> {
+    signal?.throwIfAborted();
+    const inspection = serviceInspection[this.#platform];
+    if (!inspection) return undefined;
+    const deadline = AbortSignal.timeout(PC_SERVICE_INSPECTION_TIMEOUT_MS);
+    const querySignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    const result = await this.#runner.run(inspection.file, inspection.args, querySignal);
+    signal?.throwIfAborted();
+    return result.exitCode === 0 && !deadline.aborted ? inspection.parse(result.stdout) : undefined;
   }
 
   async repairNetwork(input: { readonly mode: "refresh_dhcp" | "restart_network"; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly changed: boolean }> {
@@ -83,12 +107,56 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
   }
 }
 
-function parseSystemdServices(text: string): readonly PcServiceStatus[] {
-  return text.split(/\r?\n/u).map(line => line.trim()).filter(Boolean).slice(0, 256).map(line => {
-    const parts = line.split(/\s+/u);
-    const name = parts[0]?.replace(/\.service$/u, "") ?? "unknown";
-    const activeState = parts[3] ?? parts[2];
-    const state = activeState === "running" ? "running" : activeState === "failed" ? "failed" : activeState === "dead" ? "stopped" : "unknown";
-    return { name, state };
-  });
+function parseSystemdServices(text: string): readonly PcServiceStatus[] | undefined {
+  const services: PcServiceStatus[] = [];
+  for (const line of text.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    const match = /^\s*(\S+)\.service\s+\S+\s+(\S+)\s+\S+(?:\s|$)/u.exec(line);
+    if (!match) return undefined;
+    const [, name, activeState] = match;
+    if (!isServiceName(name)) return undefined;
+    const state = activeState === "failed" ? "failed"
+      : activeState === "inactive" ? "stopped"
+      : activeState === "active" || activeState === "reloading" || activeState === "refreshing" ? "running"
+      : "unknown";
+    services.push({ name, state });
+  }
+  return services;
+}
+
+function parseLaunchdServices(text: string): readonly PcServiceStatus[] | undefined {
+  const [header, ...lines] = text.trim().split(/\r?\n/u);
+  if (!header || !/^PID\s+Status\s+Label\s*$/u.test(header)) return undefined;
+  const services: PcServiceStatus[] = [];
+  for (const line of lines) {
+    const match = /^\s*(-|[1-9]\d*)\s+(-?\d+)\s+(.+)$/u.exec(line);
+    if (!match) return undefined;
+    const [, pid, exitStatus, name] = match;
+    if (!isServiceName(name)) return undefined;
+    const code = Number(exitStatus);
+    const state = pid !== "-" ? "running" : code > 0 ? "failed" : code === 0 ? "stopped" : "unknown";
+    services.push({ name, state });
+  }
+  return services;
+}
+
+function parseWindowsServices(text: string): readonly PcServiceStatus[] | undefined {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(rows)) return undefined;
+  const services: PcServiceStatus[] = [];
+  for (const row of rows) {
+    if (!isServiceName(row?.name) || typeof row.state !== "string") return undefined;
+    const state = row.state === "Running" ? "running" : row.state === "Stopped" ? "stopped" : "unknown";
+    services.push({ name: row.name, state });
+  }
+  return services;
+}
+
+function isServiceName(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 256 && !/[\p{Cc}\p{Cf}]/u.test(value);
 }

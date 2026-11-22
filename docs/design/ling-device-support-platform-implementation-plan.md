@@ -47,7 +47,7 @@ validation and the boundary of what remains unverified.
 | D2 | [x] | Device registry and capability broker | A fake device can register, discover, refresh capabilities, lease a target, and execute a read-only capability | Core broker tests with fake adapter |
 | D3 | [~] | Task state, approval, verification, and evidence | A task keeps its approval, dispatch intent, receipt and verification through interruptions, with user-visible reconciliation and recovery | Core SQLite journal and daemon startup recovery tests |
 | D4 | [~] | Home Assistant adapter | The configured Daemon diagnoses entity availability and records it in the owner journal | Daemon fixtures and a local Home Assistant Core 2026.11.2 run |
-| D5 | [~] | PC adapter and target-side executor | Typed PC inventory, network/services observations, and one reversible repair are implemented | Daemon adapter fixture tests |
+| D5 | [~] | PC adapter and target-side executor | Typed PC inventory, network and native service observations, and one reversible repair are implemented | Three-platform service fixtures and macOS arm64 owner-journal acceptance |
 | D6 | [~] | Mobile device-task facade | Paired Mobile can inspect, approve, revoke, request readback, and resume the PC owner's journal through Gateway | Remote protocol and authenticated Gateway fixtures |
 | D7 | [~] | Playbooks and operator evidence | Bounded read-only playbook validation and replayable task attempts are implemented | Core playbook fixture tests |
 | D8 | [~] | Additional ecosystems | PC-owned Linux SSH enrolls a pinned target and journals IPv4, route, Wi-Fi and optional DNS observations | Daemon HTTP, reconnect fixtures and OpenSSH loopback |
@@ -253,7 +253,10 @@ D0 covers the design and the implementation plan.
 
 - [x] Define the Windows/Linux/macOS target-side executor boundary.
 - [~] Implement inventory, process/service, network, log, and software-version
-  observations.
+  observations. Local service diagnosis records loaded systemd units, jobs in the
+  Daemon's launchd domain, or Windows services visible to the current user. Unavailable
+  and oversized results produce unknown-quality evidence and remain outside the
+  diagnostic counts. Process, log, and installed software observations remain open.
 - [x] Expose typed repair actions instead of arbitrary shell execution.
 - [x] Add a loopback-authenticated local PC diagnosis route that returns the structured
   read-only report and persists the daemon-owned task and observations.
@@ -262,12 +265,25 @@ D0 covers the design and the implementation plan.
 - [ ] Establish a reproducible Windows network fault on a test PC or VM. Reproduce the
   diagnosis with read-only checks before exercising an approved reversible repair and
   retesting the original symptom.
-- [ ] Document when the target must have a running executor, when SSH/WinRM is enough, and
-  which recovery paths exist if the operating system cannot boot.
+- [x] Document target access and OS recovery prerequisites.
+
+### Target access and recovery
+
+- Local PC operations run on the target's Daemon with its current OS permissions. A
+  paired Mobile session requests PC-owned operations through that target's Gateway.
+- The [D8 Linux SSH adapter](#d8-additional-ecosystems) handles supported network reads
+  when SSH is already running and the operator has enrolled the pinned target. WinRM
+  operations require a compatible Windows adapter and an authorized WinRM endpoint.
+- When the operating system cannot start, the operator uses the platform's documented
+  recovery environment or a configured out-of-band management path. After recovery, the
+  owning runtime refreshes target identity and connectivity before resuming device tasks.
 
 ### Exit evidence
 
-- Adapter contract tests on a fake host.
+- Adapter contract tests exercise Linux, macOS and Windows service status projection,
+  empty and malformed results, and unavailable or oversized observations. macOS 27.2.1
+  arm64 returned 549 jobs in its current launchd domain. The diagnosis report's state
+  counts matched the normalized service observations after reopening SQLite.
 - Windows OS acceptance with the known network fault. Record whether the test PC is
   physical or virtual and the recovery path used.
 - Permission and uninstall checks.
@@ -868,7 +884,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D2 | `b21089541` | `corepack pnpm --filter @ling-stack/contracts build:ci`; `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-adapters.test.ts` (35 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [external-process.ts](../../packages/daemon/src/features/device-support/adapters/external-process.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Registry ownership, revocation, lease migration, refresh fencing, current capability snapshots, stable identities, broker dispatch, and crash-isolated external adapter execution are covered by fixtures | External adapter package signing, production resource activation and field acceptance remain |
 | D3 | Alternate-route approval and readback | Contracts, Core, Daemon, Remote Protocol, Remote Client and Mobile typechecks. Device contract (6), Core broker (29), Daemon device suites (21), Remote Protocol (43), Remote Client (19), standalone Mobile (9) passed | [Broker admission](../../packages/core/src/device-support.ts), [Core lease and stop fixture](../../packages/core/test/device-support.test.ts), [Authenticated v4 fixture](../../packages/daemon/test/device-remote-facade.test.ts), [Phone journal fixture](../../apps/mobile/test/standalone-device-runtime.test.ts) | Owner journals retain the exact approval, checked recovery route, baseline and attempt. A cancelled route check creates no write attempt. An interrupted write stays unknown until fresh readback. | Shared approval queue, target rollback timers, recovery approvals over routed peers, and physical alternate-route recovery remain |
 | D4 | `fd2e14c64` plus catalog boundary | Daemon build/typecheck. Adapter/catalog and runtime suites (10 and 9 passed). Home Assistant Core 2026.11.2 on macOS arm64 remains verified for REST entity diagnosis | [Adapter](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts), [Catalog](../../packages/daemon/src/features/device-support/adapters/home-assistant-catalog.ts), [Catalog tests](../../packages/daemon/test/home-assistant-catalog.test.ts), [D4 acceptance](#d4-home-assistant-adapter) | The adapter reads version-bound entity availability and exposes bounded devices, entities and services through typed catalog capabilities. WebSocket registry authentication pins the Home Assistant version. | Device-specific service action support, detailed stale-state and automation diagnosis, physical Home Assistant and field action acceptance remain |
-| D5 | `56e112a84` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/local-pc-executor.test.ts packages/daemon/test/device-support-runtime.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts), [local-pc-executor.ts](../../packages/daemon/src/features/device-support/adapters/local-pc-executor.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | Typed PC executor and loopback diagnosis route expose inventory, network/services observations, a reversible repair boundary and a persisted structured report. The route checks local origin and keeps target credentials out of the response | Windows/Linux/macOS clean-machine, target-side executor install/revoke and field acceptance remain |
+| D5 | `56e112a84` plus native service diagnosis | Daemon build and typecheck. Focused executor, adapter and runtime suites (21 passed). Real launchd query and owner-journal reopen on macOS 27.2.1 arm64 | [PC adapter](../../packages/daemon/src/features/device-support/adapters/pc.ts), [Executor fixtures](../../packages/daemon/test/local-pc-executor.test.ts), [D5 acceptance](#d5-pc-adapter-and-target-side-executor) | The PC playbook reports actual service state counts. The owner journal retains normalized names and states or an explicit unavailable observation. | Linux and Windows native service acceptance, network repair field acceptance, target executor installation and removal remain |
 | D6 | Paired readback and owner journal | Remote Protocol and Remote Client builds, typechecks and tests (43 and 13 passed). Mobile typecheck, 98 tests and both Expo JS exports passed | [Device facade](../../packages/daemon/src/features/remote-access/device-facade.ts), [Mobile journal](../../apps/mobile/src/features/device-tasks/PcDeviceTaskJournal.tsx), [Client fixtures](../../packages/remote-client/test/client.test.ts) | Paired Mobile can check status, approve, stop, request fresh readback, and page through the PC-owned journal. The client binds journal replies to the authenticated session, workspace, task and cursor | Detailed approval presentation and packaged PC/iPhone/Android acceptance remain |
 | D7 | `56e112a84` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts), [device-diagnosis.ts](../../packages/core/src/device-diagnosis.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | PC and Home Assistant templates project current typed facts, hypotheses, journaled outcomes and remaining uncertainty. The local daemon route returns a report after persisting its read-only task and observations | Model task projection and physical target verification remain |
 | D8 | `fdb3b50f7` and PC-owned Linux SSH enrollment | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. Targeted device suite (87 passed) covers same-name targets, disconnect, changed endpoint and revocation. OpenSSH loopback completed a diagnosis and rejected a mismatched host key | [Linux SSH operation](ling-device-developer-execution.md#pc-owned-linux-ssh-diagnosis), [Enrollment and diagnosis fixture](../../packages/daemon/test/linux-ssh-runtime.test.ts), [Broker readback fixture](../../packages/daemon/test/device-support-adapters.test.ts), [Android ADB adapter](../../packages/daemon/src/features/device-support/adapters/android-adb.ts), [OBD adapter](../../packages/daemon/src/features/device-support/adapters/obd.ts) | Daemon enrolls a target by verified key, then journals typed IPv4, route, Wi-Fi and optional DNS name resolution. Reconnect keeps the device ID and refreshes the connection. A lost repair receipt stays uncertain until fresh readback | Native Mobile SSH, actual LAN/hotspot and DNS evidence, PC network recovery route, ADB/OBD transport, parked head-unit and vehicle acceptance remain |

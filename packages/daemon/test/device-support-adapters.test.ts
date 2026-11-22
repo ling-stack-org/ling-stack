@@ -3,7 +3,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { isAdapterManifestV1, type DeviceActionRequestV1 } from "@ling-stack/contracts";
-import { createHomeAssistantOfflinePlaybook, DeviceCapabilityBroker, digestRequest, runDeviceReadOnlyPlaybook, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, DeviceCapabilityBroker, digestRequest, runDeviceReadOnlyPlaybook, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   AndroidAdbAdapter,
   ExternalDeviceAdapter,
@@ -11,6 +11,7 @@ import {
   LinuxSshAdapter,
   ObdVehicleAdapter,
   PcAdapter,
+  type PcServiceStatus,
 } from "../dist/features/device-support/adapters/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -135,6 +136,52 @@ test("PC adapter uses typed executor operations for diagnosis and repair", async
   });
   assert.equal("action" in action ? action.action.status : action.status, "completed");
   assert.deepEqual(operations, ["inventory", "repairNetwork"]);
+});
+
+test("PC diagnosis distinguishes an observed empty service inventory from unavailable evidence", async t => {
+  const store = new SqliteDeviceSupportStore();
+  t.after(() => store.close());
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  let services: readonly PcServiceStatus[] | undefined;
+  const adapter = new PcAdapter({
+    now: () => now,
+    executor: {
+      async inventory() { return { hostname: "test-pc", os: "linux" }; },
+      async readNetwork() { return { connected: true }; },
+      async readServices() { return services; },
+      async repairNetwork() { throw new Error("unexpected write"); },
+    },
+  });
+  broker.registerAdapter(adapter);
+  const target = await broker.discover(adapter.manifest.adapterId, { connectionRef: "local:test-pc", ownerId: "workspace" });
+  const snapshot = store.getCurrentCapabilitySnapshot(target.device.id)!;
+  const overBudget: PcServiceStatus[] = Array.from({ length: 1024 }, (_, index) => ({ name: `${index}-${"x".repeat(250)}`, state: "running" }));
+  for (const [taskId, reading, expectedQuality] of [
+    ["empty", [], "good"], ["failed", undefined, "unknown"], ["oversize", overBudget, "unknown"],
+  ] as const) {
+    services = reading;
+    const task = broker.createTask({
+      id: taskId, ownerKind: "daemon", ownerId: "pc-1", targetDeviceIds: [target.device.id],
+      status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now,
+    });
+    const run = await runDeviceReadOnlyPlaybook({
+      broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
+      playbook: createPcSoftwareDiagnosisPlaybook(),
+    });
+    const observation = store.listObservations(task.id).find(item => item.source === "pc.services");
+    assert.ok(observation);
+    assert.equal(observation.quality, expectedQuality);
+    const fact = run.report.facts.find(item => item.source === "pc.services");
+    if (expectedQuality === "good") {
+      assert.deepEqual(observation.value, { services: [] });
+      assert.deepEqual(fact?.value, { running: 0, stopped: 0, failed: 0, unknown: 0 });
+      assert.deepEqual(run.report.remainingUncertainty, []);
+    } else {
+      assert.deepEqual(observation.value, { status: "unavailable" });
+      assert.equal(fact, undefined);
+      assert.deepEqual(run.report.remainingUncertainty, [{ code: "unusable_observation", ref: observation.id }]);
+    }
+  }
 });
 
 test("Linux SSH adapter exposes diagnosis and network repair through a fixed operation set", async () => {
