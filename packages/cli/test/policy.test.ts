@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import type { CliResult } from "./fixtures/cli-result.js";
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 const defaultToolDecisions = {
@@ -16,7 +17,7 @@ const defaultToolDecisions = {
   bash: "ask",
   edit: "ask",
   write: "ask",
-};
+} as const;
 const defaultAllowedWritePaths = ["."];
 
 test("policy show reads the workspace approval policy", async () => {
@@ -114,8 +115,8 @@ test("policy set rejects invalid tool decisions before contacting the daemon", a
   assert.match(result.stderr, /bad_decision/);
 });
 
-function runCli(daemonUrl, cwd, args) {
-  return new Promise((resolveResult) => {
+function runCli(daemonUrl: string, cwd: string, args: readonly string[]) {
+  return new Promise<CliResult>((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], (error, stdout, stderr) => {
       resolveResult({
         code: typeof error?.code === "number" ? error.code : 0,
@@ -126,8 +127,13 @@ function runCli(daemonUrl, cwd, args) {
   });
 }
 
-async function startPolicyDaemon(initialPolicy = {}) {
-  const requests = [];
+interface PolicyUpdate {
+  toolDecisions?: Record<string, "allow" | "ask" | "deny">;
+  allowedWritePaths?: string[];
+}
+
+async function startPolicyDaemon(initialPolicy: PolicyUpdate = {}) {
+  const requests: { method: "GET" | "PATCH"; body?: PolicyUpdate }[] = [];
   let policy = {
     workspaceId: "workspace_default",
     toolDecisions: {
@@ -171,7 +177,7 @@ async function startPolicyDaemon(initialPolicy = {}) {
     writeJson(response, 405, { error: "method_not_allowed" });
   });
 
-  await new Promise((resolveListen) => {
+  await new Promise<void>((resolveListen) => {
     server.listen(0, "127.0.0.1", resolveListen);
   });
   const address = server.address();
@@ -179,7 +185,7 @@ async function startPolicyDaemon(initialPolicy = {}) {
   return {
     requests,
     url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise((resolveClose, rejectClose) => {
+    close: () => new Promise<void>((resolveClose, rejectClose) => {
       server.close((error) => {
         if (error) {
           rejectClose(error);
@@ -191,7 +197,7 @@ async function startPolicyDaemon(initialPolicy = {}) {
   };
 }
 
-function readJsonBody(request) {
+function readJsonBody(request: IncomingMessage): Promise<PolicyUpdate> {
   return new Promise((resolveBody, rejectBody) => {
     let body = "";
     request.setEncoding("utf8");
@@ -209,7 +215,7 @@ function readJsonBody(request) {
   });
 }
 
-function writeJson(response, statusCode, body) {
+function writeJson(response: ServerResponse, statusCode: number, body: unknown) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }

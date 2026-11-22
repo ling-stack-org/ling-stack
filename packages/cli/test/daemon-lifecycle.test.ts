@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import type { DoctorReport } from "../dist/doctor/checks.js";
+import type { CliResult } from "./fixtures/cli-result.js";
 
 const cliPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/index.js");
 
@@ -17,7 +19,7 @@ test("daemon lifecycle starts, reports status, reads logs, and stops a managed d
     LING_MOBILE_GATEWAY_PORT: String(await getFreePort()),
     LING_STACK_HOME: resolve(cwd, ".ling-stack-user"),
   };
-  const runDaemonCli = (args) => runCli(daemonUrl, cwd, args, daemonEnv);
+  const runDaemonCli = (args: readonly string[]) => runCli(daemonUrl, cwd, args, daemonEnv);
   let started = false;
   try {
     const start = await runDaemonCli(["daemon", "start", "--timeout", "10000"]);
@@ -37,7 +39,8 @@ test("daemon lifecycle starts, reports status, reads logs, and stops a managed d
 
     const doctor = await runDaemonCli(["doctor", "--json"]);
     assert.equal(doctor.code, 4, doctor.stderr);
-    const checks = new Map(JSON.parse(doctor.stdout).checks.map((check) => [check.id, check]));
+    const report: DoctorReport = JSON.parse(doctor.stdout);
+    const checks = new Map(report.checks.map((check) => [check.id, check]));
     assert.equal(checks.get("daemon.health")?.status, "ok");
     assert.equal(checks.get("workspace.sqlite")?.status, "ok");
     assert.equal(checks.get("skills.registry")?.status, "ok");
@@ -79,7 +82,7 @@ test("daemon restart removes stale pid metadata and starts a fresh daemon", asyn
     LING_MOBILE_GATEWAY_PORT: String(await getFreePort()),
     LING_STACK_HOME: resolve(cwd, ".ling-stack-user"),
   };
-  const runDaemonCli = (args) => runCli(daemonUrl, cwd, args, daemonEnv);
+  const runDaemonCli = (args: readonly string[]) => runCli(daemonUrl, cwd, args, daemonEnv);
   let started = false;
   try {
     await writeStaleDaemonState(cwd, daemonUrl, port);
@@ -120,8 +123,8 @@ test("daemon restart refuses active work before stopping the daemon", async () =
   }
 });
 
-function runCli(daemonUrl, cwd, args, env = {}) {
-  return new Promise((resolveResult) => {
+function runCli(daemonUrl: string, cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = {}) {
+  return new Promise<CliResult>((resolveResult) => {
     execFile(process.execPath, [cliPath, "--daemon-url", daemonUrl, "--cwd", cwd, ...args], {
       env: { ...process.env, ...env },
     }, (error, stdout, stderr) => {
@@ -134,7 +137,7 @@ function runCli(daemonUrl, cwd, args, env = {}) {
   });
 }
 
-async function writeStaleDaemonState(cwd, daemonUrl, port) {
+async function writeStaleDaemonState(cwd: string, daemonUrl: string, port: number) {
   const rootDir = resolve(cwd, ".ling-stack");
   const daemonDir = resolve(rootDir, "daemon");
   const logsDir = resolve(rootDir, "logs");
@@ -165,7 +168,7 @@ async function writeStaleDaemonState(cwd, daemonUrl, port) {
 }
 
 async function startActiveWorkDaemon() {
-  const requests = [];
+  const requests: string[] = [];
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push(`${request.method} ${url.pathname}`);
@@ -185,7 +188,7 @@ async function startActiveWorkDaemon() {
 
     writeJson(response, 404, { error: "not_found" });
   });
-  await new Promise((resolveListen) => {
+  await new Promise<void>((resolveListen) => {
     server.listen(0, "127.0.0.1", resolveListen);
   });
   const address = server.address();
@@ -193,7 +196,7 @@ async function startActiveWorkDaemon() {
   return {
     requests,
     url: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise((resolveClose, rejectClose) => {
+    close: () => new Promise<void>((resolveClose, rejectClose) => {
       server.close((error) => {
         if (error) {
           rejectClose(error);
@@ -205,13 +208,13 @@ async function startActiveWorkDaemon() {
   };
 }
 
-function writeJson(response, statusCode, body) {
+function writeJson(response: ServerResponse, statusCode: number, body: unknown) {
   response.writeHead(statusCode, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }
 
 function getFreePort() {
-  return new Promise((resolvePort, rejectPort) => {
+  return new Promise<number>((resolvePort, rejectPort) => {
     const server = createServer();
     server.once("error", rejectPort);
     server.listen(0, "127.0.0.1", () => {
