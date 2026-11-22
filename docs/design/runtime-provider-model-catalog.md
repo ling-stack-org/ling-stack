@@ -1,6 +1,6 @@
 # Runtime Provider Model Catalog
 
-Status: implementation in progress
+Status: implemented
 Owner: Provider platform
 Related: [Provider Model Catalog And Discovery](provider-model-catalog-and-discovery-p15.md)
 
