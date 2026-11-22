@@ -19,6 +19,7 @@ import {
   type CreateProposedPlanArtifactInput,
   type LingApprovalCheckpoint,
   type LingThread,
+  type LingThreadGoal,
   type LingThreadSearchMatch,
   type LingThreadArchivedFilter,
   type LingThreadGoalStatus,
@@ -404,7 +405,8 @@ async function handleLingThreadGoal(
       }
       const body = await readOptionalJsonBody(request, 1024 * 1024);
       const patch = parsePatchLingThreadGoalBody(body);
-      const goal = store.updateLingThreadGoal(existing.id, patch, new Date().toISOString());
+      const input = await bindGoalVerificationCandidate(store.paths.cwd, existing, patch);
+      const goal = store.updateLingThreadGoal(existing.id, input, new Date().toISOString());
       writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
       return;
     }
@@ -444,7 +446,8 @@ async function handleLingThreadGoalComplete(
       return;
     }
     const body = await readOptionalJsonBody(request, 1024 * 1024);
-    const goal = store.updateLingThreadGoal(existing.id, parseCompleteLingThreadGoalBody(body), new Date().toISOString());
+    const input = await bindGoalVerificationCandidate(store.paths.cwd, existing, parseCompleteLingThreadGoalBody(body));
+    const goal = store.updateLingThreadGoal(existing.id, input, new Date().toISOString());
     writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
   } catch (error) {
     writeLingThreadRouteError(response, error);
@@ -2225,6 +2228,19 @@ export function parseCompleteLingThreadGoalBody(value: unknown): UpdateLingThrea
   };
 }
 
+export async function bindGoalVerificationCandidate(
+  cwd: string, goal: LingThreadGoal, input: UpdateLingThreadGoalInput,
+): Promise<UpdateLingThreadGoalInput> {
+  if (input.status !== "complete" || goal.status === "complete"
+    || !goal.acceptanceCriteria?.some(criterion => criterion.kind === "verification_passed")) return input;
+  const { captureCodeAssessmentSnapshot } = await import("../code-assessments/snapshot.js");
+  const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+  if (snapshot.coverage !== "complete") {
+    throw new HttpError(409, "goal_verification_candidate_incomplete", "Goal verification requires complete coverage of the current candidate.");
+  }
+  return { ...input, verificationCandidateDigest: snapshot.digest, verificationGoalRevision: goal.updatedAt };
+}
+
 const lingThreadGoalStatuses = [
   "active",
   "paused",
@@ -2547,7 +2563,7 @@ function readOptionalPlanVersion(record: Record<string, unknown>, key: string): 
   return readOptionalGoalNumber(record, key, true);
 }
 
-const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow"] as const;
+const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow", "verification"] as const;
 
 function findActiveChannelDiscussionRootThread(store: RunStore, channelId: string): LingThread | undefined {
   return store

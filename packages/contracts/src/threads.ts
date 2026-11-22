@@ -75,7 +75,28 @@ export type GoalEvidenceRef =
   | { readonly kind: "turn"; readonly id: string }
   | { readonly kind: "artifact"; readonly id: string }
   | { readonly kind: "approval"; readonly id: string }
-  | { readonly kind: "workflow"; readonly id: string };
+  | { readonly kind: "workflow"; readonly id: string }
+  | { readonly kind: "verification"; readonly id: string };
+
+export interface GoalVerificationRequirement {
+  readonly checkId: string;
+  readonly verifierBasisRef: string;
+  readonly coverageDigest: string;
+}
+
+export interface GoalAcceptanceCriterion {
+  readonly id: string;
+  readonly description: string;
+  readonly kind: "run_succeeded" | "workflow_succeeded" | "artifact" | "verification_passed";
+  readonly contentSha256?: string;
+  readonly evidenceId?: string;
+  readonly verification?: GoalVerificationRequirement;
+}
+
+export interface GoalAcceptanceEvidence {
+  readonly criterionId: string;
+  readonly evidence: GoalEvidenceRef;
+}
 
 export interface GoalContinuationEvidenceDelta {
   readonly newEvidenceRefs: number;
@@ -118,6 +139,8 @@ export interface LingThreadGoal {
   readonly lastRunId?: string;
   readonly blockedReason?: string;
   readonly completionEvidenceRefs: readonly GoalEvidenceRef[];
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
   readonly completedBy?: LingThreadGoalCompletionActor;
   readonly completedReason?: string;
   readonly completionVerificationSummary?: string;
@@ -136,6 +159,7 @@ export interface LingThreadGoalPutRequest {
   readonly objective: string;
   readonly tokenBudget?: number | null;
   readonly replaceExisting?: boolean;
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
 }
 
 export interface LingThreadGoalPatchRequest {
@@ -154,6 +178,7 @@ export interface LingThreadGoalCompleteRequest {
   readonly reason?: string;
   readonly evidenceRefs?: readonly GoalEvidenceRef[];
   readonly completionVerificationSummary?: string;
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
 }
 
 export interface ProposedPlanArtifact {

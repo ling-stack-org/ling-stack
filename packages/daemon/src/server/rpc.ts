@@ -71,7 +71,7 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
-import { buildLingThreadResumeContext, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { bindGoalVerificationCandidate, buildLingThreadResumeContext, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention, requestRunInterventionRedirect } from "../features/runs/interventions.js";
@@ -1376,7 +1376,7 @@ class RpcConnection {
     return { cwd, threadId, goal };
   }
 
-  private completeThreadGoal(params: unknown): unknown {
+  private async completeThreadGoal(params: unknown): Promise<unknown> {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const threadId = readStringField(record, "threadId");
@@ -1389,7 +1389,8 @@ class RpcConnection {
       evidenceRefs: record.evidenceRefs ?? record.completionEvidenceRefs,
       completionVerificationSummary: record.completionVerificationSummary ?? record.verificationSummary,
     });
-    const updated = store.updateLingThreadGoal(goal.id, input, new Date().toISOString());
+    const prepared = await bindGoalVerificationCandidate(store.paths.cwd, goal, input);
+    const updated = store.updateLingThreadGoal(goal.id, prepared, new Date().toISOString());
     if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
     this.publishThreadGoal(store, cwd, updated);
     return { cwd, threadId, goal: updated };

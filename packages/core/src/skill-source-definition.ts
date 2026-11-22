@@ -67,7 +67,7 @@ export function isSourceManagedSkill(entry: SkillRegistryEntry): boolean {
 }
 
 export function isLingNativeSkillId(id: string): boolean {
-  return id === "implement" || id === "checkpoint";
+  return id === "implement" || id === "checkpoint" || id === "init-project-instructions" || id === "verify-current-changes";
 }
 
 export function refreshSourceManagedSkillDefinition(

@@ -19,8 +19,6 @@ import type {
   LingAppServerSimplifyStartResult,
   LingAppServerSimplifyStatusParams,
   LingAppServerSimplifyStatusResult,
-  LingAppServerVerificationCheckPlan,
-  LingAppServerVerificationCheckStatus,
   LingAppServerVerifyCancelParams,
   LingAppServerVerifyCancelResult,
   LingAppServerVerifyPlanParams,
@@ -40,7 +38,8 @@ import type { RunStoreRegistry } from "../runtime/store-registry.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
 import { reconcileCodeAssessments, startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
 import { parseReviewRuleRefs } from "../features/code-assessments/review-rules.js";
-import { verificationRecipes } from "./app-server-verification-recipes.js";
+import { verificationRecipePlan, verificationRecipes, type AppServerVerificationCheckResult } from "./app-server-verification-recipes.js";
+import type { AppServerVerificationRecipeConfig } from "./app-server-verification-config.js";
 import { collectProjectInstructions } from "../features/conversations/project-instructions.js";
 import { initializeProjectInstructions } from "../features/conversations/project-instructions-draft.js";
 import { trimOversizedEvent } from "../features/control-plane/events.js";
@@ -62,10 +61,11 @@ export interface AppServerDevelopmentOptions {
   /** Host-owned verification execution. It must use the normal daemon authority. */
   readonly executeVerificationCheck?: (input: {
     readonly cwd: string;
-    readonly check: LingAppServerVerificationCheckPlan;
+    readonly check: LingAppServerVerifyPlanResult["checks"][number];
     readonly candidate: LingAppServerCandidateReference;
+    readonly recipes?: readonly AppServerVerificationRecipeConfig[];
     readonly signal: AbortSignal;
-  }) => Promise<LingAppServerVerificationCheckStatus>;
+  }) => Promise<AppServerVerificationCheckResult | AppServerVerificationCheckResult["status"]>;
 }
 
 /** Coordinates durable verification state and delegates code assessment to its Run owner. */
@@ -96,17 +96,19 @@ export class AppServerDevelopmentService {
       throw Object.assign(new Error("The accepted Work Item plan changed."), { jsonRpcCode: -32030, code: "stale_revision" });
     }
     const acceptedPlanRevision = workItem?.planRevision ?? input.planRevision;
-    const candidate = { ...input.candidate, workspaceId: store.paths.cwd };
-    const checks = verificationRecipes(input.requestedChecks).map(({ id, kind, label, argv, required }) => {
-      return {
-        checkId: id,
-        kind,
-        label,
-        ...(argv.length ? { command: argv.join(" ") } : {}),
-        recipeDigest: digest(JSON.stringify({ id, kind, argv, candidateDigest: candidate.candidateDigest })),
-        required,
-      } satisfies LingAppServerVerificationCheckPlan;
-    });
+    const candidateWorkspace = store.paths.cwd;
+    const configured = this.verificationRecipes(cwd);
+    let paths: readonly string[] | undefined;
+    if (configured.length && !input.requestedChecks?.length) {
+      const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+      if (snapshot.coverage !== "complete" || snapshot.digest !== input.candidate.candidateDigest) {
+        throw new HttpError(409, "candidate_stale", "Verification planning requires a current candidate with complete coverage.");
+      }
+      paths = snapshot.files.flatMap(file => file.originalPath ? [file.path, file.originalPath] : [file.path]);
+    }
+    const candidate = { ...input.candidate, workspaceId: candidateWorkspace, ...(paths ? { filePaths: [...new Set(paths)] } : {}) };
+    const checks = verificationRecipes(input.requestedChecks, configured, paths)
+      .map(recipe => verificationRecipePlan(recipe, candidate.candidateDigest));
     const plan: LingAppServerVerifyPlanResult = {
       planId: `verify_plan_${randomUUID()}`,
       planRevision: digest(JSON.stringify({ candidate, checks, acceptedPlanRevision, threadId: input.threadId, workItemId: input.workItemId })),
@@ -115,7 +117,7 @@ export class AppServerDevelopmentService {
       ...(acceptedPlanRevision ? { acceptedPlanRevision } : {}),
       candidate,
       checks,
-      rationale: ["Selected deterministic workspace checks for the candidate."],
+      rationale: [paths ? "Selected Host-registered checks using the captured diff." : "Selected registered checks for the candidate."],
       environmentRequirements: ["workspace_store", "authorized_host_execution"],
     };
     const result = store.putAppServerState({
@@ -495,16 +497,19 @@ export class AppServerDevelopmentService {
     stored = this.updateVerification(store, stored, record);
     for (const check of record.plan.checks) {
       if (record.cancelRequested || signal.aborted) break;
-      stored = this.updateVerification(store, stored, setCheckStatus(record, check.checkId, "running"));
-      let status: LingAppServerVerificationCheckStatus;
+      stored = this.updateVerification(store, stored, setCheckResult(record, check.checkId, { status: "running" }));
+      let result: AppServerVerificationCheckResult;
       try {
-        status = await executeCheck({ cwd: store.paths.cwd, check, candidate: record.plan.candidate, signal });
+        const checked = await executeCheck({
+          cwd: store.paths.cwd, check, candidate: record.plan.candidate, recipes: this.verificationRecipes(store.paths.cwd), signal,
+        });
+        result = typeof checked === "string" ? { status: checked } : checked;
       } catch {
-        status = "unknown";
+        result = { status: "unknown" };
       }
       stored = store.getAppServerState("verify_operation", operationId)!;
       record = stored.payload as VerifyRecord;
-      record = setCheckStatus(record, check.checkId, status);
+      record = setCheckResult(record, check.checkId, result);
       stored = this.updateVerification(store, stored, record);
       if (record.cancelRequested || signal.aborted) break;
     }
@@ -517,6 +522,10 @@ export class AppServerDevelopmentService {
       : "blocked";
     const blocker = status === "unknown" && stopRequested ? "verification_cancellation_unconfirmed" : undefined;
     this.updateVerification(store, stored, finishVerification(record, status, blocker));
+  }
+
+  private verificationRecipes(cwd: string): readonly AppServerVerificationRecipeConfig[] {
+    return (this.options.context.config.appServerVerificationRecipes ?? []).filter(recipe => recipe.workspaceRoot === cwd);
   }
 }
 
@@ -540,8 +549,9 @@ function verificationInFlight(record: VerifyRecord): boolean {
   return record.operation.status === "queued" || record.operation.status === "running";
 }
 
-function setCheckStatus(record: VerifyRecord, checkId: string, status: LingAppServerVerificationCheckStatus): VerifyRecord {
-  const checks = record.operation.checks.map(check => check.checkId === checkId ? { ...check, status } : check);
+function setCheckResult(record: VerifyRecord, checkId: string, result: AppServerVerificationCheckResult): VerifyRecord {
+  const { verifier, ...outcome } = result;
+  const checks = record.operation.checks.map(check => check.checkId === checkId ? { ...check, ...outcome, ...verifier } : check);
   return { ...record, operation: { ...record.operation, checks } };
 }
 

@@ -847,12 +847,7 @@ export interface ConversationModeState {
   readonly updatedAt?: string;
 }
 
-export type GoalEvidenceRef =
-  | { readonly kind: "run"; readonly id: string }
-  | { readonly kind: "turn"; readonly id: string }
-  | { readonly kind: "artifact"; readonly id: string }
-  | { readonly kind: "approval"; readonly id: string }
-  | { readonly kind: "workflow"; readonly id: string };
+export type GoalEvidenceRef = import("@ling-stack/contracts").GoalEvidenceRef;
 
 export interface GoalContinuationEvidenceDelta {
   readonly newEvidenceRefs: number;
@@ -926,6 +921,9 @@ export interface CreateLingThreadGoalInput {
 export interface UpdateLingThreadGoalInput {
   readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
   readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
+  /** Captured by the Host when settling verification-based acceptance. */
+  readonly verificationCandidateDigest?: string;
+  readonly verificationGoalRevision?: string;
   readonly supervisionPolicy?: GoalSupervisionPolicy;
   readonly objective?: string;
   readonly status?: LingThreadGoalStatus;

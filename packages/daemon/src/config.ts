@@ -8,6 +8,7 @@ import {
   type ResolvedRuntimeConcurrencyPolicy,
 } from "./runtime/concurrency-policy.js";
 import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
+import { resolveVerificationRecipes, type AppServerVerificationRecipeConfig } from "./server/app-server-verification-config.js";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -23,6 +24,7 @@ export interface DaemonConfig {
   /** Trusted Host startup limits; never read from workspace/runtime HTTP settings. */
   readonly concurrency?: RuntimeConcurrencyFeatureConfig;
   readonly transports?: TransportFeatureConfig;
+  readonly appServerVerificationRecipes?: readonly AppServerVerificationRecipeConfig[];
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
   readonly remoteAccess?: RemoteAccessFeatureConfig;
@@ -187,6 +189,7 @@ export interface ResolvedDaemonConfig {
   readonly runtimeTools: RuntimeToolFeatureConfig;
   readonly concurrency: ResolvedRuntimeConcurrencyPolicy;
   readonly transports: Required<TransportFeatureConfig>;
+  readonly appServerVerificationRecipes: readonly AppServerVerificationRecipeConfig[];
   readonly channels: ChannelFeatureConfig;
   readonly cuaDriver: {
     readonly bundledEmbedded: {
@@ -248,6 +251,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
         readBooleanEnv(process.env.LING_STACK_RUNTIME_SHELL_SNAPSHOT, false),
     },
     concurrency: resolveRuntimeConcurrencyPolicy(config.concurrency),
+    appServerVerificationRecipes: resolveVerificationRecipes(config.appServerVerificationRecipes),
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
         readBooleanEnv(process.env.LING_STACK_PROVIDER_WS_FALLBACK, true),

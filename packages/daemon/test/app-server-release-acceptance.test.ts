@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
@@ -60,6 +60,7 @@ test("App Server deduplicates verification starts and restores completed checks,
   await writeFile(join(fixture.cwd, "package.json"), JSON.stringify({ scripts: { test: "node check.cjs" } }));
   await writeFile(join(fixture.cwd, "check.cjs"), [
     'const fs = require("node:fs");',
+    'console.log("verified fixture behavior");',
     `fs.appendFileSync(${JSON.stringify(marker)}, "checked\\n");`,
     `if (fs.existsSync(${JSON.stringify(hold)})) setTimeout(() => {}, 15000);`,
   ].join("\n"));
@@ -90,6 +91,10 @@ test("App Server deduplicates verification starts and restores completed checks,
   });
   assert.equal(finished.status, "blocked");
   assert.deepEqual(finished.checks.map(check => check.status), ["passed", "blocked"]);
+  assert.equal(finished.checks[0]?.execution?.exitCode, 0);
+  assert.match(finished.checks[0]?.execution?.output ?? "", /verified fixture behavior/u);
+  assert.equal(finished.checks[0]?.execution?.timedOut, false);
+  assert.equal(finished.checks[1]?.execution, undefined);
   const finalEvent = await waitFor(() => peer.notices.find(notice =>
     notice.method === "verification/updated" && notice.params?.event?.entityId === finished.operationId
     && notice.params?.revision === finished.revision));
@@ -124,6 +129,93 @@ test("App Server deduplicates verification starts and restores completed checks,
   const afterCancellation = await fixture.connect();
   assert.deepEqual(await afterCancellation.call("verify/status", { operationId: stopping.operationId }), { operation: cancelled });
   assert.deepEqual(await afterCancellation.call("verify/cancel", cancel), receipt);
+});
+
+test("Goal completion requires a current candidate and a Host-verified independent check", { timeout: 30_000 }, async t => {
+  const verifier = 'const {readFileSync} = require("node:fs");\n'
+    + 'if (readFileSync("subject.txt", "utf8") !== "accepted behavior\\n") process.exit(1);\n'
+    + 'console.log("verified accepted behavior");\n';
+  const fixture = await releaseFixture(t, {
+    async verificationRecipes(root, cwd) {
+      const source = join(root, "trusted-check.cjs");
+      await writeFile(source, verifier);
+      return [{
+        id: "independent-check", label: "Independent check", kind: "test", workspaceRoot: cwd,
+        argv: [process.execPath, source], paths: ["subject.txt"], required: true,
+        verifier: {
+          coverage: "Checks the accepted behavior of subject.txt",
+          sources: [{ path: source, sha256: createHash("sha256").update(verifier).digest("hex") }],
+        },
+      }];
+    },
+  });
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  const manifest = join(fixture.cwd, "package.json");
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\nnode_modules/\npnpm-lock.yaml\n");
+  await writeFile(manifest, JSON.stringify({ scripts: { test: "node candidate-test.cjs" } }));
+  await writeFile(join(fixture.cwd, "candidate-test.cjs"), "console.log('candidate tests');\n");
+  await writeFile(join(fixture.cwd, "subject.txt"), "previous behavior\n");
+  git("init", "-q");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Baseline");
+  await writeFile(join(fixture.cwd, "subject.txt"), "accepted behavior\n");
+
+  const client = await fixture.connect();
+  const { thread } = await client.call<{ thread: { id: string } }>("thread/start", { title: "Independent verification" });
+  const createPlan = async (requestedChecks?: string[]) => {
+    const { candidate } = await client.call<{ candidate: LingAppServerCandidateReference }>("changes/capture");
+    return client.call<LingAppServerVerifyPlanResult>("verify/plan", {
+      candidate: { ...candidate, filePaths: ["unrelated/path"] }, threadId: thread.id, requestedChecks,
+    });
+  };
+  const planned = await createPlan();
+  assert.deepEqual(planned.checks.map(check => check.checkId), ["independent-check"]);
+  const { verifierBasisRef, coverageDigest } = planned.checks[0];
+  assert.ok(verifierBasisRef && coverageDigest);
+  await client.call("thread/goal/set", {
+    threadId: thread.id, objective: "Verify accepted behavior",
+    acceptanceCriteria: [{ id: "assertion", description: "Independent behavioral check", kind: "verification_passed",
+      verification: { checkId: "independent-check", verifierBasisRef, coverageDigest } }],
+  });
+  const runCheck = async (plan: LingAppServerVerifyPlanResult) => {
+    const { operationId } = await client.call<LingAppServerVerifyOperation>("verify/start", {
+      planId: plan.planId, planRevision: plan.planRevision, candidateDigest: plan.candidate.candidateDigest, idempotencyKey: randomUUID(),
+    });
+    return waitFor(async () => {
+      const { operation } = await client.call<LingAppServerVerifyStatusResult>("verify/status", { operationId });
+      return operation.completedAt ? operation : undefined;
+    });
+  };
+  const complete = (connection: typeof client, operationId: string) => {
+    const evidence = { kind: "verification", id: operationId };
+    return connection.call<{ goal: { status: string } }>("thread/goal/complete", {
+      threadId: thread.id, actor: "ling-agent", completionVerificationSummary: "Verified accepted behavior",
+      evidenceRefs: [evidence], acceptanceEvidence: [{ criterionId: "assertion", evidence }],
+    });
+  };
+  const original = await runCheck(planned);
+  assert.equal(original.status, "passed");
+  assert.equal(original.checks[0].verifierBasisRef, verifierBasisRef);
+  assert.deepEqual(original.checks[0].producerRefs, planned.checks[0].producerRefs);
+  assert.match(original.checks[0].execution?.output ?? "", /verified accepted behavior/u);
+
+  await writeFile(join(fixture.cwd, "candidate-test.cjs"), "console.log('changed candidate tests');\n");
+  await assert.rejects(complete(client, original.operationId), /goal_verification_candidate_stale/u);
+  const ordinary = await runCheck(await createPlan(["test"]));
+  assert.equal(ordinary.status, "passed");
+  assert.deepEqual(ordinary.checks[0].producerRefs, []);
+  await assert.rejects(complete(client, ordinary.operationId), /goal_verification_basis_mismatch/u);
+
+  await writeFile(join(fixture.root, "trusted-check.cjs"), verifier + "\n");
+  const drifted = await runCheck(await createPlan());
+  assert.equal(drifted.status, "blocked");
+  assert.deepEqual(drifted.checks[0].producerRefs, []);
+  await writeFile(join(fixture.root, "trusted-check.cjs"), verifier);
+  const verified = await runCheck(await createPlan());
+  assert.equal(verified.status, "passed");
+  await fixture.restart();
+  const reconnected = await fixture.connect();
+  assert.equal((await complete(reconnected, verified.operationId)).goal.status, "complete");
 });
 
 test("App Server submits a durable Turn through the configured Pi Runner and replays it after reconnect", { timeout: 30_000 }, async t => {
@@ -1306,10 +1398,36 @@ test("candidate App Server recovers v0.6.1 Thread state and preserves legacy cli
 
   const { daemonUrl, authToken } = fixture.transportOptions();
   const cli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
-  const { stdout } = await promisify(execFile)(process.execPath, [
-    cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl, "app-server", "probe",
-  ], { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, timeout: 8_000 });
-  assert.equal(JSON.parse(stdout).ok, true);
+  const callCli = async (...args: string[]) => {
+    const { stdout } = await promisify(execFile)(process.execPath, [
+      cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl, "app-server", ...args,
+    ], { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, timeout: 8_000 });
+    return JSON.parse(stdout);
+  };
+  assert.equal((await callCli("probe")).ok, true);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(join(fixture.cwd, "README.md"), "# Source compatibility fixture\n");
+  git("init", "-q");
+  git("add", ".gitignore", "README.md");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "CLI candidate");
+  const draft = await callCli("instructions-init");
+  assert.equal(draft.status, "draft");
+  assert.equal(draft.draft.path, "AGENTS.md");
+  await assert.rejects(readFile(join(fixture.cwd, "AGENTS.md")), { code: "ENOENT" });
+
+  const candidate = await current.captureChanges();
+  const planned = await callCli("verify", "--plan", "--thread", thread.id, "--check", "unregistered-check");
+  assert.equal(planned.operation, undefined);
+  assert.equal(planned.plan.candidate.candidateDigest, candidate.candidate.candidateDigest);
+  assert.equal(planned.plan.threadId, thread.id);
+  const started = await callCli("verify", "--thread", thread.id, "--check", "unregistered-check");
+  const operation = await waitFor(async () => {
+    const result = await callCli("verify-status", started.operation.operationId);
+    return result.operation.completedAt ? result.operation : undefined;
+  });
+  assert.equal(operation.candidateDigest, candidate.candidate.candidateDigest);
+  assert.deepEqual(operation.checks.map((check: { status: string }) => check.status), ["blocked"]);
 });
 
 type JsonLine = {
@@ -1356,18 +1474,25 @@ type ReleaseRuntime = {
 const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunStore, resolveStoragePaths };
 
 async function releaseFixture(t: TestContext, {
-  runner, initialRuntime = candidateRuntime, harness, requireAuth = true,
-}: { runner?: RunnerRegistrationInput; initialRuntime?: ReleaseRuntime; harness?: DaemonConfig["harness"]; requireAuth?: boolean } = {}) {
+  runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes,
+}: {
+  runner?: RunnerRegistrationInput;
+  initialRuntime?: ReleaseRuntime;
+  harness?: DaemonConfig["harness"];
+  requireAuth?: boolean;
+  verificationRecipes?: (root: string, cwd: string) => Promise<DaemonConfig["appServerVerificationRecipes"]>;
+} = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
+  const appServerVerificationRecipes = await verificationRecipes?.(root, cwd);
   let authToken = randomUUID();
   const priorLingHome = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(root, "fixture-home");
   const stores = new Map<string, SqliteRunStore>();
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
-    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness,
+    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness, appServerVerificationRecipes,
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,

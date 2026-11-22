@@ -274,6 +274,10 @@ type CheckEvidence = {
 - 校验候选、计划、配方、环境和篡改/截断状态后再重用绿色结果。候选变化保留旧结果和旧日志，当前候选需要自己的证据。重跑创建新的检查 Attempt。验证报告尽量链接已有 Terminal Report 与 Run 事件。模型文字可解释结果，可信的运行回执与断言决定状态。
 - Bug 修复记录复现或明确的直接行为证据、现象与根因。适用时保留回归用例，并核对修复前失败和修复后通过。已有等价覆盖可直接引用。环境无法复现时显示缺失条件，能完成的代码定位和诊断仍可保存。
 
+Daemon 启动参数 `appServerVerificationRecipes` 或启动环境中的 `LING_STACK_APP_SERVER_VERIFICATION_RECIPES_FILE` 接收配方数组。每项包括 `id`、`label`、`kind`、`required`、工作区的绝对路径 `workspaceRoot` 和以绝对可执行文件开头的 `argv`。可选的 `paths` 使用 Git 相对路径，由 Host 在捕获候选后匹配文件或目录。未匹配时使用默认检查，显式请求的未知 ID 显示为 `blocked`。
+
+要为 Goal 提供独立证据，在配方的 `verifier` 中登记 `coverage` 和 `sources`。每项 source 绑定候选仓库之外的绝对文件路径及 `sha256`。Host 管理员负责这些文件和可执行环境的写入权限，并登记决定实际断言的全部输入。执行前后核对文件摘要和候选摘要，通过的检查才返回 verifier basis。用 `ling app-server verify --plan --thread <id>` 查看检查名和依据，用 `ling app-server verify --thread <id>` 启动，随后以 `ling app-server verify-status <operation-id>` 读取有界输出和结果。Goal 的 `verification_passed` 条件绑定 `checkId`、`verifierBasisRef` 和 `coverageDigest`，完成时提交同一会话的 verification operation ID。
+
 ### 3.3 Review、交付和 CI
 
 验收依据独立性规则如下。Goal/Plan 接受时冻结必需断言、覆盖要求、检查选择依据和可信验证器来源。验证器依据包含脚本入口、选择器、测试发现配置、固定 fixture、关键断言或受信 CI workflow 的引用。候选可以修改测试和配方，但这些修改只形成待审查的替代依据，不能凭同一命令名和零退出码自动替换已接受依据。

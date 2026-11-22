@@ -258,11 +258,14 @@ export async function main(): Promise<void> {
 
 async function handleAppServer(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [mode = "stdio", socketPath, ...rest] = args;
+  const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
+  if (mode === "instructions-init" || mode === "verify" || mode === "verify-status") {
+    return handleAppServerDevelopment(mode, args.slice(1), transportOptions);
+  }
   if (!["stdio", "probe", "mcp", "listen"].includes(mode) || rest.length
     || (mode === "listen" ? !socketPath : socketPath !== undefined)) {
-    throw new CliError(2, "bad_usage", "Use app-server [stdio|probe|mcp|listen <absolute-socket-path>].");
+    throw new CliError(2, "bad_usage", "Use app-server with stdio, probe, mcp, listen, instructions-init, verify, or verify-status.");
   }
-  const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
   if (mode === "mcp") {
     const { runLingAppServerMcp } = await import("@ling-stack/daemon/dist/server/app-server-mcp.js");
     await runLingAppServerMcp(transportOptions);
@@ -286,6 +289,64 @@ async function handleAppServer(args: readonly string[], options: GlobalOptions):
     await daemon.runLingAppServerStdio(transportOptions);
   }
   return 0;
+}
+
+async function handleAppServerDevelopment(
+  command: "instructions-init" | "verify" | "verify-status",
+  args: readonly string[],
+  transport: import("@ling-stack/daemon/dist/server/app-server-local-transport.js").AppServerLocalTransportOptions,
+): Promise<number> {
+  const { connectToAppServer } = await import("@ling-stack/daemon/dist/server/app-server-local-transport.js");
+  const client = connectToAppServer(transport, "ling-cli");
+  try {
+    if (command === "instructions-init") {
+      const parsed = parseCommandArgs(args, { stringFlags: new Set(["path", "apply"]) });
+      assertNoPositionals(parsed.positionals, "app-server instructions-init");
+      const expectedWorkspaceRevision = getFlag(parsed, "apply");
+      printJson(await client.initializeInstructions({
+        taskPath: getFlag(parsed, "path"),
+        mode: expectedWorkspaceRevision === undefined ? "preview" : "apply",
+        expectedWorkspaceRevision,
+        idempotencyKey: randomUUID(),
+      }));
+    } else if (command === "verify-status") {
+      const parsed = parseCommandArgs(args);
+      const operationId = singlePositional(parsed.positionals, "app-server verify-status <operation-id>");
+      printJson(await client.getVerificationStatus({ operationId }));
+    } else {
+      const parsed = parseCommandArgs(args, {
+        stringFlags: new Set(["thread", "work-item"]),
+        repeatableFlags: new Set(["check"]),
+        booleanFlags: new Set(["plan"]),
+      });
+      assertNoPositionals(parsed.positionals, "app-server verify");
+      const capture = await client.captureChanges();
+      if (capture.coverage !== "complete") {
+        throw new CliError(1, "candidate_incomplete", "Verification requires a candidate with complete coverage.");
+      }
+      const plan = await client.planVerification({
+        candidate: capture.candidate,
+        requestedChecks: getFlagValues(parsed, "check"),
+        threadId: getFlag(parsed, "thread"),
+        workItemId: getFlag(parsed, "work-item"),
+        idempotencyKey: randomUUID(),
+      });
+      if (parsed.booleans.has("plan")) {
+        printJson({ plan });
+      } else {
+        const operation = await client.startVerification({
+          planId: plan.planId,
+          planRevision: plan.planRevision,
+          candidateDigest: plan.candidate.candidateDigest,
+          idempotencyKey: randomUUID(),
+        });
+        printJson({ plan, operation });
+      }
+    }
+    return 0;
+  } finally {
+    client.close();
+  }
 }
 
 async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
@@ -7737,6 +7798,9 @@ function shellQuote(value: string): string {
 function printCommandHelp(command: string, subcommand?: string): void {
   if (command === "app-server") {
     console.log("Usage: ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]");
+    console.log("       ling-stack [global options] app-server instructions-init [--path <directory>] [--apply <workspace-revision>]");
+    console.log("       ling-stack [global options] app-server verify [--plan] [--check <id>] [--thread <id>] [--work-item <id>]");
+    console.log("       ling-stack [global options] app-server verify-status <operation-id>");
     return;
   }
   if (command === "engine") {
@@ -7841,6 +7905,7 @@ Usage:
   ling-stack [global options] daemon restart
   ling-stack [global options] daemon logs
   ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]
+  ling-stack [global options] app-server [instructions-init|verify|verify-status]
   ling-stack [global options] engine authorize --origin <local-web-origin>
   ling-stack [global options] browser-host install
   ling-stack [global options] browser-host status

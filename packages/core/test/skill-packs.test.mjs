@@ -61,6 +61,7 @@ test("gstack default skill pack mirrors the adapted current gstack workflow surf
     "guard",
     "qa-only",
     "health",
+    "init-project-instructions",
     "investigate",
     "ios-clean",
     "ios-design-review",
@@ -90,6 +91,7 @@ test("gstack default skill pack mirrors the adapted current gstack workflow surf
     "spec",
     "sync-gbrain",
     "unfreeze",
+    "verify-current-changes",
     "gstack-upgrade",
   ]) {
     assert.equal(skillIds.has(skillId), true, `${skillId} should be adapted into the Ling-native pack`);
@@ -97,7 +99,7 @@ test("gstack default skill pack mirrors the adapted current gstack workflow surf
 
   assert.equal(skillIds.has("gstack"), false, "The gstack meta/root skill should remain outside the static Ling pack");
   assert.equal(skillIds.has("implement"), true, "Ling keeps its native implementation skill alongside adapted gstack skills");
-  assert.equal(pack.skills.length, 55);
+  assert.equal(pack.skills.length, 57);
 });
 
 test("Ling Agent default skill list references executable non-strict skills", () => {

@@ -2,6 +2,7 @@ import type {
   LingAppServerDoctorRunParams,
   LingAppServerDoctorRunResult,
   LingAppServerCapability,
+  LingAppServerCaptureChangesResult,
   LingAppServerCapabilitiesResult,
   LingAppServerContextInspectParams,
   LingAppServerContextInspectResult,
@@ -230,6 +231,11 @@ export class LingAppServerClient {
   async respondInput(params: LingAppServerInputRespondParams): Promise<LingAppServerInputRespondResult> {
     await this.connect();
     return await this.request("input/respond", params);
+  }
+
+  async captureChanges(): Promise<LingAppServerCaptureChangesResult> {
+    await this.connect();
+    return await this.request("changes/capture", {});
   }
 
   async planVerification(params: LingAppServerVerifyPlanParams): Promise<LingAppServerVerifyPlanResult> {

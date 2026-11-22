@@ -623,6 +623,13 @@ export interface LingAppServerCandidateReference {
   readonly filePaths?: readonly string[];
 }
 
+export interface LingAppServerCaptureChangesResult {
+  readonly cwd: string;
+  readonly candidate: LingAppServerCandidateReference;
+  readonly coverage: "complete" | "partial";
+  readonly headCommit: string;
+}
+
 export type LingAppServerVerificationCheckKind = "command" | "test" | "typecheck" | "browser" | "platform";
 export type LingAppServerVerificationCheckStatus =
   | "pending"
@@ -641,6 +648,8 @@ export interface LingAppServerVerificationCheckPlan {
   readonly command?: string;
   readonly recipeDigest: string;
   readonly verifierBasisRef?: string;
+  readonly coverageDigest?: string;
+  readonly producerRefs?: readonly string[];
   readonly required: boolean;
   readonly estimatedDurationMs?: number;
 }
@@ -688,6 +697,16 @@ export interface LingAppServerCheckEvidence {
   readonly attemptId: string;
   readonly status: LingAppServerVerificationCheckStatus;
   readonly evidenceRefs: readonly string[];
+  readonly execution?: LingAppServerVerificationExecution;
+}
+
+export interface LingAppServerVerificationExecution {
+  readonly startedAt: string;
+  readonly endedAt: string;
+  readonly exitCode: number | null;
+  readonly timedOut: boolean;
+  readonly output: string;
+  readonly outputTruncated: boolean;
 }
 
 export interface LingAppServerVerifyOperation {
