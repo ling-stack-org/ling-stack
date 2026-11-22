@@ -1,6 +1,6 @@
 # Runtime Provider Model Catalog Implementation Plan
 
-Status: in progress
+Status: implemented
 Design: [Runtime Provider Model Catalog](runtime-provider-model-catalog.md)
 
 - [x] Implement validated normalized snapshots, provider lookup and immutable provenance.
@@ -9,7 +9,7 @@ Design: [Runtime Provider Model Catalog](runtime-provider-model-catalog.md)
 - [x] Remove repository catalog-sync automation and update the superseded design.
 - [x] Cover refresh, failures, cache/restart, concurrency, precedence and import behavior.
 - [x] Complete owning package checks and local serving-path validation; record exact results.
-- [ ] Submit and merge the PR after required checks; clean task-owned test data and processes.
+- [x] Submit and merge the PR after required checks; clean task-owned test data and processes.
 
 Local validation: Core and daemon typechecks, Web build, runtime catalog and provider API
 tests (30 passing), and Markdown links passed. An isolated daemon and browser fetched the
