@@ -2062,11 +2062,29 @@ test("App Server grants restrict observers, controllers and approvers to their s
   };
   const allowedApproval = makeApproval(subject.id, "approved-run");
   const unrelatedApproval = makeApproval(other.id, "other-run");
+  store.appendControlPlaneEvent({ workspaceId: subject.workspaceId, cwd: fixture.cwd, domain: "approvals",
+    entityType: "approval", entityId: allowedApproval.id, action: "approval.created",
+    data: { runId: allowedApproval.runId, threadId: subject.id } }, now);
+  await approver.call("thread/subscribe", { threadId: subject.id });
+  await waitFor(() => approver.notices.find(notice => notice.method === "approval/requestDecision" && notice.params?.approvalId === allowedApproval.id));
   await assert.rejects(controller.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny" }), { code: "capability_denied" });
   await assert.rejects(approver.call("approval/respond", { approvalId: unrelatedApproval.id, decision: "deny" }), { code: "capability_denied" });
   await approver.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny" });
   assert.equal(store.getApprovalRequest(allowedApproval.id)?.status, "denied");
   assert.equal(store.getApprovalRequest(unrelatedApproval.id)?.status, "pending");
+  const reconnect = await fixture.connect("/app-server/rpc", fixture.cwd, approvals.bearer);
+  await reconnect.call("thread/subscribe", { threadId: subject.id });
+  await waitFor(() => reconnect.notices.find(notice => notice.method === "thread/replay/ready"));
+  assert.ok(!reconnect.notices.some(notice => notice.method === "approval/requestDecision"));
+
+  const input = new PassThrough(), output = new PassThrough();
+  const running = runLingAppServerMcp({ ...fixture.transportOptions(), authToken: observation.bearer }, input, output);
+  t.after(async () => { input.end(); await running; });
+  const host = jsonLines(input, output);
+  await host.call("initialize", { protocolVersion: LATEST_PROTOCOL_VERSION, clientInfo: { name: "Scoped fixture", version: "1" }, capabilities: {} });
+  host.send("notifications/initialized", {});
+  const { tools } = await host.call<{ tools: Array<{ name: string }> }>("tools/list");
+  assert.deepEqual(tools.map(tool => tool.name).sort(), ["ling_thread_events", "ling_thread_read", "ling_thread_snapshot"]);
 
   const closing = observer.waitForClose();
   await operator.call("server/grants/revoke", { grantId: observation.grant.grantId, expectedRevision: observation.grant.revision });
@@ -2467,7 +2485,7 @@ type JsonLine = {
   method?: string;
   result?: unknown;
   error?: { message: string };
-  params?: { eventId?: string; requestId?: string; revision?: string; event?: { entityId: string; action: string };
+  params?: { eventId?: string; requestId?: string; approvalId?: string; revision?: string; event?: { entityId: string; action: string };
     itemId?: string; runId?: string; streamEpoch?: string; offset?: number; text?: string;
     subject?: { threadId?: string; turnId?: string; workItemId?: string } };
 };

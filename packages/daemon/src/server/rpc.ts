@@ -1469,7 +1469,8 @@ class RpcConnection {
       const runId = turn?.activeRunId ?? turn?.lastRunId;
       const run = runId ? store.getRun(runId) : undefined;
       const goal = store.getLingThreadGoal(threadId);
-      const pendingApprovals = run ? store.listApprovalRequests({ runId: run.id, status: "pending" }).map(toApprovalSummary) : [];
+      const pendingApprovals = run ? store.listApprovalRequests({ runId: run.id, status: "pending" })
+        .filter(canPresentPendingApproval).map(toApprovalSummary) : [];
       const itemIds = turn ? store.listConversationItemsForTurn({ turnId: turn.id })
         .filter(item => item.kind === "user_input_request").map(item => item.id) : [];
       const pendingInputs = itemIds.length ? store.readUserInputTranscript({ threadId, itemIds }).flatMap(item => {
@@ -2971,6 +2972,8 @@ function appServerEventNotification(subscription: RpcSubscription, event: Contro
 
 function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () => RunStore): unknown | undefined {
   if (event.action === "approval.created") {
+    const approval = readStore().getApprovalRequest(event.entityId);
+    if (!approval || !canPresentPendingApproval(approval)) return undefined;
     return {
       jsonrpc: "2.0",
       id: `approval:${event.entityId}:${event.seq}`,
@@ -2991,6 +2994,10 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () 
     method: "input/requestAnswer",
     params: { ...event.data, pendingId: event.entityId, request: preview },
   };
+}
+
+function canPresentPendingApproval(approval: import("@ling-stack/core").ApprovalRequest): boolean {
+  return approval.status === "pending" && (!approval.expiresAt || Date.parse(approval.expiresAt) > Date.now());
 }
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
