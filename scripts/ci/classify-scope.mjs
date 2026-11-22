@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isGeneratedProviderModelCatalogRefresh, PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest } from "../provider-model-catalog-format.mjs";
+import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
@@ -31,12 +32,6 @@ const MAINTENANCE_CHECK_FILES = new Set([
   "scripts/check-markdown-links.mjs",
   "scripts/check-public-repo-safety.mjs",
   "scripts/check-public-repo-safety.test.mjs",
-]);
-
-const DEPENDENCY_CHECK_FILES = new Set([
-  "packages/daemon/test/dependency-security.test.mjs",
-  "apps/mobile/test/dependency-security-patches.test.ts",
-  "apps/mobile/test/dependency-security-tooling.test.ts",
 ]);
 
 const FORCE_FULL_PATTERNS = [
@@ -310,7 +305,13 @@ function isDocumentationPath(file) {
     return true;
   }
 
-  const locale = /^README\.([A-Za-z0-9-]+)\.md$/u.exec(file)?.[1];
+  const workspaceMarkdown = /^((?:apps|packages)\/[^/]+)\/(.+\.md)$/u.exec(file);
+  const documentationPath = workspaceMarkdown && existsSync(resolve(repositoryRoot, workspaceMarkdown[1], "package.json"))
+    ? workspaceMarkdown[2]
+    : file;
+  if (documentationPath.startsWith("docs/")) return true;
+
+  const locale = /^README\.([A-Za-z0-9-]+)\.md$/u.exec(documentationPath)?.[1];
   if (locale === undefined) return false;
   try {
     Intl.getCanonicalLocales(locale);

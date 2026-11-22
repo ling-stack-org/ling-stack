@@ -9,19 +9,19 @@ import { readCompactionRecoveryView } from "../dist/compaction-recovery.js";
 
 const task = { id: "task-anchor", title: "Preserve constraints", prompt: 'Write {"entries":[{"name":"one","rows":3}]}; never repeat completed effects.' };
 const acceptedTaskPrompt = formatTaskPrompt(task);
-const user = text => ({ role: "user", content: [{ type: "text", text }], timestamp: 42 });
-const compacted = () => [{ role: "compactionSummary", summary: "A lossy progress summary without the original schema.", timestamp: 42 },
+const user = (text: string): any => ({ role: "user", content: [{ type: "text", text }], timestamp: 42 });
+const compacted = (): any[] => [{ role: "compactionSummary", summary: "A lossy progress summary without the original schema.", timestamp: 42 },
   { role: "assistant", content: [{ type: "toolCall", id: "done-effect", name: "write", arguments: {} }], timestamp: 43 },
   { role: "toolResult", toolCallId: "done-effect", toolName: "write", content: [{ type: "text", text: "already done" }], isError: false, timestamp: 44 }];
-const text = message => message.role === "user" ? typeof message.content === "string" ? message.content
-  : message.content?.filter(block => block.type === "text").map(block => block.text).join("") : undefined;
-const anchorCount = messages => messages.filter(message => text(message) === acceptedTaskPrompt).length;
+const text = (message: any): string | undefined => message.role === "user" ? typeof message.content === "string" ? message.content
+  : message.content?.filter((block: any) => block.type === "text").map((block: any) => block.text).join("") : undefined;
+const anchorCount = (messages: readonly unknown[]): number => messages.filter((message: any) => text(message) === acceptedTaskPrompt).length;
 function contextHook(prompt = acceptedTaskPrompt) {
-  let hook;
-  createLingStackModelContextBudgetExtension({ acceptedTaskPrompt: prompt })({ on(name, callback) {
-    assert.equal(name, "context"); hook = callback;
+  let hook: any;
+  (createLingStackModelContextBudgetExtension as any)({ acceptedTaskPrompt: prompt })({ on(name: string, callback: any) {
+    assert.equal(name, "context"); hook = callback; return () => undefined;
   } });
-  return messages => hook({ messages }).messages;
+  return (messages: any[]): any[] => hook({ messages }).messages;
 }
 
 test("task anchor leaves initial prepared input unchanged before SDK compaction", () => {
@@ -58,12 +58,13 @@ test("an exact retained user prompt is not reinserted or reordered", () => {
 
 test("restored compacted task cannot dispatch if an SDK context hook loses its accepted anchor", () => {
   const options = { cwd: "/tmp/isolated-task-anchor", task, provider: { provider: "fixture", model: "fixture" } };
-  const boundary = createPiTaskBoundary(options, () => ({ systemPrompt: "Task system", messages: compacted(), acceptedTaskPrompt }));
+  const boundary = createPiTaskBoundary(options as any, () => ({ systemPrompt: "Task system", messages: compacted(), acceptedTaskPrompt,
+    sessionId: "fixture-session", preparedInput: {} as any }));
   let requests = 0;
-  const runtime = { streamSimple() { requests += 1; return {}; } };
+  const runtime: any = { streamSimple() { requests += 1; return {}; } };
   boundary.bindModelRuntime(runtime);
-  const model = { contextWindow: 8_000, maxTokens: 512 };
-  const context = { systemPrompt: "Task system", messages: [user("SDK summary only")], tools: [] };
+  const model: any = { contextWindow: 8_000, maxTokens: 512 };
+  const context: any = { systemPrompt: "Task system", messages: [user("SDK summary only")], tools: [] };
   assert.throws(() => runtime.streamSimple(model, context, {}), /accepted task anchor/iu);
   assert.equal(requests, 0);
   assert.ok(boundary.failure, "the guard must latch errors even when SDK hooks swallow exceptions");
@@ -71,9 +72,10 @@ test("restored compacted task cannot dispatch if an SDK context hook loses its a
 
 test("task anchor admission does not treat a compaction summary request as a new user task", () => {
   const options = { cwd: "/tmp/isolated-task-anchor", task, provider: { provider: "fixture", model: "fixture" } };
-  const boundary = createPiTaskBoundary(options, () => ({ systemPrompt: "Task system", messages: compacted(), acceptedTaskPrompt }));
+  const boundary = createPiTaskBoundary(options as any, () => ({ systemPrompt: "Task system", messages: compacted(), acceptedTaskPrompt,
+    sessionId: "fixture-session", preparedInput: {} as any }));
   let requests = 0;
-  const runtime = { streamSimple() { requests += 1; return {}; } };
+  const runtime: any = { streamSimple() { requests += 1; return {}; } };
   boundary.bindModelRuntime(runtime);
   runtime.streamSimple({ contextWindow: 8_000, maxTokens: 512 },
     { systemPrompt: "Summarize conversation progress", messages: [user("previous context")], tools: [] }, {});
@@ -87,14 +89,14 @@ test("Host-sealed projected view preserves the restore mode and cannot append a 
   assert.equal(anchorCount(restored), 1);
   assert.deepEqual(projectCompactionTaskView(restored, acceptedTaskPrompt), restored);
   assert.deepEqual(restored.at(-1), messages.at(-1));
-  assert.equal(restored.filter(message => message.role === "assistant").length, 1);
+  assert.equal((restored as readonly any[]).filter((message: any) => message.role === "assistant").length, 1);
 });
 
 test("an accepted task that exceeds capacity is rejected rather than clipped or silently omitted", () => {
   const largePrompt = "whole-frozen-task ".repeat(2_000);
   const projected = contextHook(largePrompt)(compacted());
   assert.ok(projected.some(message => text(message) === largePrompt));
-  assert.throws(() => assertPiModelContextCapacity({ contextWindow: 2_000, maxTokens: 256 },
+  assert.throws(() => (assertPiModelContextCapacity as any)({ contextWindow: 2_000, maxTokens: 256 },
     { systemPrompt: "Task system", messages: projected, tools: [] }), /model context exceeds.*budget/iu);
 });
 

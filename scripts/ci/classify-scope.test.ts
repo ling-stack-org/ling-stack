@@ -61,19 +61,36 @@ test("package-owned image resources stay with their package without selecting th
   assert.equal(scope.dependencyPolicy, false);
 });
 
-test("root localized READMEs accept BCP 47 language tags without accepting malformed names", () => {
+test("root and workspace localized READMEs accept BCP 47 language tags without accepting malformed names", () => {
   for (const file of [
     "README.en.md", "README.sr-Latn.md", "README.es-419.md", "README.zh-Hant-TW.md",
     "README.en-US-u-ca-gregory.md", "README.en-x-sample.md",
+    "packages/core/README.zh-CN.md", "apps/desktop/README.en.md",
   ]) {
     assert.equal(classify([file]).mode, "docs", file);
   }
   for (const file of [
     "README.zh_CN.md", "README.中文.md", "README.1.md", "README.en.ts",
     "README.en-foo.md", "README.en-x.md", "README.en-US-u.md", "scripts/ci/README.en.md",
+    "packages/unregistered/README.en.md",
   ]) {
     assert.equal(classify([file]).mode, "full", file);
   }
+  assert.equal(classify(["packages/core/README.zh_CN.md"]).mode, "affected");
+});
+
+test("workspace docs classify Markdown without hiding runtime inputs or unknown paths", () => {
+  const docs = ["packages/core/docs/reference/api.md", "apps/desktop/docs/start.md"];
+  const documentation = classify(docs);
+  assert.equal(documentation.mode, "docs");
+  assert.deepEqual(documentation.packages, []);
+
+  for (const file of ["packages/core/docs/example.mjs", "packages/core/docs/demo.mdx", "packages/core/src/docs/prompt.md"]) {
+    const scope = classify([...docs, file]);
+    assert.equal(scope.mode, "affected", file);
+    assert.ok(scope.packages.includes("@ling-stack/core"), file);
+  }
+  assert.equal(classify([...docs, "packages/unregistered/docs/guide.md"]).mode, "full");
 });
 
 test("review templates and nested READMEs are documentation before broad infrastructure rules", () => {
@@ -236,8 +253,9 @@ test("removed dependency edges cannot erase consumers from a multi-package PR", 
 });
 
 test("dependency regressions cannot be skipped with ordinary test-only scope", () => {
-  for (const file of ["packages/daemon/test/dependency-security.test.mjs",
-    "apps/mobile/test/dependency-security-patches.test.ts", "apps/mobile/test/dependency-security-tooling.test.ts"]) {
+  for (const file of ["packages/daemon/test/dependency-security.test.mjs", "packages/daemon/test/dependency-security.test.ts",
+    "apps/mobile/test/dependency-security-patches.test.mjs", "apps/mobile/test/dependency-security-patches.test.ts",
+    "apps/mobile/test/dependency-security-tooling.test.mjs", "apps/mobile/test/dependency-security-tooling.test.ts"]) {
     assert.equal(classify([file]).dependencyPolicy, true, file);
   }
   assert.equal(classify(["packages/daemon/test/runtime-supervisor.test.mjs"]).dependencyPolicy, false);
@@ -355,6 +373,7 @@ function repositoryFixture(t: TestContext) {
   mkdirSync(join(root, "scripts/ci"), { recursive: true });
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
+  copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
   copyFileSync(new URL("../provider-model-catalog-format.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-format.mjs"));
   copyFileSync(new URL("../provider-model-catalog-normalization.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-normalization.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
@@ -398,7 +417,8 @@ test("only a verified documentation history can skip the common job and merge ga
 
   repo.write("README.zh-CN.md", "# Ling Stack\n");
   repo.commit();
-  repo.write("docs/guide.md", "# Guide\n");
+  repo.write("packages/core/README.zh-CN.md", "# Core\n");
+  repo.write("apps/desktop/docs/guide.md", "# Guide\n");
   repo.commit();
   assert.equal(repo.classify(base).documentationOnly, true);
 
@@ -726,6 +746,50 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   assert.deepEqual(scope.packages, ["@ling-stack/core"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.dependencyPolicy, false);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+});
+
+test("CLI migrations accept verified dependency builds and the package build check", t => {
+  const repo = repositoryFixture(t);
+  const root = "packages/cli";
+  const manifest = {
+    name: "@ling-stack/cli", type: "module",
+    dependencies: {
+      "@ling-stack/browser-host": "workspace:*", "@ling-stack/contracts": "workspace:*",
+      "@ling-stack/core": "workspace:*", "@ling-stack/daemon": "workspace:*",
+    },
+    scripts: {
+      build: "corepack pnpm --filter @ling-stack/browser-host build && tsc -p tsconfig.json",
+      "build:ci": "tsc -p tsconfig.json",
+      typecheck: "corepack pnpm --filter @ling-stack/browser-host build && tsc -p tsconfig.json --noEmit",
+      "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+      test: "corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.json && node --test test/*.test.mjs",
+      "test:ci": "node --test test/*.test.mjs",
+    } as Record<string, string>,
+  };
+  const saveManifest = () => repo.write(`${root}/package.json`, JSON.stringify(manifest));
+  saveManifest();
+  repo.write(`${root}/test/probe.test.mjs`, "import test from 'node:test'; test('probe', () => {});\n");
+  const base = repo.commit();
+
+  repo.git("mv", `${root}/test/probe.test.mjs`, `${root}/test/probe.test.ts`);
+  Object.assign(manifest.scripts, {
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    typecheck: "corepack pnpm --filter @ling-stack/daemon... run build:ci && corepack pnpm build:ci && corepack pnpm typecheck:ci",
+    test: "corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.json && corepack pnpm test:ci",
+    "test:ci": "node --test test/*.test.ts",
+  });
+  repo.write(`${root}/tsconfig.test.json`, JSON.stringify({ compilerOptions: { noEmit: true }, include: ["test/**/*.ts"] }));
+  saveManifest();
+  repo.commit();
+
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/cli"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/cli"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/cli"]);
   assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
