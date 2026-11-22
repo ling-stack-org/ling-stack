@@ -17,6 +17,11 @@ import {
   resolveGenerationProviderRuntimeState,
   resolveMediaProviderRuntimeState,
   shouldAutoEnableLiveMediaTransport,
+  type ProviderCapability,
+  type ProviderModelCatalogContext,
+  type ProviderPreset,
+  type ProviderThinkingMode,
+  type ProviderThinkingSupport,
 } from "../dist/index.js";
 
 test("default provider templates include Seedream live HTTP transport config", () => {
@@ -122,7 +127,7 @@ test("provider media model filtering respects the selected media provider", () =
 });
 
 test("generation model catalog recognizes public image families without marking chat models", () => {
-  const cases = [
+  const cases: [string, ProviderCapability[]][] = [
     ["gpt-image-2", ["image_generate"]],
     ["dall-e-3", ["image_generate"]],
     ["google/imagen-4.0-generate", ["image_generate"]],
@@ -150,7 +155,7 @@ test("generation model catalog recognizes public image families without marking 
 });
 
 test("provider model enrichment uses catalog fallback only when upstream is silent", () => {
-  const context = {
+  const context: ProviderModelCatalogContext = {
     kind: "openai-compatible",
     providerId: "custom-openai-compatible",
     api: "openai-completions",
@@ -178,11 +183,12 @@ test("provider model enrichment uses catalog fallback only when upstream is sile
 
   const unknownVision = enrichProviderModelOption({ id: "gpt-5" }, context);
   assert.notEqual(unknownVision.api, "media-job");
+  assert.ok(unknownVision.capabilities);
   assert.ok(!unknownVision.capabilities.includes("image_generate"));
 });
 
 test("versioned provider model catalog prefers exact metadata and preserves explicit upstream capabilities", () => {
-  const openAiContext = {
+  const openAiContext: ProviderModelCatalogContext = {
     kind: "openai",
     providerId: "openai",
     api: "openai-responses",
@@ -190,8 +196,8 @@ test("versioned provider model catalog prefers exact metadata and preserves expl
   const catalog = enrichProviderModelOption({ id: "gpt-5-nano" }, openAiContext);
   assert.equal(catalog.capabilitySource, "model_catalog");
   assert.equal(catalog.contextWindow, 400000);
-  assert.ok(catalog.capabilities.includes("reasoning"));
-  assert.ok(catalog.capabilities.includes("vision"));
+  assert.ok(catalog.capabilities?.includes("reasoning"));
+  assert.ok(catalog.capabilities?.includes("vision"));
 
   const upstream = enrichProviderModelOption({
     id: "gpt-5-nano",
@@ -204,7 +210,7 @@ test("versioned provider model catalog prefers exact metadata and preserves expl
 });
 
 test("exact catalog records without thinking modes retain known family thinking metadata", () => {
-  const cases = [
+  const cases: { id: string; context: ProviderModelCatalogContext; supportedParameters: string[] }[] = [
     {
       id: "claude-sonnet-4-5",
       context: { kind: "anthropic", providerId: "anthropic", api: "anthropic-messages" },
@@ -235,7 +241,7 @@ test("exact catalog records without thinking modes retain known family thinking 
 });
 
 test("new provider model generations inherit provider-specific reasoning metadata", () => {
-  const cases = [
+  const cases: { ids: string[]; context: ProviderModelCatalogContext; supportedParameters: string[] }[] = [
     {
       ids: ["gpt-6-astra", "gpt-6.1-sol", "gpt-daybreak-blue-latest"],
       context: { kind: "openai", providerId: "openai", api: "openai-responses" },
@@ -264,10 +270,10 @@ test("new provider model generations inherit provider-specific reasoning metadat
   for (const expected of cases) {
     for (const id of expected.ids) {
       const model = enrichProviderModelOption({ id }, expected.context);
-      assert.ok(model.capabilities.includes("reasoning"), id);
-      assert.ok(model.capabilities.includes("tool_call"), id);
+      assert.ok(model.capabilities?.includes("reasoning"), id);
+      assert.ok(model.capabilities?.includes("tool_call"), id);
       assert.deepEqual(model.supportedParameters, expected.supportedParameters, id);
-      assert.ok(model.thinkingModes.some((mode) => mode !== "off" && mode !== "auto"), id);
+      assert.ok(model.thinkingModes?.some((mode) => mode !== "off" && mode !== "auto"), id);
       assert.ok(resolveProviderModelThinkingModes({
         model: id,
         kind: expected.context.kind,
@@ -279,14 +285,15 @@ test("new provider model generations inherit provider-specific reasoning metadat
 });
 
 test("family thinking fallback preserves explicit upstream disablement and support flags", () => {
-  const context = { kind: "anthropic", providerId: "anthropic", api: "anthropic-messages" };
-  for (const thinkingModes of [[], ["off"]]) {
+  const context: ProviderModelCatalogContext = { kind: "anthropic", providerId: "anthropic", api: "anthropic-messages" };
+  const upstreamModes: ProviderThinkingMode[][] = [[], ["off"]];
+  for (const thinkingModes of upstreamModes) {
     const model = enrichProviderModelOption({ id: "claude-sonnet-4-5", thinkingModes }, context);
     assert.deepEqual(model.thinkingModes, thinkingModes);
     assert.equal(model.thinkingSupport, undefined);
   }
 
-  const thinkingSupport = { levels: ["off"], zeroAllowed: false, dynamicAllowed: false };
+  const thinkingSupport: ProviderThinkingSupport = { levels: ["off"], zeroAllowed: false, dynamicAllowed: false };
   const model = enrichProviderModelOption({ id: "claude-sonnet-4-5", thinkingSupport }, context);
   assert.deepEqual(model.thinkingModes, ["off"]);
   assert.deepEqual(model.thinkingSupport, thinkingSupport);
@@ -334,7 +341,7 @@ test("exact audio catalog records retain empty capabilities and do not inherit f
 });
 
 test("unknown compatible relays use only unique exact catalog ids and otherwise stay conservative", () => {
-  const relayContext = {
+  const relayContext: ProviderModelCatalogContext = {
     kind: "openai-compatible",
     providerId: "private-relay",
     api: "openai-completions",
@@ -381,7 +388,7 @@ test("live media transport auto-enable is restricted to implemented image adapte
 });
 
 test("media provider normalization centralizes live runtime eligibility", () => {
-  const baseProvider = {
+  const baseProvider: ProviderPreset = {
     id: "provider_image",
     kind: "openai-compatible",
     displayName: "Relay Image",
@@ -391,6 +398,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
     baseUrl: "https://relay.example.com/v1",
     apiKeyRef: "env:OPENAI_API_KEY",
     headers: {},
+    secretHeaderRefs: {},
     authHeader: true,
     input: ["text", "image"],
     compat: {},
@@ -400,7 +408,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
     updatedAt: "2026-06-30T00:00:00.000Z",
   };
 
-  assert.deepEqual(normalizeMediaProviderCompat(baseProvider).mediaVendorTransport, { mode: "live" });
+  assert.deepEqual(normalizeMediaProviderCompat(baseProvider)?.mediaVendorTransport, { mode: "live" });
   assert.deepEqual(normalizeProviderPresetForMediaRuntime(baseProvider).compat.mediaVendorTransport, { mode: "live" });
   const openAIState = resolveGenerationProviderRuntimeState(baseProvider, "image_generate");
   assert.equal(openAIState.canRun, true);
@@ -417,7 +425,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
   });
 
   const dallE = { ...baseProvider, model: "dall-e-3" };
-  assert.deepEqual(normalizeMediaProviderCompat(dallE).mediaVendorTransport, { mode: "live" });
+  assert.deepEqual(normalizeMediaProviderCompat(dallE)?.mediaVendorTransport, { mode: "live" });
   assert.deepEqual(resolveMediaProviderRuntimeState(dallE, "image_generate").imageGeneration, {
     aspectRatios: ["1:1", "7:4", "4:7"],
     sizeByAspectRatio: {
@@ -428,7 +436,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
     maxCount: 1,
   });
 
-  const seedream = {
+  const seedream: ProviderPreset = {
     ...baseProvider,
     kind: "seedream",
     providerId: "seedream",
@@ -436,12 +444,12 @@ test("media provider normalization centralizes live runtime eligibility", () => 
     capabilities: ["image_generate", "image_edit"],
   };
   const seedreamState = resolveMediaProviderRuntimeState(seedream, "image_generate");
-  assert.deepEqual(normalizeMediaProviderCompat(seedream).mediaVendorTransport, { mode: "live" });
+  assert.deepEqual(normalizeMediaProviderCompat(seedream)?.mediaVendorTransport, { mode: "live" });
   assert.equal(seedreamState.canRun, true);
   assert.equal(seedreamState.imageGeneration, undefined);
   assert.equal(resolveMediaProviderRuntimeState(seedream, "image_edit").canRun, true);
 
-  const jimeng = {
+  const jimeng: ProviderPreset = {
     ...baseProvider,
     kind: "jimeng",
     providerId: "jimeng",
@@ -454,7 +462,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
     "unsupported_live_adapter",
   );
 
-  const seedance = {
+  const seedance: ProviderPreset = {
     ...baseProvider,
     kind: "seedance",
     providerId: "seedance",
@@ -462,7 +470,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
     capabilities: ["video_generate"],
   };
   const seedanceState = resolveGenerationProviderRuntimeState(seedance, "video_generate");
-  assert.deepEqual(normalizeMediaProviderCompat(seedance).mediaVendorTransport, { mode: "live" });
+  assert.deepEqual(normalizeMediaProviderCompat(seedance)?.mediaVendorTransport, { mode: "live" });
   assert.equal(seedanceState.canRun, true);
   assert.deepEqual(seedanceState.supportedOperations, ["video_generate"]);
   assert.deepEqual(seedanceState.videoGeneration?.inputModes, ["text", "first_frame"]);
@@ -472,7 +480,7 @@ test("media provider normalization centralizes live runtime eligibility", () => 
     ["doubao-seedance-2-0-260128", ["text", "first_frame", "reference_image"], 9],
     ["doubao-seedance-2-5-260628", ["text", "first_frame", "reference_image"], 30],
     ["doubao-seedance-next", ["text"], undefined],
-  ];
+  ] as const;
   for (const [model, inputModes, maxReferenceImages] of seedanceCapabilities) {
     const state = resolveGenerationProviderRuntimeState({ ...seedance, model }, "video_generate");
     assert.deepEqual(state.videoGeneration?.inputModes, inputModes, model);
@@ -481,11 +489,13 @@ test("media provider normalization centralizes live runtime eligibility", () => 
 
   const flux = { ...baseProvider, model: "black-forest-labs/flux-2-pro", providerId: "relay" };
   const fluxState = resolveMediaProviderRuntimeState(flux, "image_generate");
-  assert.equal(normalizeMediaProviderCompat(flux).mediaVendorTransport, undefined);
+  const fluxCompat = normalizeMediaProviderCompat(flux);
+  assert.ok(fluxCompat);
+  assert.equal(fluxCompat.mediaVendorTransport, undefined);
   assert.equal(fluxState.canRun, false);
   assert.equal(fluxState.reason, "live_transport_required");
 
-  const chatProvider = {
+  const chatProvider: ProviderPreset = {
     ...baseProvider,
     model: "gpt-5",
     api: "openai-completions",
@@ -591,6 +601,7 @@ test("sqlite store persists and validates provider transport", async () => {
         providerId: "bad-transport",
         model: "gpt-5.5-codex",
         api: "openai-codex-responses",
+        // @ts-expect-error Exercise runtime rejection of an unsupported transport.
         providerTransport: "websocket-jsonrpc",
         baseUrl: "https://chatgpt.com/backend-api",
         apiKeyRef: "env:OPENAI_CODEX_API_KEY",
@@ -608,6 +619,7 @@ test("sqlite store persists and validates provider transport", async () => {
     const updated = store.updateProviderPreset(providerId, { providerTransport: "auto" }, "2026-06-10T00:04:00.000Z");
     assert.equal(updated?.providerTransport, "auto");
     assert.throws(
+      // @ts-expect-error Exercise runtime rejection of an unsupported transport.
       () => store.updateProviderPreset(providerId, { providerTransport: "http2" }, "2026-06-10T00:05:00.000Z"),
       /providerTransport must be one of/,
     );

@@ -7,13 +7,21 @@ import {
   DEFAULT_WORKSPACE_ID,
   createSqliteRunStore,
   resolveStoragePaths,
+  type ProviderCheckAdmission,
+  type ProviderCheckPublicationResult,
+  type ProviderCheckResult,
+  type ProviderCheckSource,
+  type ProviderPresetInput,
+  type ProviderPresetUpdateInput,
+  type SqliteRunStore,
 } from "../dist/index.js";
 import { applyProviderCheckMigration } from "../dist/storage/sqlite/provider-check-migration.js";
+import { testDatabase } from "./support/sqlite-test-database.ts";
 
 const NOW = "2026-10-09T02:00:00.000Z";
-const SOURCES = ["manual", "startup", "model_import"];
+const SOURCES: readonly ProviderCheckSource[] = ["manual", "startup", "model_import"];
 
-function providerInput(overrides = {}) {
+function providerInput(overrides: Partial<ProviderPresetInput> = {}): ProviderPresetInput {
   return {
     kind: "openai-compatible",
     displayName: "Publication fixture",
@@ -28,12 +36,19 @@ function providerInput(overrides = {}) {
   };
 }
 
-function check(message = "Current evidence", overrides = {}) {
+function check(message = "Current evidence", overrides: Partial<ProviderCheckResult> = {}): ProviderCheckResult {
   return { ok: true, code: "ready", message, checkedAt: NOW, ...overrides };
 }
 
+interface PublicationFixture {
+  store: SqliteRunStore;
+  open: () => SqliteRunStore;
+  providerId: string;
+  cwd: string;
+}
+
 /** No test can select the user's storage, secrets, default workspace or home. */
-async function withStore(body, input = providerInput()) {
+async function withStore(body: (fixture: PublicationFixture) => void | Promise<void>, input = providerInput()) {
   const directory = await mkdtemp(resolve(tmpdir(), "ling-provider-check-publication-"));
   const cwd = resolve(directory, "workspace");
   const paths = resolveStoragePaths(cwd, {
@@ -41,7 +56,7 @@ async function withStore(body, input = providerInput()) {
     env: {},
     workspaceStateLocation: "repo-local",
   }).workspace;
-  const stores = [];
+  const stores: SqliteRunStore[] = [];
   const open = () => {
     const store = createSqliteRunStore(cwd, paths);
     stores.push(store);
@@ -53,13 +68,13 @@ async function withStore(body, input = providerInput()) {
     return await body({ store, open, providerId: provider.id, cwd });
   } finally {
     for (const candidate of stores.reverse()) {
-      if (candidate.database.isOpen) candidate.close();
+      if (testDatabase(candidate).isOpen) candidate.close();
     }
     await rm(directory, { recursive: true, force: true });
   }
 }
 
-function begin(store, providerId, source = "manual", pendingCheck) {
+function begin(store: SqliteRunStore, providerId: string, source: ProviderCheckSource = "manual", pendingCheck?: ProviderCheckResult) {
   const request = store.beginProviderCheckRequest(providerId, source, pendingCheck);
   assert.ok(request, "Existing fixture provider must admit a check request");
   assert.equal(request.provider.id, providerId);
@@ -68,22 +83,35 @@ function begin(store, providerId, source = "manual", pendingCheck) {
   return request;
 }
 
-function publish(store, request, cwd, result = check()) {
+function publish(store: SqliteRunStore, request: ProviderCheckAdmission, cwd: string, result = check()) {
   return store.commitProviderCheckResult(request.ticket, result, cwd);
 }
 
+function authority(store: SqliteRunStore, providerId: string) {
+  const current = store.getProviderCheckAuthority(providerId);
+  assert.ok(current, "Existing fixture provider must have check authority");
+  return current;
+}
+
 /** A rejected or failed publication must preserve all durable state. */
-function state(store, providerId) {
+function state(store: SqliteRunStore, providerId: string) {
   return {
     provider: store.getProviderPreset(providerId),
     authority: store.getProviderCheckAuthority(providerId),
-    authorityRows: store.database.prepare("SELECT * FROM provider_check_authorities ORDER BY provider_id").all(),
+    authorityRows: testDatabase(store).prepare("SELECT * FROM provider_check_authorities ORDER BY provider_id").all(),
     events: store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID }),
     replay: store.getControlPlaneReplayState(DEFAULT_WORKSPACE_ID),
   };
 }
 
-function assertRejected(store, request, cwd, providerId, status, result = check("Obsolete evidence")) {
+function assertRejected(
+  store: SqliteRunStore,
+  request: ProviderCheckAdmission,
+  cwd: string,
+  providerId: string,
+  status: Exclude<ProviderCheckPublicationResult["status"], "published">,
+  result = check("Obsolete evidence"),
+) {
   const before = state(store, providerId);
   assert.equal(publish(store, request, cwd, result).status, status);
   assert.deepEqual(state(store, providerId), before);
@@ -91,7 +119,7 @@ function assertRejected(store, request, cwd, providerId, status, result = check(
 
 test("provider check admission captures durable authority without changing configuration", async () => {
   await withStore(({ store, providerId }) => {
-    const before = store.getProviderCheckAuthority(providerId);
+    const before = authority(store, providerId);
     assert.deepEqual(Object.keys(before).sort(), ["configRevision", "publishedRevision", "requestRevision"]);
     assert.ok(Number.isSafeInteger(before.configRevision) && before.configRevision > 0);
     assert.equal(before.requestRevision, 0);
@@ -117,7 +145,7 @@ for (const olderSource of SOURCES) {
         assertRejected(store, earlier, cwd, providerId, "superseded");
         const current = publish(other, later, cwd, check("Latest admitted evidence"));
         assert.equal(current.status, "published");
-        assert.equal(current.provider.lastCheck.message, "Latest admitted evidence");
+        assert.equal(current.provider.lastCheck?.message, "Latest admitted evidence");
         assert.deepEqual(store.getProviderPreset(providerId), current.provider);
         assert.equal(current.event.action, "provider.preflight_checked");
         assert.equal(current.event.entityId, providerId);
@@ -148,23 +176,23 @@ test("pending evidence is installed during admission without invalidating its ow
   await withStore(({ store, providerId, cwd }) => {
     const original = publish(store, begin(store, providerId), cwd, check("Previous evidence"));
     assert.equal(original.status, "published");
-    const configRevision = store.getProviderCheckAuthority(providerId).configRevision;
+    const configRevision = authority(store, providerId).configRevision;
     const pending = check("Waiting for imported model check", { ok: false, code: "preflight_pending" });
     const request = begin(store, providerId, "model_import", pending);
     assert.deepEqual(request.provider.lastCheck, pending);
-    assert.deepEqual(store.getProviderPreset(providerId).lastCheck, pending);
+    assert.deepEqual(store.getProviderPreset(providerId)?.lastCheck, pending);
     assert.equal(request.ticket.configRevision, configRevision);
-    assert.equal(store.getProviderCheckAuthority(providerId).configRevision, configRevision);
+    assert.equal(authority(store, providerId).configRevision, configRevision);
     const current = publish(store, request, cwd, check("Imported model ready"));
     assert.equal(current.status, "published");
-    assert.equal(current.provider.lastCheck.message, "Imported model ready");
+    assert.equal(current.provider.lastCheck?.message, "Imported model ready");
     assert.equal(state(store, providerId).events.length, 2);
   });
 });
 
 test("every provider configuration update invalidates an older ticket at the same timestamp", async () => {
   await withStore(({ store, providerId, cwd }) => {
-    const changes = [
+    const changes: readonly ProviderPresetUpdateInput[] = [
       { displayName: "Changed display name" },
       { kind: "openai" },
       { providerId: "changed-relay" },
@@ -188,8 +216,9 @@ test("every provider configuration update invalidates an older ticket at the sam
     for (const change of changes) {
       const request = begin(store, providerId);
       const updated = store.updateProviderPreset(providerId, change, NOW);
+      assert.ok(updated, JSON.stringify(change));
       assert.equal(updated.updatedAt, request.provider.updatedAt, JSON.stringify(change));
-      assert.ok(store.getProviderCheckAuthority(providerId).configRevision > request.ticket.configRevision,
+      assert.ok(authority(store, providerId).configRevision > request.ticket.configRevision,
         JSON.stringify(change));
       assert.equal(updated.lastCheck, undefined);
       assertRejected(store, request, cwd, providerId, "config_changed");
@@ -212,8 +241,9 @@ test("same-timestamp configuration A to B to A cannot resurrect A's original aut
     const request = begin(store, providerId);
     store.updateProviderPreset(providerId, { model: "fixture-model-B" }, NOW);
     store.updateProviderPreset(providerId, { model: request.provider.model }, NOW);
-    assert.equal(store.getProviderPreset(providerId).model, request.provider.model);
-    assert.equal(store.getProviderPreset(providerId).updatedAt, request.provider.updatedAt);
+    const restored = store.getProviderPreset(providerId);
+    assert.equal(restored?.model, request.provider.model);
+    assert.equal(restored?.updatedAt, request.provider.updatedAt);
     assertRejected(store, request, cwd, providerId, "config_changed");
     assert.equal(publish(store, begin(store, providerId), cwd).status, "published");
   });
@@ -222,7 +252,7 @@ test("same-timestamp configuration A to B to A cannot resurrect A's original aut
 test("direct SQL update also invalidates same-timestamp pending provider checks", async () => {
   await withStore(({ store, providerId, cwd }) => {
     const request = begin(store, providerId);
-    store.database.prepare("UPDATE provider_presets SET model = ? WHERE id = ?")
+    testDatabase(store).prepare("UPDATE provider_presets SET model = ? WHERE id = ?")
       .run("SQL-updated-model", providerId);
     assertRejected(store, request, cwd, providerId, "config_changed");
   });
@@ -241,13 +271,14 @@ test("deleted provider rejects publication without recreating its check or durab
 test("SQL delete and reinsert of the same provider ID keeps the tombstone and rejects ABA", async () => {
   await withStore(({ store, providerId, cwd }) => {
     const request = begin(store, providerId);
-    const row = store.database.prepare("SELECT * FROM provider_presets WHERE id = ?").get(providerId);
+    const row = testDatabase(store).prepare("SELECT * FROM provider_presets WHERE id = ?").get(providerId);
+    assert.ok(row);
     const columns = Object.keys(row);
-    store.database.prepare("DELETE FROM provider_presets WHERE id = ?").run(providerId);
-    store.database.prepare(`INSERT INTO provider_presets (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`)
+    testDatabase(store).prepare("DELETE FROM provider_presets WHERE id = ?").run(providerId);
+    testDatabase(store).prepare(`INSERT INTO provider_presets (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`)
       .run(...columns.map(column => row[column]));
     assert.deepEqual(store.getProviderPreset(providerId), request.provider);
-    assert.ok(store.getProviderCheckAuthority(providerId).configRevision > request.ticket.configRevision);
+    assert.ok(authority(store, providerId).configRevision > request.ticket.configRevision);
     assertRejected(store, request, cwd, providerId, "config_changed");
     assert.ok(begin(store, providerId).ticket.requestRevision > request.ticket.requestRevision);
   });
@@ -261,8 +292,8 @@ test("disabled provider remains checkable and published results do not change co
     assert.equal(current.status, "published");
     assert.equal(current.provider.enabled, false);
     assert.deepEqual(current.provider.lastCheck, disabled);
-    assert.equal(store.getProviderCheckAuthority(providerId).configRevision, request.ticket.configRevision);
-    assert.equal(store.getProviderCheckAuthority(providerId).publishedRevision, request.ticket.requestRevision);
+    assert.equal(authority(store, providerId).configRevision, request.ticket.configRevision);
+    assert.equal(authority(store, providerId).publishedRevision, request.ticket.requestRevision);
   }, providerInput({ enabled: false }));
 });
 
@@ -286,8 +317,10 @@ for (const operation of ["set", "delete"]) {
       if (operation === "set") store.setProviderSecret(providerId, "fixture-secret-B-not-real", NOW);
       else assert.equal(store.deleteProviderSecret(providerId), true);
       for (let index = 0; index < ids.length; index += 1) {
-        assert.equal(store.getProviderPreset(ids[index]).lastCheck, undefined);
-        assert.ok(store.getProviderCheckAuthority(ids[index]).configRevision > requests[index].ticket.configRevision);
+        const provider = store.getProviderPreset(ids[index]);
+        assert.ok(provider);
+        assert.equal(provider.lastCheck, undefined);
+        assert.ok(authority(store, ids[index]).configRevision > requests[index].ticket.configRevision);
         assertRejected(store, requests[index], cwd, ids[index], "config_changed");
       }
     });
@@ -329,15 +362,15 @@ for (const [label, triggerName, trigger] of [
     await withStore(({ store, open, providerId, cwd }) => {
       assert.equal(publish(store, begin(store, providerId), cwd, check("Previous evidence")).status, "published");
       const request = begin(store, providerId, "model_import");
-      store.database.exec(trigger);
+      testDatabase(store).exec(trigger);
       const before = state(store, providerId);
       assert.throws(() => publish(store, request, cwd, check("Faulted evidence")), /provider check .* fault/u);
       assert.deepEqual(state(store, providerId), before);
       assert.deepEqual(state(open(), providerId), before);
-      store.database.exec(`DROP TRIGGER ${triggerName};`);
+      testDatabase(store).exec(`DROP TRIGGER ${triggerName};`);
       const recovered = publish(store, request, cwd, check("Recovered evidence"));
       assert.equal(recovered.status, "published");
-      assert.equal(recovered.provider.lastCheck.message, "Recovered evidence");
+      assert.equal(recovered.provider.lastCheck?.message, "Recovered evidence");
       assert.equal(state(store, providerId).events.length, before.events.length + 1);
       assert.equal(state(store, providerId).replay.latestSeq, recovered.event.seq);
       assertRejected(store, request, cwd, providerId, "already_published");
@@ -349,6 +382,7 @@ test("invalid request source is rejected before changing authority or pending ev
   await withStore(({ store, providerId }) => {
     const before = state(store, providerId);
     for (const source of ["unknown", "", undefined, null, 1]) {
+      // @ts-expect-error Exercise runtime rejection of an untrusted source.
       assert.throws(() => store.beginProviderCheckRequest(providerId, source, check("Untrusted pending")), TypeError);
       assert.deepEqual(state(store, providerId), before);
     }
@@ -359,9 +393,10 @@ test("invalid ticket revisions cannot publish or consume admitted authority", as
   await withStore(({ store, providerId, cwd }) => {
     const request = begin(store, providerId);
     const before = state(store, providerId);
-    for (const field of ["configRevision", "requestRevision"]) {
+    for (const field of ["configRevision", "requestRevision"] as const) {
       for (const value of [-1, 0, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "1"]) {
-        assert.throws(() => store.commitProviderCheckResult({ ...request.ticket, [field]: value }, check(), cwd), TypeError);
+        const ticket = { ...request.ticket, [field]: value };
+        assert.throws(() => store.commitProviderCheckResult(ticket, check(), cwd), TypeError);
         assert.deepEqual(state(store, providerId), before);
       }
     }
@@ -373,20 +408,20 @@ for (const operation of ["begin", "commit"]) {
   test(`${operation} does not roll back a caller-owned outer transaction when nested BEGIN is refused`, async () => {
     await withStore(({ store, providerId, cwd }) => {
       const request = begin(store, providerId);
-      store.database.exec("CREATE TABLE provider_outer_marker (value TEXT NOT NULL); BEGIN IMMEDIATE;");
+      testDatabase(store).exec("CREATE TABLE provider_outer_marker (value TEXT NOT NULL); BEGIN IMMEDIATE;");
       let committed = false;
       try {
-        store.database.prepare("INSERT INTO provider_outer_marker (value) VALUES (?)").run("owned_by_caller");
+        testDatabase(store).prepare("INSERT INTO provider_outer_marker (value) VALUES (?)").run("owned_by_caller");
         assert.throws(() => operation === "begin" ? begin(store, providerId) : publish(store, request, cwd), /transaction|BEGIN/iu);
-        assert.equal(store.database.prepare("SELECT value FROM provider_outer_marker").get().value, "owned_by_caller");
-        store.database.exec("COMMIT;");
+        assert.equal(testDatabase(store).prepare("SELECT value FROM provider_outer_marker").get()?.value, "owned_by_caller");
+        testDatabase(store).exec("COMMIT;");
         committed = true;
       } finally {
         if (!committed) {
-          try { store.database.exec("ROLLBACK;"); } catch {}
+          try { testDatabase(store).exec("ROLLBACK;"); } catch {}
         }
       }
-      assert.equal(store.database.prepare("SELECT value FROM provider_outer_marker").get().value, "owned_by_caller");
+      assert.equal(testDatabase(store).prepare("SELECT value FROM provider_outer_marker").get()?.value, "owned_by_caller");
       assert.equal(publish(store, request, cwd).status, "published");
     });
   });
@@ -404,32 +439,33 @@ test("enumeration-valid ticket source tampering is rejected without publication 
   });
 });
 
-function verifyMarkedMigration(store) {
+function verifyMarkedMigration(store: SqliteRunStore) {
+  const database = testDatabase(store);
   applyProviderCheckMigration({
-    database: store.database,
-    hasMigration: version => Boolean(store.database.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(version)),
+    database,
+    hasMigration: version => Boolean(database.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(version)),
     recordMigration: () => { throw new Error("A marked migration must not rewrite history."); },
   });
 }
 
 test("marked provider migration refuses equal-name no-op trigger drift", async () => {
   await withStore(({ store }) => {
-    store.database.exec(`
+    testDatabase(store).exec(`
       DROP TRIGGER provider_check_update;
       CREATE TRIGGER provider_check_update AFTER UPDATE ON provider_presets BEGIN SELECT 1; END;
     `);
-    const before = store.database.prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all();
+    const before = testDatabase(store).prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all();
     assert.throws(() => verifyMarkedMigration(store), /Provider check migration/iu);
-    assert.deepEqual(store.database.prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all(), before);
+    assert.deepEqual(testDatabase(store).prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all(), before);
   });
 });
 
 test("marked provider migration refuses required-column drift even when all object names remain", async () => {
   await withStore(({ store }) => {
-    store.database.exec("ALTER TABLE provider_check_authorities RENAME COLUMN config_revision TO lost_config_revision;");
-    const before = store.database.prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all();
+    testDatabase(store).exec("ALTER TABLE provider_check_authorities RENAME COLUMN config_revision TO lost_config_revision;");
+    const before = testDatabase(store).prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all();
     assert.throws(() => verifyMarkedMigration(store), /Provider check migration/iu);
-    assert.deepEqual(store.database.prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all(), before);
+    assert.deepEqual(testDatabase(store).prepare("SELECT name, type, sql FROM sqlite_schema ORDER BY name").all(), before);
   });
 });
 
@@ -441,12 +477,12 @@ test("local secret ownership move invalidates both old and new consumers", async
     store.updateProviderPreset(other.id, { apiKeyRef: `local:${other.id}` }, NOW);
     const ids = [providerId, other.id];
     const requests = ids.map(id => begin(store, id));
-    store.database.prepare("UPDATE provider_secrets SET provider_id = ? WHERE provider_id = ?")
+    testDatabase(store).prepare("UPDATE provider_secrets SET provider_id = ? WHERE provider_id = ?")
       .run(other.id, providerId);
     assert.equal(store.hasProviderSecret(providerId), false);
     assert.equal(store.hasProviderSecret(other.id), true);
     for (let index = 0; index < ids.length; index += 1) {
-      assert.ok(store.getProviderCheckAuthority(ids[index]).configRevision > requests[index].ticket.configRevision,
+      assert.ok(authority(store, ids[index]).configRevision > requests[index].ticket.configRevision,
         "Both the old credential consumer and the new consumer must lose check authority.");
       assertRejected(store, requests[index], cwd, ids[index], "config_changed");
     }
@@ -455,7 +491,7 @@ test("local secret ownership move invalidates both old and new consumers", async
 
 test("exhausted provider request authority is refused without wraparound or pending writes", async () => {
   await withStore(({ store, providerId }) => {
-    store.database.prepare("UPDATE provider_check_authorities SET request_revision = ? WHERE provider_id = ?")
+    testDatabase(store).prepare("UPDATE provider_check_authorities SET request_revision = ? WHERE provider_id = ?")
       .run(Number.MAX_SAFE_INTEGER, providerId);
     const before = state(store, providerId);
     assert.throws(() => begin(store, providerId, "startup", check("Must not become pending")), /exhausted|authority/iu);
@@ -465,7 +501,7 @@ test("exhausted provider request authority is refused without wraparound or pend
 
 test("exhausted provider config authority rolls back a configuration mutation instead of wrapping", async () => {
   await withStore(({ store, providerId }) => {
-    store.database.prepare("UPDATE provider_check_authorities SET config_revision = ? WHERE provider_id = ?")
+    testDatabase(store).prepare("UPDATE provider_check_authorities SET config_revision = ? WHERE provider_id = ?")
       .run(Number.MAX_SAFE_INTEGER, providerId);
     const before = state(store, providerId);
     assert.throws(() => store.updateProviderPreset(providerId, { model: "Must-not-persist" }, NOW), /CHECK constraint|exhausted/iu);
