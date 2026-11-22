@@ -13,6 +13,8 @@ import {
 import type { LingPluginArtifactDescriptor } from "@ling-stack/plugin-sdk";
 import { installRemotePluginArtifact, rollbackRemotePluginArtifact } from "../dist/features/plugins/remote-package.js";
 
+// The Cua and native-host cache contract is platform-neutral. The test uses
+// fixture bytes and never starts an operating-system process.
 const pluginId = "official:chrome-browser";
 const executable = "runtime/ling-browser-host";
 const manifestPath = ".ling-plugin/plugin.json";
