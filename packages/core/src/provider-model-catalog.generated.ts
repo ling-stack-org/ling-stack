@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:a14d28d55d3e",
+  "version": "models.dev:384dba2bbca2",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-11-18T18:53:28.136Z",
-  "updatedAt": "2026-11-17"
+  "generatedAt": "2026-11-22T09:56:49.920Z",
+  "updatedAt": "2026-11-18"
 } as const satisfies ProviderModelCatalogManifest;
 
 export const providerModelCatalogRecords = [
@@ -2104,6 +2104,30 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1048576,
     "maxTokens": 65536,
     "updatedAt": "2026-11-12"
+  },
+  {
+    "providerId": "google",
+    "id": "gemini-4-neon",
+    "displayName": "Gemini 4 Neon",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 65536,
+    "updatedAt": "2026-11-18"
   },
   {
     "providerId": "google",
@@ -6009,24 +6033,6 @@ export const providerModelCatalogRecords = [
     "contextWindow": 500000,
     "maxTokens": 16384,
     "updatedAt": "2026-09-21"
-  },
-  {
-    "providerId": "xai",
-    "id": "grok-build-0.1",
-    "displayName": "Grok Build 0.1",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "chat",
-      "tool_call",
-      "reasoning",
-      "vision"
-    ],
-    "contextWindow": 256000,
-    "maxTokens": 16384,
-    "updatedAt": "2026-04-16"
   },
   {
     "providerId": "xai",
