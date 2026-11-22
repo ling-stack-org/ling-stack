@@ -1469,6 +1469,8 @@ test("automatic GitHub intake resumes a scoped dispatch once and preserves admis
   t.after(() => provider.close());
   const repository = "example/ling";
   const quietRepository = "example/quiet";
+  const revokedRepository = "example/revoked";
+  let labelRevoked = false;
   let providerPresetId = "fixture-provider-unconfigured";
   const observedAt = new Date();
   const quietTime = (delta: number) => new Date(observedAt.getTime() + delta * 60_000).toISOString().slice(11, 16);
@@ -1484,13 +1486,22 @@ test("automatic GitHub intake resumes a scoped dispatch once and preserves admis
         intake: { enabled: true, mode: "auto_start", requiredLabel: "agent-ready", providerPresetId,
           budget: { maxConcurrent: 1, maxStartsPerWindow: 2, windowMs: 60_000 },
           quietHours: { timeZone: "UTC", start: quietTime(-30), end: quietTime(30) } } },
+      { workspaceRoot: cwd, repository: revokedRepository, repositoryId: "716",
+        intake: { enabled: true, mode: "auto_start", requiredLabel: "agent-ready", providerPresetId,
+          budget: { maxConcurrent: 1, maxStartsPerWindow: 2, windowMs: 60_000 } } },
     ],
     externalWorkFetch: async input => {
       const { pathname } = new URL(String(input));
       if (pathname === `/repos/${repository}`) return Response.json({ id: 714, full_name: repository });
       if (pathname === `/repos/${quietRepository}`) return Response.json({ id: 715, full_name: quietRepository });
       if (pathname === `/repos/${repository}/issues`) return Response.json(current);
+      if (pathname === `/repos/${repository}/issues/21`) return Response.json(issue(21));
       if (pathname === `/repos/${quietRepository}/issues`) return Response.json([issue(1)]);
+      if (pathname === `/repos/${revokedRepository}`) return Response.json({ id: 716, full_name: revokedRepository });
+      if (pathname === `/repos/${revokedRepository}/issues`) return Response.json([issue(1)]);
+      if (pathname === `/repos/${revokedRepository}/issues/1`) {
+        return Response.json({ ...issue(1), labels: labelRevoked ? [] : issue(1).labels });
+      }
       return new Response(null, { status: 404 });
     },
   });
@@ -1512,6 +1523,10 @@ test("automatic GitHub intake resumes a scoped dispatch once and preserves admis
   assert.equal(claimed?.blocker?.code, "control_blocked");
   const quiet = await first.call<LingAppServerGitHubIntakePollResult>("github/intake/poll", { repository: quietRepository });
   assert.equal(quiet.receipts[0]?.reasonCode, "quiet_hours");
+  const revoked = await first.call<LingAppServerGitHubIntakePollResult>("github/intake/poll", { repository: revokedRepository });
+  assert.equal(revoked.receipts[0]?.outcome, "accepted");
+  const revokedWorkItemId = revoked.receipts[0]?.workItemId;
+  assert.ok(revokedWorkItemId);
   const stagedThread = awaiting.createLingThread({ kind: "conversation", status: "open", title: "Reserved triage", objective: "Triage issue 21" }, now);
   const staged = awaiting.acceptWorkItem(accepted.workItemId, {
     expectedRevision: claimed!.workItem.revision, actorId: "ling_agent", idempotencyKey: accepted.receiptId,
@@ -1521,6 +1536,7 @@ test("automatic GitHub intake resumes a scoped dispatch once and preserves admis
   await assert.rejects(first.call("turn/start", { threadId: stagedThread.id, message: staged.receipt.dispatch.message,
     providerPresetId: preset.id, idempotencyKey: staged.receipt.dispatch.submissionKey }), { code: "work_item_dispatch_held" });
   assert.equal(provider.requests.length, 0);
+  labelRevoked = true;
   await fixture.restart();
   fixture.getStore().updateProviderPreset(preset.id, { enabled: true }, new Date().toISOString());
   fixture.getStore().recordProviderCheckResult(preset.id, { ok: true, code: "ready", message: "Loopback fixture", checkedAt: new Date().toISOString() });
@@ -1535,6 +1551,12 @@ test("automatic GitHub intake resumes a scoped dispatch once and preserves admis
   });
   assert.equal(finished.status, "succeeded", finished.errorMessage ?? "The routed Run succeeded.");
   assert.equal(finished.threadId, stagedThread.id);
+  const held = await waitFor(async () => {
+    const result = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: revokedWorkItemId });
+    return result.intakeDispatch?.status === "held" ? result.intakeDispatch : undefined;
+  });
+  assert.equal(held.reasonCode, "required_label_missing");
+  assert.equal(fixture.getStore().getWorkItem(revokedWorkItemId)?.runId, undefined);
   assert.equal(provider.requests.length, 1);
   assert.equal(fixture.getStore().listRuns({ threadId: finished.threadId }).length, 1);
   assert.match(JSON.stringify(provider.requests[0]), /Triage issue 21/u);

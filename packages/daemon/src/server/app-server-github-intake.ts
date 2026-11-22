@@ -195,7 +195,7 @@ function isQuiet(quiet: LingAppServerGitHubIntakeQuietHours | undefined, now: Da
 }
 
 export async function dispatchGitHubIntake(
-  context: Pick<DaemonContext, "config" | "controlPlaneEvents" | "runnerRegistry" | "imageVisionSummarizer">,
+  context: IntakeContext & Pick<DaemonContext, "runnerRegistry" | "imageVisionSummarizer">,
   store: RunStore, signal: AbortSignal,
   startRun: (request: RunRequest, admission: { readonly receiptId: string; readonly assertCurrent: () => void }) => Promise<string | undefined>,
 ): Promise<void> {
@@ -253,6 +253,26 @@ export async function dispatchGitHubIntake(
         }
       };
       assertCurrent();
+      const client = gitHubReadClient(context, store.paths.cwd, receipt.repository);
+      const subject = await readAppServerGitHubSubject(client, { repository: receipt.repository, ...receipt.subject });
+      assertCurrent();
+      if (subject.state !== "open" || !subject.labels?.includes(policy.requiredLabel)) {
+        complete("held", subject.state !== "open" ? "subject_closed" : "required_label_missing");
+        continue;
+      }
+      const current = store.getWorkItem(workItem.id);
+      if (!current || ["done", "cancelled", "superseded", "archived"].includes(current.status)) {
+        complete("held", "intake_authority_changed");
+        continue;
+      }
+      if (current.control.state !== "active" || current.holds.some(hold => hold.blocksNewAdmission)) {
+        complete("pending", "intake_temporarily_held");
+        continue;
+      }
+      if (current.runId) {
+        complete("admitted", undefined, current.runId);
+        continue;
+      }
       const original = store.getAppServerState("work_item_acceptance", workItem.id)?.payload as WorkItemAcceptanceReceipt | undefined;
       if (original && original.idempotencyKey !== receipt.receiptId) {
         complete("held", "work_item_already_assigned");
@@ -267,7 +287,7 @@ export async function dispatchGitHubIntake(
       const message = `Review the authorized GitHub ${kind} ${receipt.repository}#${number} for this project. Use its title `
         + `${JSON.stringify(workItem.title)} as source data. Check the requirements against the repository and propose a scoped plan or ask for clarification.`;
       const acceptance = store.acceptWorkItem(workItem.id, {
-        expectedRevision: original?.acceptedRevision ?? workItem.revision, actorId: LING_AGENT_ID, idempotencyKey: receipt.receiptId,
+        expectedRevision: original?.acceptedRevision ?? current.revision, actorId: LING_AGENT_ID, idempotencyKey: receipt.receiptId,
         dispatch: original?.dispatch ?? { threadId, message, providerPresetId: policy.providerPresetId },
       }, new Date().toISOString());
       if (!acceptance?.receipt.dispatch || acceptance.receipt.idempotencyKey !== receipt.receiptId) {
@@ -288,7 +308,9 @@ export async function dispatchGitHubIntake(
     } catch (error) {
       signal.throwIfAborted();
       const reason = error instanceof HttpError ? error.code : "work_item_admission_pending";
-      if (reason === "duplicate_work_unit") complete("held", "intake_dispatch_reconciliation_required");
+      if (error instanceof HttpError && error.statusCode === 404 && reason.startsWith("github_")) {
+        complete("held", "subject_unavailable");
+      } else if (reason === "duplicate_work_unit") complete("held", "intake_dispatch_reconciliation_required");
       else complete("pending", reason);
     }
   }
