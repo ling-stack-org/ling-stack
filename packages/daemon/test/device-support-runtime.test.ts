@@ -117,6 +117,21 @@ test("the configured PC ADB target journals diagnosis and developer log capture 
   const { profile } = await enrollment.json() as { profile: DeviceProfileV1 };
   assert.equal(profile.device.id, candidates.targets[0].deviceId);
   assert.equal(profile.device.kind, "head_unit");
+  const readGraphNode = async () => {
+    const response = await fetch(base + "/fabric/graph", { headers });
+    assert.equal(response.status, 200);
+    const graph = await response.json() as {
+      nodes: { nodeId: string; deviceId: string; source?: string; connectionRevision?: string; lifecycleStatus?: string }[];
+    };
+    assert.doesNotMatch(JSON.stringify(graph), /fixture-hardware-id|fixture-head-unit/u);
+    const matches = graph.nodes.filter(node => node.deviceId === profile.device.id);
+    assert.equal(matches.length, 1);
+    return matches[0]!;
+  };
+  const enrolledNode = await readGraphNode();
+  assert.equal(enrolledNode.source, "registry");
+  assert.equal(enrolledNode.lifecycleStatus, "healthy");
+  assert.equal(enrolledNode.connectionRevision, profile.device.profileRevision);
   const sessions = "/developer/sessions";
   const developerSession = await post(sessions, { targetDeviceId: profile.device.id, mode: "developer" });
   assert.equal(developerSession.status, 201);
@@ -154,6 +169,9 @@ test("the configured PC ADB target journals diagnosis and developer log capture 
   transportId = "18";
   const reconnected = await diagnosis();
   assert.equal(reconnected.status, "succeeded");
+  const reconnectedNode = await readGraphNode();
+  assert.equal(reconnectedNode.nodeId, enrolledNode.nodeId);
+  assert.notEqual(reconnectedNode.connectionRevision, enrolledNode.connectionRevision);
   const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     const original = store.listAttempts(first.report.taskId)[0]?.attempt;
@@ -329,12 +347,14 @@ test("the configured Home Assistant instance supplies PC-owned diagnosis evidenc
     assert.equal(graphResponse.status, 200);
     const graph = await graphResponse.json() as {
       generatedAt: string;
-      nodes: { nodeId: string; deviceId: string }[];
+      nodes: { nodeId: string; deviceId: string; connectionRevision?: string }[];
       relationships: { relationshipId: string }[];
       twins: { deviceId: string; values: { quality: string; hasReported: boolean }[] }[];
     };
     assert.ok(Number.isFinite(Date.parse(graph.generatedAt)));
     assert.deepEqual(graph.nodes.map(node => [node.nodeId, node.deviceId]), [["component", deviceId], ["integration", deviceId]]);
+    assert.equal(graph.nodes.find(node => node.nodeId === "integration")?.connectionRevision,
+      store.getDeviceRetirementState(deviceId, DEFAULT_WORKSPACE_ID).connectionRevision);
     assert.deepEqual(graph.relationships.map(link => link.relationshipId), ["contains-component"]);
     assert.equal(graph.twins.length, 1);
     assert.equal(graph.twins[0]?.deviceId, deviceId);

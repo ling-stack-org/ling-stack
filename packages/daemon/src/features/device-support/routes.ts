@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { type ApprovalRequest, DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceAttemptConformance,
@@ -128,15 +129,27 @@ function writeFabricGraph(request: IncomingMessage, response: ServerResponse, ru
   try {
     const generatedAt = new Date().toISOString();
     const now = Date.parse(generatedAt);
-    const ownedDeviceIds = new Set(runtime.store.listDevices()
-      .filter(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID)
-      .map(profile => profile.device.id));
-    const nodes = runtime.fabricStore.listGraphNodes()
-      .filter(node => node.deviceId !== undefined && ownedDeviceIds.has(node.deviceId));
-    const nodeIds = new Set(nodes.map(node => node.nodeId));
+    const profiles = runtime.store.listDevices().filter(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID);
+    const registry = new Map(profiles.map(profile => {
+      const { id } = profile.device;
+      const { profileRevision, connectionRevision, lifecycleStatus } = runtime.store.getDeviceRetirementState(id, DEFAULT_WORKSPACE_ID);
+      return [id, { profileRevision, connectionRevision, lifecycleStatus }] as const;
+    }));
+    const graphNodes = runtime.fabricStore.listGraphNodes()
+      .filter(node => node.deviceId !== undefined && registry.has(node.deviceId));
+    const nodeIds = new Set(graphNodes.map(node => node.nodeId));
+    const representedDeviceIds = new Set(graphNodes.filter(node => node.kind === "device").map(node => node.deviceId));
+    const registryNodes = profiles.filter(profile => !representedDeviceIds.has(profile.device.id)).map(profile => {
+      const { id: deviceId, kind: deviceKind, displayName: label } = profile.device;
+      const digest = createHash("sha256").update(deviceId).digest("hex");
+      return {
+        nodeId: `registry:${digest}`, kind: "device", deviceId, label, deviceKind, revision: 0,
+        source: "registry", ...registry.get(deviceId),
+      };
+    });
     const relationships = runtime.fabricStore.listGraphRelationships()
       .filter(relationship => nodeIds.has(relationship.fromNodeId) && nodeIds.has(relationship.toNodeId));
-    const twins = [...new Set(nodes.flatMap(node => node.deviceId ? [node.deviceId] : []))].flatMap(deviceId => {
+    const twins = [...registry.keys()].flatMap(deviceId => {
       const twin = runtime.fabricStore.getTwin(deviceId);
       return twin ? [{
         deviceId, revision: twin.revision, updatedAt: twin.updatedAt,
@@ -150,10 +163,14 @@ function writeFabricGraph(request: IncomingMessage, response: ServerResponse, ru
     });
     writePrivateJson(response, 200, {
       generatedAt,
-      nodes: nodes.map(({ nodeId, kind, deviceId, parentNodeId, label, deviceKind, revision }) => ({
-        nodeId, kind, deviceId, parentNodeId: parentNodeId && nodeIds.has(parentNodeId) ? parentNodeId : undefined,
-        label, deviceKind, revision,
-      })),
+      nodes: [
+        ...graphNodes.map(({ nodeId, kind, deviceId, parentNodeId, label, deviceKind, revision }) => ({
+          nodeId, kind, deviceId, parentNodeId: parentNodeId && nodeIds.has(parentNodeId) ? parentNodeId : undefined,
+          label, deviceKind, revision,
+          ...(kind === "device" && deviceId ? registry.get(deviceId) : undefined),
+        })),
+        ...registryNodes,
+      ],
       relationships: relationships.map(({ relationshipId, fromNodeId, toNodeId, type, revision }) => ({
         relationshipId, fromNodeId, toNodeId, type, revision,
       })),
