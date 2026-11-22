@@ -153,6 +153,13 @@ test("resource activation retains verified bytes across restart and rolls back p
     assert.equal(store.readActiveResourcePayload(original.resourceId), undefined);
     assert.equal(store.installResource(original, oldPayload, now).replayed, true);
     assert.deepEqual(store.readActiveResourcePayload(original.resourceId), oldPayload);
+    const edgePayload = new TextEncoder().encode("edge-package");
+    const edgeDigest = createHash("sha256").update(edgePayload).digest("hex");
+    assert.equal(store.installResource({
+      resourceId: "edge-runtime-package", version: "1.0.0", kind: "edge_package", digest: edgeDigest,
+      license: "MIT", dependencies: [], signature: "signature-edge", supportedDeviceKinds: ["linux"], entrypoint: "edge.js",
+    }, edgePayload, now).replayed, false);
+    assert.deepEqual(store.readActiveResourcePayload("edge-runtime-package"), edgePayload);
     store.database.exec(`
       CREATE TEMP TRIGGER reject_resource_pointer_update BEFORE UPDATE ON device_resource_active
       BEGIN SELECT RAISE(ABORT, 'fixture activation failure'); END;

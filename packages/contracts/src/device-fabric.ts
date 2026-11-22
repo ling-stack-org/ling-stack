@@ -210,7 +210,10 @@ export const DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1 = {
   journal_changed: { sourceKind: "runtime", fields: [] },
 } as const;
 
-const deviceResourceKinds = ["adapter", "playbook", "codec", "firmware", "schema"] as const;
+const deviceResourceKinds = [
+  "adapter", "transport", "codec", "profile", "playbook", "vocabulary", "simulator",
+  "capture", "documentation", "firmware", "edge_package", "schema",
+] as const;
 const deviceResourcePlatforms = ["ios", "android", "macos", "windows", "linux"] as const;
 
 export interface DeviceResourceManifestV1 {
