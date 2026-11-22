@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import type {
-  DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1, DevicePlannerProviderHandoffV1,
-  DeviceProfileV1, JsonValue,
+  DeviceAccessGrantV1, DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1,
+  DevicePlannerProviderHandoffV1, DeviceProfileV1, JsonValue,
 } from "@ling-stack/contracts";
 import {
   type DevicePlaybookV1,
@@ -12,6 +12,7 @@ import {
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
   DeviceBrokerError,
+  DeviceFabricError,
   devicePlaybookNodeId,
   DeviceAccessManager,
   DeviceCapabilityBroker,
@@ -74,6 +75,17 @@ export interface DeviceSupportRuntime {
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
   diagnoseLinuxSshTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   fleetHealth(workspaceId?: string): DeviceFleetHealthProjectionV1;
+  getAccessGrant(deviceId: string, grantId: string): DeviceAccessGrantV1;
+  saveAccessGrant(input: {
+    readonly deviceId: string;
+    readonly grantId: string;
+    readonly expectedRevision: number;
+    readonly principalId: string;
+    readonly scope: "read_only" | "developer";
+    readonly capabilityIds: readonly string[];
+    readonly expiresAt: string;
+  }): DeviceAccessGrantV1;
+  revokeAccessGrant(input: { readonly deviceId: string; readonly grantId: string; readonly expectedRevision: number }): DeviceAccessGrantV1;
   close(): void;
 }
 
@@ -413,6 +425,59 @@ export function createDeviceSupportRuntime(options: {
         runtimes: edgeRuntimes.list(),
       });
     },
+    getAccessGrant(deviceId, grantId) {
+      requireLocalAccessTarget(store, deviceId);
+      return requireBoundGrant(fabricStore.getAccessGrant(grantId), deviceId);
+    },
+    saveAccessGrant(input) {
+      const profile = requireLocalAccessTarget(store, input.deviceId);
+      const current = fabricStore.getAccessGrant(input.grantId);
+      if (current) {
+        requireBoundGrant(current, input.deviceId);
+        if (current.principalId !== input.principalId) {
+          throw new DeviceBrokerError("target_changed", "device access grant is bound to another principal");
+        }
+      }
+      const capabilityIds = [...input.capabilityIds].sort();
+      const changedAt = now();
+      const grant: DeviceAccessGrantV1 = {
+        grantId: input.grantId, targetDeviceId: input.deviceId, principalId: input.principalId,
+        scope: input.scope, capabilityIds, revision: input.expectedRevision + 1,
+        status: "active", expiresAt: input.expiresAt, authority: localGrantAuthority, changedAt,
+      };
+      if (current && isGrantReplay(current, grant)) return current;
+      assertGrantRevision(current, input.expectedRevision);
+      if (["revoked", "retired"].includes(profile.device.lifecycleStatus) || current?.status === "revoked" || current?.scope === "owner") {
+        throw new DeviceBrokerError("permission_denied", "device access grant is no longer active");
+      }
+      if (!(Date.parse(input.expiresAt) > Date.parse(changedAt))) {
+        throw new DeviceBrokerError("invalid_request", "device access grant must expire in the future");
+      }
+      if (!capabilityIds.length || new Set(capabilityIds).size !== capabilityIds.length) {
+        throw new DeviceBrokerError("invalid_request", "device access grant requires distinct capabilities");
+      }
+      const snapshot = store.getCurrentCapabilitySnapshot(input.deviceId);
+      if (!snapshot || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion
+        || !(Date.parse(snapshot.observedAt) <= Date.parse(changedAt) && Date.parse(changedAt) < Date.parse(snapshot.freshnessUntil))) {
+        throw new DeviceBrokerError("target_changed", "device access grant requires a current capability snapshot");
+      }
+      if (capabilityIds.some(id => !snapshot.capabilities.some(capability => capability.id === id
+        && (input.scope === "developer" || capability.sideEffect === "read_only")))) {
+        throw new DeviceBrokerError("invalid_request", "device access grant contains an unavailable or incompatible capability");
+      }
+      return persistGrant(access, fabricStore, grant);
+    },
+    revokeAccessGrant(input) {
+      requireLocalAccessTarget(store, input.deviceId);
+      const current = requireBoundGrant(fabricStore.getAccessGrant(input.grantId), input.deviceId);
+      const grant: DeviceAccessGrantV1 = {
+        ...current, revision: input.expectedRevision + 1, status: "revoked", authority: localGrantAuthority, changedAt: now(),
+      };
+      if (isGrantReplay(current, grant)) return current;
+      assertGrantRevision(current, input.expectedRevision);
+      if (current.status === "revoked") return current;
+      return persistGrant(access, fabricStore, grant);
+    },
     close: () => {
       for (const externalAdapter of options.externalAdapters ?? []) externalAdapter.close();
       ssh?.close();
@@ -423,4 +488,47 @@ export function createDeviceSupportRuntime(options: {
       store.close();
     },
   };
+}
+
+const localGrantAuthority = "local_operator";
+
+function requireLocalAccessTarget(store: SqliteDeviceSupportStore, deviceId: string): DeviceProfileV1 {
+  const profile = store.getDevice(deviceId);
+  if (profile?.device.ownerScope !== DEFAULT_WORKSPACE_ID) {
+    throw new DeviceBrokerError("missing_target", "device is unavailable in this workspace");
+  }
+  return profile;
+}
+
+function requireBoundGrant(grant: DeviceAccessGrantV1 | undefined, deviceId: string): DeviceAccessGrantV1 {
+  if (grant?.targetDeviceId !== deviceId) throw new DeviceBrokerError("missing_target", "device access grant is unavailable");
+  return grant;
+}
+
+function assertGrantRevision(grant: DeviceAccessGrantV1 | undefined, expectedRevision: number): void {
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision === Number.MAX_SAFE_INTEGER) {
+    throw new DeviceBrokerError("invalid_request", "device access grant revision is invalid");
+  }
+  if (expectedRevision !== (grant?.revision ?? 0)) {
+    throw new DeviceBrokerError("target_changed", "device access grant revision changed");
+  }
+}
+
+function isGrantReplay(current: DeviceAccessGrantV1 | undefined, grant: DeviceAccessGrantV1): boolean {
+  return current !== undefined && current.revision === grant.revision && current.status === grant.status
+    && current.authority === grant.authority && current.targetDeviceId === grant.targetDeviceId
+    && current.principalId === grant.principalId && current.scope === grant.scope && current.expiresAt === grant.expiresAt
+    && current.capabilityIds.length === grant.capabilityIds.length
+    && current.capabilityIds.every((id, index) => id === grant.capabilityIds[index]);
+}
+
+function persistGrant(access: DeviceAccessManager, store: SqliteDeviceFabricStore, grant: DeviceAccessGrantV1): DeviceAccessGrantV1 {
+  try {
+    return access.grant(grant);
+  } catch (error) {
+    if (!(error instanceof DeviceFabricError) || error.code !== "revision_conflict") throw error;
+    const current = store.getAccessGrant(grant.grantId);
+    if (current && isGrantReplay(current, grant)) return current;
+    throw new DeviceBrokerError("target_changed", "device access grant revision changed");
+  }
 }

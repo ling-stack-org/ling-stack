@@ -503,7 +503,7 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   const { status, report } = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
   assert.equal(status, "succeeded");
   assert.equal(report.playbookId, "pc-software-diagnosis");
-  assert.deepEqual(report.actions.map(action => action.capabilityId), ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.inspect.logs"]);
+  assert.deepEqual(report.actions.map(action => action.capabilityId), ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.inspect.logs", "pc.inspect.software"]);
   const network = report.facts.find(fact => fact.source === "pc.network");
   assert.ok(network);
   assert.equal(typeof (network.value as { connected?: unknown }).connected, "boolean");
@@ -599,7 +599,7 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.equal(tasks[0]?.status, "succeeded");
     assert.equal(tasks[0]?.ownerId, tasks[0]?.targetDeviceIds[0]);
     const observations = journal.listObservations(report.taskId);
-    assert.equal(observations.length, 4);
+    assert.equal(observations.length, 5);
     const processes = observations.find(observation => observation.source === "pc.processes");
     assert.ok(processes);
     const processFact = report.facts.find(fact => fact.observationId === processes.id);
@@ -704,12 +704,12 @@ test("a PC adapter upgrade refreshes the enrolled target while retaining its his
     deviceId = pc.device.id;
     const snapshot = initial.store.getCurrentCapabilitySnapshot(deviceId);
     assert.ok(snapshot);
-    const legacyVersion = "1.1.0";
+    const legacyVersion = "1.2.0";
     const at = new Date().toISOString();
     assert.equal(initial.store.registerDevice({ ...pc, adapterVersion: legacyVersion }, at), true);
     initial.store.saveCapabilitySnapshot({
       ...snapshot, snapshotId, adapterVersion: legacyVersion,
-      capabilities: snapshot.capabilities.filter(capability => capability.id !== "pc.inspect.logs"),
+      capabilities: snapshot.capabilities.filter(capability => capability.id !== "pc.inspect.logs" && capability.id !== "pc.inspect.software"),
     }, at);
   } finally {
     initial.close();
@@ -721,13 +721,13 @@ test("a PC adapter upgrade refreshes the enrolled target while retaining its his
     const result = await upgraded.diagnoseLocalPc();
     assert.equal(result.status, "succeeded");
     assert.equal(upgraded.store.listDevices().length, 1);
-    assert.deepEqual(result.attempts.map(attempt => attempt.request.targetDeviceId), [deviceId, deviceId, deviceId, deviceId]);
-    assert.equal(result.report.playbookVersion, "1.2.0");
+    assert.deepEqual(result.attempts.map(attempt => attempt.request.targetDeviceId), [deviceId, deviceId, deviceId, deviceId, deviceId]);
+    assert.equal(result.report.playbookVersion, "1.3.0");
     const current = upgraded.store.getCurrentCapabilitySnapshot(deviceId);
-    assert.equal(current?.adapterVersion, "1.2.0");
+    assert.equal(current?.adapterVersion, "1.3.0");
     assert.ok(current?.capabilities.some(capability => capability.id === "pc.inspect.logs"));
     const historical = upgraded.store.getRecordedCapabilitySnapshot(deviceId, snapshotId);
-    assert.equal(historical?.snapshot.adapterVersion, "1.1.0");
+    assert.equal(historical?.snapshot.adapterVersion, "1.2.0");
     assert.deepEqual(historical?.snapshot.capabilities.map(capability => capability.id), [
       "pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.repair.network",
     ]);
@@ -819,7 +819,7 @@ test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback 
   }
   await secondProvider.close();
   secondOnline = false;
-  const fallback = await checkDiagnosis(secondPreset, ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.inspect.logs"], "graph");
+  const fallback = await checkDiagnosis(secondPreset, ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.inspect.logs", "pc.inspect.software"], "graph");
   assert.match(JSON.stringify(fallback.planning.metadata), /runner_unavailable/u);
   const switched = await checkDiagnosis(secondPreset, ["pc.inspect.services"], "model", firstPreset);
   assert.equal(switched.adapters.length, 1);

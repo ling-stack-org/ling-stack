@@ -12,6 +12,7 @@ import {
   ObdVehicleAdapter,
   PcAdapter,
   type PcLogEntry,
+  type PcSoftwareInventory,
   type PcProcessInfo,
   type PcServiceStatus,
 } from "../dist/features/device-support/adapters/index.js";
@@ -119,6 +120,7 @@ test("PC adapter uses typed executor operations for diagnosis and repair", async
       async readServices() { operations.push("readServices"); return [{ name: "network", state: "failed" }]; },
       async readProcesses() { operations.push("readProcesses"); return []; },
       async readLogs() { operations.push("readLogs"); return []; },
+      async readSoftware() { operations.push("readSoftware"); return { entries: [], truncated: false }; },
       async repairNetwork() { operations.push("repairNetwork"); return { accepted: true, changed: true }; },
     },
   });
@@ -149,6 +151,7 @@ test("PC diagnosis distinguishes empty native inventories from unavailable evide
   let services: readonly PcServiceStatus[] | undefined;
   let processes: readonly PcProcessInfo[] | undefined;
   let logs: readonly PcLogEntry[] | undefined;
+  let software: PcSoftwareInventory | undefined;
   const adapter = new PcAdapter({
     now: () => now,
     executor: {
@@ -157,6 +160,7 @@ test("PC diagnosis distinguishes empty native inventories from unavailable evide
       async readServices() { return services; },
       async readProcesses() { return processes; },
       async readLogs() { return logs; },
+      async readSoftware() { return software; },
       async repairNetwork() { throw new Error("unexpected write"); },
     },
   });
@@ -166,14 +170,18 @@ test("PC diagnosis distinguishes empty native inventories from unavailable evide
   const oversizedServices: PcServiceStatus[] = Array.from({ length: 1024 }, (_, index) => ({ name: `${index}-${"x".repeat(250)}`, state: "running" }));
   const oversizedProcesses: PcProcessInfo[] = oversizedServices.map(({ name }, pid) => ({ pid, name }));
   const oversizedLogs: PcLogEntry[] = oversizedServices.map(({ name }) => ({ source: name, level: "error", timestamp: now }));
-  for (const [taskId, serviceResult, processResult, logResult, expectedQuality] of [
-    ["empty", [], [], [], "good"],
-    ["failed", undefined, undefined, undefined, "unknown"],
-    ["oversize", oversizedServices, oversizedProcesses, oversizedLogs, "unknown"],
+  const oversizedSoftware: PcSoftwareInventory = {
+    entries: oversizedServices.map(({ name }) => ({ name, source: "dpkg" })), truncated: true,
+  };
+  for (const [taskId, serviceResult, processResult, logResult, softwareResult, expectedQuality] of [
+    ["empty", [], [], [], { entries: [], truncated: false }, "good"],
+    ["failed", undefined, undefined, undefined, undefined, "unknown"],
+    ["oversize", oversizedServices, oversizedProcesses, oversizedLogs, oversizedSoftware, "unknown"],
   ] as const) {
     services = serviceResult;
     processes = processResult;
     logs = logResult;
+    software = softwareResult;
     const task = broker.createTask({
       id: taskId, ownerKind: "daemon", ownerId: "pc-1", targetDeviceIds: [target.device.id],
       status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now,
@@ -187,6 +195,7 @@ test("PC diagnosis distinguishes empty native inventories from unavailable evide
       ["pc.services", { services: [] }, { running: 0, stopped: 0, failed: 0, unknown: 0 }],
       ["pc.processes", { processes: [] }, { count: 0 }],
       ["pc.logs", { entries: [] }, { count: 0, error: 0, warning: 0, unknown: 0 }],
+      ["pc.software", { software: [], truncated: false }, { count: 0, sources: { dpkg: 0, rpm: 0, system_profiler: 0, registry: 0, unknown: 0 }, truncated: false }],
     ] as const) {
       const observation = observations.find(item => item.source === source);
       assert.ok(observation);

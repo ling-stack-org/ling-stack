@@ -240,3 +240,63 @@ test("native log inspection distinguishes a complete empty stream from a malform
   assert.equal(await inspect("win32", "[null]", 0).readLogs(), undefined);
   assert.equal(await inspect("freebsd", "", 0).readLogs(), undefined);
 });
+
+test("software inspection uses bounded native package inventories and redacts paths", async t => {
+  for (const [platform, output, expected] of [
+    ["linux", "installed\tbash\t5.2\nconfig-files\told\t1.0\ninstalled\tlinux-image\t6.1\n", [
+      { name: "bash", version: "5.2", source: "dpkg" },
+      { name: "linux-image", version: "6.1", source: "dpkg" },
+    ]],
+    ["win32", '[{"name":"Example App","version":"1.2.3"}]\r\n', [
+      { name: "Example App", version: "1.2.3", source: "registry" },
+    ]],
+    ["darwin", JSON.stringify({ SPApplicationsDataType: [{ _name: "Example", version: "4.5", path: "/Users/secret/Example.app" }] }), [
+      { name: "Example", version: "4.5", source: "system_profiler" },
+    ]],
+  ] as const) {
+    await t.test(platform, async () => {
+      const executor = new LocalPcTargetExecutor({
+        platform,
+        runner: { async run(file, args) {
+          if (platform === "linux") {
+            assert.equal(file, "/usr/bin/dpkg-query");
+            assert.deepEqual(args, ["-W", "-f=${db:Status-Status}\\t${binary:Package}\\t${Version}\\n"]);
+          } else if (platform === "win32") {
+            assert.match(args[4] ?? "", /DisplayName/u);
+          } else {
+            assert.equal(file, "/usr/sbin/system_profiler");
+            assert.deepEqual(args, ["SPApplicationsDataType", "-json"]);
+          }
+          return { stdout: output, stderr: "", exitCode: 0 };
+        } },
+      });
+      const inventory = await executor.readSoftware();
+      assert.deepEqual(inventory, { entries: expected, truncated: false });
+      assert.doesNotMatch(JSON.stringify(inventory), /secret/u);
+    });
+  }
+  const malformed = new LocalPcTargetExecutor({ platform: "linux", runner: {
+    async run() { return { stdout: "broken", stderr: "", exitCode: 0 }; },
+  } });
+  assert.equal(await malformed.readSoftware(), undefined);
+});
+
+test("RPM fallback retains the native source and distinguishes a full inventory from a truncated one", async () => {
+  for (const count of [200, 201]) {
+    const files: string[] = [];
+    const executor = new LocalPcTargetExecutor({ platform: "linux", runner: {
+      async run(file, args) {
+        files.push(file);
+        if (file === "/usr/bin/dpkg-query") return { stdout: "", stderr: "unavailable", exitCode: 1 };
+        assert.equal(file, "/usr/bin/rpm");
+        assert.deepEqual(args, ["-qa", "--qf", "%{NAME}.%{ARCH}\\t%{VERSION}-%{RELEASE}\\n"]);
+        return { stdout: Array.from({ length: count }, (_, index) => `package-${index}.x86_64\t1.2-3`).join("\n"), stderr: "", exitCode: 0 };
+      },
+    } });
+    const inventory = await executor.readSoftware();
+    assert.deepEqual(files, ["/usr/bin/dpkg-query", "/usr/bin/rpm"]);
+    assert.equal(inventory?.truncated, count > 200);
+    assert.equal(inventory?.entries.length, 200);
+    assert.deepEqual(inventory?.entries[0], { name: "package-0.x86_64", version: "1.2-3", source: "rpm" });
+  }
+});

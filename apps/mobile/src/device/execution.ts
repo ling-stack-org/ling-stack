@@ -77,6 +77,8 @@ interface MobileDeviceActionInput {
   readonly transport: MobileDeviceTransport;
   readonly signal?: AbortSignal;
   readonly finalizeTask?: boolean;
+  /** Setup writes must be verified by fresh, target-bound observations persisted in the journal. */
+  readonly requireFreshVerificationEvidence?: boolean;
 }
 
 type MobileDeviceExecutionErrorCode =
@@ -308,7 +310,7 @@ export class MobileDeviceExecution {
     return received;
   }
 
-  async finishReadOnlyPlaybook(taskId: string, outcome: "succeeded" | "partial" | "failed"): Promise<"succeeded" | "partial" | "failed" | "unknown" | "cancelled"> {
+  async finishPlaybook(taskId: string, outcome: "succeeded" | "partial" | "failed"): Promise<"succeeded" | "partial" | "failed" | "unknown" | "cancelled"> {
     const task = await this.#journal.getTask(taskId);
     if (!task || task.ownerKind !== "mobile" || task.ownerId !== this.#ownerId || this.#active.has(taskId)) {
       throw new MobileDeviceExecutionError("invalid_request", "phone task is not ready to finalize");
@@ -316,6 +318,10 @@ export class MobileDeviceExecution {
     if (task.status === "unknown" || task.status === "cancelled") return task.status;
     if (task.status === "executing") await this.#journal.saveTask({ ...task, status: outcome, updatedAt: this.#now() });
     return outcome;
+  }
+
+  async finishReadOnlyPlaybook(taskId: string, outcome: "succeeded" | "partial" | "failed"): Promise<"succeeded" | "partial" | "failed" | "unknown" | "cancelled"> {
+    return this.finishPlaybook(taskId, outcome);
   }
 
   async recoverAfterResume(): Promise<readonly MobileAttemptRecord[]> {
@@ -368,7 +374,7 @@ export class MobileDeviceExecution {
         if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId
           && (request.expectedVerification === undefined
             || encodeBase64Url(canonicalJsonBytes(verification.rule)) === encodeBase64Url(canonicalJsonBytes(request.expectedVerification)))) {
-          if (!request.recoveryPlan || verification.status === "not_evaluable") return verification;
+          if (!input.requireFreshVerificationEvidence && (!request.recoveryPlan || verification.status === "not_evaluable")) return verification;
           const now = this.#now();
           const checkedAt = Date.parse(verification.checkedAt);
           const observations = evidence?.observations;

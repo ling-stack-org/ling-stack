@@ -23,13 +23,14 @@ export async function handleDeviceSupportRoute(
   if (url.pathname.startsWith("/v1/device-support/protocol/")) return await handleDeviceProtocolRoute(url, request, response, runtime);
   const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace|conformance)$/u.exec(url.pathname);
   const deviceOperation = /^\/v1\/device-support\/devices\/([^/]+)\/(dispatch-stop|retirement)$/u.exec(url.pathname);
+  const accessGrantOperation = /^\/v1\/device-support\/devices\/([^/]+)\/access-grants\/([^/]+)$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
   const homeAssistantCatalog = url.pathname === "/v1/device-support/home-assistant/catalog";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
-  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !linuxAction
-    && !homeAssistant && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
+  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
+    && !linuxAction && !homeAssistant && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
@@ -38,6 +39,10 @@ export async function handleDeviceSupportRoute(
   if (deviceOperation) {
     const handle = deviceOperation[2] === "retirement" ? handleDeviceRetirement : handleDispatchStop;
     await handle(deviceOperation[1]!, request, response, runtime);
+    return true;
+  }
+  if (accessGrantOperation) {
+    await handleDeviceAccessGrant(accessGrantOperation[1]!, accessGrantOperation[2]!, request, response, runtime);
     return true;
   }
   if (linuxAction) {
@@ -205,6 +210,51 @@ async function handleDeviceRetirement(
     writePrivateJson(response, 200, runtime.broker.retireDevice({
       deviceId, workspaceId: DEFAULT_WORKSPACE_ID,
       expectedProfileRevision: body.expectedProfileRevision, expectedConnectionRevision: body.expectedConnectionRevision,
+    }));
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+async function handleDeviceAccessGrant(
+  encodedDeviceId: string, encodedGrantId: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "PUT") {
+    response.setHeader("Allow", "GET, PUT");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const deviceId = readDeviceReference(encodedDeviceId);
+    const grantId = readDeviceReference(encodedGrantId);
+    if (request.method === "GET") {
+      writePrivateJson(response, 200, runtime.getAccessGrant(deviceId, grantId));
+      return;
+    }
+    const body = await readJsonBody(request, 16 * 1024).catch(() => undefined);
+    if (!isRecord(body) || typeof body.expectedRevision !== "number" || !Number.isSafeInteger(body.expectedRevision)
+      || body.expectedRevision < 0 || body.expectedRevision === Number.MAX_SAFE_INTEGER) {
+      throw new DeviceBrokerError("invalid_request", "invalid device access grant revision");
+    }
+    const { expectedRevision } = body;
+    if (body.action === "revoke") {
+      if (expectedRevision < 1 || Object.keys(body).length !== 2) {
+        throw new DeviceBrokerError("invalid_request", "invalid device access grant revoke");
+      }
+      writePrivateJson(response, 200, runtime.revokeAccessGrant({ deviceId, grantId, expectedRevision }));
+      return;
+    }
+    if (Object.keys(body).length !== 6 || body.action !== "grant"
+      || !validBoundedText(body.principalId, 512) || (body.scope !== "read_only" && body.scope !== "developer")
+      || !Array.isArray(body.capabilityIds) || body.capabilityIds.length > 100
+      || !body.capabilityIds.every(value => validBoundedText(value, 256))
+      || typeof body.expiresAt !== "string" || !Number.isFinite(Date.parse(body.expiresAt))
+      || new Date(body.expiresAt).toISOString() !== body.expiresAt) {
+      throw new DeviceBrokerError("invalid_request", "invalid device access grant");
+    }
+    writePrivateJson(response, 200, runtime.saveAccessGrant({
+      deviceId, grantId, expectedRevision, principalId: body.principalId, scope: body.scope,
+      capabilityIds: body.capabilityIds, expiresAt: body.expiresAt,
     }));
   } catch (error) {
     writeDeviceOperationError(response, error);

@@ -174,5 +174,17 @@ export function projectDeviceDiagnosticEvidence(
     }
     return { value: counts, hypotheses: [] };
   }
+  if (request.capabilityId === "pc.inspect.software" && observation.source === "pc.software"
+    && Array.isArray(fields.software) && typeof fields.truncated === "boolean") {
+    const sources = { dpkg: 0, rpm: 0, system_profiler: 0, registry: 0, unknown: 0 };
+    for (const entry of fields.software) {
+      const source = entry && typeof entry === "object" && !Array.isArray(entry)
+        ? (entry as Record<string, JsonValue>).source
+        : undefined;
+      if (source === "dpkg" || source === "rpm" || source === "system_profiler" || source === "registry") sources[source] += 1;
+      else sources.unknown += 1;
+    }
+    return { value: { count: fields.software.length, sources, truncated: fields.truncated }, hypotheses: [] };
+  }
   return undefined;
 }

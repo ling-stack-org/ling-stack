@@ -43,6 +43,17 @@ export interface PcLogEntry {
   readonly source: string;
 }
 
+export interface PcInstalledSoftware {
+  readonly name: string;
+  readonly version?: string;
+  readonly source: "dpkg" | "rpm" | "system_profiler" | "registry";
+}
+
+export interface PcSoftwareInventory {
+  readonly entries: readonly PcInstalledSoftware[];
+  readonly truncated: boolean;
+}
+
 export const PC_INSPECTION_TIMEOUT_MS = 10_000;
 const PC_INVENTORY_RESPONSE_BYTES_LIMIT = 256 * 1024;
 
@@ -52,6 +63,7 @@ export interface PcTargetExecutor {
   readServices(signal?: AbortSignal): Promise<readonly PcServiceStatus[] | undefined>;
   readProcesses(signal?: AbortSignal): Promise<readonly PcProcessInfo[] | undefined>;
   readLogs(signal?: AbortSignal): Promise<readonly PcLogEntry[] | undefined>;
+  readonly readSoftware?: (signal?: AbortSignal) => Promise<PcSoftwareInventory | undefined>;
   repairNetwork(input: { readonly mode: "refresh_dhcp" | "restart_network"; readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean; readonly changed: boolean }>;
 }
 
@@ -62,7 +74,7 @@ export interface PcAdapterOptions {
 
 const pcManifest: AdapterManifestV1 = {
   adapterId: "pc-target-executor",
-  adapterVersion: "1.2.0",
+  adapterVersion: "1.3.0",
   contractMajor: 1,
   supportedDeviceKinds: ["pc"],
   supportedTransports: ["local_process", "ssh", "winrm"],
@@ -141,6 +153,23 @@ const pcManifest: AdapterManifestV1 = {
       supportedDeviceKinds: ["pc"],
       supportedTransports: ["local_process"],
       displayMetadata: { label: "Inspect system log diagnostics", category: "diagnostics" },
+    },
+    {
+      id: "pc.inspect.software",
+      schemaVersion: "1.0",
+      semanticVerb: "inspect.software",
+      inputSchema: { type: "object" },
+      outputSchema: { type: "object" },
+      sideEffect: "read_only",
+      approvalClass: "allow",
+      requiredPermissions: ["pc.software.read"],
+      prerequisites: [],
+      timeoutMs: PC_INSPECTION_TIMEOUT_MS,
+      responseBytesLimit: PC_INVENTORY_RESPONSE_BYTES_LIMIT,
+      idempotency: "request",
+      supportedDeviceKinds: ["pc"],
+      supportedTransports: ["local_process"],
+      displayMetadata: { label: "Inspect installed software", category: "diagnostics" },
     },
     {
       id: "pc.repair.network",
@@ -229,6 +258,14 @@ export class PcAdapter implements DeviceAdapter {
       };
       return completedInventory(input, startedAt, evidence, "pc.logs");
     }
+    if (input.capability.id === "pc.inspect.software") {
+      const software = await this.#executor.readSoftware?.(input.signal);
+      const evidence = software && {
+        software: software.entries.map(({ name, version, source }) => ({ name, ...(version === undefined ? {} : { version }), source })),
+        truncated: software.truncated,
+      };
+      return completedInventory(input, startedAt, evidence, "pc.software");
+    }
     if (input.capability.id === "pc.repair.network") {
       const mode = isNetworkRepairMode(input.request.normalizedInput);
       const result = await this.#executor.repairNetwork({ mode, signal: input.signal });
@@ -263,7 +300,7 @@ function completedInventory(
   input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1 },
   startedAt: string,
   evidence: JsonValue | undefined,
-  source: "pc.services" | "pc.processes" | "pc.logs",
+  source: "pc.services" | "pc.processes" | "pc.logs" | "pc.software",
 ): DeviceAdapterExecutionResult {
   if (!evidence || Buffer.byteLength(JSON.stringify(evidence)) > PC_INVENTORY_RESPONSE_BYTES_LIMIT) {
     return completedObservation(input, startedAt, { status: "unavailable" }, source, "unknown");

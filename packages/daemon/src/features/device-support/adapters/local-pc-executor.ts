@@ -3,7 +3,7 @@ import { networkInterfaces } from "node:os";
 import { posix, win32 } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { PC_INSPECTION_TIMEOUT_MS, type PcLogEntry, type PcNetworkStatus, type PcProcessInfo, type PcServiceStatus, type PcTargetExecutor } from "./pc.js";
+import { PC_INSPECTION_TIMEOUT_MS, type PcInstalledSoftware, type PcLogEntry, type PcNetworkStatus, type PcProcessInfo, type PcServiceStatus, type PcSoftwareInventory, type PcTargetExecutor } from "./pc.js";
 
 const execFile = promisify(nodeExecFile);
 
@@ -33,7 +33,19 @@ const windowsLogQuery = [
   "  @{ time = $_.TimeCreated.ToUniversalTime().ToString('o'); level = $_.Level; source = $_.ProviderName }",
   "})",
 ].join("\n");
+const windowsSoftwareQuery = [
+  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+  "$paths = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+  "  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',",
+  "  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')",
+  "$ErrorActionPreference = 'Stop'",
+  "$entries = foreach ($path in $paths) { if (Test-Path -Path $path) { Get-ItemProperty -Path $path } }",
+  "ConvertTo-Json -Compress -InputObject @($entries |",
+  "  Where-Object { $_.DisplayName -is [string] -and $_.DisplayName.Trim().Length -gt 0 } |",
+  "  ForEach-Object { @{ name = $_.DisplayName; version = [string]$_.DisplayVersion } })",
+].join("\n");
 const logEntryLimit = 200;
+const softwareEntryLimit = 200;
 const macLogArgs = [
   "show", "--last", "30s", "--style", "ndjson", "--no-backtrace", "--no-loss", "--no-signpost",
   "--predicate", "logType == error OR logType == fault",
@@ -76,6 +88,20 @@ const logInspection: Partial<Record<NodeJS.Platform, PcInspection<PcLogEntry>>> 
     parse: parseLinuxLogs,
   },
   win32: { file: windowsPowerShell, args: [...windowsQueryArgs, windowsLogQuery], parse: parseWindowsLogs },
+};
+
+const softwareInspection: Partial<Record<NodeJS.Platform, PcInspection<PcInstalledSoftware>>> = {
+  linux: {
+    file: "/usr/bin/dpkg-query",
+    args: ["-W", "-f=${db:Status-Status}\\t${binary:Package}\\t${Version}\\n"],
+    parse: text => parseLinuxSoftware(text, "dpkg"),
+  },
+  win32: { file: windowsPowerShell, args: [...windowsQueryArgs, windowsSoftwareQuery], parse: parseWindowsSoftware },
+  darwin: { file: "/usr/sbin/system_profiler", args: ["SPApplicationsDataType", "-json"], parse: parseMacSoftware },
+};
+const rpmSoftwareInspection: PcInspection<PcInstalledSoftware> = {
+  file: "/usr/bin/rpm", args: ["-qa", "--qf", "%{NAME}.%{ARCH}\\t%{VERSION}-%{RELEASE}\\n"],
+  parse: text => parseLinuxSoftware(text, "rpm"),
 };
 
 export interface LocalProcessRunner {
@@ -162,6 +188,22 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
     return this.#readInspection(logInspection[this.#platform], signal);
   }
 
+  async readSoftware(signal?: AbortSignal): Promise<PcSoftwareInventory | undefined> {
+    const queryTimeout = AbortSignal.timeout(PC_INSPECTION_TIMEOUT_MS);
+    const querySignal = signal ? AbortSignal.any([signal, queryTimeout]) : queryTimeout;
+    const inspection = softwareInspection[this.#platform];
+    try {
+      const primary = await this.#readInspection(inspection, querySignal);
+      const entries = primary ?? (this.#platform === "linux" ? await this.#readInspection(rpmSoftwareInspection, querySignal) : undefined);
+      if (entries === undefined) return undefined;
+      return { entries: entries.slice(0, softwareEntryLimit), truncated: entries.length > softwareEntryLimit };
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (queryTimeout.aborted) return undefined;
+      throw error;
+    }
+  }
+
   async #readMacLogs(signal?: AbortSignal): Promise<readonly PcLogEntry[] | undefined> {
     signal?.throwIfAborted();
     const deadline = AbortSignal.timeout(PC_INSPECTION_TIMEOUT_MS);
@@ -222,6 +264,7 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
     signal?.throwIfAborted();
     return result.exitCode === 0 && !deadline.aborted ? inspection.parse(result.stdout) : undefined;
   }
+
 }
 
 function parseSystemdServices(text: string): readonly PcServiceStatus[] | undefined {
@@ -327,6 +370,50 @@ function parseWindowsLogs(text: string): readonly PcLogEntry[] | undefined {
     entries.push({ ...(timestamp ? { timestamp } : {}), level, source });
   }
   return entries.reverse();
+}
+
+function parseLinuxSoftware(text: string, source: "dpkg" | "rpm"): readonly PcInstalledSoftware[] | undefined {
+  const entries: PcInstalledSoftware[] = [];
+  for (const line of text.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    const fields = line.split("\t");
+    if (fields.length !== (source === "dpkg" ? 3 : 2)) return undefined;
+    if (source === "dpkg" && fields.shift() !== "installed") continue;
+    const [name, version] = fields;
+    if (!isInspectionName(name) || !isInspectionName(version)) return undefined;
+    entries.push({ name, version, source });
+    if (entries.length > softwareEntryLimit) break;
+  }
+  return entries;
+}
+
+function parseWindowsSoftware(text: string): readonly PcInstalledSoftware[] | undefined {
+  const rows = parseWindowsInspection(text);
+  if (!rows) return undefined;
+  const entries: PcInstalledSoftware[] = [];
+  for (const row of rows.slice(0, softwareEntryLimit + 1)) {
+    if (!row || typeof row !== "object" || !("name" in row) || !("version" in row)
+      || !isInspectionName(row.name) || typeof row.version !== "string") return undefined;
+    entries.push({ name: row.name, ...(isInspectionName(row.version) ? { version: row.version } : {}), source: "registry" });
+  }
+  return entries;
+}
+
+function parseMacSoftware(text: string): readonly PcInstalledSoftware[] | undefined {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { return undefined; }
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("SPApplicationsDataType" in value)) return undefined;
+  const rows = (value as { readonly SPApplicationsDataType?: unknown }).SPApplicationsDataType;
+  if (!Array.isArray(rows)) return undefined;
+  const entries: PcInstalledSoftware[] = [];
+  for (const row of rows.slice(0, softwareEntryLimit + 1)) {
+    if (!row || typeof row !== "object" || Array.isArray(row) || !("_name" in row)) return undefined;
+    const name = (row as { readonly _name?: unknown })._name;
+    const version = (row as { readonly version?: unknown }).version;
+    if (!isInspectionName(name) || (version !== undefined && typeof version !== "string")) return undefined;
+    entries.push({ name, ...(isInspectionName(version) ? { version } : {}), source: "system_profiler" });
+  }
+  return entries;
 }
 
 function parseLogObject(line: string): Record<string, unknown> | undefined {

@@ -701,12 +701,19 @@ export class SqliteDeviceFabricStore {
   }
 
   saveAccessGrant(grant: DeviceAccessGrantV1): DeviceAccessGrantV1 {
-    const current = this.getAccessGrant(grant.grantId);
-    if (current && grant.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "device access grant revision must advance");
-    this.database.prepare("INSERT INTO device_access_grants(grant_id,target_device_id,principal_id,revision,grant_json) VALUES(?,?,?,?,?) ON CONFLICT(grant_id) DO UPDATE SET target_device_id=excluded.target_device_id,principal_id=excluded.principal_id,revision=excluded.revision,grant_json=excluded.grant_json")
-      .run(grant.grantId, grant.targetDeviceId, grant.principalId, grant.revision, JSON.stringify(grant));
-    this.database.prepare("INSERT INTO device_access_history(grant_id,revision,grant_json,changed_at) VALUES(?,?,?,?)").run(grant.grantId, grant.revision, JSON.stringify(grant), grant.changedAt);
-    return grant;
+    return this.withWriteTransaction(() => {
+      const current = this.getAccessGrant(grant.grantId);
+      if (current && (grant.revision <= current.revision || grant.targetDeviceId !== current.targetDeviceId
+        || grant.principalId !== current.principalId)) {
+        throw new DeviceFabricError("revision_conflict", "device access grant revision or binding changed");
+      }
+      const json = JSON.stringify(grant);
+      this.database.prepare("INSERT INTO device_access_grants(grant_id,target_device_id,principal_id,revision,grant_json) VALUES(?,?,?,?,?) ON CONFLICT(grant_id) DO UPDATE SET revision=excluded.revision,grant_json=excluded.grant_json")
+        .run(grant.grantId, grant.targetDeviceId, grant.principalId, grant.revision, json);
+      this.database.prepare("INSERT INTO device_access_history(grant_id,revision,grant_json,changed_at) VALUES(?,?,?,?)")
+        .run(grant.grantId, grant.revision, json, grant.changedAt);
+      return grant;
+    });
   }
 
   getAccessGrant(grantId: string): DeviceAccessGrantV1 | undefined {
