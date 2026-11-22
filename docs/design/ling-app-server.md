@@ -2,7 +2,7 @@
 
 - **状态** 目标态设计，待实施
 - **维护者** Daemon、Conversation、Workspace 与开发工具维护者
-- **核对基线** 2026-11-21，`origin/main@50f73b852`
+- **核对基线** 2026-11-22，`origin/main@a9dd29921`
 - **类型** 产品与架构合同
 - **代码锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [普通会话入口](../../packages/daemon/src/features/conversations/routes.ts) · [Goal 验收](../../packages/core/src/storage/sqlite/goal-acceptance.ts)
 

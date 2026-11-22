@@ -1,8 +1,8 @@
 # Ling App Server 详细设计
 
-- **状态** 目标态详细设计，待实施
+- **状态** 协议、执行与恢复合同，运行时实现状态见实施计划
 - **维护者** Contracts、Daemon、API Client、Runner 与开发工具维护者
-- **核对基线** 2026-11-21，`origin/main@50f73b852`
+- **核对基线** 2026-11-22，`origin/main@a9dd29921`
 - **类型** 协议、执行、存储与恢复合同
 - **上位合同** [Ling App Server 与开发工作流](ling-app-server.md)
 - **交付计划** [实施计划与验收](ling-app-server-implementation-plan.md)

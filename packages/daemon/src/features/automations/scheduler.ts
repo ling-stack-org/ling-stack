@@ -470,6 +470,19 @@ export class AutomationSchedulerRegistry {
       }
       const message = error instanceof Error ? error.message : String(error);
       if (coordination) {
+        if (message === "coordination_schedule_stale") {
+          // A policy or definition revision changed after this timer was armed.
+          // Refresh the durable schedule without consuming an occurrence that
+          // never reached the coordination store.
+          executionEntered = false;
+          const current = this.storeRegistry.getStore(entry.state.cwd).getAutomationDefinition(automationId);
+          if (current && current.status === "enabled" && current.trigger.type === "schedule") {
+            this.scheduleAutomation(entry, current, new Date());
+          } else {
+            this.removeTimer(entry, automationId);
+          }
+          return;
+        }
         retryCoordination = true;
         this.upsertItem(entry, { automationId, title: coordination.title, lastErrorMessage: message });
         return;
