@@ -14,7 +14,7 @@ import type {
   LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceCollaborationViewV1, RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
 import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6 } from "@ling-stack/contracts";
-import { createSqliteRunStore } from "@ling-stack/core";
+import { createEnvSecretResolver, createSqliteRunStore } from "@ling-stack/core";
 import {
   RemoteSessionClient, createFetchRemoteHttpClient, type RemoteBindingV1, type RemoteDeviceKeyAdapter,
 } from "@ling-stack/remote-client";
@@ -25,11 +25,14 @@ import type { HomeAssistantFetch } from "../../../apps/mobile/src/device/home-as
 import type { PhoneTaskCollaborationPeer } from "../../../apps/mobile/src/device/phone-task-collaboration.ts";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
+import { createPhoneTaskAnalysisDrafter } from "../dist/features/device-support/diagnosis-planner.js";
+import { createDefaultRunnerRegistry } from "../dist/index.js";
 import { RemoteAccessController } from "../dist/features/remote-access/controller.js";
 import { PhoneTaskCollaboration } from "../dist/features/remote-access/phone-task-collaboration.js";
 import { createRemoteGatewayIdentity } from "../dist/features/remote-access/pairing-auth-service.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "../dist/features/remote-access/pion-peer-worker.js";
 import { RemoteAccessStateStore } from "../dist/features/remote-access/state-store.js";
+import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
 const worker = resolvePionPeerWorker();
 test("the native Gateway renews authenticated WebRTC authority, resumes after restart and respects server revocation",
@@ -47,6 +50,24 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     let clockOffset = 0;
     const now = () => new Date(Date.now() + clockOffset).toISOString();
     const workspace = createSqliteRunStore(root);
+    const modelNote = "Use the existing readback to verify the automation.";
+    let modelCalls = 0;
+    let releaseDraft!: () => void;
+    const blockedDraft = new Promise<void>(resolve => { releaseDraft = resolve; });
+    const provider = await startLoopbackPiProvider(async (request: { readonly stream?: boolean }) => {
+      if (request.stream && ++modelCalls === 2) await blockedDraft;
+      return { text: modelNote };
+    });
+    const preset = workspace.createProviderPreset({
+      kind: "openai-compatible", displayName: "Loopback analysis", providerId: "loopback-analysis",
+      baseUrl: provider.baseUrl, model: "static-tools", api: "openai-completions", capabilities: ["chat"],
+      authHeader: false, reasoning: false,
+    }, now());
+    workspace.recordProviderCheckResult(preset.id, { ok: true, code: "ready", message: "Loopback ready", checkedAt: now() });
+    workspace.updateWorkspaceSettings({ defaultProviderPresetId: preset.id }, now());
+    const draftPhoneTaskAnalysis = createPhoneTaskAnalysisDrafter({
+      store: workspace, runnerRegistry: createDefaultRunnerRegistry(), secretResolver: createEnvSecretResolver({}),
+    });
     const channel = workspace.createChannel({ name: "Peer continuity", boundPath: root }, now());
     const createDeviceRuntime = () => createDeviceSupportRuntime({
       databasePath: join(root, "device-owner.sqlite"), now,
@@ -78,10 +99,12 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     let management: Server | undefined;
     let client: RemoteSessionClient | undefined;
     t.after(async () => {
+      releaseDraft();
       client?.disconnect();
       await gateway?.stop();
       if (management) await close(management);
       await control.stop();
+      await provider.close();
       devices.close();
       workspace.close();
       setDefaultCACertificates(trust);
@@ -107,7 +130,7 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     const managementOrigin = "http://127.0.0.1";
     const createGateway = () => new RemoteAccessController({ store: workspace, stateDir, listenerPort, workspaceDisplayName: "Native fixture",
       managementCapability, managementAllowedOrigins: [managementOrigin], now, deviceFacade: devices.remoteFacade,
-      phoneTaskCollaboration: new PhoneTaskCollaboration(devices.developerStore) });
+      phoneTaskCollaboration: new PhoneTaskCollaboration(devices.developerStore), draftPhoneTaskAnalysis });
     gateway = createGateway();
     await gateway.startIfEnabled();
     management = createServer(async (request, response) => {
@@ -116,6 +139,10 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     const managementPort = await listen(management);
     const collaborationUrl = managementOrigin + ":" + managementPort + "/v1/mobile-access/device-collaboration";
     const collaborationHeaders = { Origin: managementOrigin, "X-Ling-Mobile-Management-Capability": managementCapability };
+    const draftAnalysis = (share: RemoteDeviceCollaborationViewV1, csrfToken = gateway!.csrfToken) => fetch(collaborationUrl + "/draft", {
+      method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ shareId: share.shareId, expectedRevision: share.revision, locale: "en-US" }),
+    });
     const listShares = async () => {
       const response = await fetch(collaborationUrl, { headers: collaborationHeaders });
       assert.equal(response.status, 200);
@@ -226,8 +253,19 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     assert.equal(share.projection.status, "unknown");
     assert.doesNotMatch(JSON.stringify(share), /phone\.fixture|phone-fixture-credential|private-fixture-data|automation\.test/u);
     assert.deepEqual(await listShares(), [share]);
+    assert.equal((await draftAnalysis(share, "invalid-csrf")).status, 403);
+    const draft = await draftAnalysis(share);
+    assert.equal(draft.status, 200);
+    assert.deepEqual(await draft.json(), { shareId: share.shareId, expectedRevision: share.revision, text: modelNote, modelLabel: "Loopback analysis" });
+    assert.deepEqual(await listShares(), [share]);
+    const streamed = provider.requests.filter(request => request.stream);
+    assert.equal(streamed.length, 1);
+    assert.equal(streamed[0].tools?.length ?? 0, 0);
+    const prompt = JSON.stringify(streamed[0].messages);
+    assert.match(prompt, /unknown/u);
+    assert.doesNotMatch(prompt, /phone\.fixture|phone-fixture-credential|private-fixture-data|automation\.test|phone_owner_|device_task_/u);
     const notes = [
-      { proposalId: "suggest-readback", text: "Use the existing readback to verify the automation." },
+      { proposalId: "suggest-readback", text: modelNote },
       { proposalId: "stale-note", text: "Check the recorded automation status." },
     ];
     for (const note of notes) {
@@ -293,7 +331,11 @@ test("the native Gateway renews authenticated WebRTC authority, resumes after re
     assert.deepEqual(verifiedShare.proposals, []);
     assert.deepEqual(await listShares(), [verifiedShare]);
     assert.equal(phoneWrites, 1);
+    const staleDraft = draftAnalysis(verifiedShare);
+    await waitFor(() => modelCalls >= 2);
     const revoked = await phone.collaborate(phoneRecovery.taskId, phonePeer, { kind: "revoke" });
+    releaseDraft();
+    assert.equal((await staleDraft).status, 409);
     assert.equal(revoked?.state, "revoked");
     assert.deepEqual(await listShares(), []);
     control.registry.revokeBinding(publication.binding.bindingId, publication.binding.revision + 1);

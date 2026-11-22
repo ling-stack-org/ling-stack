@@ -6,6 +6,7 @@ import {
   REMOTE_DEVICE_COLLABORATION_MAX_SHARES,
   type DeviceCollaborationProposalV1,
   type RemoteDeviceAnalysisInputV1,
+  type RemoteDeviceAnalysisDraftInputV1,
   type RemoteDeviceCollaborationCommandV1,
   type RemoteDeviceCollaborationViewV1,
 } from "@ling-stack/contracts";
@@ -54,6 +55,13 @@ export class PhoneTaskCollaboration {
 
   listForPc(principal: PhoneTaskCollaborationPrincipal, now: string): readonly RemoteDeviceCollaborationViewV1[] {
     return this.activeShares(principal, now).map(share => this.view(share, principal.workspaceId, now));
+  }
+
+  projectionForAnalysis(principal: PhoneTaskCollaborationPrincipal, input: RemoteDeviceAnalysisDraftInputV1, now: string) {
+    const share = this.requireShare(principal, input.shareId);
+    const projection = this.assertActive(share, now);
+    requireRevision(share, input.expectedRevision);
+    return projection;
   }
 
   proposeFromPc(principal: PhoneTaskCollaborationPrincipal, input: RemoteDeviceAnalysisInputV1, now: string): RemoteDeviceCollaborationViewV1 {

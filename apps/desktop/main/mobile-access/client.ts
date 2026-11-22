@@ -4,6 +4,8 @@ import type {
   LingServerPairingMigrationPublicationRequestV1,
   LingServerPairingMigrationRequestV1,
   LingServerPairingMigrationV1,
+  RemoteDeviceAnalysisDraftInputV1,
+  RemoteDeviceAnalysisDraftV1,
   RemoteDeviceAnalysisInputV1,
   RemoteDeviceCollaborationViewV1,
 } from "@ling-stack/contracts";
@@ -75,6 +77,10 @@ export class DesktopMobileAccessClient implements DesktopMobileAccessCapabilitie
     return await this.request("/v1/mobile-access/device-collaboration", "POST", request) as RemoteDeviceCollaborationViewV1;
   }
 
+  async draftDeviceAnalysis(request: RemoteDeviceAnalysisDraftInputV1): Promise<RemoteDeviceAnalysisDraftV1> {
+    return await this.request("/v1/mobile-access/device-collaboration/draft", "POST", request, 15_000) as RemoteDeviceAnalysisDraftV1;
+  }
+
   async preparePairingMigration(request: LingServerPairingMigrationRequestV1): Promise<LingServerPairingMigrationV1> {
     return await this.request("/v1/mobile-access/pairing-migration/prepare", "POST", request) as LingServerPairingMigrationV1;
   }
@@ -85,7 +91,7 @@ export class DesktopMobileAccessClient implements DesktopMobileAccessCapabilitie
     return { confirmation, gatewayPublicKeyJwk };
   }
 
-  private async request(path: string, method: "GET" | "POST", body?: unknown): Promise<unknown> {
+  private async request(path: string, method: "GET" | "POST", body?: unknown, timeoutMs = 5_000): Promise<unknown> {
     const response = await this.fetchImpl(new URL(path, this.options.daemonBaseUrl), {
       method,
       headers: {
@@ -98,7 +104,7 @@ export class DesktopMobileAccessClient implements DesktopMobileAccessCapabilitie
       },
       ...(method === "POST" ? { body: JSON.stringify(body ?? {}) } : {}),
       redirect: "error",
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await response.text();
     const value = text ? JSON.parse(text) as unknown : {};

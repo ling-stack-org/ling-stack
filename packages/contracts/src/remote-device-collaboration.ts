@@ -68,18 +68,41 @@ export interface RemoteDeviceCollaborationResultV1 {
   readonly share: RemoteDeviceCollaborationViewV1;
 }
 
-export interface RemoteDeviceAnalysisInputV1 {
+interface RemoteDeviceAnalysisBindingV1 {
   readonly shareId: string;
   readonly expectedRevision: number;
+}
+
+export interface RemoteDeviceAnalysisInputV1 extends RemoteDeviceAnalysisBindingV1 {
   readonly proposalId: string;
   readonly text: string;
 }
 
+export interface RemoteDeviceAnalysisDraftInputV1 extends RemoteDeviceAnalysisBindingV1 {
+  readonly locale: string;
+}
+
+export interface RemoteDeviceAnalysisDraftV1 extends RemoteDeviceAnalysisBindingV1 {
+  readonly text: string;
+  readonly modelLabel: string;
+}
+
 export function isRemoteDeviceAnalysisInputV1(value: unknown): value is RemoteDeviceAnalysisInputV1 {
-  if (typeof value !== "object" || value === null || Array.isArray(value) || Object.keys(value).length !== 4) return false;
-  const { shareId, expectedRevision, proposalId, text } = value as Record<string, unknown>;
-  const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
-  return typeof shareId === "string" && identifier.test(shareId) && typeof proposalId === "string" && identifier.test(proposalId)
-    && typeof expectedRevision === "number" && Number.isSafeInteger(expectedRevision) && expectedRevision >= 1
+  if (!isAnalysisBinding(value) || Object.keys(value).length !== 4) return false;
+  const { proposalId, text } = value;
+  return typeof proposalId === "string" && analysisIdentifier.test(proposalId)
     && typeof text === "string" && text.length <= REMOTE_DEVICE_COLLABORATION_MAX_NOTE_BYTES;
+}
+
+export function isRemoteDeviceAnalysisDraftInputV1(value: unknown): value is RemoteDeviceAnalysisDraftInputV1 {
+  return isAnalysisBinding(value) && Object.keys(value).length === 3
+    && typeof value.locale === "string" && /^[a-zA-Z]{2,8}(?:-[a-zA-Z0-9]{1,8}){0,4}$/u.test(value.locale);
+}
+
+const analysisIdentifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
+function isAnalysisBinding(value: unknown): value is RemoteDeviceAnalysisBindingV1 & Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const { shareId, expectedRevision } = value as Record<string, unknown>;
+  return typeof shareId === "string" && analysisIdentifier.test(shareId)
+    && typeof expectedRevision === "number" && Number.isSafeInteger(expectedRevision) && expectedRevision >= 1;
 }

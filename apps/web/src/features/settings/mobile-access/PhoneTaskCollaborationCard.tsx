@@ -8,10 +8,10 @@ import type { DesktopMobileAccessCapabilities } from "../../../../../desktop/sha
 import { useI18n } from "../../../i18n.js";
 import { Button, Field, InlineFeedback, Textarea } from "../../../shared/ui/index.js";
 
-type Access = Pick<DesktopMobileAccessCapabilities, "listDeviceCollaboration" | "proposeDeviceAnalysis">;
+type Access = Pick<DesktopMobileAccessCapabilities, "listDeviceCollaboration" | "proposeDeviceAnalysis" | "draftDeviceAnalysis">;
 type ActiveShare = Extract<RemoteDeviceCollaborationViewV1, { state: "active" }>;
 
-export function PhoneTaskCollaborationCard({ access }: { readonly access: Access }) {
+export function PhoneTaskCollaborationCard({ access, canDraft }: { readonly access: Access; readonly canDraft: boolean }) {
   const { t } = useI18n();
   const headingId = useId();
   const [shares, setShares] = useState<readonly ActiveShare[]>([]);
@@ -43,19 +43,25 @@ export function PhoneTaskCollaborationCard({ access }: { readonly access: Access
     <header className="mobile-access-section-header"><h2 id={headingId}>{t("Phone device tasks")}</h2></header>
     {error ? <InlineFeedback tone="danger">{t("Shared device tasks could not be loaded.")}</InlineFeedback> : null}
     {!error && shares.length === 0 ? <p>{t("Share a device diagnosis from the paired phone to ask this PC for help.")}</p> : null}
-    {shares.map(share => <SharedPhoneTask key={share.shareId} share={share} access={access} refresh={refresh} />)}
+    {shares.map(share => <SharedPhoneTask key={share.shareId} share={share} access={access} canDraft={canDraft} refresh={refresh} />)}
   </section>;
 }
 
-function SharedPhoneTask({ share, access, refresh }: { readonly share: ActiveShare; readonly access: Access; readonly refresh: () => Promise<void> }) {
-  const { t } = useI18n();
-  const [text, setText] = useState("");
-  const [working, setWorking] = useState(false);
+function SharedPhoneTask({ share, access, canDraft, refresh }: {
+  readonly share: ActiveShare;
+  readonly access: Access;
+  readonly canDraft: boolean;
+  readonly refresh: () => Promise<void>;
+}) {
+  const { locale, t } = useI18n();
+  const [draft, setDraft] = useState({ text: "", revision: share.revision, modelLabel: "" });
+  const [working, setWorking] = useState<"draft" | "send">();
   const [error, setError] = useState<string>();
   const retry = useRef<RemoteDeviceAnalysisInputV1 | undefined>(undefined);
   const inFlight = useRef(false);
   const { projection } = share;
   const { facts } = projection;
+  const stale = Boolean(draft.text) && draft.revision !== share.revision;
   const taskStatusLabels: Record<typeof projection.status, string> = {
     created: t("Waiting"), target_resolved: t("Waiting"), capabilities_loaded: t("Waiting"),
     planning: t("Running"), awaiting_approval: t("Pending approval"), executing: t("Running"),
@@ -63,26 +69,47 @@ function SharedPhoneTask({ share, access, refresh }: { readonly share: ActiveSha
     failed: t("Failed"), cancelled: t("Cancelled"), unknown: t("Verification pending"),
   };
   const verificationStatus = projection.attempt.verification?.status;
+  async function generateDraft(): Promise<void> {
+    if (inFlight.current || !canDraft) return;
+    inFlight.current = true;
+    setWorking("draft");
+    setError(undefined);
+    try {
+      const generated = await access.draftDeviceAnalysis({ shareId: share.shareId, expectedRevision: share.revision, locale });
+      if (generated.shareId !== share.shareId || generated.expectedRevision !== share.revision) {
+        throw new Error(t("Review your note against the updated diagnosis."));
+      }
+      setDraft({ text: generated.text, revision: generated.expectedRevision, modelLabel: generated.modelLabel });
+    } catch {
+      setError(t("The workspace chat model could not prepare a note."));
+      await refresh();
+    } finally {
+      inFlight.current = false;
+      setWorking(undefined);
+    }
+  }
+
   async function propose(): Promise<void> {
-    if (inFlight.current || !text.trim()) return;
+    const { text, revision } = draft;
+    if (inFlight.current || stale || !text.trim()) return;
     const previous = retry.current;
-    const request = previous?.text === text && previous.expectedRevision === share.revision
+    const request = previous?.text === text && previous.expectedRevision === revision
       ? previous
-      : { shareId: share.shareId, expectedRevision: share.revision, proposalId: `phone_note_${crypto.randomUUID()}`, text };
+      : { shareId: share.shareId, expectedRevision: revision, proposalId: `phone_note_${crypto.randomUUID()}`, text };
     retry.current = request;
     inFlight.current = true;
-    setWorking(true);
+    setWorking("send");
     setError(undefined);
     try {
       await access.proposeDeviceAnalysis(request);
       retry.current = undefined;
-      setText("");
+      setDraft({ text: "", revision, modelLabel: "" });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("The note could not be sent."));
     } finally {
       await refresh();
       inFlight.current = false;
-      setWorking(false);
+      setWorking(undefined);
     }
   }
   const yesNo = (value: boolean | undefined) => value === undefined ? "—" : value ? t("Yes") : t("No");
@@ -113,13 +140,17 @@ function SharedPhoneTask({ share, access, refresh }: { readonly share: ActiveSha
       ))}
     </ul> : null}
     <form className="mobile-access-collaboration-task" onSubmit={event => { event.preventDefault(); void propose(); }}>
-      <Field label={t("Analysis for the phone")} error={error}>
-        <Textarea rows={3} value={text} disabled={working} maxLength={REMOTE_DEVICE_COLLABORATION_MAX_NOTE_BYTES}
-          onChange={event => setText(event.target.value)} />
+      <Field label={t("Analysis for the phone")} error={error ?? (stale ? t("Review your note against the updated diagnosis.") : undefined)}
+        description={draft.modelLabel ? t("Drafted with {model}", { model: draft.modelLabel }) : undefined}>
+        <Textarea rows={3} value={draft.text} disabled={working !== undefined} maxLength={REMOTE_DEVICE_COLLABORATION_MAX_NOTE_BYTES}
+          onChange={event => setDraft({ ...draft, text: event.target.value, revision: share.revision })} />
       </Field>
       <div className="mobile-access-actions">
-        <Button type="submit" variant="primary" disabled={!text.trim() || new TextEncoder().encode(text.trim()).length > REMOTE_DEVICE_COLLABORATION_MAX_NOTE_BYTES}
-          loading={working}>{t("Send analysis")}</Button>
+        {canDraft ? <Button type="button" variant="secondary" disabled={working === "send"}
+          loading={working === "draft"} onClick={() => void generateDraft()}>{t("Draft with workspace model")}</Button> : null}
+        <Button type="submit" variant="primary" disabled={working === "draft" || stale || !draft.text.trim()
+          || new TextEncoder().encode(draft.text.trim()).length > REMOTE_DEVICE_COLLABORATION_MAX_NOTE_BYTES}
+          loading={working === "send"}>{t("Send analysis")}</Button>
       </div>
     </form>
   </article>;

@@ -4,6 +4,7 @@ import {
   LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1,
   REMOTE_PROTOCOL_LIMITS,
   REMOTE_PROTOCOL_VERSION,
+  isRemoteDeviceAnalysisDraftInputV1,
   isRemoteDeviceAnalysisInputV1,
   type LingServerPairingMigrationConfirmationV1,
   type LingServerPairingMigrationRequestV1,
@@ -196,6 +197,14 @@ export function registerDesktopIpc(input: {
     const share = await input.mobileAccess.proposeDeviceAnalysis(request);
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
     return share;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationDraft, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceAnalysisDraftInputV1(request)) throw new Error("invalid_device_analysis_draft");
+    const draft = await input.mobileAccess.draftDeviceAnalysis(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return draft;
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationPrepare, async (event, request: unknown) => {
     const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);

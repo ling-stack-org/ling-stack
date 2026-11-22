@@ -1,7 +1,7 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
-import { createDeviceDiagnosisPlanner } from "./features/device-support/diagnosis-planner.js";
+import { createDeviceDiagnosisPlanner, createPhoneTaskAnalysisDrafter } from "./features/device-support/diagnosis-planner.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
 import { orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
 import { createWorkflowParallelCapabilityResolver } from "./features/runs/workflow-safety.js";
@@ -1095,6 +1095,7 @@ export function createDaemonServer(
     dispatcher: remoteReplyDispatcher,
     deviceFacade: deviceSupport.remoteFacade,
     phoneTaskCollaboration: new PhoneTaskCollaboration(deviceSupport.developerStore),
+    draftPhoneTaskAnalysis: createPhoneTaskAnalysisDrafter({ store: defaultWorkspaceStore, runnerRegistry, secretResolver }),
   });
   const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
   // Terminal-QA human authority is independent of CU gate, live Run or lease.

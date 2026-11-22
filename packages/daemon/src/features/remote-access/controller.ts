@@ -17,6 +17,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V6,
   REMOTE_PROTOCOL_LIMITS,
+  isRemoteDeviceAnalysisDraftInputV1,
   isRemoteDeviceAnalysisInputV1,
   type LingServerGatewayRouteV1,
   type RemoteAuthChallengeV1,
@@ -37,6 +38,7 @@ import { RemoteGatewaySession } from "./session.js";
 import { RemoteAccessStateStore } from "./state-store.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
 import type { PhoneTaskCollaboration, PhoneTaskCollaborationPrincipal } from "./phone-task-collaboration.js";
+import type { PhoneTaskAnalysisDrafter } from "../device-support/diagnosis-planner.js";
 import { LingServerGatewayPeer } from "./ling-server-gateway-peer.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "./pion-peer-worker.js";
 
@@ -60,6 +62,7 @@ export interface RemoteAccessControllerOptions {
   readonly dispatcher?: RemoteReplyDispatcher;
   readonly deviceFacade?: RemoteDeviceFacade;
   readonly phoneTaskCollaboration?: PhoneTaskCollaboration;
+  readonly draftPhoneTaskAnalysis?: PhoneTaskAnalysisDrafter;
   readonly now?: () => string;
 }
 
@@ -80,6 +83,7 @@ export interface RemoteAccessStatus {
   readonly workspaceBindingId: string;
   readonly sendEnabled: boolean;
   readonly deviceCollaborationEnabled?: boolean;
+  readonly deviceCollaborationAnalysisEnabled?: boolean;
 }
 
 interface RoutedSessionAuthentication {
@@ -210,6 +214,8 @@ export class RemoteAccessController {
       workspaceBindingId: state.workspaceBindingId,
       sendEnabled: Boolean(this.options.dispatcher),
       ...(this.options.phoneTaskCollaboration ? { deviceCollaborationEnabled: true } : {}),
+      ...(this.options.draftPhoneTaskAnalysis && this.options.store.getWorkspaceSettings().defaultProviderPresetId
+        ? { deviceCollaborationAnalysisEnabled: true } : {}),
     };
   }
 
@@ -256,6 +262,32 @@ export class RemoteAccessController {
           if (!principal) throw new RemoteAccessError("binding_changed", "Pair a phone before sending analysis.");
           writeManagementJson(response, 200, collaboration.proposeFromPc(principal, input, this.now()), origin);
           return true;
+        }
+      }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/device-collaboration/draft` && request.method === "POST"
+        && this.options.phoneTaskCollaboration && this.options.draftPhoneTaskAnalysis) {
+        const input = await readJson(request);
+        if (!isRemoteDeviceAnalysisDraftInputV1(input)) throw new Error("Invalid device analysis draft request.");
+        const principal = this.currentCollaborationPrincipal();
+        if (!principal) throw new RemoteAccessError("binding_changed", "Pair a phone before generating analysis.");
+        const service = this.options.phoneTaskCollaboration;
+        const projection = service.projectionForAnalysis(principal, input, this.now());
+        const cancellation = new AbortController();
+        const cancel = () => cancellation.abort();
+        response.once("close", cancel);
+        try {
+          const draft = await this.options.draftPhoneTaskAnalysis(projection, input.locale, cancellation.signal).catch(() => {
+            if (!cancellation.signal.aborted) throw new RemoteAccessError("pc_unavailable", "The workspace chat model could not prepare a note.");
+            return undefined;
+          });
+          if (!draft || response.destroyed) return true;
+          const current = this.currentCollaborationPrincipal();
+          if (!current) throw new RemoteAccessError("binding_changed", "The phone pairing changed while preparing the note.");
+          service.projectionForAnalysis(current, input, this.now());
+          writeManagementJson(response, 200, { shareId: input.shareId, expectedRevision: input.expectedRevision, ...draft }, origin);
+          return true;
+        } finally {
+          response.off("close", cancel);
         }
       }
       if (url.pathname === `${MANAGEMENT_PREFIX}/enable` && request.method === "POST") {

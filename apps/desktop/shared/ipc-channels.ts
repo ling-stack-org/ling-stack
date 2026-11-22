@@ -66,6 +66,7 @@ export const DESKTOP_IPC_CHANNELS = {
   mobileAccessPairingReject: "ling-desktop:mobile-access:pairing-reject",
   mobileAccessRevoke: "ling-desktop:mobile-access:revoke",
   mobileAccessDeviceCollaborationList: "ling-desktop:mobile-access:device-collaboration-list",
+  mobileAccessDeviceCollaborationDraft: "ling-desktop:mobile-access:device-collaboration-draft",
   mobileAccessDeviceCollaborationPropose: "ling-desktop:mobile-access:device-collaboration-propose",
   mobileAccessPairingMigrationPrepare: "ling-desktop:mobile-access:pairing-migration-prepare",
   mobileAccessPairingMigrationConfirm: "ling-desktop:mobile-access:pairing-migration-confirm",

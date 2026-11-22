@@ -100,6 +100,8 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   const owner = { id: 7, mainFrame: frame, isDestroyed: () => false, getURL: () => frame.url };
   const calls: unknown[] = [];
   const analysis = { shareId: "phone-share", proposalId: "diagnostic-note", expectedRevision: 2, text: "Check the network status." };
+  const analysisRequest = { shareId: analysis.shareId, expectedRevision: analysis.expectedRevision, locale: "en-US" };
+  const analysisDraft = { shareId: analysis.shareId, expectedRevision: analysis.expectedRevision, text: analysis.text, modelLabel: "Fixture model" };
   const share = { workspaceId: "fixture-workspace", shareId: analysis.shareId, revision: 3, expiresAt: "2026-11-23T10:02:00.000Z", state: "revoked" } as const;
   const unregister = registerDesktopIpc({
     ipcMainImpl: ipc,
@@ -127,6 +129,7 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
       rejectPairing: unavailable,
       revoke: unavailable,
       async listDeviceCollaboration() { return []; },
+      async draftDeviceAnalysis(input) { calls.push(input); return analysisDraft; },
       async proposeDeviceAnalysis(input) { calls.push(input); return share; },
       async preparePairingMigration(input) { calls.push(input); return preview; },
       async confirmPairingMigration(input) { calls.push(input); return { confirmation, gatewayPublicKeyJwk }; },
@@ -141,22 +144,26 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   const prepare = DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationPrepare;
   const confirm = DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationConfirm;
   const listCollaboration = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationList;
+  const draftAnalysis = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationDraft;
   const proposeAnalysis = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationPropose;
   await assert.rejects(invoke(prepare, request, { ...owner, id: 9 }), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(confirm, confirmationRequest, owner, { ...frame }), /mobile_access_unauthorized/u);
   frame.url = "https://different.example";
   await assert.rejects(invoke(prepare, request), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(listCollaboration, undefined), /mobile_access_unauthorized/u);
+  await assert.rejects(invoke(draftAnalysis, analysisRequest), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(proposeAnalysis, analysis), /mobile_access_unauthorized/u);
   frame.url = documentUrl + "#/settings/mobile-access";
   await assert.rejects(invoke(prepare, { ...request, retainedCommandIds: ["duplicate", "duplicate"] }), /invalid_pairing_migration_request/u);
   await assert.rejects(invoke(confirm, { ...confirmationRequest, confirmationDigest: "invalid" }), /invalid_pairing_migration_confirmation/u);
   await assert.rejects(invoke(proposeAnalysis, { ...analysis, expectedRevision: 0 }), /invalid_device_analysis_proposal/u);
+  await assert.rejects(invoke(draftAnalysis, { ...analysisRequest, facts: {} }), /invalid_device_analysis_draft/u);
   assert.deepEqual(calls, []);
 
   assert.deepEqual(await invoke(prepare, request), preview);
   assert.deepEqual(await invoke(confirm, confirmationRequest), { confirmation, gatewayPublicKeyJwk });
   assert.deepEqual(await invoke(listCollaboration, undefined), []);
+  assert.deepEqual(await invoke(draftAnalysis, analysisRequest), analysisDraft);
   assert.deepEqual(await invoke(proposeAnalysis, analysis), share);
-  assert.deepEqual(calls, [request, confirmationRequest, analysis]);
+  assert.deepEqual(calls, [request, confirmationRequest, analysisRequest, analysis]);
 });

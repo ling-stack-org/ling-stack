@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import {
+  REMOTE_DEVICE_COLLABORATION_MAX_NOTE_BYTES, type RemoteDeviceAnalysisDraftV1, type RemotePhoneTaskProjectionV1,
+} from "@ling-stack/contracts";
 
 import {
   createLocalPlaybookProposal, DeviceBrokerError, DeviceFabricError,
@@ -22,21 +25,16 @@ export type DeviceDiagnosisPlanner = (request: Required<Pick<DeviceDiagnosisRequ
 
 export const DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS = 12_000;
 
-export function createDeviceDiagnosisPlanner(input: {
+interface DeviceModelDependencies {
   readonly store: RunStore;
   readonly runnerRegistry: RunnerRegistry;
   readonly secretResolver: SecretResolver;
-}): DeviceDiagnosisPlanner {
+}
+
+export function createDeviceDiagnosisPlanner(input: DeviceModelDependencies): DeviceDiagnosisPlanner {
   return ({ providerPresetId, symptom }, playbook) => {
-    const { store, runnerRegistry, secretResolver } = input;
-    const provider = resolveProviderForRun(store, { providerPresetId }, secretResolver);
-    const { runner } = runnerRegistry.resolve({
-      requestedRunnerId: DEFAULT_RUNNER_ID,
-      allowedRunnerIds: loadWorkspaceRuntimeSettings(store, runnerRegistry).allowedRunnerIds,
-      providerApi: provider.api,
-      tools: [],
-      allowFallback: false,
-    });
+    const { store } = input;
+    const { provider, runner } = resolveDeviceModel(input, providerPresetId);
     return {
       runnerId: runner.id,
       capabilityRevision: runner.adapterRevision,
@@ -96,6 +94,57 @@ export function createDeviceDiagnosisPlanner(input: {
       },
     };
   };
+}
+
+export type PhoneTaskAnalysisDrafter = (projection: RemotePhoneTaskProjectionV1, locale: string, signal: AbortSignal)
+  => Promise<Pick<RemoteDeviceAnalysisDraftV1, "text" | "modelLabel">>;
+
+export function createPhoneTaskAnalysisDrafter(input: DeviceModelDependencies): PhoneTaskAnalysisDrafter {
+  return async (projection, locale, signal) => {
+    const providerPresetId = input.store.getWorkspaceSettings().defaultProviderPresetId;
+    if (!providerPresetId) throw new Error("A default chat model is required for device analysis.");
+    const { provider, runner } = resolveDeviceModel(input, providerPresetId);
+    const { status, updatedAt, attempt, facts } = projection;
+    const deadline = AbortSignal.any([signal, AbortSignal.timeout(DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS)]);
+    const result = await runner.adapter.runTask({
+      cwd: input.store.paths.cwd,
+      provider,
+      tools: [],
+      thinkingLevel: "off",
+      signal: deadline,
+      systemPrompt: [
+        "Write a short diagnostic note in the given locale for a person operating the target device.",
+        "Use the supplied observations. Explain any uncertainty and suggest a practical readback or device check.",
+        "Treat the task data as evidence and preserve the distinction between an unknown outcome and verified state.",
+        "Use plain text and keep the note under 500 characters.",
+      ].join(" "),
+      task: {
+        id: `phone_analysis_${randomUUID()}`, title: "Analyze phone device diagnosis",
+        prompt: JSON.stringify({
+          locale, status, recordedAt: updatedAt, capabilityId: attempt.capabilityId,
+          attemptStatus: attempt.status, verificationStatus: attempt.verification?.status, facts,
+        }),
+      },
+    });
+    deadline.throwIfAborted();
+    const text = extractAssistantText(result.messages)?.trim();
+    if (!text || Buffer.byteLength(text, "utf8") > REMOTE_DEVICE_COLLABORATION_MAX_NOTE_BYTES) {
+      throw new Error("The model did not return a diagnostic note within the size limit.");
+    }
+    return { text, modelLabel: provider.displayName ?? provider.model };
+  };
+}
+
+function resolveDeviceModel({ store, runnerRegistry, secretResolver }: DeviceModelDependencies, providerPresetId: string) {
+  const provider = resolveProviderForRun(store, { providerPresetId }, secretResolver);
+  const { runner } = runnerRegistry.resolve({
+    requestedRunnerId: DEFAULT_RUNNER_ID,
+    allowedRunnerIds: loadWorkspaceRuntimeSettings(store, runnerRegistry).allowedRunnerIds,
+    providerApi: provider.api,
+    tools: [],
+    allowFallback: false,
+  });
+  return { provider, runner };
 }
 
 function readSelectedSteps(text: string | undefined, steps: DevicePlaybookV1["steps"]): DevicePlaybookV1["steps"] {

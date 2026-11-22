@@ -430,6 +430,12 @@ and choose **请配对电脑协助**. Confirm the 30-minute share. In Ling Deskt
 diagnostic facts and verification state. Use **Send analysis** to attach a note
 to the displayed task revision.
 
+When the PC workspace has a default chat model, **Draft with workspace model**
+fills the note with an editable suggestion. The model receives the shared
+diagnostic facts, recorded outcome and verification status. Review the draft and
+select **Send analysis** to share it. A newer phone task revision requires the PC
+to review the note with that record before sending.
+
 On the phone, choose **同步记录和建议** to review the note. The phone records the
 accept or reject decision and keeps device operations in the task's existing
 controls. A completed readback updates the shared task revision, and a note
