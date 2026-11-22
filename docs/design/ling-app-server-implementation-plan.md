@@ -26,7 +26,7 @@
 - 复核工作台的「验证」页使用和 App Server 相同的 Verify operation。浏览器验收在隔离仓库中从 Web 触发已登记的 Chromium 检查，读取实际断言输出，刷新后恢复原结果并显示候选漂移。
 - Goal 的 `verification_passed` 条件要求同一 Thread 的已完成 Verify operation、当前候选摘要、匹配的 verifier basis、coverage 和 producer refs。候选漂移、检查来源漂移、缺少独立证据和过期的接受版本都会阻止完成。
 - App Server 可以为已绑定的频道或队友会话创建、刷新和归档托管工作树。归档按检视过的候选和目录身份校验，恢复日志保留同一预览请求的归档快照。
-- 普通会话可从最新已收敛的 Turn 封存 Handoff。记录包含候选、原 Goal 进度、接受的计划和产物引用。接手通过正常会话分支和提交受理复用原回执。候选、Goal 或计划变化时需要更新 Handoff。
+- 普通会话可从最新已收敛的 Turn 封存 Handoff。接手保留 Goal ID、累计用量、预算和监督状态。回归覆盖转移 Goal 后、受理子会话 Turn 前失败，重启后复用转移回执并派发一次。候选、Goal 或计划变化时需要更新 Handoff。
 - App Server operator grant 支持 workspace、Thread 和 Work Item 范围，按 scope 分开观察、控制、审批和答复权限。grant 的 revision、过期和撤销参与握手、请求和推送路径。
 - CLI 和 TypeScript client 可以直接进入上述流程。Daemon 重启、重复请求、取消未确认和未知配方仍保持已有的持久回执语义。
 - MCP bridge 暴露 Work Item 阶段、协作记录、受限 artifact range、模型清单和 Skill 读取。artifact 元数据去除内容摘要，正文只能按授权的 Thread/Work Item/Run 归属读取，并受单次范围上限约束。
@@ -59,7 +59,7 @@
 | --- | --- |
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入，审批和用户答复仍需按不同真实宿主与远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
-| F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。CLI `app-server codex-host` 同时连接 Ling 和 Codex，保存连接游标和干预回执。本机安装的 Codex 联调覆盖 Ling 的在途排队、事件补齐和原干预回执。可编程宿主的会话界面、向正在运行的 Codex Turn 发送指导及跨 Agent 预算承接仍待验收。 |
+| F1、F2 | 普通会话 Handoff 的候选封存、Goal 预算承接与接手已接入。CLI `app-server codex-host` 同时连接 Ling 和 Codex，保存连接游标和干预回执。本机安装的 Codex 联调覆盖 Ling 的在途排队、事件补齐和原干预回执。可编程宿主的会话界面、向正在运行的 Codex Turn 发送指导及跨 Workflow Agent 的预算承接仍待验收。 |
 | O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。还需 Channel、设备和已有 AutomationRun 的统一自治接入、设备反馈、改计划时按受影响阶段暂停并承接独立成果、Workflow 交接、自动审议投票、跨 Run 预算与完整 O9 联合验收。 |
 | G | 独立恢复日志已验证 SQLite 快照恢复、撤权、旧游标失效和 GitHub 对账后派发。上一版源码通过同一套本地兼容验收。签名安装产物、实际远程 WSS、受保护 GitHub 仓库及三个真实 Provider 自研试点仍需对应环境的证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
 

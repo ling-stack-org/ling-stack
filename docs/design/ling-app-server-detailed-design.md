@@ -74,7 +74,7 @@ App Server grant 使用 `las1.<grantId>.<secret>` bearer 形式。Daemon 只在�
 | 工作区 | `workspace/list`、`workspace/read`、`worktree/list`、`worktree/create`、`worktree/refresh`、`worktree/cleanup/preview`、`worktree/cleanup` | 使用 opaque workspace/worktree ID 和预期版本。清理路线沿用当前确认、归属和恢复校验。 |
 | Thread | `thread/start`、`thread/resume`、`thread/read`、`thread/list`、`thread/name/set`、`thread/archive`、`thread/unarchive`、`thread/delete/preview`、`thread/delete` | 返回标识、状态、版本、绑定、最新可见 Turn、有效规则来源和历史游标。永久删除使用现有管理权限与用户确认，并在预览和提交时核对当前 Work Item、Plan、Goal、审批、证据和 Delivery 依赖。 |
 | 历史和订阅 | `thread/turns/list`、`thread/items/list`、`item/read`、`thread/subscribe`、`thread/unsubscribe`、`thread/snapshot`、`submission/read` | 游标持久化，订阅 ID 只在连接有效。重连与历史读取没有执行副作用。 |
-| 计划和目标 | `thread/mode/get`、`thread/mode/set`、`plan/read`、`plan/accept`、`thread/goal/get`、`thread/goal/set`、`thread/goal/pause`、`thread/goal/resume`、`thread/goal/clear`、`thread/goal/complete` | 复用现有模式、计划、Goal 版本和完成证据。工作内容发生实质变化时生成新的接受版本。 |
+| 计划和目标 | `thread/mode/get`、`thread/mode/set`、`plan/read`、`plan/refine`、`plan/accept`、`thread/goal/get`、`thread/goal/set`、`thread/goal/pause`、`thread/goal/resume`、`thread/goal/clear`、`thread/goal/complete` | 复用现有模式、计划、Goal 版本和完成证据。`plan/refine` 以源版本生成后继草案。`plan/accept` 的 `workflow` 模式按草案版本和阶段预览创建 Workflow。 |
 | Turn | `turn/start`、`turn/steer`、`turn/queue`、`turn/interrupt`、`turn/retry`、`turn/resume` | 返回持久受理回执与状态。实际 Run、Attempt 和证据通过订阅或快照查询。 |
 | 分支和上下文 | `thread/fork`、`thread/compact/start`、`thread/revert`、`context/inspect`、`handoff/create`、`handoff/read`、`handoff/resume` | 从指定可恢复边界分支、压缩或交接。历史变更与实际文件回退各用自己的权限、预览和预期版本。 |
 | 改动和产物 | `changes/capture`、`changes/read`、`changes/apply/preview`、`changes/apply`、`artifact/read` | 以候选、选中 hunk、工作树版本和审批为边界。应用、回退、重放沿用现有 patch 所有者。产物可分页，内容读取限范围和大小。 |
@@ -309,7 +309,7 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 - Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。跨会话接手可以引用当前阶段简报、未决问答、工作项交接回执与所属 Workflow。审议引用证据板修订、封存结果和已记录的决定。 [阶段简报与交接](ling-agent-operating-model-detailed-design.md#57-plan-stages-and-stage-briefs)
 - `handoff/resume` 在新会话检查源是否可交接、worktree 版本与写入租约、候选、证据修订和当前授权。兼容则带版本接手，漂移则显示差异和需要重新验证的项。Runner 重启走已有 checkpoint 恢复，交接走普通 Turn 的新派发。多 Agent 使用现有 Workflow 归属、独立授权和可核对的产物合并。
 - 每个开发任务记录 Provider、Runner、工作树和构建输入。调试长任务可看模型调用预算、失速原因和最近一个有证据的阶段。正常开发从稳定 Ling 使用独立 worktree 和 Agent 环境。候选 Daemon 和 UI 用独立数据、端口和测试配置启动。代码或配置需要换模型或 Runner 时，交接优先从明确的候选快照进入普通新任务。
-- `handoff/create` 只接受最新已收敛的普通 conversation Turn。它封存当前候选摘要、源 Turn/Run revision、Goal 进度、已接受计划和产物引用。`handoff/resume` 先复核这些摘要，再用普通 conversation fork 和受理收据创建一个子 Thread。重复请求复用同一 child Thread 和 Run，候选或源状态漂移返回 `handoff_stale`。
+- `handoff/create` 只接受最新已收敛的普通 conversation Turn。它封存当前候选摘要、源 Turn/Run revision、Goal 进度、已接受计划和产物引用。`handoff/resume` 复核摘要后创建子 Thread，在同一事务内转移 Goal 归属并记录两端事件。Goal ID、累计用量、预算和监督状态随归属转移。源会话有待派发续接或预算已用尽时暂停接手。重复请求复用 Goal 转移回执、child Thread 和 Run，候选或源状态漂移返回 `handoff_stale`。
 
 ### 3.5 Codex 控制宿主
 

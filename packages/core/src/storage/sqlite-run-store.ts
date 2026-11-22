@@ -6238,6 +6238,56 @@ export class SqliteRunStore implements RunStore {
     return this.appServerState.delete(kind, recordId, workspaceId);
   }
 
+  transferAppServerHandoffGoal(handoffId: string, threadId: string, now: string): ReturnType<RunStore["transferAppServerHandoffGoal"]> {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const retained = this.appServerState.get("handoff_goal_transfer", handoffId);
+      if (retained) {
+        const transfer = retained.payload as import("@ling-stack/contracts").LingAppServerHandoffGoalTransfer;
+        if (transfer.threadId !== threadId) throw new Error("handoff_goal_stale");
+        this.database.exec("COMMIT");
+        return { transfer, events: [] };
+      }
+      const record = this.appServerState.get("handoff", handoffId)?.payload as { handoff: import("@ling-stack/contracts").LingAppServerHandoff } | undefined;
+      const handoff = record?.handoff;
+      if (!handoff?.goal) {
+        this.database.exec("COMMIT");
+        return undefined;
+      }
+      const source = this.getLingThread(handoff.sourceThreadId);
+      const goal = this.getLingThreadGoal(handoff.sourceThreadId);
+      const child = this.getNormalConversationForkSeed(threadId);
+      const childThread = child && this.getLingThread(threadId);
+      const [turn] = this.listLingTurns({ threadId: handoff.sourceThreadId, orderBy: "createdAt", limit: 1 });
+      if (!source || source.archivedAt || source.activeRunId || turn?.id !== handoff.sourceTurnId
+        || turn.updatedAt !== handoff.sourceTurnRevision || turn.lastRunId !== handoff.sourceRunId
+        || !goal || goal.id !== handoff.goal.id || goal.updatedAt !== handoff.goal.updatedAt
+        || this.getLingThreadGoal(threadId) || !child || !childThread || childThread.activeRunId || childThread.archivedAt
+        || child.threadId !== source.id || child.turnId !== turn.id || child.sourceRunId !== turn.lastRunId) {
+        throw new Error("handoff_goal_stale");
+      }
+      if (this.database.prepare(`SELECT 1 FROM run_interventions i JOIN run_sessions r ON r.id=i.source_run_id
+        WHERE r.thread_id=? AND i.status IN ('queued','cancelling_source','starting_continuation') LIMIT 1`).get(source.id)) {
+        throw new Error("handoff_goal_busy");
+      }
+      const updated = this.database.prepare(`UPDATE ling_thread_goals SET thread_id=?, updated_at=?
+        WHERE id=? AND thread_id=? AND updated_at=?`).run(threadId, now, goal.id, source.id, goal.updatedAt);
+      if (updated.changes !== 1) throw new Error("handoff_goal_stale");
+      const transfer = { goalId: goal.id, sourceThreadId: source.id, threadId, sourceGoalRevision: goal.updatedAt, transferredAt: now };
+      this.appServerState.putWithinTransaction({ kind: "handoff_goal_transfer", recordId: handoffId, expectedRevision: 0, payload: transfer }, now);
+      const events = [source.id, threadId].map(affectedThreadId => this.controlPlane.appendControlPlaneEventWithinTransaction({
+        workspaceId: goal.workspaceId, cwd: this.paths.cwd, domain: "runs", entityType: "thread_goal", entityId: goal.id,
+        action: "thread.goal.updated", data: { threadId: affectedThreadId, goalId: goal.id, handoffId,
+          ...(affectedThreadId === threadId ? { status: goal.status, revision: now } : { transferred: true }) },
+      }, now));
+      this.database.exec("COMMIT");
+      return { transfer, events };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
+  }
+
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
     return this.workItems.pauseWorkItem(id, input, now);
   }

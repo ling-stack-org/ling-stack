@@ -82,7 +82,9 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
-import { bindGoalAcceptanceEvidence, buildLingThreadResumeContext, createLingThreadFork, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { bindGoalAcceptanceEvidence, buildLingThreadResumeContext, createLingThreadFork, parseCompleteLingThreadGoalBody,
+  parseProposedPlanActionBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { ProposedPlanMutationError } from "@ling-stack/core";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention, requestRunInterventionRedirect } from "../features/runs/interventions.js";
@@ -98,7 +100,7 @@ import { applyAppServerChangeTransfer, previewAppServerChangeTransfer } from "./
 import { RunWorkspaceRecoveryError } from "../features/runs/workspace-change-recovery.js";
 import { listManagedWorktrees, WorktreeActionError } from "../features/workspaces/worktree-management.js";
 import { cleanupAppServerWorktree, createAppServerWorktree, previewAppServerWorktreeCleanup, refreshAppServerWorktree } from "./app-server-worktrees.js";
-import { checkAppServerHandoff, createAppServerHandoff, handoffInstruction, readAppServerHandoff } from "./app-server-handoff.js";
+import { checkAppServerHandoff, createAppServerHandoff, handoffInstruction, readAppServerHandoff, readAppServerHandoffGoalTransfer } from "./app-server-handoff.js";
 import { normalConversationForkId } from "../features/conversations/normal-conversation-fork.js";
 import {
   appServerGrantBearerPrefix, appServerGrantStillActive, authenticateAppServerGrant, createAppServerGrant,
@@ -179,7 +181,7 @@ const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
   "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
   "thread/delete", "thread/goal/set", "thread/goal/pause", "thread/goal/resume",
-  "thread/goal/clear", "thread/goal/complete", "plan/accept",
+  "thread/goal/clear", "thread/goal/complete", "plan/accept", "plan/refine",
   "worktree/create", "worktree/cleanup",
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
@@ -200,7 +202,7 @@ const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "ru
 const recoveryGuardedMethods = new Set([
   "github/delivery/enqueue",
   "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
-  "plan/accept", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
+  "plan/accept", "plan/refine", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
   "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
   "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
   "workItem/feedback/add",
@@ -706,7 +708,8 @@ class RpcConnection {
       case "plan/read":
         return this.readPlan(params);
       case "plan/accept":
-        return this.acceptPlan(params);
+      case "plan/refine":
+        return this.applyPlanAction(method, params);
       case "thread/unsubscribe":
         return this.unsubscribeControlPlane(params);
       case "verify/plan":
@@ -1683,6 +1686,7 @@ class RpcConnection {
     let child = store.getLingThread(childId);
     const receipt = readConversationSubmission(store, { surface: "normal", threadId: childId, idempotencyKey });
     const acceptedTurn = receipt.status === "accepted" && receipt.turnId ? store.getLingTurn(receipt.turnId) : undefined;
+    let goalTransfer = readAppServerHandoffGoalTransfer(store, handoff.handoffId);
     if (child && store.getNormalConversationForkSeed(child.id)?.threadId !== handoff.sourceThreadId) {
       throw rpcError(-32031, "idempotency_conflict", "The Handoff child Thread has a different origin.");
     }
@@ -1693,11 +1697,24 @@ class RpcConnection {
         body: { turnId: handoff.sourceTurnId, sourceRunId: handoff.sourceRunId, idempotencyKey,
           title: `Handoff: ${sourceThread.title}`, objective: handoff.goal?.objective ?? sourceThread.objective },
       }).childThread;
+      try {
+        const ownership = store.transferAppServerHandoffGoal(handoff.handoffId, child.id, new Date().toISOString());
+        goalTransfer = ownership?.transfer;
+        for (const event of ownership?.events ?? []) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      } catch (error) {
+        if (error instanceof Error && error.message === "handoff_goal_stale") {
+          throw rpcError(-32030, "handoff_stale", "The Goal or its source execution changed before the handoff.");
+        }
+        if (error instanceof Error && error.message === "handoff_goal_busy") {
+          throw rpcError(-32061, "resume_blocked", "The source has a pending Run continuation.");
+        }
+        throw error;
+      }
     }
     if (!child) throw rpcError(-32061, "resume_blocked", "The Handoff receipt has no available child Thread.");
     this.publishForkedThread(store, record.cwd, child, handoff.sourceThreadId);
     const result = await this.startConversationTurn({ idempotencyKey, providerPresetId }, child, record.cwd, handoffInstruction(handoff));
-    return { ...result, handoffId: handoff.handoffId };
+    return { ...result, handoffId: handoff.handoffId, ...(goalTransfer ? { goalTransfer } : {}) };
   }
 
   private publishForkedThread(store: RunStore, cwd: string, thread: LingThread, sourceThreadId: string): void {
@@ -2006,34 +2023,43 @@ class RpcConnection {
     if (!planId && !threadId) throw rpcError(-32602, "invalid_params", "planId or threadId is required.");
     if (planId) {
       const plan = store.getProposedPlanArtifact(planId);
-      if (!plan) throw rpcError(-32040, "workspace_binding_invalid", `Plan was not found: ${planId}`);
-      return { cwd, plan };
+      if (!plan || threadId && plan.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", `Plan was not found: ${planId}`);
+      return { cwd, threadId: plan.threadId, plan };
     }
     return { cwd, threadId, plans: store.listProposedPlanArtifacts({ threadId, limit: readOptionalIntegerField(record, "limit") }) };
   }
 
-  private acceptPlan(params: unknown): unknown {
+  private applyPlanAction(method: "plan/refine" | "plan/accept", params: unknown): import("@ling-stack/contracts").ProposedPlanActionResponse {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const planId = readStringField(record, "planId");
     const threadId = readStringField(record, "threadId");
+    const expectedRevision = readOptionalIntegerField(record, "expectedRevision");
+    const action = method === "plan/refine" ? "refine" : record.mode === "workflow" ? "convert-workflow" : "accept";
+    const workflow = action === "convert-workflow" ? parseProposedPlanActionBody({
+      workflowTitle: record.workflowTitle, workflowStepPreviews: record.workflowStepPreviews,
+    }, threadId) : undefined;
+    if (action !== "accept" && expectedRevision === undefined) throw rpcError(-32602, "invalid_params", "Supply the current Plan revision.");
+    if (workflow && !workflow.workflowStepPreviews?.length) throw rpcError(-32602, "invalid_params", "Supply at least one Workflow stage.");
+    const draft = action === "refine" && record.draft !== undefined ? readParamsRecord(record.draft) : undefined;
+    const refinedDraft = draft && { title: readStringField(draft, "title"), bodyMarkdown: readStringField(draft, "bodyMarkdown") };
     const store = this.context.storeRegistry.getStore(cwd);
     const result = store.applyProposedPlanArtifactAction(planId, {
-      threadId,
-      action: "accept",
-      expectedRevision: readOptionalIntegerField(record, "expectedRevision"),
+      ...workflow, threadId, action, expectedRevision, refinedDraft,
       createdBy: readOptionalStringField(record, "createdBy") ?? "local-user",
     }, new Date().toISOString());
+    const eventAction = action === "refine" ? "plan.refined" : "plan.accepted";
     appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
+      workspaceId: result.plan.workspaceId,
       cwd,
       domain: "runs",
       entityType: "plan",
-      entityId: planId,
-      action: "plan.accepted",
-      data: { planId, threadId, revision: result.plan.revision },
+      entityId: result.plan.id,
+      action: eventAction,
+      data: { planId: result.plan.id, threadId, revision: result.plan.revision, parentPlanId: result.plan.parentPlanId },
+      idempotencyKey: `app-server:${eventAction}:${result.plan.id}:${result.plan.revision}`,
     });
-    return { cwd, ...result };
+    return { cwd, threadId, ...result };
   }
 
   private listThreadTurns(params: unknown): unknown {
@@ -3213,6 +3239,11 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   if (error instanceof ControlPlaneBadRequestError) {
     return { jsonRpcCode: -32602, code: "bad_request", message: error.message };
   }
+  if (error instanceof ProposedPlanMutationError) {
+    if (error.code === "proposed_plan_revision_conflict") return { jsonRpcCode: -32030, code: "stale_revision", message: error.message };
+    const jsonRpcCode = error.statusCode === 404 ? -32040 : error.statusCode === 400 ? -32602 : -32061;
+    return { jsonRpcCode, code: error.code, message: error.message };
+  }
   if (error instanceof HttpError) {
     const code = error.code;
     const jsonRpcCode = code === "stale_revision" ? -32030 : code === "idempotency_conflict" ? -32031
@@ -3378,6 +3409,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   if (event.entityType === "handoff" && event.action === "handoff.created") return "handoff/created";
   if (event.entityType === "conversation_item" && event.action === "conversation_narration.published") return "item/completed";
   if (event.action === "thread.goal.updated") return "thread/goal/updated";
+  if (event.entityType === "plan" && (event.action === "plan.accepted" || event.action === "plan.refined")) return "turn/plan/updated";
   if (event.entityType === "run" && typeof event.data.turnId === "string") {
     if (event.action === "run.created") return typeof event.data.interventionId === "string" ? "turn/started" : "turn/status/changed";
     if (event.action === "run.completed" || event.action === "run.cancelled") return "turn/completed";

@@ -2726,6 +2726,10 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   listPendingGitHubIntakeDispatches(updatedBefore: string, limit: number): import("./app-server-state-types.js").AppServerStateRecord[];
   putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
   deleteAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean;
+  transferAppServerHandoffGoal(handoffId: string, threadId: string, now: string): {
+    readonly transfer: import("@ling-stack/contracts").LingAppServerHandoffGoalTransfer;
+    readonly events: readonly ControlPlaneEvent[];
+  } | undefined;
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;

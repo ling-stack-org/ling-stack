@@ -16,6 +16,7 @@ export interface ApplyProposedPlanArtifactActionInput {
   readonly workflowTitle?: string;
   readonly workflowSteps?: readonly string[];
   readonly workflowStepPreviews?: readonly ProposedPlanWorkflowStepPreviewInput[];
+  readonly refinedDraft?: Pick<CreateProposedPlanArtifactInput, "title" | "bodyMarkdown">;
 }
 
 export interface ProposedPlanArtifactActionResult {

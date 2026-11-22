@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import type { LingAppServerHandoff, LingAppServerHandoffCreateParams } from "@ling-stack/contracts";
+import type { LingAppServerHandoff, LingAppServerHandoffCreateParams, LingAppServerHandoffGoalTransfer } from "@ling-stack/contracts";
 import { DEFAULT_WORKSPACE_ID, type RunStore } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
@@ -74,13 +74,24 @@ export function readAppServerHandoff(store: RunStore, handoffId: string): LingAp
   return record.handoff;
 }
 
+export function readAppServerHandoffGoalTransfer(store: RunStore, handoffId: string): LingAppServerHandoffGoalTransfer | undefined {
+  return store.getAppServerState("handoff_goal_transfer", handoffId)?.payload as LingAppServerHandoffGoalTransfer | undefined;
+}
+
 export async function checkAppServerHandoff(context: DaemonContext, store: RunStore, handoff: LingAppServerHandoff) {
   const candidate = await captureHandoffCandidate(store.paths.cwd);
   const source = handoffSource(context, store, handoff.sourceThreadId, handoff.sourceTurnId);
+  const transfer = readAppServerHandoffGoalTransfer(store, handoff.handoffId);
+  const goal = transfer ? store.getLingThreadGoal(transfer.threadId) : source.goal;
+  const goalRevision = transfer?.sourceGoalRevision ?? goal?.updatedAt;
   if (candidate.candidateDigest !== handoff.candidate.candidateDigest || source.turn.updatedAt !== handoff.sourceTurnRevision
-    || source.run.id !== handoff.sourceRunId || source.goal?.id !== handoff.goal?.id || source.goal?.updatedAt !== handoff.goal?.updatedAt
+    || source.run.id !== handoff.sourceRunId || goal?.id !== handoff.goal?.id || goalRevision !== handoff.goal?.updatedAt
+    || transfer && source.goal !== undefined
     || source.plan?.id !== handoff.plan?.id || source.plan?.revision !== handoff.plan?.revision) {
     throw new HttpError(409, "handoff_stale", "The source candidate, accepted plan, or evidence changed since the handoff was recorded.");
+  }
+  if (goal?.tokenBudget !== undefined && goal.tokensUsed >= goal.tokenBudget) {
+    throw new HttpError(409, "resume_blocked", "The handed-off Goal has no remaining token budget.");
   }
   return source.thread;
 }

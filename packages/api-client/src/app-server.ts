@@ -61,6 +61,9 @@ import type {
   LingAppServerInitializeParams,
   LingAppServerInitializeResult,
   LingAppServerInputRespondParams,
+  LingAppServerPlanRefineParams,
+  LingAppServerPlanWorkflowAcceptParams,
+  ProposedPlanActionResponse,
   LingAppServerInputRespondResult,
   LingAppServerJsonRpcId,
   LingAppServerNotificationMethod,
@@ -358,6 +361,16 @@ export class LingAppServerClient {
   async bindWorkItemWorkflow(params: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams): Promise<import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindResult> {
     await this.connect();
     return await this.request("workItem/workflow/bind", params);
+  }
+
+  async refinePlan(params: LingAppServerPlanRefineParams): Promise<ProposedPlanActionResponse> {
+    await this.connect();
+    return this.request("plan/refine", params);
+  }
+
+  async acceptPlanAsWorkflow(params: LingAppServerPlanWorkflowAcceptParams): Promise<ProposedPlanActionResponse> {
+    await this.connect();
+    return this.request("plan/accept", params);
   }
 
   async startThread(params: Record<string, unknown>): Promise<unknown> {

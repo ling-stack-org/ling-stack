@@ -46,6 +46,12 @@ const stringArraySchema: LingAppServerJsonSchema = { type: "array", items: strin
 
 const threadTarget = { threadId: stringSchema };
 const workItemTarget = { workItemId: stringSchema };
+const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: integerSchema };
+const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema, taskId: stringSchema,
+  workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
+const planWorkflowStep = objectWith({ title: stringSchema, stageId: stringSchema, dependsOnStageIds: stringArraySchema,
+  ownerId: stringSchema, ownerLabel: stringSchema, requiredTools: stringArraySchema,
+  requiredDecision: objectWith({ question: stringSchema, options: stringArraySchema }, ["question", "options"]) }, ["title"]);
 const journalFields = { id: stringSchema, recordedAt: stringSchema, pending: booleanSchema };
 const journalRequired = ["id", "kind", "recordedAt", "pending"];
 const journalEntry = { oneOf: [
@@ -195,7 +201,11 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "plan/read":
       return { params: objectWith({ ...threadTarget, planId: stringSchema, limit: integerSchema }), result };
     case "plan/accept":
-      return { params: objectWith({ ...threadTarget, planId: stringSchema, expectedRevision: integerSchema }, ["threadId", "planId"]), result };
+      return { params: objectWith({ ...planTarget, mode: { enum: ["workflow"] }, workflowTitle: stringSchema,
+        workflowStepPreviews: { type: "array", items: planWorkflowStep } }, ["threadId", "planId"]), result: planActionResult };
+    case "plan/refine":
+      return { params: objectWith({ ...planTarget, draft: objectWith({ title: stringSchema, bodyMarkdown: stringSchema }, ["title", "bodyMarkdown"]) },
+        ["threadId", "planId", "expectedRevision"]), result: planActionResult };
     case "item/read":
       return { params: objectWith({ ...threadTarget, itemId: stringSchema }, ["threadId", "itemId"]), result };
     case "context/inspect":
@@ -385,7 +395,11 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "handoff/read":
       return { params: objectWith({ handoffId: stringSchema }, ["handoffId"]), result };
     case "handoff/resume":
-      return { params: objectWith({ handoffId: stringSchema, providerPresetId: stringSchema }, ["handoffId", "providerPresetId"]), result };
+      return { params: objectWith({ handoffId: stringSchema, providerPresetId: stringSchema }, ["handoffId", "providerPresetId"]),
+      result: objectWith({ cwd: stringSchema, handoffId: stringSchema, thread: objectSchema, replayed: booleanSchema,
+        goalTransfer: objectWith({ goalId: stringSchema, sourceThreadId: stringSchema, threadId: stringSchema,
+          sourceGoalRevision: stringSchema, transferredAt: stringSchema },
+        ["goalId", "sourceThreadId", "threadId", "sourceGoalRevision", "transferredAt"]) }, ["cwd", "handoffId", "thread", "replayed"]) };
     case "github/intake/policy/list":
       return { params: objectSchema, result };
     case "github/intake/read":

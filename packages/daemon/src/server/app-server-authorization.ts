@@ -110,7 +110,7 @@ export function revokeAppServerGrant(store: RunStore, grantId: string, expectedR
 const serverMethods = new Set(["initialize", "server/ping", "server/capabilities"]);
 const threadReads = new Set([
   "thread/read", "thread/resume", "thread/snapshot", "thread/turns/list", "thread/items/list", "thread/events/read",
-  "thread/subscribe", "thread/unsubscribe", "thread/mode/get", "thread/goal/get", "item/read", "context/inspect", "artifact/read",
+  "thread/subscribe", "thread/unsubscribe", "thread/mode/get", "thread/goal/get", "plan/read", "item/read", "context/inspect", "artifact/read",
 ]);
 const workspaceReads = new Set(["model/list", "skill/read", "permissionProfile/list"]);
 const threadControls = new Set(["turn/start", "turn/queue", "turn/interrupt", "turn/resume"]);

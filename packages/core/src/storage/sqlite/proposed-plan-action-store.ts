@@ -36,7 +36,7 @@ export class SqliteProposedPlanActionStore {
       }
       if (input.action === "save") return { plan: this.update(plan, { savedAt: now }, now) };
       if (input.action === "archive") return { plan: this.update(plan, { status: "archived", archivedAt: plan.archivedAt ?? now }, now) };
-      if (input.action === "refine") return { plan: this.refine(plan, now) };
+      if (input.action === "refine") return { plan: this.refine(plan, now, input.refinedDraft) };
       if (input.action === "accept" && plan.acceptedTaskId) return { plan, taskId: plan.acceptedTaskId, runId: plan.acceptedRunId };
       if (input.action === "convert-workflow" && plan.acceptedWorkflowId) return { plan, workflowId: plan.acceptedWorkflowId,
         workflowStepId: plan.acceptedWorkflowStepId, runId: plan.acceptedRunId };
@@ -100,7 +100,7 @@ export class SqliteProposedPlanActionStore {
     });
   }
 
-  private refine(parent: ProposedPlanArtifact, now: string): ProposedPlanArtifact {
+  private refine(parent: ProposedPlanArtifact, now: string, draft?: ApplyProposedPlanArtifactActionInput["refinedDraft"]): ProposedPlanArtifact {
     const group = parent.planGroupId ?? parent.id;
     if (!Number.isSafeInteger(parent.version ?? 1) || (parent.version ?? 1) < 1) {
       throw new ProposedPlanMutationError("proposed_plan_lineage_conflict", "The parent plan has an invalid lineage version.");
@@ -112,6 +112,9 @@ export class SqliteProposedPlanActionStore {
         || child.version !== (parent.version ?? 1) + 1) {
         throw new ProposedPlanMutationError("proposed_plan_lineage_conflict", "The existing refined successor has inconsistent lineage.");
       }
+      if (draft && (draft.title !== child.title || draft.bodyMarkdown !== child.bodyMarkdown)) {
+        throw new ProposedPlanMutationError("proposed_plan_revision_conflict", "Review the existing successor before editing its draft.");
+      }
       return child;
     }
     const version = (parent.version ?? 1) + 1;
@@ -119,7 +122,8 @@ export class SqliteProposedPlanActionStore {
     const child = this.ports.upsertProposedPlanArtifact({ id: createProposedPlanArtifactId(), threadId: parent.threadId,
       channelId: parent.channelId, goalId: parent.goalId, sourceAgentId: parent.sourceAgentId, ownerAgentId: parent.ownerAgentId,
       sourceTurnId: parent.sourceTurnId, sourceMessageId: parent.sourceMessageId, sourceRunId: parent.sourceRunId,
-      parentPlanId: parent.id, planGroupId: group, version, title: parent.title, bodyMarkdown: parent.bodyMarkdown, status: "draft" }, now);
+      parentPlanId: parent.id, planGroupId: group, version,
+      title: draft?.title ?? parent.title, bodyMarkdown: draft?.bodyMarkdown ?? parent.bodyMarkdown, status: "draft" }, now);
     this.update(parent, { supersededByPlanId: child.id,
       ...(parent.status === "draft" && !proposedPlanHasAcceptance(parent) ? { status: "superseded" as const } : {}) }, now);
     return child;

@@ -126,6 +126,45 @@ export async function runLingAppServerMcp(
         previousWorkflowId: objectId.optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.bindWorkItemWorkflow(params)));
+    const plan = { threadId: objectId, planId: objectId, expectedRevision: z.number().int().positive() };
+    if (methods.has("plan/refine")) server.registerTool("ling_plan_refine", {
+      description: "Create the next draft from a Ling Plan at its current revision.",
+      inputSchema: z.strictObject({ ...plan, draft: z.strictObject({
+        title: z.string().min(1).max(500), bodyMarkdown: z.string().min(1).max(65_536),
+      }).optional() }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.refinePlan(params)));
+    if (methods.has("plan/accept")) server.registerTool("ling_plan_accept_workflow", {
+      description: "Accept a Plan revision as a staged Workflow using the supplied participant and dependency previews.",
+      inputSchema: z.strictObject({ ...plan, workflowTitle: z.string().min(1).max(500).optional(),
+        workflowStepPreviews: z.array(z.strictObject({
+          stageId: objectId, title: z.string().min(1).max(500),
+          ownerId: objectId.optional(), ownerLabel: z.string().min(1).max(160).optional(),
+          dependsOnStageIds: z.array(objectId).max(50).optional(),
+          requiredTools: z.array(z.enum(["read", "grep", "find", "ls", "bash", "edit", "write"])).max(7).optional(),
+          requiredDecision: z.strictObject({
+            question: z.string().min(1).max(500), options: z.array(z.string().min(1).max(200)).min(2).max(12),
+          }).optional(),
+        })).min(1).max(50),
+      }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.acceptPlanAsWorkflow({ ...params, mode: "workflow" })));
+    if (methods.has("handoff/create")) server.registerTool("ling_handoff_create", {
+      description: "Seal the current candidate and the latest settled Ling Turn for a handoff.",
+      inputSchema: z.strictObject({ threadId: objectId, turnId: objectId, idempotencyKey: requestKey,
+        nextInstruction: z.string().min(1).max(8192) }),
+      annotations: { idempotentHint: true },
+    }, async params => describe(await client.createHandoff(params)));
+    if (methods.has("handoff/read")) server.registerTool("ling_handoff_read", {
+      description: "Read a sealed Ling handoff.",
+      inputSchema: z.strictObject({ handoffId: objectId }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.readHandoff(params)));
+    if (methods.has("handoff/resume")) server.registerTool("ling_handoff_resume", {
+      description: "Continue a sealed Ling handoff in its successor conversation and transfer the accepted Goal with its usage and budget.",
+      inputSchema: z.strictObject({ handoffId: objectId, providerPresetId: objectId }),
+      annotations: { idempotentHint: true },
+    }, async params => describe(await client.resumeHandoff(params)));
     if (methods.has("changes/capture")) server.registerTool("ling_changes_capture", {
       description: "Capture the current working-tree candidate and its coverage.",
       inputSchema: z.strictObject({ sourceWorktree: changeWorktree.optional() }),

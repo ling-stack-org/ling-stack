@@ -6,7 +6,7 @@ import type { ConversationContextProjectionMetadata } from "./conversation-conti
 import type { RunSession } from "./runtime.js";
 import type { ProviderPreset } from "./providers.js";
 import type { SkillDefinition, SkillRegistryEntry } from "./skills.js";
-import type { LingThread, LingThreadGoal } from "./threads.js";
+import type { LingThread, LingThreadGoal, ProposedPlanWorkflowStepPreview } from "./threads.js";
 import type { LingTurn, LingTurnRun } from "./turns.js";
 import type { ManagedWorktreeEntry, ManagedWorktreeOwnerKind, WorktreeRecoverySnapshot } from "./worktrees.js";
 import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "./user-input.js";
@@ -106,6 +106,7 @@ export const LING_APP_SERVER_METHODS = [
   "thread/mode/set",
   "plan/read",
   "plan/accept",
+  "plan/refine",
   "thread/goal/get",
   "thread/goal/set",
   "thread/goal/pause",
@@ -677,6 +678,24 @@ export interface LingAppServerWorkItemWorkflowBindResult extends LingAppServerWo
   readonly replayed: boolean;
 }
 
+export interface LingAppServerPlanRefineParams {
+  readonly cwd?: string;
+  readonly threadId: string;
+  readonly planId: string;
+  readonly expectedRevision: number;
+  readonly draft?: { readonly title: string; readonly bodyMarkdown: string };
+}
+
+export interface LingAppServerPlanWorkflowAcceptParams {
+  readonly cwd?: string;
+  readonly threadId: string;
+  readonly planId: string;
+  readonly expectedRevision: number;
+  readonly mode: "workflow";
+  readonly workflowTitle?: string;
+  readonly workflowStepPreviews: readonly ProposedPlanWorkflowStepPreview[];
+}
+
 export interface LingAppServerWorkItemWorkflowStages {
   readonly workflowId: string;
   readonly planRevision: string;
@@ -1120,7 +1139,16 @@ export interface LingAppServerHandoffResumeResult {
   readonly thread: LingThread;
   readonly turn?: LingTurn;
   readonly run?: RunSession;
+  readonly goalTransfer?: LingAppServerHandoffGoalTransfer;
   readonly replayed: boolean;
+}
+
+export interface LingAppServerHandoffGoalTransfer {
+  readonly goalId: string;
+  readonly sourceThreadId: string;
+  readonly threadId: string;
+  readonly sourceGoalRevision: string;
+  readonly transferredAt: string;
 }
 
 export interface LingAppServerGitHubSubjectParams {

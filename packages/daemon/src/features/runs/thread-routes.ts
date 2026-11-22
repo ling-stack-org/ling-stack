@@ -2388,7 +2388,7 @@ function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanA
   };
 }
 
-function parseProposedPlanActionBody(value: unknown, threadId: string): ProposedPlanActionInput {
+export function parseProposedPlanActionBody(value: unknown, threadId: string): ProposedPlanActionInput {
   if (value === undefined || value === null) {
     return {};
   }
