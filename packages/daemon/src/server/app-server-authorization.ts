@@ -109,8 +109,12 @@ const workItemReads = new Set([
   "workItem/read", "workItem/subscribe", "workItem/unsubscribe", "workItem/evidence/read", "workItem/collaboration/read",
   "workItem/stage/read", "workItem/stage/brief/read", "workItem/coordination/read", "workItem/deliberation/read",
   "workItem/message/read", "workItem/message/list", "workItem/question/read", "workItem/handoff/read",
+  "workItem/coordination/schedule/read",
 ]);
-const workItemControls = new Set(["workItem/pause", "workItem/resume", "workItem/cancel"]);
+const workItemControls = new Set([
+  "workItem/pause", "workItem/resume", "workItem/cancel", "workItem/accept",
+  "workItem/coordination/schedule/set",
+]);
 
 export function grantAllowsMethod(grant: LingAppServerGrant, method: string): boolean {
   if (serverMethods.has(method)) return true;

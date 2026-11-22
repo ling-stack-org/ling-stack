@@ -390,6 +390,9 @@ class RpcConnection {
         throw rpcError(-32021, "capability_denied", "The App Server grant does not authorize this method or subject.");
       }
       if (request.method === "controlPlane.subscribe") {
+        if (this.appServer) {
+          throw rpcError(-32601, "method_not_found", "Use thread/subscribe or workItem/subscribe on the App Server.");
+        }
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
         }
