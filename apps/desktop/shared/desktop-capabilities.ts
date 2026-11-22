@@ -1,5 +1,6 @@
 import type { ComputerUseRuntimeStatus, EngineDiscoveryReport, ManagedInstallStatus, ExecutionEngineConnectionProbe, ExecutionEngineInstallationProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation, ExecutionEngineProfileListResponse, ExecutionEngineProfileResponse,
   ExternalExecutionEngineId, SaveExecutionEngineProfileRequest, SaveExecutionEngineSecretRequest } from "@ling-stack/contracts";
+import type { LingServerPairingMigrationConfirmationV1, LingServerPairingMigrationPublicationRequestV1, LingServerPairingMigrationRequestV1, LingServerPairingMigrationV1 } from "@ling-stack/contracts";
 
 export interface DesktopExecutionEngineCapabilities {
   saveProfileWithSecret(engineId: ExternalExecutionEngineId, request: SaveExecutionEngineSecretRequest): Promise<ExecutionEngineProfileResponse>;
@@ -115,6 +116,8 @@ export interface DesktopMobileAccessCapabilities {
   confirmPairing(): Promise<DesktopMobileAccessStatus>;
   rejectPairing(): Promise<DesktopMobileAccessStatus>;
   revoke(): Promise<DesktopMobileAccessStatus>;
+  preparePairingMigration(request: LingServerPairingMigrationRequestV1): Promise<LingServerPairingMigrationV1>;
+  confirmPairingMigration(request: LingServerPairingMigrationConfirmationV1): Promise<LingServerPairingMigrationPublicationRequestV1>;
 }
 
 export interface DesktopRect {

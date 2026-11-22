@@ -250,6 +250,9 @@ export function collectMaterials(options) {
   for (const path of ["apps/desktop/scripts/native/office-driver", "apps/desktop/scripts/native/locked-control", "apps/desktop/scripts/native/human-evaluation", ...(options.platform === "darwin-arm64" ? ["native/office-local"] : [])]) {
     if (existsSync(join(root, path))) copySource(join(root, path), `sources/repository/${path}`);
   }
+  const peerSource = "packages/daemon/native/ling-peer-worker";
+  copySource(join(root, peerSource), `sources/repository/${peerSource}`);
+  collectPeerWorkerMaterials(root, options.platform, add, components, gaps);
   const electron = resolveInstalledPackage(join(root, "apps/desktop"), "electron");
   if (!electron) gaps.push({ component: "electron", reason: "electron_distribution_missing" });
   else {
@@ -283,6 +286,34 @@ export function collectMaterials(options) {
   add("distribution-manifest.json", json(manifest));
   add("SHA256SUMS.txt", [...material].map(([path, bytes]) => `${sha256(bytes)}  ${path}`).sort().join("\n") + "\n");
   return { manifest, material };
+}
+
+function collectPeerWorkerMaterials(root, platform, add, components, gaps) {
+  const directory = join(root, "packages/daemon/dist/native/ling-peer-worker");
+  const executable = platform === "win32-x64" ? "ling-peer-worker.exe" : "ling-peer-worker";
+  const files = [executable, "build-metadata.json", "THIRD_PARTY_LICENSES.txt"].map(name => join(directory, name));
+  if (files.some(path => !existsSync(path))) {
+    gaps.push({ component: "ling-peer-worker", reason: "native_peer_worker_build_missing" });
+    return;
+  }
+  const [binary, record, notices] = files.map(path => readFileSync(path));
+  const metadata = JSON.parse(record);
+  if (metadata.schema !== "ling.peer-worker.build.v1" || metadata.platform !== platform || metadata.executable !== executable
+    || metadata.sha256 !== sha256(binary) || metadata.noticesSha256 !== sha256(notices)
+    || !/^go\d+\.\d+\.\d+$/u.test(metadata.goVersion ?? "")
+    || !Array.isArray(metadata.dependencies) || metadata.dependencies.length === 0
+    || metadata.dependencies.some(identity => typeof identity !== "string" || !/^[\w./-]+@v[^\s@]+$/u.test(identity))) {
+    throw new Error("distribution_peer_worker_build_mismatch");
+  }
+  const licenseFiles = [add("licenses/go/ling-peer-worker/THIRD_PARTY_LICENSES.txt", notices)];
+  add("inputs/ling-peer-worker/build-metadata.json", record);
+  const scope = "statically linked Ling Server peer worker";
+  components.push({ identifier: `go:toolchain@${metadata.goVersion}`, kind: "go", name: "Go runtime",
+    version: metadata.goVersion, licenseFiles, scope });
+  for (const identity of metadata.dependencies) {
+    const [name, version] = identity.split("@");
+    components.push({ identifier: `go:${identity}`, kind: "go", name, version, licenseFiles, scope });
+  }
 }
 
 export function collectGstackBundleNotices(name, directory, add) {
@@ -586,7 +617,7 @@ export function verifyMaterials({ resources, output, platform, sourceSha }) {
   }
   // Inventory the final expanded resources as evidence. No extension-based license clearance.
   const runtimeFiles = filesBelow(resources, { symlinks: true }).filter(path => !path.startsWith(`${directory}${sep}`));
-  const nativeAndFontInventory = runtimeFiles.filter(path => binaryPattern.test(path) || /\/(?:ling-browser-host|ling-image-sanitizer|ling-sandbox-runner|ling-human-evaluation-helper)$/u.test(posix(path))).map(path => ({ path: posix(relative(resources, path)), sizeBytes: lstatSync(path).size, sha256: sha256(readFileSync(path)) }));
+  const nativeAndFontInventory = runtimeFiles.filter(path => binaryPattern.test(path) || /\/(?:ling-browser-host|ling-image-sanitizer|ling-peer-worker|ling-sandbox-runner|ling-human-evaluation-helper)$/u.test(posix(path))).map(path => ({ path: posix(relative(resources, path)), sizeBytes: lstatSync(path).size, sha256: sha256(readFileSync(path)) }));
   return { schemaVersion: 1, kind: "desktop-distribution-verification", status: "verified", platform, sourceSha: manifest.sourceSha, materialFiles: actual.length + 1, manifestSha256: sha256(readFileSync(join(directory, "distribution-manifest.json"))), limitations, nativeAndFontInventory, scope: "Byte and set verification of embedded collected materials plus inventory of final native/font files; no legal approval or full runtime acceptance claim." };
 }
 

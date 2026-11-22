@@ -25,6 +25,7 @@ export type ApprovalActionType =
   | "node_rerun"
   | "mcp_tool_call"
   | "host_capability"
+  | "device_action"
   | "runtime_permission_request";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
@@ -147,6 +148,7 @@ export type MediaCostApprovalPayload =
     };
 
 export type ApprovalPayload =
+  | import("@ling-stack/contracts").DeviceActionApprovalPayload
   | ({ readonly type: "host_capability"; readonly cwd: string } & HostCapabilityCallV1)
   | {
       readonly type: "file_write";
@@ -242,6 +244,7 @@ export type ApprovalPayload =
 
 export interface ApprovalRequest {
   readonly id: string;
+  readonly deviceTaskId?: string;
   readonly runId?: string;
   readonly taskId?: string;
   readonly mediaJobId?: string;

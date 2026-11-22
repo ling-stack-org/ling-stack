@@ -2,7 +2,7 @@
 
 Status: proposed design, implementation and device acceptance pending
 Owner: Ling platform maintainers
-Last verified: 2026-11-20
+Last verified: 2026-11-22
 Document type: enrollment, peer transport, relay, and synchronization contract
 
 Related documents:
@@ -157,6 +157,33 @@ WebRTC validates the DTLS certificate fingerprint authenticated in that SDP. Ver
 the key, signature, epoch and negotiation scope before installing the remote
 description or accepting candidates. Scope ICE restart to a new route attempt.
 
+For a registered route, the peers read the service instance ID at
+`GET /v1/signaling/instance` and submit ES256-signed messages to
+`POST /v1/signaling`. The active binding supplies each role's key fingerprint.
+The signature covers the instance, installation, application key, epoch, route,
+roles, features, expiry and exact signaling message. Each sender has an ordered
+lane. The other role polls it with a signed, single-use nonce and a cursor. The
+service keeps the signed payloads in memory until expiration. Restart, revoke and
+relay fallback invalidate the earlier signaling scope.
+A signed `transport_config` request retrieves the configured STUN endpoints.
+During relay checks it also retrieves a short-lived coturn credential for its
+own role and the configured TURN listeners. Each listed TURN listener uses the
+same relay credential secret. The credential's `url` identifies the default
+listener for a single-endpoint consumer.
+[Signaling protocol](../../packages/remote-protocol/src/ling-server-signaling.ts)
+
+The Remote Client verifies each polled message against the pinned peer key and
+the current instance, route, epoch, role, features, deadline, and expected sequence.
+It releases a page to the WebRTC adapter after every message verifies. The adapter
+applies the signed SDP and ICE candidates, bounds negotiation time, and creates
+one reliable, ordered `ling-peer.v1` DataChannel. The LAN path uses host candidates,
+the direct path can use the configured STUN services, and the relay path uses the
+issued credential across the configured TURN endpoints. ICE can select a reachable
+TURN/TLS listener when TURN/UDP is unavailable. At cancellation or timeout, the
+adapter closes an incomplete connection and stops processing signaling for that
+negotiation even if a platform operation is still pending.
+[Endpoint negotiation](../../packages/remote-client/src/ling-server-data-channel.ts)
+
 After the DataChannel opens, authenticate again at the Remote Gateway using the
 paired keys and a fresh application session challenge bound to the verified route.
 Perform protocol negotiation and capability filtering before projection or command
@@ -217,6 +244,15 @@ destination networks, and tests per-installation abuse controls. Keep coturn's a
 interface private. Record the maximum remaining lifetime of an allocation when a pair
 is revoked. Gateway authorization uses the live binding independently.
 
+The local operator control API accepts the binding ID, route-attempt ID and role
+at `POST /v1/routes/relay-credential` once the route enters relay checks.
+`POST /v1/routes/transport-config` includes a server-issued credential for a
+connected relay route. The shared secret is supplied to the control plane through
+its transport configuration. The credential expiry in the response matches the
+whole-second expiry in the coturn REST username. Issuance counts are process-local.
+Existing coturn allocations follow the deployment's allocation policy.
+[Control plane](../../packages/daemon/src/features/ling-server/control-plane.ts)
+
 Local execution, including a phone task with an authorized external-device link,
 can continue during a Ling Server outage. A live direct peer route can continue
 within its already authorized lease while it remains reachable. New cross-network
@@ -235,8 +271,46 @@ separate signaling and app protocol versions. The server origin locates the cont
 plane. The pinned Gateway identity identifies the application peer. Update the QR and
 authentication transcripts explicitly for the new route profile. Reuse the existing
 validation, pairing primitives and session handler through typed transport adapters
-in the client and daemon. Existing endpoint paths and routing are a code baseline
-until D12 is implemented and accepted.
+in the client and daemon.
+
+The application session on a verified DataChannel uses the Gateway challenge,
+device proof and application frames from Remote Access. The endpoints derive the
+route context locally from their pinned installation, binding and peer records,
+the route and signaling instance, and the SHA-256 digests of the signed offer and
+answer they installed. Both application signatures cover this context and the
+device-task protocol under Ling Server signing domains. Peers include
+`ling.device-tasks.v4` in their signed signaling features to display and confirm
+device actions with an alternate recovery path. Routes without that feature use
+the `ling.device-tasks.v3` signature transcript and capability profile. The
+Gateway issues the challenge on the ready channel and accepts its proof once on
+that channel. Challenge lifetime is bounded by the route deadline.
+The Gateway rechecks the local pairing and epoch before activating the session.
+
+The Gateway starts sending application frames after authentication. The negotiated
+route deadline bounds the first authentication. A signed Gateway poll receipt from
+the same Ling Server instance renews the active route's authority for up to 15 seconds.
+An explicit server denial, a changed server instance, an expired authority deadline,
+or a Daemon shutdown ends the connection. A replacement session retains the device
+pairing and closes the earlier connection. Revoking the local pairing also ends
+pending sessions and removes local pairing authority.
+
+A phone with a verified Ling Server profile tries direct ICE and then Ling Relay.
+A route that replaces the previous offer uses a new attempt ID and ends the prior
+signaling lane. If the peer transport is unavailable, Mobile can reconnect to the
+original paired Gateway WebSocket using its existing proof and subprotocol negotiation.
+Identity, signature, and redirect errors terminate the connection attempt. On reconnect
+the client reloads the workspace projection and queries the same PC task journal by
+its task-local cursor.
+[Gateway channel admission](../../packages/daemon/src/features/remote-access/controller.ts)
+[Remote Client authentication](../../packages/remote-client/src/session-authentication.ts)
+[Mobile peer connector](../../apps/mobile/src/remote/mobile-ling-server-peer.ts)
+
+Desktop package commands build `ling-peer-worker` using the pinned Go module.
+The package places the executable, build metadata, and third-party notices in
+the `ling-peer-worker` resources directory. Desktop passes its resolved path to its
+Daemon, which exchanges messages with the worker through private process pipes.
+A source checkout can build the worker with
+`corepack pnpm --filter @ling-stack/daemon build:peer-worker`.
 
 To switch an existing pairing, the PC owner opts in locally, the PC signs a new
 server-bound peer record using its existing Gateway identity, and the phone verifies
@@ -244,6 +318,68 @@ the new server pin through the local confirmation flow. When the existing keys o
 protocol cannot prove the new binding, perform local QR pairing. Keep conversation
 IDs, read state and durable receipts with their owner through the migration. A changed
 server identity needs its own verified trust transition.
+
+The Gateway's local Mobile Access management API prepares the migration at
+`POST /v1/mobile-access/pairing-migration/prepare`. The request supplies a versioned
+profile and the command IDs to retain. The PC reads the active Gateway origin,
+both peer fingerprints, device epoch and workspace binding from its existing
+pairing. The profile carries the new server origin, application fingerprint,
+installation revision, proposed peer binding ID and separate signaling and Gateway
+protocol majors. The preview keeps command IDs and payload digests from the current
+device's owner journal.
+
+`POST /v1/mobile-access/pairing-migration/confirm` consumes the preview's migration
+ID and confirmation digest within five minutes. The Gateway rechecks the pair
+and receipt references before signing the exact record under
+`ling.server.pairing_migration.v1`. SQLite retains the signature and returns the
+same record for an exact retry from the active pairing. The original Gateway origin
+continues to serve its existing session and the owner journal retains the original
+receipts.
+[Gateway migration entry point](../../packages/daemon/src/features/remote-access/controller.ts)
+
+The paired PC's Mobile Access settings show the exact server origin, public-key
+fingerprint, installation revision, binding ID and retained command IDs for local
+confirmation. The operator can export the raw signed record for Mobile or the
+publication JSON that includes the Gateway public key for the server administrator.
+[PC Mobile Access settings](../../apps/web/src/features/settings/mobile-access/MobileAccessSettingsPage.tsx)
+
+On the Ling Server admin listener, `POST /v1/pairing-migrations` accepts the
+confirmed record as `confirmation` and the existing Gateway's P-256 public key as
+`gatewayPublicKeyJwk`. It checks the Gateway signature, the confirmation lifetime,
+and the active installation's origin, application key fingerprint and revision.
+The signed peer keys and epoch become the new binding. The control plane commits
+the binding and publication receipt in one SQLite transaction. An exact retry
+returns the original receipt while the binding and installation stay current.
+[Ling Server control plane](../../packages/daemon/src/features/ling-server/control-plane.ts)
+
+On the phone, open **My → Ling Server**, paste the signed record and check the
+origin, fingerprint and binding against the PC confirmation. When the user confirms,
+the Remote Client validates the record against the paired Gateway key, workspace,
+device epoch and local key. It then signs a fresh nonce with the existing Mobile key
+and sends it to `POST /v1/pairing-migrations/verify` at the confirmed HTTPS origin.
+Ling Server checks that the publication, binding and installation are current, then
+signs the nonce, exact profile, and binding with the configured application key.
+The app verifies the response and stores the profile in the existing secure binding.
+The current session continues using the paired Gateway connection until route activation.
+[Mobile confirmation](../../apps/mobile/src/features/pairing/LingServerPairingScreen.tsx) ·
+[Remote Client verification](../../packages/remote-client/src/ling-server-pairing-pin.ts)
+
+A paired Mobile can request a route at `POST /v1/rendezvous`. Gateway polls
+the same endpoint using its own pairing key. Each signed request binds the server
+instance, installation revision, peer epoch, binding, nonce and expiry. The
+server allocates the exact route named in the Mobile proof and signs a receipt
+that covers the caller's request and the original Mobile proof. Gateway validates
+both signatures before applying the route. The signaling client pins the server
+instance from the receipt. A control service restart clears the live offer.
+
+Android builds that use native libwebrtc can negotiate channel ID 0 using the
+signed `ling.peer.negotiated-data-channel.v1` feature. Both peers create the same
+ordered, reliable channel locally. Existing in-band clients use their original
+channel negotiation. A client configured for both transports can try the paired
+Gateway WebSocket when a peer transport is unavailable. A peer proof or binding
+failure terminates that connection attempt.
+[Rendezvous entry point](../../packages/daemon/src/features/ling-server/rendezvous.ts) ·
+[Remote Client verification](../../packages/remote-client/src/ling-server-rendezvous.ts)
 
 ### 6.2 Reconnect and cursors
 
@@ -255,6 +391,12 @@ the snapshot read. Advance the acknowledged cursor only after applying its event
 A cold start without the matching snapshot requests a new one. Transport sequence
 and connection IDs change when a peer session reopens. The owning journal identity and
 accepted command IDs persist.
+
+The peer journal scopes its cursor to the transport generation and direction. It
+returns a snapshot requirement for an old generation or a missing frame. The owner
+commits the frame and its sequence together. On route cutover, each direction starts
+at sequence zero in the new generation. Sending, receiving and resuming check the
+current binding epoch, including when a request repeats a retained frame.
 
 Keep one durable logical command ID for retries within the existing retry horizon.
 The owner returns the recorded receipt for the same command and normalized input and
@@ -290,6 +432,46 @@ distinct states. This helps a user distinguish a reachable server from a synced 
 or a reachable external device.
 
 ## 8. Deployment and operations
+
+### Standalone control service
+
+Run `ling-server /path/to/server.json` from the Daemon package. A source checkout
+can run `node packages/daemon/dist/ling-server-cli.js /path/to/server.json` after
+building that package. Configuration paths below resolve relative to the JSON file.
+
+```json
+{
+  "host": "0.0.0.0",
+  "port": 443,
+  "adminPort": 17894,
+  "databasePath": "state/ling-server.sqlite",
+  "authTokenFile": "secrets/operator-token",
+  "applicationIdentityKeyFile": "secrets/application-identity.pem",
+  "tls": {
+    "certFile": "tls/fullchain.pem",
+    "keyFile": "tls/private-key.pem"
+  },
+  "transport": {
+    "stunUrls": ["stun:stun.example.com:3478"],
+    "turnUrls": ["turn:relay.example.com:3478?transport=udp", "turns:relay.example.com:443?transport=tcp"],
+    "relaySharedSecretFile": "secrets/coturn-rest-secret"
+  }
+}
+```
+
+The TLS listener exposes health and signed signaling. The administrator binds
+installations and routes using the bearer-token API on the separate
+`127.0.0.1` listener. Configure coturn on the advertised STUN/TURN addresses and
+supply its REST shared secret through the named file. SQLite preserves the control
+metadata across process restart.
+
+Mobile pin verification uses `applicationIdentityKeyFile` with an unencrypted P-256
+PEM private key. Register the fingerprint of its canonical public JWK with the active
+installation and use the same fingerprint in the PC migration profile. The TLS
+certificate and application key identify their respective protocol layers.
+[CLI and configuration](../../packages/daemon/src/ling-server-cli.ts)
+
+### Deployment topology
 
 | Listener or component | Deployment |
 | --- | --- |

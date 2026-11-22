@@ -1,0 +1,20 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'com.lingstack.mobile'
+version = '0.0.1'
+
+android {
+  namespace 'expo.modules.lingdevicetransport'
+  defaultConfig {
+    versionCode 1
+    versionName '0.0.1'
+  }
+}
+
+dependencies {
+  implementation 'com.github.mwiede:jsch:2.28.8'
+  implementation 'org.bouncycastle:bcprov-jdk18on:1.87'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.apache.sshd:sshd-core:2.20.1'
+}

@@ -3,10 +3,17 @@ import { createHash, createHmac, createPublicKey, verify } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import test from "node:test";
 import {
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  type LingServerGatewayRouteV1,
+} from "@ling-stack/contracts";
+import {
   authChallengeSigningBytes,
   authProofSigningBytes,
   commandHashBytes,
   decodeBase64Url,
+  domainSeparatedCanonicalBytes,
   encodeBase64Url,
   hashResumeCursors,
   pairingAcceptedSigningBytes,
@@ -73,6 +80,44 @@ test("shared pairing and auth challenge fixtures match bytes and ES256 signature
     authProofSigningBytes(fixture.authProof.input),
     deviceKey,
   );
+});
+
+test("routed Gateway signing prefers journal watch v5 and keeps the v3 and v4 transcripts", () => {
+  const challenge = fixture.authChallenge.input;
+  const proof = fixture.authProof.input;
+  const route: LingServerGatewayRouteV1 = {
+    version: 1,
+    instanceId: "server-1",
+    installationId: "installation-1",
+    applicationKeyFingerprint: fixture.gatewayIdentity.fingerprint,
+    serverOrigin: "https://ling.example",
+    bindingId: "binding-1",
+    routeAttemptId: "route-1",
+    preferredRoute: "relay",
+    peerEpoch: proof.deviceEpoch,
+    gatewayId: proof.gatewayId,
+    mobileDeviceId: proof.deviceId,
+    gatewayKeyFingerprint: fixture.gatewayIdentity.fingerprint,
+    mobileKeyFingerprint: fixture.deviceIdentity.fingerprint,
+    protocolMajor: 1,
+    features: ["ordered-channel"],
+    expiresAt: challenge.expiresAt,
+    offerDigest: encodeBase64Url(sha256(Uint8Array.of(1))),
+    answerDigest: encodeBase64Url(sha256(Uint8Array.of(2))),
+  };
+  for (const [features, subprotocol] of [
+    [route.features, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3],
+    [[...route.features, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4], REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4],
+    [[...route.features, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5], REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5],
+  ] as const) {
+    const signedRoute = { ...route, features };
+    assert.deepEqual(authChallengeSigningBytes(challenge, signedRoute), domainSeparatedCanonicalBytes("ling.server.gateway.challenge.v1", {
+      subprotocol, route: signedRoute, input: challenge,
+    }));
+    assert.deepEqual(authProofSigningBytes(proof, signedRoute), domainSeparatedCanonicalBytes("ling.server.gateway.proof.v1", {
+      subprotocol, route: signedRoute, input: proof,
+    }));
+  }
 });
 
 test("pairing proof HMAC uses the exact same canonical transcript", () => {

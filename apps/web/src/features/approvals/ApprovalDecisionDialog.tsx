@@ -13,6 +13,7 @@ import { CheckCircle2 } from "lucide-react";
 import { useRef, type RefObject } from "react";
 import { useI18n } from "../../i18n.js";
 import type { ApprovalRequest } from "../../types.js";
+import { ApprovalPayloadSummary } from "./ApprovalPayloadSummary.js";
 import type { ApprovalResolution } from "./types.js";
 
 export function ApprovalDecisionDialog({
@@ -68,6 +69,7 @@ export function ApprovalDecisionDialog({
               ? "High-risk approval. Review the payload and reason, then confirm."
               : "Review the approval payload, then confirm.")}
           </InlineFeedback>
+          {approval.actionType === "device_action" ? <ApprovalPayloadSummary approval={approval} /> : null}
           <Field
             error={reasonError ? t(reasonError) : undefined}
             label={t("Decision reason")}

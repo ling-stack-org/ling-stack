@@ -315,6 +315,17 @@ Node journals and attempts belong to their owners. If the model service is unava
 run a supported deterministic local playbook using available evidence and current
 authorization. Mark what remains pending for a later model turn or operator.
 
+The local PC diagnosis route and the enrolled Linux diagnosis route accept an
+optional `providerPresetId` and `symptom`. The Daemon uses Pi to select an ordered
+set of available diagnosis steps. It validates the output, binds it to the owner
+and current capability snapshot, and records it before dispatch. The same routes
+run the local playbook when the operator leaves the preset unselected. A request
+can specify `fallbackProviderPresetId` alongside the primary preset. If the
+primary runner is unavailable, the Daemon rebuilds the context for the fallback
+preset on the same task. The local playbook covers a model outage when no runner
+is available. The task trace records the accepted source and provider handoff.
+[Diagnosis routes](../../packages/daemon/src/features/device-support/routes.ts)
+
 ## 9. Resource and adapter registry
 
 The catalog indexes versioned device profiles, codecs, protocol descriptions, register
@@ -336,6 +347,32 @@ the target and policy. When supported, restore the previous compatible resource 
 activation fails. The lifecycle records both the activation outcome and any verification
 still required. [Protocol profiles and captures](ling-hardware-protocol-workbench.md)
 
+### Daemon resource imports
+
+The daemon reads the resource publisher trust file at startup from
+`deviceSupport.resourceTrustFile` or `LING_STACK_DEVICE_RESOURCE_TRUST_FILE`.
+The version 1 JSON document contains an `allowedLicenses` array of license
+identifiers and a `signingKeys` array. Each key has a `keyId` and
+`publicKeyPem` containing an Ed25519 public key in SPKI PEM format.
+
+Publishers sign the canonical JSON bytes of
+`{ purpose: "ling.device-resource-manifest.v1", keyId, manifest }`. The signed
+`manifest` object contains every manifest field except `signature`, including
+the SHA-256 digest of the file. Its signature field uses
+`ed25519:<keyId>:<base64url-signature>`.
+
+The local operator imports a manifest and its base64url-encoded bytes through
+`POST /v1/device-support/resources` with the JSON keys `manifest` and
+`payloadBase64Url`. The JSON import accepts up to 4 MiB of resource bytes. The
+registry exposes the active record through `GET /v1/device-support/resources/:resourceId`.
+Append `/disable` or `/rollback` and use POST to change its active state.
+The daemon checks publisher trust, license, digest, dependencies and host
+compatibility before activation. Active payload reads and rollbacks recheck the
+current trust policy. An unavailable rollback leaves the current revision active.
+Adapter installation and applying a profile to a particular device remain
+separate operations owned by the relevant runtime.
+[Resource routes](../../packages/daemon/src/features/device-support/resource-routes.ts)
+
 ## 10. Safety, security, and secrets
 
 The device broker evaluates actual target permissions, current capability and physical
@@ -346,12 +383,21 @@ A changed or unavailable condition prevents additional writes for that step. A S
 request follows the owning adapter's cancel semantics and verifies the effect where
 the target exposes one.
 
+The local Daemon exposes `GET /v1/device-support/devices/:deviceId/dispatch-stop`
+for the current stop state. The operator activates or clears it with `PUT` and
+the fields `active` and `expectedRevision`. Activation journals a stop for the
+currently leased task and requests cancellation from its adapter. New writes are
+blocked while diagnostics can run once the active lease drains. A device-side
+result remains unknown until readback establishes what happened.
+[Daemon device routes](../../packages/daemon/src/features/device-support/routes.ts)
+
 Support normal device controls and documented configuration actions through their
 typed capabilities. Ling uses authorized vehicle observations and head-unit app
 maintenance for the vehicle cases. Safety-critical vehicle, lock, alarm, power and
 firmware operations use the certified controller or the operator's authorized vendor
 workflow. Ling can collect permitted diagnostics and verification evidence. Device
 policies and safety interlocks remain effective on the controller.
+A critical action admission can include a certified-controller or vendor-workflow readiness record. The record binds target, capability, policy revision, controller identity, readiness digest, operator handoff digest and expiry. The fabric stores the evidence references and digests, then requires fresh readback after the controller reports completion.
 
 The execution host resolves a secret reference only for the authorized local action.
 Journal the reason, target and policy decision. The model and peer projections receive
@@ -366,6 +412,21 @@ Keep ownership, operational health and current task outcome as separate records.
 Discovery produces a candidate. Enrollment binds target and connector identities and
 their authorization. A validated profile establishes available capabilities.
 Health and maintenance follow the latest verified device and adapter observations.
+
+The default workspace's authenticated loopback endpoint
+`GET /v1/device-support/fleet/health` reports the registered devices, their profile
+and adapter revisions, known firmware and the matching capability snapshot.
+An enrolled Edge Runtime contributes its revision and last-seen time separately
+from the device observation. [Fleet projection](../../packages/core/src/device-fabric.ts)
+
+The local Daemon exposes `GET /v1/device-support/devices/:deviceId/retirement` for
+the retirement preview. The corresponding `PUT` takes
+`expectedProfileRevision` and `expectedConnectionRevision` from that preview.
+Retirement invalidates the live capability snapshot and stops the leased task
+in the same journal transaction. Repeating the confirmed request returns the
+recorded retirement. A dispatched write keeps its attempt and any late receipt
+with an unknown outcome. Historical journal, trace and conformance reads retain
+their workspace scope. [Daemon routes](../../packages/daemon/src/features/device-support/routes.ts)
 
 An ownership transfer revokes the previous authorization and validates the new holder
 and credentials before offering more actions. Ongoing or unknown attempts remain
@@ -387,6 +448,25 @@ evidence IDs. Link project WorkUnit or model turn when available. Device capture
 retains provenance at the host. A shared trace carries authorized references and
 redacted status across hosts. Use OpenTelemetry conventions where they fit existing
 observability.
+
+The local operator reads a Daemon-owned trace through
+`GET /v1/device-support/tasks/:taskId/trace` on the authenticated loopback API.
+The projection uses the same workspace and trace identity as the owner journal.
+It links the accepted plan, the exact adapter/profile and connection used for each
+attempt, and the public evidence references from verification or reconciliation.
+An interrupted dispatch keeps its status when a later readback verifies the
+target. Each readback records its own connection revision.
+[Trace projection](../../packages/core/src/device-task-trace.ts)
+
+Use `GET /v1/device-support/tasks/:taskId/conformance?attemptId=...` on the same
+authenticated loopback API to capture a report from the owner journal. The report
+retains the journal sequence, target, adapter and profile revisions, declared
+transport when it is unambiguous, and the model turn when the attempt has one.
+Each check cites its snapshot, trace span or public observation. A readback needs
+same-target evidence. Checks with missing evidence have status `skip`. A later
+readback creates a report for the new journal sequence. Supply
+`?reportId=...` to retrieve a previously captured report from the same task.
+[Report projection](../../packages/core/src/device-task-conformance.ts)
 
 | Test layer | Evidence |
 | --- | --- |

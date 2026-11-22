@@ -1,0 +1,446 @@
+import { createPrivateKey, createPublicKey, sign, timingSafeEqual, verify } from "node:crypto";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
+import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
+import {
+  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
+  type LingServerPairingPinProofV1, type LingServerPeerBindingV1, type LingServerRouteAttemptV1, type RemoteP256PublicJwkV1,
+} from "@ling-stack/contracts";
+import {
+  decodeBase64Url, encodeBase64Url, fingerprintPublicJwkSync, lingServerPairingMigrationSigningBytes,
+  lingServerPairingPinChallengeBytes, lingServerPairingPinProofBytes, matchesPublicJwkFingerprint, RemoteProtocolError,
+  validateLingServerPairingMigrationPublicationRequestV1, validateLingServerPairingPinRequestV1, validateRemoteP256PublicJwkV1,
+} from "@ling-stack/remote-protocol";
+import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
+import { LingServerSignaling } from "./signaling.js";
+import { LingServerRendezvous } from "./rendezvous.js";
+
+const MAX_BODY_BYTES = 256 * 1024;
+
+export interface LingServerControlPlaneOptions {
+  readonly host?: string;
+  readonly port?: number;
+  readonly authToken: string;
+  readonly now?: () => string;
+  readonly registry?: LingServerPeerRegistry;
+  readonly databasePath?: string;
+  readonly store?: SqliteLingServerStore;
+  readonly applicationIdentityPrivateKeyPem?: string;
+  readonly tls?: Pick<ServerOptions, "cert" | "key">;
+  readonly adminPort?: number;
+  readonly transport?: {
+    readonly protocolMajor?: number;
+    readonly features?: readonly string[];
+    readonly stunUrls?: readonly string[];
+    readonly turnUrls?: readonly string[];
+    readonly relaySharedSecret?: string | Uint8Array;
+    readonly maxRelayCredentialTtlMs?: number;
+    readonly maxActiveRelayCredentialsPerBinding?: number;
+    readonly maxFrameBytes?: number;
+  };
+}
+
+export class LingServerControlPlane {
+  readonly registry: LingServerPeerRegistry;
+  readonly #host: string;
+  readonly #port: number;
+  readonly #authToken: string;
+  readonly #applicationIdentity?: ReturnType<typeof createApplicationIdentity>;
+  readonly #now: () => string;
+  readonly #store?: SqliteLingServerStore;
+  readonly #ownsStore: boolean;
+  readonly #transportOptions: NonNullable<LingServerControlPlaneOptions["transport"]>;
+  readonly #relayIssuer?: LingServerRelayCredentialIssuer;
+  readonly #tls?: LingServerControlPlaneOptions["tls"];
+  readonly #adminPort?: number;
+  #storeClosed = false;
+  #server?: HttpServer | HttpsServer;
+  #adminServer?: HttpServer;
+  #signaling?: LingServerSignaling;
+  #rendezvous?: LingServerRendezvous;
+  #signalExpiryTimer?: ReturnType<typeof setInterval>;
+
+  constructor(options: LingServerControlPlaneOptions) {
+    if (!options.authToken.trim()) throw new Error("Ling Server control auth token is required");
+    if (options.applicationIdentityPrivateKeyPem !== undefined) {
+      this.#applicationIdentity = createApplicationIdentity(options.applicationIdentityPrivateKeyPem);
+    }
+    this.#store = options.store ?? (options.databasePath ? new SqliteLingServerStore({ databasePath: options.databasePath }) : undefined);
+    this.#ownsStore = options.store === undefined && this.#store !== undefined;
+    this.registry = options.registry ?? new LingServerPeerRegistry({ store: this.#store });
+    this.#host = options.host ?? "127.0.0.1";
+    this.#port = options.port ?? 0;
+    this.#authToken = options.authToken;
+    this.#tls = options.tls;
+    this.#adminPort = options.adminPort;
+    this.#now = options.now ?? (() => new Date().toISOString());
+    this.#transportOptions = options.transport ?? {};
+    if (options.transport?.relaySharedSecret !== undefined) {
+      this.#relayIssuer = new LingServerRelayCredentialIssuer({
+        turnUrls: options.transport.turnUrls ?? [],
+        sharedSecret: options.transport.relaySharedSecret,
+        now: this.#now,
+        maxTtlMs: options.transport.maxRelayCredentialTtlMs,
+        maxActiveCredentialsPerBinding: options.transport.maxActiveRelayCredentialsPerBinding,
+      });
+    }
+  }
+
+  async start(): Promise<{ readonly host: string; readonly port: number }> {
+    if (this.#server?.listening) return this.address();
+    const handler = (request: IncomingMessage, response: ServerResponse) => {
+      void this.handleRequest(request, response, this.#adminPort === undefined);
+    };
+    const limits = { headersTimeout: 10_000, requestTimeout: 15_000 };
+    const server = this.#tls ? createHttpsServer({ ...this.#tls, ...limits, minVersion: "TLSv1.2" }, handler)
+      : createServer(limits, handler);
+    const adminServer = this.#adminPort === undefined ? undefined : createServer(limits, (request, response) => {
+      void this.handleRequest(request, response);
+    });
+    try {
+      if (adminServer) await listen(adminServer, this.#adminPort!, "127.0.0.1");
+      await listen(server, this.#port, this.#host);
+    } catch (error) {
+      if (adminServer) await closeServer(adminServer);
+      await closeServer(server);
+      throw error;
+    }
+    this.#server = server;
+    this.#adminServer = adminServer;
+    this.#signaling = new LingServerSignaling({
+      registry: this.registry, protocolMajor: this.#transportOptions.protocolMajor ?? 1,
+      features: this.transportFeatures(),
+      now: this.#now, relayIssuer: this.#relayIssuer,
+      stunUrls: this.#transportOptions.stunUrls ?? [], turnUrls: this.#transportOptions.turnUrls ?? [],
+    });
+    if (this.#applicationIdentity) {
+      this.#rendezvous = new LingServerRendezvous({
+        registry: this.registry, instanceId: this.#signaling.instanceId, now: this.#now,
+        identity: this.#applicationIdentity, relayAvailable: this.#relayIssuer !== undefined,
+      });
+    }
+    this.#signalExpiryTimer = setInterval(() => {
+      this.#signaling?.purge();
+      this.#rendezvous?.purge();
+    }, 5_000);
+    this.#signalExpiryTimer.unref();
+    return this.address();
+  }
+
+  async stop(): Promise<void> {
+    const server = this.#server;
+    const adminServer = this.#adminServer;
+    this.#server = undefined;
+    this.#adminServer = undefined;
+    clearInterval(this.#signalExpiryTimer);
+    this.#signaling = undefined;
+    this.#rendezvous = undefined;
+    await Promise.all([server ? closeServer(server) : undefined, adminServer ? closeServer(adminServer) : undefined]);
+    if (this.#ownsStore && !this.#storeClosed) {
+      this.#store?.close();
+      this.#storeClosed = true;
+    }
+  }
+
+  address(): { readonly host: string; readonly port: number } {
+    const address = this.#server?.address();
+    return { host: this.#host, port: typeof address === "object" && address ? address.port : this.#port };
+  }
+
+  adminAddress(): { readonly host: string; readonly port: number } | undefined {
+    const bound = this.#adminServer?.address();
+    return typeof bound === "object" && bound ? { host: bound.address, port: bound.port } : undefined;
+  }
+
+  private transportFeatures(): readonly string[] {
+    return [...new Set([
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+      LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1,
+      ...(this.#transportOptions.features ?? []),
+    ])];
+  }
+
+  async handleRequest(request: IncomingMessage, response: ServerResponse, admin = true): Promise<void> {
+    const url = new URL(request.url ?? "/", "http://localhost");
+    if (request.method === "GET" && url.pathname === "/healthz") {
+      writeJson(response, 200, { status: "ok", generatedAt: this.#now() });
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/signaling/instance") {
+      writeJson(response, 200, { instanceId: this.#signaling?.instanceId });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/rendezvous") {
+      await this.exchangeRendezvous(request, response);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/signaling") {
+      await this.exchangeSignaling(request, response);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/pairing-migrations/verify") {
+      await this.issuePairingPinProof(request, response);
+      return;
+    }
+    if (!admin) {
+      writeJson(response, 404, { error: "not_found" });
+      return;
+    }
+    if (!safeToken(request.headers.authorization, this.#authToken)) {
+      writeJson(response, 401, { error: "unauthorized" });
+      return;
+    }
+    if (!allowLocalServiceRequest(request, response)) return;
+    try {
+      const body = request.method === "POST" ? await readJson(request) : undefined;
+      if (request.method === "POST" && url.pathname === "/v1/installations") {
+        writeJson(response, 200, this.registry.registerInstallation(requireBody< LingServerInstallationV1>(body)));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/bindings") {
+        writeJson(response, 200, this.registry.bindPeers(requireBody<LingServerPeerBindingV1>(body)));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/pairing-migrations") {
+        this.publishPairingMigration(body, response);
+        return;
+      }
+      const revoke = /^\/v1\/bindings\/([^/]+)\/revoke$/u.exec(url.pathname);
+      if (request.method === "POST" && revoke) {
+        const input = requireBody<{ readonly revision: number }>(body);
+        const revoked = this.registry.revokeBinding(decodeURIComponent(revoke[1]!), input.revision);
+        this.#signaling?.purge();
+        writeJson(response, 200, revoked);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/routes") {
+        const input = requireBody<{ readonly action: "begin" | "select" | "failover"; readonly route?: LingServerRouteAttemptV1; readonly routeAttemptId?: string; readonly selected?: "lan" | "direct" | "relay" }>(body);
+        if (input.action === "begin" && input.route) writeJson(response, 200, this.registry.beginRoute(input.route));
+        else if (input.action === "select" && input.routeAttemptId && input.selected) writeJson(response, 200, this.registry.selectRoute(input.routeAttemptId, input.selected, this.#now()));
+        else if (input.action === "failover" && input.routeAttemptId) writeJson(response, 200, this.registry.failoverRoute(input.routeAttemptId, this.#now()));
+        else writeJson(response, 400, { error: "invalid_route_request" });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/routes/transport-config") {
+        const input = requireBody<{
+          readonly bindingId: string;
+          readonly routeAttemptId: string;
+          readonly role: "gateway" | "mobile";
+          readonly localKeyFingerprint: string;
+          readonly remoteKeyFingerprint: string;
+          readonly expiresAt: string;
+        }>(body);
+        if (Object.hasOwn(input, "relayCredential")) throw new Error("relay credentials are issued by the control plane");
+        const binding = this.registry.requireActiveBinding(input.bindingId);
+        const route = this.registry.requireRoute(input.routeAttemptId);
+        const installation = this.registry.getInstallation(binding.installationId);
+        if (!installation) throw new Error("installation is missing");
+        const planner = new LingServerTransportPlanner({
+          installation, ...this.#transportOptions, features: this.transportFeatures(), now: this.#now, relayIssuer: this.#relayIssuer,
+        });
+        writeJson(response, 200, planner.createConfig({ binding, route, role: input.role, localKeyFingerprint: input.localKeyFingerprint, remoteKeyFingerprint: input.remoteKeyFingerprint, expiresAt: input.expiresAt }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/routes/relay-credential") {
+        const input = requireBody<{ readonly bindingId: string; readonly routeAttemptId: string; readonly role: "gateway" | "mobile"; readonly ttlMs?: number }>(body);
+        const binding = this.registry.requireActiveBinding(input.bindingId);
+        const route = this.registry.requireRoute(input.routeAttemptId);
+        if (!this.#relayIssuer) throw new Error("relay credential issuer is not configured");
+        writeJson(response, 200, this.#relayIssuer.issue({ binding, route, role: input.role, ttlMs: input.ttlMs }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/routes/diagnostics") {
+        const input = requireBody<{
+          readonly bindingId: string;
+          readonly routeAttemptId: string;
+          readonly diagnosticId: string;
+          readonly checks: readonly { readonly id: "control_reachability" | "peer_presence" | "signaling" | "candidate_gathering" | "peer_handshake" | "cursor_resume" | "relay_quota" | "revocation"; readonly status: "pass" | "fail" | "unknown"; readonly code: string; readonly latencyMs?: number }[];
+          readonly transportGeneration?: number;
+          readonly localCandidateCount?: number;
+          readonly remoteCandidateCount?: number;
+          readonly requestedResumeSequence?: number;
+          readonly replayedFrameCount?: number;
+          readonly requiresSnapshot?: boolean;
+          readonly generatedAt?: string;
+        }>(body);
+        const binding = this.registry.getBinding(input.bindingId);
+        const route = this.registry.requireRoute(input.routeAttemptId);
+        if (!binding) throw new Error("binding is missing");
+        const installation = this.registry.getInstallation(binding.installationId);
+        if (!installation) throw new Error("installation is missing");
+        const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now });
+        writeJson(response, 200, planner.createDiagnostics({
+          binding,
+          route,
+          diagnosticId: input.diagnosticId,
+          checks: input.checks,
+          transportGeneration: input.transportGeneration,
+          localCandidateCount: input.localCandidateCount,
+          remoteCandidateCount: input.remoteCandidateCount,
+          requestedResumeSequence: input.requestedResumeSequence,
+          replayedFrameCount: input.replayedFrameCount,
+          requiresSnapshot: input.requiresSnapshot,
+          generatedAt: input.generatedAt,
+        }));
+        return;
+      }
+      writeJson(response, 404, { error: "not_found" });
+    } catch {
+      writeJson(response, 400, { error: "bad_request" });
+    }
+  }
+
+  private async exchangeRendezvous(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const rendezvous = this.#rendezvous;
+    if (!rendezvous) {
+      writeJson(response, 503, { error: "rendezvous_unavailable" });
+      return;
+    }
+    try {
+      const body = await readJson(request).catch(() => undefined);
+      writeJson(response, 200, rendezvous.exchange(body));
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_rendezvous" });
+      else if (error instanceof DeviceFabricError && error.code === "revision_conflict") writeJson(response, 409, { error: "rendezvous_conflict" });
+      else if (error instanceof DeviceFabricError && ["lease_busy", "resource_conflict"].includes(error.code)) {
+        writeJson(response, 503, { error: "rendezvous_unavailable" });
+      } else if (error instanceof DeviceFabricError) writeJson(response, 403, { error: "rendezvous_denied" });
+      else writeJson(response, 500, { error: "rendezvous_unavailable" });
+    }
+  }
+
+  private publishPairingMigration(body: unknown, response: ServerResponse): void {
+    try {
+      const publication = validateLingServerPairingMigrationPublicationRequestV1(body);
+      if (!verifyPairingMigration(publication) || (this.#applicationIdentity
+        && this.#applicationIdentity.fingerprint !== publication.confirmation.routingProfile.applicationKeyFingerprint)) {
+        writeJson(response, 403, { error: "pairing_migration_denied" });
+        return;
+      }
+      writeJson(response, 200, this.registry.publishPairingMigration(publication.confirmation, this.#now()));
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_pairing_migration" });
+      else if (error instanceof DeviceFabricError && error.code === "revision_conflict") writeJson(response, 409, { error: error.code });
+      else if (error instanceof DeviceFabricError) writeJson(response, 403, { error: "pairing_migration_denied" });
+      else writeJson(response, 500, { error: "pairing_migration_unavailable" });
+    }
+  }
+
+  private async issuePairingPinProof(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    try {
+      const body = await readJson(request).catch(() => undefined);
+      const { challenge, mobilePublicKeyJwk, mobileSignature } = validateLingServerPairingPinRequestV1(body);
+      const identity = this.#applicationIdentity;
+      if (!identity) {
+        writeJson(response, 503, { error: "pairing_pin_unavailable" });
+        return;
+      }
+      const { confirmation, binding } = this.registry.requireActivePairingPublication(challenge.migrationId, challenge.confirmationDigest);
+      if (identity.fingerprint !== confirmation.routingProfile.applicationKeyFingerprint
+        || !matchesPublicJwkFingerprint(mobilePublicKeyJwk, binding.mobileKeyFingerprint)
+        || !verifyPeerSignature(mobilePublicKeyJwk, lingServerPairingPinChallengeBytes(challenge), mobileSignature)) {
+        throw new DeviceFabricError("safety_denied", "pairing pin proof is outside the active pairing");
+      }
+      const proof: Omit<LingServerPairingPinProofV1, "applicationSignature"> = {
+        challenge, routingProfile: confirmation.routingProfile, binding,
+        issuedAt: this.#now(), applicationPublicKeyJwk: identity.publicJwk,
+      };
+      const applicationSignature = encodeBase64Url(sign("sha256", lingServerPairingPinProofBytes(proof), {
+        key: identity.privateKey, dsaEncoding: "ieee-p1363",
+      }));
+      writeJson(response, 200, { ...proof, applicationSignature } satisfies LingServerPairingPinProofV1);
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_pairing_pin_request" });
+      else if (error instanceof DeviceFabricError) writeJson(response, 403, { error: "pairing_pin_denied" });
+      else writeJson(response, 503, { error: "pairing_pin_unavailable" });
+    }
+  }
+
+  private async exchangeSignaling(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = await readJson(request).catch(() => undefined);
+    if (body === undefined) {
+      writeJson(response, 400, { error: "invalid_signaling_request" });
+      return;
+    }
+    try {
+      if (!this.#signaling) {
+        writeJson(response, 503, { error: "signaling_unavailable" });
+        return;
+      }
+      writeJson(response, 200, this.#signaling.exchange(body));
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_signaling_request" });
+      else if (error instanceof DeviceFabricError) {
+        const status = error.code === "lease_busy" ? 429 : error.code === "revision_conflict" ? 409 : error.code === "resource_conflict" ? 503 : 403;
+        writeJson(response, status, { error: status === 403 ? "signaling_denied" : status === 503 ? "signaling_unavailable" : error.code });
+      } else writeJson(response, 503, { error: "signaling_unavailable" });
+    }
+  }
+}
+
+function createApplicationIdentity(pem: string) {
+  try {
+    const privateKey = createPrivateKey({ key: pem, format: "pem" });
+    const publicJwk = validateRemoteP256PublicJwkV1(createPublicKey(privateKey).export({ format: "jwk" }));
+    return { privateKey, publicJwk, fingerprint: fingerprintPublicJwkSync(publicJwk) };
+  } catch {
+    throw new Error("Invalid Ling Server P-256 application identity private key");
+  }
+}
+
+function verifyPairingMigration(publication: LingServerPairingMigrationPublicationRequestV1): boolean {
+  const { confirmation: { status: _status, gatewaySignature, ...unsigned }, gatewayPublicKeyJwk } = publication;
+  return matchesPublicJwkFingerprint(gatewayPublicKeyJwk, unsigned.oldPairing.gatewayKeyFingerprint)
+    && verifyPeerSignature(gatewayPublicKeyJwk, lingServerPairingMigrationSigningBytes(unsigned), gatewaySignature);
+}
+
+function verifyPeerSignature(publicKeyJwk: RemoteP256PublicJwkV1, bytes: Uint8Array, signature: string): boolean {
+  try {
+    const key = createPublicKey({ format: "jwk", key: publicKeyJwk });
+    return verify("sha256", bytes, { key, dsaEncoding: "ieee-p1363" }, decodeBase64Url(signature));
+  } catch {
+    return false;
+  }
+}
+
+function listen(server: HttpServer | HttpsServer, port: number, host: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => { server.off("error", reject); resolve(); });
+  });
+}
+
+function closeServer(server: HttpServer | HttpsServer): Promise<void> {
+  return new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
+}
+
+function safeToken(value: string | undefined, expected: string): boolean {
+  if (value === undefined) return false;
+  const provided = Buffer.from(value);
+  const required = Buffer.from(`Bearer ${expected}`);
+  return provided.length === required.length && timingSafeEqual(provided, required);
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += bytes.byteLength;
+    if (total > MAX_BODY_BYTES) throw new Error("request body is too large");
+    chunks.push(bytes);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function requireBody<T>(value: unknown): T {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("request body must be an object");
+  return value as T;
+}
+
+function writeJson(response: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  response.end(payload);
+}

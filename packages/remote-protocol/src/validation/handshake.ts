@@ -215,6 +215,10 @@ export function validateRemotePairingAcceptedV1(value: unknown): RemotePairingAc
   };
 }
 
+export function parseRemoteAuthFrameV1(raw: string): unknown {
+  return parseJsonInput(raw, REMOTE_PROTOCOL_LIMITS.maxFrameBytes);
+}
+
 export function validateRemoteAuthChallengeV1(
   value: unknown,
   options: RemoteValidationClockOptions = {},

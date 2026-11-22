@@ -271,6 +271,7 @@ jobs:
         run: |
           set -euo pipefail
           corepack pnpm --filter @ling-stack/browser-host build:native
+          corepack pnpm --filter @ling-stack/daemon build:peer-worker
           if [[ "$DESKTOP_TARGET" == "windows-x64" ]]; then
             corepack pnpm --filter @ling-stack/daemon build:engine-supervisor
           else

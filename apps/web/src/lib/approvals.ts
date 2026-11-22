@@ -171,6 +171,7 @@ export function approvalOwnerLabels(approval: ApprovalRequest): readonly string[
 }
 
 export function approvalOwnerIdentity(approval: ApprovalRequest): string {
+  if (approval.deviceTaskId) return `device task ${approval.deviceTaskId}`;
   if (approval.mediaJobId) return `generation task ${approval.mediaJobId}`;
   if (approval.runId) return `run ${approval.runId}`;
   if (approval.taskId) return `task ${approval.taskId}`;

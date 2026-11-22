@@ -321,6 +321,81 @@ maintains the SSH session and applies the accepted action. If the PC has its own
 verified connection to the Linux device, the user can select it as the owner at
 task creation.
 
+### PC-owned Linux SSH diagnosis
+
+The Daemon loads a host-owned JSON file from `LING_STACK_DEVICE_SSH_TARGETS_FILE`
+or the embedding option `deviceSupport.linuxSshTargetsFile`. The file belongs
+in the installation's trusted configuration area. Each target includes an
+operator-verified SSH server public key and an absolute path to a local client
+identity. OpenSSH reads the client identity on the executing host.
+
+```json
+{
+  "version": 1,
+  "targets": [
+    {
+      "connectionId": "lab-board",
+      "host": "board.lab.example",
+      "port": 22,
+      "user": "operator",
+      "identityFile": "<absolute path to the local SSH identity>",
+      "hostKey": "ssh-ed25519 <verified public key data>",
+      "credentialRevision": "key-1"
+    }
+  ]
+}
+```
+
+These routes use the direct-loopback Daemon listener and its configured bearer
+authentication. [Daemon routes](../../packages/daemon/src/features/device-support/routes.ts)
+
+| Operation | Route | Request |
+| --- | --- | --- |
+| List candidate and enrolled targets | `GET /v1/device-support/linux/targets` | No body |
+| Verify the supplied host key and enroll the board | `POST /v1/device-support/linux/enroll` | `{"connectionId":"lab-board"}` |
+| Run and persist a read-only diagnosis | `POST /v1/device-support/linux/diagnose` | `{"deviceId":"<enrolled device ID>"}` |
+| Read the durable task journal | `GET /v1/device-support/tasks/<task ID>/events` | Optional `afterSequence`, `generation` and `limit` |
+
+The device ID uses the verified host key fingerprint. A moved target with the
+same key retains its device ID. Update its endpoint or move the client identity
+to a new path in the host configuration and restart the Daemon. Bump
+`credentialRevision` when rotating the client identity in place. The next diagnosis
+revalidates the pin and refreshes the connection binding. A removed target goes
+offline and keeps its journals. A new server key requires enrollment as a new identity.
+
+Network evidence uses `iproute2` JSON output and `iw`. The report records IPv4
+configuration, route selection and Wi-Fi association separately. An optional
+`dnsProbeHostname` adds an IPv4 name-resolution observation through the target's
+DNS service via `getent`. Missing tools and unmeasured reachability remain unknown.
+Each report links its normalized facts to the owned task journal. Network changes
+that could drop SSH access require a verified recovery route or target-side restoration.
+[Linux SSH executor](../../packages/daemon/src/features/device-support/adapters/linux-ssh-executor.ts)
+
+### Phone-owned Linux SSH diagnosis
+
+An Android build with the `LingDeviceTransport` module exposes Linux SSH from
+phone device diagnosis. Enter the board address, port, SSH account and verified
+OpenSSH `SHA256:` host-key fingerprint. The fingerprint comes from the target's
+console or trusted inventory. Submit the account password for this connection.
+The transport checks the pin during the handshake before sending authentication.
+
+The phone runs the same IPv4, route, Wi-Fi and optional DNS observations as the
+PC adapter. It saves the enrolled device identity and endpoint metadata after a
+successful diagnosis. The password is scoped to the submitted operation. The
+local task journal retains typed facts and failure codes. When the app loses
+foreground access it closes the live SSH session and preserves an interrupted
+attempt for inspection after resume.
+[Mobile runtime](../../apps/mobile/src/device/standalone-runtime.ts)
+[Android native session](../../apps/mobile/modules/ling-device-transport/android/src/main/java/expo/modules/lingdevicetransport/PinnedSshSession.java)
+
+The Android native client has passed JVM loopback tests, including host-key
+rejection before authentication, fixed command execution and output bounds. The
+generated Gradle project requires Android SDK 37 for compilation and targets SDK
+36. The default build environment has no complete Android SDK/NDK installation,
+so the native Gradle package has not been accepted yet. Physical Android LAN
+and hotspot runs, native iOS SSH, and a recovery path for network changes remain
+on the acceptance ledger.
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with

@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { WebSocket } from "ws";
 import {
+  REMOTE_PROTOCOL_LIMITS,
   REMOTE_PROTOCOL_VERSION,
+  isDeviceRecoveryPlanV1,
   type RemoteAccessPolicySummaryV1,
   type RemoteClientFrameV1,
   type RemoteCommandCompletedV1,
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteConversationDeltaV1,
+  type RemoteDeviceTaskJournalCommandV1,
+  type RemoteDeviceTaskJournalV1,
+  type RemoteDeviceTaskSnapshotV1,
   type RemoteLifecycleCommandTypeV1,
   type RemoteServerEventPayloadMapV1,
   type RemoteServerEventTypeV1,
@@ -23,13 +27,16 @@ import {
   isRemoteProtocolError,
   parseRemoteClientFrameV1,
   sha256,
+  type RemoteMessageChannel,
 } from "@ling-stack/remote-protocol";
 import type { RemoteConversationFacade, RemoteProjectedEvent } from "./conversation-facade.js";
+import type { RemoteDeviceFacade } from "./device-facade.js";
 import { RemoteAccessError } from "./errors.js";
 import type { AuthenticatedRemoteSession } from "./pairing-auth-service.js";
 
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const MAX_COMMANDS_PER_MINUTE = 120;
+const MAX_JOURNAL_WATCHES = 4;
 
 interface RemoteStreamState {
   readonly id: string;
@@ -39,13 +46,22 @@ interface RemoteStreamState {
   ackServerSeq: number;
 }
 
+interface DeviceJournalWatch {
+  readonly request: RemoteDeviceTaskJournalCommandV1;
+  readonly ownerId: string;
+}
+
 export interface RemoteGatewaySessionOptions {
-  readonly socket: WebSocket;
+  readonly channel: RemoteMessageChannel;
   readonly authenticated: AuthenticatedRemoteSession;
   readonly gatewayId: string;
   readonly facade: RemoteConversationFacade;
+  readonly deviceFacade?: RemoteDeviceFacade;
+  readonly recoveryApprovals?: boolean;
+  readonly isPairedDeviceCurrent?: () => boolean;
   readonly policy: RemoteAccessPolicySummaryV1;
   readonly now?: () => string;
+  readonly routeAuthorityUntil?: () => number;
   readonly onMutation?: () => void;
   readonly onSelfUnpair?: () => void;
   readonly onClosed?: (session: RemoteGatewaySession) => void;
@@ -57,6 +73,9 @@ export class RemoteGatewaySession {
   private readonly now: () => string;
   private readonly controlStream: RemoteStreamState;
   private readonly streams = new Map<string, RemoteStreamState>();
+  private readonly journalWatches = new Map<string, DeviceJournalWatch>();
+  private journalPageServerSeq = 0;
+  private readonly detach: () => void;
   private lastClientSeq = 0;
   private commandWindowStartedAt = 0;
   private commandCount = 0;
@@ -75,23 +94,18 @@ export class RemoteGatewaySession {
       ackServerSeq: 0,
     };
     this.streams.set(this.controlStream.id, this.controlStream);
-    options.socket.on("message", (data, isBinary) => {
-      if (isBinary) {
-        this.closePolicyViolation("Binary frames are not supported.");
-        return;
-      }
-      this.messageQueue = this.messageQueue
-        .then(async () => await this.handleRawFrame(data.toString()))
-        .catch(() => this.closePolicyViolation("Remote command processing failed."));
-    });
-    options.socket.on("close", () => {
-      if (!this.closed) {
-        this.closed = true;
-        options.onClosed?.(this);
-      }
-    });
-    options.socket.on("error", () => {
-      this.close(1011, "Remote session transport failed.");
+    this.detach = options.channel.subscribe({
+      received: data => {
+        if (typeof data !== "string") {
+          this.closePolicyViolation("Binary frames are not supported.");
+          return;
+        }
+        this.messageQueue = this.messageQueue
+          .then(async () => await this.handleRawFrame(data))
+          .catch(() => this.closePolicyViolation("Remote command processing failed."));
+      },
+      closed: () => this.finish(),
+      failed: () => this.close(1011, "Remote session transport failed."),
     });
     this.sendEvent("session.ready", {
       deviceId: this.deviceId,
@@ -99,6 +113,10 @@ export class RemoteGatewaySession {
       policy: options.policy,
       connectedAt: options.authenticated.authenticatedAt,
     }, this.controlStream);
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   publish(event: RemoteProjectedEvent): void {
@@ -125,6 +143,30 @@ export class RemoteGatewaySession {
     }
   }
 
+  pushDeviceJournalPage(): void {
+    if (!this.checkAuthority() || this.journalWatches.size === 0) return;
+    try {
+      this.assertCurrentJournalPrincipal();
+      if (this.controlStream.ackServerSeq < this.journalPageServerSeq
+        || this.options.channel.bufferedAmount > MAX_BUFFERED_BYTES - REMOTE_PROTOCOL_LIMITS.maxFrameBytes) return;
+      for (const [watchId, watch] of this.journalWatches) {
+        const journal = this.requireDeviceFacade(watch.request.workspaceId).taskJournal(watch.request);
+        if (journal.task.ownerId !== watch.ownerId) {
+          throw new RemoteAccessError("binding_changed", "The device journal owner changed.", true);
+        }
+        if (!journal.requiresSnapshot && journal.events.length === 0) continue;
+        if (this.sendEvent("device.task.journal_page", { watchId, journal }, this.controlStream)) {
+          this.journalPageServerSeq = this.controlStream.serverSeq;
+          this.journalWatches.delete(watchId);
+          this.journalWatches.set(watchId, this.nextJournalWatch(watch.request, journal));
+        }
+        return;
+      }
+    } catch {
+      this.close(1013, "Device journal unavailable; reconnect to resume.");
+    }
+  }
+
   revoke(reason: "revoked" | "replaced" | "disabled" | "identity_reset"): void {
     if (this.closed) {
       return;
@@ -133,11 +175,14 @@ export class RemoteGatewaySession {
     this.close(4001, reason);
   }
 
+  disconnect(): void {
+    this.close(1001, "gateway_stopping");
+  }
+
   private async handleRawFrame(raw: string): Promise<void> {
-    if (this.closed) {
+    if (!this.checkAuthority()) {
       return;
     }
-    this.consumeRateLimit();
     let frame: RemoteClientFrameV1;
     try {
       frame = parseRemoteClientFrameV1(raw, { nowMs: Date.parse(this.now()) });
@@ -156,21 +201,38 @@ export class RemoteGatewaySession {
     }
     this.lastClientSeq = sequenceDecision.next;
     if (frame.type === "stream.ack") {
+      const { streamId, ackServerSeq } = frame.payload;
+      // Acknowledging one bounded journal page releases the next page even during a long catch-up.
+      const acknowledgesJournalPage = streamId === this.controlStream.id
+        && this.controlStream.ackServerSeq < this.journalPageServerSeq
+        && ackServerSeq >= this.journalPageServerSeq && ackServerSeq <= this.controlStream.serverSeq;
+      if (!acknowledgesJournalPage) this.consumeRateLimit();
       this.handleAck(frame.payload.streamId, frame.payload.ackServerSeq);
       return;
     }
+    this.consumeRateLimit();
     const commandType = frame.type as RemoteLifecycleCommandTypeV1;
     this.sendEvent("command.accepted", {
       commandId: frame.payload.commandId,
       commandType,
       acceptedAt: this.now(),
     }, this.controlStream, frame.messageId);
+    const command = this.executeAuthorizedCommand(frame);
+    if (frame.type === "device.task.approve" || frame.type === "device.task.reconcile") {
+      // Keep consuming ordered frames while the admitted device request waits for its adapter.
+      void command.catch(() => this.closePolicyViolation("Remote command processing failed."));
+      return;
+    }
+    await command;
+  }
+
+  private async executeAuthorizedCommand(frame: Exclude<RemoteClientFrameV1, { readonly type: "stream.ack" }>): Promise<void> {
     try {
       this.assertCapability(frame.type);
-      await this.executeCommand(frame as Exclude<RemoteClientFrameV1, { readonly type: "stream.ack" }>);
+      await this.executeCommand(frame);
     } catch (error) {
       const remoteError = toRemoteError(error);
-      this.sendCommandFailed(commandType, frame.payload.commandId, remoteError, frame.messageId);
+      this.sendCommandFailed(frame.type, frame.payload.commandId, remoteError, frame.messageId);
     }
   }
 
@@ -253,9 +315,108 @@ export class RemoteGatewaySession {
         this.complete(frame, { kind: "device_unpaired" });
         this.options.onSelfUnpair?.();
         return;
+      case "device.list": {
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).listDevices(frame.payload.workspaceId);
+        this.sendEvent("device.list_snapshot", snapshot, this.workspaceStream(), frame.messageId);
+        this.complete(frame, { kind: "device_list_requested" });
+        return;
+      }
+      case "device.task.status": {
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).taskSnapshot(frame.payload);
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.complete(frame, { kind: "device_task_status_requested", taskId: frame.payload.taskId });
+        return;
+      }
+      case "device.task.journal": {
+        const journal = this.requireDeviceFacade(frame.payload.workspaceId).taskJournal(frame.payload);
+        this.complete(frame, { kind: "device_task_journal_read", journal });
+        return;
+      }
+      case "device.task.journal.watch": {
+        this.assertCurrentJournalPrincipal();
+        const request = frame.payload;
+        const facade = this.requireDeviceFacade(request.workspaceId);
+        if (this.journalWatches.has(request.commandId)) {
+          throw new RemoteAccessError("idempotency_conflict", "The device journal watch ID is already active.");
+        }
+        if (this.journalWatches.size >= MAX_JOURNAL_WATCHES) {
+          throw new RemoteAccessError("rate_limited", "Too many active device journal watches.", true);
+        }
+        const journal = facade.taskJournal(request);
+        this.journalWatches.set(request.commandId, this.nextJournalWatch(request, journal));
+        this.complete(frame, { kind: "device_task_journal_watching", journal });
+        this.journalPageServerSeq = this.controlStream.serverSeq;
+        return;
+      }
+      case "device.task.journal.unwatch": {
+        this.assertCurrentJournalPrincipal();
+        const { workspaceId, taskId, watchId } = frame.payload;
+        this.requireDeviceFacade(workspaceId);
+        const watch = this.journalWatches.get(watchId);
+        if (watch && watch.request.taskId !== taskId) {
+          throw new RemoteAccessError("binding_changed", "The device journal watch belongs to another task.");
+        }
+        this.journalWatches.delete(watchId);
+        this.complete(frame, { kind: "device_task_journal_unwatched" });
+        return;
+      }
+      case "device.task.approve": {
+        if (isDeviceRecoveryPlanV1(frame.payload.approval.recoveryScope) && !this.options.recoveryApprovals) {
+          throw new RemoteAccessError("protocol_incompatible", "The client does not support recovery approvals.");
+        }
+        const snapshot = await this.requireDeviceFacade(frame.payload.workspaceId).approveTask(frame.payload, {
+          kind: "paired_mobile", deviceId: this.deviceId, deviceEpoch: this.options.authenticated.device.deviceEpoch,
+          sessionId: this.sessionId,
+        }, this.options.isPairedDeviceCurrent);
+        this.complete(frame, { kind: "device_task_approved", taskId: frame.payload.taskId });
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.options.onMutation?.();
+        return;
+      }
+      case "device.task.revoke": {
+        const snapshot = this.requireDeviceFacade(frame.payload.workspaceId).revokeTask(frame.payload);
+        this.complete(frame, { kind: "device_task_revoked", taskId: frame.payload.taskId });
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.options.onMutation?.();
+        return;
+      }
+      case "device.task.reconcile": {
+        const { snapshot, status } = await this.requireDeviceFacade(frame.payload.workspaceId).reconcileTask(frame.payload);
+        this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
+        this.complete(frame, { kind: "device_task_rechecked", taskId: frame.payload.taskId, status });
+        return;
+      }
       default:
         throw new RemoteAccessError("protocol_incompatible", `Unsupported command: ${(payload as { commandId: string }).commandId}`);
     }
+  }
+
+  private assertCurrentJournalPrincipal(): void {
+    if (this.options.isPairedDeviceCurrent?.() === false) {
+      throw new RemoteAccessError("binding_changed", "The device journal pairing is no longer current.", true);
+    }
+  }
+
+  private nextJournalWatch(request: RemoteDeviceTaskJournalCommandV1, journal: RemoteDeviceTaskJournalV1): DeviceJournalWatch {
+    return {
+      ownerId: journal.task.ownerId,
+      request: {
+        ...request, generation: journal.generation,
+        afterSequence: journal.requiresSnapshot ? 0 : journal.afterSequence + journal.events.length,
+      },
+    };
+  }
+
+  private sendDeviceTaskSnapshot(snapshot: RemoteDeviceTaskSnapshotV1, requestId: string): void {
+    if (snapshot.task.pendingApproval?.recoveryPlan && !this.options.recoveryApprovals) {
+      const { pendingApproval: _preview, ...task } = snapshot.task;
+      snapshot = { ...snapshot, task };
+    }
+    if (snapshot.task.pendingReconciliation && !this.options.policy.capabilities.includes("device.reconcile")) {
+      const { pendingReconciliation: _preview, ...task } = snapshot.task;
+      snapshot = { ...snapshot, task };
+    }
+    this.sendEvent("device.task.snapshot", snapshot, this.workspaceStream(), requestId);
   }
 
   private complete(
@@ -292,6 +453,9 @@ export class RemoteGatewaySession {
       this.sendEvent("workspace.summary", this.options.facade.workspaceSummary(), stream);
       this.sendEvent("conversation.list_snapshot", this.options.facade.listConversations(stream.scope.workspaceId), stream);
       this.sendEvent("profile.snapshot", this.options.facade.readProfile(stream.scope.workspaceId), stream);
+      if (this.options.deviceFacade && this.options.policy.capabilities.includes("device.read")) {
+        this.sendEvent("device.list_snapshot", this.options.deviceFacade.listDevices(stream.scope.workspaceId), stream);
+      }
     } else {
       this.sendEvent("conversation.snapshot", this.options.facade.openConversation(
         stream.scope.workspaceId,
@@ -307,18 +471,26 @@ export class RemoteGatewaySession {
     }
   }
 
+  private requireDeviceFacade(workspaceId: string): RemoteDeviceFacade {
+    if (workspaceId !== this.options.policy.workspaceId) {
+      throw new RemoteAccessError("workspace_not_allowed", "Device request is outside the paired workspace.");
+    }
+    if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+    return this.options.deviceFacade;
+  }
+
   private sendEvent<TType extends RemoteServerEventTypeV1>(
     type: TType,
     payload: RemoteServerEventPayloadMapV1[TType],
     stream: RemoteStreamState,
     requestId?: string,
-  ): void {
-    if (this.closed || this.options.socket.readyState !== WebSocket.OPEN) {
-      return;
+  ): boolean {
+    if (!this.checkAuthority() || this.options.channel.readyState !== 1) {
+      return false;
     }
-    if (this.options.socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+    if (this.options.channel.bufferedAmount > MAX_BUFFERED_BYTES) {
       this.close(1013, "Remote client is too slow; resync required.");
-      return;
+      return false;
     }
     const occurredAt = this.now();
     stream.serverSeq += 1;
@@ -336,7 +508,13 @@ export class RemoteGatewaySession {
       serverSeq: stream.serverSeq,
       occurredAt,
     } as RemoteServerFrameV1;
-    this.options.socket.send(JSON.stringify(frame));
+    try {
+      this.options.channel.send(JSON.stringify(frame));
+      return true;
+    } catch {
+      this.close(1011, "Remote session transport failed.");
+      return false;
+    }
   }
 
   private handleAck(streamId: string, ackServerSeq: number): void {
@@ -412,13 +590,27 @@ export class RemoteGatewaySession {
     this.close(1008, reason.slice(0, 120));
   }
 
+  private checkAuthority(): boolean {
+    if (!this.closed && this.options.routeAuthorityUntil
+      && !(Date.parse(this.now()) < this.options.routeAuthorityUntil())) {
+      this.close(1008, "peer_route_expired");
+    }
+    return !this.closed;
+  }
+
   private close(code: number, reason: string): void {
+    if (this.finish()) this.options.channel.close(code, reason.slice(0, 120));
+  }
+
+  private finish(): boolean {
     if (this.closed) {
-      return;
+      return false;
     }
     this.closed = true;
-    this.options.socket.close(code, reason.slice(0, 120));
+    this.journalWatches.clear();
+    this.detach();
     this.options.onClosed?.(this);
+    return true;
   }
 }
 
@@ -442,6 +634,24 @@ function commandCapability(
   }
   if (commandType === "security.unpair") {
     return "security.unpair";
+  }
+  if (commandType === "device.list" || commandType === "device.task.status") {
+    return "device.read";
+  }
+  if (commandType === "device.task.journal") {
+    return "device.journal";
+  }
+  if (commandType === "device.task.journal.watch" || commandType === "device.task.journal.unwatch") {
+    return "device.journal.watch";
+  }
+  if (commandType === "device.task.approve") {
+    return "device.approve";
+  }
+  if (commandType === "device.task.revoke") {
+    return "device.revoke";
+  }
+  if (commandType === "device.task.reconcile") {
+    return "device.reconcile";
   }
   return undefined;
 }

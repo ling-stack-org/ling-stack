@@ -508,6 +508,7 @@ export interface MockApproval {
   id: string;
   runId?: string;
   taskId?: string;
+  deviceTaskId?: string;
   mediaJobId?: string;
   externalWorkActionId?: string;
   workflowStepId?: string;

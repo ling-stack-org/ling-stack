@@ -1,12 +1,16 @@
 import {
+  REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1,
   REMOTE_PROTOCOL_VERSION,
-  type RemoteAuthChallengeV1,
-  type RemoteAuthProofV1,
+  type DeviceApprovalBindingV1,
   type RemoteClientCommandPayloadMapV1,
   type RemoteClientCommandTypeV1,
   type RemoteClientFrameV1,
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
+  type RemoteDeviceApprovalPreviewV1,
+  type RemoteDeviceTaskJournalCommandV1,
+  type RemoteDeviceTaskJournalV1,
+  type RemoteDeviceReconciliationPreviewV1,
   type RemoteConversationOpenCommandV1,
   type RemoteMarkConversationReadCommandV1,
   type RemoteProfileUpdateCommandV1,
@@ -15,15 +19,15 @@ import {
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
 import {
-  authChallengeSigningBytes,
-  authChallengeSigningInput,
-  authProofSigningBytes,
-  authProofSigningInput,
-  encodeBase64Url,
+  canonicalizeJson,
+  parseRemoteAuthFrameV1,
   parseRemoteServerFrameV1,
-  sha256,
-  validateRemoteAuthChallengeV1,
+  type RemoteMessageChannel,
 } from "@ling-stack/remote-protocol";
+import { verifyLingServerPairingPin } from "./ling-server-pairing-pin.js";
+import {
+  createRemoteSessionProof, openRemoteSessionChannel, type RemoteSessionAuthentication, type RemoteSessionConnectionOptions,
+} from "./session-authentication.js";
 import {
   createInitialRemoteClientState,
   reduceRemoteClientState,
@@ -32,7 +36,6 @@ import {
   type RemoteStateAction,
 } from "./state.js";
 import {
-  remoteWebSocketUrl,
   type RemoteBindingStore,
   type RemoteBindingV1,
   type RemoteCacheStore,
@@ -40,8 +43,6 @@ import {
   type RemoteDeviceKeyAdapter,
   type RemoteEntropy,
   type RemoteHttpClient,
-  type RemoteWebSocketFactory,
-  type RemoteWebSocketLike,
 } from "./types.js";
 
 type CommandType = Exclude<RemoteClientCommandTypeV1, "stream.ack">;
@@ -49,6 +50,21 @@ type CommandType = Exclude<RemoteClientCommandTypeV1, "stream.ack">;
 export interface RemoteCommandHandle<TResult> {
   readonly commandId: string;
   readonly completion: Promise<TResult>;
+}
+
+export interface RemoteDeviceTaskJournalWatchOptions {
+  readonly onUpdate: (journal: RemoteDeviceTaskJournalV1) => void;
+  readonly onError?: (error: unknown) => void;
+}
+
+type DeviceJournalCursor = Pick<RemoteDeviceTaskJournalCommandV1, "generation" | "afterSequence" | "limit">;
+
+interface DeviceJournalWatch extends RemoteDeviceTaskJournalWatchOptions {
+  readonly taskId: string;
+  readonly workspaceId: string;
+  readonly assertCurrent: () => void;
+  cursor: DeviceJournalCursor;
+  ownerId?: string;
 }
 
 interface PendingCommand<TResult = unknown> {
@@ -60,17 +76,17 @@ interface PendingCommand<TResult = unknown> {
   readonly reject: (error: Error) => void;
 }
 
-export interface RemoteSessionClientOptions {
+interface RemoteSessionClientBaseOptions {
   readonly binding: RemoteBindingV1;
   readonly bindingStore: RemoteBindingStore;
   readonly cacheStore: RemoteCacheStore<RemoteClientState>;
-  readonly http: RemoteHttpClient;
   readonly keys: RemoteDeviceKeyAdapter;
   readonly entropy: RemoteEntropy;
   readonly clock: RemoteClock;
-  readonly webSocketFactory: RemoteWebSocketFactory;
   readonly autoReconnect?: boolean;
 }
+
+export type RemoteSessionClientOptions = RemoteSessionClientBaseOptions & RemoteSessionConnectionOptions;
 
 export class RemoteSessionClient {
   private binding: RemoteBindingV1;
@@ -80,10 +96,14 @@ export class RemoteSessionClient {
   private readonly outboundByMessage = new Map<string, PendingCommand>();
   private readonly streamSequences = new Map<string, number>();
   private readonly streamSnapshots = new Map<string, string>();
-  private socket?: RemoteWebSocketLike;
+  private readonly deviceJournalWatches = new Map<string, DeviceJournalWatch>();
+  private socket?: RemoteMessageChannel;
+  private detachSocket?: () => void;
+  private authenticationAttempt?: AbortController;
   private connectPromise?: Promise<void>;
   private frameQueue = Promise.resolve();
   private bindingMutation = Promise.resolve();
+  private unpairing = false;
   private clientSeq = 0;
   private reconnectAttempts = 0;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -91,6 +111,7 @@ export class RemoteSessionClient {
   private connectionGeneration = 0;
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
+  private expectedSessionId?: string;
 
   constructor(private readonly options: RemoteSessionClientOptions) {
     this.binding = options.binding;
@@ -98,6 +119,10 @@ export class RemoteSessionClient {
 
   get state(): RemoteClientState {
     return this.stateValue;
+  }
+
+  get activeBinding(): RemoteBindingV1 | undefined {
+    return this.binding.status === "active" ? this.binding : undefined;
   }
 
   subscribe(listener: (state: RemoteClientState) => void): () => void {
@@ -118,6 +143,8 @@ export class RemoteSessionClient {
     this.stateValue = {
       ...cache.state,
       connection: "disconnected",
+      deviceOverviewCurrent: false,
+      deviceTaskCurrent: false,
       lastError: undefined,
     };
     this.emit();
@@ -230,6 +257,162 @@ export class RemoteSessionClient {
     });
   }
 
+  async requestDeviceList(): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.list"]>> {
+    return await this.sendCommand("device.list", {
+      commandId: await this.options.entropy.randomId("device_list"),
+      workspaceId: this.requireDeviceWorkspaceId(),
+    });
+  }
+
+  async requestDeviceTaskStatus(taskId: string): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.status"]>> {
+    return await this.sendCommand("device.task.status", {
+      commandId: await this.options.entropy.randomId("device_task"),
+      workspaceId: this.requireDeviceWorkspaceId(),
+      taskId,
+    });
+  }
+
+  async readDeviceTaskJournal(taskId: string, cursor: Omit<DeviceJournalCursor, "limit"> & { readonly limit?: number }): Promise<RemoteDeviceTaskJournalV1> {
+    const { workspaceId, assertCurrent } = this.deviceTaskAuthority("device.journal");
+    const normalized = normalizeDeviceJournalCursor(cursor);
+    const handle = await this.sendCommand("device.task.journal", {
+      commandId: await this.options.entropy.randomId("device_task_journal"),
+      workspaceId, taskId, ...normalized,
+    }, assertCurrent);
+    const result = await handle.completion;
+    assertCurrent();
+    if (result.kind !== "device_task_journal_read") throw new Error("remote_device_journal_binding_mismatch");
+    assertDeviceJournalPage(result.journal, workspaceId, taskId, normalized);
+    return result.journal;
+  }
+
+  watchDeviceTaskJournal(
+    taskId: string,
+    cursor: Omit<DeviceJournalCursor, "limit"> & { readonly limit?: number },
+    options: RemoteDeviceTaskJournalWatchOptions,
+  ): () => void {
+    const { workspaceId, assertCurrent } = this.deviceTaskAuthority("device.journal.watch");
+    const watch: DeviceJournalWatch = { ...options, taskId, workspaceId, assertCurrent, cursor: normalizeDeviceJournalCursor(cursor) };
+    let active = true;
+    let watchId: string | undefined;
+    let sent = false;
+    const open = async () => {
+      const commandId = await this.options.entropy.randomId("device_journal_watch");
+      if (!active) return;
+      watchId = commandId;
+      this.deviceJournalWatches.set(commandId, watch);
+      const handle = await this.sendCommand("device.task.journal.watch", { commandId, workspaceId, taskId, ...watch.cursor }, () => {
+        assertCurrent();
+        if (!active) throw new Error("remote_device_journal_watch_closed");
+        sent = true;
+      });
+      const result = await handle.completion;
+      if (result.kind !== "device_task_journal_watching") throw new Error("remote_device_journal_binding_mismatch");
+    };
+    void open().catch(error => {
+      if (watchId && !this.deviceJournalWatches.delete(watchId)) return;
+      if (active) options.onError?.(error);
+    });
+    return () => {
+      if (!active) return;
+      active = false;
+      if (!watchId || !this.deviceJournalWatches.delete(watchId) || !sent) return;
+      void this.stopDeviceJournalWatch(watchId, watch).catch(() => undefined);
+    };
+  }
+
+  private async stopDeviceJournalWatch(watchId: string, watch: DeviceJournalWatch): Promise<void> {
+    watch.assertCurrent();
+    const handle = await this.sendCommand("device.task.journal.unwatch", {
+      commandId: await this.options.entropy.randomId("device_journal_unwatch"),
+      workspaceId: watch.workspaceId, taskId: watch.taskId, watchId,
+    }, watch.assertCurrent);
+    await handle.completion;
+  }
+
+  private applyDeviceJournalWatchPage(watchId: string, page: RemoteDeviceTaskJournalV1, initial: boolean): void {
+    const watch = this.deviceJournalWatches.get(watchId);
+    if (!watch) return;
+    watch.assertCurrent();
+    if (initial !== (watch.ownerId === undefined) || (watch.ownerId !== undefined && page.task.ownerId !== watch.ownerId)) {
+      throw new Error("remote_device_journal_binding_mismatch");
+    }
+    assertDeviceJournalPage(page, watch.workspaceId, watch.taskId, watch.cursor);
+    watch.ownerId = page.task.ownerId;
+    watch.cursor = {
+      ...watch.cursor,
+      generation: page.generation,
+      afterSequence: page.requiresSnapshot ? 0 : page.afterSequence + page.events.length,
+    };
+    watch.onUpdate(page);
+  }
+
+  async approveDeviceTask(taskId: string, preview: RemoteDeviceApprovalPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.approve"]>> {
+    const authority = this.deviceTaskAuthority("device.approve");
+    const assertApprovalCurrent = () => {
+      authority.assertCurrent();
+      const task = this.stateValue.deviceTask?.task;
+      if (!this.stateValue.deviceTaskCurrent || task?.taskId !== taskId || task.status !== "awaiting_approval"
+        || task.pendingApproval !== preview
+        || (preview.recoveryPlan && Date.parse(preview.recoveryPlan.verifyBy) <= Date.parse(this.options.clock.now()))) {
+        throw new Error("remote_device_approval_changed");
+      }
+    };
+    assertApprovalCurrent();
+    const approvalId = await this.options.entropy.randomId("device_approval");
+    const expiresAt = new Date(Math.min(
+      Date.parse(this.options.clock.now()) + 5 * 60_000,
+      preview.recoveryPlan ? Date.parse(preview.recoveryPlan.verifyBy) : Number.POSITIVE_INFINITY,
+    )).toISOString();
+    const approval: DeviceApprovalBindingV1 = {
+      approvalId,
+      taskId,
+      actionId: preview.actionId,
+      targetDeviceId: preview.targetDeviceId,
+      capabilitySnapshotId: preview.capabilitySnapshotId,
+      connectionRevision: preview.connectionRevision,
+      policyRevision: preview.policyRevision,
+      normalizedInputDigest: preview.normalizedInputDigest,
+      expiresAt,
+      ...(preview.recoveryPlan ? { recoveryScope: preview.recoveryPlan } : {}),
+    };
+    return await this.sendCommand("device.task.approve", {
+      commandId: await this.options.entropy.randomId("device_task_approve"),
+      workspaceId: authority.workspaceId,
+      taskId,
+      approval,
+    }, assertApprovalCurrent);
+  }
+
+  async revokeDeviceTask(taskId: string): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.revoke"]>> {
+    const authority = this.deviceTaskAuthority("device.revoke");
+    return await this.sendCommand("device.task.revoke", {
+      commandId: await this.options.entropy.randomId("device_task_revoke"),
+      workspaceId: authority.workspaceId,
+      taskId,
+    }, authority.assertCurrent);
+  }
+
+  async reconcileDeviceTask(taskId: string, preview: RemoteDeviceReconciliationPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.reconcile"]>> {
+    const authority = this.deviceTaskAuthority("device.reconcile");
+    const assertReconciliationCurrent = () => {
+      authority.assertCurrent();
+      const task = this.stateValue.deviceTask?.task;
+      if (!this.stateValue.deviceTaskCurrent || task?.taskId !== taskId || task.status !== "unknown"
+        || task.pendingReconciliation !== preview) {
+        throw new Error("remote_device_reconciliation_changed");
+      }
+    };
+    assertReconciliationCurrent();
+    return await this.sendCommand("device.task.reconcile", {
+      commandId: await this.options.entropy.randomId("device_task_reconcile"),
+      workspaceId: authority.workspaceId,
+      taskId,
+      attemptId: preview.attemptId,
+      capabilitySnapshotId: preview.capabilitySnapshotId,
+    }, assertReconciliationCurrent);
+  }
+
   async requestFullResync(): Promise<void> {
     const handle = await this.sendCommand("snapshot.request", {
       commandId: await this.options.entropy.randomId("snapshot"),
@@ -238,7 +421,50 @@ export class RemoteSessionClient {
     void handle.completion.catch(() => undefined);
   }
 
+  async confirmLingServerPairingPin(confirmation: unknown, options: {
+    readonly http?: RemoteHttpClient;
+    readonly signal?: AbortSignal;
+  } = {}): Promise<RemoteBindingV1> {
+    const binding = this.binding;
+    const http = options.http ?? this.options.http;
+    if (!http) throw new Error("ling_server_pairing_http_unavailable");
+    const assertCurrentPairing = () => {
+      if (this.unpairing || this.binding.status !== "active" || this.binding.workspaceBindingId !== binding.workspaceBindingId) {
+        throw new Error("ling_server_pairing_binding_changed");
+      }
+    };
+    assertCurrentPairing();
+    const { keys, entropy, clock } = this.options;
+    const proof = await verifyLingServerPairingPin({ confirmation, binding, http, keys, entropy, clock, signal: options.signal });
+    return await this.runBindingMutation(async () => {
+      assertCurrentPairing();
+      const current = this.binding;
+      const stored = await this.options.bindingStore.read();
+      assertCurrentPairing();
+      options.signal?.throwIfAborted();
+      const next = { ...current, lingServerRoutingProfile: proof.routingProfile };
+      const storedBinding = stored && canonicalizeJson(stored);
+      const currentBinding = canonicalizeJson(current);
+      if (storedBinding !== canonicalizeJson(next)) {
+        if (storedBinding !== currentBinding) {
+          throw new Error("ling_server_pairing_binding_changed");
+        }
+        if (canonicalizeJson(current.lingServerRoutingProfile ?? null) !== canonicalizeJson(binding.lingServerRoutingProfile ?? null)) {
+          throw new Error("ling_server_pairing_profile_changed");
+        }
+        await this.options.bindingStore.write(next);
+        assertCurrentPairing();
+      } else if (storedBinding === currentBinding) {
+        return current;
+      }
+      this.binding = next;
+      this.emit();
+      return next;
+    });
+  }
+
   async unpair(): Promise<void> {
+    this.unpairing = true;
     let remoteError: unknown;
     try {
       if (this.stateValue.connection === "connected") {
@@ -286,39 +512,66 @@ export class RemoteSessionClient {
       type: "connection",
       status: this.reconnectAttempts > 0 ? "reconnecting" : "connecting",
     });
-    const proof = await this.createAuthProof(generation);
-    this.assertConnectionActive(generation);
-    this.clientSeq = 0;
-    this.streamSequences.clear();
-    this.streamSnapshots.clear();
-    const socket = this.options.webSocketFactory(remoteWebSocketUrl(this.binding.gatewayOrigin));
+    const attempt = new AbortController();
+    this.authenticationAttempt = attempt;
+    try {
+      const { channel, authentication } = await openRemoteSessionChannel(this.options, this.authenticationContext(generation), attempt.signal);
+      await this.runSession(generation, channel, authentication);
+    } finally {
+      if (this.authenticationAttempt === attempt) this.authenticationAttempt = undefined;
+    }
+  }
+
+  private async runSession(
+    generation: number,
+    socket: RemoteMessageChannel,
+    authentication: RemoteSessionAuthentication,
+  ): Promise<void> {
     if (!this.isConnectionActive(generation)) {
       socket.close(1000, "stale_connection");
       throw new Error("remote_connection_invalidated");
     }
+    this.clientSeq = 0;
+    this.streamSequences.clear();
+    this.streamSnapshots.clear();
+    this.controlStreamId = undefined;
     this.socket = socket;
-    this.assertConnectionActive(generation);
+    this.expectedSessionId = "proof" in authentication ? authentication.proof.candidateSessionId : undefined;
+    let challengeRoute = "route" in authentication ? authentication.route : undefined;
     const ready = new Promise<void>((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
-    socket.addEventListener("open", () => {
-      if (!this.isCurrentSocket(generation, socket)) {
-        socket.close(1000, "stale_connection");
-        return;
-      }
-      socket.send(JSON.stringify(proof));
+    this.detachSocket = socket.subscribe({
+      opened: () => {
+        if (!this.isCurrentSocket(generation, socket) || !("proof" in authentication)) return;
+        try {
+          socket.send(JSON.stringify(authentication.proof));
+        } catch (error) {
+          this.failSession(error, generation, socket);
+        }
+      },
+      received: raw => {
+        if (!this.isCurrentSocket(generation, socket)) return;
+        this.frameQueue = this.frameQueue
+          .then(async () => {
+            if (!challengeRoute) return await this.handleRawFrame(raw, generation, socket);
+            this.assertCurrentSocket(generation, socket);
+            if (typeof raw !== "string") throw new Error("remote_binary_frame_not_supported");
+            const route = challengeRoute;
+            challengeRoute = undefined;
+            const proof = await createRemoteSessionProof(this.authenticationContext(generation), parseRemoteAuthFrameV1(raw), route);
+            this.assertCurrentSocket(generation, socket);
+            this.expectedSessionId = proof.candidateSessionId;
+            socket.send(JSON.stringify(proof));
+          })
+          .catch(error => this.failSession(error, generation, socket));
+      },
+      failed: () => this.failSession(new Error("remote_socket_error"), generation, socket),
+      closed: event => {
+        this.frameQueue = this.frameQueue.then(() => this.handleClose(event.code, event.reason, generation, socket));
+      },
     });
-    socket.addEventListener("message", (event) => {
-      if (!this.isCurrentSocket(generation, socket)) {
-        return;
-      }
-      this.frameQueue = this.frameQueue
-        .then(async () => await this.handleRawFrame(event.data, generation, socket))
-        .catch((error) => this.failSession(error, generation, socket));
-    });
-    socket.addEventListener("error", () => this.failSession(new Error("remote_socket_error"), generation, socket));
-    socket.addEventListener("close", (event) => this.handleClose(event.code, event.reason, generation, socket));
     const timeout = setTimeout(() => this.failSession(new Error("remote_session_ready_timeout"), generation, socket), 10_000);
     try {
       await ready;
@@ -333,63 +586,18 @@ export class RemoteSessionClient {
     }
   }
 
-  private async createAuthProof(generation: number): Promise<RemoteAuthProofV1> {
-    const binding = this.binding;
-    const response = await this.options.http.postJson<unknown>(binding.gatewayOrigin, "/v1/auth/challenge", {
-      deviceId: binding.deviceId,
-    });
-    this.assertConnectionActive(generation);
-    const challenge: RemoteAuthChallengeV1 = validateRemoteAuthChallengeV1(response.body, {
-      nowMs: Date.parse(this.options.clock.now()),
-    });
-    if (
-      challenge.gatewayId !== binding.gatewayId
-      || challenge.deviceEpoch !== binding.deviceEpoch
-      || !challenge.supportedProtocolVersions.includes(REMOTE_PROTOCOL_VERSION)
-    ) {
-      throw new Error("remote_auth_challenge_identity_mismatch");
-    }
-    const { gatewaySignature: _gatewaySignature, ...unsignedChallenge } = challenge;
-    const challengeValid = await this.options.keys.verify(
-      binding.gatewayIdentityPublicKeyJwk,
-      authChallengeSigningBytes(authChallengeSigningInput(binding.gatewayOrigin, unsignedChallenge)),
-      challenge.gatewaySignature,
-    );
-    this.assertConnectionActive(generation);
-    if (!challengeValid) {
-      throw new Error("remote_auth_gateway_signature_invalid");
-    }
-    const resume = await this.readResumeCursors();
-    this.assertConnectionActive(generation);
-    const clientNonce = encodeBase64Url(await this.options.entropy.randomBytes(32));
-    this.assertConnectionActive(generation);
-    const unsignedProof: Omit<RemoteAuthProofV1, "signature"> = {
-      version: REMOTE_PROTOCOL_VERSION,
-      gatewayId: binding.gatewayId,
-      challengeId: challenge.challengeId,
-      candidateSessionId: challenge.candidateSessionId,
-      deviceId: binding.deviceId,
-      deviceEpoch: binding.deviceEpoch,
-      clientNonce,
-      protocolVersion: REMOTE_PROTOCOL_VERSION,
-      resume,
-    };
-    const signingInput = await authProofSigningInput(
-      binding.gatewayOrigin,
-      unsignedChallenge,
-      unsignedProof,
-      sha256,
-    );
-    this.assertConnectionActive(generation);
-    const signature = await this.options.keys.sign(binding.deviceKeyId, authProofSigningBytes(signingInput));
-    this.assertConnectionActive(generation);
+  private authenticationContext(generation: number) {
     return {
-      ...unsignedProof,
-      signature,
+      binding: this.binding,
+      keys: this.options.keys,
+      entropy: this.options.entropy,
+      clock: this.options.clock,
+      assertCurrent: () => this.assertConnectionActive(generation),
+      readResumeCursors: () => this.readResumeCursors(),
     };
   }
 
-  private async handleRawFrame(raw: unknown, generation: number, socket: RemoteWebSocketLike): Promise<void> {
+  private async handleRawFrame(raw: unknown, generation: number, socket: RemoteMessageChannel): Promise<void> {
     this.assertCurrentSocket(generation, socket);
     if (typeof raw !== "string") {
       throw new Error("remote_binary_frame_not_supported");
@@ -402,18 +610,21 @@ export class RemoteSessionClient {
       throw new Error("remote_session_identity_mismatch");
     }
     if (!this.currentSessionId) {
-      if (frame.type !== "session.ready") {
+      if (frame.type !== "session.ready" || frame.sessionId !== this.expectedSessionId) {
         throw new Error("remote_session_ready_required");
       }
       this.currentSessionId = frame.sessionId;
     }
     const previousSeq = this.streamSequences.get(frame.streamId) ?? 0;
     if (frame.serverSeq <= previousSeq) {
-      await this.sendAck(frame.streamId, previousSeq);
+      await this.sendAck(frame.streamId, previousSeq, generation, socket);
       this.assertCurrentSocket(generation, socket);
       return;
     }
     if (frame.serverSeq !== previousSeq + 1) {
+      if (this.deviceJournalWatches.size > 0 && frame.streamId === this.controlStreamId) {
+        throw new Error("remote_device_journal_stream_gap");
+      }
       this.streamSequences.set(frame.streamId, frame.serverSeq);
       await this.requestFullResync();
       this.assertCurrentSocket(generation, socket);
@@ -422,18 +633,19 @@ export class RemoteSessionClient {
     this.streamSequences.set(frame.streamId, frame.serverSeq);
     await this.applyFrame(frame, generation, socket);
     this.assertCurrentSocket(generation, socket);
-    await this.sendAck(frame.streamId, frame.serverSeq);
+    await this.sendAck(frame.streamId, frame.serverSeq, generation, socket);
     this.assertCurrentSocket(generation, socket);
     await this.persistCache();
     this.assertCurrentSocket(generation, socket);
   }
 
-  private async applyFrame(frame: RemoteServerFrameV1, generation: number, socket: RemoteWebSocketLike): Promise<void> {
+  private async applyFrame(frame: RemoteServerFrameV1, generation: number, socket: RemoteMessageChannel): Promise<void> {
     switch (frame.type) {
       case "session.ready": {
         if (frame.sessionId === "" || frame.payload.deviceId !== this.binding.deviceId) {
           throw new Error("remote_session_identity_mismatch");
         }
+        this.controlStreamId = frame.streamId;
         await this.activateWorkspaceBinding(frame.payload.policy.workspaceBindingId, generation, socket);
         this.dispatch({ type: "session_ready", policy: frame.payload.policy });
         this.readyResolve?.();
@@ -467,12 +679,31 @@ export class RemoteSessionClient {
       case "profile.snapshot":
         this.dispatch({ type: "profile", profile: frame.payload });
         return;
+      case "device.list_snapshot":
+        this.assertDeviceWorkspace(frame.payload.workspaceId);
+        this.dispatch({ type: "device_overview", snapshot: frame.payload });
+        return;
+      case "device.task.snapshot":
+        this.assertDeviceWorkspace(frame.payload.workspaceId);
+        this.dispatch({ type: "device_task", snapshot: frame.payload });
+        return;
+      case "device.task.journal_page":
+        if (frame.streamId !== this.controlStreamId) throw new Error("remote_device_journal_stream_mismatch");
+        this.applyDeviceJournalWatchPage(frame.payload.watchId, frame.payload.journal, false);
+        return;
       case "command.accepted":
         if (frame.payload.commandType === "conversation.send_text") {
           this.dispatch({ type: "send_accepted", commandId: frame.payload.commandId });
         }
         return;
       case "command.completed":
+        if (frame.payload.commandType === "device.task.journal.watch" && frame.payload.result.kind === "device_task_journal_watching") {
+          const pending = this.commands.get(frame.payload.commandId);
+          if (frame.streamId !== this.controlStreamId || (pending && pending.type !== frame.payload.commandType)) {
+            throw new Error("remote_device_journal_stream_mismatch");
+          }
+          this.applyDeviceJournalWatchPage(frame.payload.commandId, frame.payload.result.journal, true);
+        }
         this.completeCommand(frame.payload.commandId, frame.payload.result);
         if (frame.payload.commandType === "conversation.send_text") {
           this.dispatch({
@@ -490,6 +721,10 @@ export class RemoteSessionClient {
         await this.requestFullResync();
         return;
       case "security.revoked":
+        if (frame.payload.reason === "replaced") {
+          this.disconnect();
+          return;
+        }
         await this.revokeLocal(frame.payload.reason);
         return;
     }
@@ -498,10 +733,12 @@ export class RemoteSessionClient {
   private async sendCommand<T extends CommandType>(
     type: T,
     payload: RemoteClientCommandPayloadMapV1[T],
+    assertAuthority?: () => void,
   ): Promise<RemoteCommandHandle<RemoteCommandResultMapV1[T]>> {
     this.requireConnectedSocket();
     const messageId = await this.options.entropy.randomId("message");
     this.requireConnectedSocket();
+    assertAuthority?.();
     const completion = new Promise<RemoteCommandResultMapV1[T]>((resolve, reject) => {
       const pending: PendingCommand<RemoteCommandResultMapV1[T]> = {
         commandId: payload.commandId,
@@ -518,8 +755,10 @@ export class RemoteSessionClient {
     return { commandId: payload.commandId, completion };
   }
 
-  private async sendAck(streamId: string, ackServerSeq: number): Promise<void> {
-    this.sendFrame("stream.ack", { streamId, ackServerSeq }, await this.options.entropy.randomId("ack"));
+  private async sendAck(streamId: string, ackServerSeq: number, generation: number, socket: RemoteMessageChannel): Promise<void> {
+    const messageId = await this.options.entropy.randomId("ack");
+    this.assertCurrentSocket(generation, socket);
+    this.sendFrame("stream.ack", { streamId, ackServerSeq }, messageId);
   }
 
   private sendFrame<T extends RemoteClientCommandTypeV1>(
@@ -550,6 +789,7 @@ export class RemoteSessionClient {
       return;
     }
     this.commands.delete(commandId);
+    if (pending.type !== "conversation.open") this.outboundByMessage.delete(pending.messageId);
     pending.resolve(result);
   }
 
@@ -557,6 +797,7 @@ export class RemoteSessionClient {
     const pending = this.commands.get(failed.commandId);
     if (pending) {
       this.commands.delete(failed.commandId);
+      this.outboundByMessage.delete(pending.messageId);
       pending.reject(new Error(`${failed.error.code}: ${failed.error.message}`));
     }
     if (failed.commandType === "conversation.send_text") {
@@ -567,25 +808,30 @@ export class RemoteSessionClient {
   private async activateWorkspaceBinding(
     workspaceBindingId: string,
     generation: number,
-    socket: RemoteWebSocketLike,
+    socket: RemoteMessageChannel,
   ): Promise<void> {
-    const previous = this.binding.workspaceBindingId;
-    if (previous && previous !== workspaceBindingId) {
-      await this.options.cacheStore.remove(previous);
+    await this.runBindingMutation(async () => {
       this.assertCurrentSocket(generation, socket);
-      this.dispatch({ type: "clear_workspace", workspaceBindingId });
-    }
-    const nextBinding = { ...this.binding, workspaceBindingId };
-    this.assertCurrentSocket(generation, socket);
-    await this.runBindingMutation(() => this.options.bindingStore.write(nextBinding));
-    if (!this.isCurrentSocket(generation, socket)) {
-      throw new Error("remote_connection_invalidated");
-    }
-    this.binding = nextBinding;
+      const previous = this.binding.workspaceBindingId;
+      if (previous && previous !== workspaceBindingId) {
+        await this.options.cacheStore.remove(previous);
+        this.assertCurrentSocket(generation, socket);
+        this.dispatch({ type: "clear_workspace", workspaceBindingId });
+      }
+      const { lingServerRoutingProfile, ...binding } = this.binding;
+      const nextBinding = {
+        ...binding, workspaceBindingId,
+        ...(previous === workspaceBindingId && lingServerRoutingProfile ? { lingServerRoutingProfile } : {}),
+      };
+      this.assertCurrentSocket(generation, socket);
+      await this.options.bindingStore.write(nextBinding);
+      this.assertCurrentSocket(generation, socket);
+      this.binding = nextBinding;
+    });
     const cache = await this.options.cacheStore.read(workspaceBindingId);
     this.assertCurrentSocket(generation, socket);
     if (cache?.workspaceBindingId === workspaceBindingId) {
-      this.stateValue = { ...cache.state, connection: "connecting", lastError: undefined };
+      this.stateValue = { ...cache.state, connection: "connecting", deviceOverviewCurrent: false, deviceTaskCurrent: false, lastError: undefined };
       this.emit();
     }
   }
@@ -595,10 +841,16 @@ export class RemoteSessionClient {
     if (!workspaceBindingId || this.binding.status !== "active") {
       return;
     }
+    const { deviceTask } = this.stateValue;
+    let state = { ...this.stateValue, deviceOverviewCurrent: false, deviceTaskCurrent: false };
+    if (deviceTask?.task.pendingApproval) {
+      const { pendingApproval: _pendingApproval, ...task } = deviceTask.task;
+      state = { ...state, deviceTask: { ...deviceTask, task } };
+    }
     await this.options.cacheStore.write(workspaceBindingId, {
       version: 1,
       workspaceBindingId,
-      state: this.stateValue,
+      state,
       resume: this.resumeCursors(),
       updatedAt: this.options.clock.now(),
     });
@@ -637,6 +889,28 @@ export class RemoteSessionClient {
     return workspaceId;
   }
 
+  private requireDeviceWorkspaceId(): string {
+    if (!this.stateValue.policy?.capabilities.includes("device.read")) throw new Error("remote_device_read_unavailable");
+    return this.requireWorkspaceId();
+  }
+
+  private assertDeviceWorkspace(workspaceId: string): void {
+    if (workspaceId !== this.requireDeviceWorkspaceId()) throw new Error("remote_device_workspace_mismatch");
+  }
+
+  private deviceTaskAuthority(capability: "device.approve" | "device.revoke" | "device.reconcile" | "device.journal" | "device.journal.watch") {
+    const sessionId = this.requireSessionId();
+    const workspaceId = this.requireDeviceWorkspaceId();
+    const assertCurrent = () => {
+      if (this.requireSessionId() !== sessionId || this.requireDeviceWorkspaceId() !== workspaceId
+        || !this.stateValue.policy?.capabilities.includes(capability)) {
+        throw new Error(capability.startsWith("device.journal") ? "remote_device_journal_unavailable" : "remote_device_mutation_unavailable");
+      }
+    };
+    assertCurrent();
+    return { workspaceId, assertCurrent };
+  }
+
   private requireSessionId(): string {
     const socketSession = this.stateValue.connection === "connected" ? this.currentSessionId : undefined;
     if (!socketSession) {
@@ -646,15 +920,16 @@ export class RemoteSessionClient {
   }
 
   private currentSessionId?: string;
+  private controlStreamId?: string;
 
-  private requireConnectedSocket(): RemoteWebSocketLike {
+  private requireConnectedSocket(): RemoteMessageChannel {
     if (!this.socket || this.socket.readyState !== 1) {
       throw new Error("remote_socket_not_connected");
     }
     return this.socket;
   }
 
-  private failSession(error: unknown, generation: number, socket: RemoteWebSocketLike): void {
+  private failSession(error: unknown, generation: number, socket: RemoteMessageChannel): void {
     if (!this.isCurrentSocket(generation, socket)) {
       return;
     }
@@ -664,14 +939,17 @@ export class RemoteSessionClient {
     this.dispatch({ type: "connection", status: "disconnected", error: normalized.message });
   }
 
-  private handleClose(code: number | undefined, reason: string | undefined, generation: number, socket: RemoteWebSocketLike): void {
+  private handleClose(code: number | undefined, reason: string | undefined, generation: number, socket: RemoteMessageChannel): void {
     if (!this.isCurrentSocket(generation, socket)) {
       return;
     }
     const closeMessage = reason || `remote_socket_closed_${code ?? 0}`;
     this.readyReject?.(new Error(closeMessage));
+    this.detachSocket?.();
+    this.detachSocket = undefined;
     this.socket = undefined;
     this.currentSessionId = undefined;
+    this.expectedSessionId = undefined;
     this.rejectPendingCommands(closeMessage);
     if (this.intentionalClose || this.binding.status !== "active") {
       return;
@@ -681,6 +959,9 @@ export class RemoteSessionClient {
   }
 
   private rejectPendingCommands(message: string): void {
+    const watches = [...this.deviceJournalWatches.values()];
+    this.deviceJournalWatches.clear();
+    for (const watch of watches) watch.onError?.(new Error(message));
     for (const pending of this.commands.values()) {
       pending.reject(new Error(message));
       if (pending.type === "conversation.send_text") {
@@ -727,9 +1008,14 @@ export class RemoteSessionClient {
     this.readyReject?.(new Error("remote_connection_invalidated"));
     this.readyResolve = undefined;
     this.readyReject = undefined;
+    this.authenticationAttempt?.abort();
+    this.authenticationAttempt = undefined;
+    this.detachSocket?.();
+    this.detachSocket = undefined;
     const socket = this.socket;
     this.socket = undefined;
     this.currentSessionId = undefined;
+    this.expectedSessionId = undefined;
     this.connectPromise = undefined;
     this.rejectPendingCommands(reason);
     socket?.close(code, reason);
@@ -741,11 +1027,11 @@ export class RemoteSessionClient {
       && !this.intentionalClose;
   }
 
-  private isCurrentSocket(generation: number, socket: RemoteWebSocketLike): boolean {
+  private isCurrentSocket(generation: number, socket: RemoteMessageChannel): boolean {
     return this.isConnectionActive(generation) && this.socket === socket;
   }
 
-  private assertCurrentSocket(generation: number, socket: RemoteWebSocketLike): void {
+  private assertCurrentSocket(generation: number, socket: RemoteMessageChannel): void {
     if (!this.isCurrentSocket(generation, socket)) {
       throw new Error("remote_connection_invalidated");
     }
@@ -761,6 +1047,23 @@ export class RemoteSessionClient {
     if (!this.isConnectionActive(generation)) {
       throw new Error("remote_connection_invalidated");
     }
+  }
+}
+
+function normalizeDeviceJournalCursor(cursor: Omit<DeviceJournalCursor, "limit"> & { readonly limit?: number }): DeviceJournalCursor {
+  const { generation, afterSequence, limit = REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 } = cursor;
+  if (!Number.isSafeInteger(generation) || generation < 1 || !Number.isSafeInteger(afterSequence) || afterSequence < 0
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1) {
+    throw new Error("remote_device_journal_invalid_cursor");
+  }
+  return { generation, afterSequence, limit };
+}
+
+function assertDeviceJournalPage(page: RemoteDeviceTaskJournalV1, workspaceId: string, taskId: string, cursor: DeviceJournalCursor): void {
+  if (page.workspaceId !== workspaceId || page.task.taskId !== taskId || page.afterSequence !== cursor.afterSequence
+    || page.events.length > cursor.limit
+    || page.requiresSnapshot !== (page.generation !== cursor.generation || cursor.afterSequence > page.latestSequence)) {
+    throw new Error("remote_device_journal_binding_mismatch");
   }
 }
 

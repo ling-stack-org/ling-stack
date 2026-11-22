@@ -1,7 +1,11 @@
 import type {
+  LingServerRoutingProfileV1,
   RemoteP256PublicJwkV1,
   RemoteResumeCursorV1,
 } from "@ling-stack/contracts";
+import type { RemoteWebSocketLike } from "@ling-stack/remote-protocol";
+
+export type { RemoteSocketCloseEvent, RemoteSocketMessageEvent, RemoteWebSocketLike } from "@ling-stack/remote-protocol";
 
 export interface RemoteDeviceKeyInfo {
   readonly keyId: string;
@@ -32,30 +36,27 @@ export interface RemoteHttpResponse<T> {
 }
 
 export interface RemoteHttpClient {
-  getJson<T>(origin: string, path: string): Promise<RemoteHttpResponse<T>>;
-  postJson<T>(origin: string, path: string, body: unknown): Promise<RemoteHttpResponse<T>>;
+  getJson<T>(origin: string, path: string, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>>;
+  postJson<T>(origin: string, path: string, body: unknown, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>>;
 }
 
-export interface RemoteSocketMessageEvent {
-  readonly data: unknown;
+type RemoteHttpRequestOptions = Pick<RequestInit, "signal" | "redirect">;
+
+export class RemoteHttpStatusError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "RemoteHttpStatusError";
+  }
 }
 
-export interface RemoteSocketCloseEvent {
-  readonly code?: number;
-  readonly reason?: string;
+export class RemoteHttpTransportError extends Error {
+  constructor(cause: unknown) {
+    super("remote_http_transport_unavailable", { cause });
+    this.name = "RemoteHttpTransportError";
+  }
 }
 
-export interface RemoteWebSocketLike {
-  readonly readyState: number;
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-  addEventListener(type: "open", listener: () => void): void;
-  addEventListener(type: "message", listener: (event: RemoteSocketMessageEvent) => void): void;
-  addEventListener(type: "close", listener: (event: RemoteSocketCloseEvent) => void): void;
-  addEventListener(type: "error", listener: () => void): void;
-}
-
-export type RemoteWebSocketFactory = (url: string) => RemoteWebSocketLike;
+export type RemoteWebSocketFactory = (url: string, subprotocols?: string | string[]) => RemoteWebSocketLike;
 
 export interface RemoteBindingV1 {
   readonly version: 1;
@@ -69,6 +70,7 @@ export interface RemoteBindingV1 {
   readonly deviceEpoch: number;
   readonly pairedAt: string;
   readonly workspaceBindingId?: string;
+  readonly lingServerRoutingProfile?: LingServerRoutingProfileV1;
 }
 
 export interface RemoteBindingStore {
@@ -97,11 +99,12 @@ export const systemRemoteClock: RemoteClock = {
 
 export function createFetchRemoteHttpClient(fetchImpl: typeof globalThis.fetch = globalThis.fetch): RemoteHttpClient {
   return {
-    async getJson<T>(origin: string, path: string): Promise<RemoteHttpResponse<T>> {
-      return await requestJson<T>(fetchImpl, origin, path, { method: "GET" });
+    async getJson<T>(origin: string, path: string, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>> {
+      return await requestJson<T>(fetchImpl, origin, path, { ...options, method: "GET" });
     },
-    async postJson<T>(origin: string, path: string, body: unknown): Promise<RemoteHttpResponse<T>> {
+    async postJson<T>(origin: string, path: string, body: unknown, options?: RemoteHttpRequestOptions): Promise<RemoteHttpResponse<T>> {
       return await requestJson<T>(fetchImpl, origin, path, {
+        ...options,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -116,13 +119,27 @@ async function requestJson<T>(
   path: string,
   init: RequestInit,
 ): Promise<RemoteHttpResponse<T>> {
-  const response = await fetchImpl(new URL(path, origin), init);
-  const body = await response.json() as T;
-  if (!response.ok) {
-    const record = body && typeof body === "object" ? body as Record<string, unknown> : undefined;
-    throw new Error(typeof record?.message === "string" ? record.message : `remote_http_${response.status}`);
+  const url = new URL(path, origin);
+  const rejectRedirect = init.redirect === "error";
+  let response: Response;
+  try {
+    response = await fetchImpl(url, rejectRedirect ? { ...init, redirect: "manual" } : init);
+  } catch (error) {
+    init.signal?.throwIfAborted();
+    if (!rejectRedirect) throw error;
+    throw new RemoteHttpTransportError(error);
   }
-  return { status: response.status, body };
+  if (rejectRedirect && (response.redirected || response.type === "opaqueredirect"
+    || (response.status >= 300 && response.status < 400))) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("remote_http_redirect_refused");
+  }
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => undefined);
+    const record = body && typeof body === "object" ? body as Record<string, unknown> : undefined;
+    throw new RemoteHttpStatusError(response.status, typeof record?.message === "string" ? record.message : `remote_http_${response.status}`);
+  }
+  return { status: response.status, body: await response.json() as T };
 }
 
 export function remoteWebSocketUrl(origin: string): string {
