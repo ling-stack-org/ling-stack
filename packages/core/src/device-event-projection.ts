@@ -24,13 +24,19 @@ export interface DevicePeerEventReceiveResult {
   readonly replayed: boolean;
 }
 
+export interface DevicePeerSnapshotReceiveResult {
+  readonly frame: LingServerPeerFrameV1;
+  readonly snapshot: DeviceSnapshotRecord;
+  readonly replayed: boolean;
+}
+
 /** Binds owner-stream events to the authenticated peer session without exposing transport internals to projections. */
 export class DevicePeerEventSynchronizer {
   readonly #sessions: LingServerPeerSessionCoordinator;
-  readonly #store: DeviceEventAppendStore;
+  readonly #store: DeviceEventAppendStore & DeviceEventProjectionStore;
   readonly #now: () => string;
 
-  constructor(input: { readonly sessions: LingServerPeerSessionCoordinator; readonly store: DeviceEventAppendStore; readonly now?: () => string }) {
+  constructor(input: { readonly sessions: LingServerPeerSessionCoordinator; readonly store: DeviceEventAppendStore & DeviceEventProjectionStore; readonly now?: () => string }) {
     this.#sessions = input.sessions;
     this.#store = input.store;
     this.#now = input.now ?? (() => new Date().toISOString());
@@ -47,11 +53,29 @@ export class DevicePeerEventSynchronizer {
     return result;
   }
 
+  publishSnapshot(sessionId: string, snapshot: DeviceSnapshotRecord, direction: LingServerPeerFrameV1["direction"] = "to_mobile"): DevicePeerEventPublishResult {
+    assertSnapshot(snapshot);
+    return this.#sessions.sendFrame(sessionId, {
+      frameId: "snapshot:" + snapshot.streamId + ":" + snapshot.generation + ":" + snapshot.sequence,
+      direction,
+      kind: "device_task",
+      payload: { type: "device_snapshot", snapshot: snapshot as unknown as JsonValue } as unknown as JsonValue,
+      sentAt: this.#now(),
+    });
+  }
+
   receive(frame: LingServerPeerFrameV1): DevicePeerEventReceiveResult {
     const accepted = this.#sessions.acceptFrame(frame);
     const event = readPeerEvent(frame.payload);
     const stored = this.#store.appendEvent(event, this.#now());
     return { frame: accepted.frame, event: stored.event, replayed: accepted.replayed || stored.replayed };
+  }
+
+  receiveSnapshot(frame: LingServerPeerFrameV1): DevicePeerSnapshotReceiveResult {
+    const accepted = this.#sessions.acceptFrame(frame);
+    const snapshot = readPeerSnapshot(frame.payload);
+    const saved = this.#store.saveSnapshot(snapshot);
+    return { frame: accepted.frame, snapshot: saved, replayed: accepted.replayed };
   }
 }
 
@@ -158,6 +182,28 @@ function readPeerEvent(value: JsonValue): DeviceEventEnvelopeV1 {
     throw new DeviceFabricError("revision_conflict", "peer device event is malformed");
   }
   return event as unknown as DeviceEventEnvelopeV1;
+}
+
+function readPeerSnapshot(value: JsonValue): DeviceSnapshotRecord {
+  if (!isRecord(value) || value.type !== "device_snapshot" || !isRecord(value.snapshot)) {
+    throw new DeviceFabricError("revision_conflict", "peer frame does not contain a device snapshot");
+  }
+  const snapshot = value.snapshot;
+  if (typeof snapshot.streamId !== "string" || !snapshot.streamId.trim()
+    || typeof snapshot.generation !== "number" || !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 1
+    || typeof snapshot.sequence !== "number" || !Number.isSafeInteger(snapshot.sequence) || snapshot.sequence < 0
+    || typeof snapshot.createdAt !== "string" || !Number.isFinite(Date.parse(snapshot.createdAt))
+    || !Object.hasOwn(snapshot, "snapshot")) {
+    throw new DeviceFabricError("revision_conflict", "peer device snapshot is malformed");
+  }
+  return snapshot as unknown as DeviceSnapshotRecord;
+}
+
+function assertSnapshot(snapshot: DeviceSnapshotRecord): void {
+  if (!snapshot.streamId.trim() || !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 1
+    || !Number.isSafeInteger(snapshot.sequence) || snapshot.sequence < 0 || !Number.isFinite(Date.parse(snapshot.createdAt))) {
+    throw new DeviceFabricError("revision_conflict", "device snapshot is invalid");
+  }
 }
 
 function isRecord(value: JsonValue): value is { readonly [key: string]: JsonValue } {

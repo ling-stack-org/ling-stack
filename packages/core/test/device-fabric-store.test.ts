@@ -101,6 +101,11 @@ test("peer event synchronization preserves owner stream identity and idempotent 
   assert.equal(sync.receive(outbound.frame).replayed, false);
   assert.equal(sync.receive(outbound.frame).replayed, true);
   assert.deepEqual(store.readEvents("task:peer", 1, 0).events.map(item => item.eventId), ["peer-event-1"]);
+  const snapshot = { streamId: "task:peer", generation: 1, sequence: 1, snapshot: { status: "succeeded" }, createdAt: now };
+  const snapshotOutbound = new DevicePeerEventSynchronizer({ sessions: sender, store: senderStore, now: () => now }).publishSnapshot("session-1", snapshot);
+  assert.equal(sync.receiveSnapshot(snapshotOutbound.frame).replayed, false);
+  assert.equal(sync.receiveSnapshot(snapshotOutbound.frame).replayed, true);
+  assert.deepEqual(store.getSnapshot("task:peer", 1)?.snapshot, snapshot.snapshot);
   senderStore.close();
   store.close();
 });
