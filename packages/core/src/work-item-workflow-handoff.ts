@@ -19,6 +19,7 @@ export interface WorkflowStageHandoffDecision {
   readonly targetRevision: string;
   readonly sourceArtifactId?: string;
   readonly sourceRunId?: string;
+  readonly candidateDigest?: string;
   readonly reason?: LingAppServerStageHandoffReturnReason;
   readonly detail?: string;
 }

@@ -31,6 +31,7 @@ import { writeJson } from "../../shared/response.js";
 import { readWorkItemStageMessages } from "../work-items/stage-messages.js";
 import { readWorkItemStageQuestionInputs } from "../work-items/stage-questions.js";
 import { readWorkItemRetainedStageInputs } from "../work-items/workflow-stages.js";
+import { workItemHandoffCandidatesCurrent } from "../work-items/stage-handoff-candidates.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -1072,6 +1073,9 @@ export async function prepareWorkflowStepStart(
     admission = input.mode === "create_and_run_task" ? createWorkflowSafetyAdmission(store, step, runRequestBase) : undefined;
   } catch (error) {
     return fail(409, "workflow_safety_mismatch", error instanceof Error ? error.message : String(error));
+  }
+  if (step.metadata?.requiredPlanHandoffStepIds?.length && !await workItemHandoffCandidatesCurrent(store, step)) {
+    return fail(409, "work_item_handoff_candidate_stale", "The accepted handoff uses a different worktree candidate.");
   }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),

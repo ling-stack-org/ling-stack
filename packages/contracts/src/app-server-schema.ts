@@ -299,7 +299,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "workItem/handoff/accept":
     case "workItem/handoff/return":
       return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, sourceStepId: stringSchema, targetStepId: stringSchema,
-        expectedSourceRevision: stringSchema, expectedTargetRevision: stringSchema, reason: stringSchema, detail: stringSchema }, ["workItemId"]), result };
+        expectedSourceRevision: stringSchema, expectedTargetRevision: stringSchema, expectedCandidateDigest: stringSchema,
+        reason: stringSchema, detail: stringSchema }, ["workItemId"]), result };
     case "workItem/feedback/add":
       return { params: objectWith({ ...collaborationAppend, sourceRunId: stringSchema, providerPresetId: stringSchema }, ["workItemId"]),
         result: { oneOf: [

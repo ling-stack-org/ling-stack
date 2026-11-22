@@ -87,7 +87,7 @@ function readStageHandoffs(
       ...basis, status: "returned", receiptId: handoff.record.id, reason: handoff.decision.reason,
     }];
     if (handoff && stageHandoffAdmitsTarget(store, subject, source, step)) return [{
-      ...basis, status: "accepted", receiptId: handoff.record.id,
+      ...basis, status: "accepted", receiptId: handoff.record.id, candidateDigest: handoff.decision.candidateDigest,
     }];
     return [{ ...basis, status: source.status === "succeeded" ? "awaiting_acceptance" : "awaiting_source" }];
   });

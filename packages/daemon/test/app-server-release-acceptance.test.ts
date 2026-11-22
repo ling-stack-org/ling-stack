@@ -2542,7 +2542,13 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
   await peer.call("workItem/subscribe", { workItemId, cursor: before.cursor });
   assert.deepEqual(before.workItem.currentExecutionRefs, []);
-  await writeFile(join(fixture.cwd, "implementation-input.txt"), "Verified compatibility input\n");
+  const inputFile = join(fixture.cwd, "implementation-input.txt");
+  await writeFile(inputFile, "Verified compatibility input\n");
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  git("init", "-q", "-b", "main");
+  git("add", ".gitignore", "implementation-input.txt");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Freeze the staged input");
   const store = fixture.getStore();
   const preset = addLoopbackPreset(store, provider.baseUrl);
   const now = new Date().toISOString();
@@ -2788,8 +2794,12 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   await assert.rejects(resumedClient.call("workItem/question/ask", {
     ...ask, expectedWorkItemRevision: question.workItemRevision, waitingStepId: p02.id, respondentStepId: qa.id, idempotencyKey: "mutual-wait",
   }), { code: "work_item_question_cycle" });
-  const handoff = { ...offeredHandoff, expectedSourceRevision: revisedSource.updatedAt,
+  const { candidate } = await resumedClient.call<LingAppServerCaptureChangesResult>("changes/capture");
+  const handoff = { ...offeredHandoff, expectedSourceRevision: revisedSource.updatedAt, expectedCandidateDigest: candidate.candidateDigest,
     expectedWorkItemRevision: question.workItemRevision, idempotencyKey: "qa-accept-repaired-contract" };
+  await writeFile(inputFile, "Changed after QA read\n");
+  await assert.rejects(resumedClient.call("workItem/handoff/accept", handoff), { code: "work_item_handoff_candidate_stale" });
+  await writeFile(inputFile, "Verified compatibility input\n");
   const handoffPath = `${itemPath}/handoff`;
   const { daemonUrl, authToken } = fixture.transportOptions();
   const forbiddenHandoff = await fetch(new URL(`${handoffPath}?cwd=${encodeURIComponent(fixture.cwd)}`, daemonUrl), {
@@ -2809,6 +2819,7 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.ok(acceptedHandoff.record.sourceRefs.some(source => source.id === revisedArtifact.id));
   const awaitingReply = (await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id);
   assert.equal(awaitingReply?.handoffs?.[0]?.status, "accepted");
+  assert.equal(awaitingReply.handoffs[0]?.candidateDigest, candidate.candidateDigest);
   assert.equal(awaitingReply.admissionBlocker, "work_item_stage_question_pending");
   const readBallots = (connection: typeof client) => connection.call<LingAppServerWorkItemCollaborationReadResult>(
     "workItem/deliberation/read", { workItemId: item.id });
@@ -2853,11 +2864,20 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
     workItemId, questionId: question.record.id, expectedQuestionRevision: question.record.collaborationRevision,
     expectedWorkItemRevision: restoredMessage.workItemRevision, answer: "Include omitted optional fields in the QA checks.", idempotencyKey: "qa-compatibility-answer",
   };
+  await writeFile(inputFile, "Changed after the handoff was accepted\n");
   await assert.rejects(decisionClient.call("workItem/question/reply", { ...reply, expectedQuestionRevision: 1 }), { code: "stale_revision" });
   const answered = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/reply", reply);
   const repeatedAnswer = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/reply", reply);
   assert.equal(repeatedAnswer.status, "replayed");
   assert.equal(repeatedAnswer.record.id, answered.record.id);
+  const drifted = await waitFor(async () => {
+    const response = await request(`/workflow-steps/${encodeURIComponent(qa.id)}/start`, { mode: "create_and_run_task" });
+    const body = await response.json() as { error?: string };
+    return body.error === "resource_conflict" ? undefined : { status: response.status, code: body.error };
+  });
+  assert.deepEqual(drifted, { status: 409, code: "work_item_handoff_candidate_stale" });
+  assert.equal(fixture.getStore().listRuns({ workflowStepId: qa.id }).length, 0);
+  await writeFile(inputFile, "Verified compatibility input\n");
   await waitFor(() => fixture.getStore().getChannelWorkflowStep(qa.id)?.status === "succeeded" ? true : undefined);
   const releaseImplementation = await decisionClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/withdraw", {
     ...changeBasis, expectedWorkItemRevision: answered.workItemRevision,
@@ -3469,7 +3489,15 @@ test("App Server grants restrict observers, controllers and approvers to their s
 });
 
 test("the dedicated TLS App Server accepts scoped controllers and revokes access across listeners", { timeout: 30_000 }, async t => {
+  const provider = await startLoopbackPiProvider((_: unknown, count: number) => count === 1 ? {
+    tool: "request_user_input",
+    input: { schemaVersion: 1, waitMode: "required", questions: [
+      { questionId: "remote-scope", prompt: "Which compatibility contract applies?", required: true, allowFreeText: true, options: [] },
+    ] },
+  } : { text: "Used the authorized remote response." });
+  t.after(() => provider.close());
   const fixture = await releaseFixture(t, {
+    harness: { toolBroker: { mode: "enforce" } },
     wssConfig: async root => {
       const certificateFile = join(root, "certificate.pem");
       const privateKeyFile = join(root, "private-key.pem");
@@ -3484,6 +3512,7 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
     },
   });
   const host = await fixture.connect();
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
   const { thread } = await host.call<ThreadRead>("thread/start", { title: "Remote authorized task" });
   const { thread: other } = await host.call<ThreadRead>("thread/start", { title: "Unrelated task" });
   const secret = createHash("sha256").update(randomUUID()).digest("hex");
@@ -3530,9 +3559,40 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
   assert.deepEqual(remote.effectiveScopes, ["control", "observe"]);
   await client.subscribe({ threadId: thread.id });
   await assert.rejects(client.readThread(other.id), { code: "capability_denied" });
-  const action = await client.startTurn({ threadId: thread.id, turnId: "wss-turn", message: "Record a remote control input." }) as { turn: { id: string } };
-  assert.equal(action.turn.id, "wss-turn");
+  const action = await client.startTurn({ threadId: thread.id, providerPresetId: preset.id,
+    message: "Ask which compatibility contract applies.", idempotencyKey: "wss-turn" }) as { turn: { id: string }; run: { id: string } };
+  assert.ok(action.turn.id && action.run.id);
   await waitFor(() => notifications.includes("turn/started") ? true : undefined);
+  const answerSecret = randomBytes(32).toString("hex");
+  const answerGrant = await host.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+    label: "Remote responder", scopes: ["observe", "respond"], subject: { kind: "thread", id: thread.id },
+    expiresAt: new Date(Date.now() + 60_000).toISOString(), idempotencyKey: "remote-answer-grant",
+    credentialSha256: createHash("sha256").update(answerSecret).digest("hex"),
+  });
+  const responder = new LingAppServerClient({
+    url: url.href, clientInfo: { name: "remote-response-test", version: "1" }, autoReconnect: false,
+    createSocket: location => new WebSocket(location, {
+      ca, headers: { Authorization: `Bearer las1.${answerGrant.grant.grantId}.${answerSecret}` },
+    }) as unknown as LingAppServerSocket,
+  });
+  t.after(() => responder.close());
+  const authority = await waitFor(async () => {
+    const snapshot = await responder.readThreadSnapshot({ threadId: thread.id });
+    return snapshot.pendingInputs[0]?.answerAuthority;
+  });
+  assert.equal(authority.runId, action.run.id);
+  await waitFor(() => fixture.getStore().getRun(authority.runId)?.status === "yielded" ? true : undefined);
+  const answer: LingAppServerInputRespondParams = {
+    schemaVersion: 1, authority, idempotencyKey: "wss-answer",
+    answers: [{ questionId: "remote-scope", kind: "text", text: "Use the accepted remote compatibility contract." }],
+  };
+  assert.equal((await client.readThreadSnapshot({ threadId: thread.id })).pendingInputs[0]?.answerAuthority, undefined);
+  await assert.rejects(client.respondInput(answer), { code: "capability_denied" });
+  const answered = await responder.respondInput(answer);
+  assert.deepEqual((await responder.respondInput(answer)).receipt, { ...answered.receipt, replayed: true });
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  assert.match(JSON.stringify(provider.requests[1]), /Use the accepted remote compatibility contract/u);
+  await waitFor(() => fixture.getStore().getLingTurn(action.turn.id)?.status === "succeeded" ? true : undefined);
   assert.ok(socket);
   const closed = once(socket, "close");
   await host.call("server/grants/revoke", { grantId: grant.grantId, expectedRevision: grant.revision });

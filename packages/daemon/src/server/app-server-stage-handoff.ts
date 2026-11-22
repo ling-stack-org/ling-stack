@@ -3,11 +3,12 @@ import { LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, type LingAppServerStageHa
   type LingAppServerStageHandoffReturnReason } from "@ling-stack/contracts";
 import {
   appendWorkItemCollaboration, readWorkflowStageHandoff, workflowStageHandoffId,
-  type RunStore, type WorkflowStageHandoffDecision,
+  type AppendWorkItemCollaborationResult, type RunStore, type WorkflowStageHandoffDecision,
 } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import { readWorkflowStepOutputPacketArtifact } from "../features/channels/workflow-step-packets.js";
+import { readCompleteHandoffCandidate } from "../features/work-items/stage-handoff-candidates.js";
 import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { readJsonBody } from "../shared/request.js";
 import { writeJson } from "../shared/response.js";
@@ -25,14 +26,16 @@ export function readStageHandoffParams(record: Record<string, unknown>, action: 
   const reason = record.reason as LingAppServerStageHandoffReturnReason | undefined;
   const detail = record.detail;
   const revision = record.expectedWorkItemRevision;
+  const expectedCandidateDigest = record.expectedCandidateDigest;
   if (action === "returned" && (!reason || !LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS.includes(reason))
     || action === "accepted" && reason !== undefined || detail !== undefined && (typeof detail !== "string" || detail.length > 1200)
+    || expectedCandidateDigest !== undefined && (action !== "accepted" || typeof expectedCandidateDigest !== "string" || !/^[a-f0-9]{64}$/u.test(expectedCandidateDigest))
     || typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1) throw invalid();
   return {
     workItemId: required("workItemId"), planRevision: required("planRevision"),
     sourceStepId: required("sourceStepId"), targetStepId: required("targetStepId"),
     expectedSourceRevision: required("expectedSourceRevision"), expectedTargetRevision: required("expectedTargetRevision"),
-    idempotencyKey: required("idempotencyKey", 200), expectedWorkItemRevision: revision, reason, detail: detail?.trim(),
+    idempotencyKey: required("idempotencyKey", 200), expectedWorkItemRevision: revision, reason, detail: detail?.trim(), expectedCandidateDigest,
   };
 }
 
@@ -62,7 +65,7 @@ export async function handleWorkItemStageHandoff(
     }
     const input = readStageHandoffParams({ ...body, workItemId }, body.action);
     if (body.action === "accepted") appServerRecoveryFor(context.config, store)?.assertReady();
-    const { event, ...result } = settleAppServerStageHandoff(store, input, body.action, new Date().toISOString());
+    const { event, ...result } = await settleAppServerStageHandoff(store, input, body.action, new Date().toISOString());
     if (event) {
       context.controlPlaneEvents.publish(event);
       if (body.action === "accepted") context.taskSupervisor.poke(store.paths.cwd);
@@ -80,23 +83,27 @@ export async function handleWorkItemStageHandoff(
   }
 }
 
-export function settleAppServerStageHandoff(
+export async function settleAppServerStageHandoff(
   store: RunStore, input: LingAppServerStageHandoffParams, action: "accepted" | "returned", now: string,
-) {
+): Promise<AppendWorkItemCollaborationResult> {
   const { workItemId, planRevision, sourceStepId, targetStepId, expectedSourceRevision, expectedTargetRevision, idempotencyKey } = input;
   const item = store.getWorkItem(workItemId);
   if (!item) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
   const subject = { workItemId, planRevision, sourceStepId, sourceRevision: expectedSourceRevision, targetStepId };
-  const existing = readWorkflowStageHandoff(store, subject);
-  if (existing) {
+  const replay = (): AppendWorkItemCollaborationResult | undefined => {
+    const existing = readWorkflowStageHandoff(store, subject);
+    if (!existing) return undefined;
     const { record, decision } = existing;
     if (record.idempotencyKey !== idempotencyKey) throw new AppServerCollaborationError("stale_revision", "This source revision already has a handoff decision.");
     if (record.action !== action || decision.targetRevision !== expectedTargetRevision
-      || decision.reason !== input.reason || decision.detail !== input.detail) {
+      || decision.reason !== input.reason || decision.detail !== input.detail || decision.candidateDigest !== input.expectedCandidateDigest) {
       throw new AppServerCollaborationError("idempotency_conflict", "The handoff key was used with a different decision.");
     }
-    return { status: "replayed" as const, record: { ...record, workItemRevision: item.revision }, workItemRevision: item.revision };
-  }
+    const revision = store.getWorkItem(workItemId)?.revision ?? item.revision;
+    return { status: "replayed", record: { ...record, workItemRevision: revision }, workItemRevision: revision };
+  };
+  const prior = replay();
+  if (prior) return prior;
 
   const source = store.getChannelWorkflowStep(sourceStepId);
   const target = store.getChannelWorkflowStep(targetStepId);
@@ -118,9 +125,22 @@ export function settleAppServerStageHandoff(
     || packet?.workflowId !== source.workflowId || packet.workflowStepId !== source.id || packet.runId !== sourceRun.id)) {
     throw new HttpError(409, "resume_blocked", "The supplying stage needs a current result packet from its original Run.");
   }
+  if (input.expectedCandidateDigest && sourceRun) {
+    const candidate = await readCompleteHandoffCandidate(sourceRun.cwd);
+    const committed = replay();
+    if (committed) return committed;
+    if (candidate !== input.expectedCandidateDigest) throw new HttpError(409, "work_item_handoff_candidate_stale", "The supplying worktree's candidate changed.");
+    const latestSource = store.getChannelWorkflowStep(sourceStepId);
+    const latestTarget = store.getChannelWorkflowStep(targetStepId);
+    if (latestSource?.updatedAt !== source.updatedAt || latestSource.runId !== source.runId
+      || latestSource.metadata?.outputArtifactId !== artifactId || latestTarget?.updatedAt !== target.updatedAt
+      || latestTarget.toParticipantId !== target.toParticipantId || latestTarget.status !== "queued") {
+      throw new AppServerCollaborationError("stale_revision", "The handoff changed while capturing the candidate.");
+    }
+  }
   const payload: WorkflowStageHandoffDecision = {
     recipientId: target.toParticipantId, targetRevision: target.updatedAt, sourceArtifactId: artifactId, sourceRunId: sourceRun?.id,
-    reason: input.reason, detail: input.detail,
+    reason: input.reason, detail: input.detail, candidateDigest: input.expectedCandidateDigest,
   };
   const result = appendWorkItemCollaboration(store, {
     id: workflowStageHandoffId(subject), workItemId, expectedWorkItemRevision: input.expectedWorkItemRevision,
@@ -129,6 +149,7 @@ export function settleAppServerStageHandoff(
       { type: "workflow_step", id: source.id, revision: source.updatedAt },
       { type: "workflow_step", id: target.id, revision: target.updatedAt },
       ...(artifactId ? [{ type: "artifact", id: artifactId }] : []),
+      ...(input.expectedCandidateDigest ? [{ type: "candidate", id: input.expectedCandidateDigest, digest: input.expectedCandidateDigest }] : []),
     ],
   }, now, store.paths.cwd);
   if (!result) throw new AppServerCollaborationError("stale_revision", "The Work Item changed before recording the handoff.");

@@ -921,6 +921,7 @@ export interface LingAppServerStageHandoffParams {
   readonly expectedTargetRevision: string;
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
+  readonly expectedCandidateDigest?: string;
   readonly reason?: LingAppServerStageHandoffReturnReason;
   readonly detail?: string;
 }
@@ -931,6 +932,7 @@ export interface LingAppServerStageHandoffProgress {
   readonly sourceRevision: string;
   readonly status: "awaiting_source" | "awaiting_acceptance" | "accepted" | "returned";
   readonly receiptId?: string;
+  readonly candidateDigest?: string;
   readonly reason?: LingAppServerStageHandoffReturnReason;
 }
 

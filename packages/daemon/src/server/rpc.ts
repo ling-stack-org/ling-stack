@@ -1438,13 +1438,13 @@ class RpcConnection {
     return result;
   }
 
-  private settleWorkItemStageHandoff(action: "accepted" | "returned", params: unknown): unknown {
+  private async settleWorkItemStageHandoff(action: "accepted" | "returned", params: unknown): Promise<unknown> {
     const raw = readParamsRecord(params);
     if (raw.sourceStepId === undefined && raw.targetStepId === undefined) return this.appendCollaboration("handoff", action, params);
     const { cwd, ...record } = this.workspaceParams(params, true);
     try {
       const store = this.context.storeRegistry.getStore(cwd);
-      const { event, ...result } = settleAppServerStageHandoff(store, readStageHandoffParams(record, action), action, new Date().toISOString());
+      const { event, ...result } = await settleAppServerStageHandoff(store, readStageHandoffParams(record, action), action, new Date().toISOString());
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         if (action === "accepted") this.context.taskSupervisor.poke(cwd);
