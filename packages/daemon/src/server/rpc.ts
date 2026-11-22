@@ -30,6 +30,7 @@ import {
   type LingAppServerContextInspectResult,
   type LingAppServerInputRespondResult,
   type LingAppServerGrant,
+  type LingAppServerGitHubDeliveryResult,
   type LingAppServerJsonRpcId,
   type LingAppServerThreadEventsResult,
   type LingAppServerThreadSnapshotResult,
@@ -72,7 +73,7 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
-import { bindGoalVerificationCandidate, buildLingThreadResumeContext, createLingThreadFork, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { bindGoalAcceptanceEvidence, buildLingThreadResumeContext, createLingThreadFork, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention, requestRunInterventionRedirect } from "../features/runs/interventions.js";
@@ -92,6 +93,7 @@ import {
   grantAllowsMethod, grantAllowsRequest, listAppServerGrants, revokeAppServerGrant,
 } from "./app-server-authorization.js";
 import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
+import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import {
   ExternalAgentFederationService,
   externalAgentRpcError,
@@ -148,8 +150,8 @@ const legacyRpcMethods = new Set([
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "turn/retry", "turn/steer", "thread/compact/start", "thread/revert",
   "changes/read",
-  "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
-  "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
+  "changes/apply/preview", "changes/apply", "artifact/read",
+  "model/list", "skill/read", "permissionProfile/list",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const operatorMethods = new Set([
@@ -160,7 +162,7 @@ const operatorMethods = new Set([
   "worktree/create", "worktree/cleanup",
   "thread/fork", "handoff/create", "handoff/resume",
   "server/grants/create", "server/grants/list", "server/grants/revoke",
-  "github/subject/read",
+  "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
@@ -681,6 +683,26 @@ class RpcConnection {
         const subjectParams = parseGitHubSubjectParams(record);
         const subject = await readAppServerGitHubSubject(gitHubReadClient(this.context, record.cwd, subjectParams.repository), subjectParams);
         return { cwd: record.cwd, subject };
+      }
+      case "github/delivery/reconcile": {
+        const record = this.workspaceParams(params, true);
+        const subject = parseGitHubSubjectParams({ repository: record.repository, kind: "pull_request", number: record.pullRequestNumber });
+        const delivery = await reconcileGitHubDelivery(this.context, {
+          cwd: record.cwd, repository: subject.repository, pullRequestNumber: subject.number,
+          workItemId: readStringField(record, "workItemId"), threadId: readStringField(record, "threadId"),
+          candidateDigest: readStringField(record, "candidateDigest"),
+          expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
+        });
+        return { cwd: record.cwd, delivery } satisfies LingAppServerGitHubDeliveryResult;
+      }
+      case "workItem/delivery/read":
+      case "delivery/read": {
+        const record = this.workspaceParams(params, true);
+        const workItemId = readStringField(record, "workItemId");
+        const deliveryId = method === "delivery/read" ? readStringField(record, "deliveryId") : undefined;
+        const delivery = readGitHubDelivery(this.context.storeRegistry.getStore(record.cwd), workItemId, deliveryId);
+        if (!delivery) throw rpcError(-32040, "github_delivery_binding_unavailable", "Delivery was not found for this Work Item.");
+        return { cwd: record.cwd, delivery } satisfies LingAppServerGitHubDeliveryResult;
       }
       case "workItem/accept":
         return this.acceptWorkItem(params);
@@ -1572,7 +1594,7 @@ class RpcConnection {
       evidenceRefs: record.evidenceRefs ?? record.completionEvidenceRefs,
       completionVerificationSummary: record.completionVerificationSummary ?? record.verificationSummary,
     });
-    const prepared = await bindGoalVerificationCandidate(store.paths.cwd, goal, input);
+    const prepared = await bindGoalAcceptanceEvidence(store, goal, input, params => reconcileGitHubDelivery(this.context, params));
     const updated = store.updateLingThreadGoal(goal.id, prepared, new Date().toISOString());
     if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
     this.publishThreadGoal(store, cwd, updated);

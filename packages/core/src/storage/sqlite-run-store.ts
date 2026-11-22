@@ -6102,6 +6102,10 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.createWorkItem(input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
   }
 
+  commitWorkItemGitHubDelivery(input: Parameters<RunStore["commitWorkItemGitHubDelivery"]>[0], eventCwd = this.paths.cwd) {
+    return this.workItems.commitGitHubDelivery(input, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
+  }
+
   getWorkItem(id: string): WorkItem | undefined {
     return this.workItems.getWorkItem(id);
   }

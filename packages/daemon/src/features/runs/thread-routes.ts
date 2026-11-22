@@ -1,4 +1,6 @@
 import { parseGoalAcceptanceCriteria, parseGoalAcceptanceEvidence, parseGoalSupervisionPolicy, type GoalAcceptanceCriterion, type GoalSupervisionPolicy } from "@ling-stack/core";
+import type { LingAppServerGitHubDelivery, LingAppServerReconcileGitHubDeliveryParams } from "@ling-stack/contracts";
+import { readGitHubDelivery } from "../../server/app-server-github-delivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -98,11 +100,13 @@ export type LingThreadRoute =
 
 export type StartLingThreadResumeRun = (runRequest: RunRequest) => Promise<string | undefined>;
 export type StartLingThreadForkRun = (runRequest: RunRequest) => Promise<string | undefined>;
+type ReconcileGoalGitHubDelivery = (params: LingAppServerReconcileGitHubDeliveryParams & { readonly cwd: string }) => Promise<LingAppServerGitHubDelivery>;
 
 export interface HandleLingThreadRouteOptions {
   readonly maxBodyBytes: number;
   readonly startResumeRun?: StartLingThreadResumeRun;
   readonly startForkRun?: StartLingThreadForkRun;
+  readonly reconcileGitHubDelivery?: ReconcileGoalGitHubDelivery;
 }
 
 export interface ResumeContextPreview {
@@ -273,10 +277,10 @@ export function handleLingThreadItem(
     return handleLingThreadMode(request, response, url, storeRegistry, route.threadId, options);
   }
   if (route.kind === "goal") {
-    return handleLingThreadGoal(request, response, url, storeRegistry, route.threadId);
+    return handleLingThreadGoal(request, response, url, storeRegistry, route.threadId, options?.reconcileGitHubDelivery);
   }
   if (route.kind === "goal-complete") {
-    return handleLingThreadGoalComplete(request, response, url, storeRegistry, route.threadId);
+    return handleLingThreadGoalComplete(request, response, url, storeRegistry, route.threadId, options?.reconcileGitHubDelivery);
   }
   if (route.kind === "proposed-plans") {
     return handleLingThreadProposedPlans(request, response, url, storeRegistry, route.threadId, route.planId, route.action, options);
@@ -356,6 +360,7 @@ async function handleLingThreadGoal(
   url: URL,
   storeRegistry: RunStoreRegistry,
   threadId: string,
+  reconcileDelivery?: ReconcileGoalGitHubDelivery,
 ): Promise<void> {
   const supportedMethods = new Set(["GET", "PUT", "PATCH", "DELETE"]);
   if (!request.method || !supportedMethods.has(request.method)) {
@@ -405,7 +410,7 @@ async function handleLingThreadGoal(
       }
       const body = await readOptionalJsonBody(request, 1024 * 1024);
       const patch = parsePatchLingThreadGoalBody(body);
-      const input = await bindGoalVerificationCandidate(store.paths.cwd, existing, patch);
+      const input = await bindGoalAcceptanceEvidence(store, existing, patch, reconcileDelivery);
       const goal = store.updateLingThreadGoal(existing.id, input, new Date().toISOString());
       writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
       return;
@@ -423,6 +428,7 @@ async function handleLingThreadGoalComplete(
   url: URL,
   storeRegistry: RunStoreRegistry,
   threadId: string,
+  reconcileDelivery?: ReconcileGoalGitHubDelivery,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for goal completion` });
@@ -446,7 +452,7 @@ async function handleLingThreadGoalComplete(
       return;
     }
     const body = await readOptionalJsonBody(request, 1024 * 1024);
-    const input = await bindGoalVerificationCandidate(store.paths.cwd, existing, parseCompleteLingThreadGoalBody(body));
+    const input = await bindGoalAcceptanceEvidence(store, existing, parseCompleteLingThreadGoalBody(body), reconcileDelivery);
     const goal = store.updateLingThreadGoal(existing.id, input, new Date().toISOString());
     writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
   } catch (error) {
@@ -2228,17 +2234,41 @@ export function parseCompleteLingThreadGoalBody(value: unknown): UpdateLingThrea
   };
 }
 
-export async function bindGoalVerificationCandidate(
-  cwd: string, goal: LingThreadGoal, input: UpdateLingThreadGoalInput,
+export async function bindGoalAcceptanceEvidence(
+  store: RunStore, goal: LingThreadGoal, input: UpdateLingThreadGoalInput, reconcileDelivery?: ReconcileGoalGitHubDelivery,
 ): Promise<UpdateLingThreadGoalInput> {
-  if (input.status !== "complete" || goal.status === "complete"
-    || !goal.acceptanceCriteria?.some(criterion => criterion.kind === "verification_passed")) return input;
+  if (input.status !== "complete" || goal.status === "complete") return input;
+  const deliveryCriteria = goal.acceptanceCriteria?.filter(criterion => criterion.kind === "github_delivered") ?? [];
+  if (!deliveryCriteria.length && !goal.acceptanceCriteria?.some(criterion => criterion.kind === "verification_passed")) return input;
+  const cwd = store.paths.cwd;
   const { captureCodeAssessmentSnapshot } = await import("../code-assessments/snapshot.js");
   const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
   if (snapshot.coverage !== "complete") {
     throw new HttpError(409, "goal_verification_candidate_incomplete", "Goal verification requires complete coverage of the current candidate.");
   }
-  return { ...input, verificationCandidateDigest: snapshot.digest, verificationGoalRevision: goal.updatedAt };
+  const reconciledGitHubDeliveryIds = new Set<string>();
+  for (const criterion of deliveryCriteria) {
+    const requirement = criterion.githubDelivery!;
+    const binding = input.acceptanceEvidence?.find(item => item.criterionId === criterion.id);
+    const workItem = store.getWorkItem(requirement.workItemId);
+    const observed = binding?.evidence.kind === "github_delivery"
+      ? readGitHubDelivery(store, requirement.workItemId, binding.evidence.id) : undefined;
+    if (!observed || !reconcileDelivery || !workItem || observed.threadId !== goal.threadId
+      || observed.policyRevision !== requirement.policyRevision) {
+      throw new HttpError(409, "goal_completion_evidence_invalid", "The Goal requires delivery evidence for its accepted Work Item and policy.");
+    }
+    if (reconciledGitHubDeliveryIds.has(observed.deliveryId)) continue;
+    const current = await reconcileDelivery({
+      cwd, workItemId: workItem.id, threadId: goal.threadId, expectedWorkItemRevision: workItem.revision,
+      candidateDigest: snapshot.digest, repository: observed.subject.repository, pullRequestNumber: observed.subject.number,
+    });
+    if (current.deliveryId !== observed.deliveryId || current.status !== "delivered") {
+      throw new HttpError(409, "goal_completion_evidence_invalid", "The observed merge or its applicable checks have changed.");
+    }
+    reconciledGitHubDeliveryIds.add(current.deliveryId);
+  }
+  return { ...input, verificationCandidateDigest: snapshot.digest, verificationGoalRevision: goal.updatedAt,
+    reconciledGitHubDeliveryIds: [...reconciledGitHubDeliveryIds] };
 }
 
 const lingThreadGoalStatuses = [
@@ -2563,7 +2593,7 @@ function readOptionalPlanVersion(record: Record<string, unknown>, key: string): 
   return readOptionalGoalNumber(record, key, true);
 }
 
-const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow", "verification"] as const;
+const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow", "verification", "github_delivery"] as const;
 
 function findActiveChannelDiscussionRootThread(store: RunStore, channelId: string): LingThread | undefined {
   return store

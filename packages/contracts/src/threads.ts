@@ -78,7 +78,8 @@ export type GoalEvidenceRef =
   | { readonly kind: "artifact"; readonly id: string }
   | { readonly kind: "approval"; readonly id: string }
   | { readonly kind: "workflow"; readonly id: string }
-  | { readonly kind: "verification"; readonly id: string };
+  | { readonly kind: "verification"; readonly id: string }
+  | { readonly kind: "github_delivery"; readonly id: string };
 
 export interface GoalVerificationRequirement {
   readonly checkId: string;
@@ -86,13 +87,19 @@ export interface GoalVerificationRequirement {
   readonly coverageDigest: string;
 }
 
+export interface GoalGitHubDeliveryRequirement {
+  readonly workItemId: string;
+  readonly policyRevision: string;
+}
+
 export interface GoalAcceptanceCriterion {
   readonly id: string;
   readonly description: string;
-  readonly kind: "run_succeeded" | "workflow_succeeded" | "artifact" | "verification_passed";
+  readonly kind: "run_succeeded" | "workflow_succeeded" | "artifact" | "verification_passed" | "github_delivered";
   readonly contentSha256?: string;
   readonly evidenceId?: string;
   readonly verification?: GoalVerificationRequirement;
+  readonly githubDelivery?: GoalGitHubDeliveryRequirement;
 }
 
 export interface GoalAcceptanceEvidence {

@@ -1,11 +1,22 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import type { LingGitHubRequiredCheck } from "@ling-stack/contracts";
+
+export interface AppServerGitHubDeliveryPolicy {
+  readonly baseRef: string;
+  /**
+   * Each named workflow must test the GitHub-attested check subject and must
+   * source its acceptance configuration from the trusted CI environment.
+   */
+  readonly requiredChecks: readonly LingGitHubRequiredCheck[];
+}
 
 export interface AppServerGitHubSourceConfig {
   readonly workspaceRoot: string;
   readonly repository: string;
   readonly repositoryId: string;
   readonly secretRef?: string;
+  readonly deliveryPolicies?: readonly AppServerGitHubDeliveryPolicy[];
 }
 
 export const githubRepositoryPattern = /^[A-Za-z0-9][A-Za-z0-9-]{0,99}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/u;
@@ -34,6 +45,39 @@ export function resolveAppServerGitHubSources(
     const key = JSON.stringify([workspaceRoot, repository]);
     if (seen.has(key)) throw new Error("Duplicate App Server GitHub source for a workspace.");
     seen.add(key);
-    return { workspaceRoot, repository, repositoryId: config.repositoryId, secretRef: config.secretRef };
+    return {
+      workspaceRoot, repository, repositoryId: config.repositoryId, secretRef: config.secretRef,
+      deliveryPolicies: resolveDeliveryPolicies(config.deliveryPolicies),
+    };
+  });
+}
+
+function resolveDeliveryPolicies(policies: readonly AppServerGitHubDeliveryPolicy[] | undefined): readonly AppServerGitHubDeliveryPolicy[] {
+  if (policies === undefined) return [];
+  if (!Array.isArray(policies) || policies.length > 32) throw new Error("GitHub delivery policies must be a bounded array.");
+  const baseRefs = new Set<string>();
+  return policies.map((policy: AppServerGitHubDeliveryPolicy) => {
+    if (!policy || typeof policy.baseRef !== "string" || !policy.baseRef.trim() || baseRefs.has(policy.baseRef)
+      || !Array.isArray(policy.requiredChecks) || !policy.requiredChecks.length || policy.requiredChecks.length > 32) {
+      throw new Error("Invalid App Server GitHub delivery policy.");
+    }
+    baseRefs.add(policy.baseRef);
+    const names = new Set<string>();
+    const requiredChecks = policy.requiredChecks.map((check: LingGitHubRequiredCheck) => {
+      if (!check || typeof check.name !== "string" || !check.name.trim() || check.name.length > 160
+        || names.has(check.name) || !Number.isSafeInteger(check.appId) || check.appId < 1
+        || !Number.isSafeInteger(check.workflowId) || check.workflowId < 1
+        || typeof check.workflowPath !== "string" || !/^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/u.test(check.workflowPath)
+        || typeof check.workflowSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(check.workflowSha256)
+        || !["head", "integration", "merge_group"].includes(check.basis)
+        || !Array.isArray(check.coverageRefs) || !check.coverageRefs.length || check.coverageRefs.length > 8
+        || check.coverageRefs.some(ref => typeof ref !== "string" || !ref.trim() || ref.length > 160)) {
+        throw new Error("Invalid trusted GitHub check.");
+      }
+      names.add(check.name);
+      return { name: check.name, appId: check.appId, workflowId: check.workflowId, workflowPath: check.workflowPath,
+        workflowSha256: check.workflowSha256, basis: check.basis, coverageRefs: [...check.coverageRefs] };
+    });
+    return { baseRef: policy.baseRef, requiredChecks };
   });
 }

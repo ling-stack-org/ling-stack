@@ -271,6 +271,7 @@ import { handleGetNodeRerunTargetReadiness } from "../features/runs/node-rerun-r
 import { handlePostRunAssuranceEvaluationAssociation } from "../features/harness/evaluations/assurance-association-route.js";
 import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
+import { reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
@@ -1411,6 +1412,7 @@ export async function routeRequest(
   if (lingThreadRoute) {
     await handleLingThreadItem(request, response, url, storeRegistry, lingThreadRoute, {
       maxBodyBytes: config.maxBodyBytes,
+      reconcileGitHubDelivery: params => reconcileGitHubDelivery(context, params),
       startResumeRun: async (runRequest) =>
         await startDetachedRunAndResolveReady((onRunReady) =>
           executeRunRequest(

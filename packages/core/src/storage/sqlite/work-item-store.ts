@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   createWorkItemId,
+  type CommitWorkItemGitHubDeliveryInput,
+  type CommitWorkItemGitHubDeliveryResult,
   type CreateWorkItemInput,
   type CreateWorkItemResult,
   type ListWorkItemsOptions,
@@ -31,7 +33,7 @@ import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
-import type { LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
+import type { LingAppServerGitHubDelivery, LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -127,6 +129,56 @@ export class SqliteWorkItemStore {
       }, now) : undefined;
       database.exec("COMMIT");
       return { workItem, event, sourceReceipt };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(database);
+      throw error;
+    }
+  }
+
+  commitGitHubDelivery(
+    { delivery, targetKey, expectedWorkItemRevision, expectedDeliveryRevision }: CommitWorkItemGitHubDeliveryInput,
+    state: SqliteAppServerStateStore,
+    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string },
+  ): CommitWorkItemGitHubDeliveryResult {
+    const { database } = this.context;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const { workItemId, deliveryId, observedAt } = delivery;
+      const workItem = this.getWorkItem(workItemId);
+      const acceptance = state.get("work_item_acceptance", workItemId)?.payload as WorkItemAcceptanceReceipt | undefined;
+      const existingTarget = state.get("work_item_target", targetKey)?.payload as { workItemId: string } | undefined;
+      const current = state.get("github_delivery_current", workItemId);
+      const prior = current?.payload as LingAppServerGitHubDelivery | undefined;
+      if (existingTarget && existingTarget.workItemId !== workItemId
+        || prior && (prior.threadId !== delivery.threadId || prior.subject.repositoryId !== delivery.subject.repositoryId
+          || prior.subject.number !== delivery.subject.number)) throw new Error("github_delivery_binding_conflict");
+      if (!workItem || workItem.revision !== expectedWorkItemRevision || acceptance?.id !== delivery.acceptanceId
+        || !database.prepare("SELECT 1 FROM ling_threads WHERE id=? AND archived_at IS NULL").get(delivery.threadId)) {
+        throw new Error("github_delivery_stale");
+      }
+      if (prior?.deliveryId === deliveryId) {
+        database.exec("COMMIT");
+        return { delivery: prior };
+      }
+      if (expectedDeliveryRevision !== (current?.revision ?? 0)) throw new Error("github_delivery_stale");
+      if (!existingTarget) state.putWithinTransaction({
+        kind: "work_item_target", recordId: targetKey, expectedRevision: 0, payload: { workItemId },
+      }, observedAt);
+      const retained = state.get("github_delivery", deliveryId)?.payload as LingAppServerGitHubDelivery | undefined;
+      if (!retained) state.putWithinTransaction({
+        kind: "github_delivery", recordId: deliveryId, expectedRevision: 0, payload: delivery,
+      }, observedAt);
+      const committed = retained ?? delivery;
+      state.putWithinTransaction({
+        kind: "github_delivery_current", recordId: workItemId, expectedRevision: expectedDeliveryRevision, payload: committed,
+      }, observedAt);
+      const event = events.store.appendControlPlaneEventWithinTransaction({
+        workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items", entityType: "work_item", entityId: workItemId,
+        action: "work_item.delivery.reconciled",
+        data: { workItemId, deliveryId, status: delivery.status, revision: workItem.revision },
+      }, observedAt);
+      database.exec("COMMIT");
+      return { delivery: committed, event };
     } catch (error) {
       rollbackOwnedSqliteTransaction(database);
       throw error;

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { LingAppServerGitHubDelivery, LingAppServerWorkItemSourceReceipt } from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
 
 export type WorkItemStatus =
@@ -142,7 +143,19 @@ export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
 export interface CreateWorkItemResult {
   readonly workItem: WorkItem;
   readonly event?: ControlPlaneEvent;
-  readonly sourceReceipt?: import("@ling-stack/contracts").LingAppServerWorkItemSourceReceipt;
+  readonly sourceReceipt?: LingAppServerWorkItemSourceReceipt;
+}
+
+export interface CommitWorkItemGitHubDeliveryInput {
+  readonly delivery: LingAppServerGitHubDelivery;
+  readonly targetKey: string;
+  readonly expectedWorkItemRevision: number;
+  readonly expectedDeliveryRevision: number;
+}
+
+export interface CommitWorkItemGitHubDeliveryResult {
+  readonly delivery: LingAppServerGitHubDelivery;
+  readonly event?: ControlPlaneEvent;
 }
 
 export interface ListWorkItemsOptions {

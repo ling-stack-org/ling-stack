@@ -774,6 +774,60 @@ export interface LingAppServerGitHubSubjectResult {
   readonly subject: LingAppServerGitHubSubject;
 }
 
+export type LingGitHubVerificationBasis = "head" | "integration" | "merge_group";
+
+export interface LingGitHubRequiredCheck {
+  readonly name: string;
+  readonly appId: number;
+  readonly workflowId: number;
+  readonly workflowPath: string;
+  readonly workflowSha256: string;
+  readonly basis: LingGitHubVerificationBasis;
+  readonly coverageRefs: readonly string[];
+}
+
+export interface LingGitHubCiEvidence {
+  readonly check: LingGitHubRequiredCheck;
+  readonly testedCommit?: string;
+  readonly checkRunId?: number;
+  readonly runId?: number;
+  readonly runAttempt?: number;
+  readonly jobId?: number;
+  readonly outcome: "passed" | "failed" | "pending" | "unavailable";
+  readonly reason?: "applicable_check_missing" | "current_attempt_pending" | "integration_unavailable"
+    | "merge_group_membership_unavailable" | "ambiguous_run" | "observation_window_exceeded" | "workflow_source_changed";
+}
+
+export interface LingAppServerGitHubDelivery {
+  readonly deliveryId: string;
+  readonly workItemId: string;
+  readonly acceptanceId: string;
+  readonly threadId: string;
+  readonly candidateDigest: string;
+  readonly policyRevision: string;
+  readonly subject: LingAppServerGitHubSubject;
+  readonly baseCommit: string;
+  readonly checks: readonly LingGitHubCiEvidence[];
+  readonly status: "ci_pending" | "ci_failed" | "delivery_pending" | "delivered";
+  readonly mergedCommit?: string;
+  readonly observedAt: string;
+}
+
+export interface LingAppServerReconcileGitHubDeliveryParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly threadId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly candidateDigest: string;
+  readonly repository: string;
+  readonly pullRequestNumber: number;
+}
+
+export interface LingAppServerGitHubDeliveryResult {
+  readonly cwd: string;
+  readonly delivery: LingAppServerGitHubDelivery;
+}
+
 export interface LingAppServerWorkItemSourceReceipt {
   readonly workItemId: string;
   readonly sourceType: string;

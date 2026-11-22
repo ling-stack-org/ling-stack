@@ -924,6 +924,8 @@ export interface UpdateLingThreadGoalInput {
   /** Captured by the Host when settling verification-based acceptance. */
   readonly verificationCandidateDigest?: string;
   readonly verificationGoalRevision?: string;
+  /** Receipt IDs reconciled against GitHub by the Host during completion. */
+  readonly reconciledGitHubDeliveryIds?: readonly string[];
   readonly supervisionPolicy?: GoalSupervisionPolicy;
   readonly objective?: string;
   readonly status?: LingThreadGoalStatus;
@@ -2689,6 +2691,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   ): ExternalWorkSchedulerState | undefined;
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem;
   createWorkItem(input: import("./work-item-types.js").CreateWorkItemInput, now: string, eventCwd?: string): import("./work-item-types.js").CreateWorkItemResult;
+  commitWorkItemGitHubDelivery(input: import("./work-item-types.js").CommitWorkItemGitHubDeliveryInput, eventCwd?: string): import("./work-item-types.js").CommitWorkItemGitHubDeliveryResult;
   getWorkItem(id: string): WorkItem | undefined;
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
@@ -3298,6 +3301,7 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "listWorkItems"
   | "routeWorkItem"
   | "claimWorkItem"
+  | "commitWorkItemGitHubDelivery"
   | "heartbeatWorkItem"
   | "releaseWorkItem"
   | "completeWorkItem"

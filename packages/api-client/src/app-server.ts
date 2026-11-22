@@ -23,6 +23,8 @@ import type {
   LingAppServerExternalAgentTaskStartResult,
   LingAppServerGitHubSubjectParams,
   LingAppServerGitHubSubjectResult,
+  LingAppServerGitHubDeliveryResult,
+  LingAppServerReconcileGitHubDeliveryParams,
   LingAppServerGrant,
   LingAppServerGrantCreateParams,
   LingAppServerHandoffCreateParams,
@@ -234,6 +236,16 @@ export class LingAppServerClient {
   async readGitHubSubject(params: LingAppServerGitHubSubjectParams): Promise<LingAppServerGitHubSubjectResult> {
     await this.connect();
     return await this.request("github/subject/read", params);
+  }
+
+  async reconcileGitHubDelivery(params: LingAppServerReconcileGitHubDeliveryParams): Promise<LingAppServerGitHubDeliveryResult> {
+    await this.connect();
+    return await this.request("github/delivery/reconcile", params);
+  }
+
+  async readGitHubDelivery(params: { readonly workItemId: string; readonly deliveryId?: string }): Promise<LingAppServerGitHubDeliveryResult> {
+    await this.connect();
+    return await this.request(params.deliveryId === undefined ? "workItem/delivery/read" : "delivery/read", params);
   }
 
   async acceptWorkItem(params: Record<string, unknown>): Promise<unknown> {

@@ -18,7 +18,7 @@ export function gitHubWorkItemTargetKey(subject: LingAppServerGitHubSubject): st
   return `github_${digest([subject.githubInstanceId, subject.repositoryId, subject.kind, subject.number])}`;
 }
 
-export function gitHubReadClient(context: DaemonContext, cwd: string, repository: string) {
+export function gitHubReadClient(context: Pick<DaemonContext, "config" | "secretResolver" | "externalWorkFetch">, cwd: string, repository: string) {
   const source = context.config.appServerGitHubSources.find(item => item.workspaceRoot === cwd && item.repository === repository);
   if (!source) throw new HttpError(403, "github_subject_unavailable", "The GitHub repository is unavailable in this workspace.");
   const secret = source.secretRef ? context.secretResolver.resolve(source.secretRef, "github_token") : undefined;

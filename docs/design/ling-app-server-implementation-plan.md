@@ -33,7 +33,8 @@
 | B2 在途输入 | `turn/queue` 将输入交给持久 Run intervention。前驱已记录执行结束及副作用收敛时，Daemon 可在重启后用同一收据启动后继 Turn。用配置 Pi Runner 核对实际投递一次、重连事件及新旧 Turn 的关联。`turn/interrupt` 可携带明确的重定向输入。`turn/steer` 在当前 Runner 无同 Turn 安全注入能力时返回 `steer_unsupported`。已安装的 Codex 通过 MCP 验证了快照、追加消息、Turn 恢复入口和事件读取。 |
 | C2/F2 版本兼容 | 用 `v0.6.1@3fe77440e` 源码构建在 macOS 上创建 Thread、Turn、待决审批和游标，候选 Daemon 接手原 SQLite，旧 SDK 可读取 Thread 和处置后的审批。候选 SDK 向旧 `/rpc/stream` 尝试提交时，在协商阶段返回 `protocol_version_unsupported`。候选 Daemon 的 `/rpc/stream` 仅提供原有方法。测试覆盖 App Server 专属方法拒绝、旧客户端的 Run 启动和取消。候选 CLI probe 和本机 Codex MCP 已通过。v0.6.1 未提供 App Server 协议。发布安装包、远程连接及回退对账另行验收。 |
 | E1 Verify 与用户输入恢复 | Verify 按幂等键在 SQLite 写事务内受理。两个连接同时提交复用原操作及其事件。取消受理与停止意图一起写入，重启后可按原键读取回执。`verify/status` 记录确认退出后的 `cancelled`。执行器无法确认停止时，返回 `unknown` 并附 `verification_cancellation_unconfirmed`。已绑定工作项的 Verify 状态和 Control Plane 事件同事务提交。用户提问的 authority、答案 CAS、投递收据和 `pending/answered/cancelled` 事件也在重启后保持同一请求身份。 |
-| E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。Verify 结果还可以用绑定当前候选的 `verification_passed` 条件完成 Goal，独立 verifier basis、coverage 和 producer refs 不匹配时会被拒绝。缺证据和引用其他 Thread 的 Run 会被拒绝。Review 已验证候选绑定、发现项处置重放及 freshness 持久化。`simplify/start` 对同一候选运行只读简化审查，`simplify/status` 可分页读取建议和报告引用，重启后重试复用原操作。GitHub CI 交付证据仍需接入 Goal。 |
+| E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。Verify 结果用绑定当前候选的 `verification_passed` 条件完成 Goal，独立 verifier basis、coverage 和 producer refs 不匹配时会被拒绝。Review 已验证候选绑定、发现项处置和 freshness 持久化。`simplify/start` 与 `simplify/status` 支持只读简化审查及重启重放。`github_delivered` 要求当前已提交候选、同 Thread 与 Work Item、已接受的检查政策和 Host 重新核对的实际合并结果。 |
+| O4 GitHub 证据核对 | 配置注册仓库、不可变仓库 ID 与分支政策。对已受理工作项重读 PR、实时 base ref、集成提交父链、检查 App、冻结的 workflow 文件、实际测试对象和最新 attempt。夹具覆盖同名异源检查、工作流改动、保持 head 更新 base、迟到尝试和合并后重新核对。工作项保留以前的观察和稳定交付 ID。GitHub merge queue 与实际仓库合并保护仍需验收。 |
 | O1/O8/O9 接单、控制和协作 | App Server 按来源标识创建或取得现有工作项。工作项创建、控制、接单、证据和协作写入各自与对应的事件同事务提交。控制回执在后继操作和 Daemon 重启后可按原请求找回。两个客户端验证了幂等、冲突错误、事件写入失败回滚和游标回放。阶段运行、定时轮次、交接、裁决与恢复的联合验收仍待下方矩阵。 |
 
 源码兼容用例由 `LING_APP_SERVER_PREVIOUS_BUILD` 指向已构建的上一版源码目录。`LING_APP_SERVER_CODEX_EXECUTABLE` 指向已安装的 Codex。两项均使用隔离状态和回环服务，配置 Pi Runner 使用脚本化 Provider。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
@@ -43,7 +44,7 @@
 | 工作包 | 代码或验收差距 |
 | --- | --- |
 | A1、B1、C1、C2 | 全方法的 Schema 校验、远程认证 WSS 和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 范围已接入，审批和用户答复仍需按不同真实宿主和远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
-| D1、D2、E1、E2 | 开工时的项目规则加载、两个开发 Skill、工作区 Verify、独立 verifier basis 和托管工作树管理已接入。仍需运行中进入新目录的局部规则、候选补丁的应用预览和提交、浏览器/平台配方、可信 GitHub CI 结果进入 Goal 验收，以及 UI 运行报告。 |
+| D1、D2、E1、E2 | 开工时的项目规则加载、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理和外部 GitHub 合并结果验收已接入。仍需运行中进入新目录的局部规则、候选补丁的应用预览和提交、浏览器/平台配方，以及 UI 运行报告。 |
 | F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。仍需跨 Agent Workflow 的执行归属和预算承接。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
 | O1、O3–O9 | 跨入口任务归并和首次派发、自治策略、GitHub 交付、经验与设备反馈、阶段和定时轮次、在途改计划、交接和审议裁决。现有协作记录的持久化、版本冲突和回放已验证，原 Workflow/Automation 执行与联合验收还要接通。 |
 | G | 自研切换和回退日志对账、签名安装产物、远程 WSS 和三个真实 Provider 自研试点。macOS 打包预检仍缺当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检达到评审条件，真实试点仍需按 Framework Assurance 准入。 |

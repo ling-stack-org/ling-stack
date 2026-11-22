@@ -15,11 +15,13 @@ import { promisify } from "node:util";
 import { parseUserInputAnswerCommandV1 } from "@ling-stack/contracts";
 import type {
   LingAppServerCandidateReference,
+  LingAppServerCaptureChangesResult,
   LingAppServerContextInspectResult,
   LingAppServerExternalAgentRegisterResult,
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartResult,
   LingAppServerGitHubSubjectResult,
+  LingAppServerGitHubDeliveryResult,
   LingAppServerGrant,
   LingAppServerGrantScope,
   LingAppServerHandoffResult,
@@ -1067,6 +1069,153 @@ test("authorized GitHub occurrences converge on one Work Item and retain their o
   const { gitHubSubject: _, idempotencyKey: __, ...bareSource } = codex;
   assert.deepEqual(await restored.call("workItem/create", bareSource), replay);
   assert.equal(fixture.getStore().listWorkItems().length, 1);
+});
+
+test("GitHub delivery keeps head checks across base changes and completes a Goal only with current trusted merge evidence", { timeout: 30_000 }, async t => {
+  const originalBase = "b".repeat(40);
+  const newBase = "c".repeat(40);
+  const originalIntegration = "d".repeat(40);
+  const newIntegration = "e".repeat(40);
+  const workflowPath = ".github/workflows/verify.yml";
+  const workflow = "name: Trusted verification\n";
+  const workflowSha256 = createHash("sha256").update(workflow).digest("hex");
+  let head = "";
+  let base = originalBase;
+  let integration = originalIntegration;
+  let wrongSource = true;
+  let changedWorkflow = false;
+  let latestAttempt = 1;
+  let attemptChanges = false;
+  let merged = false;
+  let baseChanges = false;
+  let integratedCheckAvailable = true;
+  const fixture = await releaseFixture(t, {
+    githubSources: cwd => [{
+      workspaceRoot: cwd, repository: "example/ling", repositoryId: "73",
+      deliveryPolicies: [{ baseRef: "main", requiredChecks: [
+        { name: "unit", appId: 19, workflowId: 5, workflowPath, workflowSha256, basis: "head", coverageRefs: ["unit-contracts"] },
+        { name: "integration", appId: 19, workflowId: 6, workflowPath, workflowSha256, basis: "integration", coverageRefs: ["workflow-integration"] },
+      ] }],
+    }],
+    externalWorkFetch: async input => {
+      const url = new URL(String(input));
+      assert.equal(url.origin, "https://api.github.com");
+      const prefix = "/repos/example/ling";
+      assert.ok(url.pathname.startsWith(prefix));
+      const path = url.pathname.slice(prefix.length);
+      if (path === "") return Response.json({ id: 73, full_name: "example/ling" });
+      if (path === "/pulls/12") return Response.json({
+        number: 12, title: "Fix replay", state: merged ? "closed" : "open", merged,
+        base: { sha: originalBase, ref: "main", repo: { id: 73 } }, head: { sha: head }, merge_commit_sha: integration,
+      });
+      if (path === "/git/ref/heads/main") return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha: base } });
+      if (path === `/git/commits/${integration}`) return Response.json({
+        sha: integration, parents: [{ sha: integration === originalIntegration ? originalBase : newBase }, { sha: head }],
+      });
+      const subject = url.searchParams.get("head_sha");
+      const run = subject === head ? { id: 15, workflow_id: 5, head_sha: head, name: "unit" }
+        : { id: 16, workflow_id: 6, head_sha: integration, name: "integration" };
+      if (path === `/actions/workflows/${run.workflow_id}/runs`) {
+        if (baseChanges && subject === integration) base = newBase;
+        const workflow_runs = subject === integration && !integratedCheckAvailable ? [] : [{
+          ...run, created_at: "2026-11-22T00:00:00Z", run_attempt: latestAttempt, status: "completed",
+          path: workflowPath, event: "push",
+        }];
+        return Response.json({ total_count: workflow_runs.length, workflow_runs });
+      }
+      if (path === `/contents/${workflowPath}`) return Response.json({
+        type: "file", path: workflowPath, encoding: "base64",
+        content: Buffer.from(changedWorkflow ? "name: Replaced verification\n" : workflow).toString("base64"),
+      });
+      const runId = path.includes("/15") || path.includes(head) ? 15 : 16;
+      const testedCommit = runId === 15 ? head : integration;
+      const name = runId === 15 ? "unit" : "integration";
+      const checkRunId = 100 + runId;
+      const checkRunUrl = `https://api.github.com${prefix}/check-runs/${checkRunId}`;
+      if (path === `/actions/runs/${runId}/attempts/${latestAttempt}/jobs`) {
+        return Response.json({ total_count: 1, jobs: [{
+          id: 200 + runId, run_id: runId, head_sha: testedCommit, name, check_run_url: checkRunUrl,
+          status: "completed", conclusion: "success",
+        }] });
+      }
+      if (path === `/commits/${testedCommit}/check-runs`) return Response.json({ total_count: 1, check_runs: [{
+        id: checkRunId, name, head_sha: testedCommit, status: "completed", conclusion: "success", url: checkRunUrl,
+        app: { id: wrongSource && runId === 16 ? 27 : 19 },
+      }] });
+      if (path === `/actions/runs/${runId}`) return Response.json({ id: runId, run_attempt: attemptChanges ? latestAttempt + 1 : latestAttempt });
+      return Response.json({}, { status: 404 });
+    },
+  });
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(join(fixture.cwd, "replay.txt"), "accepted replay\n");
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
+  head = git("rev-parse", "HEAD");
+  const client = await fixture.connect();
+  const created = await client.call<LingAppServerWorkItemResult>("workItem/create", { sourceId: "delivery", title: "Fix replay" });
+  const { workItemId } = created.workItem;
+  const accepted = await client.call<LingAppServerWorkItemResult>("workItem/accept", {
+    workItemId, expectedWorkItemRevision: Number(created.workItem.revision), idempotencyKey: "accept-delivery",
+  });
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Fix replay" });
+  const { candidate } = await client.call<LingAppServerCaptureChangesResult>("changes/capture");
+  const input = { workItemId, threadId: thread.id, expectedWorkItemRevision: Number(accepted.workItem.revision),
+    repository: "example/ling", pullRequestNumber: 12, candidateDigest: candidate.candidateDigest };
+  const reconcile = async (connection = client) => (await connection.call<LingAppServerGitHubDeliveryResult>("github/delivery/reconcile", input)).delivery;
+
+  assert.deepEqual((await reconcile()).checks.map(check => check.outcome), ["passed", "pending"]);
+  wrongSource = false;
+  changedWorkflow = true;
+  assert.equal((await reconcile()).checks[0]?.reason, "workflow_source_changed");
+  changedWorkflow = false;
+  const initial = await reconcile();
+  assert.equal(initial.status, "delivery_pending");
+  assert.deepEqual(await reconcile(), initial);
+  baseChanges = true;
+  await assert.rejects(reconcile(), { code: "stale_revision" });
+  baseChanges = false;
+  const advanced = await reconcile();
+  assert.equal(advanced.baseCommit, newBase);
+  assert.deepEqual(advanced.checks.map(check => [check.outcome, check.testedCommit]), [["passed", head], ["unavailable", undefined]]);
+  integration = newIntegration;
+  integratedCheckAvailable = false;
+  assert.equal((await reconcile()).status, "ci_pending");
+  integratedCheckAvailable = true;
+  attemptChanges = true;
+  await assert.rejects(reconcile(), { code: "stale_revision" });
+  attemptChanges = false;
+  latestAttempt = 2;
+  const current = await reconcile();
+  assert.deepEqual(current.checks.map(check => [check.testedCommit, check.runAttempt]), [[head, 2], [newIntegration, 2]]);
+  const { delivery: old } = await client.call<LingAppServerGitHubDeliveryResult>("delivery/read", {
+    workItemId, deliveryId: initial.deliveryId,
+  });
+  assert.deepEqual(old, initial);
+
+  await client.call("thread/goal/set", { threadId: thread.id, objective: "Deliver the verified fix",
+    acceptanceCriteria: [{ id: "merged", description: "Trusted checks on the merged candidate", kind: "github_delivered",
+      githubDelivery: { workItemId, policyRevision: current.policyRevision } }] });
+  const complete = (connection: typeof client, deliveryId: string) => {
+    const evidence = { kind: "github_delivery", id: deliveryId };
+    return connection.call<{ goal: LingThreadGoal }>("thread/goal/complete", {
+      threadId: thread.id, actor: "ling-agent", completionVerificationSummary: "Confirmed merge and required checks.",
+      evidenceRefs: [evidence], acceptanceEvidence: [{ criterionId: "merged", evidence }],
+    });
+  };
+  await assert.rejects(complete(client, current.deliveryId), { code: "goal_completion_evidence_invalid" });
+  merged = true;
+  const delivered = await reconcile();
+  assert.equal(delivered.status, "delivered");
+  assert.equal(delivered.mergedCommit, newIntegration);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.deepEqual((await restored.call<LingAppServerGitHubDeliveryResult>("workItem/delivery/read", { workItemId })).delivery, delivered);
+  latestAttempt = 3;
+  await assert.rejects(complete(restored, delivered.deliveryId), { code: "goal_completion_evidence_invalid" });
+  const fresh = await reconcile(restored);
+  assert.equal((await complete(restored, fresh.deliveryId)).goal.status, "complete");
 });
 
 test("Work Item creation, acceptance, evidence and collaboration retries keep one event per committed revision", { timeout: 20_000 }, async t => {
