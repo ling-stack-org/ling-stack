@@ -588,7 +588,7 @@
     "test/cua-driver-catalog-projection.test.mjs",
     "test/cua-driver-catalog.test.mjs",
     "test/cua-driver-client-pool.regression-1.test.mjs",
-    "test/cua-driver-contracts.test.mjs",
+    "test/cua-driver-contracts.test.ts",
     "test/cua-driver-daemon-composition.regression-1.test.mjs",
     "test/cua-driver-daemon-composition.test.mjs",
     "test/cua-driver-generation-broker.test.mjs",

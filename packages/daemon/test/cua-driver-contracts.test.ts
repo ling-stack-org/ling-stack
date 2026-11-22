@@ -4,12 +4,18 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { resolveConfig } from "../dist/config.js";
+import { HttpError } from "../dist/errors.js";
 import { assertBundledCuaDriverRuntimeAvailable } from "../dist/features/plugins/routes.js";
 import { buildCuaDriverSetupView } from "../dist/features/plugins/cua-driver.js";
 import { CUA_DRIVER_MCP_SERVER_ID, CUA_DRIVER_PLUGIN_ID } from "../dist/features/plugins/presets.js";
 
+type SetupStore = Parameters<typeof buildCuaDriverSetupView>[0]["store"];
+type SetupStoreFixture = Pick<SetupStore,
+  "getMcpServer" | "getManagedPlugin" | "getManagedPluginPackage" | "listManagedPluginContributions">;
+
 test("Cua Driver feature config defaults off and explicit config wins over env", () => {
   const keys = [
+    "LING_DESKTOP_CUA_DRIVER_CATALOG_MANAGED",
     "LING_STACK_CUA_DRIVER_BUNDLED_EMBEDDED_DARWIN",
     "LING_STACK_CUA_DRIVER_BUNDLED_EMBEDDED_WIN32",
     "LING_DESKTOP_CUA_DRIVER_PACKAGED_PROVIDER_DARWIN",
@@ -17,20 +23,30 @@ test("Cua Driver feature config defaults off and explicit config wins over env",
   ];
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
   try {
+    for (const key of keys) delete process.env[key];
+    assert.deepEqual(resolveConfig({}).cuaDriver, {
+      catalogManaged: false,
+      bundledEmbedded: { darwin: false, win32: false },
+      packagedProvider: { darwin: false, win32: false },
+    });
+
     for (const key of keys) process.env[key] = "1";
     const fromEnv = resolveConfig({});
     assert.deepEqual(fromEnv.cuaDriver, {
+      catalogManaged: true,
       bundledEmbedded: { darwin: true, win32: true },
       packagedProvider: { darwin: true, win32: true },
     });
 
     const explicit = resolveConfig({
       cuaDriver: {
+        catalogManaged: false,
         bundledEmbedded: { darwin: false },
         packagedProvider: { darwin: false },
       },
     });
     assert.deepEqual(explicit.cuaDriver, {
+      catalogManaged: false,
       bundledEmbedded: { darwin: false, win32: true },
       packagedProvider: { darwin: false, win32: true },
     });
@@ -49,14 +65,14 @@ test("gate-off Cua Driver setup projection is byte-for-byte the legacy external 
     await writeFile(command, "#!/bin/sh\nexit 0\n");
     await chmod(command, 0o755);
     process.env.PATH = root;
-    const store = {
+    const store: SetupStoreFixture = {
       getMcpServer: () => undefined,
       getManagedPlugin: () => undefined,
       getManagedPluginPackage: () => undefined,
       listManagedPluginContributions: () => [],
     };
     assert.deepEqual(
-      buildCuaDriverSetupView({ store, now: "2026-07-18T00:00:00.000Z", platform: "darwin" }),
+      buildCuaDriverSetupView({ store: store as SetupStore, now: "2026-07-18T00:00:00.000Z", platform: "darwin" }),
       {
         kind: "local_binary",
         state: "detected",
@@ -73,12 +89,16 @@ test("gate-off Cua Driver setup projection is byte-for-byte the legacy external 
 
 test("bundled V2 setup projection never probes PATH and maps included to connected", () => {
   let probed = false;
-  const store = {
+  const store: SetupStoreFixture = {
     getMcpServer: () => {
       probed = true;
       throw new Error("external resolver must not be called");
     },
     getManagedPlugin: () => {
+      probed = true;
+      throw new Error("external resolver must not be called");
+    },
+    getManagedPluginPackage: () => {
       probed = true;
       throw new Error("external resolver must not be called");
     },
@@ -88,7 +108,7 @@ test("bundled V2 setup projection never probes PATH and maps included to connect
     },
   };
   const setup = buildCuaDriverSetupView({
-    store,
+    store: store as SetupStore,
     now: "2026-07-18T00:00:00.000Z",
     platform: "darwin",
     projection: {
@@ -114,7 +134,8 @@ test("effective packaged gate honors the explicit platform before external conne
   });
   assert.throws(
     () => assertBundledCuaDriverRuntimeAvailable(config, "darwin"),
-    (error) => error?.code === "cua_desktop_lease_unavailable" && error?.statusCode === 409,
+    (error) => error instanceof HttpError
+      && error.code === "cua_desktop_lease_unavailable" && error.statusCode === 409,
   );
   assert.doesNotThrow(() => assertBundledCuaDriverRuntimeAvailable(config, "win32"));
 });
