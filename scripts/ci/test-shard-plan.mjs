@@ -3,10 +3,11 @@ import { statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadDaemonTestPlatforms } from "./daemon-test-platforms.mjs";
+import { DAEMON_DEPENDENCY_TEST_FILENAMES } from "./dependency-security.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const daemonSuite = { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 4, concurrency: 3,
-    excluded: ["dependency-security.test.mjs"],
+    excluded: DAEMON_DEPENDENCY_TEST_FILENAMES,
     // Keep explicit hosted-runner allowances for high-cost workflow fixtures.
     // Split channel files use the ordinary five-minute watchdog and workers.
     fileTimeouts: {

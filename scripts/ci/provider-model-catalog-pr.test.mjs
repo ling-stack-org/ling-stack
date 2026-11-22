@@ -85,6 +85,7 @@ test("workflow queries exact open head/base and preserves the existing leased pu
   assert.match(workflow, /git push --force-with-lease origin "HEAD:\$branch"/u);
   assert.match(workflow, /gh pr edit "\$pull_request"/u);
   assert.match(workflow, /name: provider-model-catalog-\$\{\{ steps\.candidate\.outputs\.catalog-digest \}\}/u);
+  assert.doesNotMatch(workflow, /Record generated catalog before publishing[\\s\\S]*?continue-on-error:/u);
   assert.ok(workflow.indexOf("Record generated catalog before publishing the PR") < workflow.indexOf("git push --force-with-lease"));
 });
 

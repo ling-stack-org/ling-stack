@@ -134,6 +134,16 @@ only when its description is complete and its claimed validation has actually ru
 - Keep migrations scoped to the module and behavior being changed. Do not perform
   unrelated mass renames, lose test discovery, or reduce coverage during migration.
 
+### Migration Pull Request Boundaries
+
+- Land changes to shared CI and repository dependency-security entrypoints in a
+  separate pull request after full CI passes, before opening the package migration.
+- Keep each package migration limited to package tests, test/typecheck configuration,
+  and related documentation. Keep shared CI, lockfile, workspace, and dependency
+  security changes in their own pull requests.
+- Keep registered dependency-security test basenames during migration. Each entry
+  must resolve to exactly one `.mjs` or `.ts` file.
+
 ### Behavior And Independent Contracts
 
 - Prefer tests that exercise observable behavior, invariants, and public boundaries.

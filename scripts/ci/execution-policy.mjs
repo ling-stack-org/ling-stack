@@ -144,6 +144,9 @@ function parseArguments(args) {
 function main(args, env) {
   const options = parseArguments(args);
   if (options.checkQuality) {
+    if (env.SCOPE_RESULT !== "success") {
+      throw new Error(`CI lanes failed: SCOPE=${env.SCOPE_RESULT ?? ""}`);
+    }
     const selectors = Object.fromEntries(Object.keys(SELECTOR_LANES).map((selector) => {
       const name = selectorEnv(selector);
       if (env[name] !== "true" && env[name] !== "false") throw new Error(`${name} must be true or false`);
