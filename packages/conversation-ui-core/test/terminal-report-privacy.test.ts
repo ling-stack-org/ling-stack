@@ -1,8 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ConversationOperationSourceRef } from "../dist/index.js";
 import { projectVisibleTerminalReportContent, terminalReportSourceRefs, visibleTerminalReportTimelineItem } from "../dist/index.js";
 
-function report() {
+type ReportContent = Parameters<typeof projectVisibleTerminalReportContent>[0];
+type Section = { sourceRefs: readonly ConversationOperationSourceRef[] };
+
+type TerminalReportRow = Parameters<typeof visibleTerminalReportTimelineItem>[0];
+type LegacyArtifact = Omit<TerminalReportRow["artifacts"][number], "kind">;
+
+function report(): {
+  language: NonNullable<ReportContent["language"]>;
+  evidenceFingerprint: string;
+  outcome: {
+    title: string;
+    summary: string;
+    status: ReportContent["outcome"]["status"];
+    corrections: (Section & { correctedFact: string })[];
+    sourceRefs: Section["sourceRefs"];
+  };
+  changes: (Section & { title: string; paths: string[] })[];
+  verification: (Section & { command: string })[];
+  participants: (Section & { contribution: string })[];
+  artifacts: (Section & { id: string; title: string; path: string })[];
+  risks: (Section & { summary: string })[];
+  references: ConversationOperationSourceRef[];
+} {
   return {
     language: "en-US", evidenceFingerprint: "unchanged",
     outcome: { title: "Safe title", summary: "Safe summary", status: "succeeded", corrections: [], sourceRefs: [] },
@@ -11,14 +34,14 @@ function report() {
 }
 
 test("one report source adapter preserves policy without minting a capability", () => {
-  const ref = { kind: "file", id: "file", label: "File", visibility: "folded_evidence", sensitivity: "private", hostTarget: "open_file", capabilityId: "untrusted" };
+  const ref: ConversationOperationSourceRef = { kind: "file", id: "file", label: "File", visibility: "folded_evidence", sensitivity: "private", hostTarget: "open_file", capabilityId: "untrusted" };
   assert.deepEqual(terminalReportSourceRefs([ref]), [{ kind: "file", id: "file", label: "File", visibility: "folded_evidence", sensitivity: "private" }]);
 });
 
 test("all sections and duplicate identities follow the most restrictive privacy marker", () => {
-  for (const policy of [{ visibility: "developer_only" }, { visibility: "private" }, { visibility: "audit" }, { sensitivity: "secret_adjacent" }]) {
+  for (const policy of [{ visibility: "developer_only" }, { visibility: "private" }, { visibility: "audit" }, { sensitivity: "secret_adjacent" }] as const) {
     const input = report();
-    const publicRef = { kind: "file", id: "restricted.txt", visibility: "conversation" };
+    const publicRef: ConversationOperationSourceRef = { kind: "file", id: "restricted.txt", visibility: "conversation" };
     const privateRef = { ...publicRef, ...policy };
     input.references = [privateRef, publicRef];
     const section = { sourceRefs: [publicRef] };
@@ -63,12 +86,13 @@ test("restricted outcomes use only the localized Host status and preserve termin
 
 test("typed channel and child rows filter content and refresh visible counts", () => {
   const source = report();
-  const sourceRefs = [{ kind: "artifact", id: "hidden", sensitivity: "secret_adjacent" }];
-  const row = { id: "row", kind: "terminalReport", reportId: "report", generation: 2, resultItemId: "result",
+  const sourceRefs: ConversationOperationSourceRef[] = [{ kind: "artifact", id: "hidden", sensitivity: "secret_adjacent" }];
+  const row: TerminalReportRow = { id: "row", kind: "terminalReport", reportId: "report", generation: 2, resultItemId: "result",
     revision: 7, threadSequence: 2, partIndex: 0, status: "succeeded", outcomeStatus: "succeeded",
     title: source.outcome.title, summary: source.outcome.summary, sourceRefs: [],
     corrections: [], changes: [], verification: [], participants: [], risks: [], references: [],
-    artifacts: [{ id: "hidden", title: "PRIVACY_SENTINEL", sourceRefs }],
+    // A legacy artifact can have no kind and still needs privacy filtering.
+    artifacts: [{ id: "hidden", title: "PRIVACY_SENTINEL", sourceRefs } satisfies LegacyArtifact as unknown as TerminalReportRow["artifacts"][number]],
     changeCount: 0, verificationCount: 0, participantCount: 0, riskCount: 0, artifactCount: 1 };
   const projected = visibleTerminalReportTimelineItem(row);
   assert.doesNotMatch(JSON.stringify(projected), /PRIVACY_SENTINEL/u);
@@ -78,10 +102,10 @@ test("typed channel and child rows filter content and refresh visible counts", (
 
 test("legacy run-storage artifacts do not appear as deliverables or duplicate sources", () => {
   const input = report();
-  const runRef = { kind: "run", id: "run_legacy", visibility: "conversation" };
-  const toolRef = { kind: "artifact", id: "tool-content", label: "find content", visibility: "conversation" };
-  const patchRef = { kind: "artifact", id: "patch-plan", label: "Workspace forward patch plan", visibility: "conversation" };
-  const fileRef = { kind: "file", id: "docs/output.md", visibility: "conversation" };
+  const runRef: ConversationOperationSourceRef = { kind: "run", id: "run_legacy", visibility: "conversation" };
+  const toolRef: ConversationOperationSourceRef = { kind: "artifact", id: "tool-content", label: "find content", visibility: "conversation" };
+  const patchRef: ConversationOperationSourceRef = { kind: "artifact", id: "patch-plan", label: "Workspace forward patch plan", visibility: "conversation" };
+  const fileRef: ConversationOperationSourceRef = { kind: "file", id: "docs/output.md", visibility: "conversation" };
   input.changes = [{ title: "docs/output.md", paths: ["docs/output.md"], sourceRefs: [fileRef, toolRef] }];
   input.artifacts = [
     { id: "tool-content", title: "find content", path: "run_legacy/002-find-content.md", sourceRefs: [runRef, toolRef] },

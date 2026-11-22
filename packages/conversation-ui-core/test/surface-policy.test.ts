@@ -25,7 +25,7 @@ test("private chat policy blocks channel-only controls", () => {
 });
 
 test("channel policies allow topic reply and teammate collaboration", () => {
-  for (const surface of ["channel_root", "channel_branch"]) {
+  for (const surface of ["channel_root", "channel_branch"] as const) {
     const policy = getConversationInteractionPolicy(surface);
 
     assert.equal(conversationActionAllowedByPolicy("reply_topic", policy), true);
@@ -111,6 +111,8 @@ test("terminal report projection follows surface policy without deleting semanti
   assert.equal(getTerminalReportProjectionPolicy("run_thread").artifactMode, "detail");
 });
 
-function candidate(id, surface, ownerId, laneId, author) {
+type EditCandidate = Parameters<typeof findLatestEditableConversationMessage>[0][number];
+
+function candidate(id: string, surface: EditCandidate["surface"], ownerId: string, laneId: string, author: EditCandidate["author"]): EditCandidate {
   return { id, surface, ownerId, laneId, author, revision: 1 };
 }

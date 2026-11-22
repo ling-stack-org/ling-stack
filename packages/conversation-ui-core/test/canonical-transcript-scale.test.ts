@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { CanonicalConversationItem } from "../dist/index.js";
 import { projectCanonicalConversationTimeline } from "../dist/index.js";
-import { transcriptScaleFixture } from "./fixtures/transcript-scale.mjs";
+import { transcriptScaleFixture } from "./fixtures/transcript-scale.ts";
 
 test("ordered canonical history does not repeatedly scan every previous sequence", () => {
   const input = transcriptScaleFixture(1_000, "message");
@@ -17,11 +18,11 @@ test("ordered canonical history does not repeatedly scan every previous sequence
     `Sequence reads ${sequenceReads} exceed linear scan budget ${input.items.length * 30}`);
 });
 
-const message = (id, sequence, revision = 1, body = id) => ({
+const message = (id: string, sequence: number, revision = 1, body = id): CanonicalConversationItem => ({
   ...transcriptScaleFixture(1, "message").items[0], id, sequence, revision,
   payload: { body, deliveryStatus: "ready", presentationRole: "narration" },
 });
-const project = (items) => projectCanonicalConversationTimeline({
+const project = (items: readonly CanonicalConversationItem[]) => projectCanonicalConversationTimeline({
   ...transcriptScaleFixture(1, "message"), items, sourceSequence: 10,
 });
 
@@ -53,7 +54,9 @@ test("equal-revision removal releases its index entry without erasing the confli
 test("removing one conflicting owner retains the remaining peer in the sequence index", () => {
   const result = project([message("a", 1), message("b", 1), message("a", 1, 1, "conflict"), message("c", 1)]);
   assert.deepEqual(result.items, []);
-  assert.deepEqual(result.diagnostics.at(-1).sourceRefs.map((ref) => ref.id), ["b", "c"]);
+  const diagnostic = result.diagnostics.at(-1);
+  assert.ok(diagnostic);
+  assert.deepEqual(diagnostic.sourceRefs.map((ref) => ref.id), ["b", "c"]);
 });
 
 test("a stale revision does not move the current sequence index", () => {

@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type {
+  ConversationRunNarrationSegment,
+  ConversationTimelineExplorationItem,
+  ConversationTimelineMessageItem,
+} from "../dist/index.js";
 import { mergeConversationRunNarration, projectConversationRunNarration, projectDisplayBatches } from "../dist/index.js";
 
-function message(id, runId, threadSequence = 1) {
+function message(id: string, runId: string | undefined, threadSequence = 1): ConversationTimelineMessageItem {
   return { id, itemId: id, kind: "agentMessage", runId, turnId: "turn-1", revision: 1, threadSequence, partIndex: 0, markdown: "aggregate", phase: "final", sourceRefs: [{ kind: "conversation_item", id }] };
 }
 
-function segment(sequence, content, end = sequence + 1) {
+function segment(sequence: number, content: string, end = sequence + 1): ConversationRunNarrationSegment {
   return { content, firstEventId: `event-${sequence}`, lastEventId: `event-${end}`, startEventSequence: sequence, endEventSequence: end, completed: true };
 }
 
-function action(id, runId, sequence, partIndex, threadSequence = 1) {
+function action(id: string, runId: string, sequence: number, partIndex: number, threadSequence = 1): ConversationTimelineExplorationItem {
   return {
     id, kind: "exploration", actionId: id, runId, turnId: "turn-1", attemptId: `attempt-${runId}`,
     participantId: "ling", workflowStepId: null, status: "succeeded", revision: sequence + 20,
@@ -19,7 +24,7 @@ function action(id, runId, sequence, partIndex, threadSequence = 1) {
   };
 }
 
-const user = { ...message("user-1", undefined), kind: "userMessage", markdown: "Inspect" };
+const user = { ...message("user-1", undefined), kind: "userMessage", markdown: "Inspect" } satisfies ConversationTimelineMessageItem;
 
 test("run narration preserves stable identity and real anchor refs across streaming revisions", () => {
   const input = { message: message("assistant-1", "run-1"), runId: "run-1", anchor: user };
@@ -42,7 +47,7 @@ test("run narration uses only its own event order and keeps other runs in place"
     segments: [segment(5, "Before A"), segment(57, "Between A"), segment(101, "After A")],
   });
   const merged = mergeConversationRunNarration([user, ...actions], narration);
-  assert.deepEqual(merged.map((item) => item.markdown ?? item.id), ["Inspect", "Before A", "a-first", "Between A", "a-second", "After A", "b-first"]);
+  assert.deepEqual(merged.map((item) => ("markdown" in item ? item.markdown : undefined) ?? item.id), ["Inspect", "Before A", "a-first", "Between A", "a-second", "After A", "b-first"]);
   assert.deepEqual(merged.map((item) => item.partIndex), [0, 1, 2, 3, 4, 5, 6]);
 });
 
@@ -53,7 +58,7 @@ test("run narration interleaves facts on distinct canonical tool anchors", () =>
     segments: [segment(5, "Before read"), segment(57, "Before write")],
   });
   const merged = mergeConversationRunNarration([user, ...actions], narration);
-  assert.deepEqual(merged.map((item) => item.markdown ?? item.id), ["Inspect", "Before read", "read", "Before write", "write"]);
+  assert.deepEqual(merged.map((item) => ("markdown" in item ? item.markdown : undefined) ?? item.id), ["Inspect", "Before read", "read", "Before write", "write"]);
   assert.deepEqual(merged.map((item) => [item.threadSequence, item.partIndex]), [[1, 0], [2, 0], [2, 1], [3, 0], [3, 1]]);
 });
 
@@ -64,7 +69,7 @@ test("run narration restores immutable event order when a legacy adapter emits d
     segments: [segment(1, "Before actions"), segment(5, "Between actions")],
   });
   const merged = mergeConversationRunNarration(actions, narration);
-  assert.deepEqual(merged.map((item) => item.markdown ?? item.id), ["Before actions", "early", "Between actions", "late"]);
+  assert.deepEqual(merged.map((item) => ("markdown" in item ? item.markdown : undefined) ?? item.id), ["Before actions", "early", "Between actions", "late"]);
   assert.deepEqual(merged.map((item) => item.partIndex), [0, 1, 2, 3]);
 });
 
