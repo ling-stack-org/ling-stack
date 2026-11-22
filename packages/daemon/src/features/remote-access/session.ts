@@ -61,7 +61,7 @@ export interface RemoteGatewaySessionOptions {
   readonly isPairedDeviceCurrent?: () => boolean;
   readonly policy: RemoteAccessPolicySummaryV1;
   readonly now?: () => string;
-  readonly routeExpiresAt?: string;
+  readonly routeAuthorityUntil?: () => number;
   readonly onMutation?: () => void;
   readonly onSelfUnpair?: () => void;
   readonly onClosed?: (session: RemoteGatewaySession) => void;
@@ -76,8 +76,6 @@ export class RemoteGatewaySession {
   private readonly journalWatches = new Map<string, DeviceJournalWatch>();
   private journalPageServerSeq = 0;
   private readonly detach: () => void;
-  private readonly routeExpiryMs?: number;
-  private readonly routeTimer?: NodeJS.Timeout;
   private lastClientSeq = 0;
   private commandWindowStartedAt = 0;
   private commandCount = 0;
@@ -96,11 +94,6 @@ export class RemoteGatewaySession {
       ackServerSeq: 0,
     };
     this.streams.set(this.controlStream.id, this.controlStream);
-    if (options.routeExpiresAt) {
-      this.routeExpiryMs = Date.parse(options.routeExpiresAt);
-      this.routeTimer = setTimeout(() => this.close(1008, "peer_route_expired"), Math.max(0, this.routeExpiryMs - Date.parse(this.now())));
-      this.routeTimer.unref();
-    }
     this.detach = options.channel.subscribe({
       received: data => {
         if (typeof data !== "string") {
@@ -151,7 +144,7 @@ export class RemoteGatewaySession {
   }
 
   pushDeviceJournalPage(): void {
-    if (this.journalWatches.size === 0 || !this.checkAuthority()) return;
+    if (!this.checkAuthority() || this.journalWatches.size === 0) return;
     try {
       this.assertCurrentJournalPrincipal();
       if (this.controlStream.ackServerSeq < this.journalPageServerSeq
@@ -598,7 +591,8 @@ export class RemoteGatewaySession {
   }
 
   private checkAuthority(): boolean {
-    if (!this.closed && this.routeExpiryMs !== undefined && Date.parse(this.now()) >= this.routeExpiryMs) {
+    if (!this.closed && this.options.routeAuthorityUntil
+      && !(Date.parse(this.now()) < this.options.routeAuthorityUntil())) {
       this.close(1008, "peer_route_expired");
     }
     return !this.closed;
@@ -614,7 +608,6 @@ export class RemoteGatewaySession {
     }
     this.closed = true;
     this.journalWatches.clear();
-    clearTimeout(this.routeTimer);
     this.detach();
     this.options.onClosed?.(this);
     return true;

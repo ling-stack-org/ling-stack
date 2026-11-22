@@ -1,5 +1,5 @@
 import {
-  connectLingServerDataChannel, lingServerNativeGatewayFeatures, RemoteHttpStatusError, requestLingServerRoute,
+  connectLingServerDataChannel, lingServerNativeGatewayFeatures, RemoteHttpStatusError, RemoteHttpTransportError, requestLingServerRoute,
   type LingServerDataChannel, type LingServerDataChannelOptions, type LingServerRendezvousOptions, type RemoteBindingV1,
   type RemoteDeviceKeyAdapter,
 } from "@ling-stack/remote-client";
@@ -42,7 +42,8 @@ export async function connectMobileLingServerPeer(binding: RemoteBindingV1, sign
     const deadline = new AbortController();
     const cancel = () => deadline.abort();
     signal.addEventListener("abort", cancel, { once: true });
-    const timer = setTimeout(cancel, routeBudgetMs);
+    const timedOut = new Error("ling_server_mobile_route_timed_out");
+    const timer = setTimeout(() => deadline.abort(timedOut), routeBudgetMs);
     try {
       signal.throwIfAborted();
       const { route, instanceId } = await requestLingServerRoute({ ...requestOptions, signal: deadline.signal }, preferred);
@@ -52,7 +53,9 @@ export async function connectMobileLingServerPeer(binding: RemoteBindingV1, sign
       });
     } catch (error) {
       signal.throwIfAborted();
-      if (!deadline.signal.aborted && !isUnavailablePeerRoute(error)) throw error;
+      const timedOutDuringNegotiation = deadline.signal.reason === timedOut
+        && error instanceof Error && error.message === "ling_server_negotiation_cancelled";
+      if (error !== timedOut && !timedOutDuringNegotiation && !isUnavailablePeerRoute(error)) throw error;
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", cancel);
@@ -62,9 +65,8 @@ export async function connectMobileLingServerPeer(binding: RemoteBindingV1, sign
 }
 
 function isUnavailablePeerRoute(error: unknown): boolean {
-  if (error instanceof RemoteHttpStatusError) return error.status === 404 || error.status === 503;
+  if (error instanceof RemoteHttpTransportError) return true;
+  if (error instanceof RemoteHttpStatusError) return [404, 502, 503, 504].includes(error.status);
   if (!(error instanceof Error)) return false;
-  // Fetch rejects for lookup, transport and TLS reachability without an HTTP response.
-  if (error instanceof TypeError && /^(Network request failed|Failed to fetch|fetch failed)$/u.test(error.message)) return true;
   return ["ling_server_peer_connection_failed", "ling_server_data_channel_closed", "ling_server_negotiation_timed_out"].includes(error.message);
 }

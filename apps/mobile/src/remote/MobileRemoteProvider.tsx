@@ -9,6 +9,7 @@ import {
   type RemotePendingPairing,
   type RemoteWebSocketLike,
 } from "@ling-stack/remote-client";
+import { fetch as expoFetch } from "expo/fetch";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
@@ -50,7 +51,7 @@ export interface MobileRemoteContextValue {
 }
 
 const MobileRemoteContext = createContext<MobileRemoteContextValue | undefined>(undefined);
-const http = createFetchRemoteHttpClient();
+const http = createFetchRemoteHttpClient(expoFetch);
 
 export function MobileRemoteProvider({ children }: { readonly children: ReactNode }) {
   const [phase, setPhase] = useState<MobilePairingPhase>("loading");

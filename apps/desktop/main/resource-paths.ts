@@ -11,6 +11,7 @@ export interface DesktopResourcePaths {
   readonly browserHostPath: string;
   readonly engineSupervisorPath?: string;
   readonly imageSanitizerPath: string;
+  readonly peerWorkerPath: string;
 }
 
 export class DesktopResourceResolutionError extends Error {
@@ -26,6 +27,10 @@ export async function resolveDesktopResourcePaths(
 ): Promise<DesktopResourcePaths> {
   const appPath = app.getAppPath();
   const resourcesRoot = resolveDesktopResourcesRoot(app, packagedResourcesPath);
+  const workerRoot = app.isPackaged
+    ? resolve(resourcesRoot, "ling-peer-worker")
+    : resolve(appPath, "../../packages/daemon/dist/native/ling-peer-worker");
+  const peerWorkerPath = resolve(workerRoot, process.platform === "win32" ? "ling-peer-worker.exe" : "ling-peer-worker");
   const paths: DesktopResourcePaths = app.isPackaged
     ? {
         resourcesRoot,
@@ -33,6 +38,7 @@ export async function resolveDesktopResourcePaths(
         daemonEntryPath: resolve(appPath, "dist/daemon/cli.mjs"),
         previewIndexPath: resolve(appPath, "dist/renderer/computer-use-preview/index.html"),
         imageSanitizerPath: resolve(resourcesRoot, "image-sanitizer", imageExecutable()),
+        peerWorkerPath,
         browserHostPath: resolve(resourcesRoot, "browser-host", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
         ...(process.platform === "win32" ? { engineSupervisorPath: resolve(resourcesRoot, "engine-supervisor/ling-engine-supervisor.exe") } : {}),
       }
@@ -42,6 +48,7 @@ export async function resolveDesktopResourcePaths(
         daemonEntryPath: resolve(appPath, "dist/daemon/cli.mjs"),
         previewIndexPath: resolve(appPath, "dist/renderer/computer-use-preview/index.html"),
         imageSanitizerPath: resolve(appPath, "../../packages/daemon/dist/native/image-sanitizer", imageExecutable()),
+        peerWorkerPath,
         browserHostPath: resolve(appPath, "../../packages/browser-host/dist/native", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
         ...(process.platform === "win32" ? { engineSupervisorPath: resolve(appPath, "../../packages/daemon/dist/native/engine-supervisor/ling-engine-supervisor.exe") } : {}),
       };
@@ -52,7 +59,9 @@ export async function resolveDesktopResourcePaths(
       access(paths.previewIndexPath),
       ...(app.isPackaged ? [access(paths.browserHostPath), access(paths.imageSanitizerPath),
         access(resolve(resourcesRoot, "image-sanitizer/build-metadata.json")),
-        access(resolve(resourcesRoot, "image-sanitizer/THIRD_PARTY_LICENSES.txt"))] : []),
+        access(resolve(resourcesRoot, "image-sanitizer/THIRD_PARTY_LICENSES.txt")),
+        access(peerWorkerPath), access(resolve(workerRoot, "build-metadata.json")),
+        access(resolve(workerRoot, "THIRD_PARTY_LICENSES.txt"))] : []),
       ...(app.isPackaged && process.platform === "darwin"
         ? [
             access(resolve(paths.resourcesRoot, "restricted-command/ling-sandbox-runner")),

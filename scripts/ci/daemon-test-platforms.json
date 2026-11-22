@@ -255,6 +255,7 @@
     "test/learning-skill-provenance.test.mjs",
     "test/learning-sources.test.mjs",
     "test/ling-server-control-plane.test.ts",
+    "test/ling-server-native-peer.test.ts",
     "test/ling-server-pairing-migration.test.ts",
     "test/ling-turns-api.test.mjs",
     "test/linux-ssh-executor.test.ts",

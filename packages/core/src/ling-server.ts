@@ -120,7 +120,7 @@ export class LingServerPeerRegistry {
     });
   }
 
-  beginRoute(route: LingServerRouteAttemptV1): LingServerRouteAttemptV1 {
+  beginRoute(route: LingServerRouteAttemptV1, supersedes?: string): LingServerRouteAttemptV1 {
     return this.write(() => {
       const binding = this.requireActiveBinding(route.bindingId, route.peerEpoch);
       if (!["gathering", "checking"].includes(route.status) || route.selected !== undefined || !Number.isFinite(Date.parse(route.expiresAt))) {
@@ -132,6 +132,16 @@ export class LingServerPeerRegistry {
         throw new DeviceFabricError("revision_conflict", "route attempt id already has a binding or state");
       }
       if (current) return current;
+      if (supersedes) {
+        const prior = this.requireRoute(supersedes);
+        if (prior.bindingId !== binding.bindingId || (prior.peerEpoch ?? 1) !== binding.epoch) {
+          throw new DeviceFabricError("safety_denied", "replacement route is outside the current binding");
+        }
+        if (prior.status !== "failed" && prior.status !== "expired") {
+          const { selected: _selected, ...attempt } = prior;
+          this.saveRoute({ ...attempt, status: "failed" });
+        }
+      }
       this.saveRoute(boundRoute);
       return boundRoute;
     });

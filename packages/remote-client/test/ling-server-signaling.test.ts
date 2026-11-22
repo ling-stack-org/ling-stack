@@ -347,12 +347,13 @@ test("the route client verifies the server receipt and the original phone offer 
       },
     },
   });
-  assert.equal(await pollLingServerRoute(options(gateway)), undefined);
+  const authority = { instanceId, authorizedUntil: "2026-11-22T00:00:15.000Z" };
+  assert.deepEqual(await pollLingServerRoute(options(gateway)), authority);
   await assert.rejects(requestLingServerRoute(options(gateway), "direct"), /rendezvous_binding_invalid/u);
   const requested = await requestLingServerRoute(options(mobile), "direct");
   assert.equal(requested.instanceId, instanceId);
   assert.equal(requested.route.preferred, "direct");
-  assert.deepEqual(await pollLingServerRoute(options(gateway)), requested);
+  assert.deepEqual(await pollLingServerRoute(options(gateway)), { ...authority, offer: requested });
   tamperOffer = true;
   await assert.rejects(pollLingServerRoute(options(gateway)), /rendezvous_offer_invalid/u);
   tamperOffer = false;

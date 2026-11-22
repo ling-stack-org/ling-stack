@@ -478,6 +478,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           packaged: app.isPackaged,
           engineSupervisorPath: resources.engineSupervisorPath,
           imageSanitizerPath: resources.imageSanitizerPath,
+          peerWorkerPath: resources.peerWorkerPath,
           cuaDriverFeatureFlags: featureFlags,
           ...(!app.isPackaged && smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onUnexpectedExit: (details) => {

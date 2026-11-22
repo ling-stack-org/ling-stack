@@ -57,12 +57,14 @@ export class LingServerRendezvous {
       if (route.preferred === "relay" && !this.options.relayAvailable) {
         throw new DeviceFabricError("resource_conflict", "rendezvous relay is unavailable");
       }
-      if ((!previous && this.#offers.size >= 128) || (previous && now - previous.acceptedAtMs < 1_000)) {
+      const priorRoute = previous?.request.input.operation;
+      const switchesToRelay = priorRoute?.kind === "request_route" && priorRoute.preferred !== "relay" && route.preferred === "relay";
+      if ((!previous && this.#offers.size >= 128) || (previous && now - previous.acceptedAtMs < 1_000 && !switchesToRelay)) {
         throw new DeviceFabricError("lease_busy", "rendezvous offer capacity reached");
       }
       // IDs belong to one negotiation. A consumed ID cannot replace a current offer.
       if (registry.getRoute(route.routeAttemptId)) throw new DeviceFabricError("revision_conflict", "rendezvous route was already used");
-      registry.beginRoute(route);
+      registry.beginRoute(route, priorRoute?.kind === "request_route" ? priorRoute.routeAttemptId : undefined);
       offer = proof;
       this.#offers.set(binding.bindingId, { request: proof, expiresAtMs: expiresAt, acceptedAtMs: now });
     }

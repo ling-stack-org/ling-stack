@@ -127,6 +127,7 @@ test("paired keys request and find the same route without exposing the admin lis
   const application = newKey();
   const control = new LingServerControlPlane({ authToken: "fixture-admin", adminPort: 0, now: () => clock,
     applicationIdentityPrivateKeyPem: application.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+    transport: { turnUrls: ["turns:relay.fixture.example:443?transport=tcp"], relaySharedSecret: "0123456789abcdef" },
   });
   t.after(() => control.stop());
   const address = await control.start();
@@ -175,7 +176,6 @@ test("paired keys request and find the same route without exposing the admin lis
   assert.equal((await send(proof({ kind: "poll_route" }, mobile))).status, 403);
   assert.equal((await send(proof(request, mobile, { installationRevision: 2 }))).status, 403);
   assert.equal((await send(proof(request, mobile, { instanceId: "other-instance" }))).status, 403);
-  assert.equal((await send(proof({ ...request, preferred: "relay" }, mobile))).status, 503);
   assert.equal((await send({ action: "begin", route: {} }, "/v1/routes")).status, 404);
   assert.equal(control.registry.getRoute(routeAttemptId), undefined);
   const phoneRequest = proof(request, mobile);
@@ -190,6 +190,13 @@ test("paired keys request and find the same route without exposing the admin lis
   const discovered = await getReceipt(await send(nextPoll));
   assert.deepEqual(discovered.request, nextPoll.input);
   assert.deepEqual(discovered.offer, phoneRequest);
+  const otherDirect = proof({ ...request, routeAttemptId: "other-direct" }, mobile);
+  assert.equal((await send(otherDirect)).status, 503);
+  const relay = proof({ ...request, routeAttemptId: "route-relay", preferred: "relay" }, mobile);
+  assert.deepEqual((await getReceipt(await send(relay))).offer, relay);
+  assert.equal(control.registry.requireRoute(routeAttemptId).status, "failed");
+  assert.equal(control.registry.requireRoute("route-relay").preferred, "relay");
+  assert.deepEqual((await getReceipt(await send(proof({ kind: "poll_route" }, gateway)))).offer, relay);
   const expired = expiresAt;
   clock = expired;
   const currentExpiry = "2026-11-21T00:01:30.000Z";

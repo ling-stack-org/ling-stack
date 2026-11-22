@@ -19,6 +19,7 @@ test("development resourcesRoot is appPath/resources", async (t) => {
   const paths = await resolveDesktopResourcePaths(app, "/ignored/packaged/resources");
   assert.equal(paths.resourcesRoot, resolve(fixture.appPath, "resources"));
   assert.equal(paths.imageSanitizerPath, resolve(fixture.root, "packages/daemon/dist/native/image-sanitizer", imageExecutable()));
+  assert.equal(paths.peerWorkerPath, resolve(fixture.root, "packages/daemon/dist/native/ling-peer-worker", peerExecutable()));
 });
 
 test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
@@ -46,6 +47,11 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   await writeFile(imagePath, "test-only codec bytes");
   await writeFile(join(packagedResourcesPath, "image-sanitizer/build-metadata.json"), "{}");
   await writeFile(join(packagedResourcesPath, "image-sanitizer/THIRD_PARTY_LICENSES.txt"), "test-only notices");
+  await mkdir(join(packagedResourcesPath, "ling-peer-worker"));
+  const workerPath = join(packagedResourcesPath, "ling-peer-worker", peerExecutable());
+  await writeFile(workerPath, "test-only peer worker");
+  await writeFile(join(packagedResourcesPath, "ling-peer-worker/build-metadata.json"), "{}");
+  await writeFile(join(packagedResourcesPath, "ling-peer-worker/THIRD_PARTY_LICENSES.txt"), "test-only notices");
   const app = { isPackaged: true, getAppPath: () => fixture.appPath };
 
   assert.equal(resolveDesktopResourcesRoot(app, packagedResourcesPath), resolve(packagedResourcesPath));
@@ -53,7 +59,11 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   assert.equal(paths.resourcesRoot, resolve(packagedResourcesPath));
   assert.equal(paths.webIndexPath, resolve(packagedResourcesPath, "web/index.html"));
   assert.equal(paths.imageSanitizerPath, imagePath);
+  assert.equal(paths.peerWorkerPath, workerPath);
   await unlink(imagePath);
+  await assert.rejects(resolveDesktopResourcePaths(app, packagedResourcesPath), { name: "DesktopResourceResolutionError" });
+  await writeFile(imagePath, "test-only codec bytes");
+  await unlink(workerPath);
   await assert.rejects(resolveDesktopResourcePaths(app, packagedResourcesPath), { name: "DesktopResourceResolutionError" });
   assert.equal(
     paths.browserHostPath,
@@ -162,3 +172,4 @@ function entryStylesheetPaths(html) {
 }
 
 function imageExecutable() { return process.platform === "win32" ? "ling-image-sanitizer.exe" : "ling-image-sanitizer"; }
+function peerExecutable() { return process.platform === "win32" ? "ling-peer-worker.exe" : "ling-peer-worker"; }

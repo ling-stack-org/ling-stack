@@ -286,15 +286,31 @@ Gateway issues the challenge on the ready channel and accepts its proof once on
 that channel. Challenge lifetime is bounded by the route deadline.
 The Gateway rechecks the local pairing and epoch before activating the session.
 
-The Gateway starts sending application frames after authentication. A replacement
-session closes the earlier connection and retains the device pairing. An expired
-route or a Daemon shutdown ends its connection. Revoking the pairing ends pending
-and active sessions and invalidates the pairing. The original Gateway WebSocket
-uses its existing proof and subprotocol negotiation. On reconnect the client
-reloads the workspace projection and queries the same PC task journal by its
-task-local cursor.
+The Gateway starts sending application frames after authentication. The negotiated
+route deadline bounds the first authentication. A signed Gateway poll receipt from
+the same Ling Server instance renews the active route's authority for up to 15 seconds.
+An explicit server denial, a changed server instance, an expired authority deadline,
+or a Daemon shutdown ends the connection. A replacement session retains the device
+pairing and closes the earlier connection. Revoking the local pairing also ends
+pending sessions and removes local pairing authority.
+
+A phone with a verified Ling Server profile tries direct ICE and then Ling Relay.
+A route that replaces the previous offer uses a new attempt ID and ends the prior
+signaling lane. If the peer transport is unavailable, Mobile can reconnect to the
+original paired Gateway WebSocket using its existing proof and subprotocol negotiation.
+Identity, signature, and redirect errors terminate the connection attempt. On reconnect
+the client reloads the workspace projection and queries the same PC task journal by
+its task-local cursor.
 [Gateway channel admission](../../packages/daemon/src/features/remote-access/controller.ts)
 [Remote Client authentication](../../packages/remote-client/src/session-authentication.ts)
+[Mobile peer connector](../../apps/mobile/src/remote/mobile-ling-server-peer.ts)
+
+Desktop package commands build `ling-peer-worker` using the pinned Go module.
+The package places the executable, build metadata, and third-party notices in
+the `ling-peer-worker` resources directory. Desktop passes its resolved path to its
+Daemon, which exchanges messages with the worker through private process pipes.
+A source checkout can build the worker with
+`corepack pnpm --filter @ling-stack/daemon build:peer-worker`.
 
 To switch an existing pairing, the PC owner opts in locally, the PC signs a new
 server-bound peer record using its existing Gateway identity, and the phone verifies

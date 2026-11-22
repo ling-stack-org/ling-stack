@@ -76,6 +76,12 @@ export interface RemoteAccessStatus {
   readonly sendEnabled: boolean;
 }
 
+interface RoutedSessionAuthentication {
+  readonly challenge: RemoteAuthChallengeV1;
+  readonly routeExpiresAt: number;
+  readonly authorityUntil: () => number;
+}
+
 export class RemoteAccessController {
   readonly csrfToken: string;
   private readonly now: () => string;
@@ -111,10 +117,10 @@ export class RemoteAccessController {
       now: this.now,
       onSecurityStateChanged: (reason) => {
         if (reason !== "paired") {
-          this.lingServerPeer?.stop();
-          this.lingServerPeer = undefined;
           this.cancelPendingAuthentication();
           this.activeSession?.revoke(reason);
+          this.lingServerPeer?.stop();
+          this.lingServerPeer = undefined;
         }
       },
     });
@@ -151,14 +157,20 @@ export class RemoteAccessController {
   }
 
   /** Accept an open channel and route context from the local, authenticated peer transport. */
-  attachLingServerPeer(input: { readonly route: LingServerGatewayRouteV1; readonly channel: RemoteMessageChannel }): void {
+  attachLingServerPeer(input: {
+    readonly route: LingServerGatewayRouteV1;
+    readonly channel: RemoteMessageChannel;
+    readonly authorityUntil?: () => number;
+  }): void {
     const { channel, route } = input;
     try {
       if (this.stopped || channel.readyState !== 1) throw new Error("Peer transport is unavailable.");
       const authentication = this.auth.createRoutedAuthentication(route);
+      const routeExpiresAt = Date.parse(route.expiresAt);
       this.acceptSessionChannel(channel, authentication.verify, lingServerGatewayDeviceTasksProtocol(route), {
         challenge: authentication.challenge,
-        routeExpiresAt: route.expiresAt,
+        routeExpiresAt,
+        authorityUntil: input.authorityUntil ?? (() => routeExpiresAt),
       });
     } catch (error) {
       channel.close(1008, "Peer authentication unavailable.");
@@ -304,8 +316,8 @@ export class RemoteAccessController {
     if (confirmed?.status !== "confirmed") return;
     const options = this.auth.lingServerRendezvousOptions(confirmed);
     if (options) {
-      this.lingServerPeer = new LingServerGatewayPeer(selected, options, createPionPeerConnectionFactory(executable), (route, channel) =>
-        this.attachLingServerPeer({ route, channel }));
+      this.lingServerPeer = new LingServerGatewayPeer(selected, options, createPionPeerConnectionFactory(executable), (route, channel, authorityUntil) =>
+        this.attachLingServerPeer({ route, channel, authorityUntil }));
     }
   }
 
@@ -367,7 +379,7 @@ export class RemoteAccessController {
     channel: RemoteMessageChannel,
     verify: (value: unknown) => Promise<AuthenticatedRemoteSession>,
     protocol: string,
-    peer?: { readonly challenge: RemoteAuthChallengeV1; readonly routeExpiresAt: string },
+    peer?: RoutedSessionAuthentication,
   ): void {
     let pending = true;
     let verifying = false;
@@ -399,7 +411,7 @@ export class RemoteAccessController {
             const authenticated = await verify(parseRemoteAuthFrameV1(data));
             if (!finish() || channel.readyState !== 1) return;
             try {
-              this.activateSession(channel, authenticated, protocol, peer?.routeExpiresAt);
+              this.activateSession(channel, authenticated, protocol, peer);
             } catch {
               channel.close(1008, "Authentication no longer current.");
             }
@@ -418,13 +430,14 @@ export class RemoteAccessController {
     channel: RemoteMessageChannel,
     authenticated: AuthenticatedRemoteSession,
     protocol: string,
-    routeExpiresAt?: string,
+    peer?: RoutedSessionAuthentication,
   ): void {
     const current = this.auth.state();
     const device = current.pairedDevice;
+    const nowMs = Date.parse(this.now());
     if (this.stopped || !current.enabled || !device || device.deviceId !== authenticated.device.deviceId
       || device.deviceEpoch !== authenticated.device.deviceEpoch || device.publicKeyFingerprint !== authenticated.device.publicKeyFingerprint
-      || (routeExpiresAt && Date.parse(routeExpiresAt) <= Date.parse(this.now()))) {
+      || (peer && !(nowMs < Math.min(peer.routeExpiresAt, peer.authorityUntil())))) {
       throw new Error("Authentication no longer current.");
     }
     const deviceFacade = deviceTaskProtocols.includes(protocol) ? this.options.deviceFacade : undefined;
@@ -449,9 +462,10 @@ export class RemoteAccessController {
         const state = this.auth.state();
         const device = state.pairedDevice;
         return !this.stopped && state.enabled && device?.deviceId === authenticated.device.deviceId
-          && device.deviceEpoch === authenticated.device.deviceEpoch && state.policyVersion === current.policyVersion;
+          && device.deviceEpoch === authenticated.device.deviceEpoch && state.policyVersion === current.policyVersion
+          && (!peer || Date.parse(this.now()) < peer.authorityUntil());
       },
-      routeExpiresAt,
+      routeAuthorityUntil: peer?.authorityUntil,
       policy: facade.policySummary(capabilities),
       now: this.now,
       onMutation: () => this.scheduleDrain(),

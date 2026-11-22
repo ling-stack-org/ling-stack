@@ -49,6 +49,13 @@ export class RemoteHttpStatusError extends Error {
   }
 }
 
+export class RemoteHttpTransportError extends Error {
+  constructor(cause: unknown) {
+    super("remote_http_transport_unavailable", { cause });
+    this.name = "RemoteHttpTransportError";
+  }
+}
+
 export type RemoteWebSocketFactory = (url: string, subprotocols?: string | string[]) => RemoteWebSocketLike;
 
 export interface RemoteBindingV1 {
@@ -112,13 +119,27 @@ async function requestJson<T>(
   path: string,
   init: RequestInit,
 ): Promise<RemoteHttpResponse<T>> {
-  const response = await fetchImpl(new URL(path, origin), init);
-  const body = await response.json() as T;
+  const url = new URL(path, origin);
+  const rejectRedirect = init.redirect === "error";
+  let response: Response;
+  try {
+    response = await fetchImpl(url, rejectRedirect ? { ...init, redirect: "manual" } : init);
+  } catch (error) {
+    init.signal?.throwIfAborted();
+    if (!rejectRedirect) throw error;
+    throw new RemoteHttpTransportError(error);
+  }
+  if (rejectRedirect && (response.redirected || response.type === "opaqueredirect"
+    || (response.status >= 300 && response.status < 400))) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("remote_http_redirect_refused");
+  }
   if (!response.ok) {
+    const body: unknown = await response.json().catch(() => undefined);
     const record = body && typeof body === "object" ? body as Record<string, unknown> : undefined;
     throw new RemoteHttpStatusError(response.status, typeof record?.message === "string" ? record.message : `remote_http_${response.status}`);
   }
-  return { status: response.status, body };
+  return { status: response.status, body: await response.json() as T };
 }
 
 export function remoteWebSocketUrl(origin: string): string {

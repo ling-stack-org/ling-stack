@@ -2,7 +2,7 @@
 
 Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed. Shared device approval, Home Assistant reload, and PC Modbus serial slices are implemented with field and platform acceptance still queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-22 (native PC diagnostics, Home Assistant approval/reload fixture, PC Modbus PTY capture, Mobile setup evidence, authorized journal watch, and access grants)
+Last verified: 2026-11-22 (D12 native peer continuity, signed route renewal, and PC-owned journal recovery)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -54,7 +54,7 @@ validation and the boundary of what remains unverified.
 | D9 | [~] | Standalone Mobile execution | Phone-owned typed execution, local journal, foreground gate, exact approval, and resume recovery are implemented | Mobile source fixtures |
 | D10 | [~] | Developer device sessions | The Daemon coordinator persists target-bound sessions, artifacts and job outcomes | Core and Daemon developer-session fixtures |
 | D11 | [~] | PC-assisted Mobile execution | Phone-owned collaboration proposals and chunked artifacts preserve owner and target binding | Core collaboration fixtures |
-| D12 | [~] | Ling Server connectivity | An ordered DataChannel carries Gateway authentication and the PC task journal through a local TURN/UDP relay. A separate local connection uses TURN/TLS with UDP unavailable | Core and Daemon fixtures, Remote Client tests, Chromium and Pion TURN loopback |
+| D12 | [~] | Ling Server connectivity | The native PC peer uses a verified Ling Server profile and serves the same owner journal after PC restart. Direct, relay, and fallback behavior have transport evidence | Native Pion/TLS loopback, Mobile connector tests, Chromium/Pion TURN loopback, and Desktop resource checks |
 | D13 | [~] | Hardware protocol development and debugging | Daemon developer sessions capture and replay target-bound Modbus RTU traffic using recorded codec and profile revisions | Core protocol, Daemon restart and macOS native serial PTY fixtures |
 | D14 | [~] | Semantic device graph and twin | Graph identity, relationships, merge/split, and freshness-aware twin views are implemented | Core graph/twin fixtures |
 | D15 | [~] | Cross-device task graph | Dependency validation, ready-node placement, owner leases, partial aggregation, result lineage, cancellation, and failed-node retry are implemented | Core task-graph fixtures |
@@ -539,8 +539,8 @@ only on a successful install or a model response.
 - [~] Implement the self-hosted Ling Server control API, enrollment, presence,
   rendezvous, server identity, peer epochs, revocation, and metadata persistence.
   A paired Mobile signs a route request and Gateway polls the same binding.
-  The application key signs the challenge-bound response. Production presence
-  and packaged peer runtimes remain open.
+  The application key signs the challenge-bound response and the Gateway renews
+  active authority with signed poll receipts. Field deployment remains open.
 - [x] Persist installations, peer bindings, route attempts, revocation epochs, and
   route state in SQLite, with daemon restart recovery fixtures.
 - [x] Persist the logical peer session contract, route-generation changes, ordered
@@ -552,8 +552,9 @@ only on a successful install or a model response.
   in-band mode remains the default for browser and Pion paths.
 - [~] Exchange signed WebRTC signaling on registered routes with role-specific
   key proof, replay protection and expiration. The Remote Client verifies the
-  paired peer and route scope before applying SDP and ICE candidates. Verify
-  native PC and Mobile, direct LAN and cross-network ICE, and configured STUN.
+  paired peer and route scope before applying SDP and ICE candidates. The Daemon
+  uses its Pion worker and Mobile uses the React Native WebRTC adapter. Verify
+  installed mobile runtimes, direct LAN and cross-network ICE, and configured STUN.
 - [~] Issue short-lived coturn REST credentials for an active binding, role and
   registered relay route. The local operator API bounds issuance by route expiry
   and an in-process quota. Embedded WebRTC receives all configured TURN listeners
@@ -564,7 +565,8 @@ only on a successful install or a model response.
   keys and signed SDP digests before it serves workspace projections and task journal
   pages on the channel. Signed v4 signaling enables recovery approvals on the same
   channel. Replacing the route retains the pairing and PC journal.
-  Verify native routing, live conversation continuity, collaboration and artifact lanes.
+  The native fixture verifies conversation and owner-journal continuity across the
+  original route deadline and a PC restart. Live collaboration and artifact lanes remain open.
 - [~] Start the single-node control service with the `ling-server` binary,
   SQLite, a TLS peer listener, and a separate loopback admin listener. Packaging
   coturn and verifying a scaled deployment with PostgreSQL and relay affinity
@@ -579,7 +581,8 @@ only on a successful install or a model response.
   The authenticated Ling Server admin API verifies the signed confirmation and
   commits the exact peer binding and publication together. The paired PC exports the
   record and the Mobile confirmation stores a profile after proving the server's
-  application key against the active publication. Live profile cutover remains.
+  application key against the active publication. The Gateway reloads the confirmed
+  profile after restart, and the Mobile connector uses it to request a signed route.
 
 ### Exit evidence
 
@@ -589,6 +592,21 @@ only on a successful install or a model response.
   and revoked peer epochs. Remote Client fixtures validate both signatures,
   enforce the signaling instance, negotiate the fixed native channel ID, and
   exercise the authenticated Gateway WebSocket fallback.
+- On macOS arm64 with Node 22.22.1 and Go 1.26.3, the Mobile connector and the
+  Daemon Gateway used two Pion workers over a local TLS Ling Server. The session
+  remained usable beyond the original negotiation deadline. Reopening the PC
+  owner store and Gateway resumed the conversation and the same device task
+  from journal sequence 2 while retaining the original attempt IDs. Revoking the
+  server binding closed the channel and the next route request returned HTTP 403.
+  Mobile tests exercise relay selection and Gateway fallback after unavailability,
+  plus rejection of an invalid application signature and an HTTP redirect.
+  [Native peer fixture](../../packages/daemon/test/ling-server-native-peer.test.ts)
+  [Mobile connector fixtures](../../apps/mobile/test/mobile-ling-server-peer.test.ts)
+- The Desktop package configuration builds, includes, and resolves the native
+  executable with its build metadata and licenses. Linux CI builds and transports
+  the worker in the shared build artifact. Desktop resource and Daemon launch
+  fixtures passed, and the macOS source projection exercised real esbuild. The
+  full macOS release build requires its reviewed source record and toolchain.
 - The local control fixture checks peer key mismatch and revoked route selection.
   Core fixtures cover two-direction replay after reopening SQLite, route cutover,
   revocation from a separate registry instance and rollback when the cursor write
@@ -1045,7 +1063,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D9 | `52d415e47` plus Mobile setup runner | Mobile typecheck and full test suite passed, including a typed setup-playbook fixture with 2 tests. The setup runner requires exact approval, stores fresh target-bound Wi-Fi readback observations, marks missing readback unknown, and refuses a repeat write after interruption | [Setup runner](../../apps/mobile/src/device/playbook.ts), [Mobile execution](../../apps/mobile/src/device/execution.ts), [Setup fixture](../../apps/mobile/test/mobile-setup-playbook.test.ts), [Android host-pin test](../../apps/mobile/modules/ling-device-transport/android/src/test/java/expo/modules/lingdevicetransport/PinnedSshSessionTest.java) | Phone-owned Home Assistant diagnosis and Android Linux SSH remain available. A reusable phone setup flow now shares the same approval, journal, verification, and unknown-outcome rules | Complete Android native Gradle package, physical LAN/hotspot acceptance, native iOS SSH, BLE/USB discovery, and physical smart-home Wi-Fi provisioning remain |
 | D10 | `313886185` plus target-bound developer session route | Contracts/Core/Daemon builds and typechecks. Core developer suite (7 passed), Daemon developer route and runtime fixtures passed | [Session route](../../packages/daemon/src/features/device-support/developer-routes.ts), [Coordinator](../../packages/core/src/device-developer.ts), [Protocol workbench route](../../packages/daemon/src/features/device-support/protocol-routes.ts), [HTTP fixture](../../packages/daemon/test/device-developer-routes.test.ts) | The local API creates a profile-and-connection-bound session, authorizes it with CAS, rejects stale target binding, and exposes only existing durable jobs. Standard sessions cannot admit developer jobs. Protocol workbench jobs retain the authorization revision across restart | Native workbench UI, live build/test worker reattachment, real PC/Mobile build, and packaged target acceptance remain |
 | D11 | `9e257c618`, `aac808173` | Core developer coordinator and Daemon runtime tests | [Collaboration coordinator](../../packages/core/src/device-developer.ts), [Durable artifact bytes](../../packages/core/src/storage/sqlite/device-developer-store.ts), [Transfer fixture](../../packages/core/test/device-developer.test.ts) | Phone-owned proposals bind a digest and expiry. The owner verifies stored chunk hashes, reconstructs the accepted artifact and validates its final SHA-256 before settlement. | Signed peer transport, live PC assistance, phone-side deployment and physical head-unit acceptance remain |
-| D12 | Signed rendezvous and signaling, negotiated native DataChannel support, standalone TLS, routed Gateway session, relay listener fallback, pairing publication, peer pin verification and Mobile native WebRTC factory | Contracts, Core, Daemon, Remote Protocol and Remote Client build and typecheck. Mobile typecheck and 106 tests pass with `react-native-webrtc` 155.0.1 and a factory fixture. The control-plane and device-runtime suites passed 16 tests, and Remote Client passed 35 tests. Desktop IPC and management tests (14 passed). Web typecheck and lint. Mobile typecheck, 102 tests and both Expo bundles. Loopback TLS pin acceptance and earlier Chrome/Pion TURN/UDP and TURN/TLS sessions | [Standalone service](ling-server-connectivity.md#standalone-control-service), [Endpoint negotiation](../../packages/remote-client/src/ling-server-data-channel.ts), [Gateway integration](../../packages/daemon/test/device-remote-facade.test.ts), [Pairing migration](../../packages/daemon/test/ling-server-pairing-migration.test.ts), [Mobile verification fixture](../../packages/remote-client/test/ling-server-pairing-pin.test.ts) | The client reads the owner journal and confirms recovery actions on a signed v4 DataChannel. The control plane publishes the signed migration, proves its active binding with its application key, and rejects a revoked binding. The paired keys independently obtain the same server-signed route and reject a changed instance. The client retains the verified profile with the original PC pairing. | Production PC and Mobile route workers, live profile cutover, packaged Desktop/Mobile transport, live conversation and artifact continuity, direct cross-device ICE, deployed coturn allocation and TURN/TLS over TCP 443, and deployment packaging remain |
+| D12 | Signed rendezvous, native PC peer worker, Mobile connector, and route renewal | Native Pion/TLS acceptance on macOS arm64. Mobile and Remote Client typechecks and Node 22.22.1 tests. Desktop resource, lifecycle and distribution tests (81 passed). Desktop Office source projection and source-input tests with real esbuild (1,529 passed). Prior Chromium/Pion TURN/UDP and TURN/TLS loopback runs | [Native peer fixture](../../packages/daemon/test/ling-server-native-peer.test.ts), [Mobile connector fixtures](../../apps/mobile/test/mobile-ling-server-peer.test.ts), [Desktop package verification](../../scripts/release/verify-desktop-package.mjs) | Native peer authentication preserves conversation and PC-owned task identity across route renewal and Gateway restart. Reopening the owner journal resumes at the retained sequence without adding attempts. Explicit server revocation closes the native channel. Mobile permits fallback on transport failures and rejects invalid signatures and redirects. | macOS and Windows packaged execution, iOS and Android devices, direct cross-network ICE, deployed coturn TURN/TLS on TCP 443, collaboration and artifacts, and standalone server deployment remain |
 | D13 | `98ea1e92c` plus PC serial transport | Contracts/Core/Daemon builds and typechecks. Modbus serial suite 4/4, focused runtime suite 27/27, native macOS arm64 PTY loopback, packaged Desktop Daemon bundle, documentation/license/public checks passed | [Workbench routes](../../packages/daemon/src/features/device-support/protocol-routes.ts), [Serial target](../../packages/daemon/src/features/device-support/modbus-serial-targets.ts), [Serial fixture](../../packages/daemon/test/modbus-serial-targets.test.ts) | PC configuration pins USB path and VID/PID/serial identity, captures Modbus RTU request/response, and preserves partial evidence after disconnect. The PTY loopback decoded register value 10 using the native serial driver | Android/iOS serial paths, standard-session integration, packaged target installation and physical RS-485 acceptance remain |
 | D14 | Identity evidence, graph history and operator projection | Contracts/Core/Daemon build and typecheck. Fabric suites (26 passed). Authenticated Daemon graph and Edge runtime projection route is available and workspace-filters registered devices | [Graph route](../../packages/daemon/src/features/device-support/routes.ts), [Identity contract](../../packages/contracts/src/device-fabric.ts), [Fabric store](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Reopen fixture](../../packages/core/test/device-fabric-store.test.ts) | The store records accepted evidence with each graph change and replays the original node revision after a split and restart. A retry that changes the split destination fails. | Authenticated adapter evidence and operator confirmation entry points, redirects for historical external IDs and field convergence remain |
 | D15 | Graph stop, admission retry and owner receipt validation | Contracts/Core builds and typechecks. Fabric suites (30 passed) | [Graph coordinator](../../packages/core/src/device-fabric.ts), [Graph persistence](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Receipt fixture](../../packages/core/test/device-fabric.test.ts) | The SQLite graph changes only when the owner receipt matches the persisted node, attempt and authenticated route. Stale graph or route revisions, foreign owners and mismatched attempts leave it unchanged. | Cross-runtime scheduler, authenticated receipt delivery, live route recovery and physical graph cases remain |

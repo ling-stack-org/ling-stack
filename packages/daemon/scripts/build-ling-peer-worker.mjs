@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,27 +20,33 @@ function go(args) {
 
 await mkdir(output, { recursive: true });
 const candidate = join(output, "." + executable + "." + randomUUID());
-go(["build", "-trimpath", "-mod=readonly", "-ldflags=-s -w", "-o", candidate, "."]);
-const modules = go(["list", "-mod=readonly", "-deps", "-f",
-  '{{with .Module}}{{if not .Main}}{{.Path}}{{"\\t"}}{{.Version}}{{"\\t"}}{{.Dir}}{{end}}{{end}}', "."]);
-const dependencies = [...new Set(modules.split(/\r?\n/u).filter(Boolean))].sort();
-const licenses = [];
-for (const dependency of dependencies) {
-  const [name, version, root] = dependency.split("\t");
-  licenses.push(await readLicenseFiles(name + " " + version, root));
+try {
+  go(["build", "-buildvcs=false", "-trimpath", "-mod=readonly", "-ldflags=-s -w", "-o", candidate, "."]);
+  const modules = go(["list", "-mod=readonly", "-deps", "-f",
+    '{{with .Module}}{{if not .Main}}{{.Path}}{{"\\t"}}{{.Version}}{{"\\t"}}{{.Dir}}{{end}}{{end}}', "."]);
+  const dependencies = [...new Set(modules.split(/\r?\n/u).filter(Boolean))].sort();
+  const licenses = [];
+  for (const dependency of dependencies) {
+    const [name, version, root] = dependency.split("\t");
+    licenses.push(await readLicenseFiles(name + " " + version, root));
+  }
+  const goRoot = go(["env", "GOROOT"]);
+  const goVersion = go(["env", "GOVERSION"]);
+  licenses.push(await readLicenseFiles(goVersion, goRoot, basename(goRoot) === "libexec" ? dirname(goRoot) : undefined));
+  const notices = licenses.join("\n\n") + "\n";
+  const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+  const metadata = {
+    schema: "ling.peer-worker.build.v1", platform: [process.platform, process.arch].join("-"),
+    executable, sha256: digest(await readFile(candidate)), noticesSha256: digest(notices), goVersion,
+    dependencies: dependencies.map(line => line.split("\t").slice(0, 2).join("@")),
+  };
+  await rename(candidate, join(output, executable));
+  await writeFile(join(output, "THIRD_PARTY_LICENSES.txt"), notices);
+  await writeFile(join(output, "build-metadata.json"), JSON.stringify(metadata, null, 2) + "\n");
+  process.stdout.write(JSON.stringify(metadata) + "\n");
+} finally {
+  await rm(candidate, { force: true });
 }
-const goRoot = go(["env", "GOROOT"]);
-licenses.push(await readLicenseFiles(go(["version"]), goRoot, basename(goRoot) === "libexec" ? dirname(goRoot) : undefined));
-await writeFile(join(output, "THIRD_PARTY_LICENSES.txt"), licenses.join("\n\n") + "\n");
-
-const sha256 = createHash("sha256").update(await readFile(candidate)).digest("hex");
-const metadata = {
-  schema: "ling.peer-worker.build.v1", platform: [process.platform, process.arch].join("-"),
-  executable, sha256, dependencies: dependencies.map(line => line.split("\t").slice(0, 2).join("@")),
-};
-await rename(candidate, join(output, executable));
-await writeFile(join(output, "build-metadata.json"), JSON.stringify(metadata, null, 2) + "\n");
-process.stdout.write(JSON.stringify(metadata) + "\n");
 
 async function readLicenseFiles(label, root, licenseRoot) {
   const locations = new Map();

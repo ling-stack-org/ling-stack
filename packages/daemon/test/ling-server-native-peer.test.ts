@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
@@ -15,19 +15,20 @@ import type {
 } from "@ling-stack/contracts";
 import { createSqliteRunStore } from "@ling-stack/core";
 import {
-  RemoteSessionClient, connectLingServerDataChannel, createFetchRemoteHttpClient, lingServerNativeGatewayFeatures,
-  requestLingServerRoute, type RemoteBindingV1, type RemoteDeviceKeyAdapter,
+  RemoteSessionClient, createFetchRemoteHttpClient, type RemoteBindingV1, type RemoteDeviceKeyAdapter,
 } from "@ling-stack/remote-client";
 import { fingerprintPublicJwkSync, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
+import { connectMobileLingServerPeer } from "../../../apps/mobile/src/remote/mobile-ling-server-peer.ts";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
+import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { RemoteAccessController } from "../dist/features/remote-access/controller.js";
 import { createRemoteGatewayIdentity } from "../dist/features/remote-access/pairing-auth-service.js";
 import { createPionPeerConnectionFactory, resolvePionPeerWorker } from "../dist/features/remote-access/pion-peer-worker.js";
 import { RemoteAccessStateStore } from "../dist/features/remote-access/state-store.js";
 
 const worker = resolvePionPeerWorker();
-test("the native Gateway activates a confirmed profile, authenticates over WebRTC and resumes the same workspace",
-  { timeout: 35_000, skip: worker ? false : "build the Pion peer worker to run the native transport test" }, async t => {
+test("the native Gateway renews authenticated WebRTC authority, resumes after restart and respects server revocation",
+  { timeout: 45_000, skip: !worker && !process.env.CI && "build the Pion peer worker to run the native transport test" }, async t => {
     assert.ok(worker);
     const root = await mkdtemp(join(tmpdir(), "ling-native-peer-"));
     const certificatePath = join(root, "tls.pem");
@@ -38,13 +39,35 @@ test("the native Gateway activates a confirmed profile, authenticates over WebRT
     const cert = await readFile(certificatePath, "utf8");
     const trust = getCACertificates("default");
     setDefaultCACertificates([...trust, cert]);
+    let clockOffset = 0;
+    const now = () => new Date(Date.now() + clockOffset).toISOString();
     const workspace = createSqliteRunStore(root);
     const channel = workspace.createChannel({ name: "Peer continuity", boundPath: root }, now());
+    const createDeviceRuntime = () => createDeviceSupportRuntime({
+      databasePath: join(root, "device-owner.sqlite"), now,
+      homeAssistant: {
+        baseUrl: "https://ha.fixture.example", token: "fixture-token",
+        fetchImpl: async input => {
+          const url = new URL(String(input));
+          if (url.pathname === "/api/config") return Response.json({ version: "2026.11.2" });
+          assert.equal(url.pathname, "/api/states/sensor.test");
+          return Response.json({ entity_id: "sensor.test", state: "unavailable" });
+        },
+      },
+    });
+    let devices = createDeviceRuntime();
     const mobile = pairedKey();
     const application = pairedKey();
-    const control = new LingServerControlPlane({
+    let rendezvousReceipts = 0;
+    class ObservedControl extends LingServerControlPlane {
+      override async handleRequest(request: IncomingMessage, response: ServerResponse, admin?: boolean) {
+        await super.handleRequest(request, response, admin);
+        if (request.url === "/v1/rendezvous" && response.statusCode === 200) rendezvousReceipts += 1;
+      }
+    }
+    const control = new ObservedControl({
       authToken: randomUUID(), adminPort: 0, applicationIdentityPrivateKeyPem: application.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
-      tls: { cert, key: await readFile(privateKeyPath) },
+      tls: { cert, key: await readFile(privateKeyPath) }, now,
     });
     let gateway: RemoteAccessController | undefined;
     let management: Server | undefined;
@@ -54,6 +77,7 @@ test("the native Gateway activates a confirmed profile, authenticates over WebRT
       await gateway?.stop();
       if (management) await close(management);
       await control.stop();
+      devices.close();
       workspace.close();
       setDefaultCACertificates(trust);
       await rm(root, { recursive: true, force: true });
@@ -76,8 +100,9 @@ test("the native Gateway activates a confirmed profile, authenticates over WebRT
     const gatewayKey = state.readOrCreateIdentity();
     const managementCapability = randomUUID();
     const managementOrigin = "http://127.0.0.1";
-    gateway = new RemoteAccessController({ store: workspace, stateDir, listenerPort, workspaceDisplayName: "Native fixture",
-      managementCapability, managementAllowedOrigins: [managementOrigin] });
+    const createGateway = () => new RemoteAccessController({ store: workspace, stateDir, listenerPort, workspaceDisplayName: "Native fixture",
+      managementCapability, managementAllowedOrigins: [managementOrigin], now, deviceFacade: devices.remoteFacade });
+    gateway = createGateway();
     await gateway.startIfEnabled();
     management = createServer(async (request, response) => {
       if (!await gateway?.handleManagementRequest(request, response)) response.writeHead(404).end();
@@ -117,23 +142,21 @@ test("the native Gateway activates a confirmed profile, authenticates over WebRT
       workspaceBindingId: originalState.workspaceBindingId, status: "active", pairedAt: device.pairedAt,
     };
     const http = createFetchRemoteHttpClient();
-    const options = { installation, binding: publication.binding, keys, clock: { now }, entropy: { randomBytes },
-      key: { keyId: binding.deviceKeyId, publicJwk: mobile.jwk }, http };
-    const routes: string[] = [];
+    const clock = { now };
+    const peerOptions = { keys, clock, entropy: { randomBytes }, http,
+      createPeerConnection: async () => createPionPeerConnectionFactory(worker) };
+    const routes: { readonly id: string; readonly expiresAt: string }[] = [];
     client = new RemoteSessionClient({
-      binding, keys, http, clock: options.clock,
+      binding, keys, http, clock,
       bindingStore: { async read() { return binding; }, async write(value) { binding = value; }, async remove() {} },
       cacheStore: { async read() { return undefined; }, async write() {}, async remove() {} },
       entropy: { randomBytes, randomId: prefix => prefix + "_" + randomUUID() },
-      peerFallback: true, webSocketFactory: () => assert.fail("native route fell back to WebSocket"),
+      autoReconnect: false, peerFallback: true, webSocketFactory: () => assert.fail("native route fell back to WebSocket"),
       async connectPeer(signal, activeBinding) {
         assert.equal(activeBinding.lingServerRoutingProfile?.bindingId, publication.binding.bindingId);
-        const requested = await requestLingServerRoute({ ...options, signal }, "direct");
-        const connection = await connectLingServerDataChannel({
-          ...options, signal, role: "mobile", features: lingServerNativeGatewayFeatures, route: requested.route,
-          expectedInstanceId: requested.instanceId, createPeerConnection: createPionPeerConnectionFactory(worker),
-        });
-        routes.push(connection.route.routeAttemptId);
+        const connection = await connectMobileLingServerPeer(activeBinding, signal, peerOptions);
+        assert.ok(connection);
+        routes.push({ id: connection.route.routeAttemptId, expiresAt: connection.route.expiresAt });
         return connection;
       },
     });
@@ -144,16 +167,44 @@ test("the native Gateway activates a confirmed profile, authenticates over WebRT
     const first = await client.openConversation(channel.id);
     assert.deepEqual(await first.completion, { kind: "conversation_opened", conversationId: channel.id });
     await waitFor(() => Boolean(client?.state.details[channel.id]));
-    client.disconnect();
-    await delay(1100);
+    const diagnosis = await devices.diagnoseHomeAssistant("sensor.test");
+    const taskId = diagnosis.report.taskId;
+    const attemptIds = diagnosis.attempts.map(record => record.attempt.attemptId);
+    const initialJournal = await client.readDeviceTaskJournal(taskId, { generation: 1, afterSequence: 0, limit: 1 });
+    assert.equal(initialJournal.task.taskId, taskId);
+    assert.equal(initialJournal.events.length, 1);
+    assert.equal(initialJournal.hasMore, true);
+    const expiry = Date.parse(routes[0]!.expiresAt);
+    const expectedReceipts = rendezvousReceipts + 2;
+    clockOffset = expiry - Date.now() - 8_000;
+    await waitFor(() => rendezvousReceipts >= expectedReceipts, 6_000);
+    clockOffset = expiry + 1 - Date.now();
+    const extended = await client.openConversation(channel.id);
+    assert.deepEqual(await extended.completion, { kind: "conversation_opened", conversationId: channel.id });
+    assert.equal(routes.length, 1);
+
+    await gateway.stop();
+    await waitFor(() => client?.state.connection !== "connected", 12_000);
+    devices.close();
+    devices = createDeviceRuntime();
+    gateway = createGateway();
+    await gateway.startIfEnabled();
     await client.connect();
     await waitFor(() => Boolean(client?.state.conversations[channel.id]));
     const reopened = await client.openConversation(channel.id);
     assert.deepEqual(await reopened.completion, { kind: "conversation_opened", conversationId: channel.id });
     assert.equal(routes.length, 2);
-    assert.equal(new Set(routes).size, 2);
+    assert.equal(new Set(routes.map(route => route.id)).size, 2);
     assert.equal(client.state.workspaceBindingId, originalState.workspaceBindingId);
     assert.equal(client.activeBinding?.deviceEpoch, device.deviceEpoch);
+    const continued = await client.readDeviceTaskJournal(taskId, { generation: initialJournal.generation, afterSequence: 1 });
+    assert.equal(continued.requiresSnapshot, false);
+    assert.equal(continued.events[0]?.sequence, 2);
+    assert.equal(continued.task.ownerId, initialJournal.task.ownerId);
+    assert.deepEqual(devices.store.listAttempts(taskId).map(record => record.attempt.attemptId), attemptIds);
+    control.registry.revokeBinding(publication.binding.bindingId, publication.binding.revision + 1);
+    await waitFor(() => client?.state.connection !== "connected", 12_000);
+    await assert.rejects(client.connect(), { status: 403 });
   });
 
 function pairedKey() {
@@ -164,10 +215,6 @@ function pairedKey() {
 
 function signWith(key: ReturnType<typeof pairedKey>, bytes: Uint8Array): string {
   return sign("sha256", bytes, { key: key.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
-}
-
-function now() {
-  return new Date().toISOString();
 }
 
 async function listen(server: Server): Promise<number> {
@@ -182,8 +229,8 @@ async function close(server: Server): Promise<void> {
   await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
 }
 
-async function waitFor(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + 4000;
+async function waitFor(check: () => boolean, timeoutMs = 4000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && !check()) await delay(20);
   assert.ok(check());
 }

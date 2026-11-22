@@ -26,22 +26,28 @@ export interface LingServerRendezvousRoute {
   readonly instanceId: string;
 }
 
+interface LingServerRendezvousPoll {
+  readonly instanceId: string;
+  readonly authorizedUntil: string;
+  readonly offer?: LingServerRendezvousRoute;
+}
+
 export async function requestLingServerRoute(
   options: LingServerRendezvousOptions, preferred: LingServerTransportRouteV1,
 ): Promise<LingServerRendezvousRoute> {
   const routeAttemptId = `route_${encodeBase64Url(await options.entropy.randomBytes(18))}`;
-  const route = await exchange(options, { kind: "request_route", routeAttemptId, preferred });
-  if (!route) throw new Error("ling_server_rendezvous_offer_missing");
-  return route;
+  const { offer } = await exchange(options, { kind: "request_route", routeAttemptId, preferred });
+  if (!offer) throw new Error("ling_server_rendezvous_offer_missing");
+  return offer;
 }
 
-export async function pollLingServerRoute(options: LingServerRendezvousOptions): Promise<LingServerRendezvousRoute | undefined> {
+export async function pollLingServerRoute(options: LingServerRendezvousOptions): Promise<LingServerRendezvousPoll> {
   return await exchange(options, { kind: "poll_route" });
 }
 
 async function exchange(
   options: LingServerRendezvousOptions, operation: LingServerRendezvousRequestV1["operation"],
-): Promise<LingServerRendezvousRoute | undefined> {
+): Promise<LingServerRendezvousPoll> {
   const { installation, binding, signal, keys, key, http, clock, entropy } = options;
   const mobile = operation.kind === "request_route";
   const expectedFingerprint = mobile ? binding.mobileKeyFingerprint : binding.gatewayKeyFingerprint;
@@ -80,7 +86,8 @@ async function exchange(
     throw new Error("ling_server_rendezvous_receipt_invalid");
   }
   assertLive(input.expiresAt, options);
-  if (!receipt.offer) return undefined;
+  const authority = { instanceId, authorizedUntil: input.expiresAt };
+  if (!receipt.offer) return authority;
 
   const { input: offerInput, publicKeyJwk, signature: offerSignature } = receipt.offer;
   const { nonce: _nonce, expiresAt, operation: _operation, ...offerScope } = offerInput;
@@ -93,7 +100,7 @@ async function exchange(
   }
   assertLive(input.expiresAt, options);
   assertLive(expiresAt, options);
-  return { route, instanceId };
+  return { ...authority, offer: { route, instanceId } };
 }
 
 function assertLive(expiresAt: string, { clock, signal }: Pick<LingServerRendezvousOptions, "clock" | "signal">): void {
