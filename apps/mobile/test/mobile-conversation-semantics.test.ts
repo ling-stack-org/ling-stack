@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import type { RemoteConversationMessageV1 } from "@ling-stack/contracts";
 import {
   adaptRemoteConversationMessage,
   adaptRemoteConversationMessages,
 } from "../src/features/conversations/domain/MobileConversationAdapter.ts";
 
-const source = async (path) => await readFile(new URL(path, import.meta.url), "utf8");
+const source = async (path: string) => await readFile(new URL(path, import.meta.url), "utf8");
 
 test("all three remote conversation kinds map to shared core surfaces", () => {
   const message = remoteMessage({ role: "teammate", authorId: "teammate-qa", authorLabel: "QA" });
@@ -15,7 +16,7 @@ test("all three remote conversation kinds map to shared core surfaces", () => {
     ["channel", "channel_root"],
     ["conversation", "normal_conversation"],
     ["teammate_direct", "teammate_direct"],
-  ];
+  ] as const;
 
   for (const [kind, surface] of fixtures) {
     const viewModel = adaptRemoteConversationMessage(kind, message);
@@ -89,7 +90,7 @@ test("native renderer consumes semantic blocks without importing Web renderers",
   assert.doesNotMatch(renderer, /apps\/web|conversation-ui-react|\.css/iu);
 });
 
-function remoteMessage(overrides = {}) {
+function remoteMessage(overrides: Partial<RemoteConversationMessageV1> = {}): RemoteConversationMessageV1 {
   return {
     messageId: "message-1",
     workspaceId: "workspace-1",

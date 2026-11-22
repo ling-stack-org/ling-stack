@@ -20,7 +20,10 @@ const { PluginSchema, DevToolsPluginOutputSchema } =
   cliRequire("./build/src/start/server/devtools/DevToolsPlugin.schema.js");
 const pluginPath = cliRequire.resolve("./build/src/start/server/devtools/DevToolsPlugin.js");
 const { DevToolsPlugin } = cliRequire(pluginPath);
-const { validate, ValidationError } = createRequire(pluginPath)("@expo/schema-utils");
+const { validate, ValidationError }: {
+  validate(schema: unknown, value: unknown): void;
+  ValidationError: new (...args: never[]) => Error & { errors: readonly { keyword: string }[] };
+} = createRequire(pluginPath)("@expo/schema-utils");
 const { DevToolsPluginCliExtensionResults } =
   cliRequire("./build/src/start/server/devtools/DevToolsPluginCliExtensionResults.js");
 const { createMCPDevToolsExtensionSchema } =
@@ -134,11 +137,12 @@ test("Metro's braces rejects deeply nested braces and parentheses before walking
 });
 
 test("braces guards caller-supplied deep and cyclic ASTs", () => {
-  let nested = { type: "text", value: "safe" };
+  type BracesNode = { type: "text"; value: string } | { type: "paren" | "root"; nodes: BracesNode[] };
+  let nested: BracesNode = { type: "text", value: "safe" };
   for (let i = 0; i < 500; i++) {
     nested = { type: "paren", nodes: [nested] };
   }
-  const cyclic = { type: "root", nodes: [] };
+  const cyclic: BracesNode = { type: "root", nodes: [] };
   cyclic.nodes.push(cyclic);
   for (const ast of [{ type: "root", nodes: [nested] }, cyclic]) {
     for (const method of ["compile", "expand", "stringify"]) {
@@ -164,7 +168,7 @@ test("braces preserves normal glob compilation, expansion and literal escaping",
 
 test("fixed Zod still rejects oversized bounded arrays before visiting elements", () => {
   let elementVisits = 0;
-  const schema = z.array(z.string().transform((value) => {
+  const schema = z.array(z.string().transform((value: string) => {
     elementVisits++;
     return value.toUpperCase();
   })).max(2);
@@ -256,9 +260,17 @@ test("Expo's MCP registration retains constraints through the legacy JSON schema
     environments: ["cli"],
     parameters: [{ name: "localPath", type: "text" }],
   });
-  const registrations = [];
+  type Registration = [
+    name: string,
+    config: {
+      title: string;
+      inputSchema: { parameters: { safeParse(value: unknown): { success: boolean } } };
+    },
+    handler: unknown,
+  ];
+  const registrations: Registration[] = [];
   await addMcpCapabilities({
-    registerTool(...args) {
+    registerTool(...args: Registration) {
       registrations.push(args);
     },
   }, {
@@ -300,7 +312,7 @@ test("Expo's schema-utils rejects oversized bounded arrays before visiting eleme
     { type: "audio", url: "https://example.com/audio.mp3" },
     { type: "image", url: "https://example.com/image.png" },
   ];
-  const observed = (items) => new Proxy(items, {
+  const observed = (items: typeof output) => new Proxy(items, {
     get(target, key, receiver) {
       if (typeof key === "string" && /^\d+$/.test(key)) elementVisits++;
       return Reflect.get(target, key, receiver);

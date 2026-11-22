@@ -28,7 +28,7 @@
     "plugins:catalog": "node scripts/plugins/generate-catalog.mjs",
     "plugins:catalog:sign": "node scripts/plugins/sign-catalog.mjs",
     "plugins:catalog:verify": "node scripts/plugins/verify-catalog-assets.mjs",
-    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs test/dependency-security-tooling.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs && node --test scripts/dependency-security-regressions.test.mjs scripts/dependency-security-minimatch.test.mjs scripts/dependency-security-glob.test.mjs",
+    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.ts test/dependency-security-tooling.test.ts && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs && node --test scripts/dependency-security-regressions.test.mjs scripts/dependency-security-minimatch.test.mjs scripts/dependency-security-glob.test.mjs",
     "typecheck": "corepack pnpm typecheck:ci-tests && corepack pnpm --workspace-concurrency=1 -r typecheck",
     "typecheck:ci-tests": "tsc -p scripts/ci/tsconfig.test.json",
     "ling": "node packages/cli/dist/index.js",
