@@ -40,6 +40,7 @@ import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-acc
 import type { ExternalDeviceAdapter } from "./adapters/external-process.js";
 import { HOME_ASSISTANT_ENABLE_AUTOMATION, HOME_ASSISTANT_RELOAD_CAPABILITY_ID, HomeAssistantAdapter, homeAssistantAdapterManifest, type HomeAssistantAdapterOptions } from "./adapters/home-assistant.js";
 import { AndroidAdbAdapter, type AndroidAdbExecutor } from "./adapters/android-adb.js";
+import type { BoundAndroidAdbTarget } from "./android-adb-targets.js";
 import { assertHomeAssistantCatalogQuery, homeAssistantCatalogCapabilities, type HomeAssistantCatalogQuery } from "./adapters/home-assistant-catalog.js";
 import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { ModbusSerialAdapter, modbusRegisterDiagnosis } from "./adapters/modbus-serial.js";
@@ -53,12 +54,21 @@ import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 import { createDeviceApprovalQueue } from "./approval-queue.js";
 import { createDeviceDeveloperJobs, type DeviceDeveloperExecutor } from "./developer-jobs.js";
 
-interface LinuxSshTargetSummary {
+interface ConfiguredDeviceTargetSummary {
   readonly connectionId: string;
   readonly deviceId: string;
   readonly status: "candidate" | DeviceLifecycleStatusV1;
   readonly displayName?: string;
 }
+
+const androidDiagnosis: DevicePlaybookV1 = {
+  id: "android-adb-diagnosis", version: "1.0.0", displayName: "Android ADB diagnosis",
+  supportedDeviceKinds: ["android", "head_unit"], riskClass: "read_only", localFallback: true,
+  steps: [
+    { id: "inspect-device", capabilityId: "android.inspect.device", input: {} },
+    { id: "inspect-packages", capabilityId: "android.inspect.packages", input: {} },
+  ],
+};
 
 export interface DeviceSupportRuntime {
   readonly store: SqliteDeviceSupportStore;
@@ -83,10 +93,13 @@ export interface DeviceSupportRuntime {
   proposeHomeAssistantReload(target: { readonly entryId: string; readonly entityId: string }): Promise<ApprovalRequest>;
   proposeHomeAssistantAutomationEnable(entityId: string): Promise<ApprovalRequest>;
   readHomeAssistantCatalog(query: HomeAssistantCatalogQuery): Promise<{ readonly taskId: string; readonly deviceId: string; readonly catalog: JsonValue }>;
-  listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
+  listLinuxSshTargets(): readonly ConfiguredDeviceTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
   diagnoseLinuxSshTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   diagnoseModbusTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
+  listAndroidAdbTargets(): readonly (ConfiguredDeviceTargetSummary & { readonly kind: BoundAndroidAdbTarget["kind"] })[];
+  enrollAndroidAdbTarget(connectionId: string): Promise<DeviceProfileV1>;
+  diagnoseAndroidAdbTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   discoverAndroidAdb(connectionRef: string): Promise<DeviceProfileV1>;
   discoverObd(connectionRef: string): Promise<DeviceProfileV1>;
   fleetHealth(workspaceId?: string): DeviceFleetHealthProjectionV1;
@@ -116,6 +129,7 @@ export function createDeviceSupportRuntime(options: {
   readonly createDiagnosisPlanner?: DeviceDiagnosisPlanner;
   readonly externalAdapters?: readonly ExternalDeviceAdapter[];
   readonly androidAdbExecutor?: AndroidAdbExecutor;
+  readonly androidAdbTargets?: readonly BoundAndroidAdbTarget[];
   readonly obdExecutor?: ObdExecutor;
   readonly developerExecutor?: DeviceDeveloperExecutor;
 }): DeviceSupportRuntime {
@@ -144,9 +158,11 @@ export function createDeviceSupportRuntime(options: {
   let ssh: ReturnType<typeof bindLinuxSshTargets> | undefined;
   let linuxAdapter: LinuxSshAdapter;
   let homeAssistant: HomeAssistantAdapter | undefined;
-  let androidAdb: AndroidAdbAdapter | undefined;
   let obd: ObdVehicleAdapter | undefined;
   const linuxTargets = new Map<string, BoundLinuxSshTarget>();
+  const adbTargets = new Map(options.androidAdbTargets?.map(target => [target.deviceId, target]));
+  const androidAdb = options.androidAdbExecutor || adbTargets.size > 0
+    ? new AndroidAdbAdapter({ executor: options.androidAdbExecutor, targets: [...adbTargets.values()], now }) : undefined;
   const configuredModbusIds = new Set<string>();
   try {
     developerSessions.recoverInterruptedJobs({ ownerKind: "daemon", ownerId: DEFAULT_WORKSPACE_ID }, now());
@@ -179,10 +195,7 @@ export function createDeviceSupportRuntime(options: {
       homeAssistant = new HomeAssistantAdapter({ ...options.homeAssistant, now });
       broker.registerAdapter(homeAssistant);
     }
-    if (options.androidAdbExecutor) {
-      androidAdb = new AndroidAdbAdapter({ executor: options.androidAdbExecutor, now });
-      broker.registerAdapter(androidAdb);
-    }
+    if (androidAdb) broker.registerAdapter(androidAdb);
     if (options.obdExecutor) {
       obd = new ObdVehicleAdapter({ executor: options.obdExecutor, now });
       broker.registerAdapter(obd);
@@ -205,6 +218,7 @@ export function createDeviceSupportRuntime(options: {
         }
         if ((profile.adapterId === modbusSerialAdapterId && !configuredModbusIds.has(profile.device.id))
           || (profile.adapterId === linuxAdapter.manifest.adapterId && !hasCurrentLinuxConnection(profile))
+          || (profile.adapterId === "android-adb" && profile.connectionRefs[0]?.startsWith("adb-target:"))
           || (profile.adapterId === homeAssistantAdapterManifest().adapterId && profile.device.id !== homeAssistant?.deviceId)) {
           store.markDeviceOffline(profile.device.id, now());
         }
@@ -400,6 +414,23 @@ export function createDeviceSupportRuntime(options: {
     }
   }
 
+  async function enrollAdbTarget(target: BoundAndroidAdbTarget): Promise<DeviceProfileV1> {
+    if (!androidAdb) throw new DeviceBrokerError("missing_target", "Android ADB is not configured on this host");
+    const previous = store.getDevice(target.deviceId);
+    if (previous && (previous.device.ownerScope !== DEFAULT_WORKSPACE_ID
+      || previous.device.lifecycleStatus === "revoked" || previous.device.lifecycleStatus === "retired")) {
+      throw new DeviceBrokerError("permission_denied", "Android device registration is no longer active");
+    }
+    try {
+      return await broker.discover(androidAdb.manifest.adapterId, {
+        ownerId: DEFAULT_WORKSPACE_ID, connectionRef: target.connectionRef, signal: AbortSignal.timeout(15_000),
+      });
+    } catch (error) {
+      if (store.getDevice(target.deviceId)?.device.ownerScope === DEFAULT_WORKSPACE_ID) store.markDeviceOffline(target.deviceId, now());
+      throw error;
+    }
+  }
+
   return {
     store,
     fabricStore,
@@ -521,6 +552,32 @@ export function createDeviceSupportRuntime(options: {
         throw new DeviceBrokerError("permission_denied", "Modbus target registration is no longer active");
       }
       return withDeviceTarget(deviceId, () => runDiagnosis(profile, deviceId, modbusRegisterDiagnosis, request));
+    },
+    listAndroidAdbTargets: () => [...adbTargets.values()].flatMap(({ deviceId, connectionId, kind }) => {
+      const profile = store.getDevice(deviceId);
+      if (profile && profile.device.ownerScope !== DEFAULT_WORKSPACE_ID) return [];
+      return [{ deviceId, connectionId, kind, status: profile?.device.lifecycleStatus ?? "candidate",
+        ...(profile ? { displayName: profile.device.displayName } : {}) }];
+    }),
+    async enrollAndroidAdbTarget(connectionId) {
+      const target = [...adbTargets.values()].find(item => item.connectionId === connectionId);
+      if (!target) throw new DeviceBrokerError("missing_target", "Android ADB target is not configured");
+      return withDeviceTarget(target.deviceId, () => enrollAdbTarget(target));
+    },
+    async diagnoseAndroidAdbTarget(deviceId, request = {}) {
+      const binding = adbTargets.get(deviceId);
+      const profile = store.getDevice(deviceId);
+      if (!binding || profile?.device.ownerScope !== DEFAULT_WORKSPACE_ID || profile.adapterId !== "android-adb") {
+        throw new DeviceBrokerError("missing_target", "Android ADB target is not enrolled");
+      }
+      return withDeviceTarget(deviceId, async () => {
+        const target = await enrollAdbTarget(binding);
+        const result = await runDiagnosis(target, deviceId, androidDiagnosis, request);
+        if (result.attempts.some(({ attempt }) => ["target_changed", "connection_failed", "authentication_required"].includes(attempt.receipt?.errorCode ?? ""))) {
+          store.markDeviceOffline(deviceId, now());
+        }
+        return result;
+      });
     },
     async discoverAndroidAdb(connectionRef) {
       if (!androidAdb) throw new DeviceBrokerError("missing_target", "Android ADB is not configured on this host");

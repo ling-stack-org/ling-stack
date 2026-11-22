@@ -462,6 +462,31 @@ test CarPlay. Vehicle acceptance records the exact OS, head unit, connection bac
 and release. DiPlay remains an independently installed project. Bundling or modifying
 it requires dependency and license review.
 
+### PC-owned Android ADB diagnosis
+
+The Daemon uses an already authorized target on the PC's local Android Platform
+Tools server. Configure an absolute JSON file with `LING_STACK_DEVICE_ADB_TARGETS_FILE`
+or the Daemon embedding setting `deviceSupport.androidAdbTargetsFile`. Each entry
+has a `connectionId`, the serial shown by `adb devices -l` as `adbSerial`, the
+device's trusted `ro.serialno` as `hardwareSerial`, and a `kind` of `android` or
+`head_unit`. For devices that supply only `ro.boot.serialno`, use that value. The
+file sets `version` to `1`, lists entries under `targets`, and can specify an
+absolute `adbPath` when Platform Tools are outside the Daemon's PATH.
+
+| Operation | Route | Request |
+| --- | --- | --- |
+| List configured targets | `GET /v1/device-support/android/targets` | No body |
+| Verify the authorized debugging transport and enroll | `POST /v1/device-support/android/enroll` | `{"connectionId":"bench"}` |
+| Read Android version and package count | `POST /v1/device-support/android/diagnose` | `{"deviceId":"<enrolled device ID>"}` |
+
+The Daemon checks the hardware serial inside the selected ADB transport and
+stores a derived device ID. A change to the ADB transport or build fingerprint
+creates a new connection revision. The package query verifies the same hardware
+serial within its own shell process. The diagnosis uses the PC owner journal
+and projects the OS version and package count. The snapshot advertises the
+operations supported by the selected executor.
+[Daemon ADB target binding](../../packages/daemon/src/features/device-support/android-adb-targets.ts)
+
 ## 6. Acceptance and delivery evidence
 
 Record host OS and app build, target model and firmware, transport, adapter and contract

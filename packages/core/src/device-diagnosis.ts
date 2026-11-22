@@ -214,6 +214,15 @@ export function projectDeviceDiagnosticEvidence(
     }
     return { value: { count: fields.software.length, sources, truncated: fields.truncated }, hypotheses: [] };
   }
+  if (request.capabilityId === "android.inspect.device" && observation.source === "android.device") {
+    const version = fields.androidVersion;
+    return { value: typeof version === "string" && /^\d{1,3}(?:\.\d{1,3}){0,3}$/u.test(version)
+      ? { androidVersion: version } : { androidVersion: null }, hypotheses: [] };
+  }
+  if (request.capabilityId === "android.inspect.packages" && observation.source === "android.packages"
+    && Array.isArray(fields.packages) && fields.packages.length <= 2_048) {
+    return { value: { packageCount: fields.packages.length }, hypotheses: [] };
+  }
   if (request.capabilityId === "protocol.read_registers" && observation.source === "modbus.rtu.read_registers") {
     const { status, unitAddress, table, startAddress, registers } = fields;
     if (status === "incomplete_capture" || status === "invalid_checksum" || status === "mismatched_response" || status === "device_exception") {

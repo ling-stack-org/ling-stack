@@ -28,7 +28,7 @@ export async function handleDeviceSupportRoute(
   const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace|conformance)$/u.exec(url.pathname);
   const deviceOperation = /^\/v1\/device-support\/devices\/([^/]+)\/(dispatch-stop|retirement)$/u.exec(url.pathname);
   const accessGrantOperation = /^\/v1\/device-support\/devices\/([^/]+)\/access-grants\/([^/]+)$/u.exec(url.pathname);
-  const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
+  const configuredTargetRoute = /^\/v1\/device-support\/(linux|android)\/(targets|enroll|diagnose)$/u.exec(url.pathname);
   const modbusDiagnosis = url.pathname === "/v1/device-support/modbus/diagnose";
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
   const homeAssistantProposal = /^\/v1\/device-support\/home-assistant\/(reload-proposals|automation-enable-proposals)$/u.exec(url.pathname)?.[1];
@@ -38,7 +38,7 @@ export async function handleDeviceSupportRoute(
   const fabricGraph = url.pathname === "/v1/device-support/fabric/graph";
   const edgeRuntimes = url.pathname === "/v1/device-support/fabric/edge-runtimes";
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
-    && !linuxAction && !modbusDiagnosis && !homeAssistant && !homeAssistantProposal && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
+    && !configuredTargetRoute && !modbusDiagnosis && !homeAssistant && !homeAssistantProposal && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
     && !fabricGraph && !edgeRuntimes) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
@@ -54,8 +54,8 @@ export async function handleDeviceSupportRoute(
     await handleDeviceAccessGrant(accessGrantOperation[1]!, accessGrantOperation[2]!, request, response, runtime);
     return true;
   }
-  if (linuxAction) {
-    await handleLinuxSshRequest(linuxAction, request, response, runtime);
+  if (configuredTargetRoute) {
+    await handleConfiguredDeviceRequest(configuredTargetRoute[1]!, configuredTargetRoute[2]!, request, response, runtime);
     return true;
   }
   if (modbusDiagnosis) {
@@ -435,8 +435,8 @@ function readDeviceReference(encodedDeviceId: string): string {
   return deviceId;
 }
 
-async function handleLinuxSshRequest(
-  action: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
+async function handleConfiguredDeviceRequest(
+  ecosystem: string, action: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): Promise<void> {
   const method = action === "targets" ? "GET" : "POST";
   if (request.method !== method) {
@@ -444,24 +444,29 @@ async function handleLinuxSshRequest(
     writePrivateJson(response, 405, { error: "method_not_allowed" });
     return;
   }
+  const target = ecosystem === "android" ? {
+    list: runtime.listAndroidAdbTargets, enroll: runtime.enrollAndroidAdbTarget, diagnose: runtime.diagnoseAndroidAdbTarget,
+  } : {
+    list: runtime.listLinuxSshTargets, enroll: runtime.enrollLinuxSshTarget, diagnose: runtime.diagnoseLinuxSshTarget,
+  };
   try {
     if (action === "targets") {
-      writePrivateJson(response, 200, { targets: runtime.listLinuxSshTargets() });
+      writePrivateJson(response, 200, { targets: target.list() });
       return;
     }
-    const body = await readJsonBody(request, 4096).catch(() => { throw new DeviceBrokerError("invalid_request", "Invalid Linux SSH request"); });
+    const body = await readJsonBody(request, 4096).catch(() => { throw new DeviceBrokerError("invalid_request", "Invalid device target request"); });
     const key = action === "enroll" ? "connectionId" : "deviceId";
     const id = isRecord(body) ? body[key] : undefined;
     if (!isRecord(body) || !validBoundedText(id, 256) || id.trim() !== id) {
-      throw new DeviceBrokerError("invalid_request", "Linux SSH request requires a target reference");
+      throw new DeviceBrokerError("invalid_request", "Device request requires a target reference");
     }
     if (action === "enroll") {
-      if (Object.keys(body).length !== 1) throw new DeviceBrokerError("invalid_request", "invalid Linux SSH enrollment request");
-      writePrivateJson(response, 200, { profile: await runtime.enrollLinuxSshTarget(id) });
+      if (Object.keys(body).length !== 1) throw new DeviceBrokerError("invalid_request", "invalid device enrollment request");
+      writePrivateJson(response, 200, { profile: await target.enroll(id) });
       return;
     }
     const { deviceId: _deviceId, ...options } = body;
-    const { status, report } = await runtime.diagnoseLinuxSshTarget(id, readDiagnosisOptions(options));
+    const { status, report } = await target.diagnose(id, readDiagnosisOptions(options));
     writePrivateJson(response, 200, { status, report });
   } catch (error) {
     writeDeviceOperationError(response, error);
@@ -521,7 +526,8 @@ function writeDeviceOperationError(response: ServerResponse, error: unknown): vo
   }
   const code = error instanceof DeviceBrokerError || (error instanceof DeviceFabricError && error.code === "target_changed")
     ? error.code : "service_unavailable";
-  const statuses = { invalid_request: 400, missing_target: 404, permission_denied: 403, target_changed: 409, target_busy: 409, stale_snapshot: 409 };
+  const statuses = { invalid_request: 400, missing_target: 404, permission_denied: 403, target_changed: 409, target_busy: 409, stale_snapshot: 409,
+    authentication_required: 409 };
   writePrivateJson(response, Object.hasOwn(statuses, code) ? statuses[code as keyof typeof statuses] : 503, { error: code });
 }
 

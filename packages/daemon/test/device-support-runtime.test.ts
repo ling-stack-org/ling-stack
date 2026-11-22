@@ -51,6 +51,98 @@ test("the Daemon registers configured Android ADB and OBD bridges as device targ
   assert.equal(runtime.store.getDevice(vehicle.device.id)?.device.ownerScope, DEFAULT_WORKSPACE_ID);
 });
 
+test("the configured PC ADB route enrolls one authorized target and journals typed package diagnosis", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-adb-diagnosis-"));
+  const targetsFile = join(cwd, "android-targets.json");
+  const workspace = createSqliteRunStore(cwd);
+  const authToken = "fixture-daemon-authority";
+  const serial = "fixture-hardware-id";
+  const adbSerial = "fixture-head-unit";
+  writeFileSync(targetsFile, JSON.stringify({ version: 1, targets: [
+    { connectionId: "bench", adbSerial, hardwareSerial: serial, kind: "head_unit" },
+  ] }));
+  let adbState = "unauthorized";
+  let transportId = "17";
+  let reportedSerial = "different-fixture-target";
+  let packageReads = 0;
+  let substitutePackageTarget = false;
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd,
+    deviceSupport: { androidAdbTargetsFile: targetsFile } }, {
+    storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    androidAdbProcessRunner: { async run(file, args) {
+      assert.equal(file, process.platform === "win32" ? "adb.exe" : "adb");
+      assert.deepEqual(args.slice(0, 4), ["-H", "localhost", "-P", "5037"]);
+      const operation = args.slice(4);
+      if (operation[0] === "devices") {
+        assert.deepEqual(operation, ["devices", "-l"]);
+        return { stdout: `List of devices attached\nother-device device transport_id:1\n${adbSerial} ${adbState} transport_id:${transportId}\n`, stderr: "", exitCode: 0 };
+      }
+      assert.deepEqual(operation.slice(0, 4), ["-t", transportId, "shell", "-T"]);
+      const command = operation[4] ?? "";
+      if (command.includes("pm list packages")) {
+        packageReads += 1;
+        assert.ok(command.includes(`if [ "$serial" = '${serial}' ]`));
+        return { stdout: substitutePackageTarget ? "other-device\n"
+          : `${reportedSerial}\nfixture/board/build\npackage:com.example.carplay\npackage:android\n`, stderr: "", exitCode: 0 };
+      }
+      assert.ok(command.includes("getprop ro.build.fingerprint"));
+      return { stdout: `${reportedSerial}\nFixture head unit\n7.1.2\nfixture/board/build\n`, stderr: "", exitCode: 0 };
+    } },
+  });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}/v1/device-support/android`;
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const post = (route: string, body: object) => fetch(base + route, { method: "POST", headers, body: JSON.stringify(body) });
+  assert.equal((await fetch(base + "/targets")).status, 401);
+  const candidates = await (await fetch(base + "/targets", { headers })).json();
+  assert.equal(candidates.targets[0].status, "candidate");
+  assert.doesNotMatch(JSON.stringify(candidates), /fixture-hardware-id|fixture-head-unit/u);
+  assert.equal((await post("/enroll", { connectionId: "bench", adbSerial: "other" })).status, 400);
+  const unauthorized = await post("/enroll", { connectionId: "bench" });
+  assert.deepEqual(await unauthorized.json(), { error: "authentication_required" });
+  adbState = "device";
+  assert.equal((await post("/enroll", { connectionId: "bench" })).status, 409);
+  assert.equal(packageReads, 0);
+  reportedSerial = serial;
+  const enrollment = await post("/enroll", { connectionId: "bench" });
+  assert.equal(enrollment.status, 200);
+  const { profile } = await enrollment.json() as { profile: DeviceProfileV1 };
+  assert.equal(profile.device.id, candidates.targets[0].deviceId);
+  assert.equal(profile.device.kind, "head_unit");
+  const diagnosis = async () => {
+    const response = await post("/diagnose", { deviceId: profile.device.id });
+    assert.equal(response.status, 200);
+    return await response.json() as { status: DeviceTaskStatusV1; report: DeviceDiagnosisReportV1 };
+  };
+  const first = await diagnosis();
+  assert.equal(first.status, "succeeded");
+  assert.deepEqual(first.report.facts.map(fact => fact.value), [{ androidVersion: "7.1.2" }, { packageCount: 2 }]);
+  assert.doesNotMatch(JSON.stringify(first), /com\.example\.carplay|fixture-hardware-id/u);
+  transportId = "18";
+  const reconnected = await diagnosis();
+  assert.equal(reconnected.status, "succeeded");
+  const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const original = store.listAttempts(first.report.taskId)[0]?.attempt;
+    const next = store.listAttempts(reconnected.report.taskId)[0]?.attempt;
+    assert.equal(original?.targetDeviceId, next?.targetDeviceId);
+    assert.notEqual(original?.connectionRevision, next?.connectionRevision);
+    assert.deepEqual(store.getCurrentCapabilitySnapshot(profile.device.id)?.capabilities.map(capability => capability.id),
+      ["android.inspect.device", "android.inspect.packages"]);
+  } finally {
+    store.close();
+  }
+  substitutePackageTarget = true;
+  const changed = await diagnosis();
+  assert.equal(changed.status, "partial");
+  assert.ok(changed.report.actions.some(action => action.errorCode === "target_changed"));
+  assert.deepEqual(changed.report.facts.map(fact => fact.value), [{ androidVersion: "7.1.2" }]);
+  assert.equal(packageReads, 3);
+});
+
 test("the configured Home Assistant instance supplies PC-owned diagnosis evidence", async t => {
   const cwd = mkdtempSync(join(tmpdir(), "ling-home-assistant-"));
   const workspace = createSqliteRunStore(cwd);

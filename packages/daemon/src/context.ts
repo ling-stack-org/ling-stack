@@ -170,6 +170,7 @@ export interface DaemonDependencies {
   readonly linuxSshProcessRunner?: LocalProcessRunner;
   readonly deviceProtocolTransports?: readonly HardwareProtocolLiveTransport[];
   readonly androidAdbExecutor?: AndroidAdbExecutor;
+  readonly androidAdbProcessRunner?: LocalProcessRunner;
   readonly obdExecutor?: ObdExecutor;
   readonly developerExecutor?: DeviceDeveloperExecutor;
   /** Optional synchronous observation of the exact production-owned Store after initialization. */
