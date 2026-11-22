@@ -13,7 +13,7 @@ const expoRequire = createRequire(require.resolve("expo/package.json"));
 const installedApple = join(dirname(expoRequire.resolve("expo-modules-jsi/package.json")), "apple");
 const installedConstants = dirname(expoRequire.resolve("expo-constants/package.json"));
 
-function write(path, content, mode) {
+function write(path: string, content: string, mode?: number) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, content, mode ? { mode } : undefined);
 }
@@ -161,7 +161,7 @@ test("legitimate RN header links work, but retargeting or losing the reviewed ro
   assert.throws(() => verifyUnsignedJsiCapsule(receiptPath), /header changed/);
   unlinkSync(headerPath);
   symlinkSync(join(f.rnRoot, "jsi.h"), headerPath);
-  const env = { ...f.env };
+  const env: NodeJS.ProcessEnv = { ...f.env };
   delete env.REACT_NATIVE_PATH;
   const result = spawnSync(process.execPath, [join(receipt.staged, "../capsule-runner.mjs"), "--run-jsi", receiptPath], { env, encoding: "utf8" });
   assert.notEqual(result.status, 0);
@@ -189,7 +189,8 @@ test("the generated JSI phase strips Node and shell preloads and propagates the 
   const receipt = f.prepare();
   const project = readFileSync(f.projectPath, "utf8");
   const phase = project.split("\n").find((line) => line.includes("--run-jsi"));
-  const command = JSON.parse(phase.trim().slice("shellScript = ".length, -1));
+  assert.ok(phase, "generated JSI shell phase is missing");
+  const command: string = JSON.parse(phase.trim().slice("shellScript = ".length, -1));
   const env = { ...f.env, NODE_OPTIONS: "--require /synthetic-invalid-node-preload", NODE_PATH: "/synthetic-node-path", BASH_ENV: "/synthetic-shell-preload" };
   const result = spawnSync("/bin/sh", ["-c", command], { env, encoding: "utf8" });
   assert.equal(result.status, 73, result.stderr);
@@ -212,9 +213,10 @@ test("copied runner drift and shell-active capsule names are refused", () => {
 test("Constants keeps the real upstream config helper and capsule xcode.env for shallow and deep bundles", () => {
   for (const format of ["shallow", "deep"]) {
     const f = fixture();
-    const project = removeConstantsLoginShell(readFileSync(f.projectPath, "utf8"));
+    const project: string = removeConstantsLoginShell(readFileSync(f.projectPath, "utf8"));
     const phase = project.split("\n").find((line) => line.includes("get-app-config-ios.sh"));
-    const command = JSON.parse(phase.trim().slice("shellScript = ".length, -1));
+    assert.ok(phase, "generated Constants shell phase is missing");
+    const command: string = JSON.parse(phase.trim().slice("shellScript = ".length, -1));
     const mobile = join(f.capsule, "apps/mobile");
     const build = join(f.root, "constants-build");
     const resource = join(build, "EXConstants.bundle", format === "deep" ? "Contents/Resources" : "");
@@ -240,9 +242,9 @@ test("an actual preparation write failure preserves backups and an unusable part
   const f = fixture();
   const failingPath = join(f.support, "ExpoModulesJSI.debug.xcconfig");
   const originalWrite = fs.writeFileSync;
-  t.mock.method(fs, "writeFileSync", (path, ...args) => {
-    if (path === failingPath) throw new Error("Synthetic generated-file write failure");
-    return originalWrite(path, ...args);
+  t.mock.method(fs, "writeFileSync", (...args: Parameters<typeof originalWrite>) => {
+    if (args[0] === failingPath) throw new Error("Synthetic generated-file write failure");
+    return originalWrite(...args);
   });
   syncBuiltinESMExports();
   try {

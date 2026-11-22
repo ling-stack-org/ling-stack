@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false,
+    "erasableSyntaxOnly": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node"]
+  },
+  "include": ["test/**/*.ts"]
+}

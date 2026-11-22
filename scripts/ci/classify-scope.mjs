@@ -35,8 +35,8 @@ const MAINTENANCE_CHECK_FILES = new Set([
 
 const DEPENDENCY_CHECK_FILES = new Set([
   "packages/daemon/test/dependency-security.test.mjs",
-  "apps/mobile/test/dependency-security-patches.test.mjs",
-  "apps/mobile/test/dependency-security-tooling.test.mjs",
+  "apps/mobile/test/dependency-security-patches.test.ts",
+  "apps/mobile/test/dependency-security-tooling.test.ts",
 ]);
 
 const FORCE_FULL_PATTERNS = [
