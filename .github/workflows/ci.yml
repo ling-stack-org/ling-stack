@@ -155,6 +155,16 @@ jobs:
             --execution-tier="${{ steps.policy.outputs.execution-tier }}" \
             --output=.codex-artifacts/ci/scope-report.md > /dev/null
 
+      - name: Check pull request whitespace
+        if: github.event_name == 'pull_request' && steps.classify.outputs.documentation-only != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git diff --check "$BASE_SHA...HEAD"
+
+      - name: Check pushed or scheduled commit whitespace
+        if: github.event_name != 'pull_request' && steps.classify.outputs.documentation-only != 'true'
+        run: git diff-tree --check --no-commit-id -r HEAD
+
       - name: Record documentation-only scope
         if: steps.classify.outputs.documentation-only == 'true'
         run: printf 'The PR diff and history contain only documentation changes.\n' >> "$GITHUB_STEP_SUMMARY"
@@ -298,14 +308,6 @@ jobs:
             --timeout 1800 \
             /repo
 
-      - name: Check pull request whitespace
-        if: github.event_name == 'pull_request'
-        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
-
-      - name: Check pushed or scheduled commit whitespace
-        if: github.event_name != 'pull_request'
-        run: git diff-tree --check --no-commit-id -r HEAD
-
   dependency-policy:
     name: Dependency policy and security checks
     needs: scope
@@ -415,6 +417,8 @@ jobs:
     timeout-minutes: 25
     env:
       SELECTED_PACKAGES: ${{ needs.scope.outputs.packages }}
+      EXCLUDED_PACKAGES: '["@ling-stack/web"]'
+      RUST_TOOLCHAIN_VERSION: 1.97.1
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -441,19 +445,40 @@ jobs:
           corepack enable
           corepack pnpm install --frozen-lockfile --prefer-offline
 
+      - name: Determine selected build closure
+        id: build-closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          closure="$(node scripts/ci/run-packages.mjs \
+            --task=build:ci \
+            --packages="$SELECTED_PACKAGES" \
+            --closure=true \
+            --exclude="$EXCLUDED_PACKAGES" \
+            --print-closure=true)"
+          echo "Selected build closure: $closure"
+          BUILD_CLOSURE="$closure" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          const closure = JSON.parse(process.env.BUILD_CLOSURE);
+          console.log(`daemon=${closure.includes("@ling-stack/daemon")}`);
+          NODE
+
       - name: Set up the pinned image codec toolchain
-        run: rustup toolchain install 1.97.1 --profile minimal
+        if: steps.build-closure.outputs.daemon == 'true'
+        run: rustup toolchain install "$RUST_TOOLCHAIN_VERSION" --profile minimal
 
       - name: Build selected graph without nested package builds
         env:
-          RUSTUP_TOOLCHAIN: 1.97.1
-        run: node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true --exclude='["@ling-stack/web"]'
+          BUILD_CLOSURE_HAS_DAEMON: ${{ steps.build-closure.outputs.daemon }}
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_CLOSURE_HAS_DAEMON" == "true" ]]; then
+            export RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN_VERSION"
+          fi
+          node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true --exclude="$EXCLUDED_PACKAGES"
 
       - name: Test bounded image codec contracts
         if: needs.scope.outputs.daemon == 'true'
-        env:
-          RUSTUP_TOOLCHAIN: 1.97.1
-        run: corepack pnpm --filter @ling-stack/daemon test:image-sanitizer
+        run: RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN_VERSION" corepack pnpm --filter @ling-stack/daemon test:image-sanitizer
 
       - name: Set up Go for the Ling Server native peer
         if: needs.scope.outputs.daemon == 'true'
@@ -944,7 +969,7 @@ jobs:
 
   quality:
     # The main ruleset requires this check name.
-    name: Typecheck, unit tests, and Web build
+    name: Required CI lanes
     needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
     # A skipped job publishes the required check for verified docs-only PRs.
     if: ${{ always() && (needs.scope.result != 'success' || needs.scope.outputs.documentation-only != 'true') }}

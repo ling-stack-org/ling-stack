@@ -100,7 +100,6 @@ jobs:
       - name: Record generated catalog before publishing the PR
         if: steps.candidate.outputs.catalog-digest != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        continue-on-error: true
         with:
           name: provider-model-catalog-${{ steps.candidate.outputs.catalog-digest }}
           path: packages/core/src/provider-model-catalog.generated.ts

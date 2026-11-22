@@ -118,6 +118,17 @@ export function packageValidationScope({ current, previous, directory, root, rep
     }
     typecheckInputs.push(checked);
     const buildCommands = typeof candidate.build === "string" ? candidate.build.split(" && ") : [];
+    // A package's unchanged build script may include its own verified
+    // TypeScript or syntax check before the test command. Keep that narrow
+    // prefix available without allowing arbitrary shell steps.
+    for (const command of buildCommands) {
+      if (typecheckCommand.test(command) || syntaxCheckCommand.test(command)) workspaceBuilds.add(command);
+    }
+    if (typeof candidate["build:ci"] === "string"
+      && (typecheckCommand.test(candidate["build:ci"]) || syntaxCheckCommand.test(candidate["build:ci"]))) {
+      workspaceBuilds.add("corepack pnpm build:ci");
+      workspaceBuilds.add("corepack pnpm run build:ci");
+    }
     const buildPrefixes = ["", "corepack pnpm build && ", "corepack pnpm run build && ",
       ...buildCommands.map((_, index) => `${buildCommands.slice(0, index + 1).join(" && ")} && `)];
     // The local test command can call the verified local typecheck command.

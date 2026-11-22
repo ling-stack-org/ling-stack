@@ -6,16 +6,17 @@ import test from "node:test";
 import { discoverDaemonTestFiles } from "./daemon-test-shard.mjs";
 import { assertSuiteCoverage, assignTestShards, createTestPlan, discoverSuiteFiles, discoverTestFiles, testSuites } from "./test-shard-plan.mjs";
 
-test("shared and daemon discovery include TypeScript tests without treating helpers as tests", async (t) => {
+test("Daemon shard discovery includes ordinary tests and excludes helpers and dedicated dependency checks", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-test-discovery-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, "test");
   await mkdir(directory);
-  for (const file of ["legacy.test.mjs", "typed.test.ts", "helper.ts", "dependency-security.test.mjs"]) {
+  for (const file of ["legacy.test.mjs", "typed.test.ts", "helper.ts", "dependency-security.test.mjs", "dependency-security.test.ts"]) {
     await writeFile(join(directory, file), "");
   }
   const expected = ["test/legacy.test.mjs", "test/typed.test.ts"];
   assert.deepEqual(await discoverTestFiles(root, testSuites.daemon.excluded), expected);
+  assert.deepEqual(await discoverTestFiles(root, testSuites["daemon-linux"].excluded), expected);
   assert.deepEqual(await discoverDaemonTestFiles(directory), expected);
 });
 

@@ -219,7 +219,7 @@ test("label events never create CI runs so the latest run always publishes the r
   // The required gate resolves against the newest CI run on a head; a label run
   // without the gate job makes the ruleset report it as expected and block merges.
   assert.doesNotMatch(workflow, /labeled/u);
-  assert.match(jobSource("quality"), /^    name: Typecheck, unit tests, and Web build$/mu);
+  assert.match(jobSource("quality"), /^    name: Required CI lanes$/mu);
   assert.doesNotMatch(jobSource("quality"), /IGNORED_LABEL_EVENT/u);
   assert.doesNotMatch(jobSource("scope"), /^    if:/mu);
   assert.match(labelWorkflow, /if: github\.event\.label\.name == 'full-ci'/u);
@@ -259,6 +259,19 @@ test("workflow gate requires every selected lane and refuses incomplete Draft va
     ...Object.fromEntries(lanes.slice(2).map((lane) => [`${lane}_RESULT`, "skipped"])) });
   assert.equal(preview.status, 1, preview.stderr);
   assert.match(preview.stdout, /deferred_by_draft_policy/u);
+});
+
+test("scope checks PR whitespace before planning and reports failures before reading missing outputs", () => {
+  const scope = jobSource("scope");
+  assert.match(scope, /name: Classify changed files[\s\S]*name: Check pull request whitespace[\s\S]*name: Plan complete core and daemon file coverage/u);
+  assert.match(scope, /name: Check pull request whitespace\n        if: github\.event_name == 'pull_request' && steps\.classify\.outputs\.documentation-only != 'true'/u);
+  assert.doesNotMatch(jobSource("common-fast"), /name: Check pull request whitespace/u);
+  for (const SCOPE_RESULT of ["failure", "cancelled"]) {
+    const blocked = runQuality({ SCOPE_RESULT, EXECUTION_TIER: "", SCOPE_MODE: "",
+      ...Object.fromEntries(Object.keys(selectorOutputs).map(selector => [selector + "_SELECTED", ""])) });
+    assert.equal(blocked.status, 1, blocked.stderr);
+    assert.equal(blocked.stdout.trim(), "CI lanes failed: SCOPE=" + SCOPE_RESULT);
+  }
 });
 
 test("workflow docs can skip product lanes but cannot hide failed common checks", () => {
