@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { PiRunnerMediaGenerationToolCallRequest } from "../dist/types.js";
+import { extensionAPI, type FixtureTool } from "./support/extension-fixture.ts";
 import { createLingStackMediaGenerationExtension } from "../dist/extensions/media-generation.js";
 
 test("media generation extension registers only configured tools and forwards safe input", async () => {
-  const registered = [];
-  const requests = [];
+  const registered: FixtureTool[] = [];
+  const requests: PiRunnerMediaGenerationToolCallRequest[] = [];
   createLingStackMediaGenerationExtension({
     ...baseOptions(),
     runId: "run_media",
@@ -25,7 +27,7 @@ test("media generation extension registers only configured tools and forwards sa
         details: { mediaJobId: "media_job_1", status: "queued" },
       };
     },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
 
   assert.equal(registered.length, 1);
   assert.equal(registered[0].name, "image_generate");
@@ -66,7 +68,7 @@ test("media generation extension registers only configured tools and forwards sa
 });
 
 test("media generation extension omits empty tools and requires a daemon handler", () => {
-  const registered = [];
+  const registered: FixtureTool[] = [];
   createLingStackMediaGenerationExtension({
     ...baseOptions(),
     runId: "run_media",
@@ -74,24 +76,24 @@ test("media generation extension omits empty tools and requires a daemon handler
       { name: "image_generate", targets: [] },
       { name: "video_generate", targets: [{ id: "workflow:video", displayName: "Video Flow" }] },
     ],
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
   assert.equal(registered.length, 0);
 });
 
 test("media schema may be prepared without a Run but cannot execute without its owner", async () => {
-  const registered = [];
+  const registered: FixtureTool[] = [];
   let calls = 0;
   createLingStackMediaGenerationExtension({ ...baseOptions(),
     mediaGenerationTools: [{ name: "image_generate", targets: [{ id: "fixture", displayName: "Fixture" }] }],
     onMediaGenerationToolCall: async () => { calls += 1; return { content: [] }; },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
   assert.equal(registered.length, 1);
   await assert.rejects(registered[0].execute("fixture_call", { prompt: "fixture" }), /not connected for this run/);
   assert.equal(calls, 0);
 });
 
 test("media generation schema omits options unsupported by every target", () => {
-  const registered = [];
+  const registered: FixtureTool[] = [];
   createLingStackMediaGenerationExtension({
     ...baseOptions(),
     runId: "run_media",
@@ -102,7 +104,7 @@ test("media generation schema omits options unsupported by every target", () => 
     async onMediaGenerationToolCall() {
       return { content: [{ type: "text", text: "accepted" }] };
     },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
 
   assert.equal(registered.length, 1);
   assert.match(registered[0].description, /Prompt-only Video Flow \(workflow:video; prompt\)/);
@@ -112,7 +114,7 @@ test("media generation schema omits options unsupported by every target", () => 
 });
 
 test("media generation extension rejects invalid controlled input", async () => {
-  const registered = [];
+  const registered: FixtureTool[] = [];
   createLingStackMediaGenerationExtension({
     ...baseOptions(),
     runId: "run_media",
@@ -123,7 +125,7 @@ test("media generation extension rejects invalid controlled input", async () => 
     async onMediaGenerationToolCall() {
       throw new Error("must not be called");
     },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
 
   await assert.rejects(
     registered[0].execute("tool_invalid", { prompt: "draw", count: 5 }),
@@ -132,7 +134,7 @@ test("media generation extension rejects invalid controlled input", async () => 
 });
 
 test("media generation extension discards a late result after runner cancellation", async () => {
-  const registered = [];
+  const registered: FixtureTool[] = [];
   const controller = new AbortController();
   const abortReason = new Error("cancelled during media creation");
   createLingStackMediaGenerationExtension({
@@ -146,7 +148,7 @@ test("media generation extension discards a late result after runner cancellatio
       controller.abort(abortReason);
       return { content: [{ type: "text", text: "late" }] };
     },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
 
   await assert.rejects(
     registered[0].execute("tool_cancelled", { prompt: "animate", durationSeconds: 5 }, controller.signal),

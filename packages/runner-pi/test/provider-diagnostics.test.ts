@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { translatePiEvent } from "../dist/events.js";
 import { classifyProviderError } from "../dist/provider-error-diagnostic.js";
-// @ts-expect-error The fixture stays JavaScript until its owning support helpers are migrated.
-import { compactionFixture, response } from "./support/pi-compaction-fixture.mjs";
+import { compactionFixture, response } from "./support/pi-compaction-fixture.ts";
 
 const privateDetail = "PRIVATE_PROVIDER_BODY sk-fixture-secret /private/model-view";
 const unknown = { schemaVersion: 1, category: "unknown", basis: "unclassified" };
@@ -109,16 +108,18 @@ for (const succeeds of [true, false]) {
     { timeout: 15_000 }, async t => {
       const f = await compactionFixture(t, { compaction: { enabled: false },
         retry: { enabled: true, maxRetries: 1, baseDelayMs: 1, provider: { maxRetries: 0 } },
-        task: ({ index }: any) => index === 1 && succeeds ? response({ text: "Complete.", inputTokens: 100 })
+        task: ({ index }) => index === 1 && succeeds ? response({ text: "Complete.", inputTokens: 100 })
           : new Response(JSON.stringify({ error: { message: privateDetail, type: "server_error" } }),
             { status: 503, headers: { "content-type": "application/json" } }),
       });
       await f.session.prompt("Run the isolated retry fixture.");
       await f.session.waitForIdle();
-      const projected: any[] = f.events.map((event: any) => translatePiEvent(event)).filter(Boolean);
-      const retries: any[] = projected.filter((event: any) => event.type === "provider_retry");
-      assert.deepEqual(retries.map((event: any) => event.phase), ["scheduled", "settled"]);
-      assert.equal(retries.at(-1).outcome, succeeds ? "succeeded" : "failed");
+      const projected = f.events.map(translatePiEvent).filter(event => event !== undefined);
+      const retries = projected.filter(event => event.type === "provider_retry");
+      assert.deepEqual(retries.map(event => event.phase), ["scheduled", "settled"]);
+      const settled = retries.at(-1);
+      assert.ok(settled?.scope === "assistant" && settled.phase === "settled");
+      assert.equal(settled.outcome, succeeds ? "succeeded" : "failed");
       assert.equal(f.requests.length, 2);
       assert.deepEqual(await f.effects(), [], "provider retries cannot invent tool execution");
       assert.equal(JSON.stringify(projected).includes(privateDetail), false);
@@ -130,13 +131,15 @@ test("real SDK backoff cancellation does not start another provider request", { 
     retry: { enabled: true, maxRetries: 1, baseDelayMs: 10_000, provider: { maxRetries: 0 } },
     task: () => new Response(JSON.stringify({ error: { message: privateDetail } }),
       { status: 503, headers: { "content-type": "application/json" } }),
-    event: (event: any) => { if (event.type === "auto_retry_start") queueMicrotask(() => f.session.abortRetry()); },
+    event: event => { if (event.type === "auto_retry_start") queueMicrotask(() => f.session.abortRetry()); },
   });
   await f.session.prompt("Cancel this isolated retry.");
   await f.session.waitForIdle();
-  const retries: any[] = f.events.map((event: any) => translatePiEvent(event)).filter((event: any) => event?.type === "provider_retry");
+  const retries = f.events.map(translatePiEvent).filter(event => event?.type === "provider_retry");
   assert.deepEqual(retries.map(event => event.phase), ["scheduled", "settled"]);
-  assert.equal(retries.at(-1).outcome, "cancelled");
+  const settled = retries.at(-1);
+  assert.ok(settled?.scope === "assistant" && settled.phase === "settled");
+  assert.equal(settled.outcome, "cancelled");
   assert.equal(f.requests.length, 1);
   assert.equal(JSON.stringify(retries).includes(privateDetail), false);
 });

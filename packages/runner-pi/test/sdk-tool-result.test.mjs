@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { PiRunnerAdapter } from "../dist/adapter.js";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.mjs";
+import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.ts";
 
 const descriptor = {
   registeredName: "fixture_read", serverId: "fixture", rawName: "read_file", displayName: "Fixture read",

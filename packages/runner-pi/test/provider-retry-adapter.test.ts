@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { PiRunnerAdapter } from "../dist/adapter.js";
-import { response } from "./support/pi-compaction-fixture.mjs";
+import type { Model } from "@earendil-works/pi-ai";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerEvent, PiRunnerProviderConfig } from "../dist/types.js";
+import { FixtureRunnerBase } from "./support/provider-registration.ts";
+import { response } from "./support/pi-compaction-fixture.ts";
 
 const privateDetail = "PRIVATE_PROVIDER_BODY sk-fixture-secret /private/model-view";
 
@@ -13,14 +16,14 @@ for (const outcome of ["succeeded", "failed", "cancelled"]) {
   test(`real adapter provider retry ${outcome} preserves tools and terminal authority`, { timeout: 15_000 }, async t => {
     const cwd = await mkdtemp(join(tmpdir(), "ling-pi-provider-retry-"));
     t.after(() => rm(cwd, { recursive: true, force: true }));
-    const events = [], effects = [];
+    const events: PiRunnerEvent[] = [], effects: string[] = [];
     const controller = new AbortController();
     let requests = 0;
-    class FixtureRunner extends PiRunnerAdapter {
-      registerCustomProviderIfNeeded(runtime, provider) {
+    class FixtureRunner extends FixtureRunnerBase {
+      registerCustomProviderIfNeeded(runtime: ModelRuntime, provider: PiRunnerProviderConfig) {
         super.registerCustomProviderIfNeeded(runtime, provider);
         runtime.registerProvider(provider.provider, { api: "openai-completions",
-          streamSimple: (model, context, options) => stream(model, context, { ...options, maxRetries: 0,
+          streamSimple: (model, context, options) => stream(model as Model<"openai-completions">, context, { ...options, maxRetries: 0,
             fetch: async () => {
               requests += 1;
               if (requests === 1) return response({ toolCallId: "completed-effect", inputTokens: 100 });
@@ -53,12 +56,13 @@ for (const outcome of ["succeeded", "failed", "cancelled"]) {
     assert.equal(requests, outcome === "cancelled" ? 2 : 3);
     assert.equal(events.filter(event => event.type === "run_end").length, outcome === "succeeded" ? 1 : 0);
     assert.equal(events.filter(event => event.type === "run_error").length, outcome === "succeeded" ? 0 : 1);
+    const terminal = events.at(-1);
     if (outcome === "failed") {
-      assert.equal(events.at(-1).type, "run_error");
-      assert.equal(events.at(-1).errorDiagnostic?.category, "provider_unavailable");
-      assert.equal(events.at(-1).errorDiagnostic?.httpStatus, 503);
+      assert.equal(terminal?.type, "run_error");
+      assert.equal(terminal.errorDiagnostic?.category, "provider_unavailable");
+      assert.equal(terminal.errorDiagnostic?.httpStatus, 503);
     }
-    if (outcome === "cancelled") assert.equal(events.at(-1).errorDiagnostic, undefined,
+    if (outcome === "cancelled") assert.equal((terminal as Extract<PiRunnerEvent, { type: "run_error" }>).errorDiagnostic, undefined,
       "user cancellation must not borrow the earlier provider diagnosis");
     assert.equal(JSON.stringify(events).includes(privateDetail), false);
   });
