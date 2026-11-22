@@ -70,11 +70,12 @@ export async function archiveWorktree(store: WorktreeLifecycleStore, input: {
   readonly repoRoot: string; readonly path: string; readonly branchName: string;
   readonly ownerKind: "channel" | "teammate"; readonly ownerId: string; readonly ownerName: string;
   readonly expectedIdentity?: ManagedWorktreeIdentity;
+  readonly archiveId?: string;
   readonly assertIdle: () => void;
   readonly finalize?: (record: WorktreeRecoverySnapshot, fence: { readonly ownerRequestId: string; readonly epoch: number }) => void | Promise<void>;
 }): Promise<WorktreeRecoverySnapshot> {
   const identity = await assertOwnedLinkedWorktree(input.repoRoot, input.path, input.branchName, input.expectedIdentity);
-  const id = `${WORKTREE_FENCE_PREFIX}${randomUUID()}`;
+  const id = input.archiveId ?? `${WORKTREE_FENCE_PREFIX}${randomUUID()}`;
   let record: RecoveryRecord = { id, ownerKind: input.ownerKind, ownerId: input.ownerId, ownerName: input.ownerName,
     originalPath: resolve(input.path), snapshotPath: join(dirname(resolve(input.path)), ".ling-recovery", id), branchName: input.branchName,
     ...identity, createdAt: new Date().toISOString(), state: "prepared" };

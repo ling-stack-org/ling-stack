@@ -26,6 +26,8 @@ export type LingThreadGoalCompletionActor = "local-user" | "ling-agent";
 export type GoalUsageSource = "provider" | "estimated" | "mixed";
 export type GoalContinuationStopReason =
   | "max_depth"
+  | "time_budget"
+  | "supervision_disabled"
   | "no_evidence_threshold"
   | "same_blocker_threshold"
   | "plan_mode_active"

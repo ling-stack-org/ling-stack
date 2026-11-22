@@ -34,6 +34,8 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 
 用户通过本机受信管理入口创建连接配置，选定允许的工作区、操作范围、过期时间及适用的 Thread 或 Work Item 范围。配置名标记操作者与用途。服务端颁发独立、可撤销的凭据，仅返回授权摘要。存放凭据用现有本机秘密管理，运行日志和 URL 只记录公开配置 ID。WSS 客户端在 Upgrade 使用认证头。需要浏览器集成的宿主通过自己的受信后端或 Desktop 桥接保持认证。监听器校验配置的 Host/Origin，认证与 TLS 终止的位置随部署明确。现有移动端配对凭据按其自身用途管理。
 
+App Server grant 使用 `las1.<grantId>.<secret>` bearer 形式。Daemon 只在创建时接收 secret 的 SHA-256，持久状态只保存摘要。grant 绑定 workspace、Thread 或 Work Item subject，scope 取 `observe`、`control`、`approve` 和 `respond` 的子集，带独立过期时间和 revision。连接握手时用 grant 的 revision 参与 replay identity，连接中的每个请求重新检查 subject 和 scope。撤销会关闭同 workspace 的 grant 连接，旧 cursor、缓存的 answer authority 和新的副作用请求都失效。grant 不能创建或撤销其他 grant，也不能跨 subject 读取事件。
+
 [Ling Device Fabric](ling-device-fabric.md#5-cross-device-task-graph) 的项目节点继续引用其执行主机的 WorkUnit 与证据。App Server 的游标与权限绑定本 Daemon 的工作区。远端设备动作及其状态由对应主机的日志、授权与配对投影管理。
 
 绑定以 Daemon 解析的规范化仓库、worktree 和当前授权版本为准。请求 ID 及客户端展示名用于关联与审计，可信 Actor 来自连接凭据。按操作取连接、工作区、目标 Work Item 或 Thread 和运行政策的交集。进入关联 Thread 的上下文还要核对它的访问授权。在受理、执行和提交决策前分别核对当前权属。撤销关闭对应订阅和新动作入口，已受理工作交由 Daemon 按其取消和恢复策略处置。
@@ -297,6 +299,7 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 - Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。跨会话接手可以引用当前阶段简报、未决问答、工作项交接回执与所属 Workflow。审议引用证据板修订、封存结果和已记录的决定。 [阶段简报与交接](ling-agent-operating-model-detailed-design.md#57-plan-stages-and-stage-briefs)
 - `handoff/resume` 在新会话检查源是否可交接、worktree 版本与写入租约、候选、证据修订和当前授权。兼容则带版本接手，漂移则显示差异和需要重新验证的项。Runner 重启走已有 checkpoint 恢复，交接走普通 Turn 的新派发。多 Agent 使用现有 Workflow 归属、独立授权和可核对的产物合并。
 - 每个开发任务记录 Provider、Runner、工作树和构建输入。调试长任务可看模型调用预算、失速原因和最近一个有证据的阶段。正常开发从稳定 Ling 使用独立 worktree 和 Agent 环境。候选 Daemon 和 UI 用独立数据、端口和测试配置启动。代码或配置需要换模型或 Runner 时，交接优先从明确的候选快照进入普通新任务。
+- `handoff/create` 只接受最新已收敛的普通 conversation Turn。它封存当前候选摘要、源 Turn/Run revision、Goal 进度、已接受计划和产物引用。`handoff/resume` 先复核这些摘要，再用普通 conversation fork 和受理收据创建一个子 Thread。重复请求复用同一 child Thread 和 Run，候选或源状态漂移返回 `handoff_stale`。
 
 ### 3.5 Codex 控制宿主
 

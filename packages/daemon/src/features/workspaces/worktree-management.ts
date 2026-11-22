@@ -91,18 +91,35 @@ export async function listManagedWorktrees(store: RunStore, cwd: string): Promis
   const policy = store.getWorkspaceSettings().worktreePolicy ?? { fetchBeforeCreate: false };
   const entries: ManagedWorktreeEntry[] = [];
   for (let i = 0; i < owned.entries.length; i += 4) {
-    entries.push(...await Promise.all(owned.entries.slice(i, i + 4).map(async (owner): Promise<ManagedWorktreeEntry> => {
-      const path = owner.path;
-      const inspection = await inspectOwnedWorktree(store, owner);
-      return { ownerKind: owner.kind, ownerId: owner.id, ownerName: owner.name, path, branchName: owner.binding.branchName,
-        status: !inspection.exists && owner.binding.status === "not_created" ? "not_created" : inspection.status,
-        isDirty: inspection.isDirty, inUse: inUse(store, path), pinned: owner.pinned,
-        kept: (policy.protectedOwners ?? []).some((item) => item.ownerKind === owner.kind && item.ownerId === owner.id), lastUsedAt: owner.lastUsedAt,
-        initialization: publicInitialization(inspection.initialization), errorMessage: inspection.status === "blocked" ? inspection.errorMessage : undefined };
-    })));
+    entries.push(...await Promise.all(owned.entries.slice(i, i + 4).map(owner => projectWorktreeEntry(store, owner))));
   }
   return { cwd, policy: redactWorktreePolicy(policy)!, defaultRootDir: store.paths.worktreesDir, effectiveRootDir: worktreeRoot(store.paths, policy),
     snapshots: await listWorktreeSnapshots(store.paths), entries, limitReached: owned.limitReached };
+}
+
+async function projectWorktreeEntry(store: RunStore, owner: OwnedWorktree): Promise<ManagedWorktreeEntry> {
+  const path = owner.path;
+  const inspection = await inspectOwnedWorktree(store, owner);
+  const protectedOwners = store.getWorkspaceSettings().worktreePolicy?.protectedOwners ?? [];
+  return {
+    ownerKind: owner.kind, ownerId: owner.id, ownerName: owner.name, path, branchName: owner.binding.branchName,
+    status: !inspection.exists && owner.binding.status === "not_created" ? "not_created" : inspection.status,
+    isDirty: inspection.isDirty, inUse: inUse(store, path), pinned: owner.pinned,
+    kept: protectedOwners.some(item => item.ownerKind === owner.kind && item.ownerId === owner.id), lastUsedAt: owner.lastUsedAt,
+    initialization: publicInitialization(inspection.initialization), errorMessage: inspection.status === "blocked" ? inspection.errorMessage : undefined,
+  };
+}
+
+export async function readManagedWorktreeEntry(
+  store: RunStore, target: Pick<ManagedWorktreeActionRequest, "ownerId" | "ownerKind">,
+): Promise<ManagedWorktreeEntry> {
+  const owner = owners(store).entries.find(item => item.kind === target.ownerKind && item.id === target.ownerId);
+  if (!owner) throw new WorktreeActionError("worktree_not_found", "未找到 Ling 托管的工作树。");
+  return projectWorktreeEntry(store, owner);
+}
+
+export function findManagedTeammateWorktreeOwner(store: RunStore, id: string) {
+  return allPages(offset => store.listTeammateDirectThreads({ limit: 500, offset })).find(thread => thread.id === id);
 }
 
 export async function actOnManagedWorktree(store: RunStore, cwd: string, input: ManagedWorktreeActionRequest): Promise<string> {
@@ -110,7 +127,10 @@ export async function actOnManagedWorktree(store: RunStore, cwd: string, input: 
 }
 
 /** Caller owns the workspace mutation queue; the durable fence also blocks Run admission. */
-export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string, input: ManagedWorktreeActionRequest, automatic = false, initializationApproval?: InitializationApproval): Promise<string> {
+export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string,
+  input: ManagedWorktreeActionRequest & { readonly archiveId?: string }, automatic = false,
+  initializationApproval?: InitializationApproval,
+): Promise<string> {
   await recoverWorktreeOperations(store);
   store.assertWorkspaceSnapshotFence(cwd);
   const owner = owners(store).entries.find((entry) => entry.kind === input.ownerKind && entry.id === input.ownerId);
@@ -161,7 +181,7 @@ export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string, i
     if (inspection.initialization?.status === "running") throw new WorktreeActionError("worktree_in_use", "工作树初始化尚未结束。");
     if (automatic && inspection.isDirty) throw new WorktreeActionError("worktree_dirty", "包含未提交改动的工作树保留。");
     await archiveWorktree(store, { repoRoot: identity.repoRoot, path, branchName: owner.binding.branchName ?? "", ownerKind: owner.kind, ownerId: owner.id,
-      ownerName: owner.name, expectedIdentity: identity, assertIdle, finalize: assertIdle });
+      ownerName: owner.name, expectedIdentity: identity, archiveId: input.archiveId, assertIdle, finalize: assertIdle });
   }
   if (input.action === "restore" || input.action === "cleanup") return path;
   const inspection = await inspectManagedWorktree(path);

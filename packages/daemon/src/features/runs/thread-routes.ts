@@ -968,7 +968,7 @@ async function handleLingThreadResume(
   }
 }
 
-function createLingThreadFork(input: {
+export function createLingThreadFork(input: {
   readonly store: RunStore;
   readonly sourceThread: LingThread;
   readonly body: unknown;

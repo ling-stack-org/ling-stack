@@ -395,7 +395,7 @@ async function readHandoffBinding(
   return await refreshDirectWorkspaceBinding({ ...thread, workspaceBinding: existing }, workspaceCwd, workspacePaths, now);
 }
 
-async function createManagedDirectWorktreeBinding(
+export async function createManagedDirectWorktreeBinding(
   thread: DirectWorktreeTarget,
   workspaceCwd: string,
   workspacePaths: LingStackRuntimePaths,

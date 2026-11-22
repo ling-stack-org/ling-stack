@@ -29,6 +29,7 @@ import {
   type ControlPlaneSubscribeResult,
   type LingAppServerContextInspectResult,
   type LingAppServerInputRespondResult,
+  type LingAppServerGrant,
   type LingAppServerJsonRpcId,
   type LingAppServerThreadEventsResult,
   type LingAppServerThreadSnapshotResult,
@@ -71,7 +72,7 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
-import { bindGoalVerificationCandidate, buildLingThreadResumeContext, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { bindGoalVerificationCandidate, buildLingThreadResumeContext, createLingThreadFork, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention, requestRunInterventionRedirect } from "../features/runs/interventions.js";
@@ -82,7 +83,14 @@ import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 import { AppServerDevelopmentService } from "./app-server-development.js";
 import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
-import { listManagedWorktrees } from "../features/workspaces/worktree-management.js";
+import { listManagedWorktrees, WorktreeActionError } from "../features/workspaces/worktree-management.js";
+import { cleanupAppServerWorktree, createAppServerWorktree, previewAppServerWorktreeCleanup, refreshAppServerWorktree } from "./app-server-worktrees.js";
+import { checkAppServerHandoff, createAppServerHandoff, handoffInstruction, readAppServerHandoff } from "./app-server-handoff.js";
+import { normalConversationForkId } from "../features/conversations/normal-conversation-fork.js";
+import {
+  appServerGrantBearerPrefix, appServerGrantStillActive, authenticateAppServerGrant, createAppServerGrant,
+  grantAllowsMethod, grantAllowsRequest, listAppServerGrants, revokeAppServerGrant,
+} from "./app-server-authorization.js";
 import {
   ExternalAgentFederationService,
   externalAgentRpcError,
@@ -137,9 +145,8 @@ const legacyRpcMethods = new Set([
   "controlPlane.subscribe", "controlPlane.unsubscribe", "runs.start", "runs.cancel",
 ]);
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
-  "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
-  "turn/retry", "turn/steer", "thread/fork", "thread/compact/start", "thread/revert",
-  "handoff/create", "handoff/read", "handoff/resume", "changes/read",
+  "turn/retry", "turn/steer", "thread/compact/start", "thread/revert",
+  "changes/read",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
   "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
 ]);
@@ -149,6 +156,9 @@ const operatorMethods = new Set([
   "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
   "thread/delete", "thread/goal/set", "thread/goal/pause", "thread/goal/resume",
   "thread/goal/clear", "thread/goal/complete", "plan/accept",
+  "worktree/create", "worktree/cleanup",
+  "thread/fork", "handoff/create", "handoff/resume",
+  "server/grants/create", "server/grants/list", "server/grants/revoke",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
@@ -171,11 +181,15 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
       rejectUpgrade(socket, 404, "WebSocket RPC transport is disabled");
       return;
     }
-    if (!daemonRequestIsAuthorized(context.config.authToken, request.headers.authorization)) {
+    const authorization = request.headers.authorization;
+    const daemonAuthorized = daemonRequestIsAuthorized(context.config.authToken, authorization);
+    const scopedBearer = appServer && typeof authorization === "string" && authorization.startsWith(appServerGrantBearerPrefix)
+      && !(context.config.authToken && daemonAuthorized);
+    if (!daemonAuthorized && !scopedBearer) {
       rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
       return;
     }
-    if (appServer && !context.config.authToken && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
+    if (appServer && !scopedBearer && !context.config.authToken && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
       rejectUpgrade(socket, 403, "WebSocket RPC access requires a direct loopback Ling page or bearer token.");
       return;
     }
@@ -197,8 +211,20 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
         return;
       }
     }
+    let grant: LingAppServerGrant | undefined;
+    if (scopedBearer) {
+      try { grant = authenticateAppServerGrant(context.storeRegistry.getStore(workspaceCwd), authorization); }
+      catch { /* A grant cannot authenticate while its workspace store is unavailable. */ }
+      if (!grant) {
+        rejectUpgrade(socket, 401, "The App Server grant is unavailable.");
+        return;
+      }
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const connection = new RpcConnection(ws, workspaceCwd, context, appServer, Boolean(context.config.authToken), () => draining);
+      const connection = new RpcConnection(ws, workspaceCwd, context, appServer, Boolean(context.config.authToken && daemonAuthorized),
+        () => draining, grant, (cwd, id) => {
+          for (const peer of appServerConnections) peer.invalidateGrant(cwd, id);
+        });
       if (appServer) {
         appServerConnections.add(connection);
         ws.once("close", () => appServerConnections.delete(connection));
@@ -257,8 +283,13 @@ class RpcConnection {
     private readonly appServer: boolean,
     private readonly authenticated: boolean,
     private readonly draining: () => boolean,
+    private readonly grant: LingAppServerGrant | undefined,
+    private readonly revokeGrantConnection: (cwd: string, id: string) => void,
   ) {
-    this.outbound = new RpcOutboundWriter(ws, { onClose: () => this.close() });
+    this.outbound = new RpcOutboundWriter(ws, {
+      onClose: () => this.close(),
+      ...(grant ? { canSend: () => this.grantIsCurrent() } : {}),
+    });
     this.development = getAppServerDevelopmentService(context);
   }
 
@@ -266,6 +297,10 @@ class RpcConnection {
     this.ws.on("message", this.onMessage);
     this.ws.on("close", this.onConnectionClose);
     this.ws.on("error", this.onConnectionError);
+  }
+
+  invalidateGrant(cwd: string, grantId: string): void {
+    if (this.grant?.grantId === grantId && this.defaultCwd === cwd) this.outbound.close(1008, "authorization_changed");
   }
 
   notifyDraining(drainId: string, startedAt: string): void {
@@ -319,6 +354,10 @@ class RpcConnection {
         throw rpcError(-32601, "method_not_found", `Unsupported App Server method: ${request.method}`);
       }
       const params = this.appServer ? this.workspaceParams(request.params, operatorMethods.has(request.method)) : request.params;
+      if (this.grant && (!this.grantIsCurrent()
+        || !grantAllowsRequest(this.context.storeRegistry.getStore(this.defaultCwd), this.grant, request.method, readParamsRecord(params)))) {
+        throw rpcError(-32021, "capability_denied", "The App Server grant does not authorize this method or subject.");
+      }
       if (request.method === "controlPlane.subscribe") {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
@@ -364,7 +403,7 @@ class RpcConnection {
       }
       const result = await this.dispatch(request.method, params);
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
-        if (this.appServer && this.authenticated && (request.method === "thread/snapshot" || request.method === "thread/resume")) {
+        if (this.appServer && this.canRespondToInput() && (request.method === "thread/snapshot" || request.method === "thread/resume")) {
           this.outbound.sendThreadSnapshot(id as LingAppServerJsonRpcId, result as LingAppServerThreadSnapshotResult);
         } else {
           this.send({ jsonrpc: "2.0", id, result });
@@ -399,7 +438,7 @@ class RpcConnection {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
           connectionId: this.connectionId,
-          effectiveScopes: ["controlPlane.read",
+          effectiveScopes: this.grant?.scopes ?? ["controlPlane.read",
             ...(this.authenticated ? ["runs.control", "approval.decide", "input.respond", "verification.execute"] : [])],
           capabilities: this.availableCapabilities(),
           ...(identity ? { storeIncarnation: identity.storeIncarnation, authorizationEpoch: identity.authorizationEpoch } : {}),
@@ -425,9 +464,21 @@ class RpcConnection {
         return {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           capabilities: this.availableCapabilities(),
-          methods: IMPLEMENTED_APP_SERVER_METHODS.filter(method => this.authenticated || !operatorMethods.has(method)),
+          methods: IMPLEMENTED_APP_SERVER_METHODS.filter(method => this.grant
+            ? grantAllowsMethod(this.grant, method) : this.authenticated || !operatorMethods.has(method)),
           notifications: LING_APP_SERVER_NOTIFICATION_METHODS,
         };
+      case "server/grants/create":
+      case "server/grants/list":
+      case "server/grants/revoke": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        if (method === "server/grants/create") return { cwd: record.cwd, grant: createAppServerGrant(store, record) };
+        if (method === "server/grants/list") return { cwd: record.cwd, grants: listAppServerGrants(store) };
+        const grant = revokeAppServerGrant(store, readStringField(record, "grantId"), readIntegerField(record, "expectedRevision", "revision"));
+        this.revokeGrantConnection(record.cwd, grant.grantId);
+        return { cwd: record.cwd, grant };
+      }
       case "workspace/list":
         return { workspaces: [{ workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.defaultCwd }] };
       case "workspace/read":
@@ -439,6 +490,25 @@ class RpcConnection {
         }
         return listManagedWorktrees(this.context.storeRegistry.getStore(cwd), cwd);
       }
+      case "worktree/create":
+      case "worktree/refresh":
+      case "worktree/cleanup/preview":
+      case "worktree/cleanup": {
+        const record = this.workspaceParams(params);
+        const ownerKind = readStringField(record, "ownerKind");
+        if (ownerKind !== "channel" && ownerKind !== "teammate") {
+          throw rpcError(-32602, "invalid_params", "ownerKind must be channel or teammate.");
+        }
+        const target = { ownerKind, ownerId: readStringField(record, "ownerId") } as const;
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        if (method === "worktree/create") return createAppServerWorktree(store, { ...target, baseBranch: readOptionalStringField(record, "baseBranch") });
+        if (method === "worktree/refresh") return refreshAppServerWorktree(store, target);
+        if (method === "worktree/cleanup/preview") return previewAppServerWorktreeCleanup(store, target);
+        if (record.confirmed !== true) {
+          throw rpcError(-32602, "worktree_confirmation_required", "Confirm the worktree cleanup preview.");
+        }
+        return cleanupAppServerWorktree(store, { ...target, expectedRevision: readStringField(record, "expectedRevision"), confirmed: true });
+      }
       case "provider/list":
         return this.readControlPlaneDomain(params, "providers");
       case "skill/list":
@@ -447,6 +517,8 @@ class RpcConnection {
         return this.startThread(params);
       case "thread/read":
         return this.readThread(params);
+      case "thread/fork":
+        return this.forkThread(params);
       case "thread/resume":
         return this.readThreadSnapshot(params);
       case "thread/snapshot":
@@ -543,6 +615,22 @@ class RpcConnection {
         return await this.development.initInstructions(this.workspaceParams(params, readParamsRecord(params).mode === "apply") as never);
       case "context/inspect":
         return this.inspectTurnContext(params);
+      case "handoff/create": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        const handoff = await createAppServerHandoff(this.context, store, {
+          threadId: readStringField(record, "threadId"), turnId: readStringField(record, "turnId"),
+          idempotencyKey: readStringField(record, "idempotencyKey"), nextInstruction: readStringField(record, "nextInstruction"),
+        });
+        return { cwd: record.cwd, handoff };
+      }
+      case "handoff/read": {
+        const record = this.workspaceParams(params);
+        const handoff = readAppServerHandoff(this.context.storeRegistry.getStore(record.cwd), readStringField(record, "handoffId"));
+        return { cwd: record.cwd, handoff };
+      }
+      case "handoff/resume":
+        return this.resumeHandoff(params);
       case "turn/start":
         return this.startTurn(params);
       case "approval/respond":
@@ -664,17 +752,43 @@ class RpcConnection {
   }
 
   private availableCapabilities(): readonly string[] {
+    if (this.grant) {
+      const capabilities = ["server/ping"];
+      if (grantAllowsMethod(this.grant, "thread/subscribe")) capabilities.push("thread.events");
+      if (grantAllowsMethod(this.grant, "turn/start")) capabilities.push("turn.control");
+      if (grantAllowsMethod(this.grant, "approval/respond")) capabilities.push("approval.respond");
+      if (grantAllowsMethod(this.grant, "input/respond")) capabilities.push("input.respond");
+      if (grantAllowsMethod(this.grant, "workItem/read")) capabilities.push("workItem.read", "workItem.evidence");
+      if (grantAllowsMethod(this.grant, "workItem/pause")) capabilities.push("workItem.control");
+      return capabilities;
+    }
     return LING_APP_SERVER_IMPLEMENTED_CAPABILITIES.filter(capability =>
       this.authenticated || (capability !== "turn.control" && capability !== "approval.respond"
         && capability !== "input.respond" && capability !== "development.simplify"));
   }
 
   private replayIdentity(cwd: string, store = this.context.storeRegistry.getStore(cwd)) {
-    return loadAppServerReplayIdentity(store, cwd, this.context.config.authToken);
+    const key = this.grant
+      ? JSON.stringify([this.context.config.authToken, this.grant.grantId, this.grant.revision])
+      : this.context.config.authToken;
+    return loadAppServerReplayIdentity(store, cwd, key);
+  }
+
+  private grantIsCurrent(): boolean {
+    if (!this.grant) return true;
+    try {
+      return appServerGrantStillActive(this.context.storeRegistry.getStore(this.defaultCwd), this.grant);
+    } catch {
+      return false;
+    }
+  }
+
+  private canRespondToInput(): boolean {
+    return this.authenticated || Boolean(this.grant?.scopes.includes("respond"));
   }
 
   private workspaceParams(params: unknown, operator = false): Record<string, unknown> & { readonly cwd: string } {
-    if (operator && (!this.appServer || !this.authenticated)) {
+    if (operator && (!this.appServer || !this.authenticated && !this.grant)) {
       throw rpcError(-32020, "authorization_required", "This App Server method requires the daemon operator bearer credential.");
     }
     const record = readParamsRecord(params);
@@ -1129,6 +1243,59 @@ class RpcConnection {
     };
   }
 
+  private forkThread(params: unknown): unknown {
+    const record = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    const sourceThread = store.getLingThread(readStringField(record, "threadId"));
+    if (!sourceThread) throw rpcError(-32040, "workspace_binding_invalid", "The source Thread was not found.");
+    const fork = createLingThreadFork({ store, sourceThread, body: record, now: new Date().toISOString() });
+    this.publishForkedThread(store, record.cwd, fork.childThread, sourceThread.id);
+    return {
+      cwd: record.cwd, sourceThreadId: sourceThread.id, sourceTurnId: fork.sourceTurn?.id, sourceRunId: fork.sourceRun?.id,
+      thread: projectPublicLingThread(fork.childThread), replayed: !fork.created,
+    };
+  }
+
+  private async resumeHandoff(params: unknown) {
+    const record = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    const handoff = readAppServerHandoff(store, readStringField(record, "handoffId"));
+    const providerPresetId = readStringField(record, "providerPresetId");
+    if (!store.getProviderPreset(providerPresetId)) {
+      throw rpcError(-32602, "invalid_params", "The Handoff requires an available provider preset.");
+    }
+    const idempotencyKey = `app-server-handoff:${handoff.handoffId}`;
+    const childId = normalConversationForkId(handoff.sourceThreadId, idempotencyKey);
+    let child = store.getLingThread(childId);
+    const receipt = readConversationSubmission(store, { surface: "normal", threadId: childId, idempotencyKey });
+    const acceptedTurn = receipt.status === "accepted" && receipt.turnId ? store.getLingTurn(receipt.turnId) : undefined;
+    if (child && store.getNormalConversationForkSeed(child.id)?.threadId !== handoff.sourceThreadId) {
+      throw rpcError(-32031, "idempotency_conflict", "The Handoff child Thread has a different origin.");
+    }
+    if (!acceptedTurn || !acceptedTurn.activeRunId && !acceptedTurn.lastRunId) {
+      const sourceThread = await checkAppServerHandoff(this.context, store, handoff);
+      child = createLingThreadFork({
+        store, sourceThread, now: new Date().toISOString(),
+        body: { turnId: handoff.sourceTurnId, sourceRunId: handoff.sourceRunId, idempotencyKey,
+          title: `Handoff: ${sourceThread.title}`, objective: handoff.goal?.objective ?? sourceThread.objective },
+      }).childThread;
+    }
+    if (!child) throw rpcError(-32061, "resume_blocked", "The Handoff receipt has no available child Thread.");
+    this.publishForkedThread(store, record.cwd, child, handoff.sourceThreadId);
+    const result = await this.startConversationTurn({ idempotencyKey, providerPresetId }, child, record.cwd, handoffInstruction(handoff));
+    return { ...result, handoffId: handoff.handoffId };
+  }
+
+  private publishForkedThread(store: RunStore, cwd: string, thread: LingThread, sourceThreadId: string): void {
+    const idempotencyKey = `app-server-fork:${thread.id}`;
+    if (store.getControlPlaneEventByIdempotency(thread.workspaceId, idempotencyKey)) return;
+    const event = store.appendControlPlaneEvent({
+      workspaceId: thread.workspaceId, cwd, domain: "runs", entityType: "thread", entityId: thread.id,
+      action: "thread.started", idempotencyKey, data: { threadId: thread.id, sourceThreadId, status: thread.status },
+    }, new Date().toISOString());
+    this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+  }
+
   private readThreadSnapshot(params: unknown): LingAppServerThreadSnapshotResult {
     const { cwd, ...record } = this.workspaceParams(params);
     const threadId = readStringField(record, "threadId");
@@ -1147,7 +1314,7 @@ class RpcConnection {
         .filter(item => item.kind === "user_input_request").map(item => item.id) : [];
       const pendingInputs = itemIds.length ? store.readUserInputTranscript({ threadId, itemIds }).flatMap(item => {
         if (item.availability !== "available" || item.kind !== "user_input_request" || item.status !== "pending") return [];
-        return [this.authenticated ? item : { ...item, answerAuthority: undefined }];
+        return [this.canRespondToInput() ? item : { ...item, answerAuthority: undefined }];
       }) : [];
       return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) ?? null,
         goal: goal ? { id: goal.id, objective: goal.objective, status: goal.status,
@@ -1591,7 +1758,7 @@ class RpcConnection {
   }
 
   private async startConversationTurn(record: Record<string, unknown>, thread: import("@ling-stack/core").LingThread, cwd: string,
-    instruction: string | undefined): Promise<unknown> {
+    instruction: string | undefined) {
     if (thread.kind !== "conversation" || thread.channelId || thread.archivedAt || thread.status === "archived") {
       throw rpcError(-32040, "workspace_binding_invalid", "This Thread cannot accept a normal conversation Turn.");
     }
@@ -1624,6 +1791,7 @@ class RpcConnection {
       || input.executionBinding && JSON.stringify(input.executionBinding) !== JSON.stringify(runRequest.executionBinding)) {
       throw rpcError(-32031, "idempotency_conflict", "The original submission used a different execution configuration.");
     }
+    if (!this.grantIsCurrent()) throw rpcError(-32020, "authorization_required", "The App Server grant expired or was revoked before dispatch.");
     this.publishConversationTurnStarted(store, cwd, turn);
     const receipt = readConversationSubmission(store, { surface: "normal", threadId: thread.id, idempotencyKey: input.idempotencyKey! });
     const runId = turn.activeRunId ?? turn.lastRunId ?? await this.executeConversationRun(runRequest);
@@ -1820,7 +1988,7 @@ class RpcConnection {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const workItemId = readStringField(record, "workItemId");
-    const actorId = readStringField(record, "actorId");
+    const actorId = this.grant ? `app-server-grant:${this.grant.grantId}` : readStringField(record, "actorId");
     const idempotencyKey = readStringField(record, "idempotencyKey");
     const expectedRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedRevision");
     const expectedControlGeneration = readIntegerField(record, "expectedControlGeneration", "controlGeneration");
@@ -2526,6 +2694,12 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   if (error instanceof HttpError) {
     return { jsonRpcCode: error.statusCode === 400 ? -32602 : -32061, code: error.code, message: error.message };
   }
+  if (error instanceof WorktreeActionError) {
+    const jsonRpcCode = error.code === "stale_revision" ? -32030
+      : error.code === "workspace_binding_invalid" || error.code === "worktree_not_found" ? -32040
+      : error.code === "unknown_outcome" ? -32060 : -32041;
+    return { jsonRpcCode, code: error.code, message: error.message };
+  }
   if (error instanceof UserInputStoreError) {
     const message = "The answer could not be accepted for the current question.";
     switch (error.code) {
@@ -2652,6 +2826,7 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () 
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   if (event.entityType === "verify_operation") return "verification/updated";
+  if (event.entityType === "handoff" && event.action === "handoff.created") return "handoff/created";
   if (event.entityType === "conversation_item" && event.action === "conversation_narration.published") return "item/completed";
   if (event.action === "thread.goal.updated") return "thread/goal/updated";
   if (event.entityType === "run" && typeof event.data.turnId === "string") {

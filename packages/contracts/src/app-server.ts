@@ -4,6 +4,7 @@ import type { ConversationContextProjectionMetadata } from "./conversation-conti
 import type { RunSession } from "./runtime.js";
 import type { LingThread, LingThreadGoal } from "./threads.js";
 import type { LingTurn, LingTurnRun } from "./turns.js";
+import type { ManagedWorktreeEntry, ManagedWorktreeOwnerKind, WorktreeRecoverySnapshot } from "./worktrees.js";
 import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "./user-input.js";
 import type { UserInputRequestTranscriptV1 } from "./user-input-transcript.js";
 
@@ -62,6 +63,9 @@ export const LING_APP_SERVER_METHODS = [
   "initialize",
   "server/capabilities",
   "server/ping",
+  "server/grants/create",
+  "server/grants/list",
+  "server/grants/revoke",
   "workspace/list",
   "workspace/read",
   "worktree/list",
@@ -177,6 +181,33 @@ export const LING_APP_SERVER_METHODS = [
 ] as const;
 
 export type LingAppServerMethod = (typeof LING_APP_SERVER_METHODS)[number];
+
+export const LING_APP_SERVER_GRANT_SCOPES = ["observe", "control", "approve", "respond"] as const;
+export type LingAppServerGrantScope = (typeof LING_APP_SERVER_GRANT_SCOPES)[number];
+
+export type LingAppServerGrantSubject =
+  | { readonly kind: "workspace" }
+  | { readonly kind: "thread" | "workItem"; readonly id: string };
+
+export interface LingAppServerGrant {
+  readonly grantId: string;
+  readonly label: string;
+  readonly subject: LingAppServerGrantSubject;
+  readonly scopes: readonly LingAppServerGrantScope[];
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+  readonly revokedAt?: string;
+}
+
+export interface LingAppServerGrantCreateParams {
+  readonly label: string;
+  readonly subject: LingAppServerGrantSubject;
+  readonly scopes: readonly LingAppServerGrantScope[];
+  readonly expiresAt: string;
+  readonly credentialSha256: string;
+  readonly idempotencyKey: string;
+}
 
 export const LING_APP_SERVER_NOTIFICATION_METHODS = [
   "initialized",
@@ -628,6 +659,80 @@ export interface LingAppServerCaptureChangesResult {
   readonly candidate: LingAppServerCandidateReference;
   readonly coverage: "complete" | "partial";
   readonly headCommit: string;
+}
+
+export interface LingAppServerWorktreeTarget {
+  readonly cwd?: string;
+  readonly ownerKind: ManagedWorktreeOwnerKind;
+  readonly ownerId: string;
+}
+
+export interface LingAppServerWorktreeCreateParams extends LingAppServerWorktreeTarget {
+  readonly baseBranch?: string;
+}
+
+export interface LingAppServerWorktreeResult {
+  readonly cwd: string;
+  readonly entry: ManagedWorktreeEntry;
+}
+
+export interface LingAppServerWorktreeCleanupPreview extends LingAppServerWorktreeResult {
+  readonly expectedRevision: string;
+}
+
+export interface LingAppServerWorktreeCleanupParams extends LingAppServerWorktreeTarget {
+  readonly expectedRevision: string;
+  readonly confirmed: true;
+}
+
+export interface LingAppServerWorktreeCleanupResult extends LingAppServerWorktreeResult {
+  readonly snapshot: WorktreeRecoverySnapshot;
+}
+
+export interface LingAppServerHandoffCreateParams {
+  readonly cwd?: string;
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly idempotencyKey: string;
+  readonly nextInstruction: string;
+}
+
+export interface LingAppServerHandoffReadParams {
+  readonly cwd?: string;
+  readonly handoffId: string;
+}
+
+export interface LingAppServerHandoffResumeParams extends LingAppServerHandoffReadParams {
+  readonly providerPresetId: string;
+}
+
+export interface LingAppServerHandoff {
+  readonly handoffId: string;
+  readonly sourceThreadId: string;
+  readonly sourceTurnId: string;
+  readonly sourceRunId: string;
+  readonly sourceTurnRevision: string;
+  readonly createdAt: string;
+  readonly candidate: LingAppServerCandidateReference;
+  readonly nextInstruction: string;
+  readonly goal?: Pick<LingThreadGoal, "id" | "objective" | "updatedAt" | "status" | "lastContinuationStopReason"
+    | "continuationDepth" | "completionEvidenceRefs" | "blockedReason" | "tokenBudget" | "tokensUsed">;
+  readonly plan?: { readonly id: string; readonly revision: number };
+  readonly artifactIds: readonly string[];
+}
+
+export interface LingAppServerHandoffResult {
+  readonly cwd: string;
+  readonly handoff: LingAppServerHandoff;
+}
+
+export interface LingAppServerHandoffResumeResult {
+  readonly cwd: string;
+  readonly handoffId: string;
+  readonly thread: LingThread;
+  readonly turn?: LingTurn;
+  readonly run?: RunSession;
+  readonly replayed: boolean;
 }
 
 export type LingAppServerVerificationCheckKind = "command" | "test" | "typecheck" | "browser" | "platform";

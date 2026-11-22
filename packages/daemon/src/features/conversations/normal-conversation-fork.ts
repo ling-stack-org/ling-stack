@@ -23,7 +23,7 @@ export function createNormalConversationThreadFork(input: {
   const { store, sourceThread, body } = input;
   const value = isRecord(body) ? body : {};
   const key = readOptionalString(value, "idempotencyKey")?.trim();
-  const childThreadId = key ? `thread_normal_fork_${createHash("sha256").update(JSON.stringify([sourceThread.id, key])).digest("hex")}`
+  const childThreadId = key ? normalConversationForkId(sourceThread.id, key)
     : `thread_normal_fork_${randomUUID()}`;
   try {
     const existing = store.getLingThread(childThreadId);
@@ -47,6 +47,10 @@ export function createNormalConversationThreadFork(input: {
     if (error instanceof HttpError) throw error;
     throw new HttpError(409, "normal_fork_context_invalid", "The normal fork source or frozen context is unavailable or invalid.");
   }
+}
+
+export function normalConversationForkId(parentThreadId: string, key: string): string {
+  return `thread_normal_fork_${createHash("sha256").update(JSON.stringify([parentThreadId, key])).digest("hex")}`;
 }
 
 /** Normal fork-run uses the same canonical acceptance and first-winner preparation as ordinary input. */

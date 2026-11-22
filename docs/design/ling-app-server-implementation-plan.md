@@ -20,6 +20,9 @@
 - 内置 `init-project-instructions` 和 `verify-current-changes` 技能通过 CLI 预览项目约定、捕获候选、生成计划、启动检查并读取状态。应用初始化草稿需要当前预览 revision 和 operator 授权。
 - Host 登记的 Verify 配方可以选择受影响路径，并把独立 verifier source 的摘要、coverage 和 producer refs 封存到每个检查结果。
 - Goal 的 `verification_passed` 条件要求同一 Thread 的已完成 Verify operation、当前候选摘要、匹配的 verifier basis、coverage 和 producer refs。候选漂移、检查来源漂移、缺少独立证据和过期的接受版本都会阻止完成。
+- App Server 可以为已绑定的频道或队友会话创建、刷新和归档托管工作树。归档按检视过的候选和目录身份校验，恢复日志保留同一预览请求的归档快照。
+- 普通会话可从最新已收敛的 Turn 封存 Handoff。记录包含候选、原 Goal 进度、接受的计划和产物引用。接手通过正常会话分支和提交受理复用原回执。候选、Goal 或计划变化时需要更新 Handoff。
+- App Server operator grant 支持 workspace、Thread 和 Work Item 范围，按 scope 分开观察、控制、审批和答复权限。grant 的 revision、过期和撤销参与握手、请求和推送路径。
 - CLI 和 TypeScript client 可以直接进入上述流程。Daemon 重启、重复请求、取消未确认和未知配方仍保持已有的持久回执语义。
 
 | 工作包 | 已验证场景与证据边界 |
@@ -39,9 +42,9 @@
 
 | 工作包 | 代码或验收差距 |
 | --- | --- |
-| A1、B1、C1、C2 | 全方法的 Schema 校验、细粒度按身份授予的控制和审批范围、认证 WSS。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
-| D1、D2、E1、E2 | 开工时的项目规则加载、两个开发 Skill、工作区 Verify 和独立 verifier basis 已接入。仍需运行中进入新目录的局部规则、完整工作树 App Server 方法、浏览器/平台配方、可信 GitHub CI 结果进入 Goal 验收，以及 UI 运行报告。 |
-| F1、F2 | 跨会话 Handoff 的执行归属与接手恢复。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
+| A1、B1、C1、C2 | 全方法的 Schema 校验、远程认证 WSS 和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 范围已接入，审批和用户答复仍需按不同真实宿主和远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
+| D1、D2、E1、E2 | 开工时的项目规则加载、两个开发 Skill、工作区 Verify、独立 verifier basis 和托管工作树管理已接入。仍需运行中进入新目录的局部规则、候选补丁的应用预览和提交、浏览器/平台配方、可信 GitHub CI 结果进入 Goal 验收，以及 UI 运行报告。 |
+| F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。仍需跨 Agent Workflow 的执行归属和预算承接。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
 | O1、O3–O9 | 跨入口任务归并和首次派发、自治策略、GitHub 交付、经验与设备反馈、阶段和定时轮次、在途改计划、交接和审议裁决。现有协作记录的持久化、版本冲突和回放已验证，原 Workflow/Automation 执行与联合验收还要接通。 |
 | G | 自研切换和回退日志对账、签名安装产物、远程 WSS 和三个真实 Provider 自研试点。macOS 打包预检仍缺当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检达到评审条件，真实试点仍需按 Framework Assurance 准入。 |
 

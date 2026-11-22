@@ -19,6 +19,10 @@ import type {
   LingAppServerExternalAgentRegisterResult,
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartResult,
+  LingAppServerGrant,
+  LingAppServerGrantScope,
+  LingAppServerHandoffResult,
+  LingAppServerHandoffResumeResult,
   LingAppServerInputRespondParams,
   LingAppServerInputRespondResult,
   LingAppServerVerifyOperation,
@@ -29,6 +33,9 @@ import type {
   LingAppServerWorkItemReadResult,
   LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
+  LingAppServerWorktreeCleanupPreview,
+  LingAppServerWorktreeCleanupResult,
+  LingAppServerWorktreeResult,
   LingAppServerReviewStartResult,
   LingAppServerReviewStatusResult,
   LingAppServerReviewFindingUpdateResult,
@@ -218,6 +225,60 @@ test("Goal completion requires a current candidate and a Host-verified independe
   assert.equal((await complete(reconnected, verified.operationId)).goal.status, "complete");
 });
 
+test("App Server manages an owned worktree and archives the reviewed candidate", { timeout: 30_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const source = join(fixture.cwd, "subject.txt");
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "ignore" });
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(source, "base\n");
+  git(fixture.cwd, "init", "-q", "-b", "main");
+  git(fixture.cwd, "add", ".gitignore", "subject.txt");
+  git(fixture.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Baseline");
+  await writeFile(source, "local work in progress\n");
+  const client = await fixture.connect();
+  const store = fixture.getStore();
+  const channel = store.createChannel({ name: "Engineering", boundPath: fixture.cwd }, new Date().toISOString());
+  const target = { ownerKind: "channel", ownerId: channel.id } as const;
+
+  const { entry } = await client.call<LingAppServerWorktreeResult>("worktree/create", { ...target, baseBranch: "main" });
+  assert.equal(entry.status, "ready");
+  assert.equal(await readFile(join(entry.path, "subject.txt"), "utf8"), "base\n");
+  assert.equal(await readFile(source, "utf8"), "local work in progress\n");
+  const repeated = await client.call<LingAppServerWorktreeResult>("worktree/create", { ...target, baseBranch: "main" });
+  assert.equal(repeated.entry.path, entry.path);
+
+  const outside = join(fixture.root, "other-repository");
+  await mkdir(outside);
+  git(outside, "init", "-q");
+  const external = store.createChannel({ name: "Other", boundPath: outside }, new Date().toISOString());
+  await assert.rejects(client.call("worktree/create", { ...target, ownerId: external.id }), { code: "workspace_binding_invalid" });
+
+  const subject = join(entry.path, "subject.txt");
+  await writeFile(subject, "first candidate\n");
+  const refreshed = await client.call<LingAppServerWorktreeResult>("worktree/refresh", target);
+  assert.equal(refreshed.entry.isDirty, true);
+  const preview = await client.call<LingAppServerWorktreeCleanupPreview>("worktree/cleanup/preview", target);
+  await writeFile(subject, "second candidate\n");
+  await assert.rejects(client.call("worktree/cleanup", { ...target, expectedRevision: preview.expectedRevision, confirmed: true }),
+    { code: "stale_revision" });
+  assert.equal(await readFile(subject, "utf8"), "second candidate\n");
+  const current = await client.call<LingAppServerWorktreeCleanupPreview>("worktree/cleanup/preview", target);
+  await assert.rejects(client.call("worktree/cleanup", { ...target, expectedRevision: current.expectedRevision }),
+    { code: "worktree_confirmation_required" });
+  const result = await client.call<LingAppServerWorktreeCleanupResult>("worktree/cleanup",
+    { ...target, expectedRevision: current.expectedRevision, confirmed: true });
+  assert.equal(result.entry.status, "not_created");
+  assert.equal(await readFile(join(result.snapshot.snapshotPath, "subject.txt"), "utf8"), "second candidate\n");
+  assert.equal(await readFile(source, "utf8"), "local work in progress\n");
+  await assert.rejects(readFile(subject), { code: "ENOENT" });
+  await fixture.restart();
+  const resumed = await fixture.connect();
+  const replay = await resumed.call<LingAppServerWorktreeCleanupResult>("worktree/cleanup",
+    { ...target, expectedRevision: current.expectedRevision, confirmed: true });
+  assert.equal(replay.snapshot.id, result.snapshot.id);
+  assert.equal(replay.entry.status, "not_created");
+});
+
 test("App Server submits a durable Turn through the configured Pi Runner and replays it after reconnect", { timeout: 30_000 }, async t => {
   const provider = await startLoopbackPiProvider(() => ({ text: "Runner accepted the task" }));
   t.after(() => provider.close());
@@ -316,6 +377,64 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   assert.deepEqual(completed.acceptanceEvidence, withEvidence(result.run.id).acceptanceEvidence);
   await waitFor(() => second.notices.find(notice => notice.method === "thread/goal/updated"
     && notice.params?.subject?.threadId === request.threadId));
+});
+
+test("a sealed Handoff resumes one new conversation from the current candidate", { timeout: 30_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Work recorded." }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  const subject = join(fixture.cwd, "subject.txt");
+  await writeFile(subject, "accepted candidate\n");
+  git("init", "-q");
+  git("add", ".gitignore", "subject.txt");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Baseline");
+  const origin = await fixture.connect();
+  const store = fixture.getStore();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const { thread } = await origin.call<{ thread: { id: string } }>("thread/start", { title: "Development workflow" });
+  const { goal } = await origin.call<{ goal: LingThreadGoal }>("thread/goal/set", {
+    threadId: thread.id, objective: "Preserve the delivery contract", supervisionPolicy: { autoContinue: false },
+  });
+  const { turn, run } = await origin.call<{ turn: { id: string }; run: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Write down the delivery contract.",
+    providerPresetId: preset.id, idempotencyKey: "source",
+  });
+  await waitFor(async () => {
+    const snapshot = await origin.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+    return snapshot.turn?.status === "succeeded" && snapshot.run?.status === "succeeded" ? true : undefined;
+  });
+  const capture = { threadId: thread.id, turnId: turn.id, nextInstruction: "Implement only the delivery contract.", idempotencyKey: "handoff" };
+  const { handoff } = await origin.call<LingAppServerHandoffResult>("handoff/create", capture);
+  assert.equal(handoff.sourceRunId, run.id);
+  assert.equal(handoff.goal?.id, goal.id);
+  assert.equal(handoff.goal?.objective, "Preserve the delivery contract");
+  assert.deepEqual(await origin.call("handoff/create", capture), { cwd: fixture.cwd, handoff });
+  await assert.rejects(origin.call("handoff/create", { ...capture, nextInstruction: "Different task" }), { code: "idempotency_conflict" });
+
+  await fixture.restart();
+  const receiver = await fixture.connect();
+  const peer = await fixture.connect();
+  const resume = { handoffId: handoff.handoffId, providerPresetId: preset.id };
+  assert.deepEqual(await receiver.call("handoff/read", { handoffId: handoff.handoffId }), { cwd: fixture.cwd, handoff });
+  await writeFile(subject, "changed candidate\n");
+  await assert.rejects(receiver.call("handoff/resume", resume), { code: "handoff_stale" });
+  assert.equal(provider.requests.length, 1);
+  await writeFile(subject, "accepted candidate\n");
+  const [first, duplicate] = await Promise.all([
+    receiver.call<LingAppServerHandoffResumeResult>("handoff/resume", resume),
+    peer.call<LingAppServerHandoffResumeResult>("handoff/resume", resume),
+  ]);
+  assert.equal(first.thread.parentThreadId, thread.id);
+  assert.equal(first.thread.parentTurnId, turn.id);
+  assert.ok(first.run?.id);
+  assert.equal(duplicate.run?.id, first.run.id);
+  assert.equal(duplicate.thread.id, first.thread.id);
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  assert.match(JSON.stringify(provider.requests[1]), /Implement only the delivery contract/u);
+  assert.match(JSON.stringify(provider.requests[1]), /Preserve the delivery contract/u);
+  assert.match(JSON.stringify(provider.requests[1]), /Write down the delivery contract/u);
 });
 
 test("thread resume attaches without dispatch and turn resume recovers a prepared request exactly once after restart", { timeout: 30_000 }, async t => {
@@ -1117,6 +1236,83 @@ test("an authenticated connection can decide its Run approval and rejects a diff
   await assert.rejects(client.call("approval/respond", params), { code: "request_already_resolved" });
 });
 
+test("App Server grants restrict observers, controllers and approvers to their subject and revoke live access", { timeout: 30_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const operator = await fixture.connect();
+  const store = fixture.getStore();
+  const now = new Date().toISOString();
+  const subject = store.createLingThread({ kind: "conversation", title: "Scoped thread", objective: "Observe scoped progress" }, now);
+  const other = store.createLingThread({ kind: "conversation", title: "Separate thread", objective: "Preserve privacy" }, now);
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  const grant = async (label: string, scopes: readonly LingAppServerGrantScope[]) => {
+    const secret = createHash("sha256").update(randomUUID()).digest("hex");
+    const input = {
+      label, scopes, expiresAt, subject: { kind: "thread", id: subject.id },
+      credentialSha256: createHash("sha256").update(secret).digest("hex"), idempotencyKey: label,
+    };
+    const result = await operator.call<{ grant: LingAppServerGrant }>("server/grants/create", input);
+    assert.deepEqual(await operator.call("server/grants/create", input), result);
+    assert.equal("credentialSha256" in result.grant, false);
+    return { ...result, bearer: `las1.${result.grant.grantId}.${secret}` };
+  };
+  const observation = await grant("Observer", ["observe"]);
+  const control = await grant("Controller", ["observe", "control"]);
+  const approvals = await grant("Approver", ["observe", "approve"]);
+  const observer = await fixture.connect("/app-server/rpc", fixture.cwd, observation.bearer);
+  const controller = await fixture.connect("/app-server/rpc", fixture.cwd, control.bearer);
+  const approver = await fixture.connect("/app-server/rpc", fixture.cwd, approvals.bearer);
+  assert.deepEqual(observer.initialization?.effectiveScopes, ["observe"]);
+  assert.ok(observer.initialization?.capabilities.includes("thread.events"));
+  assert.ok(!observer.initialization?.capabilities.includes("turn.control"));
+  const current = await observer.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: subject.id });
+  const privileged = await operator.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: subject.id });
+  assert.equal(current.thread.id, subject.id);
+  await assert.rejects(observer.call("thread/snapshot", { threadId: other.id }), { code: "capability_denied" });
+  await assert.rejects(observer.call("thread/subscribe", {}), { code: "capability_denied" });
+  await assert.rejects(observer.call("thread/list"), { code: "capability_denied" });
+  await assert.rejects(observer.call("server/grants/list"), { code: "capability_denied" });
+  await assert.rejects(observer.call("turn/start", { threadId: subject.id, message: "Record this." }), { code: "capability_denied" });
+  const rejectedCursor = await observer.call<LingAppServerThreadEventsResult>("thread/events/read", { threadId: subject.id, cursor: privileged.cursor });
+  assert.equal(rejectedCursor.window.disposition, "snapshot_required");
+
+  await observer.call("thread/subscribe", { threadId: subject.id, cursor: current.cursor });
+  const turn = await controller.call<{ turn: { id: string } }>("turn/start", { threadId: subject.id, message: "Record this.", turnId: "scoped-turn" });
+  assert.equal(turn.turn.id, "scoped-turn");
+  await waitFor(() => observer.notices.find(notice => notice.method === "turn/started" && notice.params?.subject?.threadId === subject.id));
+  await assert.rejects(controller.call("turn/start", { threadId: other.id, message: "Outside the grant." }), { code: "capability_denied" });
+  const makeApproval = (threadId: string, id: string) => {
+    const run = store.createRun({
+      id, threadId, cwd: fixture.cwd, taskId: id, providerName: "fixture", providerModel: "fixture",
+      taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now,
+    });
+    store.markRunStarted(run.id, now);
+    return store.createApprovalRequest({
+      runId: run.id, taskId: id, toolCallId: "approved-tool", actionType: "bash", risk: "medium",
+      title: "Fixture approval", description: "Check approval ownership",
+      payload: { type: "bash", cwd: fixture.cwd, command: "true", riskFlags: [] },
+    }, now);
+  };
+  const allowedApproval = makeApproval(subject.id, "approved-run");
+  const unrelatedApproval = makeApproval(other.id, "other-run");
+  await assert.rejects(controller.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny" }), { code: "capability_denied" });
+  await assert.rejects(approver.call("approval/respond", { approvalId: unrelatedApproval.id, decision: "deny" }), { code: "capability_denied" });
+  await approver.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny" });
+  assert.equal(store.getApprovalRequest(allowedApproval.id)?.status, "denied");
+  assert.equal(store.getApprovalRequest(unrelatedApproval.id)?.status, "pending");
+
+  const closing = observer.waitForClose();
+  await operator.call("server/grants/revoke", { grantId: observation.grant.grantId, expectedRevision: observation.grant.revision });
+  const [code, reason] = await closing;
+  assert.equal(code, 1008);
+  assert.equal(String(reason), "authorization_changed");
+  await fixture.restart();
+  await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, observation.bearer), /401/u);
+  const restored = await fixture.connect("/app-server/rpc", fixture.cwd, control.bearer);
+  const snapshot = await restored.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: subject.id });
+  assert.equal(snapshot.thread.id, subject.id);
+  await assert.rejects(fixture.connect("/rpc/stream", fixture.cwd, control.bearer), /401/u);
+});
+
 test("stdio and the private Unix socket deliver the same App Server Thread events", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const options = fixture.transportOptions();
@@ -1539,11 +1735,11 @@ async function releaseFixture(t: TestContext, {
       daemon = makeDaemon(candidateRuntime);
       await daemon.start();
     },
-    async connect(path: "/app-server/rpc" | "/rpc/stream" = "/app-server/rpc", workspaceCwd = cwd) {
+    async connect(path: "/app-server/rpc" | "/rpc/stream" = "/app-server/rpc", workspaceCwd = cwd, credential?: string) {
       const address = daemon.server.address();
       assert.ok(address && typeof address === "object");
       const socket = new WebSocket(`ws://127.0.0.1:${address.port}${path}?cwd=${encodeURIComponent(workspaceCwd)}`, {
-        headers: requireAuth ? { Authorization: `Bearer ${authToken}` } : undefined,
+        headers: credential || requireAuth ? { Authorization: `Bearer ${credential ?? authToken}` } : undefined,
       });
       clients.add(socket);
       await once(socket, "open");
@@ -1566,12 +1762,12 @@ async function releaseFixture(t: TestContext, {
       const initialization = path === "/app-server/rpc"
         ? await call<LingAppServerInitializeResult>("initialize", { protocolVersions: ["ling-app-server/1"] }) : undefined;
       if (initialization) {
-        await call("workItem/list");
+        await call(credential ? "server/ping" : "workItem/list");
       } else {
         const initialized = await call<{ ok: boolean }>("initialize");
         assert.equal(initialized.ok, true);
       }
-      return { call, notices, initialization, close: () => socket.terminate() };
+      return { call, notices, initialization, close: () => socket.terminate(), waitForClose: () => once(socket, "close") };
     },
   };
 }

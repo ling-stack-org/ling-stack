@@ -21,6 +21,13 @@ import type {
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartParams,
   LingAppServerExternalAgentTaskStartResult,
+  LingAppServerGrant,
+  LingAppServerGrantCreateParams,
+  LingAppServerHandoffCreateParams,
+  LingAppServerHandoffReadParams,
+  LingAppServerHandoffResumeParams,
+  LingAppServerHandoffResumeResult,
+  LingAppServerHandoffResult,
   LingAppServerInitializeParams,
   LingAppServerInitializeResult,
   LingAppServerInputRespondParams,
@@ -57,6 +64,13 @@ import type {
   LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemCollaborationReadParams,
   LingAppServerWorkItemCollaborationReadResult,
+  LingAppServerWorktreeTarget,
+  LingAppServerWorktreeCreateParams,
+  LingAppServerWorktreeResult,
+  LingAppServerWorktreeCleanupParams,
+  LingAppServerWorktreeCleanupPreview,
+  LingAppServerWorktreeCleanupResult,
+  ManagedWorktreeListResponse,
 } from "@ling-stack/contracts";
 
 export interface LingAppServerSocket {
@@ -158,6 +172,21 @@ export class LingAppServerClient {
     return await this.request("thread/read", { threadId });
   }
 
+  async createGrant(params: LingAppServerGrantCreateParams): Promise<{ cwd: string; grant: LingAppServerGrant }> {
+    await this.connect();
+    return await this.request("server/grants/create", params);
+  }
+
+  async listGrants(): Promise<{ cwd: string; grants: readonly LingAppServerGrant[] }> {
+    await this.connect();
+    return await this.request("server/grants/list", {});
+  }
+
+  async revokeGrant(grantId: string, expectedRevision: number): Promise<{ cwd: string; grant: LingAppServerGrant }> {
+    await this.connect();
+    return await this.request("server/grants/revoke", { grantId, expectedRevision });
+  }
+
   async readThreadSnapshot(params: LingAppServerThreadSnapshotParams): Promise<LingAppServerThreadSnapshotResult> {
     await this.connect();
     return await this.request("thread/snapshot", params);
@@ -166,6 +195,21 @@ export class LingAppServerClient {
   async inspectTurnContext(params: LingAppServerContextInspectParams): Promise<LingAppServerContextInspectResult> {
     await this.connect();
     return await this.request("context/inspect", params);
+  }
+
+  async createHandoff(params: LingAppServerHandoffCreateParams): Promise<LingAppServerHandoffResult> {
+    await this.connect();
+    return await this.request("handoff/create", params);
+  }
+
+  async readHandoff(params: LingAppServerHandoffReadParams): Promise<LingAppServerHandoffResult> {
+    await this.connect();
+    return await this.request("handoff/read", params);
+  }
+
+  async resumeHandoff(params: LingAppServerHandoffResumeParams): Promise<LingAppServerHandoffResumeResult> {
+    await this.connect();
+    return await this.request("handoff/resume", params);
   }
 
   async readThreadEvents(params: { readonly threadId: string; readonly cursor?: string; readonly limit?: number }): Promise<LingAppServerThreadEventsResult> {
@@ -236,6 +280,31 @@ export class LingAppServerClient {
   async captureChanges(): Promise<LingAppServerCaptureChangesResult> {
     await this.connect();
     return await this.request("changes/capture", {});
+  }
+
+  async listWorktrees(): Promise<ManagedWorktreeListResponse> {
+    await this.connect();
+    return await this.request("worktree/list", {});
+  }
+
+  async createWorktree(params: LingAppServerWorktreeCreateParams): Promise<LingAppServerWorktreeResult> {
+    await this.connect();
+    return await this.request("worktree/create", params);
+  }
+
+  async refreshWorktree(params: LingAppServerWorktreeTarget): Promise<LingAppServerWorktreeResult> {
+    await this.connect();
+    return await this.request("worktree/refresh", params);
+  }
+
+  async previewWorktreeCleanup(params: LingAppServerWorktreeTarget): Promise<LingAppServerWorktreeCleanupPreview> {
+    await this.connect();
+    return await this.request("worktree/cleanup/preview", params);
+  }
+
+  async cleanupWorktree(params: LingAppServerWorktreeCleanupParams): Promise<LingAppServerWorktreeCleanupResult> {
+    await this.connect();
+    return await this.request("worktree/cleanup", params);
   }
 
   async planVerification(params: LingAppServerVerifyPlanParams): Promise<LingAppServerVerifyPlanResult> {
