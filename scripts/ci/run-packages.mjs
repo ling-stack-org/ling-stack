@@ -13,14 +13,20 @@ const task = args.task;
 const excludedPackages = new Set(parsePackages(args.exclude));
 const packages = parsePackages(args.packages).filter((packageName) => !excludedPackages.has(packageName));
 const includeDependencies = args.closure === "true";
+const printClosure = args["print-closure"] === "true";
 
 if (!task) {
   console.error("Missing required --task=<script> argument.");
   process.exit(2);
 }
 
+if (printClosure && !includeDependencies) {
+  console.error("--print-closure requires --closure=true.");
+  process.exit(2);
+}
+
 if (packages.length === 0) {
-  console.log(`No packages selected for ${task}; nothing to run.`);
+  console.log(printClosure ? "[]" : `No packages selected for ${task}; nothing to run.`);
   process.exit(0);
 }
 
@@ -50,14 +56,38 @@ if (!includeDependencies) {
   }
 }
 
-const pnpmArgs = ["pnpm", "--workspace-concurrency=1"];
+const filters = [];
 for (const packageName of packages) {
-  pnpmArgs.push("--filter", includeDependencies ? `${packageName}...` : packageName);
+  filters.push("--filter", includeDependencies ? `${packageName}...` : packageName);
 }
 if (includeDependencies) {
-  for (const packageName of excludedPackages) pnpmArgs.push("--filter", `!${packageName}`);
-  pnpmArgs.push("--if-present");
+  for (const packageName of excludedPackages) filters.push("--filter", `!${packageName}`);
 }
+
+if (printClosure) {
+  const result = spawnSync("corepack", ["pnpm", ...filters, "list", "--depth", "-1", "--json"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+  let entries;
+  try {
+    entries = JSON.parse(result.stdout);
+  } catch (error) {
+    console.error(`Unable to parse pnpm build closure: ${error.message}`);
+    process.exit(1);
+  }
+  if (!Array.isArray(entries) || entries.length === 0
+    || entries.some(entry => typeof entry?.name !== "string" || entry.name.length === 0)) {
+    console.error("Unable to verify pnpm build closure: unexpected pnpm list output.");
+    process.exit(1);
+  }
+  console.log(JSON.stringify([...new Set(entries.map(entry => entry.name))].sort()));
+  process.exit(0);
+}
+const pnpmArgs = ["pnpm", "--workspace-concurrency=1", ...filters];
+if (includeDependencies) pnpmArgs.push("--if-present");
 pnpmArgs.push("run", task);
 
 const result = spawnSync("corepack", pnpmArgs, { stdio: "inherit" });
