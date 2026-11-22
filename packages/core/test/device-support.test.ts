@@ -397,6 +397,48 @@ test("broker distinguishes stale snapshots, target leases, and revoked devices",
   store.close();
 });
 
+test("retiring a device fences new dispatch and preserves an in-flight write and its late receipt", async t => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  const deviceId = profile.device.id;
+  const workspaceId = profile.device.ownerScope;
+  const binding = {
+    deviceId, workspaceId,
+    expectedProfileRevision: profile.profileRevision, expectedConnectionRevision: snapshot().connectionRevision,
+  };
+  const taskId = "retirement-task";
+  const action = approveNetworkRepair(request(writeCapability.id, taskId));
+  const adapter = createAdapter();
+  let dispatches = 0;
+  broker.registerAdapter({
+    ...adapter,
+    async execute(input) {
+      dispatches += 1;
+      assert.throws(() => broker.retireDevice({ ...binding, workspaceId: "foreign" }), /unavailable in this workspace/u);
+      assert.throws(() => broker.retireDevice({ ...binding, expectedConnectionRevision: "stale" }), /profile or connection changed/u);
+      const retirement = broker.retireDevice(binding);
+      assert.equal(retirement.stoppedTaskId, taskId);
+      assert.equal(retirement.previousStatus, "healthy");
+      assert.equal(input.signal?.aborted, true);
+      assert.equal(store.getTask(taskId)?.status, "unknown");
+      return adapter.execute(input);
+    },
+  });
+  broker.createTask(task(taskId));
+  broker.createTask(task("later-read"));
+  const attempt = await broker.execute(action);
+  assert.equal(attempt.attempt.status, "unknown");
+  assert.equal(attempt.attempt.receipt?.status, "completed");
+  assert.equal(store.getDevice(deviceId)?.device.lifecycleStatus, "retired");
+  assert.equal(store.getCurrentCapabilitySnapshot(deviceId), undefined);
+  assert.deepEqual(store.getRecordedCapabilitySnapshot(deviceId, snapshot().snapshotId)?.snapshot, snapshot());
+  assert.deepEqual(broker.retireDevice(binding), store.getDeviceRetirementState(deviceId, workspaceId).retirement);
+  assert.equal(broker.getReconciliationPreview(taskId), undefined);
+  assert.deepEqual(await broker.execute(action), attempt);
+  await assert.rejects(() => broker.execute(request(readCapability.id, "later-read")), /is unavailable/u);
+  assert.equal(dispatches, 1);
+});
+
 test("an in-flight refresh or repeat discovery cannot restore a revoked registration", async t => {
   const { store, broker } = brokerFixture();
   t.after(() => store.close());

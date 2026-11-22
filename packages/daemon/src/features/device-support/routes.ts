@@ -22,21 +22,22 @@ export async function handleDeviceSupportRoute(
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/protocol/")) return await handleDeviceProtocolRoute(url, request, response, runtime);
   const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace|conformance)$/u.exec(url.pathname);
-  const dispatchStop = /^\/v1\/device-support\/devices\/([^/]+)\/dispatch-stop$/u.exec(url.pathname)?.[1];
+  const deviceOperation = /^\/v1\/device-support\/devices\/([^/]+)\/(dispatch-stop|retirement)$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const homeAssistant = url.pathname === "/v1/device-support/home-assistant/diagnose";
   const homeAssistantCatalog = url.pathname === "/v1/device-support/home-assistant/catalog";
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
-  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !dispatchStop && !linuxAction
+  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !linuxAction
     && !homeAssistant && !homeAssistantCatalog && !fleetHealth && !capabilityLookup) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
     return true;
   }
-  if (dispatchStop) {
-    await handleDispatchStop(dispatchStop, request, response, runtime);
+  if (deviceOperation) {
+    const handle = deviceOperation[2] === "retirement" ? handleDeviceRetirement : handleDispatchStop;
+    await handle(deviceOperation[1]!, request, response, runtime);
     return true;
   }
   if (linuxAction) {
@@ -161,10 +162,7 @@ async function handleDispatchStop(
     return;
   }
   try {
-    const deviceId = decodeURIComponent(encodedDeviceId);
-    if (!validBoundedText(deviceId, 512) || deviceId.trim() !== deviceId) {
-      throw new DeviceBrokerError("invalid_request", "invalid device reference");
-    }
+    const deviceId = readDeviceReference(encodedDeviceId);
     if (request.method === "GET") {
       if (runtime.store.getDevice(deviceId)?.device.ownerScope !== DEFAULT_WORKSPACE_ID) {
         throw new DeviceBrokerError("missing_target", "device is unavailable in this workspace");
@@ -181,9 +179,49 @@ async function handleDispatchStop(
       deviceId, workspaceId: DEFAULT_WORKSPACE_ID, active: body.active, expectedRevision: body.expectedRevision,
     }));
   } catch (error) {
-    if (error instanceof URIError) writePrivateJson(response, 400, { error: "invalid_request" });
-    else writeDeviceOperationError(response, error);
+    writeDeviceOperationError(response, error);
   }
+}
+
+async function handleDeviceRetirement(
+  encodedDeviceId: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "PUT") {
+    response.setHeader("Allow", "GET, PUT");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const deviceId = readDeviceReference(encodedDeviceId);
+    if (request.method === "GET") {
+      writePrivateJson(response, 200, runtime.store.getDeviceRetirementState(deviceId, DEFAULT_WORKSPACE_ID));
+      return;
+    }
+    const body = await readJsonBody(request, 4096).catch(() => undefined);
+    if (!isRecord(body) || Object.keys(body).length !== 2
+      || !validBoundedText(body.expectedProfileRevision, 512) || !validBoundedText(body.expectedConnectionRevision, 512)) {
+      throw new DeviceBrokerError("invalid_request", "invalid device retirement request");
+    }
+    writePrivateJson(response, 200, runtime.broker.retireDevice({
+      deviceId, workspaceId: DEFAULT_WORKSPACE_ID,
+      expectedProfileRevision: body.expectedProfileRevision, expectedConnectionRevision: body.expectedConnectionRevision,
+    }));
+  } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+function readDeviceReference(encodedDeviceId: string): string {
+  let deviceId: string;
+  try {
+    deviceId = decodeURIComponent(encodedDeviceId);
+  } catch {
+    throw new DeviceBrokerError("invalid_request", "invalid device reference");
+  }
+  if (!validBoundedText(deviceId, 512) || deviceId.trim() !== deviceId) {
+    throw new DeviceBrokerError("invalid_request", "invalid device reference");
+  }
+  return deviceId;
 }
 
 async function handleLinuxSshRequest(

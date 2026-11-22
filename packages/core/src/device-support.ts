@@ -360,6 +360,12 @@ export class DeviceCapabilityBroker {
     return stop;
   }
 
+  retireDevice(input: Omit<Parameters<SqliteDeviceSupportStore["retireDevice"]>[0], "now">) {
+    const { retirement, stoppingTaskId } = this.store.retireDevice({ ...input, now: this.now() });
+    if (stoppingTaskId) this.activeOperations.get(stoppingTaskId)?.abort();
+    return retirement;
+  }
+
   getReconciliationPreview(taskId: string): { attemptId: string; targetDeviceId: string; capabilitySnapshotId: string } | undefined {
     const task = this.store.getTask(taskId);
     if (task?.status !== "unknown" || task.ownerKind !== "daemon" || this.store.getLeasedAttempt(taskId)) return undefined;

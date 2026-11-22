@@ -2,7 +2,7 @@
 
 Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-22 (alternate-route approvals, Home Assistant catalog, native PC services, TURN/TLS fallback, identity replay and Daemon conformance reports)
+Last verified: 2026-11-22 (local pairing migration, Edge placement replay and device retirement)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -62,7 +62,7 @@ validation and the boundary of what remains unverified.
 | D17 | [~] | Event and telemetry plane | The owning Daemon journal exposes resumable event pages to local and paired Mobile clients | Core journal, authenticated Gateway and Remote Client fixtures |
 | D18 | [~] | Resource and adapter registry | Daemon imports, updates, disables and rolls back signed resources through its local operator API | Core resource fixtures and Daemon HTTP integration |
 | D19 | [~] | Safety, policy, and secrets | The Daemon persists an operator dispatch stop and retains unsettled attempts. The policy evaluator checks physical facts and handoff requirements | Core safety and authenticated Daemon fixtures |
-| D20 | [~] | Fleet and lifecycle | The Daemon projects workspace device health, adapter/profile revisions and separately observed Edge state | Core lifecycle and Daemon Fleet fixtures |
+| D20 | [~] | Fleet and lifecycle | The Daemon projects workspace health and records retirement with the target's profile and connection revisions | Core lifecycle and authenticated Daemon Fleet fixtures |
 | D21 | [~] | Model context and orchestration | PC and enrolled Linux diagnosis can select typed steps through the existing Pi runner and a configured model provider | Core proposal validation and loopback Pi integration |
 | D22 | [~] | Observability and conformance | Daemon task traces link accepted plans, adapter attempts and readback evidence | Local diagnosis, Gateway reconciliation and Core trace fixtures |
 
@@ -812,8 +812,11 @@ only on a successful install or a model response.
   fingerprints only. Credential contents remain outside the device fabric store.
 - [~] Track enrollment and ownership revisions, profile and runtime versions,
   operational health, maintenance and retirement.
-- [ ] Add ownership transfer, shared read-only access, developer scopes, credential
-  rotation, profile restore, upgrade, rollback, and retirement evidence.
+- [x] Retire a local registration against its current profile and connection
+  revisions. The owner commits retirement, capability invalidation and the stop
+  of a leased attempt together. Historical task evidence remains readable.
+- [~] Expose ownership transfer, shared read-only and developer scopes, credential
+  rotation, profile restore, upgrade and rollback through authenticated workflows.
 - [~] Add fleet health and compatibility projections by runtime, adapter, profile,
   firmware, and target.
 
@@ -826,8 +829,11 @@ only on a successful install or a model response.
 - Transfer a device between users or workspaces without losing its task history.
 - Rotate credentials, revoke an edge runtime, upgrade an adapter, and restore the
   previous verified revision.
-- Retired devices cannot receive new dispatch and retain the configured evidence
-  retention behavior.
+- The authenticated Daemon test retires its local PC registration. Fleet reports
+  the retired status without a live snapshot. A fresh diagnosis is denied and the
+  original trace, capability snapshot and conformance report remain readable after
+  reopening SQLite. A broker fixture preserves the unknown outcome and late
+  receipt of a write during retirement and prevents another dispatch.
 
 ## D21: Model context and orchestration
 
@@ -934,7 +940,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D17 | Paired owner-journal paging | Contracts/Core focused tests (33 passed), Daemon runtime and Gateway tests (11 passed), Remote Protocol and Remote Client tests (43 and 13 passed) | [Task event projection](../../packages/core/src/device-task-event-projector.ts), [Gateway fixture](../../packages/daemon/test/device-remote-facade.test.ts), [Mobile journal](../../apps/mobile/src/features/device-tasks/PcDeviceTaskJournal.tsx) | Local and paired reads share the owner's journal projection. Indexed pages keep a per-task cursor and stable event identities. The authenticated fixture resumes after reconnect, reloads a stale generation and rejects out-of-scope tasks | Live subscription, cross-runtime snapshot exchange, telemetry sampling, backpressure and physical acceptance remain |
 | D18 | Signed Daemon resource imports | Contracts, Core and Daemon builds and typechecks. Core resource and Daemon runtime tests (19 passed) | [Resource store](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Daemon trust and import configuration](ling-device-fabric.md#daemon-resource-imports), [Local integration test](../../packages/daemon/test/device-support-runtime.test.ts) | Daemon validates an Ed25519-signed manifest and its payload before committing the active revision. Local import, replay, update, rollback and disable are exercised end to end. A corrupted, incompatible or untrusted rollback leaves the active revision intact | Remote signed delivery, platform-specific runtime activation, production adapter installation and physical acceptance remain |
 | D19 | Durable Daemon dispatch stop | Contracts/Core/Daemon builds and typechecks. Core broker, Fabric and Daemon runtime suites (42 passed) | [Target dispatch and stop](../../packages/core/src/device-support.ts), [Safety evaluator](../../packages/core/src/device-fabric.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | An authenticated local operator can stop a target. SQLite retains the stop through reopen, blocks new writes, allows later diagnostics and preserves late evidence after a revision-checked clear. Physical-state evaluation rejects stale or foreign facts | Mobile and Edge stop propagation, target-controller integration and physical safety acceptance remain |
-| D20 | Daemon Fleet health projection | Core/Daemon builds and typechecks. Core Fabric and Daemon runtime suites | [Fleet projection](../../packages/core/src/device-fabric.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | The authenticated Fleet view joins stored profile and capability observations with matching Edge enrollment. A local PC diagnosis projects a healthy device and its snapshot. Separate Edge health and last-seen evidence remain visible | Compatibility by supported firmware range, upgrade, restore, retirement and field transfer acceptance remain |
+| D20 | Daemon Fleet projection and registry retirement | Contracts, Core and Daemon builds and typechecks. Broker and Daemon runtime tests (41 passed) | [Fleet projection](../../packages/core/src/device-fabric.ts), [Retirement route](../../packages/daemon/src/features/device-support/routes.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | Fleet reports separately observed device and runtime health. The authenticated route rejects stale retirement, records an exact decision and denies new device work. SQLite keeps the original task, snapshot and attempt reports. An interrupted write retains its receipt and unknown outcome. | Client lifecycle workflows, supported firmware compatibility, upgrade, restore and field transfer/retirement acceptance remain |
 | D21 | `f9f0f8ab5` plus planner authority and observation projection | Core/Daemon builds and typechecks. Device planning and runtime fixtures pass | [Owner context](../../packages/core/src/device-task-planning-context.ts), [Planner acceptance](../../packages/core/src/device-orchestration.ts), [Diagnosis projection](../../packages/core/src/device-diagnosis.ts), [Loopback provider test](../../packages/daemon/test/device-support-runtime.test.ts) | Planning acceptance binds provider and runner revisions to the task owner, current target snapshots and context references. The context builder excludes stale, sensitive, malformed and unprojectable device output from facts while retaining bounded untrusted references. | Active-task provider handoff, live provider acceptance, project build and cross-runtime model planning remain |
 | D22 | Daemon conformance reports | Contracts, Core and Daemon build and typecheck. Focused Core and Daemon suites (56 passed) | [Report projection](../../packages/core/src/device-task-conformance.ts), [Local API and SQLite fixture](../../packages/daemon/test/device-support-runtime.test.ts), [Reconciliation fixture](../../packages/core/test/device-support.test.ts) | The authenticated loopback route captures and reloads an immutable report for an attempt. Reopening SQLite reproduces its binding and receipt checks. A verified readback creates a new report, with the same attempt and a new journal sequence. The stored earlier report remains available. | Conversation, protocol capture and Mobile/Edge trace integration, cross-runtime and field network conformance remain |
 

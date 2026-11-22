@@ -11,7 +11,7 @@ import { WebSocketServer } from "ws";
 
 import type {
   DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
-  DeviceProfileV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
+  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
@@ -619,6 +619,41 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.throws(() => buildOwnedDevicePlanningInput({ ...input, workspaceId: "elsewhere" }), /outside the workspace/);
   } finally {
     journal.close();
+  }
+
+  const retirementUrl = stopUrl.replace(/dispatch-stop$/u, "retirement");
+  assert.equal((await fetch(retirementUrl)).status, 401);
+  const preview = await fetch(retirementUrl, { headers });
+  assert.equal(preview.status, 200);
+  const { lifecycleStatus, profileRevision, connectionRevision } = await preview.json() as DeviceRetirementStateV1;
+  assert.equal(lifecycleStatus, "healthy");
+  const confirm = (revision: string, extraHeaders: Record<string, string> = {}) => fetch(retirementUrl, {
+    method: "PUT", headers: { ...headers, ...extraHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedProfileRevision: profileRevision, expectedConnectionRevision: revision }),
+  });
+  assert.equal((await confirm(connectionRevision, { Origin: "https://example.invalid" })).status, 403);
+  assert.equal((await confirm("stale")).status, 409);
+  const retired = await confirm(connectionRevision);
+  assert.equal(retired.status, 200);
+  const retirement = await retired.json() as DeviceRetirementV1;
+  assert.equal(retirement.previousStatus, "healthy");
+  assert.deepEqual(await (await confirm(connectionRevision)).json(), retirement);
+  const retiredFleet = await (await fetch(fleetUrl, { headers })).json() as DeviceFleetHealthProjectionV1;
+  assert.equal(retiredFleet.items[0]?.health, "retired");
+  assert.equal(retiredFleet.items[0]?.capabilitySnapshotId, undefined);
+  const freshDiagnosis = await fetch(url, { method: "POST", headers });
+  assert.equal(freshDiagnosis.status, 403);
+  assert.deepEqual(await freshDiagnosis.json(), { error: "permission_denied" });
+  assert.deepEqual(await (await fetch(traceUrl, { headers })).json(), trace);
+  assert.deepEqual(await (await fetch(captureUrl, { headers })).json(), conformance);
+  const reopened = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    assert.deepEqual(reopened.getDeviceRetirementState(deviceId, DEFAULT_WORKSPACE_ID), {
+      deviceId, profileRevision, connectionRevision, lifecycleStatus: "retired", retirement,
+    });
+    assert.ok(reopened.getRecordedCapabilitySnapshot(deviceId, snapshotEvidence.snapshotId));
+  } finally {
+    reopened.close();
   }
 });
 

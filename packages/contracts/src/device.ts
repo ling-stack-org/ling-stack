@@ -325,6 +325,24 @@ export interface DeviceDispatchStopV1 {
   readonly changedAt?: string;
 }
 
+export interface DeviceRetirementV1 {
+  readonly deviceId: string;
+  readonly workspaceId: string;
+  readonly profileRevision: string;
+  readonly connectionRevision: string;
+  readonly previousStatus: DeviceLifecycleStatusV1;
+  readonly retiredAt: string;
+  readonly stoppedTaskId?: string;
+}
+
+export interface DeviceRetirementStateV1 {
+  readonly deviceId: string;
+  readonly profileRevision: string;
+  readonly connectionRevision: string;
+  readonly lifecycleStatus: DeviceLifecycleStatusV1;
+  readonly retirement?: DeviceRetirementV1;
+}
+
 /** Authority observed by the owning broker at admission. */
 export interface DeviceActionAuthorityV1 {
   readonly workspaceId: string;

@@ -13,6 +13,8 @@ import {
   type DeviceObservationV1,
   type DevicePlannerAcceptanceV1,
   type DeviceProfileV1,
+  type DeviceRetirementStateV1,
+  type DeviceRetirementV1,
   type DeviceTaskAttemptV1,
   type DeviceTaskReconciliationV1,
   type DeviceTaskStatusV1,
@@ -30,7 +32,7 @@ import {
 
 import { DeviceBrokerError, type DeviceSupportStoreAttemptRecord } from "../../device-support.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
-import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
+import { readSqliteSnapshot, withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
 export interface DeviceSupportStoreOptions {
   readonly databasePath?: string;
@@ -138,10 +140,65 @@ export class SqliteDeviceSupportStore {
 
   revokeDevice(deviceId: string, now: string): DeviceProfileV1 {
     const profile = this.requireDevice(deviceId);
+    if (profile.device.lifecycleStatus === "retired") return profile;
     const revoked = { ...profile, device: { ...profile.device, lifecycleStatus: "revoked" as const, lastSeenAt: now } };
-    this.database.prepare("UPDATE device_registry SET lifecycle_status='revoked', profile_json=?, revoked_at=?, updated_at=? WHERE device_id=?")
+    const result = this.database.prepare("UPDATE device_registry SET lifecycle_status='revoked', profile_json=?, revoked_at=?, updated_at=? WHERE device_id=? AND lifecycle_status<>'retired'")
       .run(JSON.stringify(revoked), now, now, deviceId);
-    return revoked;
+    return result.changes === 1 ? revoked : this.requireDevice(deviceId);
+  }
+
+  getDeviceRetirementState(deviceId: string, workspaceId: string): DeviceRetirementStateV1 {
+    return readSqliteSnapshot(this.database, () => {
+      const profile = this.getDevice(deviceId);
+      if (profile?.device.ownerScope !== workspaceId) {
+        throw new DeviceBrokerError("missing_target", "device is unavailable in this workspace");
+      }
+      const row = this.database.prepare(`
+        SELECT device.connection_revision, retirement.record_json
+        FROM device_registry AS device LEFT JOIN device_retirements AS retirement USING (device_id)
+        WHERE device.device_id=?
+      `).get(deviceId) as Row;
+      const retirement = typeof row.record_json === "string" ? JSON.parse(row.record_json) as DeviceRetirementV1 : undefined;
+      return {
+        deviceId, profileRevision: profile.profileRevision, connectionRevision: readString(row, "connection_revision"),
+        lifecycleStatus: profile.device.lifecycleStatus, ...(retirement ? { retirement } : {}),
+      };
+    });
+  }
+
+  retireDevice(input: {
+    readonly deviceId: string;
+    readonly workspaceId: string;
+    readonly expectedProfileRevision: string;
+    readonly expectedConnectionRevision: string;
+    readonly now: string;
+  }): { readonly retirement: DeviceRetirementV1; readonly stoppingTaskId?: string } {
+    return this.withWriteTransaction(() => {
+      const current = this.getDeviceRetirementState(input.deviceId, input.workspaceId);
+      if (current.profileRevision !== input.expectedProfileRevision || current.connectionRevision !== input.expectedConnectionRevision) {
+        throw new DeviceBrokerError("target_changed", "device profile or connection changed");
+      }
+      if (current.retirement) return { retirement: current.retirement };
+      if (current.lifecycleStatus === "retired") {
+        throw new DeviceBrokerError("target_changed", "device is already retired");
+      }
+      if (!Number.isFinite(Date.parse(input.now))) {
+        throw new DeviceBrokerError("invalid_request", "device retirement time is invalid");
+      }
+      this.database.prepare(`
+        UPDATE device_registry SET lifecycle_status='retired', capability_snapshot_json=NULL, updated_at=? WHERE device_id=?
+      `).run(input.now, input.deviceId);
+      const stoppingTaskId = this.stopLeasedDaemonTaskInTransaction(input.deviceId, input.now);
+      const retirement: DeviceRetirementV1 = {
+        deviceId: input.deviceId, workspaceId: input.workspaceId,
+        profileRevision: current.profileRevision, connectionRevision: current.connectionRevision,
+        previousStatus: current.lifecycleStatus, retiredAt: input.now,
+        ...(stoppingTaskId ? { stoppedTaskId: stoppingTaskId } : {}),
+      };
+      this.database.prepare("INSERT INTO device_retirements(device_id,record_json) VALUES(?,?)")
+        .run(input.deviceId, JSON.stringify(retirement));
+      return { retirement, stoppingTaskId };
+    });
   }
 
   markDeviceOffline(deviceId: string, now: string): void {
@@ -475,14 +532,17 @@ export class SqliteDeviceSupportStore {
           ON CONFLICT(device_id) DO UPDATE SET active=excluded.active,revision=excluded.revision,changed_at=excluded.changed_at
         `).run(stop.deviceId, stop.active ? 1 : 0, stop.revision, input.now);
       }
-      if (!stop.active) return { stop };
-      const row = this.database.prepare("SELECT task_id FROM device_target_leases WHERE target_device_id=? AND attempt_id IS NOT NULL")
-        .get(stop.deviceId) as Row | undefined;
-      const task = row ? this.getTask(readString(row, "task_id")) : undefined;
-      if (task?.ownerKind !== "daemon") return { stop };
-      this.stopDaemonTaskInTransaction(task, input.now);
-      return { stop, stoppingTaskId: task.id };
+      return stop.active ? { stop, stoppingTaskId: this.stopLeasedDaemonTaskInTransaction(stop.deviceId, input.now) } : { stop };
     });
+  }
+
+  private stopLeasedDaemonTaskInTransaction(deviceId: string, now: string): string | undefined {
+    const row = this.database.prepare("SELECT task_id FROM device_target_leases WHERE target_device_id=? AND attempt_id IS NOT NULL")
+      .get(deviceId) as Row | undefined;
+    const task = row ? this.getTask(readString(row, "task_id")) : undefined;
+    if (task?.ownerKind !== "daemon") return undefined;
+    this.stopDaemonTaskInTransaction(task, now);
+    return task.id;
   }
 
   stopDaemonTask(taskId: string, now: string): DeviceTaskV1 {
@@ -688,6 +748,10 @@ export class SqliteDeviceSupportStore {
         active INTEGER NOT NULL CHECK(active IN (0, 1)),
         revision INTEGER NOT NULL,
         changed_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_retirements (
+        device_id TEXT PRIMARY KEY NOT NULL REFERENCES device_registry(device_id),
+        record_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_device_task_attempts_task ON device_task_attempts(task_id,created_at);
       CREATE INDEX IF NOT EXISTS idx_device_task_events_task ON device_task_events(task_id,sequence);

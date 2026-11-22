@@ -415,6 +415,15 @@ and adapter revisions, known firmware and the matching capability snapshot.
 An enrolled Edge Runtime contributes its revision and last-seen time separately
 from the device observation. [Fleet projection](../../packages/core/src/device-fabric.ts)
 
+The local Daemon exposes `GET /v1/device-support/devices/:deviceId/retirement` for
+the retirement preview. The corresponding `PUT` takes
+`expectedProfileRevision` and `expectedConnectionRevision` from that preview.
+Retirement invalidates the live capability snapshot and stops the leased task
+in the same journal transaction. Repeating the confirmed request returns the
+recorded retirement. A dispatched write keeps its attempt and any late receipt
+with an unknown outcome. Historical journal, trace and conformance reads retain
+their workspace scope. [Daemon routes](../../packages/daemon/src/features/device-support/routes.ts)
+
 An ownership transfer revokes the previous authorization and validates the new holder
 and credentials before offering more actions. Ongoing or unknown attempts remain
 visible to the authority responsible for their reconciliation. An access grant can
