@@ -30,11 +30,11 @@ import {
   authProofSigningBytes,
   authProofSigningInput,
   decodeBase64Url,
-  domainSeparatedCanonicalBytes,
   encodeBase64Url,
   encodePairingQrV1,
   fingerprintPublicJwkSync,
   hmacSha256,
+  lingServerPairingMigrationSigningBytes,
   pairingAcceptedSigningBytes,
   pairingAcceptedSigningInput,
   pairingChallengeSigningBytes,
@@ -330,7 +330,7 @@ export class RemotePairingAuthService {
 
   confirmLingServerPairingMigration(journal: LingServerPairingMigrationJournal, value: unknown): LingServerPairingMigrationV1 {
     return journal.confirm(value, this.requirePairedIdentity(), DEFAULT_WORKSPACE_ID, confirmation =>
-      this.sign(domainSeparatedCanonicalBytes("ling.server.pairing_migration.v1", confirmation)));
+      this.sign(lingServerPairingMigrationSigningBytes(confirmation)));
   }
 
   private requirePairedIdentity(): LingServerPairingIdentityV1 {

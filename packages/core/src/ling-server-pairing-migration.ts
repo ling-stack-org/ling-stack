@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import {
+  LING_SERVER_PAIRING_MIGRATION_LIFETIME_MS_V1, LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1,
   REMOTE_PROTOCOL_LIMITS, REMOTE_PROTOCOL_VERSION,
+  type LingServerConfirmedPairingMigrationV1,
   type LingServerPairingIdentityV1,
   type LingServerPairingMigrationProposalV1,
   type LingServerPairingMigrationV1,
@@ -11,11 +13,7 @@ import { DeviceFabricError } from "./device-fabric.js";
 import type { RemoteCommandReceipt } from "./remote-access-types.js";
 import type { SqliteLingServerStore } from "./storage/sqlite/ling-server-store.js";
 
-const confirmationLifetimeMs = 5 * 60_000;
-const maxRetainedReceipts = 128;
-
-type ConfirmedMigration = Extract<LingServerPairingMigrationV1, { status: "confirmed" }>;
-type UnsignedConfirmation = Omit<ConfirmedMigration, "status" | "gatewaySignature">;
+type UnsignedConfirmation = Omit<LingServerConfirmedPairingMigrationV1, "status" | "gatewaySignature">;
 
 /** Records a local Gateway decision against its current pairing and command journal. */
 export class LingServerPairingMigrationJournal {
@@ -33,7 +31,7 @@ export class LingServerPairingMigrationJournal {
     const request = exactRecord(value, ["routingProfile", "retainedCommandIds"]);
     const routingProfile = readRoutingProfile(request.routingProfile);
     const ids = request.retainedCommandIds;
-    if (!Array.isArray(ids) || ids.length > maxRetainedReceipts || !ids.every(isIdentifier)
+    if (!Array.isArray(ids) || ids.length > LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1 || !ids.every(isIdentifier)
       || new Set(ids).size !== ids.length) {
       throw new DeviceFabricError("invalid_graph", "retained command ids are invalid");
     }
@@ -46,7 +44,7 @@ export class LingServerPairingMigrationJournal {
         routingProfile,
         retainedReceipts: this.readRetainedReceipts([...ids].sort(), oldPairing.mobileDeviceId, workspaceId),
         createdAt,
-        expiresAt: new Date(Date.parse(createdAt) + confirmationLifetimeMs).toISOString(),
+        expiresAt: new Date(Date.parse(createdAt) + LING_SERVER_PAIRING_MIGRATION_LIFETIME_MS_V1).toISOString(),
       };
       const confirmationDigest = createHash("sha256").update(JSON.stringify(["ling.server.pairing_migration.v1", proposal])).digest("hex");
       const pending = { ...proposal, confirmationDigest, status: "pending" as const };
@@ -60,7 +58,7 @@ export class LingServerPairingMigrationJournal {
     currentPairing: LingServerPairingIdentityV1,
     workspaceId: string,
     sign: (confirmation: UnsignedConfirmation) => string,
-  ): ConfirmedMigration {
+  ): LingServerConfirmedPairingMigrationV1 {
     const request = exactRecord(value, ["migrationId", "confirmationDigest"]);
     const { migrationId, confirmationDigest } = request;
     if (!isIdentifier(migrationId) || typeof confirmationDigest !== "string" || !/^[a-f0-9]{64}$/u.test(confirmationDigest)) {
@@ -84,7 +82,7 @@ export class LingServerPairingMigrationJournal {
       }
       const { status: _status, ...proposal } = migration;
       const unsigned = { ...proposal, confirmedAt };
-      const confirmed: ConfirmedMigration = { ...unsigned, status: "confirmed", gatewaySignature: sign(unsigned) };
+      const confirmed: LingServerConfirmedPairingMigrationV1 = { ...unsigned, status: "confirmed", gatewaySignature: sign(unsigned) };
       this.options.store.savePairingMigration(confirmed);
       return confirmed;
     });

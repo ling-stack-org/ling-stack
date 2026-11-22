@@ -3,6 +3,8 @@ import type { RemoteP256PublicJwkV1 } from "./remote-access.js";
 
 export const LING_SERVER_PEER_FRAME_DEFAULT_BYTES_V1 = 256 * 1024;
 export const LING_SERVER_PEER_FRAME_MAX_BYTES_V1 = 4 * 1024 * 1024;
+export const LING_SERVER_PAIRING_MIGRATION_LIFETIME_MS_V1 = 5 * 60_000;
+export const LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1 = 128;
 
 export interface LingServerInstallationV1 {
   readonly installationId: string;
@@ -124,10 +126,26 @@ export interface LingServerPairingMigrationProposalV1 {
   readonly expiresAt: string;
 }
 
-export type LingServerPairingMigrationV1 = LingServerPairingMigrationProposalV1 & (
-  | { readonly status: "pending" }
-  | { readonly status: "confirmed"; readonly confirmedAt: string; readonly gatewaySignature: string }
-);
+export type LingServerConfirmedPairingMigrationV1 = LingServerPairingMigrationProposalV1 & {
+  readonly status: "confirmed";
+  readonly confirmedAt: string;
+  readonly gatewaySignature: string;
+};
+
+export type LingServerPairingMigrationV1 =
+  | (LingServerPairingMigrationProposalV1 & { readonly status: "pending" })
+  | LingServerConfirmedPairingMigrationV1;
+
+export interface LingServerPairingMigrationPublicationRequestV1 {
+  readonly confirmation: LingServerConfirmedPairingMigrationV1;
+  readonly gatewayPublicKeyJwk: RemoteP256PublicJwkV1;
+}
+
+export interface LingServerPairingMigrationPublicationV1 {
+  readonly confirmation: LingServerConfirmedPairingMigrationV1;
+  readonly binding: LingServerPeerBindingV1;
+  readonly publishedAt: string;
+}
 
 export type LingServerPeerRoleV1 = "gateway" | "mobile";
 export type LingServerTransportRouteV1 = "lan" | "direct" | "relay";

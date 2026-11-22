@@ -1,9 +1,15 @@
-import { timingSafeEqual } from "node:crypto";
+import { createPublicKey, timingSafeEqual, verify } from "node:crypto";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
 import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
-import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerInstallationV1, type LingServerPeerBindingV1, type LingServerRouteAttemptV1 } from "@ling-stack/contracts";
-import { RemoteProtocolError } from "@ling-stack/remote-protocol";
+import {
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
+  type LingServerPeerBindingV1, type LingServerRouteAttemptV1,
+} from "@ling-stack/contracts";
+import {
+  decodeBase64Url, lingServerPairingMigrationSigningBytes, matchesPublicJwkFingerprint, RemoteProtocolError,
+  validateLingServerPairingMigrationPublicationRequestV1,
+} from "@ling-stack/remote-protocol";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { LingServerSignaling } from "./signaling.js";
 
@@ -161,6 +167,10 @@ export class LingServerControlPlane {
         writeJson(response, 200, this.registry.bindPeers(requireBody<LingServerPeerBindingV1>(body)));
         return;
       }
+      if (request.method === "POST" && url.pathname === "/v1/pairing-migrations") {
+        this.publishPairingMigration(body, response);
+        return;
+      }
       const revoke = /^\/v1\/bindings\/([^/]+)\/revoke$/u.exec(url.pathname);
       if (request.method === "POST" && revoke) {
         const input = requireBody<{ readonly revision: number }>(body);
@@ -244,6 +254,22 @@ export class LingServerControlPlane {
     }
   }
 
+  private publishPairingMigration(body: unknown, response: ServerResponse): void {
+    try {
+      const publication = validateLingServerPairingMigrationPublicationRequestV1(body);
+      if (!verifyPairingMigration(publication)) {
+        writeJson(response, 403, { error: "pairing_migration_denied" });
+        return;
+      }
+      writeJson(response, 200, this.registry.publishPairingMigration(publication.confirmation, this.#now()));
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_pairing_migration" });
+      else if (error instanceof DeviceFabricError && error.code === "revision_conflict") writeJson(response, 409, { error: error.code });
+      else if (error instanceof DeviceFabricError) writeJson(response, 403, { error: "pairing_migration_denied" });
+      else writeJson(response, 500, { error: "pairing_migration_unavailable" });
+    }
+  }
+
   private async exchangeSignaling(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const body = await readJson(request).catch(() => undefined);
     if (body === undefined) {
@@ -263,6 +289,17 @@ export class LingServerControlPlane {
         writeJson(response, status, { error: status === 403 ? "signaling_denied" : status === 503 ? "signaling_unavailable" : error.code });
       } else writeJson(response, 503, { error: "signaling_unavailable" });
     }
+  }
+}
+
+function verifyPairingMigration(publication: LingServerPairingMigrationPublicationRequestV1): boolean {
+  const { confirmation: { status: _status, gatewaySignature, ...unsigned }, gatewayPublicKeyJwk } = publication;
+  if (!matchesPublicJwkFingerprint(gatewayPublicKeyJwk, unsigned.oldPairing.gatewayKeyFingerprint)) return false;
+  try {
+    const key = createPublicKey({ format: "jwk", key: gatewayPublicKeyJwk });
+    return verify("sha256", lingServerPairingMigrationSigningBytes(unsigned), { key, dsaEncoding: "ieee-p1363" }, decodeBase64Url(gatewaySignature));
+  } catch {
+    return false;
   }
 }
 

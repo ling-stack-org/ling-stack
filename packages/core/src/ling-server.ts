@@ -3,7 +3,9 @@ import {
   LING_SERVER_PEER_FRAME_DEFAULT_BYTES_V1,
   LING_SERVER_PEER_FRAME_MAX_BYTES_V1,
   type LingServerCommandReceiptV1,
+  type LingServerConfirmedPairingMigrationV1,
   type LingServerInstallationV1,
+  type LingServerPairingMigrationPublicationV1,
   type LingServerPeerBindingV1,
   type LingServerPeerFrameV1,
   type LingServerPeerResumeCursorV1,
@@ -22,6 +24,7 @@ export class LingServerPeerRegistry {
   readonly #installations = new Map<string, LingServerInstallationV1>();
   readonly #bindings = new Map<string, LingServerPeerBindingV1>();
   readonly #routes = new Map<string, LingServerRouteAttemptV1>();
+  readonly #pairingPublications = new Map<string, LingServerPairingMigrationPublicationV1>();
 
   readonly #store?: SqliteLingServerStore;
 
@@ -55,29 +58,40 @@ export class LingServerPeerRegistry {
   }
 
   bindPeers(binding: LingServerPeerBindingV1): LingServerPeerBindingV1 {
+    return this.write(() => this.bindPeerRevision(binding));
+  }
+
+  publishPairingMigration(confirmation: LingServerConfirmedPairingMigrationV1, now: string): LingServerPairingMigrationPublicationV1 {
     return this.write(() => {
-      if (this.getInstallation(binding.installationId)?.status !== "active") {
-        throw new DeviceFabricError("target_missing", "Ling Server installation is unavailable");
+      const { migrationId, routingProfile: profile, oldPairing } = confirmation;
+      const installation = this.getInstallation(profile.installationId);
+      if (installation?.status !== "active" || installation.revision !== profile.installationRevision
+        || installation.serverOrigin !== profile.serverOrigin || installation.applicationKeyFingerprint !== profile.applicationKeyFingerprint) {
+        throw new DeviceFabricError("safety_denied", "pairing migration is outside the active installation");
       }
-      const current = this.getBinding(binding.bindingId);
-      if (!Number.isSafeInteger(binding.revision) || binding.revision <= (current?.revision ?? 0)
-        || !Number.isSafeInteger(binding.epoch) || binding.epoch < (current?.epoch ?? 1)) {
-        throw new DeviceFabricError("revision_conflict", "peer binding revision or epoch regressed");
+      const binding = this.getBinding(profile.bindingId);
+      const prior = this.#store ? this.#store.getPairingPublication(migrationId) : this.#pairingPublications.get(migrationId);
+      if (prior) {
+        if (!isDeepStrictEqual(prior.confirmation, confirmation) || !isDeepStrictEqual(prior.binding, binding)) {
+          throw new DeviceFabricError("revision_conflict", "published pairing or its active binding changed");
+        }
+        return prior;
       }
-      if (current && binding.epoch === current.epoch && (
-        binding.status !== current.status || binding.installationId !== current.installationId
-        || binding.gatewayId !== current.gatewayId || binding.mobileDeviceId !== current.mobileDeviceId
-        || binding.gatewayKeyFingerprint !== current.gatewayKeyFingerprint || binding.mobileKeyFingerprint !== current.mobileKeyFingerprint
-      )) {
-        throw new DeviceFabricError("revision_conflict", "peer authority changes require a new epoch");
+      const admittedAt = Date.parse(now);
+      if (!(Date.parse(confirmation.confirmedAt) <= admittedAt && admittedAt < Date.parse(confirmation.expiresAt))) {
+        throw new DeviceFabricError("safety_denied", "pairing migration publication window expired");
       }
-      const knownBindings = this.#store?.listBindings() ?? [...this.#bindings.values()];
-      if (binding.status === "active" && knownBindings.some(item =>
-        item.bindingId !== binding.bindingId && item.gatewayId === binding.gatewayId && item.status === "active")) {
-        throw new DeviceFabricError("revision_conflict", "gateway already has an active peer binding");
-      }
-      this.saveBinding(binding);
-      return binding;
+      if (binding) throw new DeviceFabricError("revision_conflict", "pairing migration binding id is in use");
+      const publishedBinding = this.bindPeerRevision({
+        bindingId: profile.bindingId, installationId: profile.installationId,
+        gatewayId: oldPairing.gatewayId, mobileDeviceId: oldPairing.mobileDeviceId,
+        gatewayKeyFingerprint: oldPairing.gatewayKeyFingerprint, mobileKeyFingerprint: oldPairing.mobileKeyFingerprint,
+        epoch: oldPairing.deviceEpoch, revision: 1, status: "active",
+      });
+      const publication = { confirmation, binding: publishedBinding, publishedAt: now };
+      if (this.#store) this.#store.savePairingPublication(publication);
+      else this.#pairingPublications.set(migrationId, publication);
+      return publication;
     });
   }
 
@@ -154,6 +168,31 @@ export class LingServerPeerRegistry {
     if (!route) throw new DeviceFabricError("target_missing", "route attempt is missing");
     this.requireActiveBinding(route.bindingId, route.peerEpoch ?? 1);
     return route;
+  }
+
+  private bindPeerRevision(binding: LingServerPeerBindingV1): LingServerPeerBindingV1 {
+    if (this.getInstallation(binding.installationId)?.status !== "active") {
+      throw new DeviceFabricError("target_missing", "Ling Server installation is unavailable");
+    }
+    const current = this.getBinding(binding.bindingId);
+    if (!Number.isSafeInteger(binding.revision) || binding.revision <= (current?.revision ?? 0)
+      || !Number.isSafeInteger(binding.epoch) || binding.epoch < (current?.epoch ?? 1)) {
+      throw new DeviceFabricError("revision_conflict", "peer binding revision or epoch regressed");
+    }
+    if (current && binding.epoch === current.epoch && (
+      binding.status !== current.status || binding.installationId !== current.installationId
+      || binding.gatewayId !== current.gatewayId || binding.mobileDeviceId !== current.mobileDeviceId
+      || binding.gatewayKeyFingerprint !== current.gatewayKeyFingerprint || binding.mobileKeyFingerprint !== current.mobileKeyFingerprint
+    )) {
+      throw new DeviceFabricError("revision_conflict", "peer authority changes require a new epoch");
+    }
+    const knownBindings = this.#store?.listBindings() ?? [...this.#bindings.values()];
+    if (binding.status === "active" && knownBindings.some(item =>
+      item.bindingId !== binding.bindingId && item.gatewayId === binding.gatewayId && item.status === "active")) {
+      throw new DeviceFabricError("revision_conflict", "gateway already has an active peer binding");
+    }
+    this.saveBinding(binding);
+    return binding;
   }
 
   private saveBinding(binding: LingServerPeerBindingV1): void {

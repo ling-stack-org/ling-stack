@@ -8,6 +8,7 @@ import type {
   LingServerPeerFrameV1,
   LingServerPeerBindingV1,
   LingServerPeerSessionV1,
+  LingServerPairingMigrationPublicationV1,
   LingServerPairingMigrationV1,
   LingServerRouteAttemptV1,
 } from "@ling-stack/contracts";
@@ -67,6 +68,11 @@ export class SqliteLingServerStore {
         migration_id TEXT PRIMARY KEY NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('pending','confirmed')),
         migration_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ling_server_pairing_publications (
+        migration_id TEXT PRIMARY KEY NOT NULL,
+        binding_id TEXT NOT NULL UNIQUE REFERENCES ling_server_bindings(binding_id),
+        publication_json TEXT NOT NULL
       );
     `);
   }
@@ -175,6 +181,16 @@ export class SqliteLingServerStore {
         .run(json, migration.migrationId);
       if (changes !== 1) throw new Error("Pairing migration confirmation did not match a pending record");
     }
+  }
+
+  getPairingPublication(migrationId: string): LingServerPairingMigrationPublicationV1 | undefined {
+    const row = this.database.prepare("SELECT publication_json FROM ling_server_pairing_publications WHERE migration_id=?").get(migrationId) as Row | undefined;
+    return row ? parseJson<LingServerPairingMigrationPublicationV1>(row.publication_json, "Ling Server pairing publication") : undefined;
+  }
+
+  savePairingPublication(publication: LingServerPairingMigrationPublicationV1): void {
+    this.database.prepare("INSERT INTO ling_server_pairing_publications(migration_id,binding_id,publication_json) VALUES(?,?,?)")
+      .run(publication.confirmation.migrationId, publication.binding.bindingId, JSON.stringify(publication));
   }
 
   close(): void { this.database.close(); }

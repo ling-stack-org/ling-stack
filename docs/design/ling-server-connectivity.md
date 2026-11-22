@@ -318,9 +318,18 @@ and receipt references before signing the exact record under
 `ling.server.pairing_migration.v1`. SQLite retains the signature and returns the
 same record for an exact retry from the active pairing. The original Gateway origin
 continues to serve its existing session and the owner journal retains the original
-receipts. Publication to Ling Server, phone pin verification and route activation
-are subsequent steps of the migration workflow.
+receipts.
 [Gateway migration entry point](../../packages/daemon/src/features/remote-access/controller.ts)
+
+On the Ling Server admin listener, `POST /v1/pairing-migrations` accepts the
+confirmed record as `confirmation` and the existing Gateway's P-256 public key as
+`gatewayPublicKeyJwk`. It checks the Gateway signature, the confirmation lifetime,
+and the active installation's origin, application key fingerprint and revision.
+The signed peer keys and epoch become the new binding. The control plane commits
+the binding and publication receipt in one SQLite transaction. An exact retry
+returns the original receipt while the binding and installation stay current.
+Phone pin verification and route activation follow publication.
+[Ling Server control plane](../../packages/daemon/src/features/ling-server/control-plane.ts)
 
 ### 6.2 Reconnect and cursors
 

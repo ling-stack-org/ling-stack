@@ -7,14 +7,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { LingServerPairingMigrationRequestV1, LingServerPairingMigrationV1 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
+import type {
+  LingServerPairingMigrationPublicationRequestV1, LingServerPairingMigrationPublicationV1,
+  LingServerPairingMigrationRequestV1, LingServerPairingMigrationV1,
+} from "@ling-stack/contracts";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, SqliteLingServerStore } from "@ling-stack/core";
 import {
   domainSeparatedCanonicalBytes, encodeBase64Url, fingerprintPublicJwkSync, sha256, validateRemoteP256PublicJwkV1,
 } from "@ling-stack/remote-protocol";
 import { RemoteAccessController } from "../dist/features/remote-access/controller.js";
 import { createRemoteGatewayIdentity } from "../dist/features/remote-access/pairing-auth-service.js";
 import { RemoteAccessStateStore } from "../dist/features/remote-access/state-store.js";
+import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 
 const now = "2026-11-22T00:00:00.000Z";
 
@@ -116,6 +120,70 @@ test("local Gateway management confirms a server profile against the current pai
   const replay = store.commitRemoteConversationSend(message, now);
   assert.equal(replay.idempotentReplay, true);
   assert.equal(replay.messageId, original.messageId);
+
+  await t.test("the control plane publishes the exact signed binding and receipt atomically", async t => {
+    const databasePath = join(root, "control.sqlite");
+    const token = "fixture-server-operator";
+    let clock = now;
+    const makeServer = () => new LingServerControlPlane({ authToken: token, databasePath, now: () => clock });
+    let control = makeServer();
+    t.after(async () => await control.stop());
+    let address = await control.start();
+    const send = (path: string, body: unknown, authenticated = true) => fetch(`http://${address.host}:${address.port}/v1/${path}`, {
+      method: "POST", body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json", ...(authenticated ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+    const { routingProfile } = record;
+    const installation = {
+      installationId: routingProfile.installationId, serverOrigin: routingProfile.serverOrigin,
+      applicationKeyFingerprint: routingProfile.applicationKeyFingerprint, revision: routingProfile.installationRevision,
+      status: "active" as const,
+    };
+    const publication: LingServerPairingMigrationPublicationRequestV1 = { confirmation: record, gatewayPublicKeyJwk: identity.publicKeyJwk };
+    const publish = (input: unknown = publication) => send("pairing-migrations", input);
+
+    assert.equal((await send("pairing-migrations", publication, false)).status, 401);
+    assert.equal((await send("installations", { ...installation, revision: 1 })).status, 200);
+    assert.equal((await publish()).status, 403);
+    assert.equal((await send("installations", installation)).status, 200);
+    assert.equal((await publish({ ...publication, confirmation: preview })).status, 400);
+    assert.equal((await publish({ ...publication, gatewayPublicKeyJwk: pairedDevice.publicKeyJwk })).status, 403);
+    assert.equal((await publish({ ...publication, confirmation: { ...record, retainedReceipts: [] } })).status, 403);
+    assert.equal((await publish({ ...publication, confirmation: { ...record, oldPairing: { ...record.oldPairing, deviceEpoch: 5 } } })).status, 403);
+    clock = record.expiresAt;
+    assert.equal((await publish()).status, 403);
+    clock = now;
+    assert.equal(control.registry.getBinding(routingProfile.bindingId), undefined);
+
+    const sqlite = new SqliteLingServerStore({ databasePath });
+    try {
+      sqlite.database.exec(`CREATE TRIGGER fail_publication BEFORE INSERT ON ling_server_pairing_publications
+        BEGIN SELECT RAISE(ABORT, 'fixture publication failed'); END`);
+      assert.equal((await publish()).status, 500);
+      assert.equal(control.registry.getBinding(routingProfile.bindingId), undefined);
+      assert.equal(sqlite.getPairingPublication(record.migrationId), undefined);
+      sqlite.database.exec("DROP TRIGGER fail_publication");
+    } finally {
+      sqlite.close();
+    }
+    const response = await publish();
+    assert.equal(response.status, 200);
+    const receipt = await response.json() as LingServerPairingMigrationPublicationV1;
+    assert.deepEqual(receipt, { confirmation: record, publishedAt: now, binding: {
+      bindingId: routingProfile.bindingId, installationId: installation.installationId, revision: 1, status: "active",
+      epoch: record.oldPairing.deviceEpoch, gatewayId: identity.gatewayId, mobileDeviceId: pairedDevice.deviceId,
+      gatewayKeyFingerprint: identity.publicKeyFingerprint, mobileKeyFingerprint: pairedDevice.publicKeyFingerprint,
+    } });
+    assert.deepEqual(control.registry.requireActiveBinding(routingProfile.bindingId, pairedDevice.deviceEpoch), receipt.binding);
+    await control.stop();
+    clock = record.expiresAt;
+    control = makeServer();
+    address = await control.start();
+    assert.deepEqual(await (await publish()).json(), receipt);
+    assert.equal((await send(`bindings/${routingProfile.bindingId}/revoke`, { revision: 2 })).status, 200);
+    assert.equal((await publish()).status, 409);
+    assert.equal(control.registry.getBinding(routingProfile.bindingId)?.status, "revoked");
+  });
 
   assert.equal((await post("revoke", {})).status, 200);
   assert.equal((await post(confirmPath, confirmation)).status, 409);
