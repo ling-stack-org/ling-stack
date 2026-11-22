@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { PiRunnerApprovalRequest } from "../dist/types.js";
+import { extensionAPI, type FixtureTool } from "./support/extension-fixture.ts";
+
+type ResultHook = (event: { toolCallId: string; toolName: string; content: unknown; details: unknown; isError: boolean }) => { isError: boolean };
 import { SUPPORTED_PROVIDER_APIS } from "../dist/constants.js";
 import { createLingStackApprovalExtension } from "../dist/extensions/approval.js";
 import { createLingStackBashToolExtension } from "../dist/extensions/bash.js";
@@ -11,8 +15,7 @@ test("runner-pi exposes OpenAI Codex Responses provider support", () => {
 });
 
 test("unified exec bash extension returns daemon handled results", async () => {
-  const registered = [];
-  let resultHook;
+  const registered: FixtureTool[] = [];
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
@@ -28,7 +31,7 @@ test("unified exec bash extension returns daemon handled results", async () => {
         },
       };
     },
-  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
 
   assert.equal(registered.length, 1);
   assert.deepEqual(registered[0].parameters.properties.prefix_rule.items, { type: "string" });
@@ -38,8 +41,8 @@ test("unified exec bash extension returns daemon handled results", async () => {
 });
 
 test("unified exec bash advertises the Host cwd contract without requiring a command rewrite", () => {
-  const registered = [];
-  createLingStackBashToolExtension(baseOptions())({ on() {}, registerTool: tool => registered.push(tool) });
+  const registered: FixtureTool[] = [];
+  createLingStackBashToolExtension(baseOptions())(extensionAPI(registered));
   const tool = registered[0];
   assert.equal(tool.parameters.properties.cwd?.type, "string");
   assert.equal(tool.parameters.properties.cwd?.minLength, 1);
@@ -50,29 +53,32 @@ test("unified exec bash advertises the Host cwd contract without requiring a com
 });
 
 test("unified exec bash forwards exact relative or absolute cwd to the Host, never local execution", async () => {
-  const requests = [], registered = [];
-  let resultHook;
+  const requests: PiRunnerApprovalRequest[] = [], registered: FixtureTool[] = [];
+  let resultHook!: ResultHook;
   createLingStackBashToolExtension({
     ...baseOptions(),
     async onApprovalRequired(request) {
       requests.push(structuredClone(request));
       return { approved: false, handledResult: { content: [{ type: "text", text: "Host cwd mismatch" }], isError: true } };
     },
-  })({ on(_event, handler) { resultHook = handler; }, registerTool: tool => registered.push(tool) });
+  })(extensionAPI(registered, (_event, handler) => {
+    resultHook = handler as unknown as ResultHook;
+    return () => undefined;
+  }));
   for (const cwd of ["project", `${process.cwd()}/project`]) {
     const input = { command: "node cli.js ../records.csv --json", cwd, timeout: 3 };
     const result = await registered[0].execute(`cwd-${requests.length}`, input);
-    assert.deepEqual(requests.at(-1).input, input, "no cd or argv/cwd rewriting before Host authority");
-    assert.equal(requests.at(-1).cwd, process.cwd(), "Runner cwd remains the session workspace root");
-    assert.equal(result.content[0].text, "Host cwd mismatch");
-    assert.equal(resultHook({ toolCallId: requests.at(-1).toolCallId, toolName: "bash", ...result, isError: false }).isError,
+    assert.deepEqual(requests.at(-1)!.input, input, "no cd or argv/cwd rewriting before Host authority");
+    assert.equal(requests.at(-1)!.cwd, process.cwd(), "Runner cwd remains the session workspace root");
+    assert.equal((result.content[0] as { text: string }).text, "Host cwd mismatch");
+    assert.equal(resultHook({ toolCallId: requests.at(-1)!.toolCallId, toolName: "bash", ...result, isError: false }).isError,
       true, "a Host directory denial remains an error at the SDK result hook");
   }
 });
 
 test("unified exec bash extension preserves daemon handled error results", async () => {
-  const registered = [];
-  let resultHook;
+  const registered: FixtureTool[] = [];
+  let resultHook!: ResultHook;
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
@@ -84,7 +90,10 @@ test("unified exec bash extension preserves daemon handled error results", async
         isError: true,
       },
     }),
-  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered, (_event, handler) => {
+    resultHook = handler as unknown as ResultHook;
+    return () => undefined;
+  }));
 
   const result = await registered[0].execute("tool_bash_failed", { command: "exit 2" });
   assert.deepEqual(result.content, [{ type: "text", text: "Command exited 2 in 8ms." }]);
@@ -93,8 +102,8 @@ test("unified exec bash extension preserves daemon handled error results", async
 });
 
 test("unified exec bash extension returns daemon handled denial results", async () => {
-  const registered = [];
-  let resultHook;
+  const registered: FixtureTool[] = [];
+  let resultHook!: ResultHook;
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
@@ -107,22 +116,24 @@ test("unified exec bash extension returns daemon handled denial results", async 
         isError: true,
       },
     }),
-  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered, (_event, handler) => {
+    resultHook = handler as unknown as ResultHook;
+    return () => undefined;
+  }));
 
   const result = await registered[0].execute("tool_bash_denied", { command: "rm -rf out" });
-  assert.equal(result.content[0].text, "Ling Stack policy denied bash.");
+  assert.equal((result.content[0] as { text: string }).text, "Ling Stack policy denied bash.");
   assert.deepEqual(result.details, { unifiedExec: { status: "failed", denied: true } });
   assert.equal(resultHook({ toolCallId: "tool_bash_denied", toolName: "bash", ...result, isError: false }).isError, true);
 });
 
 test("unified exec bash extension fails closed without handled result", async () => {
-  const registered = [];
-  let resultHook;
+  const registered: FixtureTool[] = [];
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
     onApprovalRequired: () => ({ approved: true }),
-  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
+  })(extensionAPI(registered));
 
   await assert.rejects(
     registered[0].execute("tool_bash_missing", { command: "echo missing" }),
@@ -131,14 +142,17 @@ test("unified exec bash extension fails closed without handled result", async ()
 });
 
 test("approval listener skips bash when unified exec owns the tool", async () => {
-  let handler;
+  let handler!: (event: { toolName: string; toolCallId: string; input: unknown }) => Promise<unknown>;
   createLingStackApprovalExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
     onApprovalRequired: () => {
       throw new Error("approval listener should not handle bash");
     },
-  })({ on: (_event, nextHandler) => { handler = nextHandler; } });
+  })(extensionAPI([], (_event, nextHandler) => {
+    handler = nextHandler as unknown as typeof handler;
+    return () => undefined;
+  }));
 
   const result = await handler({ toolName: "bash", toolCallId: "tool_bash", input: { command: "echo ok" } });
   assert.equal(result, undefined);

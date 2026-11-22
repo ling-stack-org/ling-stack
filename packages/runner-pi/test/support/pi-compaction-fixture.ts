@@ -1,11 +1,12 @@
 import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import type { TestContext } from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { type Model, type TranscriptContext, getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
-import { createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { type AgentSession, type AgentSessionEvent, type CompactionSettings, type RetrySettings, type ToolDefinition, createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
-export function response({ text = "Fixture complete.", toolCallId, inputTokens = 100 } = {}) {
+export function response({ text = "Fixture complete.", toolCallId, inputTokens = 100 }: { text?: string; toolCallId?: string; inputTokens?: number } = {}) {
   const delta = toolCallId ? { tool_calls: [{ index: 0, id: toolCallId, type: "function",
     function: { name: "fixture_effect", arguments: "{}" } }] } : { content: text };
   const records = [
@@ -18,12 +19,35 @@ export function response({ text = "Fixture complete.", toolCallId, inputTokens =
   });
 }
 
+type FixtureRequest = {
+  phase: "summary" | "task";
+  index: number;
+  messages: TranscriptContext["messages"];
+  canonicalMessages: ReturnType<SessionManager["buildSessionProjection"]>["messages"];
+  systemPrompt: ReturnType<typeof getCurrentSystemPrompt>;
+  tools: ReturnType<typeof getCurrentTools>;
+  eventIndex: number;
+  signal?: AbortSignal;
+};
+interface FixtureOptions {
+  compaction?: Partial<CompactionSettings>;
+  retry?: Partial<RetrySettings>;
+  task?: (request: FixtureRequest) => Response | Promise<Response> | undefined;
+  summary?: (request: FixtureRequest) => Response | Promise<Response> | undefined;
+  bindRuntime?: (runtime: ModelRuntime) => void;
+  tool?: (request: { toolCallId: string; signal?: AbortSignal }) => Awaited<ReturnType<ToolDefinition["execute"]>> | ReturnType<ToolDefinition["execute"]> | undefined;
+  event?: (event: AgentSessionEvent) => void;
+}
+
 /** Real SDK session/parser/compactor; isolated transport, credentials, resources and temporary effects. */
-export async function compactionFixture(t, options = {}) {
+export async function compactionFixture(t: TestContext, options: FixtureOptions = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-pi-compaction-"));
   const effectPath = join(cwd, "effects.txt");
-  const events = [], requests = [], holds = [];
-  let session, compacting = false;
+  const events: AgentSessionEvent[] = [];
+  const requests: FixtureRequest[] = [];
+  const holds: { promise: Promise<void>; resolve: () => void }[] = [];
+  let session: AgentSession | undefined;
+  let compacting = false;
   t.after(async () => {
     for (const hold of holds) hold.resolve();
     if (session) { session.abortCompaction(); await session.abort(); session.dispose(); }
@@ -40,11 +64,11 @@ export async function compactionFixture(t, options = {}) {
   });
   modelRuntime.registerProvider(provider, {
     api: "openai-completions",
-    streamSimple: (model, context, streamOptions) => stream(model, context, {
+    streamSimple: (model, context, streamOptions) => stream(model as Model<"openai-completions">, context, {
       ...streamOptions,
       fetch: async () => {
         const phase = compacting ? "summary" : "task";
-        const request = { phase, index: requests.filter(item => item.phase === phase).length,
+        const request: FixtureRequest = { phase, index: requests.filter(item => item.phase === phase).length,
           messages: structuredClone(context.messages),
           canonicalMessages: structuredClone(sessionManager.buildSessionProjection().messages),
           systemPrompt: getCurrentSystemPrompt(context.messages), tools: structuredClone(getCurrentTools(context.messages)),
@@ -91,13 +115,13 @@ export async function compactionFixture(t, options = {}) {
   });
   return { session, sessionManager, settingsManager, events, requests,
     hold() {
-      let resolve;
-      const promise = new Promise(accept => { resolve = accept; });
+      let resolve!: () => void;
+      const promise = new Promise<void>(accept => { resolve = accept; });
       const hold = { promise, resolve }; holds.push(hold); return hold;
     },
     async effects() {
       try { return (await readFile(effectPath, "utf8")).trim().split("\n").filter(Boolean); }
-      catch (error) { if (error.code === "ENOENT") return []; throw error; }
+      catch (error) { if (error instanceof Error && "code" in error && error.code === "ENOENT") return []; throw error; }
     },
   };
 }
