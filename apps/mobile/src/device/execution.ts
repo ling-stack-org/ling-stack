@@ -226,11 +226,16 @@ export class MobileDeviceExecution {
         throw new MobileDeviceExecutionError("permission_denied", "device action requires a fresh baseline from its verification capability");
       }
       assertDispatchAllowed();
+      let stopWaiting!: () => void;
+      const interrupted = new Promise<boolean>(resolve => { stopWaiting = () => resolve(false); });
+      signal.addEventListener("abort", stopWaiting, { once: true });
       let verified = false;
       try {
-        verified = await transport.verifyRecoveryPath({ plan, baseline, signal }) === true;
+        verified = await Promise.race([transport.verifyRecoveryPath({ plan, baseline, signal }), interrupted]) === true;
       } catch {
         // The transport can report private endpoint information.
+      } finally {
+        signal.removeEventListener("abort", stopWaiting);
       }
       assertDispatchAllowed();
       if (!verified || !isCurrentTargetObservation(baseline, request.targetDeviceId, this.#now())) {

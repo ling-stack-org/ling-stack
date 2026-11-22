@@ -28,7 +28,7 @@ const time = "2026-11-21T10:00:00.000Z";
 const options = { randomId: async (prefix: string) => `${prefix}_${randomUUID()}`, now: () => time };
 const target = { origin: "https://ha.fixture.example", token: "fixture-credential", entityId: "light.kitchen" };
 
-test("a phone-owned write checks its alternate route and journals a fresh target readback", async t => {
+test("a phone-owned write checks its alternate route and journals a fresh target readback", { timeout: 5_000 }, async t => {
   const profile: DeviceProfileV1 = {
     device: { id: "fixture-board", ownerScope: "owner", displayName: "Fixture board", kind: "hardware", lifecycleStatus: "healthy", profileRevision: "1" },
     adapterId: "fixture-ble", adapterVersion: "1", transports: ["ble"], connectionRefs: ["primary"],
@@ -67,11 +67,15 @@ test("a phone-owned write checks its alternate route and journals a fresh target
     capabilitySnapshotId: snapshot.snapshotId, connectionRevision: snapshot.connectionRevision, policyRevision: "device-policy-v1",
     normalizedInputDigest: digestDeviceRequest(proposal), expiresAt, recoveryScope: recoveryPlan,
   };
-  for (const sameTarget of [false, true]) {
-    await t.test(sameTarget ? "accepts fresh evidence for this device" : "keeps a foreign readback unresolved", async () => {
+  for (const scenario of ["foreign readback", "fresh readback", "suspended route check"]) {
+    await t.test(scenario, async () => {
+      const sameTarget = scenario !== "foreign readback";
+      const suspends = scenario === "suspended route check";
       const storage = new MemoryStorage();
       const journal = createAsyncStorageMobileDeviceJournal(storage, task.ownerId);
       const execution = new MobileDeviceExecution({ journal, ownerId: task.ownerId, now: options.now });
+      const started = Promise.withResolvers<AbortSignal>();
+      const recoveryProof = Promise.withResolvers<boolean>();
       let writes = 0;
       let probes = 0;
       const transport: MobileDeviceTransport = {
@@ -86,6 +90,10 @@ test("a phone-owned write checks its alternate route and journals a fresh target
         },
         async verifyRecoveryPath(input) {
           probes += 1;
+          if (suspends && probes === 1) {
+            started.resolve(input.signal);
+            return recoveryProof.promise;
+          }
           return input.plan.routeRevision === recoveryPlan.routeRevision && input.baseline.subjectId === deviceId;
         },
         async verify({ request }) {
@@ -97,16 +105,30 @@ test("a phone-owned write checks its alternate route and journals a fresh target
       };
       const context = { profile, snapshot, task, transport };
       await execution.execute({ ...context, request: readRequest, finalizeTask: false });
+      await journal.saveTask({ ...task, status: "awaiting_approval" });
       const approved = { ...proposal, approvalId: approval.approvalId, approval };
       await assert.rejects(() => execution.execute({ ...context, request: { ...approved, approval: { ...approval, recoveryScope: undefined } } }), /exact current approval/u);
       assert.equal(probes, 0);
+      if (suspends) {
+        const pending = execution.execute({ ...context, request: approved });
+        const signal = await started.promise;
+        execution.setForeground(false);
+        assert.equal(signal.aborted, true);
+        await assert.rejects(pending, { code: "permission_denied" });
+        assert.equal((await journal.getTask(task.id))?.status, "awaiting_approval");
+        assert.deepEqual((await journal.listAttempts(task.id)).map(record => record.request.actionId), [readRequest.actionId]);
+        assert.equal(writes, 0);
+        recoveryProof.resolve(true);
+        await execution.recoverAfterResume();
+        execution.setForeground(true);
+      }
       const result = await execution.execute({ ...context, request: approved });
       const reopened = createAsyncStorageMobileDeviceJournal(storage, task.ownerId);
       assert.equal((await reopened.getTask(task.id))?.status, sameTarget ? "succeeded" : "unknown");
       assert.equal(result.attempt.recoveryPathVerifiedAt, time);
       assert.deepEqual((await reopened.listObservations(task.id)).map(item => item.id), sameTarget ? ["baseline", "after"] : ["baseline"]);
       assert.equal(writes, 1);
-      assert.equal(probes, 1);
+      assert.equal(probes, suspends ? 2 : 1);
     });
   }
 });

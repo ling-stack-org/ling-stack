@@ -177,7 +177,7 @@ export class DeviceCapabilityBroker {
   readonly policyRevision: string;
   readonly now: () => string;
   readonly accessManager?: DeviceAccessManager;
-  private readonly activeDispatches = new Map<string, AbortController>();
+  private readonly activeOperations = new Map<string, AbortController>();
 
   constructor(options: DeviceSupportBrokerOptions) {
     this.adapters = new DeviceAdapterRegistry();
@@ -270,11 +270,15 @@ export class DeviceCapabilityBroker {
     let admission = this.store.withWriteTransaction(() => this.admitDispatch(request, signal, options));
     if (admission.kind === "verify_recovery") {
       const check = admission;
+      const controller = new AbortController();
+      const recoverySignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+      this.activeOperations.set(check.taskId, controller);
       try {
-        await this.verifyRecoveryPath(check, signal);
+        await this.verifyRecoveryPath(check, recoverySignal);
         const checkedAt = this.now();
-        admission = this.store.withWriteTransaction(() => this.admitDispatch(request, signal, options, { check, checkedAt }));
+        admission = this.store.withWriteTransaction(() => this.admitDispatch(request, recoverySignal, options, { check, checkedAt }));
       } finally {
+        this.activeOperations.delete(check.taskId);
         this.store.releaseTargetLease(check.profile.device.id, check.taskId, check.leaseId);
       }
     }
@@ -291,7 +295,7 @@ export class DeviceCapabilityBroker {
       ...(signal ? [signal] : []),
       ...(recoveryDeadline === undefined ? [] : [recoveryTimeout(recoveryDeadline - Date.parse(this.now()))]),
     ]);
-    this.activeDispatches.set(attempt.taskId, controller);
+    this.activeOperations.set(attempt.taskId, controller);
     try {
       let execution: DeviceActionResultV1 | DeviceAdapterExecutionResult;
       try {
@@ -334,14 +338,14 @@ export class DeviceCapabilityBroker {
         return record;
       });
     } finally {
-      this.activeDispatches.delete(attempt.taskId);
+      this.activeOperations.delete(attempt.taskId);
       this.store.releaseTargetLease(attempt.targetDeviceId, attempt.taskId, attempt.attemptId);
     }
   }
 
   cancelTask(taskId: string): DeviceTaskV1 {
     const task = this.store.stopDaemonTask(taskId, this.now());
-    if (task.status === "unknown") this.activeDispatches.get(taskId)?.abort();
+    if (task.status === "unknown" || task.status === "cancelled") this.activeOperations.get(taskId)?.abort();
     return task;
   }
 
@@ -352,7 +356,7 @@ export class DeviceCapabilityBroker {
     readonly expectedRevision: number;
   }): DeviceDispatchStopV1 {
     const { stop, stoppingTaskId } = this.store.setDispatchStop({ ...input, now: this.now() });
-    if (stoppingTaskId) this.activeDispatches.get(stoppingTaskId)?.abort();
+    if (stoppingTaskId) this.activeOperations.get(stoppingTaskId)?.abort();
     return stop;
   }
 
@@ -406,7 +410,7 @@ export class DeviceCapabilityBroker {
     const controller = new AbortController();
     const deadline = AbortSignal.timeout(admittedReader.timeoutMs);
     const signal = AbortSignal.any(input.signal ? [input.signal, controller.signal, deadline] : [controller.signal, deadline]);
-    this.activeDispatches.set(attempt.taskId, controller);
+    this.activeOperations.set(attempt.taskId, controller);
     const reconciliationId = `device_reconciliation_${randomUUID()}`;
     try {
       let request = admittedRequest;
@@ -476,7 +480,7 @@ export class DeviceCapabilityBroker {
         return record;
       });
     } finally {
-      this.activeDispatches.delete(attempt.taskId);
+      this.activeOperations.delete(attempt.taskId);
       this.store.releaseTargetLease(attempt.targetDeviceId, attempt.taskId, attempt.attemptId);
     }
   }
@@ -641,11 +645,11 @@ export class DeviceCapabilityBroker {
     return { kind: "dispatch", attempt: dispatched.attempt, ...binding };
   }
 
-  private async verifyRecoveryPath(check: DeviceRecoveryCheck, callerSignal?: AbortSignal): Promise<void> {
+  private async verifyRecoveryPath(check: DeviceRecoveryCheck, callerSignal: AbortSignal): Promise<void> {
     const deadline = recoveryTimeout(Math.min(
       check.capability.timeoutMs, Date.parse(check.plan.verifyBy) - Date.parse(this.now()),
     ));
-    const signal = callerSignal ? AbortSignal.any([deadline, callerSignal]) : deadline;
+    const signal = AbortSignal.any([deadline, callerSignal]);
     let resolveAborted!: (value: boolean) => void;
     const aborted = new Promise<boolean>(resolve => { resolveAborted = resolve; });
     const onAbort = () => resolveAborted(false);
