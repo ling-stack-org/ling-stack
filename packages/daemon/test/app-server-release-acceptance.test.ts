@@ -111,6 +111,15 @@ test("App Server deduplicates verification starts and restores completed checks,
   assert.match(finished.checks[0]?.execution?.output ?? "", /verified fixture behavior/u);
   assert.equal(finished.checks[0]?.execution?.timedOut, false);
   assert.equal(finished.checks[1]?.execution, undefined);
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const verificationResponse = await fetch(`${daemonUrl}/workspace/verification?cwd=${encodeURIComponent(fixture.cwd)}`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  assert.equal(verificationResponse.status, 200);
+  const verificationReport = await verificationResponse.json() as { operation: { operationId: string; status: string }; candidateState: string };
+  assert.equal(verificationReport.operation.operationId, finished.operationId);
+  assert.equal(verificationReport.operation.status, "blocked");
+  assert.equal(verificationReport.candidateState, "current");
   const finalEvent = await waitFor(() => peer.notices.find(notice =>
     notice.method === "verification/updated" && notice.params?.event?.entityId === finished.operationId
     && notice.params?.revision === finished.revision));
@@ -145,6 +154,50 @@ test("App Server deduplicates verification starts and restores completed checks,
   const afterCancellation = await fixture.connect();
   assert.deepEqual(await afterCancellation.call("verify/status", { operationId: stopping.operationId }), { operation: cancelled });
   assert.deepEqual(await afterCancellation.call("verify/cancel", cancel), receipt);
+});
+
+test("workspace verification replays the accepted candidate and respects the bound Work Item", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const file = join(fixture.cwd, "subject.txt");
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(file, "baseline\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  git("init", "-q");
+  git("add", ".gitignore", "subject.txt");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "baseline");
+  await writeFile(file, "first candidate\n");
+  const client = await fixture.connect();
+  const store = fixture.getStore();
+  const now = new Date().toISOString();
+  const thread = store.createLingThread({ kind: "conversation", status: "open", title: "Verification", objective: "Verify" }, now);
+  const { workItem } = await client.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/create", {
+    sourceId: "verify-bound-thread", title: "Verify the bound Work Item",
+  });
+  const accepted = store.acceptWorkItem(workItem.workItemId, { expectedRevision: Number(workItem.revision),
+    actorId: "fixture", idempotencyKey: "accept-verification-work", dispatch: { threadId: thread.id, message: "Verify" } }, now);
+  assert.ok(accepted);
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const start = (idempotencyKey: string, threadId: string) => fetch(`${daemonUrl}/workspace/verification?cwd=${encodeURIComponent(fixture.cwd)}`, {
+    method: "POST", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ idempotencyKey, threadId }),
+  });
+  const response = await start("workspace-start", thread.id);
+  assert.equal(response.status, 202, response.ok ? "Verification accepted" : await response.text());
+  const { operation } = await response.json() as { operation: LingAppServerVerifyOperation };
+  assert.equal(operation.workItemId, workItem.workItemId);
+  await waitFor(async () => (await client.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: operation.operationId })).operation.completedAt);
+  await writeFile(file, "changed after verification\n");
+  await client.call("workItem/pause", { workItemId: workItem.workItemId, expectedWorkItemRevision: accepted.workItem.revision,
+    expectedControlGeneration: accepted.workItem.control.generation, actorId: "fixture", idempotencyKey: "pause-verification-work" });
+  const replay = await start("workspace-start", thread.id);
+  assert.equal(replay.status, 202);
+  const report = await replay.json() as { operation: LingAppServerVerifyOperation; candidateState: string };
+  assert.equal(report.operation.operationId, operation.operationId);
+  assert.equal(report.candidateState, "changed");
+  assert.equal((await start("workspace-start", "different-thread")).status, 409);
+  const blocked = await start("workspace-next", thread.id);
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json() as { error: string }).error, "resume_blocked");
 });
 
 test("Goal completion requires a current candidate and a Host-verified independent check", { timeout: 30_000 }, async t => {

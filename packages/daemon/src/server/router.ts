@@ -279,6 +279,7 @@ import { resolveProviderForRun } from "../features/runs/providers.js";
 import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import { handleCodeAssessmentRoutes } from "../features/code-assessments/routes.js";
+import { handleWorkspaceVerificationRoute } from "./workspace-verification-routes.js";
 import {
   handleGetWorkspaceFileContent,
   handleGetWorkspaceFileOpenIcon,
@@ -1690,6 +1691,10 @@ export async function routeRequest(
           nativeRunDispatcher,
         },
       ));
+    return;
+  }
+  if (url.pathname === "/workspace/verification" || url.pathname === "/workspace/verification/cancel") {
+    await handleWorkspaceVerificationRoute(request, response, url, context);
     return;
   }
   if (url.pathname.startsWith("/workspace/code-assessments")) {

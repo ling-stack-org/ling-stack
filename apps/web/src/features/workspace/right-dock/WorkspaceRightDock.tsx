@@ -481,7 +481,7 @@ export function WorkspaceRightDock({
           severity: codeChangeActionCount > 0 ? "warning" : reviewFileCount > 0 ? "info" : "neutral",
         },
         render: () => (
-          <CodeAssessmentDock cwd={effectiveReviewCwd} onOpenRun={onOpenRun} changes={<WorkspaceChangeReviewPage
+          <CodeAssessmentDock cwd={effectiveReviewCwd} threadId={currentPlanThreadId} onOpenRun={onOpenRun} changes={<WorkspaceChangeReviewPage
             cwd={effectiveReviewCwd}
             changes={workspaceChanges}
             review={scopedReview}

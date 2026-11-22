@@ -1095,6 +1095,18 @@ export interface LingAppServerVerifyStatusResult {
   readonly operation: LingAppServerVerifyOperation;
 }
 
+export interface WorkspaceVerificationReport {
+  readonly cwd: string;
+  readonly operation: LingAppServerVerifyOperation | null;
+  readonly plan: LingAppServerVerifyPlanResult | null;
+  readonly candidateState?: "current" | "changed" | "unavailable";
+}
+
+export interface StartWorkspaceVerificationRequest {
+  readonly idempotencyKey: string;
+  readonly threadId?: string;
+}
+
 export interface LingAppServerVerifyCancelParams {
   readonly cwd?: string;
   readonly operationId: string;

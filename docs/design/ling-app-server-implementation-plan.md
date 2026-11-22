@@ -22,6 +22,7 @@
 - `changes/read` 以候选 digest 分页返回受限 diff 和排除原因。`changes/apply/preview` 与 `changes/apply` 复用 Turn 的不可变变更快照、工作区 fence、幂等收据和重启恢复，候选或工作区漂移会拒绝旧预览。
 - 普通 Pi 会话进入新目录时可发现并封存逐级项目规则。验收验证首次写入等待模型收到子目录规则、第二次写入生效，以及重启后从 Thread 游标读取原规则凭据。
 - Host 登记的 Verify 配方可以选择受影响路径，并把独立 verifier source 的摘要、coverage 和 producer refs 封存到每个检查结果。
+- 复核工作台的「验证」页使用和 App Server 相同的 Verify operation。浏览器验收在隔离仓库中从 Web 触发已登记的 Chromium 检查，读取实际断言输出，刷新后恢复原结果并显示候选漂移。
 - Goal 的 `verification_passed` 条件要求同一 Thread 的已完成 Verify operation、当前候选摘要、匹配的 verifier basis、coverage 和 producer refs。候选漂移、检查来源漂移、缺少独立证据和过期的接受版本都会阻止完成。
 - App Server 可以为已绑定的频道或队友会话创建、刷新和归档托管工作树。归档按检视过的候选和目录身份校验，恢复日志保留同一预览请求的归档快照。
 - 普通会话可从最新已收敛的 Turn 封存 Handoff。记录包含候选、原 Goal 进度、接受的计划和产物引用。接手通过正常会话分支和提交受理复用原回执。候选、Goal 或计划变化时需要更新 Handoff。
@@ -50,7 +51,7 @@
 | 工作包 | 代码或验收差距 |
 | --- | --- |
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入，审批和用户答复仍需按不同真实宿主与远程部署做验收。App Server 目标游标已绑定存储代次、授权代次和目标，现有兼容用例覆盖本机的上一版源码与候选组合。 |
-| D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页和 Turn 改动恢复已接入。仍需选中 hunk 与跨工作树应用、浏览器/平台配方和 UI 运行报告。 |
+| D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复和工作台浏览器验证报告已接入。仍需选中 hunk、跨工作树应用和各发行平台验证。 |
 | F1、F2 | 普通会话已接入 Handoff 的候选封存和接手。仍需跨 Agent Workflow 的执行归属和预算承接。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
 | O1、O3–O9 | 已验证 GitHub 签名 webhook、独立轮询和显式接单可以归并到同一工作项。Webhook 入箱和待处理目标同事务提交，Daemon 重启后重试原目标。人工与建议模式保留评估收据。仍需自治派发及配置视图、合并队列、经验和设备反馈、阶段简报、在途改计划、交接、审议裁决和跨 Run 预算，以及原 Workflow 的联合 UI 验收。 |
 | G | 自研切换和回退日志对账、签名安装产物、远程 WSS 和三个真实 Provider 自研试点。macOS 打包预检仍缺当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检达到评审条件，真实试点仍需按 Framework Assurance 准入。 |

@@ -2,8 +2,11 @@ import { LING_AGENT_ID } from "../../workspace-types.js";
 import type {
   LingAppServerCoordinationSchedule, LingAppServerCoordinationScheduleParams, LingAppServerScheduledCoordinationRound,
 } from "@ling-stack/contracts";
-import type { AutomationDefinition, AutomationRun } from "../../automation-types.js";
-import type { ControlPlaneEvent, RunStore } from "../../run-types.js";
+import type {
+  AdmitScheduledCoordinationInput, AutomationDefinition, AutomationRun, CloseScheduledCoordinationInput,
+  ScheduledCoordinationAdmission, ScheduledCoordinationClose,
+} from "../../automation-types.js";
+import type { RunStore } from "../../run-types.js";
 import { appendWorkItemCollaboration, findWorkItemCollaborationById, type AppendWorkItemCollaborationResult } from "../../work-item-collaboration.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteAutomationStore } from "./automation-store.js";
@@ -11,35 +14,6 @@ import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteWorkItemEvidenceStore } from "./work-item-evidence-store.js";
-
-export interface AdmitScheduledCoordinationInput {
-  readonly automationId: string;
-  readonly expectedDefinitionRevision: string;
-  readonly expectedPolicyRevision: number;
-  readonly triggerType: "manual" | "schedule";
-  readonly scheduledFor?: string;
-  readonly idempotencyKey: string;
-}
-
-export interface ScheduledCoordinationAdmission {
-  readonly automationRun: AutomationRun;
-  readonly round?: LingAppServerScheduledCoordinationRound;
-  readonly event?: ControlPlaneEvent;
-}
-
-export interface CloseScheduledCoordinationInput {
-  readonly workItemId: string;
-  readonly recordId: string;
-  readonly actorId: string;
-  readonly cause: "owner_closed" | "deadline";
-  readonly expectedWorkItemRevision?: number;
-  readonly expectedCollaborationRevision?: number;
-}
-
-export interface ScheduledCoordinationClose {
-  readonly result: AppendWorkItemCollaborationResult;
-  readonly briefEvent?: ControlPlaneEvent;
-}
 
 export class SqliteScheduledCoordinationStore {
   constructor(

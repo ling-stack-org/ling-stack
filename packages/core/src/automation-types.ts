@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { SessionPermissionMode } from "./session-permissions.js";
 import type { SkillApprovalProfile } from "./skill-types.js";
-import type { LingThread } from "./run-types.js";
+import type { LingAppServerScheduledCoordinationRound } from "@ling-stack/contracts";
+import type { ControlPlaneEvent, LingThread } from "./run-types.js";
+import type { AppendWorkItemCollaborationResult } from "./work-item-collaboration.js";
 
 export type AutomationStatus = "enabled" | "disabled" | "paused" | "archived" | "error";
 export type AutomationKind = "daily_brief" | "weekly_review" | "project_monitor" | "custom_prompt";
@@ -18,6 +20,35 @@ export type AutomationRunStatus =
   | "succeeded"
   | "failed"
   | "cancelled";
+
+export interface AdmitScheduledCoordinationInput {
+  readonly automationId: string;
+  readonly expectedDefinitionRevision: string;
+  readonly expectedPolicyRevision: number;
+  readonly triggerType: "manual" | "schedule";
+  readonly scheduledFor?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface ScheduledCoordinationAdmission {
+  readonly automationRun: AutomationRun;
+  readonly round?: LingAppServerScheduledCoordinationRound;
+  readonly event?: ControlPlaneEvent;
+}
+
+export interface CloseScheduledCoordinationInput {
+  readonly workItemId: string;
+  readonly recordId: string;
+  readonly actorId: string;
+  readonly cause: "owner_closed" | "deadline";
+  readonly expectedWorkItemRevision?: number;
+  readonly expectedCollaborationRevision?: number;
+}
+
+export interface ScheduledCoordinationClose {
+  readonly result: AppendWorkItemCollaborationResult;
+  readonly briefEvent?: ControlPlaneEvent;
+}
 
 export type AutomationRunTriggerType = AutomationTrigger["type"] | "event";
 

@@ -67,6 +67,36 @@ export async function runLingAppServerMcp(
       }),
       annotations: { idempotentHint: true },
     }, async params => describe(await client.acceptWorkItem(params)));
+    server.registerTool("ling_changes_capture", {
+      description: "Capture the current working-tree candidate and its coverage.",
+      inputSchema: z.strictObject({}),
+      annotations: { readOnlyHint: true },
+    }, async () => describe(await client.captureChanges()));
+    server.registerTool("ling_changes_read", {
+      description: "Read the bounded current candidate diff for a captured candidate digest.",
+      inputSchema: z.strictObject({ candidateDigest: z.string().length(64), offset: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(50).optional() }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.readChanges(params)));
+    server.registerTool("ling_changes_preview_recovery", {
+      description: "Preview undo or reapply for a completed Ling Turn before committing the workspace recovery.",
+      inputSchema: z.strictObject({ threadId: objectId, turnId: objectId, action: z.enum(["undo", "reapply"]) }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.previewChangeRecovery(params)));
+    server.registerTool("ling_changes_apply_recovery", {
+      description: "Apply a previously reviewed Turn recovery preview using its exact revision and idempotency key.",
+      inputSchema: z.strictObject({ threadId: objectId, turnId: objectId, action: z.enum(["undo", "reapply"]), expectedRevision: z.string().length(64), idempotencyKey: requestKey, confirmed: z.literal(true) }),
+      annotations: { idempotentHint: true, destructiveHint: true },
+    }, async params => describe(await client.applyChanges(params)));
+    server.registerTool("ling_github_intake_poll", {
+      description: "Evaluate a configured GitHub intake page and create suggestion Work Items without dispatching them.",
+      inputSchema: z.strictObject({ repository: z.string().min(3).max(201), page: z.number().int().min(1).max(500).optional() }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.pollGitHubIntake(params)));
+    server.registerTool("ling_github_intake_read", {
+      description: "Read a durable GitHub intake evaluation receipt.",
+      inputSchema: z.strictObject({ receiptId: objectId }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.readGitHubIntake(params)));
     server.registerTool("ling_turn_queue", {
       description: "Queue a follow-up for the active Ling Turn from ling_thread_snapshot. Retry with the same request key.",
       inputSchema: followupInput,

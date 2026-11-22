@@ -27,23 +27,26 @@ import type {
   LingAppServerVerifyStatusParams,
   LingAppServerVerifyStatusResult,
   LingAppServerVerifyOperation,
+  StartWorkspaceVerificationRequest,
+  WorkspaceVerificationReport,
   CreateCodeAssessmentRequest,
   CodeAssessmentDetail,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import type { ActiveRunRegistry } from "../runtime/active-runs.js";
-import { DEFAULT_WORKSPACE_ID, type AppServerStateRecord, type PutAppServerStateResult, type RunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, type AppServerStateRecord, type PutAppServerStateResult, type RunStore, type WorkItemConversationBinding } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
 import { reconcileCodeAssessments, startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
 import { parseReviewRuleRefs } from "../features/code-assessments/review-rules.js";
-import { verificationRecipePlan, verificationRecipes, type AppServerVerificationCheckResult } from "./app-server-verification-recipes.js";
+import { executeAppServerVerificationCheck, verificationRecipePlan, verificationRecipes, type AppServerVerificationCheckResult } from "./app-server-verification-recipes.js";
 import type { AppServerVerificationRecipeConfig } from "./app-server-verification-config.js";
 import { collectProjectInstructions } from "../features/conversations/project-instructions.js";
 import { initializeProjectInstructions } from "../features/conversations/project-instructions-draft.js";
 import { trimOversizedEvent } from "../features/control-plane/events.js";
 import { isRecord } from "../shared/validation.js";
+import { captureAppServerChanges } from "./app-server-changes.js";
 
 const DEFAULT_PROVIDER_PRESET = "default";
 type VerifyRecord = {
@@ -200,6 +203,50 @@ export class AppServerDevelopmentService {
     const record = store.getAppServerState("verify_operation", input.operationId);
     if (!record) throw new Error("Verification operation was not found.");
     return { operation: this.readVerification(store, record).operation };
+  }
+
+  async readWorkspaceVerification(cwd: string, filters: { readonly operationId?: string; readonly threadId?: string }): Promise<WorkspaceVerificationReport> {
+    const store = this.workspaceStore(cwd);
+    const record = filters.operationId ? store.getAppServerState("verify_operation", filters.operationId) : store.getLatestVerificationState(filters.threadId);
+    if (!record && filters.operationId) throw new HttpError(404, "verification_not_found", "The verification operation was not found.");
+    if (!record) return { cwd, operation: null, plan: null };
+    const { operation, plan } = this.readVerification(store, record);
+    if (filters.threadId && operation.threadId !== filters.threadId) {
+      throw new HttpError(404, "verification_not_found", "The verification operation was not found in this Thread.");
+    }
+    if (!operation.completedAt) return { cwd, operation, plan };
+    const current = await captureAppServerChanges(cwd).catch(() => undefined);
+    const candidateState = current?.coverage === "complete"
+      ? current.candidate.candidateDigest === operation.candidateDigest ? "current" : "changed"
+      : "unavailable";
+    return { cwd, operation, plan, candidateState };
+  }
+
+  async startWorkspaceVerification(cwd: string, input: StartWorkspaceVerificationRequest): Promise<WorkspaceVerificationReport> {
+    assertVerificationKey(input.idempotencyKey);
+    const store = this.workspaceStore(cwd);
+    const keyDigest = digest(input.idempotencyKey);
+    const planKey = `workspace_verify_plan:${keyDigest}`;
+    const operationKey = `workspace_verify:${keyDigest}`;
+    const retained = store.findAppServerStateByIdempotencyKey("verify_plan", planKey);
+    let plan: LingAppServerVerifyPlanResult;
+    if (retained) {
+      plan = retained.payload as LingAppServerVerifyPlanResult;
+      if (plan.threadId !== input.threadId) throw verificationConflict();
+    } else {
+      const candidate = await captureAppServerChanges(cwd);
+      if (candidate.coverage !== "complete") {
+        throw new HttpError(409, "candidate_incomplete", "Verification requires a candidate with complete coverage.");
+      }
+      const binding = input.threadId ? store.getAppServerState("work_item_thread", input.threadId)?.payload as WorkItemConversationBinding | undefined : undefined;
+      plan = await this.planVerification({ cwd, candidate: candidate.candidate, threadId: input.threadId,
+        workItemId: binding?.workItemId, idempotencyKey: planKey });
+    }
+    const operation = await this.startVerification({ cwd, planId: plan.planId, planRevision: plan.planRevision,
+      candidateDigest: plan.candidate.candidateDigest, idempotencyKey: operationKey });
+    return operation.completedAt
+      ? this.readWorkspaceVerification(cwd, { operationId: operation.operationId, threadId: input.threadId })
+      : { cwd, operation, plan };
   }
 
   cancelVerification(input: LingAppServerVerifyCancelParams): LingAppServerVerifyCancelResult {
@@ -530,6 +577,21 @@ export class AppServerDevelopmentService {
   }
 }
 
+const developmentByContext = new WeakMap<DaemonContext, AppServerDevelopmentService>();
+
+export function getAppServerDevelopmentService(context: DaemonContext): AppServerDevelopmentService {
+  const existing = developmentByContext.get(context);
+  if (existing) return existing;
+  const service = new AppServerDevelopmentService({
+    context,
+    activeRuns: context.activeRuns,
+    startCodeAssessmentRun: context.startCodeAssessmentRun,
+    executeVerificationCheck: executeAppServerVerificationCheck,
+  });
+  developmentByContext.set(context, service);
+  return service;
+}
+
 function assertVerificationPlan(stored: AppServerStateRecord, plan: LingAppServerVerifyPlanResult): VerifyRecord {
   const record = stored.payload as VerifyRecord;
   if (record.plan.planId !== plan.planId || record.plan.planRevision !== plan.planRevision) throw verificationConflict();
@@ -649,4 +711,8 @@ export function asDiagnosticsCheck(check: LingAppServerDoctorRunResult["checks"]
     ...(check.details ? { details: check.details } : {}),
     ...(check.remediation ? { remediation: check.remediation } : {}),
   };
+}
+
+export function abortAppServerVerifications(context: DaemonContext): void {
+  developmentByContext.get(context)?.abortVerifications();
 }

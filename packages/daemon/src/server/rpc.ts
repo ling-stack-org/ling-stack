@@ -84,10 +84,9 @@ import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancell
 import { submitAuthorizedUserInputAnswer } from "../features/runs/user-input-answer.js";
 import { publishUserInputAnswerAcceptance } from "../features/runs/user-input-events.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
-import { AppServerDevelopmentService } from "./app-server-development.js";
+import { abortAppServerVerifications, getAppServerDevelopmentService, type AppServerDevelopmentService } from "./app-server-development.js";
 import { applyAppServerChanges, captureAppServerChanges, previewAppServerChangeRecovery, readAppServerChanges } from "./app-server-changes.js";
 import { RunWorkspaceRecoveryError } from "../features/runs/workspace-change-recovery.js";
-import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
 import { listManagedWorktrees, WorktreeActionError } from "../features/workspaces/worktree-management.js";
 import { cleanupAppServerWorktree, createAppServerWorktree, previewAppServerWorktreeCleanup, refreshAppServerWorktree } from "./app-server-worktrees.js";
 import { checkAppServerHandoff, createAppServerHandoff, handoffInstruction, readAppServerHandoff } from "./app-server-handoff.js";
@@ -274,7 +273,7 @@ export function attachRpcWebSocketServer(
     const drainId = randomUUID();
     const startedAt = new Date().toISOString();
     for (const connection of appServerConnections) connection.notifyDraining(drainId, startedAt);
-    developmentByContext.get(context)?.abortVerifications();
+    abortAppServerVerifications(context);
     for (const controller of activeExternalDispatches.get(context)?.values() ?? []) controller.abort();
   };
   const closeAll = (): void => {
@@ -2935,22 +2934,6 @@ function collaborationNotificationMethod(kind: import("@ling-stack/contracts").L
     case "question": return "workItem/question/updated";
     case "handoff": return "workItem/handoff/updated";
   }
-}
-
-const developmentByContext = new WeakMap<DaemonContext, AppServerDevelopmentService>();
-
-function getAppServerDevelopmentService(context: DaemonContext): AppServerDevelopmentService {
-  const existing = developmentByContext.get(context);
-  if (existing) return existing;
-  const created = new AppServerDevelopmentService({
-    context,
-    storeRegistry: context.storeRegistry,
-    activeRuns: context.activeRuns,
-    startCodeAssessmentRun: context.startCodeAssessmentRun,
-    executeVerificationCheck: executeAppServerVerificationCheck,
-  });
-  developmentByContext.set(context, created);
-  return created;
 }
 
 function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEvent, cursor?: string): unknown {

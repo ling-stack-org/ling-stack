@@ -2709,6 +2709,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   getAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   findAppServerStateByIdempotencyKey(kind: import("./app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   listAppServerState(kind?: import("./app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord[];
+  getLatestVerificationState(threadId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
   deleteAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean;
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
@@ -2768,11 +2769,11 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun;
   getAutomationCoordinationSchedule(automationId: string): import("@ling-stack/contracts").LingAppServerCoordinationSchedule | undefined;
   configureAutomationCoordination(input: import("@ling-stack/contracts").LingAppServerCoordinationScheduleParams, now: string): import("@ling-stack/contracts").LingAppServerCoordinationSchedule;
-  admitScheduledCoordination(input: import("./storage/sqlite/scheduled-coordination-store.js").AdmitScheduledCoordinationInput, now: string, cwd?: string): import("./storage/sqlite/scheduled-coordination-store.js").ScheduledCoordinationAdmission;
+  admitScheduledCoordination(input: import("./automation-types.js").AdmitScheduledCoordinationInput, now: string, cwd?: string): import("./automation-types.js").ScheduledCoordinationAdmission;
   readScheduledCoordinationRound(recordId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
   findScheduledCoordinationRound(automationRunId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
   listOpenScheduledCoordinationRounds(): readonly import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound[];
-  closeScheduledCoordination(input: import("./storage/sqlite/scheduled-coordination-store.js").CloseScheduledCoordinationInput, now: string, cwd?: string): import("./storage/sqlite/scheduled-coordination-store.js").ScheduledCoordinationClose | undefined;
+  closeScheduledCoordination(input: import("./automation-types.js").CloseScheduledCoordinationInput, now: string, cwd?: string): import("./automation-types.js").ScheduledCoordinationClose | undefined;
   getAutomationRun(automationRunId: string): AutomationRun | undefined;
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
   listAutomationRuns(options?: ListAutomationRunsOptions): AutomationRun[];

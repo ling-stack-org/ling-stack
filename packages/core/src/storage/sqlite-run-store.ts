@@ -6198,6 +6198,10 @@ export class SqliteRunStore implements RunStore {
     return this.appServerState.list(kind, workspaceId);
   }
 
+  getLatestVerificationState(threadId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
+    return this.appServerState.latestVerification(threadId);
+  }
+
   putAppServerState(input: import("../app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("../app-server-state-types.js").PutAppServerStateResult | undefined {
     return this.appServerState.put(input, now, publication);
   }

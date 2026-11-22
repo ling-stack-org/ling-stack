@@ -43,6 +43,15 @@ export const operationEndpoints = {
   async getCodeAssessmentOverview(this: LingDaemonEndpointContext, cwd: string, assessmentId: string): Promise<import("@ling-stack/contracts").CodeAssessmentOverview> {
     return this._get(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}`, { cwd, view: "overview" });
   },
+  async getWorkspaceVerification(this: LingDaemonEndpointContext, cwd: string, threadId?: string, operationId?: string): Promise<import("@ling-stack/contracts").WorkspaceVerificationReport> {
+    return this._get("/workspace/verification", { cwd, threadId, operationId });
+  },
+  async startWorkspaceVerification(this: LingDaemonEndpointContext, cwd: string, input: import("@ling-stack/contracts").StartWorkspaceVerificationRequest): Promise<import("@ling-stack/contracts").WorkspaceVerificationReport> {
+    return this._post("/workspace/verification", { cwd }, input);
+  },
+  async cancelWorkspaceVerification(this: LingDaemonEndpointContext, cwd: string, input: Omit<import("@ling-stack/contracts").LingAppServerVerifyCancelParams, "cwd">): Promise<import("@ling-stack/contracts").LingAppServerVerifyCancelResult> {
+    return this._post("/workspace/verification/cancel", { cwd }, input);
+  },
   async createCodeAssessmentOverview(this: LingDaemonEndpointContext, cwd: string, input: CreateCodeAssessmentRequest): Promise<import("@ling-stack/contracts").CodeAssessmentOverview> {
     return this._post("/workspace/code-assessments", { cwd, view: "overview" }, input);
   },
