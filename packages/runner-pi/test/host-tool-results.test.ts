@@ -8,17 +8,17 @@ import { translatePiEvent } from "../dist/events.js";
 import { createLingStackBashToolExtension } from "../dist/extensions/bash.js";
 import { createLingStackFileMutationToolExtension } from "../dist/extensions/file-mutation.js";
 
-function registry() {
-  let hook;
-  const adapt = createHostToolResultAdapter({ on(name, handler) {
-    assert.equal(name, "tool_result"); hook = handler;
+function registry(): any {
+  let hook: any;
+  const adapt = (createHostToolResultAdapter as any)({ on(_name: string, handler: any) {
+    assert.equal(_name, "tool_result"); hook = handler;
   } });
-  return { adapt, end: (result, changes = {}) => hook({
+  return { adapt, end: (result: any, changes: Record<string, unknown> = {}) => hook({
     type: "tool_result", toolName: "bash", toolCallId: "call",
     content: result.content, details: result.details, isError: false, ...changes,
   }) };
 }
-const failure = { content: [{ type: "text", text: "failed" }], details: { sourceRefs: ["fixture"] }, isError: true };
+const failure: any = { content: [{ type: "text", text: "failed" }], details: { sourceRefs: ["fixture"] }, isError: true };
 
 test("Host result identity is consumed once; no markers are serialized into evidence", () => {
   const r = registry(), result = r.adapt("call", "bash", failure);
@@ -60,7 +60,7 @@ test("parallel calls and identical call IDs use independent result object identi
 });
 
 test("Host translator trusts SDK status rather than arbitrary tool-result fields", () => {
-  const event = translatePiEvent({
+  const event: any = translatePiEvent({
     type: "tool_execution_end", toolName: "fixture", toolCallId: "call", isError: false,
     result: { ...failure, details: { unifiedExec: { status: "failed" } } },
   });
@@ -71,18 +71,18 @@ for (const [toolName, extension] of [
   ["bash", createLingStackBashToolExtension],
   ["write", createLingStackFileMutationToolExtension],
   ["edit", createLingStackFileMutationToolExtension],
-]) {
+] as [string, any][]) {
   for (const timing of ["before", "during"]) {
     test(`${toolName} cancellation ${timing} Host callback cannot publish a late success`, async () => {
       const controller = new AbortController(), reason = new Error("Fixture cancelled");
-      const registered = new Map(); let calls = 0;
-      extension({
+      const registered = new Map<string, any>(); let calls = 0;
+      (extension as any)({
         cwd: "/tmp/fixture-unused", task: { id: "fixture", title: "Fixture", prompt: "Fixture" },
         onApprovalRequired: async () => {
           calls += 1; controller.abort(reason);
           return { approved: true, handledResult: { ...failure, isError: false } };
         },
-      })({ on() {}, registerTool: tool => registered.set(tool.name, tool) });
+      })({ on: () => () => undefined, registerTool: (tool: any) => registered.set(tool.name, tool) });
       if (timing === "before") controller.abort(reason);
       await assert.rejects(registered.get(toolName).execute("call", {}, controller.signal), error => error === reason);
       assert.equal(calls, timing === "before" ? 0 : 1);
@@ -94,11 +94,11 @@ test("approved file mutations fail closed when the Host omits its handled result
   const cwd = await mkdtemp(join(tmpdir(), "ling-runner-file-mutation-fence-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const registered = new Map();
-  createLingStackFileMutationToolExtension({
+  (createLingStackFileMutationToolExtension as any)({
     cwd,
     task: { id: "fixture", title: "Fixture", prompt: "Fixture" },
     onApprovalRequired: async () => ({ approved: true, reason: "Host approved without executing." }),
-  })({ on() {}, registerTool: tool => registered.set(tool.name, tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.set(tool.name, tool) });
 
   await assert.rejects(
     registered.get("write").execute("call-write", { path: "should-not-exist.txt", content: "runner bypass" }),

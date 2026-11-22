@@ -3,6 +3,8 @@ import { createServer } from "node:http";
 import test from "node:test";
 import { fetchProvider, PROVIDER_CONNECT_TIMEOUT_MS } from "../dist/provider-http.js";
 
+type DispatcherRequest = RequestInit & { dispatcher?: object };
+
 test("provider dispatcher works with the actual Node fetch on a loopback connection", { timeout: 5000 }, async t => {
   const server = createServer((request, response) => {
     assert.equal(request.method, "POST");
@@ -13,8 +15,10 @@ test("provider dispatcher works with the actual Node fetch on a loopback connect
     server.close(resolve);
     server.closeAllConnections();
   }));
-  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  const response = await fetchProvider(`http://127.0.0.1:${server.address().port}/v1/models`, {
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const response = await fetchProvider(`http://127.0.0.1:${address.port}/v1/models`, {
     method: "POST", body: "{}", signal: AbortSignal.timeout(3000),
   });
   assert.equal(response.status, 200);
@@ -23,7 +27,7 @@ test("provider dispatcher works with the actual Node fetch on a loopback connect
 
 test("provider fetch supplies a bounded Undici dispatcher and preserves caller overrides", async () => {
   const originalFetch = globalThis.fetch;
-  const observed = [];
+  const observed: (DispatcherRequest | undefined)[] = [];
   globalThis.fetch = async (_input, init) => {
     observed.push(init);
     return new Response("ok");
@@ -31,14 +35,18 @@ test("provider fetch supplies a bounded Undici dispatcher and preserves caller o
   try {
     await fetchProvider("https://example.test/v1/chat/completions");
     const customDispatcher = { custom: true };
-    await fetchProvider("https://example.test/v1/chat/completions", { dispatcher: customDispatcher });
+    const init: DispatcherRequest = { dispatcher: customDispatcher };
+    await fetchProvider("https://example.test/v1/chat/completions", init);
 
     assert.equal(observed.length, 2);
-    assert.ok(observed[0].dispatcher);
-    const optionsSymbol = Object.getOwnPropertySymbols(observed[0].dispatcher)
+    const dispatcher = observed[0]?.dispatcher;
+    assert.ok(dispatcher);
+    const optionsSymbol = Object.getOwnPropertySymbols(dispatcher)
       .find((symbol) => String(symbol) === "Symbol(options)");
-    assert.equal(observed[0].dispatcher?.[optionsSymbol]?.connect?.timeout, PROVIDER_CONNECT_TIMEOUT_MS);
-    assert.equal(observed[1].dispatcher, customDispatcher);
+    assert.ok(optionsSymbol);
+    const options: { connect?: { timeout?: number } } | undefined = Reflect.get(dispatcher, optionsSymbol);
+    assert.equal(options?.connect?.timeout, PROVIDER_CONNECT_TIMEOUT_MS);
+    assert.equal(observed[1]?.dispatcher, customDispatcher);
   } finally {
     globalThis.fetch = originalFetch;
   }

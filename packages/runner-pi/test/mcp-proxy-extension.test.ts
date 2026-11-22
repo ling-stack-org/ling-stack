@@ -3,9 +3,9 @@ import test from "node:test";
 import { createLingStackMcpProxyExtension } from "../dist/extensions/mcp-proxy.js";
 
 test("MCP proxy forwards the runner execution signal to the daemon call handler", async () => {
-  const registered = [];
-  const requests = [];
-  createLingStackMcpProxyExtension({
+  const registered: any[] = [];
+  const requests: any[] = [];
+  (createLingStackMcpProxyExtension as any)({
     task: { id: "task_mcp_signal", title: "MCP signal", prompt: "test" },
     cwd: "/tmp/ling-mcp-signal",
     mcpTools: [{
@@ -17,11 +17,11 @@ test("MCP proxy forwards the runner execution signal to the daemon call handler"
       sideEffectLevel: "read",
       defaultApproval: "allow",
     }],
-    async onMcpToolCall(request) {
+    async onMcpToolCall(request: any) {
       requests.push(request);
       return { content: [{ type: "text", text: "ok" }] };
     },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.push(tool) });
 
   const controller = new AbortController();
   const result = await registered[0].execute(
@@ -36,10 +36,10 @@ test("MCP proxy forwards the runner execution signal to the daemon call handler"
 });
 
 test("MCP proxy discards a successful daemon result after runner cancellation", async () => {
-  const registered = [];
+  const registered: any[] = [];
   const controller = new AbortController();
   const abortReason = new Error("runner cancelled");
-  createLingStackMcpProxyExtension({
+  (createLingStackMcpProxyExtension as any)({
     task: { id: "task_mcp_late_cancel", title: "MCP late cancel", prompt: "test" },
     cwd: "/tmp/ling-mcp-late-cancel",
     mcpTools: [{
@@ -55,7 +55,7 @@ test("MCP proxy discards a successful daemon result after runner cancellation", 
       controller.abort(abortReason);
       return { content: [{ type: "text", text: "late" }] };
     },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.push(tool) });
 
   await assert.rejects(
     registered[0].execute("tool_call_late_cancel", {}, controller.signal),
@@ -64,11 +64,11 @@ test("MCP proxy discards a successful daemon result after runner cancellation", 
 });
 
 test("MCP proxy stops after approval when the runner is cancelled", async () => {
-  const registered = [];
+  const registered: any[] = [];
   const controller = new AbortController();
   const abortReason = new Error("runner cancelled during approval");
   let toolCalls = 0;
-  createLingStackMcpProxyExtension({
+  (createLingStackMcpProxyExtension as any)({
     task: { id: "task_mcp_approval_cancel", title: "MCP approval cancel", prompt: "test" },
     cwd: "/tmp/ling-mcp-approval-cancel",
     mcpTools: [{
@@ -88,7 +88,7 @@ test("MCP proxy stops after approval when the runner is cancelled", async () => 
       toolCalls += 1;
       return { content: [{ type: "text", text: "must not run" }] };
     },
-  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  })({ on: () => () => undefined, registerTool: (tool: any) => registered.push(tool) });
 
   await assert.rejects(
     registered[0].execute("tool_call_approval_cancel", {}, controller.signal),
