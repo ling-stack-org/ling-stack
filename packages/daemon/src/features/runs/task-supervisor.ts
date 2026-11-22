@@ -6,10 +6,11 @@ import { assertNodeRerunReuseCurrent } from "./node-rerun-submission.js";
 export class TaskSupervisor {
   private readonly workspaces = new Map<string, { timer: ReturnType<typeof setInterval>; stopped: boolean; pending?: Promise<void> }>();
   private readonly pending = new Set<Promise<void>>();
-  private readonly activeGoals = new Set<string>();
+  private readonly activeSources = new Set<string>();
   private closed = false;
   constructor(private readonly stores: RunStoreRegistry, private readonly advanceWorkflow: (store: RunStore, workflowId: string) => Promise<unknown>,
-    private readonly advanceGoal: (store: RunStore, run: RunSession) => Promise<void>) {}
+    private readonly advanceGoal: (store: RunStore, run: RunSession) => Promise<void>,
+    private readonly advanceRunInterventions?: (store: RunStore, sourceRunId: string) => Promise<void>) {}
   start(cwd: string): void {
     if (this.closed || this.workspaces.has(cwd)) return;
     const timer = setInterval(() => this.poke(cwd), 2000); timer.unref();
@@ -40,16 +41,28 @@ export class TaskSupervisor {
       }
       try { await this.advanceWorkflow(store, submission.successorWorkflowId); } catch { /* Normal workflow admission retains its durable blockers. */ }
     }
+    const advanceInterventions = this.advanceRunInterventions;
+    if (advanceInterventions) {
+      for (const sourceRunId of store.listPendingConversationInterventionSources()) {
+        if (state.stopped) return;
+        this.advanceSource(cwd, sourceRunId, () => advanceInterventions(store, sourceRunId));
+      }
+    }
     for (const run of createSqliteGoalSupervisionStore(store).listEligibleSources()) {
       if (state.stopped) return;
       if (run.threadId && createSqliteGoalSupervisionStore(store).reconcileAcceptance(run.threadId, new Date().toISOString())) continue;
-      const key = `${cwd}:${run.id}`;
-      if (this.activeGoals.has(key) || this.activeGoals.size >= 8) continue;
-      this.activeGoals.add(key);
-      const pending = Promise.resolve().then(() => this.advanceGoal(store, run)).catch(() => undefined).finally(() => {
-        this.activeGoals.delete(key); this.pending.delete(pending);
-      });
-      this.pending.add(pending);
+      this.advanceSource(cwd, run.id, () => this.advanceGoal(store, run));
     }
+  }
+
+  private advanceSource(cwd: string, sourceRunId: string, advance: () => Promise<void>): void {
+    const key = JSON.stringify([cwd, sourceRunId]);
+    if (this.activeSources.has(key) || this.activeSources.size >= 8) return;
+    this.activeSources.add(key);
+    const pending = Promise.resolve().then(advance).catch(() => undefined).finally(() => {
+      this.activeSources.delete(key);
+      this.pending.delete(pending);
+    });
+    this.pending.add(pending);
   }
 }

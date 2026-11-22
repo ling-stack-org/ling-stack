@@ -256,6 +256,38 @@ export async function main(): Promise<void> {
   }
 }
 
+async function handleAppServer(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const [mode = "stdio", socketPath, ...rest] = args;
+  if (!["stdio", "probe", "mcp", "listen"].includes(mode) || rest.length
+    || (mode === "listen" ? !socketPath : socketPath !== undefined)) {
+    throw new CliError(2, "bad_usage", "Use app-server [stdio|probe|mcp|listen <absolute-socket-path>].");
+  }
+  const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
+  if (mode === "mcp") {
+    const { runLingAppServerMcp } = await import("@ling-stack/daemon/dist/server/app-server-mcp.js");
+    await runLingAppServerMcp(transportOptions);
+    return 0;
+  }
+  const daemon = await import("@ling-stack/daemon/dist/server/app-server-local-transport.js");
+  if (mode === "probe") {
+    printJson(await daemon.probeLingAppServer(transportOptions));
+  } else if (mode === "listen" && socketPath) {
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    try {
+      await daemon.listenLingAppServerSocket(transportOptions, socketPath, controller.signal);
+    } finally {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+    }
+  } else {
+    await daemon.runLingAppServerStdio(transportOptions);
+  }
+  return 0;
+}
+
 async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
   const [command, ...rest] = parsed.args;
 
@@ -277,6 +309,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
   }
 
   switch (command) {
+    case "app-server":
+      return await handleAppServer(rest, parsed.options);
     case "engine":
       return await runExecutionEngineCommand(rest, parsed.options);
     case "init":
@@ -7701,6 +7735,10 @@ function shellQuote(value: string): string {
 }
 
 function printCommandHelp(command: string, subcommand?: string): void {
+  if (command === "app-server") {
+    console.log("Usage: ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]");
+    return;
+  }
   if (command === "engine") {
     console.log("Usage: ling engine authorize --origin http://127.0.0.1:5175 --start-daemon [--daemon-url http://127.0.0.1:17891]\nStarts a new foreground daemon. Requires an interactive terminal; never takes over an existing daemon.");
     return;
@@ -7802,6 +7840,7 @@ Usage:
   ling-stack [global options] daemon stop
   ling-stack [global options] daemon restart
   ling-stack [global options] daemon logs
+  ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]
   ling-stack [global options] engine authorize --origin <local-web-origin>
   ling-stack [global options] browser-host install
   ling-stack [global options] browser-host status

@@ -5,6 +5,21 @@ import { mockDaemon } from "./support/mock-daemon";
 import { openEngineeringChannel } from "./support/test-helpers";
 import { createBaseState, createChatProvider } from "./support/mock-state";
 
+async function openAssessmentDock(page: Page, kind: "review" | "security" = "review") {
+  await openEngineeringChannel(page);
+  await page.getByRole("toolbar", { name: /^(Workspace task toolbar|工作区任务工具栏)$/u })
+    .getByRole("button", { name: /^(Show details|显示详情)$/u }).click();
+  const dock = page.getByRole("complementary", { name: /^(Channel workspace dock|频道工作区面板)$/u });
+  if (kind === "security") {
+    await dock.getByRole("button", { name: /^(Security scan|安全扫描)$/u }).click();
+  } else {
+    await dock.getByRole("button", { name: /^(Review|复核)$/u }).click();
+    await dock.getByRole("button", { name: /^(Code review|代码审查)$/u }).click();
+  }
+  await expect(dock.getByRole("region", { name: /^(Code review and security|代码审查与安全扫描)$/u })).toBeVisible();
+  return dock;
+}
+
 test("Code review workbench starts a review, filters findings, shows Diff, and records a dismissal", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   const state = createBaseState({ approvalStatus: "expired" });
@@ -13,8 +28,7 @@ test("Code review workbench starts a review, filters findings, shows Diff, and r
   const model = await assessmentRoutes(page, assessmentFixture(), { created: false });
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }));
   await page.goto("/");
-  await page.getByRole("button", { name: "Code review and security" }).click();
-  await expect(page.getByRole("heading", { name: "Code review and security" })).toBeVisible();
+  await openAssessmentDock(page);
   await expect(page.getByLabel("Model")).toHaveValue("provider_review");
   await page.getByRole("button", { name: "Start review" }).click();
   await expect(page.getByText("Changed exported value")).toBeVisible();
@@ -38,13 +52,18 @@ test("Code review workbench starts a review, filters findings, shows Diff, and r
   await page.screenshot({ path: "/tmp/ling-code-assessment-workbench.png", fullPage: false });
 });
 
-test("Code review workbench remains readable at a narrow viewport and exposes security mode", async ({ page }) => {
-  await page.setViewportSize({ width: 760, height: 900 });
+test("The security scan stays readable in a narrow dock", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   const state = createBaseState({ approvalStatus: "expired" }); state.providers = [createChatProvider({ id: "provider_security", displayName: "Security Model" })]; await mockDaemon(page, state);
   await page.route("**/workspace/code-assessments**", async route => { const request = route.request(); const url = new URL(request.url()); if (request.method() === "GET" && !url.pathname.includes("/workspace/code-assessments/")) { await route.fulfill({ json: { assessments: [] } }); return; } await route.fulfill({ status: 202, json: { assessments: [] } }); });
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }));
-  await page.goto("/"); await page.getByRole("button", { name: "Code review and security" }).click(); await expect(page.getByRole("heading", { name: "Code review and security" })).toBeVisible(); await page.getByRole("button", { name: "Security scan" }).click(); await expect(page.getByRole("button", { name: "Start security scan" })).toBeVisible(); await expect(page.locator(".code-assessment-page")).toHaveCSS("min-width", "0px"); await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 760); await page.screenshot({ path: "/tmp/ling-code-assessment-narrow.png", fullPage: false });
+  await page.goto("/");
+  const dock = await openAssessmentDock(page, "security");
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect(dock.getByRole("button", { name: "Start security scan" })).toBeVisible();
+  await expect(dock.getByRole("region", { name: "Code review and security" })).toHaveCSS("min-width", "0px");
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 1000);
+  await page.screenshot({ path: "/tmp/ling-code-assessment-narrow.png", fullPage: false });
 });
 
 test("finding order follows severity, confidence, path and line with stable ties", async ({ page }) => {
@@ -94,8 +113,8 @@ test("finding order follows severity, confidence, path and line with stable ties
   await expect(page.getByLabel("Confidence", { exact: true })).toHaveValue("");
   await expect(headings).toHaveText(ordered);
   await expect(page.locator("#finding-tie_first")).toHaveClass(/selected/u);
-  await page.setViewportSize({ width: 760, height: 900 });
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 760);
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 1000);
   await page.getByLabel("Confidence", { exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/tmp/ling-code-assessment-confidence-order-narrow.png" });
 });
@@ -109,7 +128,11 @@ function assessmentFixture(): CodeAssessmentDetail {
     { phase: "synthesizing_findings", enteredAt: "2026-11-16T00:00:05Z" }, { phase: "completed", enteredAt: "2026-11-16T00:01:00Z" },
   ], metrics: { captureDurationMs: 12, snapshotBytes: 512, diffBytes: 96, timeToSummaryMs: 140, timeToFirstFindingMs: 140, timeToFinalMs: 180, reportBytes: 256 },
     validation: { state: "not_run", reason: "Candidate validation requires execution and was not run." },
-    snapshotId: snapshot.id, snapshotDigest: snapshot.digest, target: snapshot.target, branchName: snapshot.branchName, providerPresetId: "provider_review", runId: "run_ui", reportArtifactId: "artifact_ui", summary: "One changed behavior needs review.", findingCount: 1, createdAt: "2026-11-16T00:00:00Z", updatedAt: "2026-11-16T00:01:00Z" };
+    snapshotId: snapshot.id, snapshotDigest: snapshot.digest, target: snapshot.target, branchName: snapshot.branchName, providerPresetId: "provider_review", runId: "run_ui", reportArtifactId: "artifact_ui", summary: "One changed behavior needs review.", findingCount: 1, createdAt: "2026-11-16T00:00:00Z", updatedAt: "2026-11-16T00:01:00Z",
+    reviewRules: { baseSha: snapshot.headSha, sources: [{
+      path: "src/AGENTS.md", scope: "src", digest: "a".repeat(64), guidance: "Check compatibility for existing callers.",
+    }], omitted: [] },
+  };
   const finding = { id: "finding_ui", assessmentId: assessment.id, snapshotDigest: snapshot.digest, fingerprint: "1".repeat(64), title: "Changed exported value", body: "Every caller now observes a different value.", severity: "high" as const, confidence: "high" as const, path: "src/app.ts", side: "new" as const, startLine: 1, endLine: 1, evidence: "export const value = 2;", validation: "unverified" as const, disposition: "open" as const };
   return { assessment, snapshot, findings: [finding] };
 }
@@ -131,7 +154,7 @@ for (const themeId of ["ling-light", "ling-dark", "ling-breeze", "ling-ocean", "
     await assessmentRoutes(page, detail);
     await page.goto("/");
     await expect(page).toHaveTitle(/Ling/u);
-    await page.getByRole("button", { name: "Code review and security" }).click();
+    await openAssessmentDock(page);
     await expect(page.getByText("Changed exported value")).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
     await expect(page.locator("vite-error-overlay")).toHaveCount(0);
@@ -146,7 +169,14 @@ test("Right Dock keeps change previews and opens review/security assessments", a
   const state = createBaseState({ approvalStatus: "expired" }); state.providers = [createChatProvider({ id: "provider_dock" })];
   await mockDaemon(page, state);
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }));
-  await page.route("**/workspace/code-assessments**", route => route.fulfill({ json: { assessments: [] } }));
+  const fixture = assessmentFixture();
+  await assessmentRoutes(page, fixture, { created: false });
+  await page.route("**/workspace/code-assessments?**", async route => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === "GET" && url.searchParams.get("kind") === "security") {
+      await route.fulfill({ json: { assessments: [] } });
+    } else await route.fallback();
+  });
   await page.goto("/"); await openEngineeringChannel(page);
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
   await toolbar.getByRole("button", { name: "Show details" }).click();
@@ -154,7 +184,13 @@ test("Right Dock keeps change previews and opens review/security assessments", a
   await panel.getByRole("button", { name: "Review", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Changed files", exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Code review", exact: true }).click();
-  await expect(panel.getByRole("button", { name: "Start review", exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "Start review", exact: true }).click();
+  await expect(panel.getByText("Changed exported value", { exact: true })).toBeVisible();
+  const instructions = panel.locator("details").filter({ has: page.getByText("src/AGENTS.md", { exact: true }) });
+  await instructions.getByText("Review instructions", { exact: true }).click();
+  await expect(instructions.getByText("src/AGENTS.md", { exact: true })).toBeVisible();
+  await expect(instructions.getByText("Check compatibility for existing callers.", { exact: true })).toBeVisible();
+  await expect(instructions.getByText(fixture.snapshot.headSha!, { exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Back", exact: true }).click();
   await panel.getByRole("button", { name: "Security scan", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Start security scan" })).toBeVisible();
@@ -180,7 +216,7 @@ for (const status of ["failed", "cancelled", "interrupted", "partial"] as const)
     await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }));
     await assessmentRoutes(page, detail);
     await page.goto("/");
-    await page.getByRole("button", { name: "Code review and security" }).click();
+    await openAssessmentDock(page);
     await expect(page.getByRole("button", { name: "Run again", exact: true })).toBeVisible();
     if (status === "partial") {
       await expect(page.getByText("Coverage is partial", { exact: true })).toBeVisible();
@@ -208,9 +244,7 @@ test("Chinese workbench submits a security branch target with the selected model
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }));
   const model = await assessmentRoutes(page, detail, { created: false });
   await page.goto("/");
-  await page.getByRole("button", { name: "代码审查与安全扫描" }).click();
-  await expect(page.getByRole("heading", { name: "代码审查与安全扫描" })).toBeVisible();
-  await page.getByRole("button", { name: "安全扫描", exact: true }).click();
+  await openAssessmentDock(page, "security");
   await page.getByLabel("目标", { exact: true }).selectOption("branch");
   await page.getByLabel("基线分支").fill(target.baseRef);
   await page.getByRole("button", { name: "开始安全扫描" }).click();
@@ -307,8 +341,7 @@ async function openAssessment(page: Page, detail = assessmentFixture(), options?
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }));
   const model = await assessmentRoutes(page, detail, options);
   await page.goto("/");
-  await page.getByRole("button", { name: "Code review and security" }).click();
-  await expect(page.getByRole("heading", { name: "Code review and security" })).toBeVisible();
+  await openAssessmentDock(page);
   return model;
 }
 
@@ -398,12 +431,21 @@ test("acknowledgement, typed resolution and stale gating remain separate finding
 });
 
 test("Diff layout aligns both revisions and auto responds to container width", async ({ page }) => {
-  await page.setViewportSize({ width: 1800, height: 1100 });
+  await page.setViewportSize({ width: 2240, height: 1100 });
   const fixture = assessmentFixture();
   const diff = "@@ -1,3 +1,3 @@\n context\n-export const value = 1;\n+export const value = 2;\n tail\n@@ -10 +10 @@\n-before\n+after\n";
   await openAssessment(page, { ...fixture, snapshot: { ...fixture.snapshot, files: [{ ...fixture.snapshot.files[0]!, diff }] },
     findings: [{ ...fixture.findings[0]!, startLine: 2, endLine: 2 }] });
   const viewer = page.locator(".diff-viewer");
+  await expect(viewer).toHaveAttribute("data-diff-layout", "unified");
+  const handle = page.getByRole("separator", { name: "Resize workspace dock" });
+  const bounds = await handle.boundingBox();
+  expect(bounds).not.toBeNull();
+  const { x, y, width, height } = bounds!;
+  await page.mouse.move(x + width / 2, y + height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x - 900, y + height / 2, { steps: 10 });
+  await page.mouse.up();
   await expect(viewer).toHaveAttribute("data-diff-layout", "split");
   const replacement = viewer.locator(".diff-split-row").filter({ hasText: "export const value = 1;" });
   await expect(replacement.locator('[data-diff-side="old"]')).toContainText("export const value = 1;");
@@ -423,13 +465,13 @@ test("Diff layout aligns both revisions and auto responds to container width", a
   await expect(viewer.locator("code").filter({ hasText: "context" })).toHaveCount(1);
   await page.getByLabel("Diff layout").selectOption("auto");
   await expect(viewer).toHaveAttribute("data-diff-layout", "split");
-  await page.setViewportSize({ width: 760, height: 1000 });
+  await page.setViewportSize({ width: 1000, height: 1000 });
   await expect(viewer).toHaveAttribute("data-diff-layout", "unified");
   await viewer.scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/tmp/ling-code-assessment-auto-narrow.png" });
   await page.getByLabel("Diff layout").selectOption("split");
   await expect(viewer).toHaveAttribute("data-diff-layout", "split");
-  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 760);
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", 1000);
 });
 
 test("a selected finding expands a collapsed hunk and focuses its exact revision line", async ({ page }) => {
@@ -523,7 +565,7 @@ test("Load more appends history pages once and preserves the selected report", a
   expect(offsets).toEqual([0, 1]);
 });
 
-test("out-of-order list, kind and detail responses cannot replace the current assessment", async ({ page }) => {
+test("late responses cannot replace the current assessment after switching dock tools", async ({ page }) => {
   const review = assessmentFixture();
   await openAssessment(page, review);
   await expect(page.getByText("Changed exported value", { exact: true })).toBeVisible();
@@ -550,7 +592,9 @@ test("out-of-order list, kind and detail responses cannot replace the current as
   });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => Boolean(releaseReview)).toBe(true);
-  await page.getByRole("button", { name: "Security scan", exact: true }).click();
+  const dock = page.getByRole("complementary", { name: "Channel workspace dock" });
+  await dock.getByRole("button", { name: "Back", exact: true }).click();
+  await dock.getByRole("button", { name: "Security scan", exact: true }).click();
   await expect(page.getByText("Current security candidate", { exact: true })).toBeVisible();
   const oldList = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/code-assessments") && new URL(response.url()).searchParams.get("kind") === "review");
   await releaseReview!(); await (await oldList).finished();

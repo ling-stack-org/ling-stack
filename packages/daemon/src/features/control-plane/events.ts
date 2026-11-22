@@ -5,7 +5,7 @@ import type {
   ControlPlaneEvent,
   RunExecutionStoreFacet,
 } from "@ling-stack/core";
-import type { ControlPlaneReplayWindow } from "@ling-stack/contracts";
+import type { ControlPlaneReplayWindow, LingAppServerTextDelta } from "@ling-stack/contracts";
 import { SseStreamWriter, SSE_STREAM_MAX_BUFFERED_BYTES, type SseStreamWriterOptions } from "../../shared/sse-stream-writer.js";
 import { coalesceAndSortControlPlaneEvents } from "./event-queue.js";
 
@@ -25,6 +25,8 @@ export interface ControlPlaneEventListenerSubscription {
   activate(replayEvents: readonly ControlPlaneEvent[]): void;
   close(): void;
 }
+
+type RunTextDelta = Omit<LingAppServerTextDelta, "subscriptionId">;
 
 export interface ControlPlaneReplayWindowResult {
   readonly window: ControlPlaneReplayWindow;
@@ -52,6 +54,7 @@ interface ControlPlaneEventListenerClient {
   readonly cwd: string;
   readonly domains?: ReadonlySet<ControlPlaneDomain>;
   readonly onEvent: (event: ControlPlaneEvent) => void;
+  readonly onRunTextDelta?: (delta: RunTextDelta) => void;
   readonly onPendingChange?: (bytes: number, count: number) => boolean;
   readonly onOverflow?: () => void;
   readonly queue: ControlPlaneEvent[];
@@ -139,6 +142,7 @@ export class ControlPlaneEventHub {
     readonly cwd: string;
     readonly domains?: readonly ControlPlaneDomain[];
     readonly onEvent: (event: ControlPlaneEvent) => void;
+    readonly onRunTextDelta?: (delta: RunTextDelta) => void;
     readonly onPendingChange?: (bytes: number, count: number) => boolean;
     readonly onOverflow?: () => void;
   }): ControlPlaneEventListenerSubscription {
@@ -148,6 +152,7 @@ export class ControlPlaneEventHub {
       cwd: input.cwd,
       domains: input.domains && input.domains.length > 0 ? new Set(input.domains) : undefined,
       onEvent: input.onEvent,
+      onRunTextDelta: input.onRunTextDelta,
       onPendingChange: input.onPendingChange,
       onOverflow: input.onOverflow,
       queue: [],
@@ -174,6 +179,15 @@ export class ControlPlaneEventHub {
         continue;
       }
       enqueueListenerEvent(listener, event, () => this.closeListener(listener));
+    }
+  }
+
+  publishRunTextDelta(cwd: string, delta: RunTextDelta): void {
+    for (const listener of this.listeners) {
+      if (!listener.closed && listener.phase === "active" && listener.cwd === cwd && listener.workspaceId === delta.workspaceId) {
+        try { listener.onRunTextDelta?.(delta); }
+        catch { this.closeListener(listener); }
+      }
     }
   }
 

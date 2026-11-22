@@ -426,6 +426,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.135.0
         version: 0.135.0(zod@4.6.7)
+      '@ling-stack/api-client':
+        specifier: workspace:*
+        version: link:../api-client
       '@ling-stack/browser-host':
         specifier: workspace:*
         version: link:../browser-host

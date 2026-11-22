@@ -11,6 +11,7 @@ import {
 import type { CodeAssessmentStore } from "../../code-assessment-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { SqliteAppServerStateStore } from "./app-server-state-store.js";
 
 const maxSnapshotBytes = 1024 * 1024;
 const maxDiffBytes = 256 * 1024;
@@ -57,6 +58,8 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
     const assessment: CodeAssessment = {
       id: input.id, kind: input.kind, providerPresetId: input.providerPresetId, status: "queued",
       ...(input.instructions ? { instructions: input.instructions } : {}),
+      ...(input.reviewFocus ? { reviewFocus: input.reviewFocus } : {}),
+      ...(input.reviewRules ? { reviewRules: input.reviewRules } : {}),
       phase: "collecting_diff", phaseHistory: [{ phase: "preparing", enteredAt: input.preparedAt ?? input.now }, { phase: "collecting_diff", enteredAt: input.captureStartedAt ?? input.now }],
       metrics: mergeMetrics({ snapshotBytes: Buffer.byteLength(JSON.stringify(input.snapshot), "utf8"), diffBytes: input.snapshot.files.reduce((size, file) => size + Buffer.byteLength(file.diff, "utf8"), 0) }, input.metrics),
       validation: { state: "not_run", reason: "Tool-free Diff assessment does not execute tests or reproduce exploits." },
@@ -70,6 +73,14 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
       if (db.prepare("SELECT id FROM code_assessments WHERE status IN ('queued','analyzing') LIMIT 1").get()) throw new Error("An assessment is already running in this workspace.");
       db.prepare("INSERT INTO code_assessment_snapshots(id,digest,body_json) VALUES (?,?,?)").run(input.snapshot.id, input.snapshot.digest, JSON.stringify(input.snapshot));
       db.prepare("INSERT INTO code_assessments(id,kind,status,snapshot_id,created_at,body_json) VALUES (?,?,?,?,?,?)").run(assessment.id, assessment.kind, assessment.status, assessment.snapshotId, assessment.createdAt, JSON.stringify(assessment));
+      if (input.submission) {
+        const receipt = new SqliteAppServerStateStore(this.context).putWithinTransaction({
+          kind: input.reviewFocus === "simplification" ? "simplify_submission" : "review_submission",
+          recordId: assessment.id, expectedRevision: 0,
+          idempotencyKey: input.submission.idempotencyKey, payload: input.submission.fingerprint,
+        }, input.now);
+        if (receipt?.status !== "created") throw new Error("The review submission already has an assessment.");
+      }
       db.exec("COMMIT");
     } catch (error) { return rollback(db, error); }
     return { assessment, snapshot: input.snapshot, findings: [] };
@@ -248,19 +259,56 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
     const db = this.context.database;
     begin(db);
     try {
+      if (input.submission) {
+        const prior = new SqliteAppServerStateStore(this.context).get("review_finding_update", input.submission.recordId);
+        if (prior) {
+          const payload = prior.payload as { readonly fingerprint?: unknown };
+          if (payload.fingerprint !== input.submission.fingerprint) throw new Error("app_server_state_idempotency_conflict");
+          db.exec("COMMIT");
+          const finding = this.getCodeAssessment(assessmentId)?.findings.find(item => item.id === findingId);
+          if (!finding) throw new Error("Finding not found.");
+          return finding;
+        }
+      }
       const detail = this.require(assessmentId);
       if (input.snapshotDigest !== detail.snapshot.digest) throw new Error("Finding snapshot changed.");
+      if (input.expectedRevision !== undefined && input.expectedRevision !== detail.assessment.updatedAt) throw new Error("Finding update revision changed.");
       const reason = input.reason?.trim();
       const closing = input.disposition === "dismissed" || input.disposition === "resolved";
       if ((closing && !reason) || (reason && reason.length > 2000)) throw new Error("Closing a finding requires a bounded reason.");
       if (closing && !["false_positive", "accepted_risk", "not_reproducible", "duplicate", "out_of_scope"].includes(input.closeReason ?? "")) throw new Error("Closing a finding requires a typed close reason.");
-      if (input.disposition === "resolved" && detail.assessment.freshness?.state !== "current") throw new Error("Resolving a finding requires a current snapshot freshness check.");
+      if (input.disposition === "resolved" && !input.freshness && detail.assessment.freshness?.state !== "current") throw new Error("Resolving a finding requires a current snapshot freshness check.");
       const finding = detail.findings.find(item => item.id === findingId);
       if (!finding) throw new Error("Finding not found.");
-      const next = { ...finding, disposition: input.disposition, dispositionReason: closing ? reason : undefined, closeReason: closing ? input.closeReason : undefined };
-      db.prepare("UPDATE code_assessment_findings SET body_json=? WHERE id=? AND assessment_id=?").run(JSON.stringify(next), findingId, assessmentId);
-      const updatedAt = Date.parse(input.now) >= Date.parse(detail.assessment.updatedAt) ? input.now : detail.assessment.updatedAt;
-      this.write({ ...detail.assessment, updatedAt });
+      const next: CodeAssessmentFinding = { ...finding, disposition: input.disposition,
+        dispositionReason: closing ? reason : undefined, closeReason: closing ? input.closeReason : undefined,
+        ...(input.freshness ? { freshnessState: "current" } : {}) };
+      const updateFinding = db.prepare("UPDATE code_assessment_findings SET body_json=? WHERE id=? AND assessment_id=?");
+      updateFinding.run(JSON.stringify(next), findingId, assessmentId);
+      const previous = Date.parse(detail.assessment.updatedAt);
+      const updatedAt = input.submission
+        ? new Date(Math.max(Date.parse(input.now), previous + 1)).toISOString()
+        : Date.parse(input.now) >= previous ? input.now : detail.assessment.updatedAt;
+      const nextAssessment = { ...detail.assessment, updatedAt,
+        ...(input.freshness ? { freshness: input.freshness } : {}) };
+      this.write(nextAssessment);
+      if (input.freshness) {
+        for (const currentFinding of detail.findings) {
+          if (currentFinding.id !== findingId) {
+            updateFinding.run(JSON.stringify({ ...currentFinding, freshnessState: "current" }), currentFinding.id, assessmentId);
+          }
+        }
+      }
+      if (input.submission) {
+        const receipt = new SqliteAppServerStateStore(this.context).putWithinTransaction({
+          kind: "review_finding_update", recordId: input.submission.recordId, expectedRevision: 0,
+          idempotencyKey: input.submission.idempotencyKey,
+          payload: { fingerprint: input.submission.fingerprint, result: {
+            assessmentId, findingId, revision: updatedAt, disposition: next.disposition,
+          } },
+        }, input.now);
+        if (receipt?.status !== "created") throw new Error("The finding update already has a receipt.");
+      }
       db.exec("COMMIT");
       return next;
     } catch (error) { return rollback(db, error); }

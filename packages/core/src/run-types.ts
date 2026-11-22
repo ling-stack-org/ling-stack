@@ -475,6 +475,7 @@ import type {
   WorkItemClaimBlocker,
   WorkItemClaimRequest,
   WorkItemCompleteRequest,
+  WorkItemControlRequest,
   WorkItemFailRequest,
   WorkItemHeartbeatRequest,
   WorkItemReleaseRequest,
@@ -1535,6 +1536,7 @@ export interface CreateRunArtifactInput {
 
 export type ControlPlaneDomain =
   | "runs"
+  | "work_items"
   | "work_units"
   | "memory"
   | "skills"
@@ -1944,6 +1946,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
   getRunIntervention(interventionId: string): RunIntervention | undefined;
   listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];
+  listPendingConversationInterventionSources(): string[];
   claimNextRunIntervention(input: ClaimNextRunInterventionInput): RunIntervention | undefined;
   listPriorRunInterventionReplyMessages(input: ListPriorRunInterventionReplyMessagesInput): ChannelMessage[];
   updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined;
@@ -2687,14 +2690,28 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
     now: string,
   ): ExternalWorkSchedulerState | undefined;
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem;
+  createWorkItem(input: import("./work-item-types.js").CreateWorkItemInput, now: string, eventCwd?: string): import("./work-item-types.js").CreateWorkItemResult;
   getWorkItem(id: string): WorkItem | undefined;
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
+  acceptWorkItem(id: string, input: import("./work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemAcceptanceResult | undefined;
   claimWorkItem(id: string, input: WorkItemClaimRequest, now: string): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined;
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined;
   releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined;
   completeWorkItem(id: string, input: WorkItemCompleteRequest, now: string): WorkItem | undefined;
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
+  appendWorkItemEvidence(input: import("./work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string, event?: import("./work-item-evidence-types.js").WorkItemEvidenceEventOptions): import("./work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined;
+  getWorkItemEvidence(id: string): import("./work-item-evidence-types.js").WorkItemEvidenceEntry | undefined;
+  listWorkItemEvidence(options: import("./work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("./work-item-evidence-types.js").WorkItemEvidenceEntry[];
+  getAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
+  findAppServerStateByIdempotencyKey(kind: import("./app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
+  listAppServerState(kind?: import("./app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord[];
+  putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
+  deleteAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean;
+  pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
+  resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
+  cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
+  applyWorkItemControl(id: string, action: import("./work-item-types.js").WorkItemControlAction, input: WorkItemControlRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemControlResult;
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;
@@ -3287,6 +3304,12 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "releaseWorkItem"
   | "completeWorkItem"
   | "failWorkItem"
+  | "pauseWorkItem"
+  | "resumeWorkItem"
+  | "cancelWorkItem"
+  | "appendWorkItemEvidence"
+  | "getWorkItemEvidence"
+  | "listWorkItemEvidence"
 >;
 
 export type McpMetadataStoreFacet = RunStoreFacet<"beginMcpMetadataRequest" | "commitMcpMetadataResult">;

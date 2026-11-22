@@ -17,6 +17,7 @@ import {
 
 export const CONTROL_PLANE_DOMAINS = [
   "runs",
+  "work_items",
   "work_units",
   "memory",
   "skills",

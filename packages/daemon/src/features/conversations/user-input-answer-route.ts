@@ -1,13 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseUserInputAnswerCommandV1, type UserInputAnswerAcceptedResponseV1 } from "@ling-stack/contracts";
-import { UserInputStoreError, type RunStore } from "@ling-stack/core";
+import { UserInputStoreError } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 
-export type UserInputAnswerAcceptedHook = (store: RunStore) => void;
+import { submitAuthorizedUserInputAnswer, type UserInputAnswerAcceptedHook } from "../runs/user-input-answer.js";
 
 /** Public local-user answer boundary. Acceptance is durable Host evidence, not a Runner ACK. */
 export async function handleUserInputAnswer(
@@ -36,20 +36,9 @@ export async function handleUserInputAnswer(
     }
     const command = parsed.value;
     const store = storeRegistry.getStore(cwd);
-    const receipt = store.submitUserInputAnswer({
-      threadId: command.authority.threadId,
-      authority: command.authority,
-      submission: {
-        schemaVersion: 1,
-        requestId: command.authority.requestId,
-        expectedVersion: command.authority.requestVersion,
-        expectedStatusRevision: command.authority.statusRevision,
-        idempotencyKey: command.idempotencyKey,
-        answers: command.answers,
-      },
-    }, new Date().toISOString());
+    const receipt = submitAuthorizedUserInputAnswer(store, command, new Date().toISOString());
     try {
-      onDeliveryAccepted?.(store);
+      onDeliveryAccepted?.(store, command.authority.threadId, receipt);
     } catch {
       // Durable outbox scanning owns correctness. The wake-up hook only lowers
       // latency and must never turn an accepted answer into a false HTTP error.

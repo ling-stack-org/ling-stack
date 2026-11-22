@@ -1,6 +1,10 @@
 # Exact historical false positives reviewed on 2026-08-03 with Gitleaks v8.30.1.
 # Keep entries fingerprint-scoped. Do not replace these with broad path or rule exclusions.
 
+# App Server collaboration tests use synthetic idempotency labels, not credentials.
+22ecf2ee9c68265770dfcdf46b063af13981f7ee:packages/daemon/test/app-server-collaboration.test.mjs:generic-api-key:47
+22ecf2ee9c68265770dfcdf46b063af13981f7ee:packages/daemon/test/app-server-collaboration.test.mjs:generic-api-key:61
+
 # Design copy containing the phrase "local-auth gate".
 fdee5706a4cc51516fdfa68b8e25905c15c49d97:docs/design/mobile-conversation-ui2-detailed-design.md:generic-api-key:810
 

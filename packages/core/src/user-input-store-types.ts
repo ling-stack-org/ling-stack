@@ -38,6 +38,10 @@ export interface UserInputRequest {
   readonly expiresAt?: string;
 }
 
+export function userInputRequestEventKey(request: Pick<UserInputRequest, "requestId" | "statusRevision">): string {
+  return `user-input:${request.requestId}:${request.statusRevision}`;
+}
+
 /** Host-only entry point; toolInput is the untrusted, strictly parsed model payload. */
 export interface CreateUserInputRequest {
   readonly sourceRunId: string;

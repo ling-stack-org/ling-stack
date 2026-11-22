@@ -1,4 +1,4 @@
-import { parseGoalAcceptanceCriteria, parseGoalAcceptanceEvidence, parseGoalSupervisionPolicy, type GoalAcceptanceCriterion, type GoalAcceptanceEvidence, type GoalSupervisionPolicy } from "@ling-stack/core";
+import { parseGoalAcceptanceCriteria, parseGoalAcceptanceEvidence, parseGoalSupervisionPolicy, type GoalAcceptanceCriterion, type GoalSupervisionPolicy } from "@ling-stack/core";
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -104,7 +104,7 @@ export interface HandleLingThreadRouteOptions {
   readonly startForkRun?: StartLingThreadForkRun;
 }
 
-interface ResumeContextPreview {
+export interface ResumeContextPreview {
   readonly title: string;
   readonly instruction: string;
   readonly sourceRunId: string;
@@ -444,28 +444,7 @@ async function handleLingThreadGoalComplete(
       return;
     }
     const body = await readOptionalJsonBody(request, 1024 * 1024);
-    const input = parseCompleteLingThreadGoalBody(body);
-    const goal = store.updateLingThreadGoal(
-      existing.id,
-      {
-        status: "complete",
-        completedBy: input.actor,
-        completedReason: input.reason,
-        completionVerificationSummary: input.completionVerificationSummary,
-        acceptanceEvidence: input.acceptanceEvidence,
-        completionEvidenceRefs: input.evidenceRefs,
-        blockedReason: null,
-        continuationChainId: null,
-        continuationDepth: 0,
-        noEvidenceContinuationCount: 0,
-        lastBlockerFingerprint: null,
-        sameBlockerCount: 0,
-        lastContinuationStopReason: null,
-        lastContinuationStoppedAt: null,
-        lastContinuationEvidenceDelta: null,
-      },
-      new Date().toISOString(),
-    );
+    const goal = store.updateLingThreadGoal(existing.id, parseCompleteLingThreadGoalBody(body), new Date().toISOString());
     writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
   } catch (error) {
     writeLingThreadRouteError(response, error);
@@ -1563,7 +1542,7 @@ function readOptionalLingTurnActor(record: Record<string, unknown>, key: string)
   return value as LingTurnCreatedByActor;
 }
 
-function buildLingThreadResumeContext(input: {
+export function buildLingThreadResumeContext(input: {
   readonly store: RunStore;
   readonly thread: LingThread;
   readonly body: unknown;
@@ -2158,7 +2137,7 @@ function parseUpdateConversationModeBody(value: unknown): { readonly mode: Conve
   return { mode: mode as ConversationModeKind };
 }
 
-function parsePutLingThreadGoalBody(value: unknown): {
+export function parsePutLingThreadGoalBody(value: unknown): {
   readonly objective: string;
   readonly tokenBudget?: number | null;
   readonly replaceExisting: boolean;
@@ -2212,19 +2191,8 @@ function parsePatchLingThreadGoalBody(value: unknown): UpdateLingThreadGoalInput
   };
 }
 
-function parseCompleteLingThreadGoalBody(value: unknown): {
-  readonly actor: LingThreadGoalCompletionActor;
-  readonly reason?: string;
-  readonly evidenceRefs: readonly GoalEvidenceRef[];
-  readonly completionVerificationSummary?: string;
-  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
-} {
-  if (value === undefined || value === null) {
-    return {
-      actor: "local-user",
-      evidenceRefs: [],
-    };
-  }
+export function parseCompleteLingThreadGoalBody(value: unknown): UpdateLingThreadGoalInput {
+  value ??= {};
   if (!isRecord(value)) {
     throw new HttpError(400, "bad_request", "Goal completion request must be a JSON object.");
   }
@@ -2239,11 +2207,21 @@ function parseCompleteLingThreadGoalBody(value: unknown): {
     throw new HttpError(400, "goal_completion_summary_required", "Ling Agent completion requires a verification summary.");
   }
   return {
-    actor,
-    reason,
-    evidenceRefs,
+    status: "complete",
+    completedBy: actor,
+    completedReason: reason,
+    completionEvidenceRefs: evidenceRefs,
     completionVerificationSummary,
     acceptanceEvidence: value.acceptanceEvidence === undefined ? undefined : parseGoalAcceptanceEvidence(value.acceptanceEvidence),
+    blockedReason: null,
+    continuationChainId: null,
+    continuationDepth: 0,
+    noEvidenceContinuationCount: 0,
+    lastBlockerFingerprint: null,
+    sameBlockerCount: 0,
+    lastContinuationStopReason: null,
+    lastContinuationStoppedAt: null,
+    lastContinuationEvidenceDelta: null,
   };
 }
 

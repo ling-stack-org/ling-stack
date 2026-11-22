@@ -176,6 +176,25 @@ export class SqliteRunInterventionStore {
       .map((row) => mapRunIntervention(row as Record<string, SQLOutputValue>));
   }
 
+  listPendingConversationInterventionSources(): string[] {
+    return this.context.database.prepare(`
+      SELECT i.source_run_id
+      FROM run_interventions i
+      JOIN run_sessions source ON source.id = i.source_run_id
+      JOIN ling_threads thread ON thread.id = source.thread_id
+      LEFT JOIN run_sessions successor ON successor.id = i.continuation_run_id
+      WHERE thread.kind = 'conversation' AND thread.channel_id IS NULL
+        AND thread.archived_at IS NULL AND thread.status <> 'archived'
+        AND source.status IN ('succeeded', 'failed', 'cancelled')
+        AND i.requested_by = 'local-user'
+        AND (i.status IN ('queued', 'cancelling_source')
+          OR (i.status = 'started' AND i.completed_at IS NULL
+            AND successor.status IN ('succeeded', 'failed', 'cancelled')))
+      GROUP BY i.source_run_id
+      ORDER BY min(i.created_at), i.source_run_id
+    `).all().map(row => readString(row, "source_run_id"));
+  }
+
   claimNextRunIntervention(input: ClaimNextRunInterventionInput): RunIntervention | undefined {
     const expectedStatuses = [...new Set(input.expectedStatuses)];
     if (expectedStatuses.length === 0) {

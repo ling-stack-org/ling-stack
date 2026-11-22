@@ -138,3 +138,97 @@ test("work item claim honors expired leases, dependency blockers, retry budget, 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("work item control persists revision, generation, idempotency, and admission blocking", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-work-item-control-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const created = store.upsertWorkItem({ sourceType: "manual", sourceId: "control-1", title: "Controlled work" }, "2026-06-01T00:00:00.000Z");
+    assert.equal(created.revision, 1);
+    assert.equal(created.control.state, "active");
+    assert.equal(created.control.generation, 0);
+
+    const paused = store.pauseWorkItem(created.id, {
+      expectedRevision: created.revision,
+      expectedControlGeneration: created.control.generation,
+      actorId: "user-1",
+      idempotencyKey: "pause-1",
+      reason: "Investigate before continuing",
+    }, "2026-06-01T00:01:00.000Z");
+    assert.equal(paused.control.state, "paused");
+    assert.equal(paused.revision, 2);
+    assert.equal(paused.control.generation, 1);
+    assert.equal(paused.control.receipt.action, "pause");
+
+    const blocked = store.claimWorkItem(created.id, { ownerId: "agent-a" }, "2026-06-01T00:02:00.000Z");
+    assert.equal(blocked.blocker.code, "control_blocked");
+
+    const retriedPause = store.pauseWorkItem(created.id, {
+      expectedRevision: 999,
+      expectedControlGeneration: 999,
+      actorId: "user-1",
+      idempotencyKey: "pause-1",
+    }, "2026-06-01T00:03:00.000Z");
+    assert.equal(retriedPause.control.receipt.id, paused.control.receipt.id);
+    assert.equal(retriedPause.revision, paused.revision);
+
+    const staleResume = store.resumeWorkItem(created.id, {
+      expectedRevision: 1,
+      expectedControlGeneration: 0,
+      actorId: "user-1",
+      idempotencyKey: "resume-stale",
+    }, "2026-06-01T00:04:00.000Z");
+    assert.equal(staleResume, undefined);
+
+    const resumed = store.resumeWorkItem(created.id, {
+      expectedRevision: paused.revision,
+      expectedControlGeneration: paused.control.generation,
+      actorId: "user-1",
+      idempotencyKey: "resume-1",
+    }, "2026-06-01T00:05:00.000Z");
+    assert.equal(resumed.control.state, "active");
+    assert.equal(resumed.control.generation, 2);
+
+    const cancelled = store.cancelWorkItem(created.id, {
+      expectedRevision: resumed.revision,
+      expectedControlGeneration: resumed.control.generation,
+      actorId: "user-1",
+      idempotencyKey: "cancel-1",
+    }, "2026-06-01T00:06:00.000Z");
+    assert.equal(cancelled.control.state, "cancelled");
+    assert.equal(cancelled.control.generation, 3);
+    assert.equal(store.claimWorkItem(created.id, { ownerId: "agent-b" }, "2026-06-01T00:07:00.000Z").blocker.code, "control_blocked");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("work item evidence appends with CAS and idempotent replay", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-work-item-evidence-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "evidence-1", title: "Evidence work" }, "2026-06-01T00:00:00.000Z");
+    const input = {
+      workItemId: item.id,
+      expectedWorkItemRevision: item.revision,
+      expectedEvidenceRevision: 0,
+      idempotencyKey: "evidence-1",
+      actorId: "agent-a",
+      subjectRevision: String(item.revision),
+      kind: "observation",
+      content: "The current candidate starts cleanly.",
+      sourceRefs: [{ type: "run", id: "run-1", revision: "1" }],
+    };
+    const appended = store.appendWorkItemEvidence(input, "2026-06-01T00:01:00.000Z");
+    assert.equal(appended.status, "appended");
+    assert.equal(appended.entry.sequence, 1);
+    assert.equal(appended.workItemRevision, item.revision + 1);
+    const replayed = store.appendWorkItemEvidence(input, "2026-06-01T00:02:00.000Z");
+    assert.equal(replayed.status, "replayed");
+    assert.equal(replayed.entry.id, appended.entry.id);
+    assert.equal(store.listWorkItemEvidence({ workItemId: item.id }).length, 1);
+    assert.equal(store.appendWorkItemEvidence({ ...input, idempotencyKey: "evidence-2", expectedWorkItemRevision: item.revision }, "2026-06-01T00:03:00.000Z"), undefined);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

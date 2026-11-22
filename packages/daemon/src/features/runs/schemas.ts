@@ -35,6 +35,7 @@ import type {
   ConversationContextProjectionMetadata,
   DelegatedStepRequirementV1,
   HarnessFeatureSnapshotV1,
+  LingAppServerProjectInstructionManifest,
   RunnerContinuationOrigin,
   WorkflowParticipantProviderBindingV1,
   ExecutionBindingRequest,
@@ -148,6 +149,7 @@ export interface RunRequest extends Omit<
   readonly contextProjection?: ConversationContextProjectionMetadata;
   /** Internal-only frozen normal input evidence. External request parsing never accepts it. */
   readonly normalConversationContext?: NormalConversationContextSnapshot;
+  readonly projectInstructionManifest?: LingAppServerProjectInstructionManifest;
   /** Internal acceptance evidence; never parsed from an external RunRequest. */
   readonly normalConversationAcceptedSnapshotId?: string;
   /** Internal immutable request preparation, never accepted by external parsing. */

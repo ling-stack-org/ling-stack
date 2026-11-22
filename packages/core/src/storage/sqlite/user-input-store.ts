@@ -4,11 +4,12 @@ import {
   type UserInputAnswerSubmissionV1,
 } from "@ling-stack/contracts";
 import {
-  UserInputStoreError, type CancelUserInputRequest, type CreateUserInputRequest, type CreateUserInputRequestResult,
+  UserInputStoreError, userInputRequestEventKey, type CancelUserInputRequest, type CreateUserInputRequest, type CreateUserInputRequestResult,
   type FindRequiredUserInputForAttempt, type ListPendingUserInputDeliveries, type PendingUserInputDelivery, type SubmitUserInputAnswer,
   type UserInputAnswerReceipt, type UserInputRequest, type UserInputSource,
 } from "../../user-input-store-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
+import type { RunStore } from "../../run-types.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteConversationItemStore } from "./conversation-item-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
@@ -28,7 +29,7 @@ export class SqliteUserInputStore {
     private readonly context: SqliteStoreContext,
     private readonly items: SqliteConversationItemStore,
     private readonly events: SqliteControlPlaneStore,
-    private readonly sources: UserInputSourcePorts & UserInputAnswerAuthorityPorts,
+    private readonly sources: UserInputSourcePorts & UserInputAnswerAuthorityPorts & Pick<RunStore, "paths">,
   ) {}
 
   create(input: CreateUserInputRequest, now: string): CreateUserInputRequestResult {
@@ -214,11 +215,12 @@ export class SqliteUserInputStore {
 
   private invalidate(request: UserInputRequest, now: string): void {
     this.events.appendControlPlaneEventWithinTransaction({
-      workspaceId: DEFAULT_WORKSPACE_ID, cwd: request.source.cwd, domain: "runs",
+      workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.sources.paths.cwd, domain: "runs",
       entityType: "user_input_request", entityId: request.requestId, action: request.status,
-      data: { threadId: request.source.threadId, requestId: request.requestId, requestVersion: request.requestVersion,
+      data: { threadId: request.source.threadId, turnId: request.source.turnId, runId: request.source.runId,
+        requestId: request.requestId, requestVersion: request.requestVersion,
         statusRevision: request.statusRevision, itemId: request.itemId },
-      idempotencyKey: "user-input:" + request.requestId + ":" + request.statusRevision,
+      idempotencyKey: userInputRequestEventKey(request),
     }, now);
   }
 

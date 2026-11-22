@@ -67,6 +67,17 @@ export interface CodeAssessmentSnapshot {
   readonly exclusions: readonly { readonly path: string; readonly reason: CodeSnapshotExclusionReason }[];
 }
 
+export interface CodeAssessmentReviewRules {
+  readonly baseSha: string;
+  readonly sources: readonly {
+    readonly path: string;
+    readonly scope: string;
+    readonly digest: string;
+    readonly guidance: string;
+  }[];
+  readonly omitted: readonly string[];
+}
+
 export interface CodeAssessment {
   readonly id: string;
   readonly kind: CodeAssessmentKind;
@@ -82,6 +93,8 @@ export interface CodeAssessment {
   readonly branchName?: string;
   readonly providerPresetId: string;
   readonly instructions?: string;
+  readonly reviewFocus?: "simplification";
+  readonly reviewRules?: CodeAssessmentReviewRules;
   readonly runId?: string;
   readonly phaseRuns?: readonly CodeAssessmentPhaseRun[];
   readonly threatModelArtifactId?: string;

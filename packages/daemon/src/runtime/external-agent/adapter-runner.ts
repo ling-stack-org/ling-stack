@@ -98,6 +98,9 @@ export async function runExternalAgentTask(input: RunExternalAgentTaskOptions): 
       tools: options.tools ?? [],
     }, options.signal);
 
+    if (result.taskId !== undefined && result.taskId !== options.task.id) {
+      throw new Error("External runner result belongs to a different task.");
+    }
     const messages = result.messages ?? [];
     for (const event of result.events ?? []) {
       if (options.signal?.aborted) {

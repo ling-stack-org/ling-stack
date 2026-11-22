@@ -58,15 +58,16 @@ function assertRepoLocal(paths) {
  * SQLite cannot replay stale pages into the copy. Reopens and secondary
  * connections must use the normal production factory against this same test database.
  *
- * Use the production factory directly for migrations, first initialization,
- * recovery, builtin seed generation, or constructor-option tests. This helper
- * intentionally shares initial seed timestamps/IDs across isolated copies.
+ * Use the production factory directly when the test covers first initialization,
+ * recovery, builtin seed generation, or constructor options. Historical migration
+ * tests may use a copy as input to their rewind and must use the production
+ * factory for reopens. Initial seed timestamps/IDs are shared across copies.
  *
  * @param {string} cwd An existing test-owned temporary directory.
+ * @param {import("../../dist/index.js").LingStackRuntimePaths} [paths]
  * @returns {import("../../dist/index.js").SqliteRunStore}
  */
-export function createSqliteRunStoreFixture(cwd) {
-  const paths = resolveRuntimePaths(cwd);
+export function createSqliteRunStoreFixture(cwd, paths = resolveRuntimePaths(cwd)) {
   assertRepoLocal(paths);
   for (const suffix of ["-wal", "-shm"]) {
     const sidecar = paths.databasePath + suffix;

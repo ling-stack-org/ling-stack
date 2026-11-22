@@ -2726,6 +2726,19 @@ async function executeAdmittedRunRequest(
   });
 
   const streamEnvelope = (envelope: RunEventEnvelope): void => {
+    if (envelope.type === "assistant_text_delta" && options.controlPlaneEvents && thread?.kind === "conversation"
+      && thread.id === run.threadId && !thread.channelId && turn && run.teammateId === "ling_agent" && !delegatedExecution) {
+      const text = envelope.data.text;
+      if (text) {
+        options.controlPlaneEvents.publishRunTextDelta(workspaceCwd, {
+          workspaceId: thread.workspaceId,
+          subject: { kind: "thread", threadId: thread.id, turnId: turn.id },
+          runId: run.id, itemId: "narration:" + run.id, streamEpoch: attempt.id, offset: envelope.seq,
+          text: text.slice(0, 16_384),
+          ...(text.length > 16_384 ? { truncated: true } : {}),
+        });
+      }
+    }
     if (!sinkClosed) {
       sink.writeEvent(envelope.type, projectPublicRunEventEnvelope(envelope));
     }
@@ -3106,6 +3119,7 @@ async function executeAdmittedRunRequest(
       executorGroup: hostOperationTracker.executorGroup,
       signal: abortController.signal,
       now: executionNow,
+      controlPlaneEvents: options.controlPlaneEvents,
     });
   }
   const loopDetector = new ExecutionLoopDetector(attempt.id);
@@ -4815,6 +4829,7 @@ export function appendRunCreatedControlPlaneEvent(
     action: "run.created",
     idempotencyKey,
     data: {
+      ...runConversationEventScope(store, run),
       status: run.status,
       taskId: run.taskId,
       channelId: run.channelId ?? null,
@@ -4847,6 +4862,7 @@ export function appendRunCompletedControlPlaneEvent(
     entityId: run.id,
     action: "run.completed",
     data: {
+      ...runConversationEventScope(store, run),
       previousStatus,
       status,
       terminalAt,
@@ -4874,11 +4890,20 @@ export function appendRunCancelledControlPlaneEvent(
     entityId: run.id,
     action: "run.cancelled",
     data: {
+      ...runConversationEventScope(store, run),
       previousStatus,
       status: "cancelled",
       reasonCode: "cancelled",
     },
   }, now);
+}
+
+function runConversationEventScope(store: RunStore, run: RunSession) {
+  if (!run.threadId || run.channelId) return {};
+  const thread = store.getLingThread(run.threadId);
+  const turn = thread?.kind === "conversation" ? store.getLingTurnForRun(run.id) : undefined;
+  return turn ? { threadId: turn.threadId, turnId: turn.id, runId: run.id,
+    ...(run.interventionId ? { interventionId: run.interventionId } : {}) } : {};
 }
 
 export function appendWorkUnitCreatedControlPlaneEvent(
