@@ -102,9 +102,11 @@ export async function handleDeviceProtocolRoute(
     const replay = decodeReplay(runtime, active, capture);
     const artifactDigest = captureDigest(capture);
     const now = new Date().toISOString();
+    const existing = runtime.developerSessions.getJob(jobId);
     const started = runtime.developerSessions.startJob({
       jobId, sessionId: active.sessionId, kind: "workbench", status: "running", targetDeviceId: active.targetDeviceId,
       taskStatus: "executing", artifactDigest, revision: 1, updatedAt: now,
+      ...(!existing || existing.authorizationRevision !== undefined ? { authorizationRevision: active.authorizationRevision } : {}),
     });
     if (started.status === "completed" && started.outputRef === capture.captureId) {
       writePrivateJson(response, 200, readCompletedReplay(runtime, active, started));
@@ -206,7 +208,7 @@ async function handleLiveCapture(
   const now = new Date().toISOString();
   runtime.developerSessions.startJob({
     jobId, sessionId: active.sessionId, kind: "workbench", status: "running", targetDeviceId: active.targetDeviceId,
-    taskStatus: "executing", revision: 1, updatedAt: now,
+    taskStatus: "executing", authorizationRevision: active.authorizationRevision, revision: 1, updatedAt: now,
   });
   const stop = new AbortController();
   const onClose = () => stop.abort();

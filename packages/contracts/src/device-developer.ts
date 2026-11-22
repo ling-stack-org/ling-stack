@@ -11,6 +11,10 @@ export interface DeviceDeveloperSessionV1 {
   readonly targetKind: DeviceKindV1;
   readonly mode: DeviceSessionModeV1;
   readonly authorizationRevision: string;
+  readonly targetBinding?: {
+    readonly profileRevision: string;
+    readonly connectionRevision: string;
+  };
   readonly protocolReplay?: {
     readonly profileId: string;
     readonly profileVersion: string;
@@ -36,6 +40,7 @@ export interface DeviceDeveloperJobV1 {
   readonly status: "queued" | "running" | "completed" | "failed" | "unknown" | "cancelled";
   readonly artifactDigest?: string;
   readonly targetDeviceId: string;
+  readonly authorizationRevision?: string;
   readonly taskStatus: DeviceTaskStatusV1;
   readonly outputRef?: string;
   readonly outputDigest?: string;

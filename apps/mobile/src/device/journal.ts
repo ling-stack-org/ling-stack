@@ -16,17 +16,25 @@ export interface MobileStorageLike {
   removeItem?(key: string): Promise<void>;
 }
 
-export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike, ownerId: string): MobileDeviceJournal {
+export interface MobileTaskEvidence {
+  readonly task: DeviceTaskV1 | undefined;
+  readonly attempts: readonly MobileAttemptRecord[];
+  readonly observations: readonly DeviceObservationV1[];
+}
+
+export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike, ownerId: string): MobileDeviceJournal & {
+  readTaskEvidence(taskId: string): Promise<MobileTaskEvidence>;
+} {
   const prefix = `ling-device-execution:v1:${ownerId}`;
   const tasksKey = `${prefix}:tasks`;
   const taskKey = (taskId: string) => `${prefix}:task:${taskId}`;
   const attemptKey = (taskId: string, idempotencyKey: string) => `${prefix}:attempt:${taskId}:${encodeURIComponent(idempotencyKey)}`;
   const attemptsKey = (taskId: string) => `${prefix}:attempts:${taskId}`;
   const observationKey = (taskId: string) => `${prefix}:observations:${taskId}`;
-  let writes = Promise.resolve();
-  const write = (mutation: () => Promise<void>): Promise<void> => {
-    const next = writes.then(mutation);
-    writes = next.catch(() => undefined);
+  let queue = Promise.resolve();
+  const enqueue = <Result>(operation: () => Promise<Result>): Promise<Result> => {
+    const next = queue.then(operation);
+    queue = next.then(() => undefined, () => undefined);
     return next;
   };
 
@@ -39,8 +47,18 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
       const tasks = await Promise.all(ids.map(id => parseTask(storage.getItem(taskKey(id)))));
       return tasks.filter((task): task is DeviceTaskV1 => task !== undefined);
     },
+    readTaskEvidence(taskId) {
+      return enqueue(async () => {
+        const task = await parseTask(storage.getItem(taskKey(taskId)));
+        if (!task || task.id !== taskId || task.ownerKind !== "mobile" || task.ownerId !== ownerId) {
+          return { task: undefined, attempts: [], observations: [] };
+        }
+        const [attempts, observations] = await Promise.all([storage.getItem(attemptsKey(taskId)), storage.getItem(observationKey(taskId))]);
+        return { task, attempts: parseAttemptArray(attempts), observations: parseObservationArray(observations) };
+      });
+    },
     saveTask(task) {
-      return write(async () => {
+      return enqueue(async () => {
         if (!isDeviceTaskV1(task)) throw new Error("Invalid mobile device task");
         const ids = parseStringArray(await storage.getItem(tasksKey));
         if (!ids.includes(task.id)) await storage.setItem(tasksKey, JSON.stringify([...ids, task.id]));
@@ -59,7 +77,7 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
       return parseObservationArray(await storage.getItem(observationKey(taskId)));
     },
     saveAttempt(record) {
-      return write(async () => {
+      return enqueue(async () => {
         if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)) throw new Error("Invalid mobile device attempt");
         const key = attemptsKey(record.request.taskId);
         const attempts = parseAttemptArray(await storage.getItem(key));
@@ -69,7 +87,7 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
       });
     },
     saveObservation(taskId, observation: DeviceObservationV1) {
-      return write(async () => {
+      return enqueue(async () => {
         if (!isDeviceObservationV1(observation)) throw new Error("Invalid mobile device observation");
         const key = observationKey(taskId);
         const current = parseObservationArray(await storage.getItem(key));

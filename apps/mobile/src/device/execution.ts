@@ -246,6 +246,7 @@ export class MobileDeviceExecution {
       recoveryPathVerifiedAt = this.#now();
     }
 
+    const availableTransports = profile.transports.filter(transport => capability.supportedTransports.includes(transport));
     const attempt: DeviceTaskAttemptV1 = {
       attemptId: `${task.id}:${request.actionId}`,
       taskId: task.id,
@@ -255,6 +256,11 @@ export class MobileDeviceExecution {
       targetDeviceId: profile.device.id,
       dispatchIntentAt: this.#now(),
       connectionRevision: snapshot.connectionRevision,
+      adapterBinding: {
+        adapterId: snapshot.adapterId, adapterVersion: snapshot.adapterVersion, profileRevision: profile.profileRevision,
+        ...(profile.device.firmwareVersion ? { firmwareVersion: profile.device.firmwareVersion } : {}),
+        ...(availableTransports.length === 1 ? { transport: availableTransports[0] } : {}),
+      },
       requestDigest,
       ...(request.approvalId ? { approvalId: request.approvalId } : {}),
       ...(recoveryPathVerifiedAt ? { recoveryPathVerifiedAt } : {}),

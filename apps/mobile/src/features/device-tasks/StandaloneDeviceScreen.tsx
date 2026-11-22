@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { HomeAssistantInputError } from "../../device/home-assistant";
@@ -112,6 +112,7 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
                 <Text style={styles.label}>{run.entityId}</Text>
                 <Text style={styles.note}>{resultText(run)}</Text>
                 <Text style={styles.note}>{new Date(run.updatedAt).toLocaleString()}</Text>
+                {state.status === "ready" ? <DeviceTraceShareButton runtime={state.runtime} taskId={run.taskId} styles={styles} /> : null}
               </View>
             ))}
           </View>
@@ -214,8 +215,35 @@ function LinuxSshPanel({ runtime, styles }: { readonly runtime: StandaloneDevice
       <Text style={styles.label}>{targets.find(target => target.deviceId === run.deviceId)?.host ?? "Linux SSH"}</Text>
       <Text style={styles.note}>{linuxResultText(run)}</Text>
       <Text style={styles.note}>{new Date(run.updatedAt).toLocaleString()}</Text>
+      <DeviceTraceShareButton runtime={runtime} taskId={run.taskId} styles={styles} />
     </View>)}
   </>;
+}
+
+function DeviceTraceShareButton({ runtime, taskId, styles }: {
+  readonly runtime: StandaloneDeviceRuntime;
+  readonly taskId: string;
+  readonly styles: ReturnType<typeof createStyles>;
+}) {
+  const active = useRef(false);
+  async function share() {
+    if (active.current) return;
+    active.current = true;
+    try {
+      const trace = await runtime.readTaskTrace(taskId);
+      if (!trace) throw new Error("mobile_device_task_unavailable");
+      await Share.share({ message: JSON.stringify(trace, null, 2) });
+    } catch {
+      Alert.alert("无法分享诊断记录");
+    } finally {
+      active.current = false;
+    }
+  }
+  return (
+    <Pressable accessibilityRole="button" onPress={() => void share()} style={styles.shareButton}>
+      <Text style={styles.backText}>分享执行记录</Text>
+    </Pressable>
+  );
 }
 
 function linuxResultText(run: PhoneLinuxSshRun): string {
@@ -254,6 +282,7 @@ function createStyles(theme: MobileThemeTokens) {
     selectedOption: { borderColor: theme.action.accent },
     header: { flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: 16 },
     backButton: { minHeight: 44, justifyContent: "center" },
+    shareButton: { minHeight: 44, alignSelf: "flex-start", justifyContent: "center" },
     backText: { color: theme.text.default, fontSize: 15 },
     heading: { color: theme.text.strong, fontSize: 18, fontWeight: "600" },
     label: { color: theme.text.strong, fontSize: 14, fontWeight: "600" },

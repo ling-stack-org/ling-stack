@@ -8,6 +8,7 @@ import {
   type LinuxSshTarget, type LinuxSshTargetInput, type OpenLinuxSshConnection,
 } from "./linux-ssh.ts";
 import { runMobileReadOnlyPlaybook } from "./playbook.ts";
+import { projectMobileDeviceTaskTrace } from "./trace.ts";
 
 const ownerKey = "ling:standalone-device-owner:v1";
 const homeAssistantPlaybookId = "home-assistant-offline-diagnosis@1.0.0";
@@ -93,6 +94,11 @@ export async function createStandaloneDeviceRuntime(options: {
     async listHomeAssistantRuns(): Promise<readonly PhoneHomeAssistantRun[]> {
       await recovery;
       return listRecentRuns(journal, ownerId, readHomeAssistantRun);
+    },
+
+    async readTaskTrace(taskId: string) {
+      await recovery;
+      return projectMobileDeviceTaskTrace(await journal.readTaskEvidence(taskId), ownerId);
     },
 
     async diagnoseLinuxSsh(input: {

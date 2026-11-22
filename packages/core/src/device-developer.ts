@@ -28,9 +28,12 @@ export class DeviceDeveloperSessionCoordinator {
     });
   }
 
-  authorize(sessionId: string, authorizationRevision: string, now: string): DeviceDeveloperSessionV1 {
+  authorize(sessionId: string, authorizationRevision: string, now: string, expectedRevision?: number): DeviceDeveloperSessionV1 {
     return this.write(() => {
       const session = this.requireSession(sessionId);
+      if (expectedRevision !== undefined && session.revision !== expectedRevision) {
+        throw new DeviceFabricError("revision_conflict", "developer session revision changed");
+      }
       if (session.status === "revoked" || !authorizationRevision.trim()) {
         throw new DeviceFabricError("safety_denied", "developer session authorization is unavailable");
       }
@@ -64,12 +67,17 @@ export class DeviceDeveloperSessionCoordinator {
       const current = this.getJob(input.jobId);
       if (current) {
         if (current.sessionId !== input.sessionId || current.kind !== input.kind || current.targetDeviceId !== input.targetDeviceId
-          || current.artifactDigest !== input.artifactDigest) {
+          || current.artifactDigest !== input.artifactDigest || current.authorizationRevision !== input.authorizationRevision) {
           throw new DeviceFabricError("revision_conflict", "developer job id is bound to another job");
         }
         return current;
       }
       if (!["authorized", "running"].includes(session.status)) throw new DeviceFabricError("safety_denied", "developer session is not authorized");
+      if (session.mode !== "developer") throw new DeviceFabricError("safety_denied", "developer jobs require a developer session");
+      if ((session.targetBinding || input.authorizationRevision !== undefined)
+        && session.authorizationRevision !== input.authorizationRevision) {
+        throw new DeviceFabricError("safety_denied", "developer job authorization changed");
+      }
       if (input.targetDeviceId !== session.targetDeviceId) throw new DeviceFabricError("target_missing", "job target does not match session");
       if (session.protocolReplay && input.kind !== "workbench") {
         throw new DeviceFabricError("safety_denied", "protocol session only authorizes workbench jobs");

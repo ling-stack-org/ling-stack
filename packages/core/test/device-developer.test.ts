@@ -26,6 +26,32 @@ test("developer sessions bind artifacts to the target and record job state", () 
   assert.throws(() => coordinator.startJob({ ...job, jobId: "job-2", artifactDigest: "sha256:other" }), /artifact/);
 });
 
+test("target-bound sessions fence authorization revisions and developer job admission", () => {
+  const coordinator = new DeviceDeveloperSessionCoordinator();
+  const base = {
+    workspaceId: "workspace-1", ownerKind: "daemon", ownerId: "daemon-1", targetDeviceId: "android-1", targetKind: "android",
+    authorizationRevision: "pending", targetBinding: { profileRevision: "profile-1", connectionRevision: "connection-1" },
+    status: "created", revision: 1, createdAt: now, updatedAt: now,
+  } as const;
+  const standard = coordinator.createSession({ ...base, sessionId: "standard", mode: "standard" });
+  const developer = coordinator.createSession({ ...base, sessionId: "developer", mode: "developer" });
+  coordinator.authorize(standard.sessionId, "standard-auth", now, standard.revision);
+  assert.throws(() => coordinator.authorize(developer.sessionId, "stale-auth", now, developer.revision + 1), { code: "revision_conflict" });
+  assert.deepEqual(coordinator.getSession(developer.sessionId), developer);
+  coordinator.authorize(developer.sessionId, "developer-auth", now, developer.revision);
+  const job = {
+    jobId: "job-1", sessionId: developer.sessionId, kind: "logs", status: "running", targetDeviceId: base.targetDeviceId,
+    taskStatus: "executing", revision: 1, updatedAt: now,
+  } as const;
+  assert.throws(() => coordinator.startJob({ ...job, sessionId: standard.sessionId, authorizationRevision: "standard-auth" }), { code: "safety_denied" });
+  assert.throws(() => coordinator.startJob(job), { code: "safety_denied" });
+  assert.equal(coordinator.getJob(job.jobId), undefined);
+  const authorizedJob = { ...job, authorizationRevision: "developer-auth" };
+  assert.deepEqual(coordinator.startJob(authorizedJob), authorizedJob);
+  assert.deepEqual(coordinator.startJob(authorizedJob), authorizedJob);
+  assert.throws(() => coordinator.startJob({ ...authorizedJob, authorizationRevision: "wrong" }), { code: "revision_conflict" });
+});
+
 test("phone-owned collaboration proposals are idempotent and chunked transfers are scoped", () => {
   const coordinator = new DeviceCollaborationCoordinator();
   const payload = { capabilityId: "linux.inspect.network", input: { includeDns: true } };

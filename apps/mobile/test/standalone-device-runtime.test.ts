@@ -7,6 +7,7 @@ import { digestDeviceRequest, MobileDeviceExecution, type MobileDeviceTransport 
 import type { HomeAssistantFetch } from "../src/device/home-assistant.ts";
 import { createAsyncStorageMobileDeviceJournal, type MobileStorageLike } from "../src/device/journal.ts";
 import { createStandaloneDeviceRuntime } from "../src/device/standalone-runtime.ts";
+import { projectMobileDeviceTaskTrace } from "../src/device/trace.ts";
 
 class MemoryStorage implements MobileStorageLike {
   readonly values: Map<string, string>;
@@ -127,6 +128,26 @@ test("a phone-owned write checks its alternate route and journals a fresh target
       assert.equal((await reopened.getTask(task.id))?.status, sameTarget ? "succeeded" : "unknown");
       assert.equal(result.attempt.recoveryPathVerifiedAt, time);
       assert.deepEqual((await reopened.listObservations(task.id)).map(item => item.id), sameTarget ? ["baseline", "after"] : ["baseline"]);
+      const journalEvidence = await reopened.readTaskEvidence(task.id);
+      const trace = projectMobileDeviceTaskTrace(journalEvidence, task.ownerId);
+      assert.deepEqual(trace, projectMobileDeviceTaskTrace(await journal.readTaskEvidence(task.id), task.ownerId));
+      assert.equal(projectMobileDeviceTaskTrace(journalEvidence, "foreign-owner"), undefined);
+      const readback = trace?.spans.find(item => item.kind === "verification");
+      assert.equal(readback?.lineage?.attemptId, result.attempt.attemptId);
+      assert.equal(readback?.lineage?.connectionRevision, snapshot.connectionRevision);
+      assert.equal(readback?.status, sameTarget ? "ok" : "unknown");
+      assert.deepEqual(readback?.metadata, {
+        verificationStatus: sameTarget ? "verified" : "not_evaluable", evidenceRefs: sameTarget ? ["after"] : [],
+      });
+      assert.doesNotMatch(JSON.stringify(trace), /"online"|"normalizedInput"|"recoveryScope"/u);
+      if (sameTarget) {
+        const redacted = projectMobileDeviceTaskTrace({ ...journalEvidence, observations: journalEvidence.observations.map(
+          item => item.id === "after" ? { ...item, redactionClass: "sensitive" } : item,
+        ) }, task.ownerId);
+        const span = redacted?.spans.find(item => item.kind === "verification");
+        assert.equal(span?.status, "unknown");
+        assert.deepEqual(span?.metadata, { verificationStatus: "verified", evidenceRefs: [] });
+      }
       assert.equal(writes, 1);
       assert.equal(probes, suspends ? 2 : 1);
     });
@@ -157,6 +178,21 @@ test("a phone-only Home Assistant diagnosis records scoped facts and restores th
   const reopened = await createStandaloneDeviceRuntime({ ...options, storage, fetch });
   await reopened.setForeground(true);
   assert.deepEqual(await reopened.listHomeAssistantRuns(), [result]);
+  const trace = await reopened.readTaskTrace(result.taskId);
+  assert.deepEqual(trace, await phone.readTaskTrace(result.taskId));
+  assert.equal(trace?.taskStatus, "succeeded");
+  const adapter = trace?.spans.find(span => span.kind === "adapter");
+  assert.equal(adapter?.status, "ok");
+  assert.match(adapter?.lineage?.connectionRevision ?? "", /^ha_connection_/u);
+  assert.equal(adapter?.lineage?.runtimeId, trace?.spans[0]?.lineage?.runtimeId);
+  assert.deepEqual(adapter?.metadata, {
+    attemptStatus: "completed", capabilityId: "home_assistant.read_entity",
+    capabilitySnapshotId: trace?.capabilitySnapshots?.[0]?.snapshotId,
+    adapterBinding: { adapterId: adapter?.lineage?.adapterId, adapterVersion: "1.0.0", profileRevision: "1.0.0", transport: "https" },
+    receiptStatus: "completed", evidenceRefs: [`${result.taskId}:home-assistant-offline-diagnosis@1.0.0:read-entity:entity`],
+  });
+  assert.equal(await reopened.readTaskTrace("another-task"), undefined);
+  for (const value of [target.token, target.origin, target.entityId, "untrusted-entity-output"]) assert.ok(!JSON.stringify(trace).includes(value));
   assert.equal(requests, 1);
 });
 
@@ -220,6 +256,11 @@ test("a phone restart marks interrupted work unknown without replaying a device 
   const [retained] = await reopened.listHomeAssistantRuns();
   assert.equal(retained?.taskStatus, "unknown");
   assert.equal(retained?.availability, undefined);
+  assert.ok(retained);
+  const trace = await reopened.readTaskTrace(retained.taskId);
+  assert.equal(trace?.taskStatus, "unknown");
+  assert.deepEqual(trace?.spans.map(span => [span.kind, span.status]), [["runtime", "unknown"], ["adapter", "unknown"]]);
+  assert.match(trace?.spans[1]?.lineage?.connectionRevision ?? "", /^ha_connection_/u);
   assert.equal(resumedRequests, 0);
 });
 
