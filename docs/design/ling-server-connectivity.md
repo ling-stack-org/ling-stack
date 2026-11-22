@@ -348,6 +348,23 @@ The current session continues using the paired Gateway connection until route ac
 [Mobile confirmation](../../apps/mobile/src/features/pairing/LingServerPairingScreen.tsx) ·
 [Remote Client verification](../../packages/remote-client/src/ling-server-pairing-pin.ts)
 
+A paired Mobile can request a route at `POST /v1/rendezvous`. Gateway polls
+the same endpoint using its own pairing key. Each signed request binds the server
+instance, installation revision, peer epoch, binding, nonce and expiry. The
+server allocates the exact route named in the Mobile proof and signs a receipt
+that covers the caller's request and the original Mobile proof. Gateway validates
+both signatures before applying the route. The signaling client pins the server
+instance from the receipt. A control service restart clears the live offer.
+
+Android builds that use native libwebrtc can negotiate channel ID 0 using the
+signed `ling.peer.negotiated-data-channel.v1` feature. Both peers create the same
+ordered, reliable channel locally. Existing in-band clients use their original
+channel negotiation. A client configured for both transports can try the paired
+Gateway WebSocket when a peer transport is unavailable. A peer proof or binding
+failure terminates that connection attempt.
+[Rendezvous entry point](../../packages/daemon/src/features/ling-server/rendezvous.ts) ·
+[Remote Client verification](../../packages/remote-client/src/ling-server-rendezvous.ts)
+
 ### 6.2 Reconnect and cursors
 
 Use the owner's stream identity, snapshot/generation, event sequence and durable

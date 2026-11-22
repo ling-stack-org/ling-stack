@@ -3,12 +3,18 @@ import { createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from 
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 
-import type { LingServerSignalingInputV1, RemoteP256PublicJwkV1 } from "@ling-stack/contracts";
 import {
-  fingerprintPublicJwkSync, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1,
-  validateLingServerSignedSignalingV1,
+  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, type LingServerRendezvousReceiptV1,
+  type LingServerSignalingInputV1, type LingServerSignedRendezvousRequestV1, type RemoteP256PublicJwkV1,
+} from "@ling-stack/contracts";
+import {
+  fingerprintPublicJwkSync, lingServerRendezvousReceiptBytes, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1,
+  validateLingServerSignedRendezvousRequestV1, validateLingServerSignedSignalingV1,
 } from "@ling-stack/remote-protocol";
-import { connectLingServerDataChannel, LingServerSignalingClient, type LingServerSignalingClientOptions } from "../dist/index.js";
+import {
+  connectLingServerDataChannel, LingServerSignalingClient, pollLingServerRoute, requestLingServerRoute,
+  type LingServerRendezvousOptions, type LingServerSignalingClientOptions,
+} from "../dist/index.js";
 
 function createKey() {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -288,4 +294,112 @@ test("the negotiation deadline bounds a signaling request that ignores cancellat
   assert.equal(requestStarted, true);
   assert.equal(requestSignal?.aborted, true);
   assert.deepEqual(fixture.requests, []);
+});
+
+test("the route client verifies the server receipt and the original phone offer before returning shared signaling scope", async () => {
+  const application = createKey();
+  const mobile = createKey();
+  const gateway = createKey();
+  const wrongKey = createKey();
+  const clock = { now: () => "2026-11-22T00:00:00.000Z" };
+  const instanceId = "fixture-instance";
+  const origin = "https://ling.example";
+  let offer: LingServerSignedRendezvousRequestV1 | undefined;
+  let responseSigner = application;
+  let tamperOffer = false;
+  let staleReceipt: LingServerRendezvousReceiptV1 | undefined;
+  const options = (identity: typeof mobile): LingServerRendezvousOptions => ({
+    installation: { installationId: "installation-1", serverOrigin: origin, applicationKeyFingerprint: application.fingerprint,
+      revision: 1, status: "active" },
+    binding: { bindingId: "binding-1", installationId: "installation-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1",
+      status: "active", epoch: 2, revision: 1, gatewayKeyFingerprint: gateway.fingerprint, mobileKeyFingerprint: mobile.fingerprint },
+    key: { keyId: "fixture-key", publicJwk: identity.publicJwk },
+    keys: {
+      async sign(_id, bytes) { return identity.sign(bytes); },
+      async verify(jwk, bytes, signature) { return verifySignature(jwk, bytes, signature); },
+    },
+    entropy: { randomBytes },
+    clock,
+    http: {
+      async getJson<T>(requestOrigin: string, path: string, requestOptions?: Pick<RequestInit, "signal" | "redirect">) {
+        assert.equal(requestOrigin, origin);
+        assert.equal(path, "/v1/signaling/instance");
+        assert.equal(requestOptions?.redirect, "error");
+        return { status: 200, body: { instanceId } as T };
+      },
+      async postJson<T>(requestOrigin: string, path: string, body: unknown, requestOptions?: Pick<RequestInit, "signal" | "redirect">) {
+        assert.equal(requestOrigin, origin);
+        assert.equal(path, "/v1/rendezvous");
+        assert.equal(requestOptions?.redirect, "error");
+        const verified = validateLingServerSignedRendezvousRequestV1(body);
+        if (staleReceipt) return { status: 200, body: staleReceipt as T };
+        if (verified.input.operation.kind === "request_route") offer = verified;
+        let sharedOffer = offer;
+        if (sharedOffer && tamperOffer) {
+          sharedOffer = { ...sharedOffer, publicKeyJwk: wrongKey.publicJwk };
+        }
+        const receipt = {
+          request: verified.input, applicationPublicKeyJwk: responseSigner.publicJwk,
+          ...(sharedOffer ? { offer: sharedOffer } : {}),
+        };
+        const response = { ...receipt, applicationSignature: responseSigner.sign(lingServerRendezvousReceiptBytes(receipt)) };
+        return { status: 200, body: response as T };
+      },
+    },
+  });
+  assert.equal(await pollLingServerRoute(options(gateway)), undefined);
+  await assert.rejects(requestLingServerRoute(options(gateway), "direct"), /rendezvous_binding_invalid/u);
+  const requested = await requestLingServerRoute(options(mobile), "direct");
+  assert.equal(requested.instanceId, instanceId);
+  assert.equal(requested.route.preferred, "direct");
+  assert.deepEqual(await pollLingServerRoute(options(gateway)), requested);
+  tamperOffer = true;
+  await assert.rejects(pollLingServerRoute(options(gateway)), /rendezvous_offer_invalid/u);
+  tamperOffer = false;
+  responseSigner = wrongKey;
+  await assert.rejects(pollLingServerRoute(options(gateway)), /rendezvous_receipt_invalid/u);
+  assert.ok(offer);
+  const stale = { request: offer.input, offer, applicationPublicKeyJwk: application.publicJwk };
+  staleReceipt = { ...stale, applicationSignature: application.sign(lingServerRendezvousReceiptBytes(stale)) };
+  await assert.rejects(pollLingServerRoute(options(gateway)), /rendezvous_receipt_invalid/u);
+  const fixture = harness();
+  await assert.rejects(connectLingServerDataChannel({
+    ...fixture.options, expectedInstanceId: "before-restart",
+    createPeerConnection: () => assert.fail("opened a peer for a different signaling instance"),
+  }), /signaling_instance_changed/u);
+});
+
+test("the signed native feature opens a reliable negotiated channel with the fixed ID on Mobile", async () => {
+  const fixture = harness();
+  const features = [LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1];
+  const offer = fixture.offer({ features });
+  fixture.setResponder(({ operation }) => {
+    if (operation.kind === "transport_config") return { kind: "transport_config", route: "lan", stunUrls: [], turnUrls: [] };
+    if (operation.kind === "poll") return { kind: "signals", messages: [offer], latestSequence: 1, hasMore: false };
+    return { kind: "published", sequence: 1, replayed: false };
+  });
+  const channel = Object.assign(new EventTarget(), {
+    readyState: "connecting", bufferedAmount: 0, close() { channel.dispatchEvent(new Event("close")); },
+  });
+  let closed = false;
+  const peer = Object.assign(new EventTarget(), {
+    createDataChannel(label: string, options: RTCDataChannelInit) {
+      assert.equal(label, "ling-peer");
+      assert.deepEqual(options, { ordered: true, protocol: "ling-peer.v1", negotiated: true, id: 0 });
+      return channel;
+    },
+    async setRemoteDescription(description: RTCSessionDescriptionInit) {
+      assert.equal(description.type, "offer");
+    },
+    async createAnswer() { return { type: "answer", sdp: "v=0\r\ns=phone-fixture\r\n" }; },
+    async setLocalDescription() { channel.readyState = "open"; },
+    close() { closed = true; },
+  });
+  const connection = await connectLingServerDataChannel({
+    ...fixture.options, features, createPeerConnection: () => peer as unknown as RTCPeerConnection,
+  });
+  assert.deepEqual(connection.route.features, features);
+  assert.deepEqual(fixture.requests.map(request => request.operation.kind), ["transport_config", "poll", "publish"]);
+  connection.close();
+  assert.equal(closed, true);
 });

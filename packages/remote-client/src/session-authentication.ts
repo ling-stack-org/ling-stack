@@ -18,16 +18,29 @@ import {
   type RemoteEntropy, type RemoteHttpClient, type RemoteWebSocketFactory,
 } from "./types.js";
 
+interface RemotePeerConnection {
+  readonly route: LingServerGatewayRouteV1;
+  readonly transport: RemoteMessageChannel;
+}
+
+type GatewayConnection = {
+  readonly http: RemoteHttpClient;
+  readonly webSocketFactory: RemoteWebSocketFactory;
+};
+
 export type RemoteSessionConnectionOptions =
-  | { readonly http: RemoteHttpClient; readonly webSocketFactory: RemoteWebSocketFactory; readonly connectPeer?: never }
+  | (GatewayConnection & { readonly connectPeer?: never; readonly peerFallback?: never })
   | {
-      readonly connectPeer: (signal: AbortSignal) => Promise<{
-        readonly route: LingServerGatewayRouteV1;
-        readonly transport: RemoteMessageChannel;
-      }>;
+      readonly connectPeer: (signal: AbortSignal) => Promise<RemotePeerConnection>;
       readonly http?: never;
       readonly webSocketFactory?: never;
-    };
+      readonly peerFallback?: never;
+    }
+  | (GatewayConnection & {
+      /** Return undefined when peer transport is unavailable. Errors remain terminal for this attempt. */
+      readonly connectPeer: (signal: AbortSignal) => Promise<RemotePeerConnection | undefined>;
+      readonly peerFallback: true;
+    });
 
 export type RemoteSessionAuthentication =
   | { readonly route: LingServerGatewayRouteV1 }
@@ -49,21 +62,27 @@ export async function openRemoteSessionChannel(
 ): Promise<{ readonly channel: RemoteMessageChannel; readonly authentication: RemoteSessionAuthentication }> {
   const { binding, clock } = context;
   if (options.connectPeer) {
-    const { route, transport } = await options.connectPeer(signal);
-    try {
-      context.assertCurrent();
-      if (transport.readyState !== 1 || route.gatewayId !== binding.gatewayId
-        || route.gatewayKeyFingerprint !== binding.gatewayIdentityFingerprint || route.mobileDeviceId !== binding.deviceId
-        || route.peerEpoch !== binding.deviceEpoch || !(Date.parse(route.expiresAt) > Date.parse(clock.now()))) {
-        throw new Error("remote_peer_binding_mismatch");
+    const peer = await options.connectPeer(signal);
+    if (peer !== undefined) {
+      const { route, transport } = peer;
+      try {
+        context.assertCurrent();
+        if (transport.readyState !== 1 || route.gatewayId !== binding.gatewayId
+          || route.gatewayKeyFingerprint !== binding.gatewayIdentityFingerprint || route.mobileDeviceId !== binding.deviceId
+          || route.peerEpoch !== binding.deviceEpoch || !(Date.parse(route.expiresAt) > Date.parse(clock.now()))) {
+          throw new Error("remote_peer_binding_mismatch");
+        }
+        return { channel: transport, authentication: { route } };
+      } catch (error) {
+        transport.close(1008, "peer_binding_unavailable");
+        throw error;
       }
-      return { channel: transport, authentication: { route } };
-    } catch (error) {
-      transport.close(1008, "peer_binding_unavailable");
-      throw error;
     }
+    if (!options.peerFallback) throw new Error("remote_peer_unavailable");
   }
 
+  context.assertCurrent();
+  signal.throwIfAborted();
   const response = await options.http.postJson<unknown>(binding.gatewayOrigin, "/v1/auth/challenge", { deviceId: binding.deviceId }, { signal });
   const proof = await createRemoteSessionProof(context, response.body);
   context.assertCurrent();

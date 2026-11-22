@@ -27,6 +27,7 @@ export interface LingServerSignalingClientOptions {
   readonly protocolMajor?: number;
   readonly features?: readonly string[];
   readonly signal?: AbortSignal;
+  readonly expectedInstanceId?: string;
 }
 
 /** Exchanges signaling for one negotiated route using locally pinned pairing records. */
@@ -69,6 +70,9 @@ export class LingServerSignalingClient {
     assertRouteLive(options, scope.expiresAt);
     if (status !== 200) throw new Error("ling_server_signaling_unavailable");
     const { instanceId } = validateLingServerSignalingInstanceV1(body);
+    if (options.expectedInstanceId !== undefined && instanceId !== options.expectedInstanceId) {
+      throw new Error("ling_server_signaling_instance_changed");
+    }
     return new LingServerSignalingClient(options, origin, { ...scope, instanceId }, peerFingerprint);
   }
 

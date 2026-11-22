@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
@@ -9,8 +9,14 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, type LingServerSignalingInputV1, type LingServerSignedSignalingV1 } from "@ling-stack/contracts";
-import { fingerprintPublicJwkSync, lingServerPairingPinChallengeBytes, lingServerSignalingSigningBytes, validateRemoteP256PublicJwkV1 } from "@ling-stack/remote-protocol";
+import {
+  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
+  type LingServerRendezvousRequestV1, type LingServerSignalingInputV1, type LingServerSignedSignalingV1,
+} from "@ling-stack/contracts";
+import {
+  fingerprintPublicJwkSync, lingServerPairingPinChallengeBytes, lingServerRendezvousReceiptBytes, lingServerRendezvousRequestBytes,
+  lingServerSignalingSigningBytes, validateLingServerRendezvousReceiptV1, validateRemoteP256PublicJwkV1,
+} from "@ling-stack/remote-protocol";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 
 test("self-hosted Ling Server control plane requires auth and preserves route fallback", async () => {
@@ -44,7 +50,9 @@ test("self-hosted Ling Server control plane requires auth and preserves route fa
     assert.equal(config.status, 200);
     const configBody = await config.json() as { readonly route: string; readonly features: readonly string[] };
     assert.equal(configBody.route, "direct");
-    assert.deepEqual(configBody.features, [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, "ordered-channel"]);
+    assert.deepEqual(configBody.features, [
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, "ordered-channel",
+    ]);
     const wrongKey = await fetch(configUrl, { method: "POST", headers, body: JSON.stringify({ ...configInput, localKeyFingerprint: "different-fingerprint" }) });
     assert.equal(wrongKey.status, 400);
     const diagnostics = await fetch(`http://${address.host}:${address.port}/v1/routes/diagnostics`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", routeAttemptId: "route-1", diagnosticId: "diag-1", checks: [{ id: "control_reachability", status: "pass", code: "reachable" }] }) });
@@ -105,6 +113,91 @@ test("self-hosted Ling Server restores control metadata after restart", async ()
   } finally {
     await second.stop();
   }
+});
+
+test("paired keys request and find the same route without exposing the admin listener", async t => {
+  let clock = "2026-11-21T00:00:00.000Z";
+  const newKey = () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const publicKeyJwk = validateRemoteP256PublicJwkV1(publicKey.export({ format: "jwk" }));
+    return { privateKey, publicKey, publicKeyJwk, fingerprint: fingerprintPublicJwkSync(publicKeyJwk) };
+  };
+  const gateway = newKey();
+  const mobile = newKey();
+  const application = newKey();
+  const control = new LingServerControlPlane({ authToken: "fixture-admin", adminPort: 0, now: () => clock,
+    applicationIdentityPrivateKeyPem: application.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
+  });
+  t.after(() => control.stop());
+  const address = await control.start();
+  const origin = "http://127.0.0.1:" + address.port;
+  const installation = control.registry.registerInstallation({ installationId: "fixture-install", status: "active",
+    serverOrigin: "https://ling.example", applicationKeyFingerprint: application.fingerprint, revision: 1 });
+  const binding = control.registry.bindPeers({ bindingId: "fixture-binding", installationId: installation.installationId, status: "active",
+    gatewayId: "fixture-pc", mobileDeviceId: "fixture-phone", gatewayKeyFingerprint: gateway.fingerprint,
+    mobileKeyFingerprint: mobile.fingerprint, epoch: 2, revision: 1 });
+  const { instanceId } = await (await fetch(origin + "/v1/signaling/instance")).json() as { instanceId: string };
+  const scope = {
+    version: 1, instanceId, installationId: installation.installationId, installationRevision: installation.revision,
+    applicationKeyFingerprint: application.fingerprint, bindingId: binding.bindingId, peerEpoch: binding.epoch,
+    gatewayId: binding.gatewayId, mobileDeviceId: binding.mobileDeviceId,
+  } as const;
+  const expiresAt = "2026-11-21T00:01:00.000Z";
+  function proof(operation: LingServerRendezvousRequestV1["operation"], key: ReturnType<typeof newKey>,
+    overrides: Partial<LingServerRendezvousRequestV1> = {}) {
+    const input = { ...scope, expiresAt, nonce: randomBytes(32).toString("base64url"), operation, ...overrides };
+    return { input, publicKeyJwk: key.publicKeyJwk,
+      signature: sign("sha256", lingServerRendezvousRequestBytes(input), {
+        key: key.privateKey, dsaEncoding: "ieee-p1363",
+      }).toString("base64url") };
+  }
+  const send = (body: unknown, path = "/v1/rendezvous") => fetch(origin + path, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const getReceipt = async (response: Response) => {
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const { applicationSignature, ...receipt } = validateLingServerRendezvousReceiptV1(await response.json());
+    assert.deepEqual(receipt.applicationPublicKeyJwk, application.publicKeyJwk);
+    assert.ok(verify("sha256", lingServerRendezvousReceiptBytes(receipt), {
+      key: application.publicKey, dsaEncoding: "ieee-p1363",
+    }, Buffer.from(applicationSignature, "base64url")));
+    return receipt;
+  };
+  const routeAttemptId = "route-fixture";
+  const request = { kind: "request_route", routeAttemptId, preferred: "direct" } as const;
+  const initialPoll = proof({ kind: "poll_route" }, gateway);
+  assert.deepEqual(await getReceipt(await send(initialPoll)), {
+    request: initialPoll.input, applicationPublicKeyJwk: application.publicKeyJwk,
+  });
+  assert.equal((await send(initialPoll)).status, 409);
+  assert.equal((await send(proof(request, gateway))).status, 403);
+  assert.equal((await send(proof({ kind: "poll_route" }, mobile))).status, 403);
+  assert.equal((await send(proof(request, mobile, { installationRevision: 2 }))).status, 403);
+  assert.equal((await send(proof(request, mobile, { instanceId: "other-instance" }))).status, 403);
+  assert.equal((await send(proof({ ...request, preferred: "relay" }, mobile))).status, 503);
+  assert.equal((await send({ action: "begin", route: {} }, "/v1/routes")).status, 404);
+  assert.equal(control.registry.getRoute(routeAttemptId), undefined);
+  const phoneRequest = proof(request, mobile);
+  const tampered = { ...phoneRequest, input: { ...phoneRequest.input, operation: { ...request, preferred: "lan" } } };
+  assert.equal((await send(tampered)).status, 403);
+  const created = await getReceipt(await send(phoneRequest));
+  assert.deepEqual(created.offer, phoneRequest);
+  assert.deepEqual(control.registry.requireRoute(routeAttemptId), {
+    routeAttemptId, bindingId: binding.bindingId, peerEpoch: binding.epoch, preferred: "direct", status: "gathering", expiresAt,
+  });
+  const nextPoll = proof({ kind: "poll_route" }, gateway);
+  const discovered = await getReceipt(await send(nextPoll));
+  assert.deepEqual(discovered.request, nextPoll.input);
+  assert.deepEqual(discovered.offer, phoneRequest);
+  const expired = expiresAt;
+  clock = expired;
+  const currentExpiry = "2026-11-21T00:01:30.000Z";
+  assert.equal((await send(phoneRequest)).status, 403);
+  assert.equal((await getReceipt(await send(proof({ kind: "poll_route" }, gateway, { expiresAt: currentExpiry })))).offer, undefined);
+  assert.equal((await send(proof(request, mobile, { expiresAt: currentExpiry }))).status, 409);
+  control.registry.revokeBinding(binding.bindingId, 2);
+  assert.equal((await send(proof({ kind: "poll_route" }, gateway, { expiresAt: currentExpiry }))).status, 403);
 });
 
 test("paired peers exchange signed signaling over a bounded route and reject replay, tampering and revocation", async t => {

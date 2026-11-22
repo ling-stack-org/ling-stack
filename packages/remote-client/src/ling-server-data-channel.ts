@@ -1,4 +1,4 @@
-import { LING_SERVER_SIGNAL_LANE_LIMIT_V1, type LingServerGatewayRouteV1, type LingServerSignalingResponseV1 } from "@ling-stack/contracts";
+import { LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, LING_SERVER_SIGNAL_LANE_LIMIT_V1, type LingServerGatewayRouteV1, type LingServerSignalingResponseV1 } from "@ling-stack/contracts";
 import { encodeBase64Url, encodeUtf8, sha256, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
 import { lingServerMessageChannel } from "./ling-server-message-channel.js";
 import { LingServerSignalingClient, type LingServerSignalingClientOptions } from "./ling-server-signaling.js";
@@ -9,9 +9,6 @@ const pollIntervalMs = 350;
 
 export interface LingServerDataChannelOptions extends LingServerSignalingClientOptions {
   readonly createPeerConnection?: (configuration: RTCConfiguration) => RTCPeerConnection;
-  /** Android WebRTC may omit reliable-channel metadata on incoming channels. */
-  readonly dataChannelMode?: "in_band" | "negotiated";
-  readonly negotiatedDataChannelId?: number;
   readonly timeoutMs?: number;
 }
 
@@ -46,10 +43,8 @@ export async function connectLingServerDataChannel(options: LingServerDataChanne
     signal.throwIfAborted();
     const createPeer = options.createPeerConnection ?? (configuration => new RTCPeerConnection(configuration));
     peer = createPeer(iceConfiguration(config));
-    return await negotiate(peer, signaling, options.role, controller, {
-      mode: options.dataChannelMode ?? "in_band",
-      id: options.negotiatedDataChannelId ?? 0,
-    });
+    const negotiatedChannel = options.features?.includes(LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1) === true;
+    return await negotiate(peer, signaling, options.role, controller, negotiatedChannel);
   };
   try {
     const connected = await Promise.race([aborted, open()]);
@@ -69,7 +64,7 @@ async function negotiate(
   signaling: LingServerSignalingClient,
   role: LingServerSignalingClientOptions["role"],
   controller: AbortController,
-  channelOptions: { readonly mode: "in_band" | "negotiated"; readonly id: number },
+  negotiatedChannel: boolean,
 ): Promise<LingServerDataChannel> {
   const signal = controller.signal;
   signal.throwIfAborted();
@@ -92,13 +87,8 @@ async function negotiate(
     localCandidates.push(event.candidate.toJSON());
   };
   const receiveChannel = (event: RTCDataChannelEvent) => {
-    if (channelOptions.mode === "negotiated") {
-      event.channel.close();
-      controller.abort(new Error("ling_server_data_channel_unexpected"));
-      return;
-    }
     const incoming = event.channel;
-    if (gateway || channel || incoming.label !== channelLabel || incoming.protocol !== channelProtocol
+    if (negotiatedChannel || gateway || channel || incoming.label !== channelLabel || incoming.protocol !== channelProtocol
       || !incoming.ordered || incoming.maxRetransmits !== null || incoming.maxPacketLifeTime !== null) {
       incoming.close();
       controller.abort(new Error("ling_server_data_channel_invalid"));
@@ -127,19 +117,19 @@ async function negotiate(
   };
   const detach = () => {
     peer.removeEventListener("icecandidate", gatherCandidate);
-    if (channelOptions.mode === "in_band") peer.removeEventListener("datachannel", receiveChannel);
+    peer.removeEventListener("datachannel", receiveChannel);
     peer.removeEventListener("connectionstatechange", checkState);
   };
 
   peer.addEventListener("icecandidate", gatherCandidate);
-  if (channelOptions.mode === "in_band") peer.addEventListener("datachannel", receiveChannel);
+  peer.addEventListener("datachannel", receiveChannel);
   peer.addEventListener("connectionstatechange", checkState);
   signal.addEventListener("abort", detach, { once: true });
   try {
-    if (channelOptions.mode === "negotiated" || gateway) {
+    if (negotiatedChannel || gateway) {
       channel = peer.createDataChannel(channelLabel, {
         ordered: true, protocol: channelProtocol,
-        ...(channelOptions.mode === "negotiated" ? { negotiated: true, id: channelOptions.id } : {}),
+        ...(negotiatedChannel ? { negotiated: true, id: 0 } : {}),
       });
       transport = lingServerMessageChannel(peer, channel);
       if (gateway) await describe(await peer.createOffer());

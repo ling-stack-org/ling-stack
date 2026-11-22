@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { createServer as createHttpsServer, type Server as HttpsServer, type ServerOptions } from "node:https";
 import { DeviceFabricError, LingServerPeerRegistry, LingServerRelayCredentialIssuer, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import {
-  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
+  LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5, type LingServerInstallationV1, type LingServerPairingMigrationPublicationRequestV1,
   type LingServerPairingPinProofV1, type LingServerPeerBindingV1, type LingServerRouteAttemptV1, type RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@ling-stack/remote-protocol";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { LingServerSignaling } from "./signaling.js";
+import { LingServerRendezvous } from "./rendezvous.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -56,6 +57,7 @@ export class LingServerControlPlane {
   #server?: HttpServer | HttpsServer;
   #adminServer?: HttpServer;
   #signaling?: LingServerSignaling;
+  #rendezvous?: LingServerRendezvous;
   #signalExpiryTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: LingServerControlPlaneOptions) {
@@ -111,7 +113,16 @@ export class LingServerControlPlane {
       now: this.#now, relayIssuer: this.#relayIssuer,
       stunUrls: this.#transportOptions.stunUrls ?? [], turnUrls: this.#transportOptions.turnUrls ?? [],
     });
-    this.#signalExpiryTimer = setInterval(() => this.#signaling?.purge(), 5_000);
+    if (this.#applicationIdentity) {
+      this.#rendezvous = new LingServerRendezvous({
+        registry: this.registry, instanceId: this.#signaling.instanceId, now: this.#now,
+        identity: this.#applicationIdentity, relayAvailable: this.#relayIssuer !== undefined,
+      });
+    }
+    this.#signalExpiryTimer = setInterval(() => {
+      this.#signaling?.purge();
+      this.#rendezvous?.purge();
+    }, 5_000);
     this.#signalExpiryTimer.unref();
     return this.address();
   }
@@ -123,6 +134,7 @@ export class LingServerControlPlane {
     this.#adminServer = undefined;
     clearInterval(this.#signalExpiryTimer);
     this.#signaling = undefined;
+    this.#rendezvous = undefined;
     await Promise.all([server ? closeServer(server) : undefined, adminServer ? closeServer(adminServer) : undefined]);
     if (this.#ownsStore && !this.#storeClosed) {
       this.#store?.close();
@@ -144,6 +156,7 @@ export class LingServerControlPlane {
     return [...new Set([
       REMOTE_DEVICE_TASKS_SUBPROTOCOL_V5,
       REMOTE_DEVICE_TASKS_SUBPROTOCOL_V4,
+      LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1,
       ...(this.#transportOptions.features ?? []),
     ])];
   }
@@ -156,6 +169,10 @@ export class LingServerControlPlane {
     }
     if (request.method === "GET" && url.pathname === "/v1/signaling/instance") {
       writeJson(response, 200, { instanceId: this.#signaling?.instanceId });
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/rendezvous") {
+      await this.exchangeRendezvous(request, response);
       return;
     }
     if (request.method === "POST" && url.pathname === "/v1/signaling") {
@@ -271,6 +288,25 @@ export class LingServerControlPlane {
       writeJson(response, 404, { error: "not_found" });
     } catch {
       writeJson(response, 400, { error: "bad_request" });
+    }
+  }
+
+  private async exchangeRendezvous(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const rendezvous = this.#rendezvous;
+    if (!rendezvous) {
+      writeJson(response, 503, { error: "rendezvous_unavailable" });
+      return;
+    }
+    try {
+      const body = await readJson(request).catch(() => undefined);
+      writeJson(response, 200, rendezvous.exchange(body));
+    } catch (error) {
+      if (error instanceof RemoteProtocolError) writeJson(response, 400, { error: "invalid_rendezvous" });
+      else if (error instanceof DeviceFabricError && error.code === "revision_conflict") writeJson(response, 409, { error: "rendezvous_conflict" });
+      else if (error instanceof DeviceFabricError && ["lease_busy", "resource_conflict"].includes(error.code)) {
+        writeJson(response, 503, { error: "rendezvous_unavailable" });
+      } else if (error instanceof DeviceFabricError) writeJson(response, 403, { error: "rendezvous_denied" });
+      else writeJson(response, 500, { error: "rendezvous_unavailable" });
     }
   }
 

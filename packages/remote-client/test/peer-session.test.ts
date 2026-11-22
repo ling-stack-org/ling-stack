@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import test from "node:test";
 import {
@@ -11,7 +12,8 @@ import {
   fingerprintPublicJwkSync, sha256, validateRemoteAuthProofV1, validateRemoteP256PublicJwkV1,
   type RemoteMessageChannel, type RemoteMessageReceiver,
 } from "@ling-stack/remote-protocol";
-import { RemoteSessionClient, type RemoteBindingV1, type RemoteSessionClientOptions } from "../dist/index.js";
+import { RemoteSessionClient, type RemoteBindingV1 } from "../dist/index.js";
+import type { RemoteSessionConnectionOptions } from "../dist/session-authentication.js";
 
 const now = "2026-11-22T01:00:00.000Z";
 const gatewayOrigin = "https://pc.example";
@@ -93,10 +95,13 @@ function makeFixture(lingServerRoutingProfile?: LingServerRoutingProfileV1) {
     clock: { now: () => now },
     autoReconnect: false,
   };
-  function createClient(connectPeer: NonNullable<RemoteSessionClientOptions["connectPeer"]>) {
+  function createClient(connectPeer: (signal: AbortSignal) => Promise<{ readonly route: LingServerGatewayRouteV1; readonly transport: RemoteMessageChannel }>) {
     return new RemoteSessionClient({ ...clientOptions, connectPeer });
   }
-  function challenge(signedRoute: LingServerGatewayRouteV1) {
+  function createHybridClient(connection: Extract<RemoteSessionConnectionOptions, { readonly peerFallback: true }>) {
+    return new RemoteSessionClient({ ...clientOptions, ...connection });
+  }
+  function challenge(signedRoute?: LingServerGatewayRouteV1) {
     const unsigned: Omit<RemoteAuthChallengeV1, "gatewaySignature"> = {
       version: 1, gatewayId, challengeId: "challenge_" + randomUUID(), candidateSessionId: "session_" + randomUUID(),
       serverNonce: randomBytes(32).toString("base64url"), deviceEpoch: binding.deviceEpoch,
@@ -105,7 +110,7 @@ function makeFixture(lingServerRoutingProfile?: LingServerRoutingProfileV1) {
     return { ...unsigned, gatewaySignature: gateway.sign(authChallengeSigningBytes(authChallengeSigningInput(gatewayOrigin, unsigned), signedRoute)) };
   }
   return {
-    route, createClient, challenge, phone, get binding() { return saved; }, get keyRemovals() { return keyRemovals; },
+    route, createClient, createHybridClient, challenge, phone, get binding() { return saved; }, get keyRemovals() { return keyRemovals; },
   };
 }
 
@@ -219,4 +224,98 @@ test("reauthentication retains the confirmed server pin only within its authenti
     client.disconnect();
     peer = channel();
   }
+});
+
+test("the mixed transport uses a verified peer without calling Gateway fallback", async () => {
+  const fixture = makeFixture();
+  const peer = channel();
+  const client = fixture.createHybridClient({
+    peerFallback: true,
+    connectPeer: async () => ({ route: fixture.route, transport: peer.transport }),
+    http: {
+      async getJson() { return assert.fail("unexpected HTTP GET"); },
+      async postJson() { return assert.fail("unexpected Gateway challenge"); },
+    },
+    webSocketFactory: () => assert.fail("unexpected Gateway WebSocket"),
+  });
+  const connected = client.connect();
+  await setImmediate();
+  const challenge = fixture.challenge(fixture.route);
+  peer.receive(challenge);
+  await setImmediate();
+  peer.receive(ready(challenge.candidateSessionId));
+  await connected;
+  assert.equal(client.state.connection, "connected");
+  client.disconnect();
+});
+
+test("an unavailable peer falls back to the paired Gateway authentication", async () => {
+  const fixture = makeFixture();
+  const challenge = fixture.challenge();
+  const requests: string[] = [];
+  const events = new EventEmitter();
+  let state = 0;
+  const sent: unknown[] = [];
+  const client = fixture.createHybridClient({
+    peerFallback: true,
+    connectPeer: async () => { requests.push("peer"); return undefined; },
+    http: {
+      async getJson() { return assert.fail("unexpected HTTP GET"); },
+      async postJson<T>(origin: string, path: string, body: unknown) {
+        requests.push("gateway-challenge");
+        assert.equal(origin, gatewayOrigin);
+        assert.equal(path, "/v1/auth/challenge");
+        assert.deepEqual(body, { deviceId });
+        return { status: 200, body: challenge as T };
+      },
+    },
+    webSocketFactory: url => {
+      requests.push("gateway-socket");
+      assert.equal(url, "wss://pc.example/v1/session");
+      return {
+        get readyState() { return state; },
+        send(data) { sent.push(JSON.parse(data) as unknown); },
+        close() { state = 3; events.emit("close", {}); },
+        addEventListener: events.on.bind(events),
+      };
+    },
+  });
+  const connected = client.connect();
+  await setImmediate();
+  assert.deepEqual(requests, ["peer", "gateway-challenge", "gateway-socket"]);
+  state = 1;
+  events.emit("open");
+  const { signature, ...proof } = validateRemoteAuthProofV1(sent[0]);
+  const { gatewaySignature: _gatewaySignature, ...unsigned } = challenge;
+  const signingInput = await authProofSigningInput(gatewayOrigin, unsigned, proof, sha256);
+  assert.ok(verifyProof(fixture.phone.publicJwk, authProofSigningBytes(signingInput), signature));
+  events.emit("message", { data: JSON.stringify(ready(challenge.candidateSessionId)) });
+  await connected;
+  assert.equal(client.state.connection, "connected");
+  client.disconnect();
+});
+
+test("a peer connector error or returned binding mismatch cannot initiate fallback", async () => {
+  const fixture = makeFixture();
+  const peer = channel();
+  const transports = {
+    peerFallback: true as const,
+    http: {
+      async getJson() { return assert.fail("unexpected HTTP GET"); },
+      async postJson() { return assert.fail("unexpected Gateway challenge"); },
+    },
+    webSocketFactory: () => assert.fail("unexpected Gateway WebSocket"),
+  };
+  const mismatched = fixture.createHybridClient({
+    ...transports,
+    connectPeer: async () => ({ route: { ...fixture.route, gatewayId: "another-gateway" }, transport: peer.transport }),
+  });
+  await assert.rejects(mismatched.connect(), /remote_peer_binding_mismatch/u);
+  assert.equal(peer.transport.readyState, 3);
+  assert.equal(peer.subscribed, false);
+  const failed = fixture.createHybridClient({
+    ...transports,
+    connectPeer: async () => { throw new Error("invalid_peer_signature"); },
+  });
+  await assert.rejects(failed.connect(), /invalid_peer_signature/u);
 });

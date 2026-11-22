@@ -175,6 +175,7 @@ export type LingServerTransportRouteV1 = "lan" | "direct" | "relay";
 export const LING_SERVER_SIGNAL_PAYLOAD_BYTES_V1 = 32 * 1024;
 export const LING_SERVER_SIGNAL_LANE_LIMIT_V1 = 96;
 export const LING_SERVER_SIGNAL_PAGE_LIMIT_V1 = 8;
+export const LING_SERVER_NEGOTIATED_DATA_CHANNEL_FEATURE_V1 = "ling.peer.negotiated-data-channel.v1";
 export const LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1 = 5 * 60_000;
 
 export type LingServerSignalingOperationV1 =
@@ -290,4 +291,39 @@ export interface LingServerTransportDiagnosticsV1 {
   readonly replayedFrameCount?: number;
   readonly requiresSnapshot?: boolean;
   readonly generatedAt: string;
+}
+
+export const LING_SERVER_RENDEZVOUS_MAX_LIFETIME_MS_V1 = 90_000;
+
+export interface LingServerRendezvousScopeV1 {
+  readonly version: 1;
+  readonly instanceId: string;
+  readonly installationId: string;
+  readonly installationRevision: number;
+  readonly applicationKeyFingerprint: string;
+  readonly bindingId: string;
+  readonly peerEpoch: number;
+  readonly gatewayId: string;
+  readonly mobileDeviceId: string;
+}
+
+export interface LingServerRendezvousRequestV1 extends LingServerRendezvousScopeV1 {
+  readonly nonce: string;
+  readonly expiresAt: string;
+  readonly operation:
+    | { readonly kind: "request_route"; readonly routeAttemptId: string; readonly preferred: LingServerTransportRouteV1 }
+    | { readonly kind: "poll_route" };
+}
+
+export interface LingServerSignedRendezvousRequestV1 {
+  readonly input: LingServerRendezvousRequestV1;
+  readonly publicKeyJwk: RemoteP256PublicJwkV1;
+  readonly signature: string;
+}
+
+export interface LingServerRendezvousReceiptV1 {
+  readonly request: LingServerRendezvousRequestV1;
+  readonly offer?: LingServerSignedRendezvousRequestV1;
+  readonly applicationPublicKeyJwk: RemoteP256PublicJwkV1;
+  readonly applicationSignature: string;
 }

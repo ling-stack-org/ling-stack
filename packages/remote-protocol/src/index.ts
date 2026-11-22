@@ -5,6 +5,7 @@ export * from "./errors.js";
 export * from "./hmac.js";
 export * from "./ling-server-pairing-migration.js";
 export * from "./ling-server-signaling.js";
+export * from "./ling-server-rendezvous.js";
 export * from "./message-channel.js";
 export * from "./sha256.js";
 export * from "./validators.js";
