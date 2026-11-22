@@ -158,6 +158,30 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
   client.close();
 });
 
+test("Ling App Server stops reconnecting with a revoked grant and exposes the authorization state", async () => {
+  const sockets: FakeSocket[] = [];
+  const client = new LingAppServerClient({
+    url: "wss://fixture/app-server/rpc",
+    createSocket: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    clientInfo: { name: "fixture-client", version: "1" },
+    reconnectDelayMs: 10,
+  });
+  const states: string[] = [];
+  client.onConnectionState(({ state }) => states.push(state));
+  await client.connect();
+  sockets[0]?.emit("close", { code: 1008, reason: "authorization_changed" });
+  await new Promise(resolve => setTimeout(resolve, 35));
+  assert.deepEqual(states, ["connecting", "connected", "authorization_required"]);
+  assert.equal(sockets.length, 1);
+  await client.connect();
+  assert.equal(sockets.length, 2);
+  client.close();
+});
+
 test("Ling App Server client routes the development, delivery, grant, worktree and coordination methods", async () => {
   const socket = new FakeSocket();
   const client = new LingAppServerClient({

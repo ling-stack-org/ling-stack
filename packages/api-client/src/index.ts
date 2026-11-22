@@ -8,5 +8,7 @@ export {
   type LingAppServerServerRequest,
   type LingAppServerSocket,
   type LingAppServerSocketFactory,
+  type LingAppServerConnectionState,
+  type LingAppServerConnectionStatus,
 } from "./app-server.js";
 export type { ExecutionBindingRequest } from "@ling-stack/contracts";

@@ -1107,6 +1107,116 @@ test("App Server simplification runs against the captured diff and retains the s
 });
 
 const codexExecutable = process.env.LING_APP_SERVER_CODEX_EXECUTABLE;
+
+test("Codex control host streams Ling, accepts explicit controls, and replays cursors and delivery receipts", {
+  timeout: 30_000, skip: process.platform === "win32",
+}, async t => {
+  const fixture = await releaseFixture(t);
+  let release: () => void = () => undefined;
+  const firstRequest = new Promise<void>(resolve => { release = resolve; });
+  const provider = await startLoopbackPiProvider(async (_input: unknown, count: number) => {
+    if (count === 1) await firstRequest;
+    return { text: "Controlled delivery" };
+  });
+  t.after(async () => { release(); await provider.close(); });
+  const statePath = join(fixture.root, "codex-host.sqlite");
+  const codexFixture = join(fixture.root, "fixture-codex.cjs");
+  const writes = join(fixture.root, "steer-written.txt");
+  await writeFile(codexFixture, [
+    "#!/usr/bin/env node",
+    "const { createInterface } = require('node:readline');",
+    "const { appendFileSync } = require('node:fs');",
+    "if (process.env.LING_STACK_AUTH_TOKEN) process.exit(2);",
+    "function send(frame) { process.stdout.write(JSON.stringify(frame) + '\\n'); }",
+    "createInterface({ input: process.stdin }).on('line', line => {",
+    "  const { id, method, params } = JSON.parse(line);",
+    "  if (!id) return;",
+    "  let result;",
+    "  if (method === 'initialize') result = { userAgent: 'fixture' };",
+    "  else if (method === 'thread/resume' || method === 'thread/read') result = { thread: { id: params.threadId, cwd: process.cwd() } };",
+    "  else if (method === 'turn/start') result = { turn: { id: 'codex-live-turn' } };",
+    "  else if (method === 'turn/steer') {",
+    `    appendFileSync(${JSON.stringify(writes)}, JSON.stringify(params) + '\\n');`,
+    "    result = { turnId: params.expectedTurnId };",
+    "  } else throw new Error('unexpected method: ' + method);",
+    "  send({ id, result });",
+    "});",
+  ].join("\n"), { mode: 0o700 });
+  const operator = await fixture.connect();
+  const { thread } = await operator.call<ThreadRead>("thread/start", { title: "Dual control host" });
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const cli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
+  const start = async () => {
+    const child = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
+      "app-server", "codex-host", "--thread", thread.id, "--state", statePath, "--codex", codexFixture,
+      "--codex-thread", "codex-host-thread"], { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, stdio: "pipe" });
+    const output = jsonLines(child.stdin, child.stdout);
+    const finished = once(child, "close");
+    let diagnostic = "";
+    child.stderr.setEncoding("utf8").on("data", chunk => { diagnostic = (diagnostic + chunk).slice(-4000); });
+    t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill(); await finished; });
+    await Promise.race([waitFor(() => output.notices.find(notice => notice.method === "ready")),
+      finished.then(() => { throw new Error(diagnostic.replaceAll(authToken, "[redacted]")); })]);
+    return { ...output, async stop() {
+      child.stdin.end();
+      assert.equal((await finished)[0], 0, diagnostic.replaceAll(authToken, "[redacted]"));
+    } };
+  };
+  const first = await start();
+  assert.equal((await first.call<ThreadRead>("codex/snapshot")).thread.id, "codex-host-thread");
+  await first.call("codex/turn/start", { message: "Follow the paired Ling task." });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const turn = await operator.call<{ turn: { id: string } }>("turn/start", {
+    threadId: thread.id, providerPresetId: preset.id, idempotencyKey: "host-turn", message: "Run a paired task.",
+  });
+  const started = await waitFor(() => first.notices.find(notice => notice.method === "turn/started" && notice.params?.eventId));
+  const steer = { eventId: started.params!.eventId!, expectedTurnId: "codex-live-turn" };
+  assert.deepEqual(await first.call("codex/steer", steer), { status: "accepted" });
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const snapshot = await first.call<LingAppServerThreadSnapshotResult>("ling/snapshot");
+  assert.equal(snapshot.turn?.id, turn.turn.id);
+  const queued = await first.call<{ intervention: RunIntervention }>("ling/queue", {
+    expectedTurnId: turn.turn.id, expectedTurnRevision: snapshot.turn?.updatedAt,
+    message: "Finish the verified follow-up.", idempotencyKey: "host-followup",
+  });
+  assert.equal(queued.intervention.status, "queued");
+  await first.stop();
+  release();
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  const second = await start();
+  const finished = await waitFor(() => second.notices.find(notice => notice.method === "turn/completed" && notice.params?.eventId));
+  assert.ok(finished.params?.eventId);
+  assert.ok(!second.notices.some(notice => notice.params?.eventId === steer.eventId));
+  assert.deepEqual(await second.call("codex/steer", steer), { status: "accepted", replayed: true });
+  assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 1);
+  await second.stop();
+});
+
+test("the reference control host negotiates installed Codex and streams an actual Ling Turn", {
+  skip: !codexExecutable, timeout: 30_000,
+}, async t => {
+  const fixture = await releaseFixture(t);
+  const ling = await fixture.connect();
+  const { thread } = await ling.call<ThreadRead>("thread/start", { title: "Native Codex observation" });
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const cli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
+  const running = spawn(process.execPath, [cli, "--cwd", fixture.cwd, "--daemon-url", daemonUrl,
+    "app-server", "codex-host", "--thread", thread.id, "--state", join(fixture.root, "native-host.sqlite"),
+    "--codex", codexExecutable!], { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, stdio: "pipe" });
+  const peer = jsonLines(running.stdin, running.stdout);
+  const stopped = once(running, "close");
+  let diagnostics = "";
+  running.stderr.setEncoding("utf8").on("data", chunk => { diagnostics = (diagnostics + chunk).slice(-4000); });
+  t.after(async () => { running.stdin.end(); await stopped; });
+  const ready = await Promise.race([waitFor(() => peer.notices.find(notice => notice.method === "ready")), stopped.then(() => {
+    throw new Error(diagnostics.replaceAll(authToken, "[redacted]"));
+  })]);
+  assert.ok(ready.params?.codexUserAgent);
+  const { turn } = await ling.call<{ turn: { id: string } }>("turn/start", { threadId: thread.id, message: "Observe the committed Turn." });
+  await waitFor(() => peer.notices.find(notice => notice.method === "turn/started" && notice.params?.event?.entityId === turn.id));
+  assert.equal((await peer.call<LingAppServerThreadSnapshotResult>("ling/snapshot")).turn?.id, turn.id);
+});
+
 test("installed Codex calls the CLI MCP bridge while a Ling subscription receives the same Turn", {
   skip: !codexExecutable, timeout: 45_000,
 }, async t => {
@@ -1614,6 +1724,14 @@ test("a reserved Work Item dispatch recovers once through the conversation owner
   const [restored, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
   await peer.call("workItem/subscribe", { workItemId: workItem.workItemId, cursor: before.cursor });
   await waitFor(() => peer.notices.find(value => value.method === "workItem/thread/linked"));
+  await restored.call("thread/subscribe", { threadId: thread.id });
+  const overlap = await waitFor(() => restored.notices.find(value => value.method === "workItem/control/updated"
+    && value.params?.event?.action === "work_item.control.pause"));
+  const workItemNotice = await waitFor(() => peer.notices.find(value => value.method === "workItem/control/updated"
+    && value.params?.event?.action === "work_item.control.pause"));
+  assert.ok(overlap.params?.eventId);
+  assert.equal(overlap.params.eventId, workItemNotice.params?.eventId);
+  assert.ok(!restored.notices.some(value => value.method === "workItem/created" && value.params?.event?.entityId === workItem.workItemId));
   await restored.call("workItem/resume", {
     workItemId: workItem.workItemId, expectedWorkItemRevision: Number(pause.workItem.revision), expectedControlGeneration: 1,
     idempotencyKey: "resume-primary", actorId: "local-user",
@@ -2431,10 +2549,14 @@ test("App Server grants restrict observers, controllers and approvers to their s
     entityType: "approval", entityId: allowedApproval.id, action: "approval.created",
     data: { runId: allowedApproval.runId, threadId: subject.id } }, now);
   await approver.call("thread/subscribe", { threadId: subject.id });
-  await waitFor(() => approver.notices.find(notice => notice.method === "approval/requestDecision" && notice.params?.approvalId === allowedApproval.id));
+  const pending = await waitFor(() => approver.notices.find(notice => notice.method === "approval/requestDecision" && notice.params?.approvalId === allowedApproval.id));
+  assert.ok(pending.params?.revision);
   await assert.rejects(controller.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny" }), { code: "capability_denied" });
   await assert.rejects(approver.call("approval/respond", { approvalId: unrelatedApproval.id, decision: "deny" }), { code: "capability_denied" });
-  await approver.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny" });
+  await assert.rejects(approver.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny", expectedRevision: "stale" }),
+    { code: "stale_revision" });
+  assert.equal(store.getApprovalRequest(allowedApproval.id)?.status, "pending");
+  await approver.call("approval/respond", { approvalId: allowedApproval.id, decision: "deny", expectedRevision: pending.params.revision });
   assert.equal(store.getApprovalRequest(allowedApproval.id)?.status, "denied");
   assert.equal(store.getApprovalRequest(unrelatedApproval.id)?.status, "pending");
   const reconnect = await fixture.connect("/app-server/rpc", fixture.cwd, approvals.bearer);
@@ -2508,9 +2630,11 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
   await assert.rejects(once(new WebSocket(legacy, { ca, headers: { Authorization: `Bearer ${credential}` } }), "open"), /404/u);
 
   let socket: WebSocket | undefined;
+  let socketCount = 0;
   const client = new LingAppServerClient({
-    url: url.href, clientInfo: { name: "remote-contract-test", version: "1" }, autoReconnect: false,
+    url: url.href, clientInfo: { name: "remote-contract-test", version: "1" }, reconnectDelayMs: 10,
     createSocket: address => {
+      socketCount++;
       socket = new WebSocket(address, { ca, headers: { Authorization: `Bearer ${credential}` } });
       return socket as unknown as LingAppServerSocket;
     },
@@ -2518,6 +2642,8 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
   t.after(() => client.close());
   const notifications: string[] = [];
   client.onNotification(notification => notifications.push(notification.method));
+  const states: string[] = [];
+  client.onConnectionState(status => states.push(status.state));
   const remote = await client.connect();
   assert.deepEqual(remote.effectiveScopes, ["control", "observe"]);
   await client.subscribe({ threadId: thread.id });
@@ -2529,6 +2655,8 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
   const closed = once(socket, "close");
   await host.call("server/grants/revoke", { grantId: grant.grantId, expectedRevision: grant.revision });
   await closed;
+  await waitFor(() => states.includes("authorization_required") ? true : undefined);
+  assert.equal(socketCount, 1);
   await assert.rejects(open(credential), /401/u);
 });
 
@@ -2995,7 +3123,7 @@ type JsonLine = {
   method?: string;
   result?: unknown;
   error?: { message: string };
-  params?: { eventId?: string; requestId?: string; approvalId?: string; revision?: string; event?: { entityId: string; action: string };
+  params?: { codexUserAgent?: string; eventId?: string; requestId?: string; approvalId?: string; revision?: string; event?: { entityId: string; action: string };
     itemId?: string; runId?: string; streamEpoch?: string; offset?: number; text?: string;
     subject?: { threadId?: string; turnId?: string; workItemId?: string } };
 };

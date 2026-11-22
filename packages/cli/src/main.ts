@@ -267,12 +267,31 @@ async function handleAppServer(args: readonly string[], options: GlobalOptions):
     return 0;
   }
   const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
+  if (mode === "codex-host") {
+    const parsed = parseCommandArgs(args.slice(1), { stringFlags: new Set(["thread", "state", "codex", "codex-thread"]) });
+    assertNoPositionals(parsed.positionals, "app-server codex-host --thread <id> --state <file>");
+    const threadId = getFlag(parsed, "thread"), statePath = getFlag(parsed, "state");
+    if (!threadId || !statePath) throw new CliError(2, "bad_usage", "Usage: ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>]");
+    const { runLingCodexHost } = await import("@ling-stack/daemon/dist/server/app-server-codex-host.js");
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    try {
+      await runLingCodexHost({ ...transportOptions, threadId, statePath, codexExecutable: getFlag(parsed, "codex") ?? "codex",
+        codexThreadId: getFlag(parsed, "codex-thread") }, controller.signal);
+    } finally {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+    }
+    return 0;
+  }
   if (mode === "instructions-init" || mode === "verify" || mode === "verify-status") {
     return handleAppServerDevelopment(mode, args.slice(1), transportOptions);
   }
   if (!["stdio", "probe", "mcp", "listen"].includes(mode) || rest.length
     || (mode === "listen" ? !socketPath : socketPath !== undefined)) {
-    throw new CliError(2, "bad_usage", "Use app-server with stdio, probe, mcp, listen, schema, instructions-init, verify, or verify-status.");
+    throw new CliError(2, "bad_usage", "Use app-server with stdio, probe, mcp, listen, schema, codex-host, instructions-init, verify, or verify-status.");
   }
   if (mode === "mcp") {
     const { runLingAppServerMcp } = await import("@ling-stack/daemon/dist/server/app-server-mcp.js");
@@ -7807,6 +7826,8 @@ function printCommandHelp(command: string, subcommand?: string): void {
   if (command === "app-server") {
     console.log("Usage: ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]");
     console.log("       ling-stack app-server schema [method]");
+    console.log("       ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>]");
+    console.log("       Host JSONL methods: ling/snapshot, ling/queue, ling/interrupt, codex/thread/start, codex/snapshot, codex/turn/start, codex/steer");
     console.log("       ling-stack [global options] app-server instructions-init [--path <directory>] [--apply <workspace-revision>]");
     console.log("       ling-stack [global options] app-server verify [--plan] [--check <id>] [--thread <id>] [--work-item <id>]");
     console.log("       ling-stack [global options] app-server verify-status <operation-id>");

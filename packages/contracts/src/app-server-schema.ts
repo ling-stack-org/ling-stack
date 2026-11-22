@@ -271,7 +271,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ ...threadTarget, turnId: stringSchema, sourceRunId: stringSchema, idempotencyKey: stringSchema }, ["threadId"]), result };
     case "approval/respond":
       return { params: objectWith({ approvalId: stringSchema, decision: { enum: ["approve", "deny"] }, expectedRevision: stringSchema,
-        idempotencyKey: stringSchema, runId: stringSchema, threadId: stringSchema, turnId: stringSchema }, ["approvalId", "decision"]), result };
+        runId: stringSchema, threadId: stringSchema, turnId: stringSchema, reason: stringSchema, decisionKind: { enum: ["approve_once"] } },
+      ["approvalId", "decision"]), result: objectWith({ cwd: stringSchema, approval: objectSchema }, ["cwd", "approval"]) };
     case "input/respond":
       return { params: objectWith({ schemaVersion: { enum: [1] }, authority: objectSchema, answers: arraySchema, idempotencyKey: stringSchema },
         ["schemaVersion", "authority", "answers", "idempotencyKey"]),

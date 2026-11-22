@@ -1,4 +1,5 @@
 import type { CodeAssessmentFinding, CodeAssessmentReviewRules, CodeAssessmentSnapshot, CodeFindingCloseReason } from "./code-assessments.js";
+import type { ApprovalRequest } from "./approvals.js";
 import type { RunArtifact } from "./artifacts.js";
 import type { ApprovalSummary, ControlPlaneEventsResponse, ControlPlaneReplayWindow } from "./control-plane.js";
 import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
@@ -864,6 +865,28 @@ export interface LingAppServerServerRequest<Params = unknown> {
   readonly params: Params;
 }
 
+export interface LingAppServerApprovalRespondParams {
+  readonly cwd?: string;
+  readonly approvalId: string;
+  readonly decision: "approve" | "deny";
+  readonly expectedRevision?: string;
+  readonly threadId?: string;
+  readonly turnId?: string;
+  readonly runId?: string;
+  readonly reason?: string;
+  readonly decisionKind?: "approve_once";
+}
+
+export interface LingAppServerApprovalRespondResult {
+  readonly cwd: string;
+  readonly approval: ApprovalRequest;
+  readonly postCommit?: { readonly status: "deferred" };
+}
+
+export interface LingAppServerPendingApproval extends ApprovalSummary {
+  readonly revision?: string;
+}
+
 export interface LingAppServerInputRespondParams extends UserInputAnswerCommandV1 {
   readonly cwd?: string;
 }
@@ -1530,7 +1553,7 @@ export interface LingAppServerThreadSnapshotResult {
   readonly turn: LingTurn | null;
   readonly goal: Pick<LingThreadGoal, "id" | "objective" | "status" | "tokenBudget" | "tokensUsed" | "timeUsedSeconds" | "updatedAt"> | null;
   readonly run: Pick<RunSession, "id" | "status" | "startedAt" | "endedAt"> | null;
-  readonly pendingApprovals: readonly ApprovalSummary[];
+  readonly pendingApprovals: readonly LingAppServerPendingApproval[];
   readonly pendingInputs: readonly UserInputRequestTranscriptV1[];
 }
 

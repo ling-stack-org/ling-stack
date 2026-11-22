@@ -39,12 +39,12 @@ function createAppServerSocket(url: string, authToken: string | undefined): WebS
   });
 }
 
-export function connectToAppServer(options: AppServerLocalTransportOptions, clientName: string): LingAppServerClient {
+export function connectToAppServer(options: AppServerLocalTransportOptions, clientName: string, autoReconnect = false): LingAppServerClient {
   return new LingAppServerClient({
     url: appServerUrl(options),
     createSocket: url => createAppServerSocket(url, options.authToken) as unknown as LingAppServerSocket,
     clientInfo: { name: clientName, version: LING_PRODUCT_VERSION },
-    autoReconnect: false,
+    autoReconnect,
     requestTimeoutMs: handshakeTimeout,
   });
 }

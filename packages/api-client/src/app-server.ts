@@ -6,6 +6,8 @@ import type {
   LingAppServerChangeTransferPreview,
   LingAppServerPreviewChangeTransferParams,
   LingAppServerCaptureChangesParams,
+  LingAppServerApprovalRespondParams,
+  LingAppServerApprovalRespondResult,
   LingAppServerChangeRecoveryPreview,
   LingAppServerPreviewChangeRecoveryParams,
   LingAppServerReadChangesParams,
@@ -130,6 +132,25 @@ export interface LingAppServerClientOptions {
   readonly requestTimeoutMs?: number;
 }
 
+export type LingAppServerConnectionState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "authorization_required"
+  | "error"
+  | "closed";
+
+export interface LingAppServerConnectionStatus {
+  readonly state: LingAppServerConnectionState;
+  readonly code?: string;
+  readonly message?: string;
+  readonly closeCode?: number;
+  readonly closeReason?: string;
+  readonly authorizationEpoch?: string;
+  readonly storeIncarnation?: string;
+}
+
 export interface LingAppServerNotification {
   readonly jsonrpc: "2.0";
   readonly method: LingAppServerNotificationMethod | string;
@@ -165,6 +186,7 @@ export class LingAppServerClient {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly notificationListeners = new Set<(notification: LingAppServerNotification) => void>();
   private readonly serverRequestListeners = new Set<(request: LingAppServerServerRequest) => void>();
+  private readonly connectionStateListeners = new Set<(status: LingAppServerConnectionStatus) => void>();
   private socket?: LingAppServerSocket;
   private nextId = 1;
   private connectPromise?: Promise<LingAppServerInitializeResult>;
@@ -180,11 +202,20 @@ export class LingAppServerClient {
   connect(): Promise<LingAppServerInitializeResult> {
     this.manuallyClosed = false;
     if (this.connectPromise) return this.connectPromise;
+    this.emitConnectionState({ state: this.reconnectAttempt > 0 ? "reconnecting" : "connecting" });
     const promise = this.openAndInitialize();
     this.connectPromise = promise;
-    promise.catch(() => {
-      if (this.connectPromise === promise) this.connectPromise = undefined;
-      this.scheduleReconnect();
+    promise.catch(error => {
+      if (this.manuallyClosed || this.connectPromise && this.connectPromise !== promise) return;
+      this.connectPromise = undefined;
+      const status = connectionStatusForError(error);
+      this.emitConnectionState(status);
+      if (status.state === "authorization_required" || status.code === "protocol_version_unsupported"
+        || status.code === "required_capability_unavailable") {
+        this.cancelReconnect();
+      } else {
+        this.scheduleReconnect();
+      }
     });
     return promise;
   }
@@ -359,7 +390,7 @@ export class LingAppServerClient {
     return await this.request("turn/resume", params);
   }
 
-  async respondApproval(params: Record<string, unknown>): Promise<unknown> {
+  async respondApproval(params: LingAppServerApprovalRespondParams): Promise<LingAppServerApprovalRespondResult> {
     await this.connect();
     return await this.request("approval/respond", params);
   }
@@ -599,10 +630,14 @@ export class LingAppServerClient {
     return () => this.serverRequestListeners.delete(listener);
   }
 
+  onConnectionState(listener: (status: LingAppServerConnectionStatus) => void): () => void {
+    this.connectionStateListeners.add(listener);
+    return () => this.connectionStateListeners.delete(listener);
+  }
+
   close(): void {
     this.manuallyClosed = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
+    this.cancelReconnect();
     const socket = this.socket;
     this.socket = undefined;
     this.connectPromise = undefined;
@@ -610,6 +645,7 @@ export class LingAppServerClient {
     const error = new Error("Ling App Server connection closed.");
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+    this.emitConnectionState({ state: "closed", closeCode: 1000, closeReason: "client_closed" });
   }
 
   private async openAndInitialize(): Promise<LingAppServerInitializeResult> {
@@ -620,8 +656,8 @@ export class LingAppServerClient {
     attachSocketListener(socket, "message", (event) => {
       if (this.socket === socket) this.handleMessage(readSocketMessage(event));
     });
-    attachSocketListener(socket, "close", () => this.handleClose(socket));
-    attachSocketListener(socket, "error", () => this.handleClose(socket));
+    attachSocketListener(socket, "close", event => this.handleClose(socket, event));
+    attachSocketListener(socket, "error", event => this.handleClose(socket, event));
     try {
       await opened;
       if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
@@ -637,6 +673,7 @@ export class LingAppServerClient {
       }
       socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
       this.reconnectAttempt = 0;
+      this.emitConnectionState({ state: "connected", authorizationEpoch: initialized.authorizationEpoch, storeIncarnation: initialized.storeIncarnation });
       await this.replaySubscriptions(socket);
       if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
       return initialized;
@@ -710,13 +747,24 @@ export class LingAppServerClient {
     }
   }
 
-  private handleClose(socket: LingAppServerSocket): void {
+  private handleClose(socket: LingAppServerSocket, event?: unknown): void {
     if (this.socket !== socket) return;
     this.socket = undefined;
-    const error = new Error("Ling App Server connection closed.");
+    const close = readCloseEvent(event);
+    const error = Object.assign(new Error(close.reason || "Ling App Server connection closed."), {
+      code: close.code === 1008 || /authorization_changed|unauthorized|forbidden|unexpected server response: (?:401|403)\b/iu.test(close.reason)
+        ? "authorization_required" : undefined,
+    });
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     this.connectPromise = undefined;
+    if (error.code === "authorization_required") {
+      this.cancelReconnect();
+      this.emitConnectionState({ state: "authorization_required", code: error.code, message: error.message,
+        closeCode: close.code, closeReason: close.reason });
+      return;
+    }
+    this.emitConnectionState({ state: "disconnected", message: error.message, closeCode: close.code, closeReason: close.reason });
     this.scheduleReconnect();
   }
 
@@ -744,10 +792,20 @@ export class LingAppServerClient {
     const max = Math.max(base, this.options.maxReconnectDelayMs ?? 10_000);
     const delay = Math.min(max, base * 2 ** Math.min(this.reconnectAttempt, 6));
     this.reconnectAttempt += 1;
+    this.emitConnectionState({ state: "reconnecting", message: `retrying in ${delay}ms` });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       void this.connect().catch(() => undefined);
     }, delay);
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+  }
+
+  private emitConnectionState(status: LingAppServerConnectionStatus): void {
+    for (const listener of this.connectionStateListeners) listener(status);
   }
 
   private async replaySubscriptions(socket: LingAppServerSocket): Promise<void> {
@@ -764,8 +822,16 @@ export class LingAppServerClient {
             listener({ jsonrpc: "2.0", method, params: { ...result, threadId, workItemId, workspaceId } });
           }
         }
-      } catch {
-        // A failed replay remains tracked and will be retried on the next reconnect.
+      } catch (error) {
+        const status = connectionStatusForError(error);
+        if (status.state === "authorization_required") {
+          this.subscriptions.delete(key);
+          const method = subscription.method === "thread/subscribe" ? "thread/resync/required" : "workItem/resync/required";
+          const { threadId, workItemId, workspaceId } = subscription.params;
+          for (const listener of this.notificationListeners) {
+            listener({ jsonrpc: "2.0", method, params: { reason: "authorization_changed", threadId, workItemId, workspaceId } });
+          }
+        }
       }
     }
   }
@@ -789,6 +855,25 @@ function subscriptionKey(method: TrackedSubscription["method"], params: LingAppS
   return `${method}:${params.workspaceId ?? ""}:${params.threadId ?? ""}:${params.workItemId ?? ""}`;
 }
 
+function connectionStatusForError(error: unknown): LingAppServerConnectionStatus {
+  const record = error && typeof error === "object" ? error as { readonly code?: unknown; readonly message?: unknown } : {};
+  const code = typeof record.code === "string" ? record.code : undefined;
+  const message = typeof record.message === "string" ? record.message : String(error);
+  if (code === "authorization_required" || code === "capability_denied" || /unexpected server response: (?:401|403)\b/iu.test(message)) {
+    return { state: "authorization_required", code: code ?? "authorization_required", message };
+  }
+  return { state: "error", ...(code ? { code } : {}), message };
+}
+
+function readCloseEvent(event: unknown): { readonly code: number; readonly reason: string } {
+  if (!event || typeof event !== "object") return { code: 1006, reason: "" };
+  const record = event as { readonly code?: unknown; readonly reason?: unknown; readonly message?: unknown };
+  return {
+    code: typeof record.code === "number" && Number.isSafeInteger(record.code) ? record.code : 1006,
+    reason: typeof record.reason === "string" ? record.reason : typeof record.message === "string" ? record.message : "",
+  };
+}
+
 function attachSocketListener(socket: LingAppServerSocket, type: "open" | "message" | "close" | "error", listener: (event: unknown) => void): void {
   if (socket.addEventListener) {
     socket.addEventListener(type, listener);
@@ -806,7 +891,7 @@ function waitForSocketOpen(socket: LingAppServerSocket, timeoutMs: number): Prom
     };
     const onError = (event: unknown): void => {
       cleanup();
-      reject(event instanceof Error ? event : new Error("Ling App Server connection failed."));
+      reject(event instanceof Error ? event : new Error(readCloseEvent(event).reason || "Ling App Server connection failed."));
     };
     const cleanup = (): void => {
       clearTimeout(timer);

@@ -1635,7 +1635,7 @@ class RpcConnection {
       const run = runId ? store.getRun(runId) : undefined;
       const goal = store.getLingThreadGoal(threadId);
       const pendingApprovals = run ? store.listApprovalRequests({ runId: run.id, status: "pending" })
-        .filter(canPresentPendingApproval).map(toApprovalSummary) : [];
+        .filter(canPresentPendingApproval).map(approval => ({ ...toApprovalSummary(approval), revision: appServerApprovalRevision(approval) })) : [];
       const itemIds = turn ? store.listConversationItemsForTurn({ turnId: turn.id })
         .filter(item => item.kind === "user_input_request").map(item => item.id) : [];
       const pendingInputs = itemIds.length ? store.readUserInputTranscript({ threadId, itemIds }).flatMap(item => {
@@ -2173,7 +2173,12 @@ class RpcConnection {
       || record.turnId !== undefined && readStringField(record, "turnId") !== turn?.id) {
       throw rpcError(-32040, "workspace_binding_invalid", "The approval does not belong to the supplied Thread or Turn.");
     }
+    if (approval.status === "expired") throw rpcError(-32050, "request_expired", "The approval has expired.");
     if (approval.status !== "pending") throw rpcError(-32051, "request_already_resolved", "The approval is no longer pending.");
+    const expectedRevision = readOptionalStringField(record, "expectedRevision");
+    if (expectedRevision !== undefined && expectedRevision !== appServerApprovalRevision(approval)) {
+      throw rpcError(-32030, "stale_revision", "The observed approval revision does not match the pending decision.");
+    }
     const now = new Date().toISOString();
     const input = {
       reason: readOptionalStringField(record, "reason"),
@@ -3227,13 +3232,17 @@ function appServerEventNotification(subscription: RpcSubscription, event: Contro
 
 function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () => RunStore): unknown | undefined {
   if (event.action === "approval.created") {
-    const approval = readStore().getApprovalRequest(event.entityId);
+    const store = readStore();
+    const approval = store.getApprovalRequest(event.entityId);
     if (!approval || !canPresentPendingApproval(approval)) return undefined;
+    const run = approval.runId ? store.getRun(approval.runId) : undefined;
+    const turn = run ? store.getLingTurnForRun(run.id) : undefined;
     return {
       jsonrpc: "2.0",
       id: `approval:${event.entityId}:${event.seq}`,
       method: "approval/requestDecision",
-      params: { approvalId: event.entityId, ...event.data },
+      params: { ...event.data, approvalId: approval.id, pendingId: approval.id, revision: appServerApprovalRevision(approval),
+        ...(run ? { runId: run.id, threadId: run.threadId, turnId: turn?.id } : {}) },
     };
   }
   if (event.entityType !== "user_input_request" || event.action !== "pending") return undefined;
@@ -3253,6 +3262,13 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () 
 
 function canPresentPendingApproval(approval: import("@ling-stack/core").ApprovalRequest): boolean {
   return approval.status === "pending" && (!approval.expiresAt || Date.parse(approval.expiresAt) > Date.now());
+}
+
+function appServerApprovalRevision(approval: import("@ling-stack/core").ApprovalRequest): string {
+  // A pending approval is immutable. Its owner resolves it with a pending-state CAS.
+  return createHash("sha256").update(JSON.stringify([
+    approval.id, approval.createdAt, approval.expiresAt, approval.runId, approval.toolCallId, approval.actionType,
+  ])).digest("hex");
 }
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
@@ -3311,6 +3327,13 @@ function subscriptionMatchesEvent(subscription: RpcSubscription, event: ControlP
 function threadEventMatches(event: ControlPlaneEvent, threadId: string, store: import("@ling-stack/core").RunStore): boolean {
   if (event.entityType === "thread") return event.entityId === threadId;
   if (typeof event.data.threadId === "string") return event.data.threadId === threadId;
+  if (event.entityType === "work_item") {
+    const query = { workspaceId: event.workspaceId, entityType: event.entityType, entityId: event.entityId, limit: 1 };
+    const [workflow] = store.listControlPlaneEvents({ ...query, action: "work_item.workflow.linked" });
+    if (workflow && workflow.seq <= event.seq) return workflow.data.threadId === threadId;
+    const [conversation] = store.listControlPlaneEvents({ ...query, action: "work_item.thread.linked" });
+    return Boolean(conversation && conversation.seq <= event.seq && conversation.data.threadId === threadId);
+  }
   const runId = event.entityType === "run" ? event.entityId
     : event.data.ownerType === "run" ? event.data.ownerId : event.data.runId;
   return typeof runId === "string" && store.getRun(runId)?.threadId === threadId;
