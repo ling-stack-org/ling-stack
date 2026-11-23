@@ -150,6 +150,7 @@
     "test/control-plane-event-hub.test.mjs",
     "test/control-plane-stream-backpressure.test.mjs",
     "test/conversation-context-projector.test.mjs",
+    "test/conversation-media-projection.test.ts",
     "test/conversation-message-edits.test.mjs",
     "test/conversation-model-validation-api.test.mjs",
     "test/conversation-narration-segments.test.mjs",

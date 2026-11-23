@@ -1,10 +1,10 @@
-import { Download, ExternalLink, Image as ImageIcon, Video } from "lucide-react";
-import { artifactContentUrl } from "../../../api/media.js";
+import { Image as ImageIcon, Video } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
-import { artifactDownloadName } from "../../../lib/artifacts.js";
-import type { ConversationGeneratedMedia, RunArtifact } from "../../../types.js";
+import type { ConversationGeneratedMedia } from "../../../types.js";
 import { displayableGeneratedMediaArtifacts } from "../generated-media.js";
 import { Spinner } from "../../ui/index.js";
+import { ConversationGeneratedMediaArtifact } from "./ConversationGeneratedMediaArtifact.js";
+import { ConversationGeneratedMediaFrameViewer } from "./ConversationGeneratedMediaFrameViewer.js";
 
 export interface ConversationGeneratedMediaBlockProps {
   readonly items: readonly ConversationGeneratedMedia[];
@@ -26,9 +26,10 @@ export function ConversationGeneratedMediaBlock({
         const pending = active || item.status === "waiting_for_approval";
         const imagePending = !video && active;
         const mediaArtifacts = displayableGeneratedMediaArtifacts(item);
+        const frameSequence = item.status === "succeeded" && !video && mediaArtifacts.length > 1;
         return (
           <section
-            className={`conversation-generated-media status-${item.status}${imagePending ? " image-pending" : ""}`}
+            className={`conversation-generated-media status-${item.status}${imagePending ? " image-pending" : ""}${frameSequence ? " frame-sequence" : ""}`}
             data-media-job-id={item.mediaJobId}
             data-media-job-status={item.status}
             key={item.mediaJobId}
@@ -46,10 +47,17 @@ export function ConversationGeneratedMediaBlock({
               </header>
             ) : null}
             {item.status === "succeeded" ? (
-              mediaArtifacts.length > 0 ? (
+              frameSequence ? (
+                <ConversationGeneratedMediaFrameViewer
+                  key={JSON.stringify([cwd, mediaArtifacts.map((artifact) => artifact.id)])}
+                  frames={mediaArtifacts}
+                  cwd={cwd}
+                  title={item.prompt.trim() || t("Image sequence")}
+                />
+              ) : mediaArtifacts.length > 0 ? (
                 <div className="conversation-generated-media-artifacts">
                   {mediaArtifacts.map((artifact) => (
-                    <GeneratedMediaArtifact artifact={artifact} cwd={cwd} key={artifact.id} />
+                    <ConversationGeneratedMediaArtifact artifact={artifact} cwd={cwd} key={artifact.id} />
                   ))}
                 </div>
               ) : (
@@ -97,37 +105,6 @@ function mediaFailureMessage(
       : t("The upstream generation service responded but did not return image data. Try again; if this continues, check Media Tasks.");
   }
   return t("Media generation failed. Open Media Tasks for details.");
-}
-
-function GeneratedMediaArtifact({ artifact, cwd }: {
-  readonly artifact: RunArtifact;
-  readonly cwd: string;
-}): React.JSX.Element {
-  const { t } = useI18n();
-  const url = artifactContentUrl(artifact.id, cwd);
-  const title = artifact.title || artifactDownloadName(artifact);
-  return (
-    <figure className={`conversation-generated-media-artifact artifact-${artifact.type}`}>
-      {artifact.type === "video" ? (
-        <video controls preload="metadata" playsInline aria-label={title}>
-          <source src={url} type={artifact.contentType ?? "video/mp4"} />
-          {t("This browser cannot play this video.")}
-        </video>
-      ) : (
-        <img src={url} alt={title} loading="lazy" />
-      )}
-      <figcaption aria-label={t("Generated result actions")}>
-        <span className="conversation-generated-media-actions">
-          <a href={url} target="_blank" rel="noreferrer" aria-label={t("Open generated result")} title={t("Open generated result")}>
-            <ExternalLink size={15} />
-          </a>
-          <a href={url} download={artifactDownloadName(artifact)} aria-label={t("Download generated result")} title={t("Download generated result")}>
-            <Download size={15} />
-          </a>
-        </span>
-      </figcaption>
-    </figure>
-  );
 }
 
 function mediaStatusLabel(
