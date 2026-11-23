@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -492,7 +492,6 @@ test("catalog App SHA updates select Common and retain the full fallback for wor
   assert.equal(repo.classify(base).mode, "full");
 
   repo.git("rm", "--", "packages/core/src/probe.ts", second);
-  symlinkSync("sync-translation-catalogs.yml", join(repo.root, second));
   repo.commit();
   assert.equal(repo.classify(base).mode, "full");
   assert.equal(repo.classify(pinUpdate).mode, "full");
