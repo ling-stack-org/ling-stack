@@ -16,6 +16,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { parseUserInputAnswerCommandV1, validateLingAppServerNotificationParams } from "@ling-stack/contracts";
 import type {
+  ChannelConversationTurnResponse,
   LingAppServerCandidateReference,
   AutomationRun,
   LingAppServerApplyChangeTransferResult,
@@ -3591,11 +3592,13 @@ test("App Server reads bounded artifact ranges without exposing private metadata
   assert.deepEqual({ offset: range.offset, endExclusive: range.endExclusive, sizeBytes: range.sizeBytes }, { offset: 0, endExclusive: 4, sizeBytes: 19 });
 });
 
-test("assigned Pi stages exchange coordination through their prepared tools and retain the receipts", { timeout: 30_000 }, async t => {
+test("a channel supplement reaches its active Pi stage through scoped coordination and retains both receipts", { timeout: 30_000 }, async t => {
   const tool = "work_item_coordination";
   const questionText = "Which regression fixture covers the omitted header?";
   const answerText = "Use the optional header compatibility fixture.";
   const messageText = "The regression includes the empty header case.";
+  const forwardedText = "Cover lowercase header names in the Windows fixture.";
+  const privateNote = "Channel-only release note.";
   let released: () => void = () => undefined;
   const firstRequests = new Promise<void>(resolve => { released = resolve; });
   let sendReply: () => void = () => undefined;
@@ -3610,6 +3613,8 @@ test("assigned Pi stages exchange coordination through their prepared tools and 
     const role = qa ? "qa" : "engineer";
     const index = ++calls[role];
     const payload = JSON.stringify(body);
+    assert.ok(!payload.includes(privateNote));
+    if (qa || index === 1) assert.ok(!payload.includes(forwardedText));
     assert.ok(body.tools?.some(entry => entry.function.name === tool), "Pi advertises the prepared coordination tool.");
     if (index === 1) {
       await firstRequests;
@@ -3618,7 +3623,7 @@ test("assigned Pi stages exchange coordination through their prepared tools and 
       return { tool: "read", input: { path: "contract.txt" } };
     }
     if (!qa) {
-      assert.ok(payload.includes(questionText) && payload.includes(messageText));
+      assert.ok(payload.includes(questionText) && payload.includes(messageText) && payload.includes(forwardedText));
       if (index === 2) return { tool, input: { action: "reply", questionId, text: answerText } };
       return { text: "Prepared the compatibility fixture." };
     }
@@ -3646,6 +3651,37 @@ test("assigned Pi stages exchange coordination through their prepared tools and 
   const started = await start.json() as { status: string; startedSteps?: unknown[] };
   assert.equal(started.startedSteps?.length, 2, JSON.stringify(started));
   await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  const current = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
+  await client.call("workItem/subscribe", { workItemId: item.id, cursor: current.cursor });
+  const supplement = {
+    body: `${forwardedText}\n${privateNote}`, idempotencyKey: "compatibility-channel-supplement",
+    workItemTarget: { workItemId: item.id, expectedRevision: Number(current.workItem.revision) },
+  };
+  const submitSupplement = async () => {
+    const transport = fixture.transportOptions();
+    const response = await fetch(`${transport.daemonUrl}/channels/${respondent.channelId}/turns?cwd=${encodeURIComponent(transport.cwd)}`, {
+      method: "POST", body: JSON.stringify(supplement),
+      headers: { "content-type": "application/json", authorization: `Bearer ${transport.authToken}` },
+    });
+    assert.equal(response.status, 201);
+    return await response.json() as ChannelConversationTurnResponse;
+  };
+  const accepted = await submitSupplement();
+  assert.ok(accepted.workItemInput);
+  assert.equal(accepted.turn.status, "succeeded");
+  assert.equal(store.listRuns().length, 2);
+  await waitFor(() => store.listControlPlaneEvents({ workspaceId: item.workspaceId, entityId: item.id,
+    action: "work_item.evidence.updated" }).find(event => event.data.evidenceId === accepted.workItemInput?.evidenceId));
+  const { workflow } = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
+  const target = workflow?.steps.find(step => step.stepId === respondent.id);
+  assert.ok(workflow && target?.messageReceiver);
+  const routing = {
+    workItemId: item.id, planRevision: workflow.planRevision, targetStepId, expectedTargetRevision: target.updatedAt,
+    expectedWorkItemRevision: workflow.workItemRevision, expectedExecution: target.messageReceiver,
+    idempotencyKey: "forward-compatibility-supplement", body: forwardedText,
+  };
+  const forwarded = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", routing);
+  assert.equal((forwarded.record.payload as { delivery: { status: string } }).delivery.status, "queued");
   released();
   const question = await waitFor(async () => {
     const { records } = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/question/read", { workItemId: item.id });
@@ -3679,6 +3715,15 @@ test("assigned Pi stages exchange coordination through their prepared tools and 
   ]);
   assert.equal((records[1]?.payload as { answer: string }).answer, answerText);
   assert.equal(records[1]?.parentRecordId, question.id);
+  assert.deepEqual((await submitSupplement()).workItemInput, accepted.workItemInput);
+  const replayed = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", routing);
+  assert.equal(replayed.status, "replayed");
+  assert.equal(replayed.record.id, forwarded.record.id);
+  const delivery = (replayed.record.payload as { delivery: import("@ling-stack/contracts").LingAppServerStageMessageDelivery }).delivery;
+  assert.equal(delivery.status, "input_admitted");
+  assert.equal(delivery.attemptId, target.messageReceiver.attemptId);
+  assert.match(delivery.preparedInputFingerprint ?? "", /^[a-f0-9]{64}$/u);
+  assert.equal(fixture.getStore().listRuns().length, 2);
   assert.ok(runs.every(source => fixture.getStore().getHostAttemptCompletion(source)?.effectCoverage === "pi_tracked_tools_v1"));
 });
 
