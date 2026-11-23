@@ -4,6 +4,9 @@ import { openReadyWorkItemStageDeliberations } from "./server/app-server-collabo
 import { reconcileWorkItemStageQuestionResults } from "./features/work-items/stage-question-results.js";
 import { HttpError } from "./errors.js";
 import { isRecord } from "./shared/validation.js";
+import { NativeWorkIntake } from "./features/work-items/native-intake.js";
+import { dispatchNativeAutomationIntake } from "./features/automations/native-intake.js";
+import { runAutomation, type StartAutomationRunExecution } from "./features/automations/run.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
@@ -372,6 +375,7 @@ export function createDaemonServer(
       ?? createLazyCuaDriverLeaseClientFactory(desktopBridgeToken),
   });
   const controlPlaneEvents = new ControlPlaneEventHub();
+  const nativeWorkIntake = new NativeWorkIntake(resolvedConfig, controlPlaneEvents);
   const notificationHub = new NotificationHub({
     journalPath: join(defaultStoragePaths.user.rootDir, "notifications", "journal.json"),
     preferencesPath: join(defaultStoragePaths.user.rootDir, "notifications", "preferences.json"),
@@ -576,7 +580,10 @@ export function createDaemonServer(
     if (store.listAutomationEventSources().some(source => source.enabled)
       || store.listAppServerState("github_intake_pending").length
       || store.listPendingGitHubIntakeDispatches(new Date().toISOString(), 1).length
-      || resolvedConfig.appServerGitHubSources.some(source => source.workspaceRoot === cwd && source.intake?.mode === "auto_start")) {
+      || resolvedConfig.appServerGitHubSources.some(source => source.workspaceRoot === cwd && source.intake?.mode === "auto_start")
+      || resolvedConfig.appServerNativeIntake.some(policy => policy.workspaceRoot === cwd)
+      || store.listNativeWorkIntakeReceipts("channel_task", undefined, 1, new Date().toISOString()).length
+      || store.listNativeWorkIntakeReceipts("automation_run", undefined, 1, new Date().toISOString()).length) {
       automationEvents?.start(cwd);
     }
     taskSupervisor?.start(cwd);
@@ -756,12 +763,18 @@ export function createDaemonServer(
         target: nativeRunTargetDispatcher,
       })
     : undefined;
-  automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, (request, hooks) =>
+  const startAutomationRun: StartAutomationRunExecution = (request, hooks) =>
     startDetachedRunAndResolveReady(onReady => executeRunRequest(request, createDetachedRunExecutionSink(),
       runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
         onRunReady: (id, info) => { hooks.onRunReady?.(id, info); onReady(id); },
+        assertNativeIntakeCurrent: hooks.assertNativeIntakeCurrent,
         afterRunTerminal: hooks.afterRunTerminal, controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher,
-      })), async (store, signal) => {
+      }));
+  automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, startAutomationRun, async (store, signal) => {
+      await nativeWorkIntake.dispatchTasks(store, signal, imageVisionSummarizer, (request, assertNativeIntakeCurrent) =>
+        startAutomationRun(request, { assertNativeIntakeCurrent, afterRunTerminal: afterChannelRunTerminal }));
+      await dispatchNativeAutomationIntake(store, storeRegistry, nativeWorkIntake, signal, input =>
+        runAutomation({ ...input, storeRegistry, startRun: startAutomationRun, notificationHub }));
       const intakeContext = { config: resolvedConfig, secretResolver, externalWorkFetch, controlPlaneEvents, runnerRegistry, imageVisionSummarizer };
       await processGitHubWebhookIntake(intakeContext, store, signal);
       await dispatchGitHubIntake(intakeContext, store, signal, async (request, automaticIntakeAdmission) => {
@@ -780,7 +793,7 @@ export function createDaemonServer(
         if (!runId && refusal) throw refusal;
         return runId;
       });
-    });
+    }, nativeWorkIntake);
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -793,6 +806,7 @@ export function createDaemonServer(
     startupState,
     nativeRunDispatcher,
     notificationHub,
+    nativeWorkIntake,
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,
@@ -1138,6 +1152,7 @@ export function createDaemonServer(
     backgroundSchedulers,
     automationSchedulers,
     automationEvents,
+    nativeWorkIntake,
     taskSupervisor,
     controlPlaneEvents,
     notificationHub,

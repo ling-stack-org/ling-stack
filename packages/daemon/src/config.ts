@@ -10,6 +10,7 @@ import {
 import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
 import { resolveVerificationRecipes, type AppServerVerificationRecipeConfig } from "./server/app-server-verification-config.js";
 import { resolveAppServerGitHubSources, type AppServerGitHubSourceConfig } from "./server/app-server-github-sources.js";
+import { resolveNativeWorkIntakePolicies, type NativeWorkIntakeConfig, type NativeWorkIntakePolicy } from "./server/app-server-native-intake-config.js";
 import { resolveAppServerWssConfig, type AppServerWssConfig } from "./server/app-server-wss-config.js";
 
 export interface DaemonConfig {
@@ -28,6 +29,7 @@ export interface DaemonConfig {
   readonly transports?: TransportFeatureConfig;
   readonly appServerVerificationRecipes?: readonly AppServerVerificationRecipeConfig[];
   readonly appServerGitHubSources?: readonly AppServerGitHubSourceConfig[];
+  readonly appServerNativeIntake?: readonly NativeWorkIntakeConfig[];
   /** Private Host storage retained independently of the workspace SQLite backup. */
   readonly appServerRecoveryDirectory?: string;
   readonly appServerWss?: AppServerWssConfig;
@@ -197,6 +199,7 @@ export interface ResolvedDaemonConfig {
   readonly transports: Required<TransportFeatureConfig>;
   readonly appServerVerificationRecipes: readonly AppServerVerificationRecipeConfig[];
   readonly appServerGitHubSources: readonly AppServerGitHubSourceConfig[];
+  readonly appServerNativeIntake: readonly NativeWorkIntakePolicy[];
   readonly appServerRecoveryDirectory?: string;
   readonly appServerWss?: AppServerWssConfig;
   readonly channels: ChannelFeatureConfig;
@@ -266,6 +269,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     concurrency: resolveRuntimeConcurrencyPolicy(config.concurrency),
     appServerVerificationRecipes: resolveVerificationRecipes(config.appServerVerificationRecipes),
     appServerGitHubSources: resolveAppServerGitHubSources(config.appServerGitHubSources),
+    appServerNativeIntake: resolveNativeWorkIntakePolicies(config.appServerNativeIntake),
     appServerRecoveryDirectory,
     appServerWss: resolveAppServerWssConfig(config.appServerWss),
     transports: {

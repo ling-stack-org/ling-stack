@@ -271,6 +271,7 @@ export async function handleAutomationItem(
   startRun: StartAutomationRunExecution,
   schedulerRegistry: AutomationSchedulerRegistry,
   notificationHub?: NotificationHub,
+  nativeIntake?: import("../work-items/native-intake.js").NativeWorkIntake,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = requireCwd(url);
@@ -349,6 +350,7 @@ export async function handleAutomationItem(
         request: parseAutomationRunRequest(body),
         startRun,
         notificationHub,
+        nativeIntake,
         onCoordinationRound: (cwd, event) => schedulerRegistry.publishCoordinationRound(cwd, event),
       });
       writeJson(response, 202, { ...result, run: projectPublicRunSession(result.run, store) });

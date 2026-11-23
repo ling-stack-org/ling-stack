@@ -34,6 +34,8 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // persisted missed-run policy instead of dispatching a stale skip slot.
 const LATE_TIMER_GRACE_MS = 60_000;
 
+import type { NativeWorkIntake } from "../work-items/native-intake.js";
+
 export type AutomationSchedulerStatus = "running" | "stopped" | "error";
 
 export interface AutomationSchedulerItem {
@@ -87,6 +89,7 @@ export class AutomationSchedulerRegistry {
     private readonly startupState?: StartupStateRegistry,
     private readonly nativeRunDispatcher?: NativeRunDispatcher,
     private readonly notificationHub?: NotificationHub,
+    private readonly nativeIntake?: NativeWorkIntake,
   ) {}
 
   start(cwd: string): { readonly scheduler: AutomationSchedulerState; readonly duplicate: boolean } {
@@ -581,7 +584,7 @@ export class AutomationSchedulerRegistry {
       let outcome: AutomationSchedulerItem["lastMonitorOutcome"];
       if (changed && matchesAutomationMonitorCondition(automation.trigger.condition, snapshotBody)) {
         const idempotencyKey = monitorObservationId(automation.id, scheduledFor, fingerprint);
-        const { automationRun } = await this.executeAutomationRun(entry.state.cwd, automation.id, {
+        const { automationRun, intakeReceipt } = await this.executeAutomationRun(entry.state.cwd, automation.id, {
           triggerType: "monitor",
           scheduledFor,
           idempotencyKey,
@@ -590,13 +593,13 @@ export class AutomationSchedulerRegistry {
         // Another active execution can occupy this definition's only Run slot.
         // Leave the observation pending until its own Run is durably linked.
         if (automationRun.idempotencyKey === idempotencyKey) {
-          if (!automationRun.runId) {
+          if (!automationRun.runId && !intakeReceipt) {
             throw new Error(automationRun.errorMessage ?? "Automation monitor run could not start.");
           }
           const recorded = store.recordAutomationMonitorSnapshot(observation, firedAt);
           lastAutomationRunId = automationRun.id;
           outcome = "changed";
-          if (recorded.changed) {
+          if (recorded.changed && automationRun.runId) {
             await this.emitMonitorFindingNotification(entry.state.cwd, automation, automationRun.runId);
           }
         }
@@ -707,7 +710,9 @@ export class AutomationSchedulerRegistry {
       automationId,
       storeRegistry: this.storeRegistry,
       request,
+      scheduledSource: true,
       notificationHub: this.notificationHub,
+      nativeIntake: this.nativeIntake,
       onCoordinationRound: (cwd, event) => this.publishCoordinationRound(cwd, event),
       startRun: async (runRequest, hooks) =>
         await executeRunRequest(
@@ -721,6 +726,7 @@ export class AutomationSchedulerRegistry {
           this.mcpBroker,
           {
             onRunReady: hooks.onRunReady,
+            assertNativeIntakeCurrent: hooks.assertNativeIntakeCurrent,
             afterRunTerminal: async (terminalRun) => {
               await hooks.afterRunTerminal?.(terminalRun);
               await this.maybeContinueRunInterventions(terminalRun);

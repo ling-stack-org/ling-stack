@@ -1,6 +1,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import type { LingAppServerGitHubIntakeBudget, LingAppServerGitHubIntakePolicy, LingAppServerGitHubIntakeQuietHours, LingGitHubRequiredCheck } from "@ling-stack/contracts";
+import type { LingAppServerGitHubIntakePolicy, LingGitHubRequiredCheck } from "@ling-stack/contracts";
+import { parseIntakeBudget, parseIntakeQuietHours } from "../features/work-items/intake-policy.js";
 import { isRecord } from "../shared/validation.js";
 
 export interface AppServerGitHubDeliveryPolicy {
@@ -74,27 +75,7 @@ function resolveIntakePolicy(policy: unknown): LingAppServerGitHubIntakePolicy |
     throw new Error("Automatic GitHub intake requires a label and a configured conversation provider preset.");
   }
   return { ...scope, mode: "auto_start", requiredLabel: policy.requiredLabel, providerPresetId: policy.providerPresetId,
-    budget: resolveIntakeBudget(policy.budget), quietHours: resolveQuietHours(policy.quietHours) };
-}
-
-function resolveIntakeBudget(value: unknown): LingAppServerGitHubIntakeBudget {
-  if (!isRecord(value) || !validInteger(value.maxConcurrent, 1, 16) || !validInteger(value.maxStartsPerWindow, 1, 500)
-    || !validInteger(value.windowMs, 60_000, 7 * 86_400_000)) {
-    throw new Error("Automatic GitHub intake requires bounded concurrency and a rolling start budget.");
-  }
-  return { maxConcurrent: value.maxConcurrent, maxStartsPerWindow: value.maxStartsPerWindow, windowMs: value.windowMs };
-}
-
-function resolveQuietHours(value: unknown): LingAppServerGitHubIntakeQuietHours | undefined {
-  if (value === undefined) return undefined;
-  const time = /^(?:[01]\d|2[0-3]):[0-5]\d$/u;
-  if (!isRecord(value) || typeof value.timeZone !== "string" || value.timeZone.length > 80 || !value.timeZone.trim()
-    || typeof value.start !== "string" || !time.test(value.start) || typeof value.end !== "string" || !time.test(value.end)
-    || value.start === value.end) {
-    throw new Error("Invalid GitHub intake quiet hours.");
-  }
-  const timeZone = new Intl.DateTimeFormat("en-US", { timeZone: value.timeZone }).resolvedOptions().timeZone;
-  return { timeZone, start: value.start, end: value.end };
+    budget: parseIntakeBudget(policy.budget), quietHours: parseIntakeQuietHours(policy.quietHours) };
 }
 
 function validInteger(value: unknown, min: number, max: number): value is number {

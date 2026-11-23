@@ -297,6 +297,7 @@ export interface ExecuteRunRequestOptions {
   readonly onProviderInvocationFailure?: ProviderInvocationFailureSink;
   readonly providerInvocationOrigin?: ProviderInvocationOrigin;
   readonly onRunReady?: (runId: string, info?: RunReadyInfo) => void;
+  readonly assertNativeIntakeCurrent?: () => void;
   readonly automaticIntakeAdmission?: { readonly receiptId: string; readonly assertCurrent: () => void };
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   /** Runs after a durable user-input yield, never for ordinary terminal completion. */
@@ -1114,6 +1115,7 @@ async function executeAdmittedRunRequest(
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
       if (!run && storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
       options.automaticIntakeAdmission?.assertCurrent();
+      options.assertNativeIntakeCurrent?.();
       assertHostCapabilitiesCurrent();
       assertWorkflowSafetyRequest(runStore, runRequest);
       if (!frozenExecution) assertPreselectedMemoryCurrent(runStore, runRequest);
@@ -1445,6 +1447,7 @@ async function executeAdmittedRunRequest(
     const persistRun = (context?: RunnerContinuationContextIdentity): RunSession => {
       if (storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
       options.automaticIntakeAdmission?.assertCurrent();
+      options.assertNativeIntakeCurrent?.();
       prepareManagedRuntime();
       const persisted = persistenceStore.createRun({
         id: runId,
@@ -1698,7 +1701,7 @@ async function executeAdmittedRunRequest(
     }
     const providerConcurrencyKey = runRequest.providerPresetId
       ?? `${resolvedProvider.provider}:${resolvedProvider.model}`;
-    const queueEligible = !delegatedExecution && !existingContinuation && !userInputContinuation && !nodeRerunTarget && !continuationEnforced
+    const queueEligible = !options.assertNativeIntakeCurrent && !delegatedExecution && !existingContinuation && !userInputContinuation && !nodeRerunTarget && !continuationEnforced
       && !runRequest.workflowStepId && !runRequest.parentRunId && !runRequest.interventionId && !runRequest.continuationReason
       && ["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
       && runnerResolution.runner.adapter instanceof PiRunnerAdapter && Array.isArray(executionInput?.input.tools)

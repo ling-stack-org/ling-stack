@@ -4,7 +4,6 @@ import type {
   LingAppServerGitHubIntakePollResult,
   LingAppServerGitHubIntakeReceipt,
   LingAppServerGitHubSubject,
-  LingAppServerGitHubIntakeQuietHours,
 } from "@ling-stack/contracts";
 import { LING_AGENT_ID, type AutomationEventEnvelope, type AutomationEventSource, type AutomationGitHubIntakePending,
   type AutomationGitHubIntakeTarget, type GitHubIntakeDispatchIntent, type GitHubIntakeOccurrence, type RunStore,
@@ -21,6 +20,8 @@ import { githubRepositoryPattern, type AppServerGitHubSourceConfig } from "./app
 type IntakeContext = Pick<DaemonContext, "config" | "secretResolver" | "externalWorkFetch" | "controlPlaneEvents">;
 type IntakeSubject = Pick<LingAppServerGitHubSubject, "githubInstanceId" | "repository" | "repositoryId" | "kind" | "number" | "title" | "state" | "labels">;
 type ReceiptBasis = Omit<LingAppServerGitHubIntakeReceipt, "outcome" | "reasonCode" | "workItemId">;
+import { isIntakeQuiet } from "../features/work-items/intake-policy.js";
+
 const defaultPolicy: LingAppServerGitHubIntakePolicy = { mode: "manual", enabled: true };
 const pageSize = 20;
 
@@ -172,7 +173,7 @@ function evaluateGitHubIntake(context: IntakeContext, store: RunStore, basis: Re
     return saveReceipt(store, { ...basis, outcome: "suppressed", reasonCode: "required_label_missing" });
   }
   if (policy.mode === "manual") return saveReceipt(store, { ...basis, outcome: "manual", reasonCode: "manual_intake" });
-  if (policy.mode === "auto_start" && isQuiet(policy.quietHours, new Date(basis.evaluatedAt))) {
+  if (policy.mode === "auto_start" && isIntakeQuiet(policy.quietHours, new Date(basis.evaluatedAt))) {
     return saveReceipt(store, { ...basis, outcome: "suppressed", reasonCode: "quiet_hours" });
   }
   const result = store.createWorkItem({
@@ -186,12 +187,6 @@ function evaluateGitHubIntake(context: IntakeContext, store: RunStore, basis: Re
   if (result.event) context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
   if (!result.gitHubIntakeReceipt) throw new HttpError(409, "intake_conflict", "The GitHub intake receipt was not committed.");
   return result.gitHubIntakeReceipt;
-}
-
-function isQuiet(quiet: LingAppServerGitHubIntakeQuietHours | undefined, now: Date): boolean {
-  if (!quiet) return false;
-  const time = new Intl.DateTimeFormat("en-GB", { timeZone: quiet.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
-  return quiet.start < quiet.end ? time >= quiet.start && time < quiet.end : time >= quiet.start || time < quiet.end;
 }
 
 export async function dispatchGitHubIntake(
@@ -232,7 +227,7 @@ export async function dispatchGitHubIntake(
       complete("held", "intake_authority_changed");
       continue;
     }
-    if (isQuiet(policy.quietHours, new Date()) || workItem.control.state !== "active" || workItem.holds.some(hold => hold.blocksNewAdmission)) {
+    if (isIntakeQuiet(policy.quietHours, new Date()) || workItem.control.state !== "active" || workItem.holds.some(hold => hold.blocksNewAdmission)) {
       complete("pending", "intake_temporarily_held");
       continue;
     }
@@ -248,7 +243,7 @@ export async function dispatchGitHubIntake(
     try {
       const assertCurrent = () => {
         signal.throwIfAborted();
-        if (!sourceIsCurrent() || isQuiet(policy.quietHours, new Date())) {
+        if (!sourceIsCurrent() || isIntakeQuiet(policy.quietHours, new Date())) {
           throw new HttpError(409, "intake_authority_changed", "GitHub intake authority changed before Run admission.");
         }
       };

@@ -110,81 +110,92 @@ export class SqliteWorkItemStore {
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
     try {
-      const sourceWorkItem = this.getWorkItemBySource(input.sourceType, input.sourceId);
-      const sourceOwner = input.linkExistingExecution
-        ? this.readSourceOwner(input.sourceType, input.sourceId, DEFAULT_WORKSPACE_ID) : undefined;
-      if (input.linkExistingExecution && (!sourceOwner || input.verifiedTargetKey || input.gitHubIntake)
-        || input.sourceType === "automation_run" && !sourceOwner) throw new Error("work_item_source_owner_unavailable");
-      const sourceKey = createHash("sha256").update(JSON.stringify([input.sourceType, input.sourceId])).digest("hex");
-      const targetKey = sourceOwner ? `execution:${sourceKey}` : input.verifiedTargetKey;
-      const target = (targetKey ? state.get("work_item_target", targetKey)?.payload : undefined) as { workItemId: string } | undefined;
-      const source = state.get("work_item_source", sourceKey)?.payload as LingAppServerWorkItemSourceReceipt | undefined;
-      const boundId = target?.workItemId ?? source?.workItemId;
-      if ((targetKey && source && source.targetKey !== targetKey)
-        || (source && target && source.workItemId !== target.workItemId)
-        || (boundId && sourceWorkItem && sourceWorkItem.id !== boundId)) {
-        throw new Error("work_item_creation_source_conflict");
-      }
-      const existing = boundId ? this.getWorkItem(boundId) : sourceWorkItem;
-      if (boundId && !existing) throw new Error("work_item_creation_source_conflict");
-      if (sourceOwner && existing && !existing.linkedExecution) throw new Error("work_item_creation_source_conflict");
-      const submission = input.idempotencyKey ? {
-        recordId: createHash("sha256").update(input.idempotencyKey).digest("hex"),
-        fingerprint: createHash("sha256").update(JSON.stringify([
-          input.id, input.sourceType, input.sourceId, input.title, input.description, input.priority, input.labels,
-          ...(targetKey ? [targetKey] : []),
-        ])).digest("hex"),
-      } : undefined;
-      const prior = submission ? state.get("work_item_creation", submission.recordId)?.payload as WorkItemCreationReceipt | undefined : undefined;
-      if (prior && (prior.fingerprint !== submission?.fingerprint || prior.workItemId !== existing?.id)) {
-        throw new Error("work_item_creation_idempotency_conflict");
-      }
-      if (input.id && (existing ? existing.id !== input.id : Boolean(this.getWorkItem(input.id)))) {
-        throw new Error("work_item_creation_source_conflict");
-      }
-      const workItem = existing ?? (sourceOwner ? this.saveWorkItem({
-        ...input, initialStatus: "waiting", waitingReason: "external", channelId: sourceOwner.channelId,
-        ...(sourceOwner.execution.kind === "channel_task" ? { taskId: sourceOwner.execution.id } : {}),
-      }, now, undefined, sourceOwner.execution.id) : this.saveWorkItem(input, now));
-      let sourceReceipt = source;
-      if (targetKey && !source) {
-        sourceReceipt = { workItemId: workItem.id, targetKey, sourceType: input.sourceType, sourceId: input.sourceId };
-        if (!target) state.putWithinTransaction({
-          kind: "work_item_target", recordId: targetKey, expectedRevision: 0, payload: { workItemId: workItem.id },
-        }, now);
-        state.putWithinTransaction({
-          kind: "work_item_source", recordId: sourceKey, expectedRevision: 0, payload: sourceReceipt,
-        }, now);
-      }
-      if (submission && !prior) {
-        state.putWithinTransaction({ kind: "work_item_creation", recordId: submission.recordId, expectedRevision: 0,
-          payload: { fingerprint: submission.fingerprint, workItemId: workItem.id } satisfies WorkItemCreationReceipt }, now);
-      }
-      const action = !existing ? "work_item.created" : sourceReceipt && !source ? "work_item.source_linked" : undefined;
-      const event = action ? events.store.appendControlPlaneEventWithinTransaction({
-        workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items",
-        entityType: "work_item", entityId: workItem.id, action,
-        data: { workItemId: workItem.id, revision: workItem.revision, status: workItem.status },
-      }, now) : undefined;
-      let gitHubIntakeReceipt: LingAppServerGitHubIntakeReceipt | undefined;
-      if (input.gitHubIntake) {
-        const { automatic, ...intake } = input.gitHubIntake;
-        const prior = state.get("github_intake_receipt", intake.receiptId)?.payload as LingAppServerGitHubIntakeReceipt | undefined;
-        if (prior && prior.workItemId !== workItem.id) throw new Error("github_intake_conflict");
-        const decision = prior ?? (automatic ? this.reserveGitHubIntake({ ...intake, automatic }, workItem, state, now)
-          : existing ? { outcome: "deduplicated" as const, reasonCode: "existing_target" }
-            : { outcome: "suggested" as const, reasonCode: "suggested_for_acceptance" });
-        gitHubIntakeReceipt = { ...intake, ...decision, workItemId: workItem.id };
-        if (!prior && !state.putWithinTransaction({
-          kind: "github_intake_receipt", recordId: intake.receiptId, expectedRevision: 0, payload: gitHubIntakeReceipt,
-        }, now)) throw new Error("github_intake_conflict");
-      }
+      const result = this.createWithinTransaction(input, now, state, events);
       database.exec("COMMIT");
-      return { workItem, event, sourceReceipt, gitHubIntakeReceipt };
+      return result;
     } catch (error) {
       rollbackOwnedSqliteTransaction(database);
       throw error;
     }
+  }
+
+  createWithinTransaction(
+    input: CreateWorkItemInput,
+    now: string,
+    state: SqliteAppServerStateStore,
+    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string },
+  ): CreateWorkItemResult {
+    if (!this.context.database.isTransaction) throw new Error("work_item_creation_requires_transaction");
+    const sourceWorkItem = this.getWorkItemBySource(input.sourceType, input.sourceId);
+    const sourceOwner = input.linkExistingExecution
+      ? this.readSourceOwner(input.sourceType, input.sourceId, DEFAULT_WORKSPACE_ID) : undefined;
+    if (input.linkExistingExecution && (!sourceOwner || input.verifiedTargetKey || input.gitHubIntake)
+      || input.sourceType === "automation_run" && !sourceOwner) throw new Error("work_item_source_owner_unavailable");
+    const sourceKey = createHash("sha256").update(JSON.stringify([input.sourceType, input.sourceId])).digest("hex");
+    const targetKey = sourceOwner ? `execution:${sourceKey}` : input.verifiedTargetKey;
+    const target = (targetKey ? state.get("work_item_target", targetKey)?.payload : undefined) as { workItemId: string } | undefined;
+    const source = state.get("work_item_source", sourceKey)?.payload as LingAppServerWorkItemSourceReceipt | undefined;
+    const boundId = target?.workItemId ?? source?.workItemId;
+    if ((targetKey && source && source.targetKey !== targetKey)
+      || (source && target && source.workItemId !== target.workItemId)
+      || (boundId && sourceWorkItem && sourceWorkItem.id !== boundId)) {
+      throw new Error("work_item_creation_source_conflict");
+    }
+    const existing = boundId ? this.getWorkItem(boundId) : sourceWorkItem;
+    if (boundId && !existing) throw new Error("work_item_creation_source_conflict");
+    if (sourceOwner && existing && !existing.linkedExecution) throw new Error("work_item_creation_source_conflict");
+    const submission = input.idempotencyKey ? {
+      recordId: createHash("sha256").update(input.idempotencyKey).digest("hex"),
+      fingerprint: createHash("sha256").update(JSON.stringify([
+        input.id, input.sourceType, input.sourceId, input.title, input.description, input.priority, input.labels,
+        ...(targetKey ? [targetKey] : []),
+      ])).digest("hex"),
+    } : undefined;
+    const prior = submission ? state.get("work_item_creation", submission.recordId)?.payload as WorkItemCreationReceipt | undefined : undefined;
+    if (prior && (prior.fingerprint !== submission?.fingerprint || prior.workItemId !== existing?.id)) {
+      throw new Error("work_item_creation_idempotency_conflict");
+    }
+    if (input.id && (existing ? existing.id !== input.id : Boolean(this.getWorkItem(input.id)))) {
+      throw new Error("work_item_creation_source_conflict");
+    }
+    const workItem = existing ?? (sourceOwner ? this.saveWorkItem({
+      ...input, initialStatus: "waiting", waitingReason: "external", channelId: sourceOwner.channelId,
+      ...(sourceOwner.execution.kind === "channel_task" ? { taskId: sourceOwner.execution.id } : {}),
+    }, now, undefined, sourceOwner.execution.id) : this.saveWorkItem(input, now));
+    let sourceReceipt = source;
+    if (targetKey && !source) {
+      sourceReceipt = { workItemId: workItem.id, targetKey, sourceType: input.sourceType, sourceId: input.sourceId };
+      if (!target) state.putWithinTransaction({
+        kind: "work_item_target", recordId: targetKey, expectedRevision: 0, payload: { workItemId: workItem.id },
+      }, now);
+      state.putWithinTransaction({
+        kind: "work_item_source", recordId: sourceKey, expectedRevision: 0, payload: sourceReceipt,
+      }, now);
+    }
+    if (submission && !prior) {
+      state.putWithinTransaction({ kind: "work_item_creation", recordId: submission.recordId, expectedRevision: 0,
+        payload: { fingerprint: submission.fingerprint, workItemId: workItem.id } satisfies WorkItemCreationReceipt }, now);
+    }
+    const action = !existing ? "work_item.created" : sourceReceipt && !source ? "work_item.source_linked" : undefined;
+    const event = action ? events.store.appendControlPlaneEventWithinTransaction({
+      workspaceId: workItem.workspaceId, cwd: events.cwd, domain: "work_items",
+      entityType: "work_item", entityId: workItem.id, action,
+      data: { workItemId: workItem.id, revision: workItem.revision, status: workItem.status },
+    }, now) : undefined;
+    let gitHubIntakeReceipt: LingAppServerGitHubIntakeReceipt | undefined;
+    if (input.gitHubIntake) {
+      const { automatic, ...intake } = input.gitHubIntake;
+      const prior = state.get("github_intake_receipt", intake.receiptId)?.payload as LingAppServerGitHubIntakeReceipt | undefined;
+      if (prior && prior.workItemId !== workItem.id) throw new Error("github_intake_conflict");
+      const decision = prior ?? (automatic ? this.reserveGitHubIntake({ ...intake, automatic }, workItem, state, now)
+        : existing ? { outcome: "deduplicated" as const, reasonCode: "existing_target" }
+          : { outcome: "suggested" as const, reasonCode: "suggested_for_acceptance" });
+      gitHubIntakeReceipt = { ...intake, ...decision, workItemId: workItem.id };
+      if (!prior && !state.putWithinTransaction({
+        kind: "github_intake_receipt", recordId: intake.receiptId, expectedRevision: 0, payload: gitHubIntakeReceipt,
+      }, now)) throw new Error("github_intake_conflict");
+    }
+    return { workItem, event, sourceReceipt, gitHubIntakeReceipt };
   }
 
   private reserveGitHubIntake(
@@ -1111,8 +1122,9 @@ export class SqliteWorkItemStore {
     const { sourceType, sourceId } = item;
     if ((sourceType !== "channel_task" && sourceType !== "automation_run")
       || !item.holds.some(hold => hold.id === sourceOwnerHoldId(item.id) && hold.ownerRef === sourceId)) return item;
-    const linkedExecution = this.readSourceOwner(sourceType, sourceId, item.workspaceId)?.execution
-      ?? { kind: sourceType, id: sourceId, status: "unavailable" };
+    const owner = this.readSourceOwner(sourceType, sourceId, item.workspaceId);
+    const linkedExecution = owner && owner.channelId === item.channelId ? owner.execution
+      : { kind: sourceType, id: sourceId, status: "unavailable" };
     return { ...item, linkedExecution, ...(linkedExecution.runId ? { runId: linkedExecution.runId } : {}) };
   }
 

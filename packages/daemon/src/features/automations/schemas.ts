@@ -65,6 +65,7 @@ export interface UpdateAutomationRequest {
 }
 
 export interface AutomationRunRequest {
+  readonly intakeReceiptId?: string;
   readonly idempotencyKey?: string;
   readonly triggerType?: AutomationTrigger["type"] | "event";
   readonly scheduledFor?: string;
@@ -218,7 +219,13 @@ export function parseAutomationRunRequest(value: unknown | undefined): Automatio
   if (triggerType !== undefined && triggerType !== "manual" && triggerType !== "schedule" && triggerType !== "monitor") {
     throw new Error("triggerType must be manual, schedule, or monitor");
   }
+  const intakeReceiptId = readOptionalString(value, "intakeReceiptId");
+  if (intakeReceiptId !== undefined && (!/^intake_[a-f0-9]{64}$/u.test(intakeReceiptId)
+    || triggerType !== undefined || value.idempotencyKey !== undefined || value.scheduledFor !== undefined)) {
+    throw new Error("A native intake receipt selects its original Automation occurrence.");
+  }
   return {
+    intakeReceiptId,
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
     triggerType,
     scheduledFor: readOptionalString(value, "scheduledFor"),

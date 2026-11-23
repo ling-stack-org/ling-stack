@@ -211,6 +211,7 @@ import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-
 import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
 import { handleDesktopBrowserRoute } from "../features/desktop-browser/routes.js";
 import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
+import { handleNativeWorkIntakeCollection } from "../features/work-items/native-intake-routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
 import {
@@ -857,7 +858,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/tasks") {
-    await handleTasksCollection(request, response, config, storeRegistry);
+    await handleTasksCollection(request, response, config, storeRegistry, context.nativeWorkIntake);
     return;
   }
 
@@ -939,6 +940,7 @@ export async function routeRequest(
             secretResolver,
             mcpBroker,
             {
+              assertNativeIntakeCurrent: hooks.assertNativeIntakeCurrent,
               onRunReady: (runId, info) => {
                 hooks.onRunReady?.(runId, info);
                 onRunReady(runId);
@@ -955,6 +957,7 @@ export async function routeRequest(
           )),
       automationSchedulers,
       notificationHub,
+      context.nativeWorkIntake,
     );
     return;
   }
@@ -1293,6 +1296,11 @@ export async function routeRequest(
 
   if (url.pathname === "/execution-actions") {
     handleExecutionActionsCollection(request, response, url, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/work-items/intake") {
+    await handleNativeWorkIntakeCollection(request, response, url, storeRegistry, context.nativeWorkIntake, config.maxBodyBytes);
     return;
   }
 

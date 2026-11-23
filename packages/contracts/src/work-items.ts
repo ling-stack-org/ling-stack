@@ -74,6 +74,58 @@ export interface WorkItemLinkedExecution {
   readonly runId?: string;
 }
 
+export type NativeWorkIntakeSourceKind = WorkItemLinkedExecution["kind"];
+
+export interface WorkIntakeBudget {
+  readonly maxConcurrent: number;
+  readonly maxStartsPerWindow: number;
+  readonly windowMs: number;
+}
+
+export interface WorkIntakeQuietHours {
+  readonly timeZone: string;
+  readonly start: string;
+  readonly end: string;
+}
+
+export interface NativeWorkIntakeReceipt {
+  readonly receiptId: string;
+  readonly workspaceId: string;
+  readonly policyId: string;
+  readonly policyRevision: string;
+  readonly sourceKind: NativeWorkIntakeSourceKind;
+  readonly sourceScope: string;
+  readonly sourceEventId: string;
+  readonly sourceRevision: string;
+  readonly executionId: string;
+  readonly outcome: "manual" | "suggested" | "accepted" | "suppressed" | "paused" | "deduplicated";
+  readonly reasonCode: string;
+  readonly workItemId?: string;
+  readonly evaluatedAt: string;
+  readonly previousReceiptId?: string;
+  readonly dispatch?: {
+    readonly status: "pending" | "admitted" | "held";
+    readonly runId?: string;
+    readonly reasonCode?: string;
+  };
+}
+
+export interface ListNativeWorkIntakeRequest {
+  readonly sourceKind: NativeWorkIntakeSourceKind;
+  readonly sourceScope?: string;
+  readonly limit?: number;
+}
+
+export interface RetryNativeWorkIntakeRequest {
+  readonly receiptId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface ListNativeWorkIntakeResponse {
+  readonly cwd: string;
+  readonly receipts: readonly NativeWorkIntakeReceipt[];
+}
+
 export type WorkItemView = WorkItem;
 
 export interface ListWorkItemsRequest {

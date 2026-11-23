@@ -1,7 +1,10 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Channel, Task } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { isRecord, readOptionalString } from "../../shared/validation.js";
+import type { NativeWorkIntake } from "../work-items/native-intake.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { getChannelPlanModeBlocker } from "../channels/plan-mode-guard.js";
@@ -21,6 +24,7 @@ export async function handleTasksCollection(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  nativeIntake?: NativeWorkIntake,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -47,7 +51,8 @@ export async function handleTasksCollection(
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseCreateTaskInput(body);
-      if (!store.getChannel(input.channelId)) {
+      const channel = store.getChannel(input.channelId);
+      if (!channel) {
         writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${input.channelId}` });
         return;
       }
@@ -56,15 +61,31 @@ export async function handleTasksCollection(
         writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
         return;
       }
-      const task = store.createTask(input, new Date().toISOString());
+      const now = new Date().toISOString();
+      const key = isRecord(body) ? readOptionalString(body, "idempotencyKey") : undefined;
+      if (key !== undefined && (!key.trim() || key.length > 200)) throw new Error("Invalid Task creation key.");
+      const id = key ? `task_intake_${createHash("sha256").update(JSON.stringify([channel.id, key])).digest("hex")}` : undefined;
+      const policy = nativeIntake?.policy(store, "channel_task", channel.id)
+        ?? (key ? nativeIntake?.manualPolicy(store, "channel_task", channel.id) : undefined);
+      if (policy && nativeIntake) {
+        const result = store.createTaskWithIntake({ ...input, id }, {
+          policy: nativeIntake.basis(policy, now),
+          blocker: channel.status !== "active" ? "channel_unavailable" : undefined,
+        }, now, store.paths.cwd);
+        nativeIntake.publish(result.event);
+        writeJson(response, 201, { task: result.execution, intakeReceipt: result.receipt });
+        return;
+      }
+      const task = store.createTask(input, now);
       writeJson(response, 201, { task });
       return;
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /tasks` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    const conflict = error instanceof Error && error.message === "native_intake_occurrence_conflict";
+    writeJson(response, conflict ? 409 : 400, {
+      error: conflict ? "native_intake_occurrence_conflict" : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }

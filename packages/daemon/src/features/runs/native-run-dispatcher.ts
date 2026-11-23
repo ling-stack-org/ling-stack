@@ -346,6 +346,7 @@ async function executeNativeRunRequest(
       type: "work_unit_claimed", actor: "system", ts: createdAt, data: { runId } });
     appendWorkUnitTransitionControlPlaneEvent(store, dependencies.controlPlaneEvents, workspaceCwd,
       workUnit.id, "queued", "claimed", runId, createdAt);
+    input.executionOptions.assertNativeIntakeCurrent?.();
     run = createNativeRun({ store, storeRegistry: dependencies.storeRegistry, runRequest: durableRunRequest,
       runId, workspaceCwd, workUnit, attempt, thread, turn, runtimeSettings,
       effectivePolicySnapshot, channelWorkspaceSnapshot, runnerResolution, createdAt });

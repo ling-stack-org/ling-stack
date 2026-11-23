@@ -149,6 +149,8 @@ export * from "./external-work-ci-triage.js";
 export * from "./external-work-scheduler.js";
 export * from "./external-work-source-registry.js";
 export * from "./work-item-types.js";
+export type * from "./native-work-intake-types.js";
+export { nativeTaskIntakeRevision, nativeWorkIntakeReceiptId } from "./native-work-intake-identity.js";
 export * from "./work-item-evidence-types.js";
 export * from "./work-item-collaboration.js";
 export * from "./work-item-workflow-decision.js";

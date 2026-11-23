@@ -4,6 +4,7 @@ import type { ImDestinationRegistry } from "../im-destinations/registry.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { HttpError } from "../../errors.js";
 import { recoveryBlocked } from "../../server/app-server-recovery.js";
+import type { NativeWorkIntake } from "../work-items/native-intake.js";
 import { runAutomation, type StartAutomationRunExecution } from "./run.js";
 
 /** Durable inbox/outbox execution uses existing Run admission and destination egress. */
@@ -13,7 +14,8 @@ export class AutomationEventWorker {
   private closed = false;
   constructor(private readonly stores: RunStoreRegistry, private readonly destinations: ImDestinationRegistry,
     private readonly startRun: StartAutomationRunExecution,
-    private readonly processIntake?: (store: RunStore, signal: AbortSignal) => Promise<void>) {}
+    private readonly processIntake?: (store: RunStore, signal: AbortSignal) => Promise<void>,
+    private readonly nativeIntake?: NativeWorkIntake) {}
 
   start(cwd: string): void {
     if (this.closed) throw new Error("automation_event_worker_closed");
@@ -61,7 +63,8 @@ export class AutomationEventWorker {
         if (!envelope) throw new Error("automation_event_envelope_missing");
         const result = await runAutomation({ cwd, automationId: job.automationId, storeRegistry: this.stores,
           request: { triggerType: "event", idempotencyKey: automationEventRunKey(job.id) },
-          event: { envelope, assertCurrent: () => this.assertDispatch(store, job, signal) },
+          nativeIntake: this.nativeIntake,
+          event: { envelope, dispatchId: job.id, assertCurrent: () => this.assertDispatch(store, job, signal) },
           startRun: (request, hooks) => { this.assertDispatch(store, job, signal); return this.startRun(request, hooks); } });
         const own = result.automationRun.idempotencyKey === automationEventRunKey(job.id);
         store.finishAutomationEventDispatch(job.id, job.leaseToken, own

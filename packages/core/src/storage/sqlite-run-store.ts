@@ -870,6 +870,7 @@ import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkItemEvidenceStore } from "./sqlite/work-item-evidence-store.js";
 import { SqliteScheduledCoordinationStore } from "./sqlite/scheduled-coordination-store.js";
 import { SqliteAppServerStateStore } from "./sqlite/app-server-state-store.js";
+import { SqliteNativeWorkIntakeStore } from "./sqlite/native-work-intake-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
@@ -1034,6 +1035,7 @@ export class SqliteRunStore implements RunStore {
   private readonly workItemEvidence: SqliteWorkItemEvidenceStore;
   private readonly scheduledCoordination: SqliteScheduledCoordinationStore;
   private readonly appServerState: SqliteAppServerStateStore;
+  private readonly nativeIntake: SqliteNativeWorkIntakeStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
@@ -1776,6 +1778,8 @@ export class SqliteRunStore implements RunStore {
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
     this.appServerState = new SqliteAppServerStateStore({ database: this.database }, this.controlPlane);
+    this.nativeIntake = new SqliteNativeWorkIntakeStore({ database: this.database }, this.appServerState,
+      this.workItems, this.controlPlane, this.tasks, this.automations);
     this.scheduledCoordination = new SqliteScheduledCoordinationStore({ database: this.database }, this.appServerState,
       this.automations, this.workItemEvidence, this.controlPlane, this);
     this.approvalResumes = new SqliteApprovalResumeStore(
@@ -6131,6 +6135,22 @@ export class SqliteRunStore implements RunStore {
 
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem {
     return this.workItems.upsertWorkItem(input, now);
+  }
+
+  createTaskWithIntake(...args: Parameters<RunStore["createTaskWithIntake"]>) {
+    return this.nativeIntake.createTask(...args);
+  }
+
+  createAutomationRunWithIntake(...args: Parameters<RunStore["createAutomationRunWithIntake"]>) {
+    return this.nativeIntake.createAutomationRun(...args);
+  }
+
+  retryNativeWorkIntake(...args: Parameters<RunStore["retryNativeWorkIntake"]>) {
+    return this.nativeIntake.retry(...args);
+  }
+
+  listNativeWorkIntakeReceipts(...args: Parameters<RunStore["listNativeWorkIntakeReceipts"]>) {
+    return this.nativeIntake.list(...args);
   }
 
   createWorkItem(input: CreateWorkItemInput, now: string, eventCwd = this.paths.cwd): CreateWorkItemResult {

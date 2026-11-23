@@ -289,6 +289,7 @@
     "test/native-input-capture.test.mjs",
     "test/native-permission-approval-routes.test.mjs",
     "test/native-stream-redaction.test.mjs",
+    "test/native-work-intake.test.ts",
     "test/native-workflow-host-capacity-integration.test.ts",
     "test/native-write-workspace-review.test.mjs",
     "test/node-command-input-diagnostics.regression-1.test.mjs",

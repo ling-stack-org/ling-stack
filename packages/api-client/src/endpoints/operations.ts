@@ -122,6 +122,16 @@ export const operationEndpoints = {
       });
     },
 
+  async listNativeWorkIntake(this: LingDaemonEndpointContext, cwd: string,
+    options: import("@ling-stack/contracts").ListNativeWorkIntakeRequest): Promise<import("@ling-stack/contracts").ListNativeWorkIntakeResponse> {
+    return this._get("/work-items/intake", { cwd, ...options });
+  },
+
+  async retryNativeWorkIntake(this: LingDaemonEndpointContext, cwd: string,
+    input: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest): Promise<{ cwd: string; receipt: import("@ling-stack/contracts").NativeWorkIntakeReceipt }> {
+    return this._post("/work-items/intake", { cwd }, input);
+  },
+
   async getWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string, stageOffset?: number): Promise<WorkItemDetailResponse> {
       return this._get(`/work-items/${encodeURIComponent(workItemId)}`, { cwd, stageOffset });
     },

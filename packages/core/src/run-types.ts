@@ -2693,6 +2693,15 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
     now: string,
   ): ExternalWorkSchedulerState | undefined;
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem;
+  createTaskWithIntake(input: CreateTaskInput, intake: Omit<import("./native-work-intake-types.js").NativeWorkIntakeInput, "sourceEventId" | "sourceRevision">,
+    now: string, cwd: string): import("./native-work-intake-types.js").NativeWorkIntakeResult<Task>;
+  createAutomationRunWithIntake(input: CreateAutomationRunInput, intake: import("./native-work-intake-types.js").NativeWorkIntakeInput,
+    title: string, now: string, cwd: string): import("./native-work-intake-types.js").NativeWorkIntakeResult<AutomationRun>;
+  retryNativeWorkIntake(request: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest,
+    intake: import("./native-work-intake-types.js").NativeWorkIntakeInput, now: string, cwd: string):
+    import("./native-work-intake-types.js").NativeWorkIntakeResult<Task | AutomationRun>;
+  listNativeWorkIntakeReceipts(kind: import("@ling-stack/contracts").NativeWorkIntakeSourceKind, sourceScope: string | undefined,
+    limit: number, pendingBefore?: string): import("@ling-stack/contracts").NativeWorkIntakeReceipt[];
   createWorkItem(input: import("./work-item-types.js").CreateWorkItemInput, now: string, eventCwd?: string): import("./work-item-types.js").CreateWorkItemResult;
   commitWorkItemGitHubDelivery(input: import("./work-item-types.js").CommitWorkItemGitHubDeliveryInput, eventCwd?: string,
     retainReceipt?: (delivery: import("@ling-stack/contracts").LingAppServerGitHubDelivery) => void): import("./work-item-types.js").CommitWorkItemGitHubDeliveryResult;

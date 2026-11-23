@@ -1335,17 +1335,8 @@ interface GitHubIntakePolicyScope {
   readonly priority?: "low" | "normal" | "high" | "urgent";
 }
 
-export interface LingAppServerGitHubIntakeBudget {
-  readonly maxConcurrent: number;
-  readonly maxStartsPerWindow: number;
-  readonly windowMs: number;
-}
-
-export interface LingAppServerGitHubIntakeQuietHours {
-  readonly timeZone: string;
-  readonly start: string;
-  readonly end: string;
-}
+export type LingAppServerGitHubIntakeBudget = import("./work-items.js").WorkIntakeBudget;
+export type LingAppServerGitHubIntakeQuietHours = import("./work-items.js").WorkIntakeQuietHours;
 
 export type LingAppServerGitHubIntakePolicy = GitHubIntakePolicyScope & (
   | { readonly mode: "manual" | "suggest" }
