@@ -1,4 +1,3 @@
-import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,14 +9,18 @@ import {
   createBuiltinAiTeammateId,
   createSqliteRunStore,
   resolveRuntimePaths,
+  type MarkConversationReadInput,
 } from "../dist/index.js";
+import { appendChannelItemFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
+
+type ReadKey = Omit<MarkConversationReadInput, "throughActivitySeq">;
 
 test("daemon-owned read cursor is monotonic and later message revisions become unread", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-read-state-"));
   const store = createSqliteRunStore(cwd);
   try {
     const channel = store.createChannel({ name: "Unread", boundPath: cwd }, "2026-07-31T03:00:00.000Z");
-    const readKey = {
+    const readKey: ReadKey = {
       workspaceId: DEFAULT_WORKSPACE_ID,
       userId: "local-user",
       conversationKind: "channel",
@@ -91,7 +94,7 @@ test("direct-conversation unread state ignores the local user's own mobile send"
   try {
     const teammateId = createBuiltinAiTeammateId("designer");
     const direct = store.getOrCreateTeammateDirectThread(teammateId, "2026-07-31T04:00:00.000Z");
-    const readKey = {
+    const readKey: ReadKey = {
       workspaceId: DEFAULT_WORKSPACE_ID,
       userId: "local-user",
       conversationKind: "teammate_direct",
@@ -146,12 +149,13 @@ test("one normal-conversation reply counts as one unread entity across completio
 
     const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
     try {
-      const nextSeq = database.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM run_events WHERE run_id = ?")
-        .get(run.id).seq;
+      const row = database.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM run_events WHERE run_id = ?")
+        .get(run.id);
+      assert.ok(row);
       database.prepare(`
         INSERT INTO run_events (id, run_id, seq, ts, type, data_json)
         VALUES (?, ?, ?, ?, 'result', '{}')
-      `).run("event_normal_unread_result", run.id, nextSeq, "2026-07-31T05:00:03.000Z");
+      `).run("event_normal_unread_result", run.id, row.seq, "2026-07-31T05:00:03.000Z");
       assert.ok(database.prepare(`
         SELECT version FROM schema_migrations
         WHERE version = 109 AND name = 'deduplicate_remote_run_unread_entities'
@@ -206,12 +210,13 @@ test("unread-entity migration repairs existing run-event projection rows", async
     const resultEventId = "event_legacy_unread_result";
     const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
     try {
-      const nextSeq = database.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM run_events WHERE run_id = ?")
-        .get(run.id).seq;
+      const row = database.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM run_events WHERE run_id = ?")
+        .get(run.id);
+      assert.ok(row);
       database.prepare(`
         INSERT INTO run_events (id, run_id, seq, ts, type, data_json)
         VALUES (?, ?, ?, ?, 'result', '{}')
-      `).run(resultEventId, run.id, nextSeq, "2026-07-31T06:00:03.000Z");
+      `).run(resultEventId, run.id, row.seq, "2026-07-31T06:00:03.000Z");
       database.prepare("DELETE FROM remote_projection_outbox WHERE conversation_id = ?").run(thread.id);
       const insertLegacy = database.prepare(`
         INSERT INTO remote_projection_outbox (
