@@ -1,11 +1,13 @@
 import type {
   ChannelConversationSurface,
   ChannelReplyDisposition,
+  ChannelWorkItemInputReceipt,
+  ChannelWorkItemTarget,
   ConversationDomainRef,
   ConversationItemV1,
   ConversationUserMessagePayloadV1,
 } from "@ling-stack/contracts";
-import type { LingTurnKind } from "./run-types.js";
+import type { ControlPlaneEvent, LingTurnKind } from "./run-types.js";
 import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
 
 export interface AppendConversationUserTurnInput {
@@ -37,6 +39,7 @@ export interface AppendConversationUserTurnInput {
   readonly interventionId?: string;
   readonly supersedesItemId?: string;
   readonly idempotencyKey: string;
+  readonly workItemTarget?: ChannelWorkItemTarget;
   readonly dispatch?: {
     readonly schemaVersion: 1;
     readonly requestAiReply: boolean;
@@ -138,4 +141,6 @@ export interface AppendConversationUserTurnResult {
   readonly contextSegmentId: string;
   readonly dispatchWorkUnitId?: string;
   readonly idempotentReplay: boolean;
+  readonly workItemInput?: ChannelWorkItemInputReceipt;
+  readonly workItemInputEvent?: ControlPlaneEvent;
 }

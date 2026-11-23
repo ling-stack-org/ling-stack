@@ -5232,7 +5232,52 @@ export class SqliteRunStore implements RunStore {
     input: import("../conversation-turn-ingest-types.js").AppendConversationUserTurnInput,
     now: string,
   ): import("../conversation-turn-ingest-types.js").AppendConversationUserTurnResult {
-    return this.conversationTurnIngest.appendUserTurn(input, now);
+    const target = input.workItemTarget;
+    if (!target) return this.conversationTurnIngest.appendUserTurn(input, now);
+
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const item = this.workItems.getWorkItem(target.workItemId);
+      const owningChannel = item?.workflowId ? this.getChannelWorkflow(item.workflowId)?.channelId : item?.channelId;
+      if (!item || !input.channelId || owningChannel !== input.channelId
+        || item.channelId && item.channelId !== input.channelId) {
+        throw new Error("work_item_target_unavailable");
+      }
+      if (input.dispatch) throw new Error("work_item_target_dispatch_conflict");
+      const result = this.conversationTurnIngest.appendUserTurnWithinTransaction({
+        ...input, domainRefs: [...(input.domainRefs ?? []), { type: "work_item", id: item.id }],
+      }, now);
+      const source = { type: "conversation_item", id: result.item.id, revision: String(result.item.revision) };
+      const evidence = this.workItemEvidence.appendWithinTransaction({
+        workItemId: item.id,
+        expectedWorkItemRevision: target.expectedRevision,
+        idempotencyKey: `channel-input:${result.item.id}`,
+        actorId: "local-user",
+        subjectRevision: String(target.expectedRevision),
+        kind: "evidence_ref",
+        content: "Channel message",
+        visibility: "owner",
+        sourceRefs: [source],
+      }, now, { cwd: this.paths.cwd, store: this.controlPlane });
+      if (!evidence) throw new Error("work_item_target_stale");
+      if (!result.idempotentReplay) {
+        const completed = this.lingTurns.transitionLingTurnStatus({
+          turnId: result.turnId, expectedStatus: "open", event: "succeed",
+          actor: "system", reason: "work_item_source_recorded", now,
+        });
+        if (!completed.ok) throw new Error("work_item_input_completion_conflict");
+      }
+      this.database.exec("COMMIT");
+      return {
+        ...result, workItemInput: {
+          workItemId: item.id, evidenceId: evidence.entry.id, acceptedRevision: target.expectedRevision, sourceItemId: result.item.id,
+        },
+        ...(evidence.event ? { workItemInputEvent: evidence.event } : {}),
+      };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
   }
 
   getConversationItem(id: string): import("@ling-stack/contracts").ConversationItemV1 | undefined {

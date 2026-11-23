@@ -27,6 +27,7 @@ import {
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import { trimOversizedEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
@@ -124,6 +125,7 @@ export async function handleChannelTurnStream(
   channelId: string,
   replyDispatchCoordinator?: ChannelReplyDispatchCoordinator,
   channelTurnDispatchWorker?: ChannelTurnDispatchWorkerRegistry,
+  controlPlaneEvents?: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -156,13 +158,22 @@ export async function handleChannelTurnStream(
     }
 
     const now = new Date().toISOString();
-    const message = persistChannelUserMessage({
+    const { message, workItemInput } = persistChannelUserMessage({
       store,
       channel,
       input,
       requestIdempotencyKey: readIdempotencyKey(request),
+      controlPlaneEvents,
       now,
     });
+    if (workItemInput) {
+      const committed = buildChannelConversationTurnResponse({ store, userItemId: message.id, workItemInput });
+      writeSseHead(response);
+      writeSse(response, "ready", committed);
+      writeSse(response, "done", committed);
+      response.end();
+      return;
+    }
     const releaseMessageClassification = beginChannelMessageClassification(
       replyDispatchCoordinator,
       message,
@@ -361,6 +372,7 @@ export async function handleChannelTurnsCollection(
   channelId: string,
   replyDispatchCoordinator?: ChannelReplyDispatchCoordinator,
   channelTurnDispatchWorker?: ChannelTurnDispatchWorkerRegistry,
+  controlPlaneEvents?: ControlPlaneEventHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -389,13 +401,18 @@ export async function handleChannelTurnsCollection(
         return;
       }
       const now = new Date().toISOString();
-      const message = persistChannelUserMessage({
+      const { message, workItemInput } = persistChannelUserMessage({
         store,
         channel,
         input,
         requestIdempotencyKey: readIdempotencyKey(request),
+        controlPlaneEvents,
         now,
       });
+      if (workItemInput) {
+        writeJson(response, 201, buildChannelConversationTurnResponse({ store, userItemId: message.id, workItemInput }));
+        return;
+      }
       const releaseMessageClassification = beginChannelMessageClassification(
         replyDispatchCoordinator,
         message,
@@ -939,8 +956,9 @@ function persistChannelUserMessage(input: {
   readonly channel: Channel;
   readonly input: import("./schemas.js").ChannelTurnRequest;
   readonly requestIdempotencyKey?: string;
+  readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly now: string;
-}): ChannelMessage {
+}) {
   const mentionMaterialization = materializeCanonicalChannelMentions({
     store: input.store,
     channel: input.channel,
@@ -994,7 +1012,7 @@ function persistChannelUserMessage(input: {
   // request after sequence advancement or Run completion must not reclassify
   // its Turn. User content and dispatch inputs still reach strict Store checks.
   const sourceTurnId = acceptedTurn ? acceptedTurn.sourceTurnId : validatedFollowupSourceTurn?.id;
-  const result = input.store.appendConversationUserTurn({
+  const turnInput = {
     channelId: input.channel.id,
     threadId: thread.id,
     turnKind: acceptedTurn?.kind ?? (validatedFollowupSourceTurn
@@ -1006,7 +1024,7 @@ function persistChannelUserMessage(input: {
     userInstruction: input.input.body || "Channel input with materialized references.",
     payload: {
       body: input.input.body,
-      format: "plain_text",
+      format: "plain_text" as const,
       mentions: canonicalMentions.map((mention) => ({
         id: mention.id,
         label: mention.label,
@@ -1021,11 +1039,11 @@ function persistChannelUserMessage(input: {
       fileRefs: input.input.fileRefs,
       ...(anchor ? { replyToItemId: anchor.id } : {}),
     },
-    domainRefs: [],
     ...(sourceTurnId ? { sourceTurnId } : {}),
     idempotencyKey,
-    dispatch: {
-      schemaVersion: 1,
+    workItemTarget: input.input.workItemTarget,
+    dispatch: input.input.workItemTarget ? undefined : {
+      schemaVersion: 1 as const,
       requestAiReply: Boolean(input.input.requestAiReply),
       ...(input.input.providerPresetId ? { requestedProviderPresetId: input.input.providerPresetId } : {}),
       ...(input.input.teammateId ? { requestedTeammateId: input.input.teammateId } : {}),
@@ -1036,8 +1054,25 @@ function persistChannelUserMessage(input: {
       ...(input.input.surface ? { surface: input.input.surface } : {}),
       ...(input.input.replyDisposition ? { replyDisposition: input.input.replyDisposition } : {}),
     },
-  }, input.now);
-  return projectConversationItemToChannelMessage(result.item);
+  } satisfies Parameters<RunStore["appendConversationUserTurn"]>[0];
+  try {
+    const result = input.store.appendConversationUserTurn(turnInput, input.now);
+    if (result.workItemInputEvent) input.controlPlaneEvents?.publish(trimOversizedEvent(result.workItemInputEvent));
+    return { message: projectConversationItemToChannelMessage(result.item), workItemInput: result.workItemInput };
+  } catch (error) {
+    if (error instanceof Error && input.input.workItemTarget) {
+      if (error.message === "work_item_target_unavailable") {
+        throw new HttpError(404, error.message, "The Work Item is unavailable in this channel.");
+      }
+      if (error.message === "work_item_target_stale") {
+        throw new HttpError(409, "stale_revision", "The Work Item revision changed.");
+      }
+      if (error.message === "work_item_evidence_idempotency_conflict" || error.message.startsWith("Conversation turn idempotency key belongs")) {
+        throw new HttpError(409, "idempotency_conflict", "The channel request key belongs to a different input.");
+      }
+    }
+    throw error;
+  }
 }
 
 function readChannelConversationSurfaceQuery(url: URL): ChannelConversationSurface | undefined {

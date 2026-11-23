@@ -234,6 +234,14 @@ Check source authority, credentials and the requested action grant before bindin
 
 Use the existing source-key Work Item upsert for source-local observations. Add the unique workspace target binding and its accepted owner in the Work Item store. In one workspace-store transaction, check current source policy and target revision, resolve or create the default binding, attach the occurrence and commit any first accepted dispatch intent. Readiness and actual dispatch follow section 4.2. [Current source-key store](../../packages/core/src/storage/sqlite/work-item-store.ts) · [Automation event intake](../../packages/daemon/src/features/automations/event-worker.ts) · [External Work admission](../../packages/core/src/external-work-scheduler.ts)
 
+A normal channel input can address a Work Item explicitly using
+`workItemTarget`. The current channel or the item's bound Workflow supplies
+the ownership check. The canonical input Item, the owner-only evidence
+reference and its Work Item event share a transaction and an idempotent
+receipt. Corrections use a new addressed input with the current revision.
+The coordinator uses the existing stage delivery and Plan change operations
+for decisions based on the input. [Channel input contract](../daemon-api.md#channel-work-item-inputs)
+
 ## 4. Assignment and Dispatch Claim
 
 ### 4.1 Assignment authority

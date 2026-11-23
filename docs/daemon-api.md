@@ -1666,6 +1666,22 @@ SSE events:
 Hidden `<ling_task_proposal>` blocks are not streamed as visible deltas. The daemon
 continues to extract and persist proposals through the channel proposal pipeline.
 
+### Channel Work Item inputs
+
+A Channel Turn may include `workItemTarget: { workItemId, expectedRevision }`
+to attach its user message to an item owned by the same channel or its
+bound Workflow. The response includes `workItemInput` with the source Item
+ID, evidence ID and accepted Work Item revision. For a streaming request the
+`ready` and `done` events carry the same receipt. The message, owner-only
+evidence reference and event commit together. An exact retry by the same
+channel and request key returns the original receipt. A new input with an
+outdated Work Item revision returns 409.
+
+This operation records a completed input Turn and leaves execution with the
+existing Work Item owner. Submit a follow-up addressed to the Work Item
+to correct committed input. Stage delivery and accepted Plan changes use
+their respective coordination operations.
+
 ### Review Annotations
 
 Channel Turn requests and `POST /conversations/stream` accept up to 12 `fileRefs`.

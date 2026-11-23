@@ -2665,6 +2665,7 @@ export async function routeRequest(
         channelRoute.channelId,
         channelReplyDispatchCoordinator,
         channelTurnDispatchWorker,
+        controlPlaneEvents,
       );
       return;
     }
@@ -2677,6 +2678,7 @@ export async function routeRequest(
         channelRoute.channelId,
         channelReplyDispatchCoordinator,
         channelTurnDispatchWorker,
+        controlPlaneEvents,
       );
       return;
     }

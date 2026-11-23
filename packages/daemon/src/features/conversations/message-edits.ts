@@ -325,6 +325,9 @@ function resolveChannelMessage(store: RunStore, input: EditConversationMessageRe
   if (!skipLatestCheck && (!latest || latest.id !== message.id)) {
     throw new HttpError(409, "message_not_latest", "Only the latest user message in this channel lane can be edited.");
   }
+  if (store.getConversationItem(message.id)?.domainRefs.some(ref => ref.type === "work_item")) {
+    throw new HttpError(409, "work_item_input_committed", "Send a follow-up to the Work Item to correct this committed input.");
+  }
   const dependencies = resolveMessageExecutionDependencies(store, "channel_message", message.id, message.linkedRunId);
   return {
     surface,

@@ -94,6 +94,19 @@ export interface CreateChannelTurnRequest {
   };
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+  readonly workItemTarget?: ChannelWorkItemTarget;
+}
+
+export interface ChannelWorkItemTarget {
+  readonly workItemId: string;
+  readonly expectedRevision: number;
+}
+
+export interface ChannelWorkItemInputReceipt {
+  readonly workItemId: string;
+  readonly evidenceId: string;
+  readonly acceptedRevision: number;
+  readonly sourceItemId: string;
 }
 
 export interface ChannelConversationTurnResponse {
@@ -102,6 +115,7 @@ export interface ChannelConversationTurnResponse {
   readonly userItem: ConversationItemV1;
   readonly assistantItems?: readonly ConversationItemV1[];
   readonly decorations: readonly ChannelConversationItemDecoration[];
+  readonly workItemInput?: ChannelWorkItemInputReceipt;
   readonly replyDispatch?: ChannelReplyDispatch;
   readonly autoStartedWorkflow?: {
     readonly proposal: ChannelExecutionProposal;
@@ -117,6 +131,7 @@ export interface ChannelConversationStreamReadyEvent {
   readonly userItem: ConversationItemV1;
   readonly assistantItems?: readonly ConversationItemV1[];
   readonly decorations: readonly ChannelConversationItemDecoration[];
+  readonly workItemInput?: ChannelWorkItemInputReceipt;
 }
 
 export interface ChannelConversationStreamReplyPendingEvent {

@@ -1,5 +1,5 @@
 import { parseReviewAnnotation } from "@ling-stack/contracts";
-import type { ChannelConversationSurface, ChannelReplyDisposition } from "@ling-stack/contracts";
+import type { ChannelConversationSurface, ChannelReplyDisposition, ChannelWorkItemTarget } from "@ling-stack/contracts";
 import {
   channelDecisionStatuses,
   channelContextSummaryAuthorTypes,
@@ -179,6 +179,7 @@ export interface ChannelTurnRequest {
   readonly replyDisposition?: ChannelReplyDisposition;
   readonly providerPresetId?: string;
   readonly teammateId?: string;
+  readonly workItemTarget?: ChannelWorkItemTarget;
 }
 
 export interface ChannelWorkflowRequest {
@@ -606,6 +607,7 @@ export function parseChannelTurnRequest(value: unknown): ChannelTurnRequest {
     "replyDisposition",
     "providerPresetId",
     "teammateId",
+    "workItemTarget",
   ]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) {
@@ -625,7 +627,11 @@ export function parseChannelTurnRequest(value: unknown): ChannelTurnRequest {
     replyDisposition: readOptionalChannelReplyDisposition(value),
     providerPresetId: readOptionalString(value, "providerPresetId"),
     teammateId: readOptionalString(value, "teammateId"),
+    workItemTarget: readOptionalChannelWorkItemTarget(value),
   };
+  if (input.workItemTarget && (input.requestAiReply || input.replyDisposition || input.providerPresetId || input.teammateId)) {
+    throw new Error("A channel message addressed to a Work Item cannot request a separate reply execution");
+  }
   if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0 && input.fileRefs.length === 0) {
     throw new Error("body, attachmentIds, linkPreviewIds, or fileRefs is required");
   }
@@ -636,6 +642,17 @@ export function parseChannelTurnRequest(value: unknown): ChannelTurnRequest {
     throw new Error("A channel message can reference at most 12 workspace files");
   }
   return input;
+}
+
+function readOptionalChannelWorkItemTarget(value: Record<string, unknown>): ChannelWorkItemTarget | undefined {
+  const target = value.workItemTarget;
+  if (target === undefined) return undefined;
+  if (!isRecord(target) || Object.keys(target).some(key => key !== "workItemId" && key !== "expectedRevision")
+    || typeof target.workItemId !== "string" || !target.workItemId.trim() || target.workItemId.length > 256
+    || typeof target.expectedRevision !== "number" || !Number.isSafeInteger(target.expectedRevision) || target.expectedRevision < 1) {
+    throw new Error("workItemTarget requires a Work Item ID and its observed revision");
+  }
+  return { workItemId: target.workItemId, expectedRevision: target.expectedRevision };
 }
 
 function readOptionalChannelConversationSurface(value: Record<string, unknown>): ChannelConversationSurface | undefined {
