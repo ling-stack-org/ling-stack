@@ -19,3 +19,15 @@ test("browser profile size counts only its persistent storage and metadata", asy
     assert.equal(result.knownBytes, 13);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("browser profile size stops inside a flat directory when its deadline expires", async t => {
+  const profile = await mkdtemp(join(tmpdir(), "ling-browser-size-budget-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  await writeFile(join(profile, "first"), Buffer.alloc(9));
+  await writeFile(join(profile, "second"), Buffer.alloc(9));
+  let samples = 0;
+  t.mock.method(Date, "now", () => ++samples <= 3 ? 0 : 20_001);
+  assert.deepEqual(await measureBrowserProfileSize(profile), {
+    category: "browser", knownBytes: 9, status: "partial", reason: "deadline",
+  });
+});

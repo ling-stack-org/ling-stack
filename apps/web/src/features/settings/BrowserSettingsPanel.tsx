@@ -51,7 +51,7 @@ export function BrowserSettingsPanel({ cwd }: { readonly cwd: string }): React.J
     <header><h1>{t("Browser")}</h1><p>{t("Manage the built-in browser for this workspace.")}</p></header>
     <BrowserSitePolicyPanel key={cwd} cwd={cwd} showDefaults />
     {loading && !state ? <Skeleton height={140} /> : null}
-    {error ? <InlineFeedback tone="danger" role="alert">{t("Browser data could not be saved or restored.")} <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t("Retry")}</Button></InlineFeedback> : null}
+    {error || state?.error ? <InlineFeedback tone="danger" role="alert">{t("Browser data could not be saved or restored.")} <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t("Retry")}</Button></InlineFeedback> : null}
     {state ? <>
       <section><h2>{t("Browser history")}</h2>
         <Input value={query} aria-label={t("Search browser history")} onChange={event => setQuery(event.currentTarget.value)} />

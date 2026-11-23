@@ -67,7 +67,11 @@ async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, scope: De
     if (!existsSync(workspace.stateRoot) || !existsSync(workspace.canonicalCwd)) { worktreeInventoryIncomplete = true; continue; }
     try {
       const inventory = await listManagedWorktrees(stores.getStore(workspace.canonicalCwd), workspace.canonicalCwd);
-      worktreeRoots.push(...inventory.entries.filter(item => item.status === "ready" || item.status === "missing").map(item => item.path));
+      worktreeInventoryIncomplete ||= inventory.limitReached;
+      for (const item of inventory.entries) {
+        if (item.status === "blocked") worktreeInventoryIncomplete = true;
+        if (item.status === "ready" || item.status === "missing") worktreeRoots.push(item.path);
+      }
       worktreeRoots.push(...(inventory.snapshots ?? []).filter(item => item.state !== "restored").map(item => item.snapshotPath));
     } catch { worktreeInventoryIncomplete = true; }
   }

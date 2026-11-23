@@ -16,6 +16,7 @@ test("Desktop Settings shows measured storage and editable browser defaults", as
       getSettingsState: async () => management,
       actSettings: async (request: { action: string; rule?: { origin: string; permission: string; decision: string } }) => {
         if (request.action === "device_permission" && request.rule) management.devices = [request.rule];
+        if (request.action === "download_preferences") return { ...management, error: true };
         return management;
       },
       getProfileSize: async () => ({ category: "browser", knownBytes: 4096, status: "complete" }),
@@ -77,5 +78,9 @@ test("Desktop Settings shows measured storage and editable browser defaults", as
   if (process.env.LING_SETTINGS_EVIDENCE_DIR) {
     await page.screenshot({ path: `${process.env.LING_SETTINGS_EVIDENCE_DIR}/browser-settings-interaction.png`, fullPage: true });
   }
+  const saveError = browser.getByRole("alert").filter({ hasText: "Browser data could not be saved or restored." });
+  await expect(saveError).toHaveCount(0);
+  await browser.getByText("Ask where to save each download", { exact: true }).click();
+  await expect(saveError).toBeVisible();
   expect(errors).toEqual([]);
 });
