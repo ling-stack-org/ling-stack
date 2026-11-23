@@ -1116,7 +1116,7 @@
 "packages/daemon/src/features/plugins/policy-overlay.ts":"513c033922c7ea5784aa2fa7f1a83dc2eaf71761122b892b7f274a06c8829a87",
 "packages/daemon/src/features/plugins/presets.ts":"d97d822c7894d93b3d3cfc31bc0882d05916025f48152f2411096fc8d659366e",
 "packages/daemon/src/features/plugins/provider-health.ts":"f36130c99e603ce46384dddf5682a7765beedf89b68d7202167c04abc8492d51",
-"packages/daemon/src/features/plugins/routes.ts":"1b29db59dde7ec4778ae5681ba0c57cc535d599331ca9302d247c6b41bf306fe",
+"packages/daemon/src/features/plugins/routes.ts":"58a072640e8681cb6e0c4f028813873ffd7290274ae2fa06b262ca79e019f66f",
 "packages/daemon/src/features/plugins/runtime-injection.ts":"963f5f6a06f4c5b3acf763aca1b3de46d830af69e8aaa8b95abdcc4544870abb",
 "packages/daemon/src/features/plugins/schemas.ts":"f2ec18a5051065cdcf7ea86c202c3ec6c304c72aa7ff15e2ad9bb63f9757e3ff",
 "packages/daemon/src/features/plugins/source-index.ts":"90e91e2971ee4b4b51f4c88b4ca91bb8f932aed85a9934419bee66d2866b7cbf",

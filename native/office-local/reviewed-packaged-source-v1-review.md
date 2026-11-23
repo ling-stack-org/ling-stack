@@ -9,18 +9,19 @@ and the dated reviews below retain their historical evidence and scope.
 ## Plugin rollback compatibility
 
 Date 2026-11-24. This development packaging record binds source commit
-`25a1e7924f757894cea2e3268cb4b77c24decda2`. Automatic and manual rollback both
+`95a35c3a343fe8e487e957516701f993e2516233`. Automatic and manual rollback both
 validate the previous package against the current Ling version before changing
-the selected cache pointer.
+the selected cache pointer. Host runtimes use explicit rollback. Desktop
+loads the selected host runtime on restart.
 
 Independent source review verified that only
 `packages/daemon/src/features/plugins/routes.ts` changes within the fixed
 packaging inputs. Its digest is
-`1b29db59dde7ec4778ae5681ba0c57cc535d599331ca9302d247c6b41bf306fe`.
+`58a072640e8681cb6e0c4f028813873ffd7290274ae2fa06b262ca79e019f66f`.
 The other 2,012 packaging inputs and all 15 Office native inputs match the
 preceding record. The record remains 260,282 bytes. The fixed-order packaging
-aggregate is `d7e48c47fdc2d5fff5ab208ab2c7509401285517cd1a8f2db389cb9c7bc79c33`.
-Record SHA-256 is `42a778f180223e36fd26d87ab0bf1c8f907686cec34f47eaa1f272f620b4007f`.
+aggregate is `14c38749692d8596d381f32ec215fd4022ad43372092d21bd9a39f59b47e0c14`.
+Record SHA-256 is `e904064e0ef00e1adadd5a193d759d3e231b5e77ae6df0b664c1092fd4a7e276`.
 
 ## Cold-start resource authentication rebind
 

@@ -3,16 +3,20 @@ import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:cryp
 import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import JSZip from "jszip";
 import { LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import { createSqliteRunStore, resolveStoragePaths } from "@ling-stack/core";
 import {
   OFFICIAL_PLUGIN_RUNTIME_SIGNATURE_CONTEXT,
+  isOfficialNativePluginId,
   readVerifiedOfficialPluginRuntime,
 } from "@ling-stack/core/official-plugin-runtime";
 import type { LingPluginArtifactDescriptor, LingPluginCatalog } from "@ling-stack/plugin-sdk";
+import type { McpBroker } from "../dist/context.js";
 import { startDaemon } from "../dist/index.js";
+import { createCuaDriverDescriptor, CUA_DRIVER_MCP_SERVER_ID, CUA_DRIVER_PLUGIN_ID,
+  isCuaDriverPlatformSupported } from "../dist/features/plugins/presets.js";
 import { installRemotePluginArtifact, readCurrentPluginPointer } from "../dist/features/plugins/remote-package.js";
 
 const pluginId = "official:office-documents";
@@ -29,19 +33,12 @@ test("native plugin installs from a clean workspace and can roll back offline fr
   const pem = publicKey.export({ format: "pem", type: "spki" }).toString();
   const catalogFile = join(root, "catalog.json");
   const artifactDir = join(root, "dist");
-  for (const [name, value] of Object.entries({
+  setFixtureEnvironment(t, {
     LING_STACK_HOME: join(root, "config"),
     LING_PLUGIN_ARTIFACT_PUBLIC_KEY: pem,
     LING_PLUGIN_CATALOG_FILE: catalogFile,
     LING_PLUGIN_ARTIFACT_DIR: artifactDir,
-  })) {
-    const previous = process.env[name];
-    process.env[name] = value;
-    t.after(() => {
-      if (previous === undefined) delete process.env[name];
-      else process.env[name] = previous;
-    });
-  }
+  });
   const firstWorkspace = join(root, "workspace");
   const secondWorkspace = join(root, "other-workspace");
   await Promise.all([mkdir(firstWorkspace), mkdir(secondWorkspace), mkdir(artifactDir)]);
@@ -137,13 +134,8 @@ test("native plugin installs from a clean workspace and can roll back offline fr
 
 test("a failed plugin health check keeps the current selection when rollback cannot support Ling", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-plugin-rollback-"));
-  const previousHome = process.env.LING_STACK_HOME;
-  process.env.LING_STACK_HOME = join(root, "config");
-  t.after(async () => {
-    if (previousHome === undefined) delete process.env.LING_STACK_HOME;
-    else process.env.LING_STACK_HOME = previousHome;
-    await rm(root, { recursive: true, force: true });
-  });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  setFixtureEnvironment(t, { LING_STACK_HOME: join(root, "config") });
 
   const workspace = join(root, "workspace");
   await mkdir(workspace);
@@ -193,20 +185,98 @@ test("a failed plugin health check keeps the current selection when rollback can
   }
 });
 
+test("a failed native health check keeps the selected package and live Cua runtime", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ling-cua-rollback-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  setFixtureEnvironment(t, {
+    LING_STACK_HOME: join(root, "config"),
+    LING_PLUGIN_ARTIFACT_PUBLIC_KEY: publicKey.export({ format: "pem", type: "spki" }).toString(),
+  });
+  const workspace = join(root, "workspace");
+  await mkdir(workspace);
+  const paths = resolveStoragePaths(workspace, { workspaceStateLocation: "repo-local" }).workspace;
+  const now = "2026-11-22T00:00:00.000Z";
+  const id = CUA_DRIVER_PLUGIN_ID;
+  const first = await createArtifact(privateKey, "1.0.0", "previous", { id });
+  const second = await createArtifact(privateKey, "1.1.0", "current", { id });
+  const install = (asset: Awaited<ReturnType<typeof createArtifact>>) => installRemotePluginArtifact({
+    paths, now, artifact: asset.artifact, lingVersion: LING_PRODUCT_VERSION, catalogVersion: now,
+    fetchImpl: async () => new Response(new Uint8Array(asset.bytes)),
+  });
+  await install(first);
+  const current = await install(second);
+  assert.equal(current.previousVersion, first.artifact.version);
+  const liveDescriptor = createCuaDriverDescriptor();
+  const liveTransport = { type: "streamable-http" as const, url: "http://127.0.0.1:2/", headers: {}, secretHeaderRefs: {} };
+  const probes: string[] = [];
+  const mcpBroker: McpBroker = {
+    async checkServer(server) {
+      probes.push(server.id);
+      return { statusSnapshot: {
+        serverId: server.id, checkedAt: now, expiresAt: now, status: "failed", missingSecretRefs: [],
+        authStatus: { kind: "not_required", refs: [], missingRefs: [] }, errorCode: "mcp_process_failed",
+      } };
+    },
+    async listTools() { assert.fail("rollback cannot inspect tools from a runtime pending restart"); },
+    async callTool() { assert.fail("rollback cannot call a runtime pending restart"); },
+  };
+  const store = createSqliteRunStore(workspace, paths);
+  store.upsertManagedPlugin({ id, sourceKind: "official-remote", version: liveDescriptor.version, enabled: true, descriptor: liveDescriptor }, now);
+  store.createMcpServer({ id: CUA_DRIVER_MCP_SERVER_ID, displayName: "Live Cua", transport: liveTransport, enabled: true, required: false }, now);
+  store.replaceManagedPluginContributions(id, [{
+    contributionKind: "mcp-server", contributionId: CUA_DRIVER_MCP_SERVER_ID, linkedResourceId: CUA_DRIVER_MCP_SERVER_ID, enabled: true,
+  }], now);
+  const daemon = await startDaemon({
+    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: workspace,
+    cuaDriver: { catalogManaged: true, bundledEmbedded: { darwin: false, win32: false } },
+  }, { storeFactory: () => store, mcpBroker });
+  try {
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    assert.deepEqual(store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID)?.transport, liveTransport);
+    const response = await fetch(`http://127.0.0.1:${address.port}/plugins/${encodeURIComponent(id)}/check?cwd=${encodeURIComponent(workspace)}`, {
+      method: "POST",
+    });
+    const result = await response.json();
+    assert.equal(response.status, 400);
+    assert.equal(result.error, isCuaDriverPlatformSupported() ? "mcp_process_failed" : "plugin_platform_blocked");
+    assert.equal((await readCurrentPluginPointer(paths, id))?.cacheRef, current.cacheRef);
+    assert.equal(result.plugin.package.version, second.artifact.version);
+    assert.deepEqual(store.getManagedPlugin(id)?.descriptor, liveDescriptor);
+    assert.deepEqual(store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID)?.transport, liveTransport);
+    assert.deepEqual(probes, isCuaDriverPlatformSupported() ? [CUA_DRIVER_MCP_SERVER_ID] : []);
+  } finally {
+    await daemon.stop();
+  }
+});
+
+function setFixtureEnvironment(t: TestContext, entries: Record<string, string>) {
+  for (const [name, value] of Object.entries(entries)) {
+    const previous = process.env[name];
+    process.env[name] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+}
+
 async function createArtifact(key: KeyObject, version: string, payload: string, options?: { id: string; maxLingVersion?: string }) {
   const id = options?.id ?? pluginId;
-  const native = id === pluginId;
+  const native = isOfficialNativePluginId(id);
   const artifactId = `${id}-${version}-${platform}-${arch}`;
   const compatibility = options?.maxLingVersion ? { maxLingVersion: options.maxLingVersion } : {};
   const manifest = JSON.stringify({
-    id, displayName: native ? "Office" : "Rollback fixture", trustSummary: "Test plugin.",
+    id, displayName: id === pluginId ? "Office" : "Rollback fixture", trustSummary: "Test plugin.",
     version, sourceKind: "official-remote", trustLevel: "official",
     manifestVersion: 2, lingInterfaceVersion: "2", artifactId, platform, arch, ...compatibility,
-    contributions: [{ kind: "mcp-server", id: `mcp:${id.replace(":", "-")}`, path: "./mcp-server.json" }],
+    contributions: [{ kind: "mcp-server", id: id === CUA_DRIVER_PLUGIN_ID ? "mcp:cua-driver" : `mcp:${id.replace(":", "-")}`,
+      path: "./mcp-server.json" }],
   });
   const files = {
     [manifestPath]: manifest, [executable]: payload,
-    "mcp-server.json": native ? "{}" : JSON.stringify({ transport: { type: "streamable-http", url: "http://127.0.0.1:1/" } }),
+    "mcp-server.json": id === pluginId ? "{}" : JSON.stringify({ transport: { type: "streamable-http", url: "http://127.0.0.1:1/" } }),
   };
   const checksums = Buffer.from(JSON.stringify({
     algorithm: "sha256",
@@ -221,7 +291,7 @@ async function createArtifact(key: KeyObject, version: string, payload: string, 
   const bytes = await zip.generateAsync({ type: "nodebuffer", platform: "UNIX" });
   const artifact: LingPluginArtifactDescriptor = {
     artifactId, pluginId: id, version, platform, arch, channel: "stable", ...compatibility,
-    url: native ? `https://github.com/ling-stack-org/ling-plugin-office-documents/releases/download/v${version}/plugin.zip`
+    url: native ? `https://github.com/ling-stack-org/ling-plugin-${id.slice("official:".length)}/releases/download/v${version}/plugin.zip`
       : `https://example.test/${version}/plugin.zip`,
     sizeBytes: bytes.length, sha256: sha256(bytes),
     signature: `ed25519:${sign(null, bytes, key).toString("base64")}`,
