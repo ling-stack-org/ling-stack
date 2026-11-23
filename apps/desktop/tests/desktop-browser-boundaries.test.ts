@@ -4,6 +4,7 @@ import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 import { assertBrowserNetworkUrl, isBrowserPublicAddress } from "../dist/main/browser/url-policy.js";
 import { assertBrowserIpcSender, parseBrowserSettingsAction, parseBrowserUserAction, parseBrowserViewport } from "../dist/main/browser/ipc.js";
 import { desktopBrowserPartition } from "../dist/main/browser/manager.js";
+import { BROWSER_HISTORY_CLEAR_ALL_SINCE, filterBrowserHistory } from "../dist/shared/browser-management.js";
 
 test("browser network permits explicit loopback previews, blocks application origin and private destinations", async () => {
   const options = { allowedLoopbackOrigin: "http://localhost:3000", forbiddenOrigins: ["http://127.0.0.1:17891"], resolveHost: async () => ["93.184.215.14"] };
@@ -19,6 +20,15 @@ test("browser network permits explicit loopback previews, blocks application ori
     await assert.rejects(assertBrowserNetworkUrl(`${origin}/health`, { ...options, allowedLoopbackOrigin: origin }), /browser_application_origin_forbidden/u);
   }
   for (const address of ["0.0.0.0", "10.0.0.1", "127.0.0.1", "100.64.0.1", "198.18.0.1", "224.0.0.1", "::1", "fe80::1", "fc00::1"]) assert.equal(isBrowserPublicAddress(address), false, address);
+});
+
+test("browser history clear-all removes every stored entry", () => {
+  const history = [
+    { id: "old", url: "https://example.com/old", title: "Old", visitedAt: 1 },
+    { id: "new", url: "https://example.com/new", title: "New", visitedAt: Date.now() },
+  ];
+  assert.deepEqual(filterBrowserHistory(history, BROWSER_HISTORY_CLEAR_ALL_SINCE), []);
+  assert.deepEqual(filterBrowserHistory(history, BROWSER_HISTORY_CLEAR_ALL_SINCE, "old"), [history[1]]);
 });
 
 test("browser profile names are stable, path-free and workspace-isolated", () => {

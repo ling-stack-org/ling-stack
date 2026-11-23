@@ -1,4 +1,4 @@
-import type { BrowserManagementState } from "../../../desktop/shared/browser-management.js";
+import { filterBrowserHistory, type BrowserManagementState } from "../../../desktop/shared/browser-management.js";
 import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { applyResolvedTheme, ThemeRegistry } from "@ling-stack/ui-react/theme";
@@ -30,7 +30,7 @@ export function mountBrowserFixture(): void {
     getProfileSize: async () => ({ category: "browser", knownBytes: 1024, status: "complete" }),
     actSettings: async action => {
       if (!management) management = { history: [], downloads: [], devices: [], downloadDirectory: "/downloads", askBeforeDownload: true, extensions: [] };
-      if (action.action === "history_clear") management = { ...management, history: management.history.filter(item => action.id ? item.id !== action.id : item.visitedAt < action.since) };
+      if (action.action === "history_clear") management = { ...management, history: filterBrowserHistory(management.history, action.since, action.id) };
       if (action.action === "download_preferences") management = { ...management, askBeforeDownload: action.askBeforeDownload };
       if (action.action === "clear_data" && action.history) management = { ...management, history: [] };
       listeners.forEach(listener => listener());
@@ -50,7 +50,7 @@ export function mountBrowserFixture(): void {
       else if (action.action === "activate") activeTabId = action.tabId;
       else if (action.action === "navigate") tabs = tabs.map(tab => tab.id !== action.tabId ? tab : { ...tab, url: parseDesktopBrowserUrl(action.url), canGoBack: true, navigationRevision: tab.navigationRevision + 1 });
       else if (action.action === "release_control" || action.action === "take_control") tabs = tabs.map(tab => tab.id !== action.tabId ? tab : { ...tab, control: action.action === "release_control" ? "agent" : "human" });
-      if (action.action === "history_clear" && management) management = { ...management, history: management.history.filter(item => action.id ? item.id !== action.id : item.visitedAt < action.since) };
+      if (action.action === "history_clear" && management) management = { ...management, history: filterBrowserHistory(management.history, action.since, action.id) };
       if (action.action === "download_preferences" && management) management = { ...management, askBeforeDownload: action.askBeforeDownload };
       if (action.action === "clear_data" && management) { if (action.history) management = { ...management, history: [] }; tabs = []; activeTabId = undefined; }
       const selectedTab = tabs.find(tab => tab.id === activeTabId);

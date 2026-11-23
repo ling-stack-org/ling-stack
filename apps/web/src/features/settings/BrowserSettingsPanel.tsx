@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DesktopBrowserSettingsAction } from "../../../../desktop/shared/browser-capabilities.js";
-import type { BrowserDevicePermission, BrowserManagementState } from "../../../../desktop/shared/browser-management.js";
+import { BROWSER_HISTORY_CLEAR_ALL_SINCE, type BrowserDevicePermission, type BrowserManagementState } from "../../../../desktop/shared/browser-management.js";
 import { Button, Checkbox, Field, InlineFeedback, Input, Select, Skeleton } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import { BrowserSitePolicyPanel } from "../browser/BrowserSitePolicyPanel.js";

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DesktopBrowserUserAction } from "../../../../desktop/shared/browser-capabilities.js";
-import type { BrowserDevicePermission, BrowserManagementState } from "../../../../desktop/shared/browser-management.js";
+import { BROWSER_HISTORY_CLEAR_ALL_SINCE, type BrowserDevicePermission, type BrowserManagementState } from "../../../../desktop/shared/browser-management.js";
 import { Button, Checkbox, Field, InlineFeedback, Input, Select } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import { BrowserSitePolicyPanel } from "./BrowserSitePolicyPanel.js";
@@ -21,7 +21,7 @@ export function BrowserManagementPanel({ state, cwd, url, disabled, act }: { rea
     {panel === "history" ? <div className="browser-management-section">
       <Input value={query} aria-label={t("Search browser history")} onChange={event => setQuery(event.currentTarget.value)} />
       <div className="browser-panel-actions"><Field label={t("History time range")}><Select value={since} onChange={event => setSince(event.currentTarget.value)}><option value="hour">{t("Last hour")}</option><option value="day">{t("Last day")}</option><option value="all">{t("All time")}</option></Select></Field>
-        <Button size="sm" disabled={disabled} onClick={() => act({ action: "history_clear", since: since === "all" ? 0 : Date.now() - (since === "hour" ? 3600000 : 86400000) })}>{t("Clear history")}</Button>
+        <Button size="sm" disabled={disabled} onClick={() => act({ action: "history_clear", since: since === "all" ? BROWSER_HISTORY_CLEAR_ALL_SINCE : Date.now() - (since === "hour" ? 3600000 : 86400000) })}>{t("Clear history")}</Button>
       </div>
       {state.history.filter(item => `${item.title} ${item.url}`.toLowerCase().includes(query.toLowerCase())).map(item => <div className="browser-management-row" key={item.id}>
         <Button size="sm" variant="ghost" disabled={disabled} title={item.url} onClick={() => act({ action: "open", url: item.url })}>{item.title || item.url}</Button>
