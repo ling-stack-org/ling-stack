@@ -76,13 +76,16 @@ export function WorkBoardWorkflow({ cwd, workItemId, onOpenRun }: {
         <ol className="work-board-evidence-list" start={offset + 1}>
           {workflow.steps.map(step => {
             const state = channelWorkflowStepStatusPresentation(step.status);
+            const recipientUnavailable = step.admissionBlocker === "work_item_handoff_recipient_unavailable";
             return <li key={step.stepId}>
               <div><strong dir="auto">{step.title}</strong>{" "}
                 {step.admissionBlocker
                   ? <StatusIndicator label={t("Blocked")} tone="warning" />
                   : <StatusIndicator label={t(state.labelKey)} tone={state.tone} />}
               </div>
-              <div dir="auto">{step.participantLabel}</div>
+              <div dir="auto">{step.participantLabel}{" "}
+                {recipientUnavailable ? <StatusIndicator label={t("Unavailable")} tone="warning" /> : null}
+              </div>
               {step.brief ? <p dir="auto">{step.brief}</p> : null}
               {step.decision ? <StageDecision decision={step.decision} /> : null}
               {step.handoffs?.map(handoff => <StageHandoff
@@ -113,11 +116,13 @@ function StageHandoff({ cwd, workItemId, workflow, step, handoff, onRefresh }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
   const lastRequest = useRef<{ fingerprint: string; key: string }>(undefined);
+  const recipientUnavailable = step.admissionBlocker === "work_item_handoff_recipient_unavailable";
   const canDecide = handoff.status === "awaiting_acceptance" && step.status === "queued" && !workflow.admissionBlocker
     && step.admissionBlocker !== "work_item_plan_change_pending" && workflow.workItemRevision !== undefined;
 
   async function settle(action: "accepted" | "returned"): Promise<void> {
-    if (busy || !canDecide || workflow.workItemRevision === undefined || action === "returned" && !reason) return;
+    if (busy || !canDecide || workflow.workItemRevision === undefined
+      || (action === "accepted" ? recipientUnavailable : !reason)) return;
     const decisionReason = action === "returned" && reason ? reason : undefined;
     const fingerprint = JSON.stringify([action, decisionReason, workflow.workItemRevision, step.updatedAt]);
     const key = lastRequest.current?.fingerprint === fingerprint ? lastRequest.current.key : crypto.randomUUID();
@@ -143,7 +148,7 @@ function StageHandoff({ cwd, workItemId, workflow, step, handoff, onRefresh }: {
     {" "}<StatusIndicator label={t(handoffStatus[handoff.status])} tone={handoff.status === "returned" ? "warning" : "neutral"} />
     {handoff.reason ? <p>{t(handoffReasons[handoff.reason])}</p> : null}
     {canDecide ? <div>
-      <Button size="sm" variant="ghost" disabled={busy} onClick={() => void settle("accepted")}>{t("Accept handoff")}</Button>
+      <Button size="sm" variant="ghost" disabled={busy || recipientUnavailable} onClick={() => void settle("accepted")}>{t("Accept handoff")}</Button>
       <select aria-label={t("Return reason")} disabled={busy} value={reason}
         onChange={event => setReason(event.target.value as typeof reason)}>
         <option value="">{t("Return reason")}</option>

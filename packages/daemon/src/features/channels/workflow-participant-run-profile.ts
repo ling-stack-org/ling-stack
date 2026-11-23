@@ -33,6 +33,16 @@ export type WorkflowParticipantRunProfileResolution =
       readonly missingRequirements: readonly string[];
     };
 
+export function workItemHandoffRecipientAvailable(store: RunStore, step: ChannelWorkflowStep): boolean {
+  const channel = store.getChannel(step.channelId);
+  return channel !== undefined && resolveWorkflowParticipantRunProfile({
+    store,
+    channel,
+    step,
+    requiredTools: step.metadata?.requiredTools ?? [],
+  }).kind === "ready";
+}
+
 export function resolveWorkflowParticipantRunProfile(input: {
   readonly store: RunStore;
   readonly channel: Channel;

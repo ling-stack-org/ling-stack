@@ -1,6 +1,7 @@
 import { classifyWorkflowStepStartOwner, workflowStepStartOwnerMatches, toRuntimeAttemptFence,
   type RunSession, type RunStore, type WorkUnitAttempt, type WorkflowStepStartOwnerV1 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import { workItemHandoffRecipientAvailable } from "../channels/workflow-participant-run-profile.js";
 import type { RunRequest } from "./schemas.js";
 import { createWorkflowSafetyAdmission } from "./workflow-safety.js";
 import { QueueableRunConflictError } from "./concurrency.js";
@@ -42,6 +43,9 @@ export function commitWorkflowStartReady(store: RunStore, request: RunRequest, r
   if (!request.workflowStepId) return;
   if (!owner) throw new HttpError(409, "workflow_start_owner_missing", "Workflow Run requires its captured start owner.");
   const step = store.getChannelWorkflowStep(request.workflowStepId);
+  if (step?.metadata?.requiredPlanHandoffStepIds?.length && !workItemHandoffRecipientAvailable(store, step)) {
+    throw new HttpError(409, "work_item_handoff_recipient_unavailable", "The assigned participant cannot currently receive the handoff.");
+  }
   const reservation = store.getChannelWorkflowStepStartAdmission(request.workflowStepId, owner);
   const run = store.getRun(runId);
   const unit = run?.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;

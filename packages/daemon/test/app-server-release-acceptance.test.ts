@@ -2830,6 +2830,12 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
       "Content-Type": "application/json" }, body: JSON.stringify({ ...handoff, action: "accepted" }),
   });
   assert.equal(forbiddenHandoff.status, 403);
+  assert.ok(resumedStore.updateAiTeammate(qa.toParticipantId, { status: "disabled" }, new Date().toISOString()));
+  await assert.rejects(resumedClient.call("workItem/handoff/accept", handoff), { code: "work_item_handoff_recipient_unavailable" });
+  const unavailableBeforeAccept = (await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id);
+  assert.equal(unavailableBeforeAccept?.handoffs?.[0]?.status, "awaiting_acceptance");
+  assert.equal(resumedStore.getWorkItem(workItemId)?.revision, handoff.expectedWorkItemRevision);
+  assert.ok(resumedStore.updateAiTeammate(qa.toParticipantId, { status: "active" }, new Date().toISOString()));
   const [acceptedHandoff, repeatedHandoff] = await Promise.all([
     resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff),
     request(handoffPath, { ...handoff, action: "accepted" }).then(async reply => {
@@ -2900,8 +2906,23 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   });
   assert.deepEqual(drifted, { status: 409, code: "work_item_handoff_candidate_stale" });
   assert.equal(fixture.getStore().listRuns({ workflowStepId: qa.id }).length, 0);
+  const handoffStore = fixture.getStore();
+  assert.ok(handoffStore.updateAiTeammate(qa.toParticipantId, { status: "disabled" }, new Date().toISOString()));
   await writeFile(inputFile, "Verified compatibility input\n");
-  await waitFor(() => fixture.getStore().getChannelWorkflowStep(qa.id)?.status === "succeeded" ? true : undefined);
+  const unavailableStart = await request(`/workflow-steps/${encodeURIComponent(qa.id)}/start`, { mode: "create_and_run_task" });
+  assert.equal(unavailableStart.status, 409);
+  assert.equal((await unavailableStart.json() as { error: string }).error, "work_item_handoff_recipient_unavailable");
+  assert.equal(handoffStore.listRuns({ workflowStepId: qa.id }).length, 0);
+  const unavailableAfterAccept = (await readBrief(decisionClient)).workflow?.steps.find(step => step.stepId === qa.id);
+  assert.equal(unavailableAfterAccept?.status, "queued");
+  assert.equal(unavailableAfterAccept.admissionBlocker, "work_item_handoff_recipient_unavailable");
+  assert.equal(unavailableAfterAccept.handoffs?.[0]?.receiptId, acceptedHandoff.record.id);
+  const override = { mode: "create_task", assigneeTeammateId: p01.toParticipantId };
+  const overridden = await request(`/workflow-steps/${encodeURIComponent(qa.id)}/start`, override);
+  assert.equal(overridden.status, 409);
+  assert.equal((await overridden.json() as { error: string }).error, "workflow_participant_override_forbidden");
+  assert.ok(handoffStore.updateAiTeammate(qa.toParticipantId, { status: "active" }, new Date().toISOString()));
+  await waitFor(() => handoffStore.getChannelWorkflowStep(qa.id)?.status === "succeeded" ? true : undefined);
   const releaseImplementation = await decisionClient.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/withdraw", {
     ...changeBasis, expectedWorkItemRevision: answered.workItemRevision,
     changeId: restoredChange.receipt.changeId, idempotencyKey: "withdraw-implementation-scope",
@@ -3025,6 +3046,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
     expectedRevision: plan.revision,
     workflowStepPreviews: [{ ...step("P01", "Read the old contract"), requiredTools: ["read"] }, {
       ...step("P02", "Implement the old contract"), dependsOnStageIds: ["P01"],
+      handoffFromStageIds: ["P01"], ownerId: "teammate_builtin_qa", ownerLabel: "QA",
     }],
   });
   assert.equal(conversion.status, 200);
@@ -3032,6 +3054,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.ok(original.workflowId);
   const [p01, p02] = store.listChannelWorkflowSteps({ workflowId: original.workflowId, complete: true });
   assert.ok(p01 && p02);
+  assert.equal(p02.toParticipantId, "teammate_builtin_qa");
   const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "workflow-replacement", title: "Compatibility work",
     channelId: channel.id, initialStatus: "ready" }, now);
   const client = await fixture.connect();
@@ -3048,6 +3071,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   const started = await runWorkflow(original.workflowId);
   assert.equal((await started.json()).status, "started");
   await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  assert.ok(store.updateAiTeammate(p02.toParticipantId, { status: "disabled" }, new Date().toISOString()));
 
   const { plan: draft } = await client.call<ProposedPlanActionResponse>("plan/refine", {
     threadId: thread.id, planId: original.plan.id, expectedRevision: original.plan.revision,
@@ -3072,6 +3096,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.ok(successor.workflowId);
   const [newStep] = store.listChannelWorkflowSteps({ workflowId: successor.workflowId, complete: true });
   assert.ok(newStep);
+  assert.equal(newStep.toParticipantId, "teammate_builtin_engineer");
   const startStep = (stepId: string) => post(`/workflow-steps/${stepId}/start`, { mode: "create_and_run_task" });
   const unbound = await startStep(newStep.id);
   assert.equal(unbound.status, 409);
@@ -3136,7 +3161,9 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   await waitFor(() => restoredStore.getChannelWorkflowStep(newStep.id)?.status === "succeeded" ? true : undefined);
   assert.equal(restoredStore.listRuns({ workflowStepId: p01.id }).length, 1);
   assert.equal(restoredStore.listRuns({ workflowStepId: p02.id }).length, 0);
-  assert.equal(restoredStore.listRuns({ workflowStepId: newStep.id }).length, 1);
+  const successorRuns = restoredStore.listRuns({ workflowStepId: newStep.id });
+  assert.equal(successorRuns.length, 1);
+  assert.equal(successorRuns[0]?.teammateId, newStep.toParticipantId);
   assert.equal(provider.requests.length, 3);
   assert.match(JSON.stringify(provider.requests[2]), /Retained upstream results from the predecessor Plan/u);
   assert.ok(JSON.stringify(provider.requests[2]).includes(retainedSource.metadata.outputArtifactId));

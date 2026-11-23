@@ -87,6 +87,7 @@ import { projectWorkflowStepNarration } from "./workflow-step-narration.js";
 import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
   resolveWorkflowParticipantRunProfile,
+  workItemHandoffRecipientAvailable,
 } from "./workflow-participant-run-profile.js";
 import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
 import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
@@ -747,6 +748,16 @@ export async function prepareWorkflowStepStart(
   if (workItemBlocker) {
     return { kind: "error", statusCode: 409, code: workItemBlocker, message: "The Work Item cannot start a Workflow step." };
   }
+  const needsHandoff = Boolean(step.metadata?.requiredPlanHandoffStepIds?.length);
+  const unavailableHandoffRecipient = {
+    kind: "error", statusCode: 409, code: "work_item_handoff_recipient_unavailable",
+    message: "The assigned participant cannot currently receive the handoff.",
+  } as const;
+  if (needsHandoff && input.assigneeTeammateId && input.assigneeTeammateId !== step.toParticipantId) {
+    return { kind: "error", statusCode: 409, code: "workflow_participant_override_forbidden",
+      message: "The handoff is bound to the Plan's assigned participant." };
+  }
+  if (needsHandoff && !workItemHandoffRecipientAvailable(store, step)) return unavailableHandoffRecipient;
   const channel = store.getChannel(step.channelId);
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
@@ -1074,8 +1085,13 @@ export async function prepareWorkflowStepStart(
   } catch (error) {
     return fail(409, "workflow_safety_mismatch", error instanceof Error ? error.message : String(error));
   }
-  if (step.metadata?.requiredPlanHandoffStepIds?.length && !await workItemHandoffCandidatesCurrent(store, step)) {
-    return fail(409, "work_item_handoff_candidate_stale", "The accepted handoff uses a different worktree candidate.");
+  if (needsHandoff) {
+    if (!await workItemHandoffCandidatesCurrent(store, step)) {
+      return fail(409, "work_item_handoff_candidate_stale", "The accepted handoff uses a different worktree candidate.");
+    }
+    if (!workItemHandoffRecipientAvailable(store, step)) {
+      return fail(unavailableHandoffRecipient.statusCode, unavailableHandoffRecipient.code, unavailableHandoffRecipient.message);
+    }
   }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),

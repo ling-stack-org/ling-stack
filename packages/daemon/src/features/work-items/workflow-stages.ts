@@ -3,6 +3,7 @@ import type { LingAppServerStageBallotTally, LingAppServerStageHandoffProgress, 
   LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
 import { readWorkItemCollaborationRecord, readWorkflowStageHandoff, stageHandoffAdmitsTarget, workItemWorkflowDecisionId } from "@ling-stack/core";
 import type { ChannelWorkflowStep, RunStore, WorkItem } from "@ling-stack/core";
+import { workItemHandoffRecipientAvailable } from "../channels/workflow-participant-run-profile.js";
 import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
@@ -60,7 +61,7 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       title: step.title.slice(0, 250), status: step.status, participantLabel: step.toParticipantLabel.slice(0, 160),
       dependencyIds: step.metadata?.dependsOnStepIds?.slice(0, 20) ?? [], updatedAt: step.updatedAt,
       ...(!admissionBlocker && step.status === "queued"
-        ? { admissionBlocker: store.getWorkItemWorkflowAdmissionBlocker(workflow.id, step) } : {}),
+        ? { admissionBlocker: readStageAdmissionBlocker(store, step) } : {}),
       ...(includeEvidence ? {
         runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
         briefBasis: readStageBriefBasis(store, step),
@@ -72,6 +73,13 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       } : {}),
     })),
   };
+}
+
+function readStageAdmissionBlocker(store: RunStore, step: ChannelWorkflowStep): string | undefined {
+  const blocker = store.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step);
+  if ((!blocker || blocker === "work_item_handoff_pending") && step.metadata?.requiredPlanHandoffStepIds?.length
+    && !workItemHandoffRecipientAvailable(store, step)) return "work_item_handoff_recipient_unavailable";
+  return blocker;
 }
 
 function readStageHandoffs(

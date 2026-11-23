@@ -295,7 +295,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       if (started.code === "resource_conflict") {
         continue;
       }
-      if (started.code === "work_item_handoff_candidate_stale") {
+      if (started.code === "work_item_handoff_candidate_stale" || started.code === "work_item_handoff_recipient_unavailable") {
         blockedResults.push({ status: "blocked", workflow: currentWorkflow, workflowStep: latestCandidate, blocker: started.code });
         continue;
       }
