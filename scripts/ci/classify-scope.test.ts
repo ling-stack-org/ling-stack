@@ -340,6 +340,19 @@ test("macOS helper smoke follows explicit native surface paths", () => {
   assert.equal(classify(["native/unknown.rs"]).mode, "full");
 });
 
+test("README changes under a native surface are documentation", () => {
+  const readme = "apps/desktop/native/locked-use/README.md";
+  const documentation = classify([readme]);
+  assert.equal(documentation.mode, "docs");
+  assert.equal(documentation.macosNative, false);
+  assert.equal(documentation.macosHelper, false);
+
+  const mobile = classify([readme, "apps/mobile/src/App.tsx"]);
+  assert.deepEqual(mobile.packages, ["@ling-stack/mobile"]);
+  assert.equal(mobile.daemon, false);
+  assert.equal(mobile.macosNative, false);
+});
+
 test("Chrome extension and Mobile changes select their own checks", () => {
   const chrome = classify(["apps/chrome-extension/src/background.js"]);
   assert.deepEqual(chrome.packages, ["@ling-stack/chrome-extension"]);
@@ -638,9 +651,9 @@ test("verified local output deletions keep the changed paths and use the fast la
   assert.deepEqual(scope.files, [script, report]);
   assert.deepEqual(scope.packages, []);
   assert.equal(scope.assurance, false);
-  assert.match(scope.reason, /output cleanup/u);
+  assert.match(scope.reason, /local artifact cleanup/u);
   assert.equal(classify([report]).mode, "full");
-  assert.equal(classify([report], { deletedOutputFiles: [report], forceFull: true }).mode, "full");
+  assert.equal(classify([report], { deletedLocalArtifacts: [report], forceFull: true }).mode, "full");
 
   repo.write("packages/providers/src/capture.mjs", scriptSource);
   repo.commit();
@@ -664,6 +677,46 @@ test("local output additions and modifications retain full regression", t => {
   repo.write(notes, "# QA notes\n");
   repo.commit();
   assert.equal(repo.classify(base).mode, "full");
+});
+
+test("a Git-verified Codex environment deletion with native docs selects only common checks", t => {
+  const repo = repositoryFixture(t);
+  const environment = ".codex/environments/environment.toml";
+  const otherConfig = ".codex/environments/other.toml";
+  const readme = "apps/desktop/native/locked-use/README.md";
+  repo.write(environment, 'name = "Local checks"\n');
+  repo.write(otherConfig, 'name = "Other checks"\n');
+  repo.write(readme, "# Local checks\n");
+  const base = repo.commit();
+
+  repo.write(environment, 'name = "Updated checks"\n');
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+
+  repo.git("rm", environment);
+  repo.write(readme, "# Run checks from the terminal\n");
+  const cleanup = repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "docs");
+  assert.notEqual(scope.documentationOnly, true);
+  assert.deepEqual(scope.files, [environment, readme]);
+  assert.deepEqual(scope.packages, []);
+  assert.deepEqual(scope.testPackages, []);
+  assert.deepEqual(scope.typecheckPackages, []);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.macosNative, false);
+  assert.equal(scope.macosHelper, false);
+  assert.equal(repo.classify(base, "--force-full=true").mode, "full");
+  assert.equal(classify([environment]).mode, "full");
+
+  repo.git("rm", otherConfig);
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+
+  repo.write(environment, 'name = "Local checks"\n');
+  repo.write(otherConfig, 'name = "Other checks"\n');
+  repo.commit();
+  assert.equal(repo.classify(cleanup).mode, "full");
 });
 
 test("the Git boundary verifies old manifest identity before narrowing package edits", (t) => {
