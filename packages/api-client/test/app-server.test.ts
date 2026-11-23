@@ -10,6 +10,7 @@ class FakeSocket implements LingAppServerSocket {
   subscriptionWatermark?: string;
   subscriptionWindow?: { readonly requestedAfterSeq: number; readonly nextAfterSeq: number };
   subscriptionId = "sub_fixture";
+  serverInstanceId?: string;
   replayEvents: readonly { readonly cursor: string; readonly seq?: number }[] = [];
 
   send(data: string): void {
@@ -24,6 +25,7 @@ class FakeSocket implements LingAppServerSocket {
             protocolVersion: "ling-app-server/1",
             serverInfo: { name: "fixture", version: "1" },
             connectionId: "conn_fixture",
+            serverInstanceId: this.serverInstanceId,
             effectiveScopes: ["workItem.read", "workItem.control"],
             capabilities: ["workItem.read", "workItem.control"],
             limits: { maxInboundFrameBytes: 1024, maxOutboundFrameBytes: 1024 },
@@ -113,10 +115,12 @@ test("Ling App Server client negotiates, pings, reads and receives notifications
 
 test("Ling App Server client reconnects and resumes subscriptions from the latest cursor", async () => {
   const sockets: FakeSocket[] = [];
+  const restartNotices: unknown[] = [];
   const client = new LingAppServerClient({
     url: "ws://fixture/app-server/rpc",
     createSocket: () => {
       const socket = new FakeSocket();
+      socket.serverInstanceId = sockets.length < 2 ? "daemon-1" : "daemon-2";
       if (sockets.length > 0) {
         socket.enableSubscriptionResponses = true;
         socket.subscriptionId = "sub_reconnected";
@@ -130,6 +134,7 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
     reconnectDelayMs: 1,
     maxReconnectDelayMs: 5,
   });
+  client.onNotification(notice => { if (notice.method === "server/restarted") restartNotices.push(notice.params); });
 
   await client.connect();
   const first = sockets[0]!;
@@ -147,6 +152,7 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
   await waitForCondition(() => sockets.length === 2 && sockets[1]!.sent.some((request) => request.method === "workItem/subscribe"));
   const replay = sockets[1]!.sent.find((request) => request.method === "workItem/subscribe");
   assert.equal(replay?.params?.cursor, "3");
+  assert.deepEqual(restartNotices, []);
   await client.connect();
   sockets[1]!.emit("message", JSON.stringify({
     jsonrpc: "2.0", method: "workItem/replay/ready",
@@ -154,6 +160,7 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
   }));
   sockets[1]!.emit("close", {});
   await waitForCondition(() => sockets.length === 3 && sockets[2]!.sent.some((request) => request.method === "workItem/subscribe"));
+  assert.deepEqual(restartNotices, [{ previousServerInstanceId: "daemon-1", serverInstanceId: "daemon-2" }]);
   assert.equal(sockets[2]!.sent.find((request) => request.method === "workItem/subscribe")?.params?.cursor, "scoped-cursor-at-6");
   client.close();
 });

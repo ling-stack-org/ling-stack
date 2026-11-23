@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { parseUserInputAnswerCommandV1 } from "@ling-stack/contracts";
+import { parseUserInputAnswerCommandV1, validateLingAppServerNotificationParams } from "@ling-stack/contracts";
 import type {
   LingAppServerCandidateReference,
   AutomationRun,
@@ -3098,12 +3098,14 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.equal(taskBypass.status, 409);
   assert.equal((await taskBypass.json()).error, "work_item_workflow_replan_required");
   const replacement = { threadId: thread.id, planId: draft.id, mode: "workflow",
-    expectedRevision: draft.revision, workflowStepPreviews: [step("P02", "Implement the accepted successor contract")] };
+    expectedRevision: draft.revision, workflowStepPreviews: [
+      step("P02", "Implement the accepted successor contract"), step("P03", "Clarify the compatibility requirement"),
+    ] };
   await assert.rejects(client.call("plan/accept", { ...replacement, expectedRevision: draft.revision + 1 }), { code: "stale_revision" });
   const successor = await client.call<ProposedPlanActionResponse>("plan/accept", replacement);
   assert.ok(successor.workflowId);
-  const [newStep] = store.listChannelWorkflowSteps({ workflowId: successor.workflowId, complete: true });
-  assert.ok(newStep);
+  const [newStep, clarification] = store.listChannelWorkflowSteps({ workflowId: successor.workflowId, complete: true });
+  assert.ok(newStep && clarification);
   assert.equal(newStep.toParticipantId, "teammate_builtin_engineer");
   const startStep = (stepId: string) => post(`/workflow-steps/${stepId}/start`, { mode: "create_and_run_task" });
   const unbound = await startStep(newStep.id);
@@ -3159,9 +3161,22 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   await restored.call("workItem/subscribe", { workItemId: item.id, cursor: before.cursor });
   await waitFor(() => restored.notices.find(notice => notice.params?.event?.action === "work_item.workflow.linked"
     && notice.params.event.data?.previousWorkflowId === original.workflowId));
+  const moveQuestion = { workItemId: item.id, planRevision: boundSuccessor.workItem.planRevision,
+    waitingStepId: newStep.id, respondentStepId: clarification.id,
+    expectedWorkItemRevision: Number(boundSuccessor.workItem.revision), idempotencyKey: "move-question-to-successor",
+    deadlineAt: new Date(Date.now() + 120_000).toISOString(), question: "Does the predecessor allow the old contract?",
+    predecessorQuestion: { id: oldQuestion.id, revision: oldQuestion.collaborationRevision },
+  };
+  await assert.rejects(restored.call("workItem/question/ask", {
+    ...moveQuestion, predecessorQuestion: { ...moveQuestion.predecessorQuestion, revision: oldQuestion.collaborationRevision + 1 },
+  }), { code: "stale_revision" });
+  const moved = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/ask", moveQuestion);
+  assert.equal(moved.record.parentRecordId, oldQuestion.id);
+  assert.notEqual(moved.record.id, oldQuestion.id);
+  assert.equal((await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/ask", moveQuestion)).status, "replayed");
   const history = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/reply", {
     workItemId: item.id, questionId: oldQuestion.id, expectedQuestionRevision: oldQuestion.collaborationRevision,
-    expectedWorkItemRevision: Number(boundSuccessor.workItem.revision), idempotencyKey: "predecessor-late-reply",
+    expectedWorkItemRevision: moved.workItemRevision, idempotencyKey: "predecessor-late-reply",
     answer: "This answer applies to the old contract.",
   });
   assert.equal((history.record.payload as { historicalReason?: string }).historicalReason, "plan_superseded");
@@ -3172,16 +3187,28 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   const newStart = await runWorkflow(successor.workflowId);
   assert.equal((await newStart.json()).status, "started");
   const restoredStore = fixture.getStore();
+  await waitFor(() => restoredStore.getChannelWorkflowStep(clarification.id)?.status === "succeeded" ? true : undefined);
+  const waitingOnMovedQuestion = await startStep(newStep.id);
+  assert.equal(waitingOnMovedQuestion.status, 409);
+  assert.equal((await waitingOnMovedQuestion.json()).error, "work_item_stage_question_pending");
+  const current = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
+  await restored.call("workItem/question/reply", {
+    workItemId: item.id, questionId: moved.record.id, expectedQuestionRevision: moved.record.collaborationRevision,
+    expectedWorkItemRevision: Number(current.workItem.revision), idempotencyKey: "successor-question-reply",
+    answer: "The accepted revision preserves the compatibility clause.",
+  });
   await waitFor(() => restoredStore.getChannelWorkflowStep(newStep.id)?.status === "succeeded" ? true : undefined);
   assert.equal(restoredStore.listRuns({ workflowStepId: p01.id }).length, 1);
   assert.equal(restoredStore.listRuns({ workflowStepId: p02.id }).length, 0);
   const successorRuns = restoredStore.listRuns({ workflowStepId: newStep.id });
   assert.equal(successorRuns.length, 1);
   assert.equal(successorRuns[0]?.teammateId, newStep.toParticipantId);
-  assert.equal(provider.requests.length, 3);
-  assert.match(JSON.stringify(provider.requests[2]), /Retained upstream results from the predecessor Plan/u);
-  assert.ok(JSON.stringify(provider.requests[2]).includes(retainedSource.metadata.outputArtifactId));
-  assert.doesNotMatch(JSON.stringify(provider.requests[2]), /predecessor allow the old contract|answer applies to the old contract/u);
+  assert.equal(provider.requests.length, 4);
+  assert.match(JSON.stringify(provider.requests[2]), /Does the predecessor allow the old contract/u);
+  assert.match(JSON.stringify(provider.requests[3]), /Retained upstream results from the predecessor Plan/u);
+  assert.ok(JSON.stringify(provider.requests[3]).includes(retainedSource.metadata.outputArtifactId));
+  assert.match(JSON.stringify(provider.requests[3]), /accepted revision preserves the compatibility clause/u);
+  assert.doesNotMatch(JSON.stringify(provider.requests[3]), /answer applies to the old contract/u);
 });
 
 async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string) {
@@ -3820,6 +3847,8 @@ test("native CLI stdio and WebSocket share a Turn and replay its events after re
   assert.equal(session.protocolVersion, "ling-app-server/1");
   const { thread } = await host.call<ThreadRead>("thread/start", { title: "Native transport" });
   const ws = await fixture.connect();
+  assert.ok(session.serverInstanceId);
+  assert.equal(session.serverInstanceId, ws.initialization?.serverInstanceId);
   const { cursor } = await ws.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
   const { disposition } = await host.call<LingAppServerSubscriptionResult>("thread/subscribe", { threadId: thread.id, cursor });
   assert.equal(disposition, "complete");
@@ -3829,6 +3858,7 @@ test("native CLI stdio and WebSocket share a Turn and replay its events after re
   const completion = await waitFor(() => host.notices.find(notice =>
     notice.method === "turn/completed" && notice.params?.subject?.turnId === turn.id));
   assert.ok(completion.params?.eventId);
+  assert.ok(validateLingAppServerNotificationParams("turn/completed", completion.params).ok);
   assert.equal(provider.requests.length, 1);
   child.stdin.end();
   const [exit, signal] = await childClosed;
@@ -3836,6 +3866,8 @@ test("native CLI stdio and WebSocket share a Turn and replay its events after re
   assert.equal(signal, null);
   await fixture.restart();
   const restored = await fixture.connect();
+  assert.ok(restored.initialization?.serverInstanceId);
+  assert.notEqual(restored.initialization.serverInstanceId, session.serverInstanceId);
   const snapshot = await restored.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
   assert.equal(snapshot.turn?.id, turn.id);
   assert.equal(snapshot.turn?.status, "succeeded");

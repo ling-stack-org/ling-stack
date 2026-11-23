@@ -6,17 +6,18 @@ import {
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
+import { workflowStepParticipantAvailable } from "../channels/workflow-participant-run-profile.js";
 import { readWorkItemWorkflowBinding } from "./workflow-stages.js";
 
 export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerStageQuestionAskParams, now: string) {
   const { workItemId, planRevision, waitingStepId, respondentStepId, deadlineAt, expectedWorkItemRevision,
-    idempotencyKey, answerFromStageResult } = input;
+    idempotencyKey, answerFromStageResult, predecessorQuestion } = input;
   const question = readQuestionText(input.question, idempotencyKey, expectedWorkItemRevision);
   const item = store.getWorkItem(workItemId);
   if (!item) throw new HttpError(404, "workspace_binding_invalid", "The Work Item is unavailable.");
-  const id = workItemStageQuestionId(planRevision, waitingStepId, idempotencyKey);
+  const id = workItemStageQuestionId(planRevision, waitingStepId, predecessorQuestion ? `predecessor:${predecessorQuestion.id}` : idempotencyKey);
   const payload = { planRevision, waitingStepId, respondentStepId, question, deadlineAt, requestRevision: expectedWorkItemRevision,
-    ...(answerFromStageResult ? { answerFromStageResult: true } : {}) };
+    ...(answerFromStageResult ? { answerFromStageResult: true } : {}), ...(predecessorQuestion ? { predecessorQuestion } : {}) };
   const prior = readWorkItemStageQuestion(store, workItemId, id);
   if (prior) return replay(prior.record, idempotencyKey, payload, item.revision);
 
@@ -31,9 +32,26 @@ export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerSt
     || waiting.workflowId !== item.workflowId || respondent.workflowId !== item.workflowId) {
     throw new HttpError(409, "stale_revision", "Choose stages from the current accepted Plan.");
   }
-  if (item.control.state !== "active" || ["done", "archived", "cancelled", "superseded"].includes(item.status)
+  const transferring = predecessorQuestion !== undefined;
+  if (item.control.state !== (transferring ? "paused" : "active") || ["done", "archived", "cancelled", "superseded"].includes(item.status)
     || [waiting, respondent].some(step => step.status !== "queued" || store.getBlockingResourceLease("workflow_step", step.id))) {
     throw new HttpError(409, "resume_blocked", "Both stages must be waiting for their initial Workflow admission.");
+  }
+  if (predecessorQuestion) {
+    const current = readWorkItemWorkflowBinding(store, item.workflowId);
+    const previous = current?.previousWorkflowId && readWorkItemWorkflowBinding(store, current.previousWorkflowId);
+    const source = readWorkItemStageQuestion(store, workItemId, predecessorQuestion.id);
+    const predecessorWaiting = source && store.getChannelWorkflowStep(source.question.waitingStepId);
+    if (!previous || !source || source.reply || source.historicalReply
+      || source.question.planRevision !== `${previous.planId}:${previous.planRevision}`
+      || source.record.collaborationRevision !== predecessorQuestion.revision || source.question.question !== question
+      || workItemStageQuestionExpired(source.question, Date.parse(now))
+      || predecessorWaiting?.workflowId !== previous.workflowId || predecessorWaiting.metadata?.planStageId !== waiting.metadata.planStageId) {
+      throw new HttpError(409, "stale_revision", "The source question is no longer pending for this successor stage.");
+    }
+    if (!workflowStepParticipantAvailable(store, respondent)) {
+      throw new HttpError(409, "resume_blocked", "The assigned participant cannot receive the question.");
+    }
   }
   if (answerFromStageResult && respondent.metadata?.planBallotKey) {
     throw new HttpError(409, "resume_blocked", "A ballot stage can only return its ballot.");
@@ -52,6 +70,7 @@ export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerSt
   }
   return appendQuestion(store, { id, workItemId, expectedWorkItemRevision, idempotencyKey, kind: "question", action: "created",
     actorId: "local-user", payload, visibility: "participants",
+    ...(predecessorQuestion ? { parentRecordId: predecessorQuestion.id } : {}),
     sourceRefs: [{ type: "workflow_step", id: waitingStepId }, { type: "workflow_step", id: respondentStepId }],
   }, now);
 }
@@ -139,7 +158,7 @@ function readQuestionText(value: string, key: string, revision: number): string 
 
 function replay(record: WorkItemCollaborationRecord, key: string, payload: unknown, workItemRevision: number,
   originalPayload: unknown = record.payload): AppendWorkItemCollaborationResult {
-  if (record.idempotencyKey !== key) throw new HttpError(409, "stale_revision", "The question already has a reply.");
+  if (record.idempotencyKey !== key) throw new HttpError(409, "stale_revision", "This question operation has already been accepted.");
   if (JSON.stringify(originalPayload) !== JSON.stringify(payload)) throw new HttpError(409, "idempotency_conflict", "The request key belongs to different input.");
   return { status: "replayed" as const, record: { ...record, workItemRevision }, workItemRevision };
 }

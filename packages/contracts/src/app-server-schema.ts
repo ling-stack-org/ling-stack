@@ -1,8 +1,13 @@
 import {
   LING_APP_SERVER_METHODS,
+  LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
+  LING_APP_SERVER_SERVER_REQUEST_METHODS,
   isLingAppServerMethod,
+  isLingAppServerNotificationMethod,
   type LingAppServerMethod,
+  type LingAppServerNotificationMethod,
+  type LingAppServerServerRequestMethod,
 } from "./app-server.js";
 
 /** The subset of JSON Schema used by the App Server contract registry. */
@@ -29,6 +34,8 @@ export interface LingAppServerSchemaDocument {
   readonly title: "Ling App Server protocol";
   readonly protocolVersion: "ling-app-server/1";
   readonly methods: Readonly<Record<LingAppServerMethod, LingAppServerMethodSchema>>;
+  readonly notifications: Readonly<Record<LingAppServerNotificationMethod, LingAppServerJsonSchema>>;
+  readonly serverRequests: Readonly<Record<LingAppServerServerRequestMethod, LingAppServerJsonSchema>>;
 }
 
 export interface LingAppServerValidationResult {
@@ -44,6 +51,12 @@ const booleanSchema: LingAppServerJsonSchema = { type: "boolean" };
 const arraySchema: LingAppServerJsonSchema = { type: "array" };
 const stringArraySchema: LingAppServerJsonSchema = { type: "array", items: stringSchema };
 
+const clientInfo = objectWith({ name: stringSchema, version: stringSchema }, ["name", "version"]);
+const handshakeLimits = objectWith({ maxInboundFrameBytes: integerSchema, maxOutboundFrameBytes: integerSchema,
+  maxPendingRequests: integerSchema, maxSubscriptions: integerSchema, maxBufferedBytes: integerSchema },
+["maxInboundFrameBytes", "maxOutboundFrameBytes"]);
+const pingResult = objectWith({ ok: { enum: [true] }, connectionId: stringSchema, serverTime: stringSchema },
+  ["ok", "connectionId", "serverTime"]);
 const threadTarget = { threadId: stringSchema };
 const workItemTarget = { workItemId: stringSchema };
 const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: integerSchema };
@@ -123,15 +136,15 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "initialize":
       return {
         params: objectWith({ protocolVersions: stringArraySchema,
-          clientInfo: objectWith({ name: stringSchema, version: stringSchema }, ["name", "version"]),
+          clientInfo,
           requiredCapabilities: stringArraySchema, optionalCapabilities: stringArraySchema, workspaceScope: stringArraySchema }, ["protocolVersions"]),
         result: objectWith({ protocolVersion: { enum: [LING_APP_SERVER_PROTOCOL_VERSION] }, connectionId: stringSchema,
-          serverInfo: objectSchema, effectiveScopes: stringArraySchema, capabilities: stringArraySchema, limits: objectSchema },
+          serverInfo: clientInfo, effectiveScopes: stringArraySchema, capabilities: stringArraySchema, limits: handshakeLimits,
+          serverInstanceId: stringSchema, storeIncarnation: stringSchema, authorizationEpoch: stringSchema },
         ["protocolVersion", "connectionId", "serverInfo", "effectiveScopes", "capabilities", "limits"]),
       };
     case "server/ping":
-      return { params: objectSchema, result: objectWith({ ok: { enum: [true] }, connectionId: stringSchema, serverTime: stringSchema },
-        ["ok", "connectionId", "serverTime"]) };
+      return { params: objectSchema, result: pingResult };
     case "server/recovery/read":
       return { params: objectWith({ cwd: stringSchema }), result: serverRecoveryResult };
     case "server/recovery/prepare":
@@ -289,7 +302,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith(collaborationAppend, ["workItemId"]), result };
     case "workItem/question/ask":
       return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, waitingStepId: stringSchema,
-        respondentStepId: stringSchema, question: stringSchema, deadlineAt: stringSchema, answerFromStageResult: booleanSchema }, ["workItemId"]), result };
+        respondentStepId: stringSchema, question: stringSchema, deadlineAt: stringSchema, answerFromStageResult: booleanSchema,
+        predecessorQuestion: objectWith({ id: stringSchema, revision: integerSchema }, ["id", "revision"]) }, ["workItemId"]), result };
     case "workItem/question/reply":
       return { params: objectWith({ ...collaborationAppend, questionId: stringSchema, expectedQuestionRevision: integerSchema,
         answer: stringSchema }, ["workItemId"]), result };
@@ -463,6 +477,99 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
   }
 }
 
+const controlPlaneEvent = objectWith({
+  seq: integerSchema, workspaceId: stringSchema, cwd: stringSchema, ts: stringSchema, domain: stringSchema,
+  entityType: stringSchema, entityId: stringSchema, action: stringSchema, data: objectSchema, idempotencyKey: stringSchema,
+}, ["seq", "workspaceId", "cwd", "ts", "domain", "entityType", "entityId", "action", "data"]);
+const eventSubject = { kind: { enum: ["thread", "workItem"] }, ...threadTarget, ...workItemTarget, turnId: stringSchema };
+const noticeCursor = { subscriptionId: stringSchema, cursor: stringSchema };
+const durableNotice = objectWith({
+  ...noticeCursor, workspaceId: stringSchema, eventId: stringSchema, subject: objectWith(eventSubject, ["kind"]),
+  revision: stringSchema, ...threadTarget, runId: stringSchema, turnId: stringSchema, itemId: stringSchema,
+  event: controlPlaneEvent, payload: objectSchema,
+}, ["subscriptionId", "cursor", "workspaceId", "eventId", "subject", "revision", "event", "payload"]);
+const directNotice = { cwd: stringSchema, ...workItemTarget, cursor: stringSchema, eventId: stringSchema };
+const replayWindow = objectWith({
+  disposition: { enum: ["complete", "snapshot_required"] },
+  requestedAfterSeq: integerSchema, replayFloorSeq: integerSchema, upperBoundSeq: integerSchema, nextAfterSeq: integerSchema,
+  reason: { enum: ["cursor_unavailable", "retention_gap", "window_exceeded"] },
+}, ["disposition", "requestedAfterSeq", "replayFloorSeq", "upperBoundSeq", "nextAfterSeq"]);
+const taskNotice = objectWith({ taskId: stringSchema, cursor: stringSchema, eventType: stringSchema,
+  createdAt: stringSchema, payload: {} }, ["taskId", "cursor", "eventType", "createdAt"]);
+
+function notificationSchemaFor(method: LingAppServerNotificationMethod): LingAppServerJsonSchema {
+  switch (method) {
+    case "initialized":
+      return objectSchema;
+    case "server/draining":
+      return objectWith({ drainId: stringSchema, startedAt: stringSchema }, ["drainId", "startedAt"]);
+    case "server/restarted":
+      return objectWith({ previousServerInstanceId: stringSchema, serverInstanceId: stringSchema,
+        storeIncarnation: stringSchema, authorizationEpoch: stringSchema }, ["previousServerInstanceId", "serverInstanceId"]);
+    case "server/warning":
+      return objectWith({ code: stringSchema, message: stringSchema }, ["message"]);
+    case "server/pong":
+      return pingResult;
+    case "thread/replay/ready":
+    case "workItem/replay/ready":
+      return objectWith({ ...noticeCursor, window: replayWindow }, ["subscriptionId", "cursor", "window"]);
+    case "thread/resync/required":
+    case "workItem/resync/required":
+      return { oneOf: [
+        objectWith({ ...threadTarget, ...workItemTarget, workspaceId: stringSchema, reason: { enum: ["authorization_changed"] } }, ["reason"]),
+        objectWith({ ...threadTarget, ...workItemTarget, workspaceId: stringSchema, disposition: { enum: ["snapshot_required"] },
+          window: replayWindow, reason: { enum: ["cursor_unavailable", "retention_gap", "window_exceeded"] } }, ["disposition"]),
+      ] };
+    case "item/delta":
+      return objectWith({ subscriptionId: stringSchema, workspaceId: stringSchema, subject: objectWith({ kind: { enum: ["thread"] },
+        ...threadTarget, turnId: stringSchema }, ["kind", "threadId", "turnId"]), runId: stringSchema, itemId: stringSchema,
+        streamEpoch: stringSchema, offset: integerSchema, text: stringSchema, truncated: { enum: [true] },
+      }, ["subscriptionId", "workspaceId", "subject", "runId", "itemId", "streamEpoch", "offset", "text"]);
+    case "workItem/control/updated":
+      return { oneOf: [durableNotice, objectWith({ ...directNotice, workItem: objectSchema }, [...Object.keys(directNotice), "workItem"])] };
+    case "workItem/deliberation/updated":
+    case "workItem/stage/updated":
+    case "workItem/brief/updated":
+    case "workItem/coordination/updated":
+    case "workItem/message/updated":
+    case "workItem/question/updated":
+    case "workItem/handoff/updated":
+      return { oneOf: [durableNotice, objectWith({ ...directNotice, record: objectSchema }, [...Object.keys(directNotice), "record"])] };
+    case "externalAgent/registered":
+      return objectWith({ registrationId: stringSchema, agentId: stringSchema, authorizationEpoch: stringSchema,
+        acceptedCapabilities: stringArraySchema, deniedCapabilities: stringArraySchema },
+      ["registrationId", "agentId", "authorizationEpoch", "acceptedCapabilities", "deniedCapabilities"]);
+    case "externalAgent/task/started":
+      return { oneOf: [taskNotice, objectWith({ task: objectSchema }, ["task"])] };
+    case "externalAgent/task/reconnected":
+      return objectWith({ task: objectSchema, resyncRequired: booleanSchema, events: arraySchema, reason: stringSchema }, ["task", "resyncRequired"]);
+    case "externalAgent/task/updated":
+    case "externalAgent/task/unknown":
+      return taskNotice;
+    case "$/control_plane_event":
+      return objectWith({ ...noticeCursor, event: controlPlaneEvent }, ["subscriptionId", "event"]);
+    case "$/run_event":
+      return { oneOf: [
+        objectWith({ kind: { enum: ["ready"] }, data: {} }, ["kind", "data"]),
+        objectWith({ kind: { enum: ["event"] }, event: stringSchema, data: {} }, ["kind", "event", "data"]),
+        objectWith({ kind: { enum: ["error"] }, statusCode: integerSchema, body: {} }, ["kind", "statusCode", "body"]),
+        objectWith({ kind: { enum: ["end"] } }, ["kind"]),
+      ] };
+    default:
+      return durableNotice;
+  }
+}
+
+const serverRequestSchemas: LingAppServerSchemaDocument["serverRequests"] = {
+  "approval/requestDecision": objectWith({ approvalId: stringSchema, pendingId: stringSchema, revision: stringSchema,
+    ...threadTarget, runId: stringSchema, turnId: stringSchema }, ["approvalId", "pendingId", "revision"]),
+  "input/requestAnswer": objectWith({ pendingId: stringSchema, ...threadTarget, itemId: stringSchema,
+    request: objectWith({ requestId: stringSchema, status: { enum: ["pending"] } }, ["requestId", "status"]) },
+  ["pendingId", "threadId", "itemId", "request"]),
+};
+const notificationSchemas = Object.fromEntries(LING_APP_SERVER_NOTIFICATION_METHODS.map(method => [method, notificationSchemaFor(method)])) as
+  Record<LingAppServerNotificationMethod, LingAppServerJsonSchema>;
+
 export const LING_APP_SERVER_METHOD_SCHEMAS: Readonly<Record<LingAppServerMethod, LingAppServerMethodSchema>> =
   Object.fromEntries(LING_APP_SERVER_METHODS.map(method => [method, schemaFor(method)])) as Record<LingAppServerMethod, LingAppServerMethodSchema>;
 
@@ -472,6 +579,8 @@ export function getLingAppServerSchema(): LingAppServerSchemaDocument {
     title: "Ling App Server protocol",
     protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
     methods: LING_APP_SERVER_METHOD_SCHEMAS,
+    notifications: notificationSchemas,
+    serverRequests: serverRequestSchemas,
   };
 }
 
@@ -482,6 +591,18 @@ export function validateLingAppServerParams(method: string, params: unknown): Li
 
 export function validateLingAppServerResult(method: LingAppServerMethod, result: unknown): LingAppServerValidationResult {
   return validateAgainstSchema(result, LING_APP_SERVER_METHOD_SCHEMAS[method].result, "result");
+}
+
+export function validateLingAppServerNotificationParams(method: string, params: unknown): LingAppServerValidationResult {
+  if (!isLingAppServerNotificationMethod(method)) return { ok: false, path: "method", message: "unknown App Server notification" };
+  return validateAgainstSchema(method === "initialized" && params === undefined ? {} : params, notificationSchemas[method], "params");
+}
+
+export function validateLingAppServerServerRequestParams(method: string, params: unknown): LingAppServerValidationResult {
+  if (!LING_APP_SERVER_SERVER_REQUEST_METHODS.some(registered => registered === method)) {
+    return { ok: false, path: "method", message: "unknown App Server server request" };
+  }
+  return validateAgainstSchema(params, serverRequestSchemas[method as LingAppServerServerRequestMethod], "params");
 }
 
 function validateAgainstSchema(value: unknown, schema: LingAppServerJsonSchema, path: string): LingAppServerValidationResult {

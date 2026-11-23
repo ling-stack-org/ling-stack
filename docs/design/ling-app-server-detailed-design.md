@@ -50,7 +50,7 @@ App Server grant 使用 `las1.<grantId>.<secret>` bearer 形式。Daemon 只在�
 
 计划停机先广播 `server/draining`，携带 `drainId`、原因、预计截止时间、最后可接受副作用请求的时间和建议的恢复游标。进入 draining 后拒绝新的 Work Item 派发、Run/Workflow/External Agent/Delivery 副作用和新的控制宿主写入，返回 `server_draining` 与原幂等键可重试标记。读取、快照、回放、审批查询、对账和已受理 owner 的收尾请求继续工作到截止时间。Daemon 在截止前等待协议请求和连接出站队列排空，不等待任意 Run 无限结束。Run、审批、未知效果和订阅由 Daemon 持久化后再关闭连接。
 
-客户端可发送标准 JSON-RPC `$/cancelRequest`，取消尚未完成的传输请求或读取等待。它只改变该请求的等待结果，不撤销已经提交的 Work Item、Run、Tool、Delivery 或 Approval 副作用。需要停止实际工作时，客户端必须调用对应的 `turn/interrupt`、`workItem/pause`、`workItem/cancel` 或 owner 控制方法。服务端发送 `server/restarted` 时携带新的 `storeIncarnation`、授权 epoch 和建议的 resync 原因。非计划崩溃不会伪造该通知，客户端在重新 `initialize` 时比较实例和游标并按 `snapshot_required` 恢复。
+客户端可发送标准 JSON-RPC `$/cancelRequest`，取消尚未完成的传输请求或读取等待。需要停止实际工作时，客户端通过 `turn/interrupt`、`workItem/pause`、`workItem/cancel` 或原所有者的控制方法办理。同一 Daemon 的监听器使用同一个 `serverInstanceId`。TypeScript 客户端在重连握手后发现服务实例变化时，发出 `server/restarted`，携带前后实例 ID、当前存储代次和授权代次。订阅按原游标恢复，游标失效时重新读取授权快照。
 
 ## 2. 协议标识、方法与结果
 

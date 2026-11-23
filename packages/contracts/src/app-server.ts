@@ -432,6 +432,14 @@ export interface LingAppServerInitializeResult {
   readonly effectiveScopes: readonly string[];
   readonly capabilities: readonly LingAppServerCapability[];
   readonly limits: LingAppServerLimits;
+  readonly serverInstanceId?: string;
+  readonly storeIncarnation?: string;
+  readonly authorizationEpoch?: string;
+}
+
+export interface LingAppServerRestarted {
+  readonly previousServerInstanceId: string;
+  readonly serverInstanceId: string;
   readonly storeIncarnation?: string;
   readonly authorizationEpoch?: string;
 }
@@ -976,6 +984,7 @@ export interface LingAppServerStageQuestionAskParams {
   readonly question: string;
   readonly deadlineAt: string;
   readonly answerFromStageResult?: boolean;
+  readonly predecessorQuestion?: { readonly id: string; readonly revision: number };
   readonly idempotencyKey: string;
 }
 
@@ -1066,10 +1075,13 @@ export interface LingAppServerDeliberationDecideParams extends LingAppServerDeli
     | { readonly disposition: "deferred" | "replan_required" };
 }
 
+export const LING_APP_SERVER_SERVER_REQUEST_METHODS = ["approval/requestDecision", "input/requestAnswer"] as const;
+export type LingAppServerServerRequestMethod = (typeof LING_APP_SERVER_SERVER_REQUEST_METHODS)[number];
+
 export interface LingAppServerServerRequest<Params = unknown> {
   readonly jsonrpc: "2.0";
   readonly id: LingAppServerJsonRpcId;
-  readonly method: "approval/requestDecision" | "input/requestAnswer";
+  readonly method: LingAppServerServerRequestMethod;
   readonly params: Params;
 }
 

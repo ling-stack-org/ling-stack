@@ -61,7 +61,8 @@ import {
   type LocalServiceStatus,
   type LocalStackStatus,
 } from "./local/services.js";
-import { getLingAppServerSchema, isLingAppServerMethod, LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
+import { getLingAppServerSchema, isLingAppServerMethod, isLingAppServerNotificationMethod, LING_APP_SERVER_SERVER_REQUEST_METHODS,
+  LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
@@ -259,11 +260,16 @@ export async function main(): Promise<void> {
 async function handleAppServer(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [mode = "stdio", socketPath, ...rest] = args;
   if (mode === "schema") {
-    if (rest.length || socketPath !== undefined && !isLingAppServerMethod(socketPath)) {
+    const document = getLingAppServerSchema();
+    const serverRequest = LING_APP_SERVER_SERVER_REQUEST_METHODS.find(method => method === socketPath);
+    const schema = socketPath === undefined ? document
+      : isLingAppServerMethod(socketPath) ? document.methods[socketPath]
+        : isLingAppServerNotificationMethod(socketPath) ? document.notifications[socketPath]
+          : serverRequest ? document.serverRequests[serverRequest] : undefined;
+    if (rest.length || !schema) {
       throw new CliError(2, "bad_usage", "Usage: ling-stack app-server schema [method]");
     }
-    const document = getLingAppServerSchema();
-    printJson(socketPath === undefined ? document : document.methods[socketPath]);
+    printJson(schema);
     return 0;
   }
   const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };

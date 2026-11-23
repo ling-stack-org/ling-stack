@@ -187,6 +187,7 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const appServerConnectionsByContext = new WeakMap<DaemonContext, Set<RpcConnection>>();
+const appServerInstanceIds = new WeakMap<DaemonContext, string>();
 const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
   "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
@@ -227,6 +228,7 @@ export function attachRpcWebSocketServer(
   const appServerConnections = new Set<RpcConnection>();
   const daemonConnections = appServerConnectionsByContext.get(context) ?? new Set<RpcConnection>();
   appServerConnectionsByContext.set(context, daemonConnections);
+  if (!appServerInstanceIds.has(context)) appServerInstanceIds.set(context, randomUUID());
   const remote = Boolean(options.permitsRemoteUpgrade);
   let closed = false;
   let draining = false;
@@ -533,6 +535,7 @@ class RpcConnection {
         return this.appServer ? {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
+          serverInstanceId: appServerInstanceIds.get(this.context),
           connectionId: this.connectionId,
           effectiveScopes: this.grant?.scopes ?? ["controlPlane.read",
             ...(this.authenticated ? ["runs.control", "approval.decide", "input.respond", "verification.execute"] : [])],
@@ -1504,11 +1507,14 @@ class RpcConnection {
       expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
     };
     const now = new Date().toISOString();
+    const predecessor = record.predecessorQuestion === undefined ? undefined : readParamsRecord(record.predecessorQuestion);
     if (action === "reply") appServerRecoveryFor(this.context.config, store)?.assertReady();
     const { event, ...receipt } = action === "ask" ? askWorkItemStageQuestion(store, {
       ...basis, planRevision: readStringField(record, "planRevision"), waitingStepId: readStringField(record, "waitingStepId"),
       respondentStepId: readStringField(record, "respondentStepId"), question: readStringField(record, "question"),
       deadlineAt: readStringField(record, "deadlineAt"), answerFromStageResult: record.answerFromStageResult === true,
+      ...(predecessor ? { predecessorQuestion: { id: readStringField(predecessor, "id"),
+        revision: readIntegerField(predecessor, "revision", "revision") } } : {}),
     }, now) : replyToWorkItemStageQuestion(store, {
       ...basis, questionId: readStringField(record, "questionId"), answer: readStringField(record, "answer"),
       expectedQuestionRevision: readIntegerField(record, "expectedQuestionRevision", "expectedQuestionRevision"),

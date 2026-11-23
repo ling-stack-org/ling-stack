@@ -208,6 +208,7 @@ export class LingAppServerClient {
   private manuallyClosed = false;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private reconnectAttempt = 0;
+  private serverInstanceId?: string;
   private readonly subscriptions = new Map<string, TrackedSubscription>();
 
   constructor(options: LingAppServerClientOptions) {
@@ -752,9 +753,22 @@ export class LingAppServerClient {
       if (initialized?.protocolVersion !== "ling-app-server/1") {
         throw Object.assign(new Error("The endpoint does not support Ling App Server protocol 1."), { code: "protocol_version_unsupported" });
       }
+      if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
       socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+      const previousServerInstanceId = this.serverInstanceId;
+      this.serverInstanceId = initialized.serverInstanceId;
       this.reconnectAttempt = 0;
       this.emitConnectionState({ state: "connected", authorizationEpoch: initialized.authorizationEpoch, storeIncarnation: initialized.storeIncarnation });
+      if (this.socket === socket && previousServerInstanceId && initialized.serverInstanceId
+        && previousServerInstanceId !== initialized.serverInstanceId) {
+        for (const listener of this.notificationListeners) listener({
+          jsonrpc: "2.0", method: "server/restarted", params: {
+            previousServerInstanceId, serverInstanceId: initialized.serverInstanceId,
+            ...(initialized.storeIncarnation ? { storeIncarnation: initialized.storeIncarnation } : {}),
+            ...(initialized.authorizationEpoch ? { authorizationEpoch: initialized.authorizationEpoch } : {}),
+          },
+        });
+      }
       await this.replaySubscriptions(socket);
       if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
       return initialized;
