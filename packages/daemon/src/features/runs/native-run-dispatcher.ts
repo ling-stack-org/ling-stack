@@ -225,6 +225,9 @@ async function executeNativeRunRequest(
     }
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
+    if (runRequest.workflowStepId && store.getChannelWorkflowStep(runRequest.workflowStepId)?.metadata?.planBallotKey) {
+      throw new HttpError(409, "workflow_ballot_native_unavailable", "This ballot requires a Runner that can seal the vote in the Host.");
+    }
     if (assertWorkflowSafetyRequest(store, runRequest)?.profile === "pi_host_readonly_v1") {
       throw new HttpError(409, "workflow_safety_profile_unavailable", "Native execution cannot enforce the approved Host read profile.");
     }

@@ -33,7 +33,7 @@
 - Plan 转 Workflow 时可指定稳定的 `stageId`、`dependsOnStageIds`、`requiredDecision` 和 `requiredTools`。接受事务将阶段依赖映射到真实步骤。循环、缺失的前置阶段、无效选项和未知工具会拒绝转换。Runner 准入仍按频道和当前参与者权限检查工具。
 - 接受绑定计划的后继 Workflow 后，旧 Workflow 停止新阶段和工具准入，后继 Workflow 等待重新绑定。操作方暂停工作项并核对旧 Run、Host 效果和租约收敛后，用 `workItem/workflow/bind` 的 `previousWorkflowId` 提交绑定。重启和并发重发复用绑定回执，原计划和阶段记录保留 Workflow ID。恢复工作项后，新 Workflow 使用自己的派发记录。
 - Work Board 与 App Server 使用同一套阶段、简报、阻塞和运行证据投影。阶段简报的来源是已提交的步骤状态迁移。看板支持分页与重试，并随 `work_items` 事件刷新。
-- 声明了裁决条件的步骤等待该 Work Item、已接受 Plan 和步骤的裁决回执。计划可指定独立的投票阶段与法定人数，也可在前置阶段完成时自动开启审议。Workflow 按原阶段负责人执行投票，各投票 Run 的工具列表为空。Host 在投票阶段全部结束后从终态 Run 核对选项和身份。协调者可以在裁决前查看票数和是否平票，裁决收据保留统计结果。回归覆盖等待票数、平票后的人工裁决、重启和派发一次。独立 QA 仍按自己的前置条件执行。
+- 声明了裁决条件的步骤等待该 Work Item、已接受 Plan 和步骤的裁决回执。计划可指定独立的投票阶段与法定人数，也可在前置阶段完成时自动开启审议。Workflow 按原阶段负责人执行投票，各投票 Run 的工具列表为空。Host 把选票保存在所属 Attempt 的私有回执中，公开 Run 事件提供运行进度。投票阶段全部结束后，Host 按成功 Attempt 汇总票数。协调者可以在裁决前查看票数和是否平票，裁决收据保留统计结果。回归覆盖半数运行完成时的公开事件、平票后的人工裁决、重启和派发一次。独立 QA 仍按自己的前置条件执行。
 - 浏览器连接真实 Daemon 时，Work Board 在 P02 上显示工程与 QA 的平票。裁决后通过现有 Control Plane 推送刷新同一详情，呈现选项、裁决依据和执行结果。
 - 计划可用 `handoffFromStageIds` 要求接收方先验收上游 Workflow 的结果包。工作看板、App Server、SDK 和 MCP 按当前计划、两个阶段版本及 Work Item revision 接受或退回。并发 HTTP/RPC 提交与重启复用同一回执。Chromium 通过真实 Daemon 接受 QA 交接并退回另一条评审交接。Daemon 在接受和下游准入时核对所提供的 Git 候选摘要和当前参与人。联合回归覆盖 Git 漂移、接手人被停用、恢复权限后只派发一次，以及原负责人不可用时通过后继计划改派并引用已验收的上游产物。
 - `workItem/plan/change/request` 按已接受的阶段依赖生成准入暂停范围，`workItem/plan/change/withdraw` 可释放这一项暂停。暂停、回执和事件一起提交。联合回归覆盖 P01 改动暂停下游阶段，P02 改动期间 QA 可完成交接，重启后恢复原暂停，以及后继 Workflow 绑定时按确认的变更 ID 解除暂停。
@@ -43,7 +43,7 @@
 - 协调者可在两项待执行阶段之间记录同级问答。提问只暂停等待答复的阶段。显式启用阶段结果答复时，Daemon 核对接手人、封存输入和成功结果包，以该 Agent 的原 Run 为答复来源。后继计划绑定且工作项仍暂停时，协调者可把有版本的未答问题交给新计划中的接手人。迟到和旧计划答复留在原问题记录。联合回归核对重启后的回执，并验证只有当前问题的适用答复才释放阶段等待。
 - 操作方通过 SDK 为已绑定工作项的活跃 Pi 阶段签发 Run/Attempt grant。持有该 grant 的阶段客户端可以发问、作为指定答复方回答、发送定向消息并读取自己的协作回执。受支持的 Pi 阶段自动加载 `work_item_coordination`，以其当前 Run/Attempt 查看阶段、发送消息、提问和答复。Daemon 在 SQLite 写事务核对当前归属，Run 的效果账本校验已提交的工具回执。两个并行只读阶段的联合回归验证模型可直接交换消息和问答，重启后可读取原回执，对应阶段保留可核对的执行归属。 [App Server 验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 - `workItem/create` 可按原生 ID 显式挂接现有频道 Task 或 AutomationRun。Host 从原执行记录确认归属和状态。并发提交及重启仍读取同一条 Work Item；原执行所有者持有开始、取消和恢复权限。验收中先运行一次 Automation，再从两个客户端挂接同一执行，Provider 总调用数为一次。
-- 频道 Turn 可以按工作项 ID 和已观察版本提交普通补充。HTTP 和 SSE 使用同一份消息及证据回执。定向回归核对跨频道拒绝、过期版本回滚、同键并发提交、Work Item 事件和零 Run 派发。接受的计划仍通过协调入口处理阶段投递和需求变更。
+- 频道 Turn 可以按工作项 ID 和已观察版本提交普通补充。HTTP 和 SSE 使用同一份消息及证据回执。定向回归核对跨频道拒绝、过期版本回滚、同键并发提交、Work Item 事件和零 Run 派发。协调者可将选定内容定向投给当前阶段。两阶段联调核对了目标的下一次 Pi 输入、并行阶段的可见范围、原频道输入及投递回执的重放，以及实际 Run 计数。变更已接受范围时走计划变更入口。
 - Work Item 下的 Workflow 按稳定阶段 ID 累计实际启动记录，在启动事务中检查工作项与阶段的重试额度。阶段读取返回已启动次数和剩余额度。回归使用原生 Run 历史验证耗尽后的重启仍拒绝重试，同时允许独立阶段首次运行。
 - Host 注册频道 Task 和 Automation 定义的接单策略后，同一事务保存原生执行、策略回执和适用的 Work Item。HTTP、App Server 和 MCP 使用同一份回执，建议由原 Task 或 Automation 所有者派发。联合回归通过 HTTP 和 SDK 并发确认一次调度建议，重启后执行原 AutomationRun 一次，并从 Work Item 订阅读取 Task 的实际派发状态。免打扰、并发、启动额度和暂停原因保存在原回执。显式复核复用原生执行 ID。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。

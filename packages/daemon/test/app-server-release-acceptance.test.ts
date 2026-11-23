@@ -2654,6 +2654,12 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   const earlyVote = await request(`/workflow-steps/${encodeURIComponent(engineerVote.id)}/start`, { mode: "create_and_run_task" });
   assert.equal(earlyVote.status, 409);
   assert.equal((await earlyVote.json() as { error: string }).error, "work_item_ballot_pending");
+  const nativeVote = await request("/runs", { cwd: fixture.cwd, workflowStepId: engineerVote.id,
+    executionBinding: { kind: "native_profile", engineId: "openclaw-acp", profileId: "ballot-profile", profileRevision: 1 },
+    task: { id: "native-ballot", title: engineerVote.title, prompt: engineerVote.prompt, channelId: channel.id },
+  });
+  assert.equal(nativeVote.status, 409);
+  assert.equal((await nativeVote.json() as { error: string }).error, "workflow_ballot_native_unavailable");
   await assert.rejects(client.call("workItem/deliberation/start", {
     workItemId, workflowStepId: p02.id, expectedWorkItemRevision: Number(bound.workItem.revision), idempotencyKey: "before-contract",
   }), { code: "resume_blocked" });
@@ -2862,6 +2868,20 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.equal(awaitingReply.admissionBlocker, "work_item_stage_question_pending");
   const readBallots = (connection: typeof client) => connection.call<LingAppServerWorkItemCollaborationReadResult>(
     "workItem/deliberation/read", { workItemId: item.id });
+  const engineerVoteRun = await waitFor(() => {
+    const step = resumedStore.getChannelWorkflowStep(engineerVote.id);
+    return step?.status === "succeeded" ? step.runId : undefined;
+  });
+  const readEngineerEvents = async () => {
+    const response = await request(`/runs/${encodeURIComponent(engineerVoteRun)}/events`);
+    assert.equal(response.status, 200);
+    const { events } = await response.json() as { events: readonly { type: string; data: unknown }[] };
+    assert.ok(events.some(event => event.type === "run_start"));
+    assert.ok(events.some(event => event.type === "run_end"));
+    assert.doesNotMatch(JSON.stringify(events), /Prefer the compatibility trade-off for this role/u);
+    assert.ok(events.every(event => event.type !== "assistant_text_delta"));
+  };
+  await readEngineerEvents();
   assert.deepEqual((await readBallots(resumedClient)).ballots, [{ roundId: round.id, status: "waiting" }]);
   const current = await resumedClient.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
   const expectedWorkItemRevision = Number(current.workItem.revision);
@@ -2878,6 +2898,7 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   await waitFor(() => [engineerVote, qaVote].every(step => resumedStore.getChannelWorkflowStep(step.id)?.status === "succeeded") ? true : undefined);
   assert.equal(resumedStore.listRuns({ workflowStepId: qa.id }).length, 0);
   await fixture.restart();
+  await readEngineerEvents();
   const decisionClient = await fixture.connect();
   const [readyBallot] = (await readBallots(decisionClient)).ballots ?? [];
   assert.equal(readyBallot?.status, "ready");
@@ -3670,8 +3691,8 @@ test("a channel supplement reaches its active Pi stage through scoped coordinati
   assert.ok(accepted.workItemInput);
   assert.equal(accepted.turn.status, "succeeded");
   assert.equal(store.listRuns().length, 2);
-  await waitFor(() => store.listControlPlaneEvents({ workspaceId: item.workspaceId, entityId: item.id,
-    action: "work_item.evidence.updated" }).find(event => event.data.evidenceId === accepted.workItemInput?.evidenceId));
+  await waitFor(() => client.notices.find(notice => notice.method === "workItem/evidence/updated"
+    && notice.params?.event?.data?.evidenceId === accepted.workItemInput?.evidenceId));
   const { workflow } = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
   const target = workflow?.steps.find(step => step.stepId === respondent.id);
   assert.ok(workflow && target?.messageReceiver);

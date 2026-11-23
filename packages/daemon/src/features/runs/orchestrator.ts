@@ -89,6 +89,7 @@ import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolati
 import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
 import { createStageMessageReceiver } from "../work-items/stage-message-receiver.js";
 import { createWorkItemCoordinationToolHandler } from "../work-items/stage-coordination-tool.js";
+import { persistWorkflowStageBallot } from "../work-items/stage-ballot.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
   failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
@@ -2769,8 +2770,9 @@ async function executeAdmittedRunRequest(
     }
   };
 
-  const executingStep = run.workflowStepId && runnerResolution.runner.adapter instanceof PiRunnerAdapter && !delegatedExecution
-    ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const ballotKey = workflowStep?.metadata?.planBallotKey;
+  const executingStep = runnerResolution.runner.adapter instanceof PiRunnerAdapter && !delegatedExecution ? workflowStep : undefined;
   const acceptsStageMessages = Boolean(executingStep?.metadata?.planStageId && !executingStep.metadata.planBallotKey
     && store.getAppServerState("work_item_workflow", executingStep.workflowId));
   activeRuns.add(run.id, {
@@ -3179,14 +3181,19 @@ async function executeAdmittedRunRequest(
     }
 
     try {
+      if (ballotKey && (type === "assistant_text_delta" || type === "assistant_thinking_delta" || type === "assistant_reasoning_summary")) {
+        supervision.activity();
+        return undefined;
+      }
+      const publicData = ballotKey && type === "message_end" ? { ...data, text: undefined } : data;
       const attributedData = type === "assistant_reasoning_summary"
         || type === "run_start" || type === "turn_start"
         || type === "message_end" || type === "turn_end"
         || type === "provider_retry"
         || type === "context_compaction_start"
         || type === "context_compaction_end"
-        ? { ...data, attemptId: runnerCallbackFence.attemptId } as RunEventDataByType[K]
-        : data;
+        ? { ...publicData, attemptId: runnerCallbackFence.attemptId } as RunEventDataByType[K]
+        : publicData;
       const envelope = store.appendExecutionEvent(
         run.id,
         runnerCallbackFence,
@@ -3954,6 +3961,7 @@ async function executeAdmittedRunRequest(
     // admission can change the read set after the asynchronous observation.
     assertCurrentRunAdmission();
     const endedAt = executionNow();
+    if (ballotKey) persistWorkflowStageBallot(store, run, attempt, ballotKey, result.events, resolvedSecretValues, endedAt);
     const summaryPath = getRunSummaryPath(store.paths, run.id);
     if (existingContinuation?.origin === "approval_resume") {
       const terminal = commitApprovalContinuationTerminal({

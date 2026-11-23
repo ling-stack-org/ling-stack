@@ -1,5 +1,6 @@
 import type { LingAppServerStageBallotTally, LingAppServerWorkItemSourceRef, ProposedPlanStageDecision } from "@ling-stack/contracts";
-import { planStageBallotKey, type ChannelWorkflowStep, type RunStore } from "@ling-stack/core";
+import { planStageBallotKey, redactSecrets, type ChannelWorkflowStep, type RunSession, type RunStore, type WorkUnitAttempt } from "@ling-stack/core";
+import type { PiRunnerEvent } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
 
 type BallotResult =
@@ -31,7 +32,7 @@ export function readAppServerStageBallot(
     const run = voter.runId ? store.getRun(voter.runId) : undefined;
     if (voter.status !== "succeeded" || run?.status !== "succeeded"
       || run.workflowStepId !== voter.id || run.teammateId !== voter.toParticipantId) continue;
-    const option = readVote(store, run.id, key, decision.options);
+    const option = readVote(store, run, key, decision.options);
     if (option === undefined) continue;
     if (option === null) abstained++;
     else counts.set(option, counts.get(option)! + 1);
@@ -44,20 +45,36 @@ export function readAppServerStageBallot(
     summary: { ballotKey: key, quorum: ballot.quorum, cast: sourceRefs.length, abstained, tied, tally } };
 }
 
-function readVote(store: RunStore, runId: string, ballotKey: string, options: readonly string[]): string | null | undefined {
-  const events = store.listEvents(runId, { limit: 1000 });
-  if (events.length === 1000) return undefined;
-  const text = events
-    .filter(event => event.type === "assistant_text_delta")
-    .map(event => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
-    .join("");
-  if (!text || text.length > 4096) return undefined;
-  try {
-    const vote: unknown = JSON.parse(text);
-    if (isRecord(vote) && vote.ballotKey === ballotKey && typeof vote.rationale === "string"
-      && vote.rationale.trim() && vote.rationale.length <= 1000
-      && (vote.option === null || typeof vote.option === "string" && options.includes(vote.option))) return vote.option;
-  } catch {
-    return undefined;
+export function persistWorkflowStageBallot(store: RunStore, run: RunSession, attempt: WorkUnitAttempt, ballotKey: string,
+  events: readonly PiRunnerEvent[], secrets: readonly (string | undefined)[], now: string): void {
+  let text = "";
+  for (const event of events) {
+    if (event.type !== "assistant_text_delta") continue;
+    if (text.length + event.text.length > 4096) return;
+    text += event.text;
   }
+  if (!text) return;
+  let vote: unknown;
+  try {
+    vote = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (!isRecord(vote) || vote.ballotKey !== ballotKey || typeof vote.rationale !== "string"
+    || !vote.rationale.trim() || vote.rationale.length > 1000 || (vote.option !== null && typeof vote.option !== "string")) return;
+  const result = store.putAppServerState({ kind: "work_item_stage_ballot", recordId: attempt.id, expectedRevision: 0,
+    idempotencyKey: attempt.id, payload: { runId: run.id, ballotKey, option: vote.option, rationale: redactSecrets(vote.rationale, secrets) },
+  }, now);
+  if (!result) throw new Error("workflow_stage_ballot_conflict");
+}
+
+function readVote(store: RunStore, run: RunSession, ballotKey: string, options: readonly string[]): string | null | undefined {
+  const unit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
+  if (!unit || unit.linkedRunId !== run.id || unit.status !== "succeeded") return undefined;
+  const attempt = store.listWorkUnitAttempts(unit.id).at(-1);
+  if (attempt?.status !== "succeeded" || attempt.attemptNumber !== unit.attemptCount) return undefined;
+  const vote = store.getAppServerState("work_item_stage_ballot", attempt.id)?.payload;
+  if (isRecord(vote) && vote.runId === run.id && vote.ballotKey === ballotKey
+    && (vote.option === null || typeof vote.option === "string" && options.includes(vote.option))) return vote.option;
+  return undefined;
 }
