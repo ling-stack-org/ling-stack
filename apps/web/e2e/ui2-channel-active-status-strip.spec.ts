@@ -7,7 +7,7 @@ import {
 import type { RunStatus } from "../src/types";
 import { mockDaemon, type MockState } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, isRecord } from "./support/mock-state";
-import { openEngineeringChannel } from "./support/test-helpers";
+import { expectAboveComposer, openEngineeringChannel } from "./support/test-helpers";
 
 test("channel active status keeps the typed product label and tone matrix", async () => {
   const cases: ReadonlyArray<readonly [ChannelActiveStatusInput, string, string]> = [
@@ -96,7 +96,7 @@ test("pending runtime approval replaces the composer without duplicating the pro
   expect(runtimeErrors).toEqual([]);
 });
 
-test("provider blocker keeps Settings behavior with a long description", async ({ page }) => {
+test("provider blocker appears above the composer and opens Settings", async ({ page }, testInfo) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = providerBlockedState();
@@ -111,6 +111,7 @@ test("provider blocker keeps Settings behavior with a long description", async (
     actionCount: 1,
   });
   await expect(strip).toContainText("Long disabled provider route used to verify that the channel status description remains contained");
+  await page.screenshot({ path: testInfo.outputPath("channel-provider-warning.png") });
   await strip.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.locator("[data-ui2-channel-settings='true']")).toBeVisible();
   await expectNoDocumentOverflow(page);
@@ -145,7 +146,7 @@ function activeRunState(status: Extract<RunStatus, "queued" | "running" | "waiti
 function pendingApprovalState(): MockState {
   const state = createBaseState({ approvalStatus: "pending" });
   const providerId = "provider_channel_pending_approval";
-  state.providers = [readyProvider(providerId)];
+  state.providers = [createChatProvider({ id: providerId, enabled: false })];
   state.channels = state.channels.map((channel) => isRecord(channel)
     ? { ...channel, defaultProviderPresetId: providerId }
     : channel);
@@ -204,7 +205,8 @@ async function expectStatusStrip(
   for (let index = 0; index < expected.actionCount; index += 1) {
     await expectMinimumHitArea(actions.nth(index), 32);
   }
-  await expectContained(strip, page.getByLabel("Channel composer"));
+  await expectAboveComposer(strip, page.getByLabel("Channel composer"));
+  expect(await strip.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   return strip;
 }
 
@@ -231,18 +233,6 @@ async function expectMinimumHitArea(locator: Locator, size: number): Promise<voi
   expect(box).not.toBeNull();
   expect(box!.width).toBeGreaterThanOrEqual(size);
   expect(box!.height).toBeGreaterThanOrEqual(size);
-}
-
-async function expectContained(child: Locator, owner: Locator): Promise<void> {
-  const childBox = await child.boundingBox();
-  const ownerBox = await owner.boundingBox();
-  expect(childBox).not.toBeNull();
-  expect(ownerBox).not.toBeNull();
-  expect(childBox!.x).toBeGreaterThanOrEqual(ownerBox!.x - 1);
-  expect(childBox!.y).toBeGreaterThanOrEqual(ownerBox!.y - 1);
-  expect(childBox!.x + childBox!.width).toBeLessThanOrEqual(ownerBox!.x + ownerBox!.width + 1);
-  expect(childBox!.y + childBox!.height).toBeLessThanOrEqual(ownerBox!.y + ownerBox!.height + 1);
-  expect(await child.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
 }
 
 async function expectNoDocumentOverflow(page: Page): Promise<void> {
