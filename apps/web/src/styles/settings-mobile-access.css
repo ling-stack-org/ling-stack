@@ -152,6 +152,11 @@
   color: var(--ling-text-muted);
 }
 
+.mobile-access-build-details {
+  color: var(--ling-text-muted);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 700px) {
   .mobile-access-details,
   .mobile-access-migration-grid {

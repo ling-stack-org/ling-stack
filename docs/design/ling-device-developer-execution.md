@@ -520,7 +520,9 @@ artifact identity and session revision together. Read the outcome through
 `/jobs/{jobId}` after reconnecting. Repeating a job ID with the same input
 returns the recorded outcome.
 
-The local Mobile Access management route accepts
+In **Settings → Mobile Access → Phone device tasks**, select a completed build.
+Check its package, version and SHA-256, then choose **Share APK build**. The
+local Mobile Access management route accepts
 `POST /v1/mobile-access/device-collaboration/artifacts/from-build` with the
 active `shareId`, `expectedRevision`, a `proposalId` and `buildJobId`. The
 Gateway resolves the retained APK from the completed job in its workspace,

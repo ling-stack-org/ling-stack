@@ -19,6 +19,7 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8,
   REMOTE_PROTOCOL_LIMITS,
+  isRemoteDeviceArtifactBuildOfferInputV1,
   isRemoteDeviceArtifactOfferInputV1,
   isRemoteDeviceAnalysisDraftInputV1,
   isRemoteDeviceAnalysisInputV1,
@@ -92,6 +93,7 @@ export interface RemoteAccessStatus {
   readonly deviceCollaborationEnabled?: boolean;
   readonly deviceCollaborationAnalysisEnabled?: boolean;
   readonly deviceArtifactSharingEnabled?: boolean;
+  readonly deviceBuildArtifactSharingEnabled?: boolean;
 }
 
 interface RoutedSessionAuthentication {
@@ -223,6 +225,7 @@ export class RemoteAccessController {
       sendEnabled: Boolean(this.options.dispatcher),
       ...(this.options.phoneTaskCollaboration ? { deviceCollaborationEnabled: true } : {}),
       ...(this.options.phoneTaskArtifacts ? { deviceArtifactSharingEnabled: true } : {}),
+      ...(this.options.phoneTaskArtifacts?.buildSharingEnabled ? { deviceBuildArtifactSharingEnabled: true } : {}),
       ...(this.options.draftPhoneTaskAnalysis && this.options.store.getWorkspaceSettings().defaultProviderPresetId
         ? { deviceCollaborationAnalysisEnabled: true } : {}),
     };
@@ -300,17 +303,24 @@ export class RemoteAccessController {
         }
       }
       if (url.pathname === `${MANAGEMENT_PREFIX}/device-collaboration/artifacts/from-build` && this.options.phoneTaskArtifacts) {
-        if (request.method !== "POST") {
-          writeManagementJson(response, 405, { error: "method_not_allowed", message: "Use POST to share a project build." }, origin);
-          return true;
-        }
-        const { buildJobId, ...offerInput } = requireRecord(await readJson(request));
-        if (!isRemoteDeviceArtifactOfferInputV1(offerInput) || typeof buildJobId !== "string" || !/^[a-z0-9_-]{1,128}$/iu.test(buildJobId)) {
-          throw new Error("Invalid project build offer.");
-        }
+        const service = this.options.phoneTaskArtifacts;
         const principal = this.currentCollaborationPrincipal();
         if (!principal) throw new RemoteAccessError("binding_changed", "Pair a phone before sharing an artifact.");
-        const offer = await this.options.phoneTaskArtifacts.offerFromBuild(principal, { ...offerInput, buildJobId }, {
+        if (request.method === "GET") {
+          const input = {
+            shareId: url.searchParams.get("shareId"), expectedRevision: Number(url.searchParams.get("expectedRevision")), proposalId: "list",
+          };
+          if (url.searchParams.size !== 2 || !isRemoteDeviceArtifactOfferInputV1(input)) throw new Error("Invalid project build list.");
+          writeManagementJson(response, 200, { builds: service.listBuildsForPc(principal, input, this.now()) }, origin);
+          return true;
+        }
+        if (request.method !== "POST") {
+          writeManagementJson(response, 405, { error: "method_not_allowed", message: "Use GET or POST for project build offers." }, origin);
+          return true;
+        }
+        const input = await readJson(request);
+        if (!isRemoteDeviceArtifactBuildOfferInputV1(input)) throw new Error("Invalid project build offer.");
+        const offer = await service.offerFromBuild(principal, input, {
           currentPrincipal: () => this.currentCollaborationPrincipal(), now: this.now, sign: bytes => this.signArtifact(bytes),
         });
         if (!response.destroyed) writeManagementJson(response, 201, offer, origin);

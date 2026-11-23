@@ -3,7 +3,8 @@ import type { ComputerUseRuntimeStatus, EngineDiscoveryReport, ManagedInstallSta
 import type { LingServerPairingMigrationConfirmationV1, LingServerPairingMigrationPublicationRequestV1, LingServerPairingMigrationRequestV1, LingServerPairingMigrationV1 } from "@ling-stack/contracts";
 import type {
   RemoteDeviceAnalysisDraftInputV1, RemoteDeviceAnalysisDraftV1, RemoteDeviceAnalysisInputV1,
-  RemoteDeviceArtifactOfferInputV1, RemoteDeviceArtifactOfferV1, RemoteDeviceCollaborationViewV1,
+  RemoteDeviceArtifactBuildOfferInputV1, RemoteDeviceArtifactOfferInputV1, RemoteDeviceArtifactOfferV1,
+  RemoteDeviceBuildArtifactSummaryV1, RemoteDeviceCollaborationViewV1,
 } from "@ling-stack/contracts";
 
 export interface DesktopExecutionEngineCapabilities {
@@ -103,6 +104,7 @@ export interface DesktopMobileAccessStatus {
   readonly deviceCollaborationEnabled?: boolean;
   readonly deviceCollaborationAnalysisEnabled?: boolean;
   readonly deviceArtifactSharingEnabled?: boolean;
+  readonly deviceBuildArtifactSharingEnabled?: boolean;
 }
 
 export interface DesktopMobileAccessPairingStartResult {
@@ -128,6 +130,8 @@ export interface DesktopMobileAccessCapabilities {
   proposeDeviceAnalysis(request: RemoteDeviceAnalysisInputV1): Promise<RemoteDeviceCollaborationViewV1>;
   listDeviceArtifacts(request: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">): Promise<readonly RemoteDeviceArtifactOfferV1[]>;
   offerDeviceArtifact(request: RemoteDeviceArtifactOfferInputV1): Promise<RemoteDeviceArtifactOfferV1 | undefined>;
+  listDeviceBuildArtifacts?(request: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">): Promise<readonly RemoteDeviceBuildArtifactSummaryV1[]>;
+  offerDeviceBuildArtifact?(request: RemoteDeviceArtifactBuildOfferInputV1): Promise<RemoteDeviceArtifactOfferV1>;
   preparePairingMigration(request: LingServerPairingMigrationRequestV1): Promise<LingServerPairingMigrationV1>;
   confirmPairingMigration(request: LingServerPairingMigrationConfirmationV1): Promise<LingServerPairingMigrationPublicationRequestV1>;
 }

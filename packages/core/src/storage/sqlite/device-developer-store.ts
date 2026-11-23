@@ -102,6 +102,17 @@ export class SqliteDeviceDeveloperStore {
     return row ? parseJson<DeviceDeveloperJobV1>(row.job_json, "developer job") : undefined;
   }
 
+  listCompletedBuildJobIds(workspaceId: string, limit: number): readonly string[] {
+    return this.database.prepare(`
+      SELECT job_id FROM device_developer_jobs JOIN device_developer_sessions USING (session_id)
+      WHERE json_extract(session_json, '$.workspaceId') = ? AND json_extract(session_json, '$.ownerId') = ?
+        AND json_extract(session_json, '$.ownerKind') = 'daemon'
+        AND json_extract(job_json, '$.kind') = 'build' AND json_extract(job_json, '$.status') = 'completed'
+        AND json_type(job_json, '$.buildId') = 'text'
+      ORDER BY json_extract(job_json, '$.updatedAt') DESC, job_id LIMIT ?
+    `).all(workspaceId, workspaceId, limit).map(row => String(row.job_id));
+  }
+
   listInterruptedJobIds(owner: Pick<DeviceDeveloperSessionV1, "ownerKind" | "ownerId">): readonly string[] {
     // Offline replay can retry its digest-bound import without another device call.
     return this.database.prepare(`

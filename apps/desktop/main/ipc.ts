@@ -7,6 +7,7 @@ import {
   isRemoteDeviceAnalysisDraftInputV1,
   isRemoteDeviceAnalysisInputV1,
   isRemoteDeviceArtifactOfferInputV1,
+  isRemoteDeviceArtifactBuildOfferInputV1,
   type LingServerPairingMigrationConfirmationV1,
   type LingServerPairingMigrationRequestV1,
 } from "@ling-stack/contracts";
@@ -224,6 +225,28 @@ export function registerDesktopIpc(input: {
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
     if (!isRemoteDeviceArtifactOfferInputV1(request)) throw new Error("invalid_device_artifact_offer");
     const offer = await input.mobileAccess.offerDeviceArtifact(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return offer;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceBuildArtifactsList, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!request || typeof request !== "object" || Array.isArray(request) || Object.keys(request).length !== 2
+      || !("shareId" in request) || !("expectedRevision" in request)) throw new Error("invalid_device_build_artifact_list");
+    const query = { shareId: request.shareId, expectedRevision: request.expectedRevision, proposalId: "list" };
+    if (!isRemoteDeviceArtifactOfferInputV1(query)) throw new Error("invalid_device_build_artifact_list");
+    if (!input.mobileAccess.listDeviceBuildArtifacts) throw new Error("device_build_artifacts_unavailable");
+    const { shareId, expectedRevision } = query;
+    const builds = await input.mobileAccess.listDeviceBuildArtifacts({ shareId, expectedRevision });
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return builds;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceBuildArtifactOffer, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceArtifactBuildOfferInputV1(request)) throw new Error("invalid_device_build_artifact_offer");
+    if (!input.mobileAccess.offerDeviceBuildArtifact) throw new Error("device_build_artifact_unavailable");
+    const offer = await input.mobileAccess.offerDeviceBuildArtifact(request);
     assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
     return offer;
   });

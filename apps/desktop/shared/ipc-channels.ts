@@ -69,6 +69,8 @@ export const DESKTOP_IPC_CHANNELS = {
   mobileAccessDeviceCollaborationDraft: "ling-desktop:mobile-access:device-collaboration-draft",
   mobileAccessDeviceArtifactsList: "ling-desktop:mobile-access:device-artifacts-list",
   mobileAccessDeviceArtifactOffer: "ling-desktop:mobile-access:device-artifact-offer",
+  mobileAccessDeviceBuildArtifactsList: "ling-desktop:mobile-access:device-build-artifacts-list",
+  mobileAccessDeviceBuildArtifactOffer: "ling-desktop:mobile-access:device-build-artifact-offer",
   mobileAccessDeviceCollaborationPropose: "ling-desktop:mobile-access:device-collaboration-propose",
   mobileAccessPairingMigrationPrepare: "ling-desktop:mobile-access:pairing-migration-prepare",
   mobileAccessPairingMigrationConfirm: "ling-desktop:mobile-access:pairing-migration-confirm",

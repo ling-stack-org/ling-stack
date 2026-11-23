@@ -15,6 +15,16 @@ export interface RemoteDeviceArtifactBuildOfferInputV1 extends RemoteDeviceArtif
   readonly buildJobId: string;
 }
 
+export interface RemoteDeviceBuildArtifactSummaryV1 {
+  readonly buildJobId: string;
+  readonly buildId: string;
+  readonly name: string;
+  readonly packageId: string;
+  readonly versionCode: string;
+  readonly digest: string;
+  readonly builtAt: string;
+}
+
 export interface RemoteDeviceArtifactManifestV1 {
   readonly version: 1;
   readonly gatewayId: string;
@@ -93,6 +103,12 @@ export function isRemoteDeviceArtifactOfferInputV1(value: unknown): value is Rem
   const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
   return typeof shareId === "string" && identifier.test(shareId) && typeof proposalId === "string" && identifier.test(proposalId)
     && typeof expectedRevision === "number" && Number.isSafeInteger(expectedRevision) && expectedRevision >= 1;
+}
+
+export function isRemoteDeviceArtifactBuildOfferInputV1(value: unknown): value is RemoteDeviceArtifactBuildOfferInputV1 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const { buildJobId, ...offer } = value as Record<string, unknown>;
+  return typeof buildJobId === "string" && /^[a-z0-9_-]{1,128}$/iu.test(buildJobId) && isRemoteDeviceArtifactOfferInputV1(offer);
 }
 
 export function isRemoteDeviceArtifactName(value: string): boolean {

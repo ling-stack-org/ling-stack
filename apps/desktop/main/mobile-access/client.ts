@@ -3,7 +3,9 @@ import { basename } from "node:path";
 import {
   REMOTE_DEVICE_ARTIFACT_MAX_BYTES,
   isRemoteDeviceArtifactName,
+  type RemoteDeviceArtifactBuildOfferInputV1,
   type RemoteDeviceArtifactOfferInputV1,
+  type RemoteDeviceBuildArtifactSummaryV1,
   type RemoteDeviceArtifactOfferV1,
 } from "@ling-stack/contracts";
 import type {
@@ -107,6 +109,18 @@ export class DesktopMobileAccessClient implements DesktopMobileAccessCapabilitie
     if (file.size < 1 || file.size > REMOTE_DEVICE_ARTIFACT_MAX_BYTES) throw new Error("The file size is outside the allowed range.");
     const query = new URLSearchParams({ shareId, expectedRevision: String(expectedRevision), proposalId, name });
     return await this.request(`/v1/mobile-access/device-collaboration/artifacts?${query}`, "POST", file, 180_000) as RemoteDeviceArtifactOfferV1;
+  }
+
+  async listDeviceBuildArtifacts({ shareId, expectedRevision }: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">): Promise<readonly RemoteDeviceBuildArtifactSummaryV1[]> {
+    const query = new URLSearchParams({ shareId, expectedRevision: String(expectedRevision) });
+    const response = await this.request(`/v1/mobile-access/device-collaboration/artifacts/from-build?${query}`, "GET") as {
+      readonly builds: readonly RemoteDeviceBuildArtifactSummaryV1[];
+    };
+    return response.builds;
+  }
+
+  async offerDeviceBuildArtifact(request: RemoteDeviceArtifactBuildOfferInputV1): Promise<RemoteDeviceArtifactOfferV1> {
+    return await this.request("/v1/mobile-access/device-collaboration/artifacts/from-build", "POST", request, 180_000) as RemoteDeviceArtifactOfferV1;
   }
 
   async preparePairingMigration(request: LingServerPairingMigrationRequestV1): Promise<LingServerPairingMigrationV1> {

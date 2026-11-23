@@ -164,7 +164,8 @@ export function MobileAccessSettingsPage(): React.JSX.Element {
       {status?.enabled && status.pairedDevice && status.deviceCollaborationEnabled && capability ? (
         <PhoneTaskCollaborationCard key={`${status.gatewayId}:${status.workspaceBindingId}:${status.policyVersion}`}
           access={capability} canDraft={status.deviceCollaborationAnalysisEnabled === true}
-          canShareArtifacts={status.deviceArtifactSharingEnabled === true} />
+          canShareArtifacts={status.deviceArtifactSharingEnabled === true}
+          canShareBuilds={status.deviceBuildArtifactSharingEnabled === true} />
       ) : null}
     </div>
   );

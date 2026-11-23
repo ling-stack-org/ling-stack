@@ -51,3 +51,32 @@ test("Desktop streams the selected file to the authenticated loopback artifact e
   assert.equal(upload.csrf, deriveMobileAccessCsrfToken(capability));
   assert.deepEqual(upload.bytes, bytes);
 });
+
+test("Desktop lists and shares a retained build by job ID through the management bridge", async () => {
+  const desktopBridgeToken = "build-fixture-authority";
+  const managementCapability = deriveMobileAccessManagementCapability(desktopBridgeToken);
+  const request = { shareId: "phone-share", expectedRevision: 4, proposalId: "build-offer", buildJobId: "pc-build" };
+  const builds = [{ buildJobId: "pc-build", buildId: "debug", name: "test.apk", packageId: "org.example.preview", versionCode: "71",
+    digest: "sha256:" + "a".repeat(64), builtAt: "2026-11-23T07:00:00.000Z" }];
+  const offer = { status: "proposed", manifest: { proposalId: request.proposalId } };
+  const client = new DesktopMobileAccessClient({
+    daemonBaseUrl: "http://127.0.0.1:17891", desktopBridgeToken,
+    pickDeviceArtifact: async () => assert.fail("a retained build bypassed its job identity"),
+    fetch: async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(url.pathname, "/v1/mobile-access/device-collaboration/artifacts/from-build");
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get("x-ling-mobile-management-capability"), managementCapability);
+      if (init?.method === "GET") {
+        assert.deepEqual(Object.fromEntries(url.searchParams), { shareId: "phone-share", expectedRevision: "4" });
+        return Response.json({ builds });
+      }
+      assert.equal(init?.method, "POST");
+      assert.equal(headers.get("x-ling-csrf-token"), deriveMobileAccessCsrfToken(managementCapability));
+      assert.deepEqual(JSON.parse(String(init?.body)), request);
+      return Response.json(offer, { status: 201 });
+    },
+  });
+  assert.deepEqual(await client.listDeviceBuildArtifacts({ shareId: request.shareId, expectedRevision: request.expectedRevision }), builds);
+  assert.deepEqual(await client.offerDeviceBuildArtifact(request), offer);
+});

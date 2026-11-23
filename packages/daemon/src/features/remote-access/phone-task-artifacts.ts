@@ -11,6 +11,7 @@ import {
   type AndroidApkIdentityV1, type RemoteDeviceArtifactBuildOfferInputV1,
   type DeviceCollaborationProposalV1, type RemoteDeviceArtifactCommandV1, type RemoteDeviceArtifactManifestV1,
   type RemoteDeviceArtifactOfferInputV1, type RemoteDeviceArtifactOfferV1, type RemoteDeviceArtifactResultV1,
+  type RemoteDeviceBuildArtifactSummaryV1,
 } from "@ling-stack/contracts";
 import { digestCollaborationPayload, type PhoneTaskShareRecord, type SqliteDeviceDeveloperStore } from "@ling-stack/core";
 import {
@@ -53,8 +54,26 @@ export class PhoneTaskArtifacts {
     private readonly androidApks?: AndroidApkLibrary,
   ) {}
 
+  get buildSharingEnabled(): boolean {
+    return this.androidApks !== undefined;
+  }
+
   listForPc(principal: PhoneTaskCollaborationPrincipal, input: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">, now: string) {
     return this.list(this.collaboration.currentShare(principal, input, now));
+  }
+
+  listBuildsForPc(
+    principal: PhoneTaskCollaborationPrincipal, input: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">, now: string,
+  ): readonly RemoteDeviceBuildArtifactSummaryV1[] {
+    this.collaboration.currentShare(principal, input, now);
+    if (!this.androidApks) return [];
+    return this.store.listCompletedBuildJobIds(principal.workspaceId, 20).flatMap(buildJobId => {
+      const retained = readProjectBuildArtifact(this.store, principal.workspaceId, buildJobId);
+      return retained ? [{
+        buildJobId, buildId: retained.build.buildId, name: retained.build.fileName, packageId: retained.packageId,
+        versionCode: retained.versionCode, digest: retained.artifact.digest, builtAt: retained.artifact.createdAt,
+      }] : [];
+    });
   }
 
   async offerFromPc(

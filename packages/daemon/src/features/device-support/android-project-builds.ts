@@ -69,7 +69,7 @@ export function readProjectBuildArtifact(store: SqliteDeviceDeveloperStore, work
   if (artifact?.build?.jobId !== jobId || artifact.build.buildId !== job.buildId || artifact.workspaceId !== workspaceId
     || artifact.targetDeviceId !== job.targetDeviceId || artifact.digest !== "sha256:" + job.outputDigest
     || !artifact.packageId || !artifact.androidApk) return undefined;
-  return { artifact, build: artifact.build };
+  return { artifact, build: artifact.build, packageId: artifact.packageId, versionCode: artifact.androidApk.versionCode };
 }
 
 export class AndroidProjectBuilds {

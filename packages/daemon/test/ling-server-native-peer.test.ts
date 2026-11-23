@@ -429,6 +429,13 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     assert.equal(await readFile(project.callLog, "utf8"), "build\n");
     assert.equal((await developerPost(sessionPath + "/jobs", { ...projectJob, buildId: "different" })).status, 409);
     await writeFile(project.output, "changed project output");
+    const buildList = await fetch(collaborationUrl + "/artifacts/from-build?" + artifactQuery, { headers: collaborationHeaders });
+    assert.equal(buildList.status, 200);
+    assert.deepEqual(await buildList.json(), { builds: [{
+      buildJobId: projectJob.jobId, buildId: projectJob.buildId, name: "project-debug.apk",
+      packageId: built.artifact.packageId, versionCode: built.artifact.androidApk?.versionCode,
+      digest: built.artifact.digest, builtAt: built.artifact.createdAt,
+    }] });
     const buildShare = (buildJobId: string) => fetch(collaborationUrl + "/artifacts/from-build", {
       method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": gateway!.csrfToken, "Content-Type": "application/json" },
       body: JSON.stringify({ shareId: share.shareId, expectedRevision: share.revision, proposalId: "project-apk", buildJobId }),
@@ -516,6 +523,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     assert.equal((await staleDraft).status, 409);
     assert.equal(revoked?.state, "revoked");
     assert.deepEqual(await listShares(), []);
+    assert.equal((await fetch(collaborationUrl + "/artifacts/from-build?" + artifactQuery, { headers: collaborationHeaders })).status, 409);
     await assert.rejects(client.readDeviceArtifactChunk(approvedArtifact.manifest, 9), /ended/u);
     await phone.artifacts.export(phoneRecovery.taskId, savedArtifact.fileId);
     assert.deepEqual(exported, artifactBytes);

@@ -102,6 +102,8 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   const analysis = { shareId: "phone-share", proposalId: "diagnostic-note", expectedRevision: 2, text: "Check the network status." };
   const analysisRequest = { shareId: analysis.shareId, expectedRevision: analysis.expectedRevision, locale: "en-US" };
   const analysisDraft = { shareId: analysis.shareId, expectedRevision: analysis.expectedRevision, text: analysis.text, modelLabel: "Fixture model" };
+  const buildQuery = { shareId: analysis.shareId, expectedRevision: 2 };
+  const buildOffer = { ...buildQuery, proposalId: "project-offer", buildJobId: "pc-project-job" };
   const share = { workspaceId: "fixture-workspace", shareId: analysis.shareId, revision: 3, expiresAt: "2026-11-23T10:02:00.000Z", state: "revoked" } as const;
   const unregister = registerDesktopIpc({
     ipcMainImpl: ipc,
@@ -132,6 +134,11 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
       async draftDeviceAnalysis(input) { calls.push(input); return analysisDraft; },
       listDeviceArtifacts: async () => [],
       offerDeviceArtifact: unavailable,
+      async listDeviceBuildArtifacts(input) {
+        assert.deepEqual(input, buildQuery);
+        return [];
+      },
+      async offerDeviceBuildArtifact() { throw new Error("fixture_offer_sent"); },
       async proposeDeviceAnalysis(input) { calls.push(input); return share; },
       async preparePairingMigration(input) { calls.push(input); return preview; },
       async confirmPairingMigration(input) { calls.push(input); return { confirmation, gatewayPublicKeyJwk }; },
@@ -149,6 +156,8 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   const draftAnalysis = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationDraft;
   const proposeAnalysis = DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationPropose;
   const offerArtifact = DESKTOP_IPC_CHANNELS.mobileAccessDeviceArtifactOffer;
+  const listBuilds = DESKTOP_IPC_CHANNELS.mobileAccessDeviceBuildArtifactsList;
+  const offerBuild = DESKTOP_IPC_CHANNELS.mobileAccessDeviceBuildArtifactOffer;
   await assert.rejects(invoke(prepare, request, { ...owner, id: 9 }), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(confirm, confirmationRequest, owner, { ...frame }), /mobile_access_unauthorized/u);
   frame.url = "https://different.example";
@@ -157,6 +166,8 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   await assert.rejects(invoke(draftAnalysis, analysisRequest), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(proposeAnalysis, analysis), /mobile_access_unauthorized/u);
   await assert.rejects(invoke(offerArtifact, analysisRequest), /mobile_access_unauthorized/u);
+  await assert.rejects(invoke(listBuilds, buildQuery), /mobile_access_unauthorized/u);
+  await assert.rejects(invoke(offerBuild, buildOffer), /mobile_access_unauthorized/u);
   frame.url = documentUrl + "#/settings/mobile-access";
   await assert.rejects(invoke(prepare, { ...request, retainedCommandIds: ["duplicate", "duplicate"] }), /invalid_pairing_migration_request/u);
   await assert.rejects(invoke(confirm, { ...confirmationRequest, confirmationDigest: "invalid" }), /invalid_pairing_migration_confirmation/u);
@@ -165,6 +176,8 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   await assert.rejects(invoke(offerArtifact, {
     shareId: "s", expectedRevision: 1, proposalId: "p", path: "file-from-renderer",
   }), /invalid_device_artifact_offer/u);
+  await assert.rejects(invoke(offerBuild, { ...buildOffer, buildJobId: "../foreign" }), /invalid_device_build_artifact_offer/u);
+  await assert.rejects(invoke(offerBuild, { ...buildOffer, path: "untrusted.apk" }), /invalid_device_build_artifact_offer/u);
   assert.deepEqual(calls, []);
 
   assert.deepEqual(await invoke(prepare, request), preview);
@@ -172,5 +185,7 @@ test("Desktop fences migration previews and signatures to the trusted paired-set
   assert.deepEqual(await invoke(listCollaboration, undefined), []);
   assert.deepEqual(await invoke(draftAnalysis, analysisRequest), analysisDraft);
   assert.deepEqual(await invoke(proposeAnalysis, analysis), share);
+  assert.deepEqual(await invoke(listBuilds, buildQuery), []);
+  await assert.rejects(invoke(offerBuild, buildOffer), /fixture_offer_sent/u);
   assert.deepEqual(calls, [request, confirmationRequest, analysisRequest, analysis]);
 });
