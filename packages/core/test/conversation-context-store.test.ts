@@ -3,16 +3,23 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import {
   createSqliteRunStore,
   resolveRuntimePaths,
+  type AppendConversationUserTurnInput,
+  type ApplyTurnContextAssignmentInput,
+  type CommitConversationContextSummaryInput,
+  type SqliteRunStore,
 } from "../dist/index.js";
 
 const firstAt = "2026-08-10T01:00:00.000Z";
 const secondAt = "2026-08-10T01:01:00.000Z";
 const thirdAt = "2026-08-10T01:02:00.000Z";
 const policyVersion = "continuity-v2-segmentation-v1";
+type TurnFixture = ReturnType<SqliteRunStore["appendConversationUserTurn"]>;
+type B007Fixture = Awaited<ReturnType<typeof b007Fixture>>;
 
 test("context assignments are append-only, invalidate moved-segment summaries, and promote related provisional segments", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-context-assignment-"));
@@ -55,8 +62,8 @@ test("context assignments are append-only, invalidate moved-segment summaries, a
   assert.equal(moved.segment.state, "provisional");
   assert.deepEqual(moved.invalidatedSummaryIds, ["summary-before-correction"]);
   assert.equal(store.getConversationContextSummary("summary-before-correction")?.status, "invalidated");
-  assert.equal(store.getConversationItem(first.item.id)?.payload.body, "first");
-  assert.equal(store.getConversationItem(second.item.id)?.payload.body, "second");
+  assertUserMessageBody(store.getConversationItem(first.item.id), "first");
+  assertUserMessageBody(store.getConversationItem(second.item.id), "second");
   assert.equal(store.getContextSegment(bootstrap.segmentId)?.lastActiveTurnId, first.turnId);
   assert.notEqual(store.getContextSegment(bootstrap.segmentId)?.state, "archived");
 
@@ -171,7 +178,7 @@ test("channel acceptance atomically creates and reuses the Item Turn dispatch tu
       requestedTeammateId: "ling_agent",
       unavailableRequestedParticipantIds: ["teammate_paused"],
     },
-  };
+  } satisfies AppendConversationUserTurnInput;
   const first = store.appendConversationUserTurn(input, now);
   const replay = store.appendConversationUserTurn(input, "2026-08-13T01:00:01.000Z");
 
@@ -189,6 +196,7 @@ test("channel acceptance atomically creates and reuses the Item Turn dispatch tu
     ...input,
     dispatch: { ...input.dispatch, requestedTeammateId: "teammate_builtin_engineer" },
   }, "2026-08-13T01:00:02.000Z"), /idempotency key belongs to another dispatch input/);
+  assert.ok(first.dispatchWorkUnitId);
   const dispatch = store.getWorkUnit(first.dispatchWorkUnitId);
   assert.ok(dispatch);
   assert.equal(dispatch.kind, "channel_turn_dispatch");
@@ -374,7 +382,7 @@ test("new input follows the effective assignment decision in both segment direct
     turnId: second.turnId, target: { kind: "new", state: "active" },
     status: "committed", decisionSource: "user", policyVersion,
   }, thirdAt);
-  assert.equal(store.getContextSegment(first.contextSegmentId).updatedAt, thirdAt);
+  assert.equal(store.getContextSegment(first.contextSegmentId)?.updatedAt, thirdAt);
   assert.equal(moved.segment.updatedAt, thirdAt);
   const next = appendUserTurn(store, channel.id, thread.id, "continue new", "2026-08-10T01:03:00.000Z");
   assert.equal(next.contextSegmentId, moved.segment.id);
@@ -383,12 +391,12 @@ test("new input follows the effective assignment decision in both segment direct
     turnId: next.turnId, target: { kind: "existing", segmentId: first.contextSegmentId },
     status: "committed", decisionSource: "user", policyVersion,
   }, "2026-08-10T01:04:00.000Z");
-  assert.equal(store.getContextSegment(first.contextSegmentId).updatedAt, "2026-08-10T01:04:00.000Z");
-  assert.equal(store.getContextSegment(moved.segment.id).updatedAt, "2026-08-10T01:04:00.000Z");
+  assert.equal(store.getContextSegment(first.contextSegmentId)?.updatedAt, "2026-08-10T01:04:00.000Z");
+  assert.equal(store.getContextSegment(moved.segment.id)?.updatedAt, "2026-08-10T01:04:00.000Z");
   const back = appendUserTurn(store, channel.id, thread.id, "continue original", "2026-08-10T01:05:00.000Z");
   assert.equal(back.contextSegmentId, first.contextSegmentId);
-  assert.equal(store.getEffectiveTurnContextAssignment(second.turnId).segmentId, moved.segment.id);
-  assert.equal(store.getEffectiveTurnContextAssignment(next.turnId).segmentId, first.contextSegmentId);
+  assert.equal(store.getEffectiveTurnContextAssignment(second.turnId)?.segmentId, moved.segment.id);
+  assert.equal(store.getEffectiveTurnContextAssignment(next.turnId)?.segmentId, first.contextSegmentId);
 });
 
 test("a late correction of an older source cannot change the latest source's default segment", async (t) => {
@@ -414,12 +422,17 @@ test("a late correction of an older source cannot change the latest source's def
   }, thirdAt);
   const next = appendUserTurn(store, channel.id, thread.id, "continue latest", "2026-08-10T01:03:00.000Z");
   assert.equal(next.contextSegmentId, moved.segment.id);
-  assert.equal(store.getEffectiveTurnContextAssignment(first.turnId).segmentId, first.contextSegmentId);
-  assert.equal(store.getConversationItem(first.item.id).sequence, 1);
-  assert.equal(store.getConversationItem(latest.item.id).sequence, 2);
+  assert.equal(store.getEffectiveTurnContextAssignment(first.turnId)?.segmentId, first.contextSegmentId);
+  assert.equal(store.getConversationItem(first.item.id)?.sequence, 1);
+  assert.equal(store.getConversationItem(latest.item.id)?.sequence, 2);
 });
 
-function appendUserTurn(store, channelId, threadId, body, now) {
+function assertUserMessageBody(item: ConversationItemV1 | undefined, body: string) {
+  assert.equal(item?.kind, "user_message");
+  assert.equal(item.payload.body, body);
+}
+
+function appendUserTurn(store: SqliteRunStore, channelId: string, threadId: string, body: string, now: string): TurnFixture {
   return store.appendConversationUserTurn({
     channelId,
     threadId,
@@ -437,24 +450,33 @@ function appendUserTurn(store, channelId, threadId, body, now) {
   }, now);
 }
 
-function summaryCommitInput(store, threadId, segmentId, turns, expectedActiveSummaryId = null) {
+function summaryCommitInput(
+  store: SqliteRunStore,
+  threadId: string,
+  segmentId: string | undefined,
+  turns: readonly TurnFixture[],
+  expectedActiveSummaryId: string | null = null,
+): CommitConversationContextSummaryInput {
+  const first = turns[0];
+  const last = turns.at(-1);
+  assert.ok(first && last);
   return {
     threadId,
     segmentId,
     scope: "segment",
-    coveredFromSequence: turns[0].item.sequence,
-    coveredThroughSequence: turns.at(-1).item.sequence,
+    coveredFromSequence: first.item.sequence,
+    coveredThroughSequence: last.item.sequence,
     objective: "Preserve the current objective.",
     decisions: ["Use fenced summaries."],
     constraints: ["Do not overwrite a newer summary."],
     openQuestions: [],
     activeWorkRefs: [],
     sourceRefs: [
-      ...(expectedActiveSummaryId ? [{ type: "context_summary", id: expectedActiveSummaryId }] : []),
-      ...turns.map((turn) => ({ type: "conversation_item", id: turn.item.id })),
+      ...(expectedActiveSummaryId ? [{ type: "context_summary" as const, id: expectedActiveSummaryId }] : []),
+      ...turns.map((turn) => ({ type: "conversation_item" as const, id: turn.item.id })),
     ],
     policyVersion: "continuity-v2-summary-v1",
-    projectionVersion: `ctxv2_fixture_${turns.at(-1).item.sequence}`,
+    projectionVersion: `ctxv2_fixture_${last.item.sequence}`,
     visibilityFingerprint: "visibility_fixture_channel",
     expectedActiveSummaryId,
     sourceFence: turns.map((turn) => {
@@ -475,7 +497,7 @@ function summaryCommitInput(store, threadId, segmentId, turns, expectedActiveSum
   };
 }
 
-function insertSegmentSummary(cwd, input) {
+function insertSegmentSummary(cwd: string, input: { id: string; threadId: string; segmentId: string; throughSequence: number; createdAt: string }) {
   const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   try {
     database.exec("PRAGMA foreign_keys = ON;");
@@ -501,10 +523,10 @@ function insertSegmentSummary(cwd, input) {
   }
 }
 
-const b007At = (tick) => new Date(Date.UTC(2026, 9, 15) + tick * 1_000).toISOString();
+const b007At = (tick: number): string => new Date(Date.UTC(2026, 9, 15) + tick * 1_000).toISOString();
 
 /** Public producers own every summary/assignment; raw SQL only observes or injects a failure. */
-async function b007Fixture(t) {
+async function b007Fixture(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-b007-summary-rebuild-"));
   const preserve = process.env.LING_B007_KEEP_FIXTURES === "1";
   if (preserve) t.diagnostic(`B-007 Core retained fixture root: ${cwd}`);
@@ -526,17 +548,27 @@ async function b007Fixture(t) {
   return { cwd, store, database, channel, thread, turns, segmentId: turns[0].contextSegmentId, nextTick: 10 };
 }
 
-function b007Input(f, turns, expectedActiveSummaryId = null, extra = {}) {
+function b007Input(
+  f: B007Fixture,
+  turns: readonly TurnFixture[],
+  expectedActiveSummaryId: string | null = null,
+  extra: Partial<CommitConversationContextSummaryInput> = {},
+): CommitConversationContextSummaryInput {
   return { ...summaryCommitInput(f.store, f.thread.id, f.segmentId, turns, expectedActiveSummaryId), ...extra };
 }
 
-function b007Commit(f, turns, expectedActiveSummaryId = null, extra = {}) {
+function b007Commit(
+  f: B007Fixture,
+  turns: readonly TurnFixture[],
+  expectedActiveSummaryId: string | null = null,
+  extra: Partial<CommitConversationContextSummaryInput> = {},
+) {
   const result = f.store.commitConversationContextSummary(b007Input(f, turns, expectedActiveSummaryId, extra), b007At(f.nextTick++));
   assert.equal(result.status, "committed", JSON.stringify(result));
   return result.summary;
 }
 
-function b007Move(f, turn, target) {
+function b007Move(f: B007Fixture, turn: TurnFixture, target: ApplyTurnContextAssignmentInput["target"]) {
   const previous = f.store.getEffectiveTurnContextAssignment(turn.turnId);
   assert.ok(previous);
   const result = f.store.applyTurnContextAssignment({ turnId: turn.turnId, expectedPreviousRevision: previous.revision,
@@ -546,18 +578,22 @@ function b007Move(f, turn, target) {
   return result;
 }
 
-function b007History(f) {
+function b007History(f: B007Fixture) {
   return f.store.listConversationContextSummaries({ threadId: f.thread.id,
     statuses: ["active", "superseded", "invalidated"], limit: 200 }).slice().sort((left, right) => left.version - right.version);
 }
 
-function b007Snapshot(f) {
+function b007Snapshot(f: B007Fixture) {
   return Object.fromEntries(f.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()
-    .map(({ name }) => [name, f.database.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all()
-      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))]));
+    .map(({ name }) => {
+      assert.ok(typeof name === "string");
+      const rows = f.database.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all();
+      rows.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+      return [name, rows];
+    }));
 }
 
-function b007InsertFault(f) {
+function b007InsertFault(f: B007Fixture) {
   const threadId = f.thread.id.replaceAll("'", "''");
   f.database.exec(`CREATE TRIGGER b007_summary_insert_fault BEFORE INSERT ON conversation_context_summaries
     WHEN NEW.thread_id='${threadId}' BEGIN SELECT RAISE(ABORT, 'B007_SUMMARY_INSERT_FAULT'); END`);
@@ -570,11 +606,12 @@ test("B-007 public correction rebuilds an invalidated v1 with fresh fences as v2
   const moved = b007Move(f, f.turns[1], { kind: "new", state: "active", label: "Corrected second topic" });
   assert.deepEqual(moved.invalidatedSummaryIds, [initial.id]);
   const invalidated = f.store.getConversationContextSummary(initial.id);
+  assert.ok(invalidated);
   assert.equal(invalidated.status, "invalidated");
   assert.deepEqual(f.store.listConversationContextSummaries({ threadId: f.thread.id, segmentId: f.segmentId }), []);
   const fresh = b007Input(f, [f.turns[0]]);
   assert.equal(fresh.expectedActiveSummaryId, null);
-  assert.equal(fresh.sourceFence[0].assignmentId, f.store.getEffectiveTurnContextAssignment(f.turns[0].turnId).id);
+  assert.equal(fresh.sourceFence[0].assignmentId, f.store.getEffectiveTurnContextAssignment(f.turns[0].turnId)?.id);
   const result = f.store.commitConversationContextSummary(fresh, b007At(f.nextTick++));
   assert.equal(result.status, "committed", JSON.stringify(result));
   assert.equal(result.summary.version, 2);
@@ -582,7 +619,7 @@ test("B-007 public correction rebuilds an invalidated v1 with fresh fences as v2
   assert.deepEqual(result.summary.sourceRefs, [{ type: "conversation_item", id: f.turns[0].item.id }]);
   assert.deepEqual(f.store.getConversationContextSummary(initial.id), invalidated);
   assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]), [[1, "invalidated"], [2, "active"]]);
-  assert.equal(f.store.getConversationItem(f.turns[1].item.id).payload.body, "moved second fact");
+  assertUserMessageBody(f.store.getConversationItem(f.turns[1].item.id), "moved second fact");
 });
 
 test("B-007 moving a covered turn back invalidates v2 and rebuilds its original segment as v3", async (t) => {
@@ -596,10 +633,10 @@ test("B-007 moving a covered turn back invalidates v2 and rebuilds its original 
   const third = b007Commit(f, f.turns.slice(0, 2));
   assert.equal(third.version, 3);
   assert.equal(third.supersedesSummaryId, undefined);
-  assert.equal(f.store.getEffectiveTurnContextAssignment(f.turns[1].turnId).segmentId, f.segmentId);
+  assert.equal(f.store.getEffectiveTurnContextAssignment(f.turns[1].turnId)?.segmentId, f.segmentId);
   assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]),
     [[1, "invalidated"], [2, "invalidated"], [3, "active"]]);
-  assert.equal(f.store.getConversationContextSummary(first.id).status, "invalidated");
+  assert.equal(f.store.getConversationContextSummary(first.id)?.status, "invalidated");
 });
 
 test("B-007 rebuilding after a higher public history chooses max version across superseded and invalidated rows", async (t) => {
@@ -618,7 +655,7 @@ test("B-007 rebuilding after a higher public history chooses max version across 
     [[1, "superseded"], [2, "superseded"], [3, "invalidated"], [4, "active"]]);
 });
 
-for (const scope of ["thread_core", "work"]) {
+for (const scope of ["thread_core", "work"] as const) {
   test(`B-007 ${scope} and segment summaries share the durable non-null unique version partition`, async (t) => {
     const f = await b007Fixture(t);
     const segment = b007Commit(f, f.turns.slice(0, 2));
@@ -629,7 +666,7 @@ for (const scope of ["thread_core", "work"]) {
     const replacement = b007Commit(f, f.turns.slice(0, 3), segment.id);
     assert.equal(replacement.version, 3, "the lower active segment version cannot hide a higher other-scope version");
     assert.equal(replacement.supersedesSummaryId, segment.id);
-    assert.equal(f.store.getConversationContextSummary(otherScope.id).status, "active");
+    assert.equal(f.store.getConversationContextSummary(otherScope.id)?.status, "active");
     assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]),
       [[1, "superseded"], [2, "active"], [3, "active"]]);
   });
@@ -644,7 +681,7 @@ test("B-007 null segment history remains monotonic across thread_core and work s
   assert.equal(second.segmentId, undefined);
   assert.deepEqual([first.version, second.version, third.version], [1, 2, 3]);
   assert.equal(third.supersedesSummaryId, first.id);
-  assert.equal(f.store.getConversationContextSummary(second.id).status, "active");
+  assert.equal(f.store.getConversationContextSummary(second.id)?.status, "active");
 });
 
 test("B-007 two Store generation results cannot both install after invalidation", async (t) => {
@@ -664,7 +701,7 @@ test("B-007 two Store generation results cannot both install after invalidation"
     assert.deepEqual(other.commitConversationContextSummary(latePlan, b007At(f.nextTick++)),
       { status: "discarded_stale", reason: "active_summary_changed" });
     assert.deepEqual(b007Snapshot(f), beforeLate);
-    assert.equal(other.getConversationContextSummary(initial.id).status, "invalidated");
+    assert.equal(other.getConversationContextSummary(initial.id)?.status, "invalidated");
     assert.deepEqual(b007History(f).map(({ version }) => version), [1, 2]);
   } finally { other.close(); }
 });
@@ -677,6 +714,7 @@ test("B-007 fresh rebuild keeps assignment fencing when a second Store corrects 
   const other = createSqliteRunStore(f.cwd);
   try {
     const assignment = other.getEffectiveTurnContextAssignment(f.turns[0].turnId);
+    assert.ok(assignment);
     other.applyTurnContextAssignment({ turnId: f.turns[0].turnId, expectedPreviousRevision: assignment.revision,
       target: { kind: "existing", segmentId: f.segmentId }, status: "committed", decisionSource: "user",
       evidenceRefs: [{ type: "turn", id: f.turns[0].turnId }], policyVersion: "continuity-v2-user-correction-v1" }, b007At(f.nextTick++));
@@ -699,14 +737,14 @@ for (const mode of ["invalidated rebuild", "active replacement"]) {
     try {
       assert.throws(() => f.store.commitConversationContextSummary(input, b007At(f.nextTick++)), /B007_SUMMARY_INSERT_FAULT/u);
       assert.deepEqual(b007Snapshot(f), before, "the separate connection cannot observe a partial replacement or new row");
-      assert.equal(f.store.getConversationContextSummary(initial.id).status,
+      assert.equal(f.store.getConversationContextSummary(initial.id)?.status,
         mode === "invalidated rebuild" ? "invalidated" : "active");
     } finally { f.database.exec("DROP TRIGGER b007_summary_insert_fault"); }
     const retried = f.store.commitConversationContextSummary(input, b007At(f.nextTick++));
     assert.equal(retried.status, "committed");
     assert.equal(retried.summary.version, 2);
     assert.equal(b007History(f).length, 2);
-    assert.equal(f.store.getConversationContextSummary(initial.id).status,
+    assert.equal(f.store.getConversationContextSummary(initial.id)?.status,
       mode === "invalidated rebuild" ? "invalidated" : "superseded");
   });
 }
