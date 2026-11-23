@@ -22,6 +22,7 @@ export default {
   },
   extraResources: [
     ...(baseBuild.extraResources ?? []),
+    ...packageJson.lingBundledPluginResources,
     ...(process.env.LING_CUA_FIXTURE_PROVIDER_ROOT
       ? [
           {

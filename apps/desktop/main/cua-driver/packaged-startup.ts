@@ -1,5 +1,9 @@
-import type { CuaDriverFeatureFlags } from "@ling-stack/contracts";
+import { LING_PRODUCT_VERSION, type CuaDriverFeatureFlags } from "@ling-stack/contracts";
+import { readVerifiedOfficialPluginRuntime } from "@ling-stack/core/official-plugin-runtime";
+import { join } from "node:path";
+import { cuaDriverArtifactLayoutFor, cuaDriverArtifactPlatformForRuntime } from "../../shared/cua-driver-artifact-layout.mjs";
 import { resolveDesktopCuaDriverFeatureFlags } from "./feature-gates.js";
+import { CUA_DRIVER_RESOURCE_ROOT_SEGMENTS } from "./resource-path.js";
 import {
   loadDesktopCuaDriverPackageAuthority,
   packagedProviderIntentCapabilities,
@@ -16,6 +20,7 @@ export interface DesktopCuaDriverPackagedStartupAuthority {
   readonly featureFlags: CuaDriverFeatureFlags;
   readonly runtimeEligible: boolean;
   readonly policy?: CuaDriverRuntimeTrustPolicyV1;
+  readonly providerResourcesPath?: string;
   readonly failure?: unknown;
 }
 
@@ -24,12 +29,14 @@ interface ResolveDesktopCuaDriverPackagedStartupAuthorityOptions {
   readonly appPath: string;
   readonly resourcesPath: string;
   readonly platform: string;
+  readonly lingVersion?: string;
 }
 
 interface ResolveDesktopCuaDriverPackagedStartupAuthorityDependencies {
   readonly loadAuthority?: typeof loadDesktopCuaDriverPackageAuthority;
   readonly loadCapabilities?: typeof loadDesktopCuaDriverPackagedProviderCapabilities;
   readonly loadPolicy?: typeof loadCuaDriverRuntimeTrustPolicy;
+  readonly readOfficialRuntime?: typeof readVerifiedOfficialPluginRuntime;
 }
 
 /**
@@ -101,6 +108,21 @@ export async function resolveDesktopCuaDriverPackagedStartupAuthority(
       || capabilities.win32 !== intentCapabilities.win32
     ) {
       throw new Error("cua_driver_package_capability_intent_mismatch");
+    }
+    if (authority.providerSource === "official-cache") {
+      const readOfficialRuntime = dependencies.readOfficialRuntime ?? readVerifiedOfficialPluginRuntime;
+      const layout = cuaDriverArtifactLayoutFor(cuaDriverArtifactPlatformForRuntime(expectedPlatform));
+      const runtime = await readOfficialRuntime({
+        pluginId: "official:cua-driver",
+        lingVersion: options.lingVersion ?? LING_PRODUCT_VERSION,
+        platform: expectedPlatform,
+        executable: ["runtime", ...CUA_DRIVER_RESOURCE_ROOT_SEGMENTS, layout.packagedExecutableRelativePath].join("/"),
+      });
+      if (!runtime) return Object.freeze({ authority, featureFlags, policy, runtimeEligible: false });
+      return Object.freeze({
+        authority, featureFlags, policy, runtimeEligible: true,
+        providerResourcesPath: join(runtime.root, "runtime"),
+      });
     }
     return Object.freeze({ authority, featureFlags, policy, runtimeEligible: true });
   } catch (failure) {

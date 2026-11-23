@@ -5,6 +5,12 @@
 构建时必须选取对应的已审核提交。这份文档不代表已在 Windows 执行或验收。
 候选包只用于本机工程验证，不自动上传、创建 Release 或晋级为正式发行版。
 
+需要对照独立插件的瘦包时，使用同一已审核源码和对应平台工具分别构建兼容包与
+`LING_PLUGIN_EXTERNAL_ONLY=1` 候选。保留两套安装包、解包文件清单及签名证据。
+macOS 的本机审查和原生插件的系统签名要求仍适用。
+GitHub Actions 的 Desktop candidate 工作流提供 `plugin_mode` 选项，瘦包产物作为工作流候选保留。
+[插件瘦包的构建参数与验收](../design/plugin-independent-packaging.md#瘦包对照和切换)
+
 ## 发布命名
 
 维护者另行授权 GitHub 预发布时，统一遵循 [Release Naming](README.md#release-naming)：

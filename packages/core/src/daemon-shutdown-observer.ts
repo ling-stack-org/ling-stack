@@ -1,8 +1,12 @@
 import { closeSync, fstatSync, writeSync } from "node:fs";
+import { Socket } from "node:net";
 import type { Readable } from "node:stream";
+import { isInheritedDaemonPipe } from "./daemon-pipe.js";
 
 export type DaemonShutdownPhase = "draining" | "blocked";
 export const DAEMON_SHUTDOWN_OBSERVER_MAX_BYTES = 512;
+export const DAEMON_SHUTDOWN_REQUEST_FD = 6;
+export const DAEMON_SHUTDOWN_REQUEST = "shutdown\n";
 
 export class DaemonShutdownObserverError extends Error {
   constructor(readonly code: "daemon_shutdown_observer_invalid" | "daemon_shutdown_observer_unavailable") {
@@ -11,13 +15,34 @@ export class DaemonShutdownObserverError extends Error {
   }
 }
 
+/** Windows Desktop requests a drain on its owned child's inherited command pipe. */
+export function readDaemonShutdownRequest(): Promise<boolean> {
+  if (!isInheritedDaemonPipe(fstatSync(DAEMON_SHUTDOWN_REQUEST_FD))) {
+    throw new DaemonShutdownObserverError("daemon_shutdown_observer_invalid");
+  }
+  return readShutdownRequest(new Socket({ fd: DAEMON_SHUTDOWN_REQUEST_FD, readable: true, writable: false }));
+}
+
+async function readShutdownRequest(channel: Readable): Promise<boolean> {
+  let request = "";
+  try {
+    for await (const chunk of channel) {
+      const text = String(chunk);
+      if (request.length + text.length > DAEMON_SHUTDOWN_REQUEST.length) return false;
+      request += text;
+      if (!DAEMON_SHUTDOWN_REQUEST.startsWith(request)) return false;
+    }
+  } catch { return false; }
+  return request === DAEMON_SHUTDOWN_REQUEST;
+}
+
 /** Private FD5 observations are not stopped/effect receipts or replay authority. */
 export function createDaemonShutdownReporter(input: { readonly fd: number }): {
   publish(phase: DaemonShutdownPhase): void;
 } {
   if (input.fd !== 5) throw new DaemonShutdownObserverError("daemon_shutdown_observer_invalid");
   const info = fstatSync(input.fd);
-  if (!info.isFIFO() && !info.isSocket()) throw new DaemonShutdownObserverError("daemon_shutdown_observer_invalid");
+  if (!isInheritedDaemonPipe(info)) throw new DaemonShutdownObserverError("daemon_shutdown_observer_invalid");
   let previous: DaemonShutdownPhase | undefined;
   let unavailable = false;
   const close = (): void => { try { closeSync(input.fd); } catch { /* Already unavailable. */ } };

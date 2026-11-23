@@ -113,6 +113,7 @@ export interface DesktopRuntimeOptions {
   readonly bridgeToken: string;
   readonly workspaceCwd: string;
   readonly resourcesRoot: string;
+  readonly cuaDriverProviderResourcesPath?: string;
   readonly userDataPath: string;
   readonly platform?: string;
   readonly architecture?: string;
@@ -718,7 +719,7 @@ export class DesktopRuntime {
     const coordinatorOptions: CuaDriverCoordinatorOptions = {
       platform,
       architecture,
-      resourcesPath: this.resourcesRoot,
+      resourcesPath: this.options.cuaDriverProviderResourcesPath ?? this.resourcesRoot,
       userDataPath: this.userDataPath,
       workspaceCwd: this.workspaceCwd,
       daemonBaseUrl: this.options.daemonBaseUrl,

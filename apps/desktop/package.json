@@ -88,6 +88,50 @@
     "resedit": "3.1.0",
     "vite": "^8.2.1"
   },
+  "lingBundledPluginResources": [
+    {
+      "from": "../../packages/daemon/src/features/plugins/bundled",
+      "to": "bundled",
+      "filter": [
+        "cua-driver/.ling-plugin/plugin.json",
+        "cua-driver/mcp-server.json",
+        "cua-driver/README.md"
+      ]
+    },
+    {
+      "from": "../chrome-extension/ling-for-chrome.zip",
+      "to": "browser-extension/ling-for-chrome.zip"
+    },
+    {
+      "from": "../chrome-extension/dist/build-metadata.json",
+      "to": "browser-extension/build-metadata.json"
+    },
+    {
+      "from": "../chrome-extension/README.md",
+      "to": "browser-extension/README.md"
+    },
+    {
+      "from": "../chrome-extension/STORE_SUBMISSION.md",
+      "to": "browser-extension/STORE_SUBMISSION.md"
+    },
+    {
+      "from": "dist/office-driver",
+      "to": "office-driver"
+    },
+    {
+      "from": "../../LICENSE",
+      "to": "browser-extension/LICENSE"
+    },
+    {
+      "from": "../../packages/browser-host/dist/native",
+      "to": "browser-host",
+      "filter": [
+        "ling-browser-host",
+        "ling-browser-host.exe",
+        "build-metadata.json"
+      ]
+    }
+  ],
   "build": {
     "appId": "com.lingstack.desktop",
     "productName": "Ling Stack",
@@ -119,48 +163,6 @@
       {
         "from": "../web/dist",
         "to": "web"
-      },
-      {
-        "from": "../../packages/daemon/src/features/plugins/bundled",
-        "to": "bundled",
-        "filter": [
-          "cua-driver/.ling-plugin/plugin.json",
-          "cua-driver/mcp-server.json",
-          "cua-driver/README.md"
-        ]
-      },
-      {
-        "from": "../chrome-extension/ling-for-chrome.zip",
-        "to": "browser-extension/ling-for-chrome.zip"
-      },
-      {
-        "from": "../chrome-extension/dist/build-metadata.json",
-        "to": "browser-extension/build-metadata.json"
-      },
-      {
-        "from": "../chrome-extension/README.md",
-        "to": "browser-extension/README.md"
-      },
-      {
-        "from": "../chrome-extension/STORE_SUBMISSION.md",
-        "to": "browser-extension/STORE_SUBMISSION.md"
-      },
-      {
-        "from": "dist/office-driver",
-        "to": "office-driver"
-      },
-      {
-        "from": "../../LICENSE",
-        "to": "browser-extension/LICENSE"
-      },
-      {
-        "from": "../../packages/browser-host/dist/native",
-        "to": "browser-host",
-        "filter": [
-          "ling-browser-host",
-          "ling-browser-host.exe",
-          "build-metadata.json"
-        ]
       },
       {
         "from": "../../packages/daemon/dist/native/image-sanitizer",

@@ -13,6 +13,7 @@ import {
   type RunStorePathsFacet,
   type CuaDriverActivationStoreFacet,
 } from "@ling-stack/core";
+import { pluginPackageCacheDir } from "@ling-stack/core/official-plugin-runtime";
 import { buildManagedPluginPolicyOverlays } from "./policy-overlay.js";
 import {
   isBundledEmbeddedCuaDriverRuntime,
@@ -184,7 +185,7 @@ export function toManagedPluginPackageView(packageRecord: ManagedPluginPackageRe
 }
 
 function cacheRefExists(paths: LingStackRuntimePaths, cacheRef: string): boolean {
-  return existsSync(join(paths.pluginCacheDir, cacheRef));
+  return existsSync(join(pluginPackageCacheDir(paths, cacheRef), cacheRef));
 }
 
 function resolveLinkedResources(store: ManagedPluginRuntimeStore, descriptor: ManagedPluginDescriptor): ManagedPluginLinkedResource[] {

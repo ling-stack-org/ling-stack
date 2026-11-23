@@ -20,6 +20,7 @@ export interface LingPluginArtifactDescriptor {
   readonly sizeBytes: number;
   readonly sha256: string;
   readonly signature?: string;
+  readonly runtimeChecksumSignature?: string;
   readonly minLingVersion?: string;
   readonly maxLingVersion?: string;
   readonly rollbackAllowed?: boolean;
@@ -69,6 +70,9 @@ export function validateLingPluginArtifactDescriptor(artifact: LingPluginArtifac
   }
   if (artifact.signature !== undefined && !/^ed25519:[A-Za-z0-9+/=_-]+$/u.test(artifact.signature)) {
     throw new Error("artifact.signature must use the ed25519:<payload> format.");
+  }
+  if (artifact.runtimeChecksumSignature !== undefined && !/^ed25519:[A-Za-z0-9+/=]+$/u.test(artifact.runtimeChecksumSignature)) {
+    throw new Error("artifact.runtimeChecksumSignature must use the ed25519:<payload> format.");
   }
   if (artifact.minLingVersion !== undefined) assertSemver(artifact.minLingVersion, "artifact.minLingVersion");
   if (artifact.maxLingVersion !== undefined) assertSemver(artifact.maxLingVersion, "artifact.maxLingVersion");

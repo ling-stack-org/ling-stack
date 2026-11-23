@@ -1,8 +1,96 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Managed worktree integration source closure](#managed-worktree-integration-source-closure).
+The current source prerequisite includes the [Conversation media inputs](#conversation-media-inputs),
+[Plugin rollback compatibility](#plugin-rollback-compatibility),
+[Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
+and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Conversation media inputs
+
+Date 2026-11-24. The record binds the development packaging inputs at
+`143d71a48fa7a0fbbb687395ef40989e3c937fbc`, including main PR #805. The
+conversation media projection uses the job's output order, with creation time
+and ID as tie-breakers. Its source SHA-256 is
+`cf163874a1f8d8d6fdcae9c65392d75a8ce9b6fab42eb3a07e26115b7eec66fa`.
+
+A source and digest audit reconstructed the 55 compiled locale modules from the
+committed catalogs at both revisions. Each locale adds the same eight frame
+viewer strings and retains its prior messages. The projection and those locale
+modules account for 56 digest replacements across 2,013 packaging inputs.
+The audit matched all 15 Office native inputs and verified the existing
+toolchain, runtime, signing, and trust metadata byte for byte. The focused
+SQLite test verified that listed artifacts retain job output order and unlisted
+artifacts follow them.
+
+The record is 260,282 bytes. The fixed-order packaging aggregate is
+`889a81337faed7832aadc02f0e1f95e5bae296b424ee0de6f8c36c8002f7986c`.
+Record SHA-256 is `1d7cead218cc2cc490be658dbbc38c9449c1077eea9a933456c6bccc442adff5`.
+
+## Plugin rollback compatibility
+
+Date 2026-11-24. This development packaging record binds source commit
+`95a35c3a343fe8e487e957516701f993e2516233`. Automatic and manual rollback both
+validate the previous package against the current Ling version before changing
+the selected cache pointer. Host runtimes use explicit rollback. Desktop
+loads the selected host runtime on restart.
+
+Independent source review verified that only
+`packages/daemon/src/features/plugins/routes.ts` changes within the fixed
+packaging inputs. Its digest is
+`58a072640e8681cb6e0c4f028813873ffd7290274ae2fa06b262ca79e019f66f`.
+The other 2,012 packaging inputs and all 15 Office native inputs match the
+preceding record. The record remains 260,282 bytes. The fixed-order packaging
+aggregate is `14c38749692d8596d381f32ec215fd4022ad43372092d21bd9a39f59b47e0c14`.
+Record SHA-256 is `e904064e0ef00e1adadd5a193d759d3e231b5e77ae6df0b664c1092fd4a7e276`.
+
+## Cold-start resource authentication rebind
+
+Date 2026-11-23. This development packaging record binds source commit
+`77aaa790f724baa6e6f4caa3bb10316765fc6cf2`. Packaged macOS and Windows each have a
+180-second resource authentication deadline. A valid resource receipt starts the
+separate 20-second service-readiness deadline.
+
+The only changed fixed packaging input is
+`apps/desktop/main/daemon-lifecycle.ts`, whose digest is
+`93b3423c29ba834ca7211f9b154286cb459616751f536bca48302a2ecdb709d3`.
+All other 2,012 packaging inputs and all 15 Office native inputs still match the prior
+record. The updated record is 260,282 bytes, and the fixed-order packaging aggregate is
+`4eed3e6f07ea4a43e1e84ba7d702d352ebb50744c7bb5f8a2248b687755613b7`.
+The updated record SHA-256 is
+`cae50b780f148108a0ef65b946c7f5fd7fba1527be2fe938019f58f08da879a6`.
+
+Independent Codex context `01a2089e-d773-7a81-8a86-40676888cbf2` recomputed the
+fixed digests, reviewed the startup deadlines and returned `VERDICT: CLEAN` for
+this development packaging record. Desktop type checking and all 56 focused
+lifecycle tests passed. The hosted daemon measurements used to set the resource
+deadline are recorded in [Independent Plugin Packaging](../../docs/design/plugin-independent-packaging.md#候选构建证据).
+
+## Official Plugin Packaging Source Closure
+
+Date 2026-11-23. The source prerequisite binds `4596ab2614ba2a4217c8a8f24b05128229a1c5a4`
+for Darwin arm64 with `unsigned_dev`, ad-hoc signing and the no-bundled-provider
+build lane. The inventory covers the App Server client, plugin download and
+verification code, Desktop plugin trust inputs, and dependencies identified
+from the fixed authored roots.
+
+The record covers 2,013 packaging inputs, including 66 new paths and 158 changed
+digests. All 15 Office native source digests and the toolchain, headers, runtime,
+signing and trust fields match the preceding record. The digest map uses one
+entry per line within the existing 262,144-byte reader limit.
+
+Independent Codex context `01a207d4-0b52-7631-911c-e0819e5f1455` verified the fixed
+inventory, every candidate digest and metadata preservation, and returned
+`VERDICT: CLEAN` for this scoped development source binding. A strict packaging
+fixture used real esbuild and observed the authored download, verification and
+cache modules in the emitted daemon. System signing and installed-app behavior
+require separate runtime evidence.
+
+Record SHA-256 `31aefdc05b9b9c6e1d19685ff1b3eae1786d42422f6b03efdce5b76cfb25a864`.
+Packaging aggregate `6a2718044d0dad1b75e8438ba23b3b7d41e5211ae7b681f012dcf676ba55c435`.
+The preceding record SHA-256 was
+`fc450f98173497ea0a6c73d37d32430bc551df30ac385749284e9411496993ca`.
 
 ## Managed Worktree Integration Source Closure
 

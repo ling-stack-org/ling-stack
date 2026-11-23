@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Clock3, FileText, Globe2, Puzzle, Search } from "lucide-react";
+import { comparePluginVersions, type ManagedPluginArtifactView } from "@ling-stack/contracts";
 import { useI18n } from "../../i18n.js";
 import { Field, Input, Switch, Tabs, TabsList, TabsTrigger } from "../../shared/ui/index.js";
 import { CuaDriverInstallDrawer } from "./CuaDriverInstallDrawer.js";
@@ -113,15 +114,26 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
     ? controller.pendingActionFor(chromeConnectPlugin.id, "chrome-connect")
     : undefined;
 
-  const catalogEntries = useMemo(() => {
-    const query = controller.filters.query.trim().toLocaleLowerCase();
-    return (props.catalog?.catalog.plugins ?? []).filter((entry) => !query
-      || `${entry.displayName}\n${entry.description ?? entry.trustSummary}`.toLocaleLowerCase().includes(query));
-  }, [controller.filters.query, props.catalog]);
   const installedPlugins = useMemo(
-    () => new Map(props.plugins.filter((plugin) => plugin.package?.status === "installed" || plugin.setup?.distribution === "bundled_embedded").map((plugin) => [plugin.id, plugin])),
+    () => new Map(props.plugins.filter((plugin) => plugin.package?.status === "installed"
+      || plugin.setup?.distribution === "bundled_embedded" && !plugin.actions.canInstallRemote
+    ).map((plugin) => [plugin.id, plugin])),
     [props.plugins],
   );
+  const catalogEntries = useMemo(() => {
+    const query = controller.filters.query.trim().toLocaleLowerCase();
+    const entries = new Map((props.catalog?.catalog.plugins ?? []).map((entry) => [entry.pluginId, entry]));
+    const offline = [...installedPlugins.values()].filter((plugin) => !entries.has(plugin.id)).map((plugin) => ({
+      pluginId: plugin.id,
+      displayName: plugin.displayName,
+      description: plugin.description,
+      trustSummary: plugin.trustSummary,
+      latestStableVersion: plugin.package?.version ?? plugin.version,
+      artifacts: [],
+    }));
+    return [...entries.values(), ...offline].filter((entry) => !query
+      || `${entry.displayName}\n${entry.description ?? entry.trustSummary}`.toLocaleLowerCase().includes(query));
+  }, [controller.filters.query, installedPlugins, props.catalog]);
   const installedEntries = useMemo(
     () => catalogEntries.filter((entry) => installedPlugins.has(entry.pluginId)),
     [catalogEntries, installedPlugins],
@@ -179,7 +191,10 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
             <div className="plugin-marketplace-list" onScroll={handleCatalogScroll} ref={catalogListRef}>
               {visibleEntries.map((entry) => {
                 const installed = installedPlugins.get(entry.pluginId);
-                const artifact = selectCatalogArtifact(entry.artifacts, installed);
+                const artifact = selectCatalogArtifact(entry.artifacts);
+                const installedVersion = installed?.package?.version;
+                const canUpdate = artifact && installedVersion
+                  && comparePluginVersions(artifact.version, installedVersion) > 0;
                 const icon = entry.pluginId.includes("chrome")
                   ? <Globe2 />
                   : entry.pluginId.includes("office")
@@ -191,6 +206,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                   ? controller.pendingActionFor(installed.id, "row", "enable") ?? controller.pendingActionFor(installed.id, "row", "disable")
                   : undefined;
                 const pendingInstall = controller.pendingActionFor(entry.pluginId, "row", "install");
+                const pendingRollback = controller.pendingActionFor(entry.pluginId, "row", "refresh-package");
                 const canToggle = installed
                   ? installed.status === "enabled" ? installed.actions.canDisable : installed.actions.canEnable
                   : false;
@@ -200,10 +216,37 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                     <div className="plugin-marketplace-copy">
                       <div className="plugin-marketplace-name"><strong>{entry.displayName}</strong></div>
                       <span>{entry.description ?? entry.trustSummary}</span>
-                      <small>{entry.latestStableVersion} · {t("Available for this device")} · {formatArtifactSize(artifact?.sizeBytes)}</small>
+                      <small>{installedVersion ?? artifact?.version ?? entry.latestStableVersion}{artifact && !installed
+                        ? ` · ${t("Available for this device")} · ${formatArtifactSize(artifact.sizeBytes)}`
+                        : null}</small>
                     </div>
                     {installed ? (
                       <div className="plugin-marketplace-toggle">
+                        {canUpdate ? (
+                          <button
+                            type="button"
+                            className="plugin-marketplace-action"
+                            disabled={Boolean(pendingInstall || pendingRollback)}
+                            onClick={() => void controller.runMutation({
+                              pluginId: entry.pluginId,
+                              action: "install",
+                              owner: "row",
+                              mutate: (request) => props.onInstallRemote(entry.pluginId, request, artifact.version),
+                            })}
+                          >
+                            {t("Update")} {artifact.version}
+                          </button>
+                        ) : null}
+                        {installed.actions.canRollback ? (
+                          <button
+                            type="button"
+                            className="plugin-marketplace-action"
+                            disabled={Boolean(pendingInstall || pendingRollback)}
+                            onClick={() => void buildHandlers("row").onRollback(installed.id)}
+                          >
+                            {t("Roll back")}
+                          </button>
+                        ) : null}
                         <Switch
                           aria-label={`${entry.displayName} ${installed.status === "enabled" ? t("Disable") : t("Enable")}`}
                           checked={installed.status === "enabled"}
@@ -224,10 +267,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                         type="button"
                         className="plugin-marketplace-action plugin-marketplace-action-primary"
                         disabled={!artifact || Boolean(pendingInstall)}
-                        onClick={() => artifact && void props.onInstallRemote(entry.pluginId, {
+                        onClick={() => artifact && void controller.runMutation({
+                          pluginId: entry.pluginId,
+                          action: "install",
                           owner: "row",
-                          requestId: `catalog-install:${entry.pluginId}:${Date.now()}`,
-                        }, artifact.version)}
+                          mutate: (request) => props.onInstallRemote(entry.pluginId, request, artifact.version),
+                        })}
                       >
                         {artifact ? t("Install") : t("Awaiting source")}
                       </button>
@@ -235,7 +280,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                   </article>
                 );
               })}
-                  {!props.catalog && !props.catalogLoading ? (
+                  {!props.catalog && !props.catalogLoading && visibleEntries.length === 0 ? (
                     <div className="plugin-marketplace-empty" role="status">
                       <strong>{props.catalogError ? t("Official plugin source unavailable") : t("No plugin source connected")}</strong>
                       <span>{props.catalogError ?? t("Connect the local service to load the official plugin list.")}</span>
@@ -318,14 +363,12 @@ function formatArtifactSize(sizeBytes: number | undefined): string {
   return `${(sizeBytes / (1024 * 1024)).toFixed(0)} MB`;
 }
 
-function selectCatalogArtifact(
-  artifacts: readonly import("@ling-stack/contracts").ManagedPluginArtifactView[],
-  installed: import("@ling-stack/contracts").ManagedPluginView | undefined,
-): import("@ling-stack/contracts").ManagedPluginArtifactView | undefined {
-  const installedPlatform = installed?.package?.platform;
-  const installedArch = installed?.package?.arch;
-  const candidates = installedPlatform && installedArch
-    ? artifacts.filter((artifact) => artifact.platform === installedPlatform && artifact.arch === installedArch)
-    : artifacts;
-  return candidates.find((candidate) => candidate.channel === "stable") ?? candidates[0];
+function selectCatalogArtifact(artifacts: readonly ManagedPluginArtifactView[]): ManagedPluginArtifactView | undefined {
+  let latest: ManagedPluginArtifactView | undefined;
+  for (const artifact of artifacts) {
+    if (artifact.channel === "stable" && (!latest || comparePluginVersions(artifact.version, latest.version) > 0)) {
+      latest = artifact;
+    }
+  }
+  return latest;
 }

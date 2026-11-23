@@ -672,3 +672,29 @@ c3b2c4c5b3b4eff9f67de3948aca6b1e036d65d1:packages/daemon/test/conversation-summa
 
 # Synthetic conversation summary redaction fixture introduced by the main sync commit.
 7e5e998ca0b281de433c807362392724195ed9a9:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
+
+# Packaging inventory entries verified against the SHA-256 of each committed source file.
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:26
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:277
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:410
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:426
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:501
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:641
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:793
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:924
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1024
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1135
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1148
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1149
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1157
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1390
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1549
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1599
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1643
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1645
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1651
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1653
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1656
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1668
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
+3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837

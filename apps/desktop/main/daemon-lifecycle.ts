@@ -1,9 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import { readExecutionEngineHostAuthority, type ExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
 import { DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS, DaemonResourceBootstrapError, readDaemonResourceBootstrap } from "@ling-stack/core/daemon-resource-bootstrap";
-import { observeDaemonShutdown, type DaemonShutdownPhase } from "@ling-stack/core/daemon-shutdown-observer";
+import {
+  DAEMON_SHUTDOWN_REQUEST,
+  DAEMON_SHUTDOWN_REQUEST_FD,
+  observeDaemonShutdown,
+  type DaemonShutdownPhase,
+} from "@ling-stack/core/daemon-shutdown-observer";
 import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
@@ -23,6 +28,8 @@ import {
 import { deriveMobileAccessManagementCapability } from "./mobile-access/authority.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
+// macOS and Windows cold starts authenticate several GB of packaged resources before listening.
+const DESKTOP_RESOURCE_BOOTSTRAP_TIMEOUT_MS = 180_000;
 
 export type DesktopDaemonLifecycleErrorCode =
   | "bridge_incompatible"
@@ -61,6 +68,7 @@ export type DesktopDaemonUnexpectedExit = DesktopDaemonOwnedExit & {
 interface OwnedDaemonShutdown {
   readonly child: ChildProcess;
   readonly listeners: Set<() => void>;
+  readonly requestStop: () => boolean;
   stopRequested: boolean;
   phase?: DaemonShutdownPhase;
   exit?: DesktopDaemonOwnedExit;
@@ -106,7 +114,8 @@ export interface DesktopDaemonLifecycleOptions {
   readonly engineSupervisorPath?: string;
   readonly imageSanitizerPath?: string;
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
-  /** Test seam for evaluating the platform-specific bundled gate. */
+  readonly cuaDriverCatalogManaged?: boolean;
+  /** Platform for startup policy and the bundled provider gate. */
   readonly platform?: string;
   /** Called once when a Desktop-owned child exits outside an intentional stop. */
   readonly onUnexpectedExit?: (details: DesktopDaemonUnexpectedExit) => void;
@@ -266,6 +275,8 @@ export class DesktopDaemonLifecycle {
     this.update({ state: "starting", baseUrl: this.options.baseUrl, ownedByDesktop: true });
     const url = new URL(this.options.baseUrl);
     const spawnDaemon = this.options.spawnDaemon ?? defaultSpawnDaemon;
+    const platform = this.options.platform ?? process.platform;
+    const windows = platform === "win32";
     let child: ChildProcess;
     try {
       child = spawnDaemon({
@@ -283,12 +294,14 @@ export class DesktopDaemonLifecycle {
           LING_STACK_ENGINE_AUTHORITY_FD: "3",
           LING_STACK_RESOURCE_BOOTSTRAP_FD: this.options.packaged ? "4" : undefined,
           LING_STACK_SHUTDOWN_OBSERVER_FD: "5",
+          LING_STACK_SHUTDOWN_REQUEST_FD: windows ? String(DAEMON_SHUTDOWN_REQUEST_FD) : undefined,
           // Desktop is the trusted local host for command execution. The
           // daemon still applies its approval policy and persists validated
           // command evidence; this only makes the bash surface available to
           // the packaged runner.
           LING_STACK_RUNTIME_UNIFIED_EXEC: "1",
-          ...(this.options.browserHostPath ? { LING_BROWSER_HOST_PATH: this.options.browserHostPath } : {}),
+          LING_BROWSER_HOST_PATH: this.options.browserHostPath,
+          LING_DESKTOP_CUA_DRIVER_CATALOG_MANAGED: this.options.cuaDriverCatalogManaged ? "1" : "0",
           LING_ENGINE_SUPERVISOR_PATH: this.options.engineSupervisorPath,
           LING_IMAGE_SANITIZER_PATH: this.options.imageSanitizerPath,
           ...(this.options.desktopBridgeToken
@@ -306,7 +319,12 @@ export class DesktopDaemonLifecycle {
     this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
     this.child = child;
     this.ownedStopResult = undefined;
-    const ownedShutdown: OwnedDaemonShutdown = { child, listeners: new Set(), stopRequested: false };
+    const ownedShutdown: OwnedDaemonShutdown = {
+      child,
+      listeners: new Set(),
+      requestStop: windows ? createWindowsDaemonStopRequest(child) : () => child.kill("SIGTERM"),
+      stopRequested: false,
+    };
     this.ownedShutdown = ownedShutdown;
     const shutdownChannel = (child.stdio as readonly unknown[] | undefined)?.[5];
     if (shutdownChannel instanceof Readable && child.pid) {
@@ -333,12 +351,15 @@ export class DesktopDaemonLifecycle {
     const channel = child.stdio?.[3];
     const startupAbort = new AbortController();
     const serviceStartupTimeoutMs = this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS;
+    const resourceBootstrapTimeoutMs = windows || platform === "darwin"
+      ? DESKTOP_RESOURCE_BOOTSTRAP_TIMEOUT_MS
+      : DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS;
     this.engineAuthority = {
       child,
       abort: startupAbort,
       result: channel instanceof Readable && child.pid
         ? readExecutionEngineHostAuthority({ channel, baseUrl: this.options.baseUrl, pid: child.pid,
-            timeoutMs: serviceStartupTimeoutMs + (this.options.packaged ? DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS : 0),
+            timeoutMs: serviceStartupTimeoutMs + (this.options.packaged ? resourceBootstrapTimeoutMs : 0),
             signal: startupAbort.signal }).catch(() => undefined)
         : Promise.resolve(undefined),
     };
@@ -446,7 +467,8 @@ export class DesktopDaemonLifecycle {
         if (!(resourceChannel instanceof Readable) || !child.pid) {
           throw new DaemonResourceBootstrapError("daemon_resource_bootstrap_unavailable");
         }
-        await readDaemonResourceBootstrap({ channel: resourceChannel, pid: child.pid, signal: startupAbort.signal });
+        await readDaemonResourceBootstrap({ channel: resourceChannel, pid: child.pid,
+          timeoutMs: resourceBootstrapTimeoutMs, signal: startupAbort.signal });
         this.assertStartupCurrent(startupGeneration);
         if (childSpawnError || this.child !== child || child.exitCode !== null || child.signalCode !== null) {
           throw new Error("daemon_resource_bootstrap_child_failed");
@@ -691,7 +713,7 @@ export class DesktopDaemonLifecycle {
       throw this.stopError(owner);
     }
     if (owner.phase === "blocked" || this.statusValue.reason === "stop_unconfirmed") throw this.stopError(owner);
-    const signalNeeded = !owner.stopRequested && !owner.phase;
+    const requestNeeded = !owner.stopRequested && !owner.phase;
     owner.stopRequested = true;
     this.publishStopping(owner);
     await new Promise<void>((resolve, reject) => {
@@ -712,9 +734,9 @@ export class DesktopDaemonLifecycle {
         finish(this.stopError(owner));
       }, this.options.shutdownTimeoutMs ?? 3_000);
       owner.listeners.add(changed);
-      if (signalNeeded) {
+      if (requestNeeded) {
         try {
-          if (!child.kill("SIGTERM")) {
+          if (!owner.requestStop()) {
             this.publishStopping(owner, "stop_unconfirmed");
             finish(this.stopError(owner));
           }
@@ -860,7 +882,7 @@ export class DesktopDaemonLifecycle {
 
   private update(status: DesktopDaemonStatus): DesktopDaemonStatus {
     this.statusValue = status;
-    // Observers cannot prevent SIGTERM/stop waiting, crash a timeout callback,
+    // Observers cannot interrupt shutdown, crash a timeout callback,
     // or hide the same Host fact from the remaining observers.
     for (const listener of this.events.rawListeners("status")) {
       try {
@@ -898,9 +920,22 @@ function defaultSpawnDaemon(input: {
   return spawn(input.executable, [...input.args], {
     cwd: input.cwd,
     env: input.env,
-    stdio: ["ignore", "ignore", "ignore", "pipe", input.env.LING_STACK_RESOURCE_BOOTSTRAP_FD === "4" ? "pipe" : "ignore", "pipe"],
+    stdio: ["ignore", "ignore", "ignore", "pipe", input.env.LING_STACK_RESOURCE_BOOTSTRAP_FD === "4" ? "pipe" : "ignore",
+      "pipe", input.env.LING_STACK_SHUTDOWN_REQUEST_FD === String(DAEMON_SHUTDOWN_REQUEST_FD) ? "pipe" : "ignore"],
     windowsHide: true,
   });
+}
+
+function createWindowsDaemonStopRequest(child: ChildProcess): () => boolean {
+  const channel = (child.stdio as readonly unknown[] | undefined)?.[DAEMON_SHUTDOWN_REQUEST_FD];
+  if (!(channel instanceof Writable)) return () => false;
+  // A write failure cannot confirm a stop. The observer still awaits the child's exit.
+  channel.on("error", () => undefined);
+  return () => {
+    if (!channel.writable) return false;
+    channel.end(DAEMON_SHUTDOWN_REQUEST);
+    return true;
+  };
 }
 
 function defaultProbePort(input: {

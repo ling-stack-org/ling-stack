@@ -15,7 +15,8 @@ import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "../scripts/packa
 import { bundleInventory, digest, readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
-const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
+const workspaceNames = ["api-client", "browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk",
+  "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
 test("Office fixed closure contains no duplicate packaging inputs", () => {
@@ -620,13 +621,24 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
   const workspaceInputs = paths.filter(path => workspaceNames.some(name => path.startsWith(join(f.root, "packages", name) + sep)));
   assert.ok(workspaceInputs.length > 0);
   const anyWorkspaceDist = paths.filter(path => workspaceNames.some(name => path.includes(`${sep}packages${sep}${name}${sep}dist${sep}`)));
-  assert.deepEqual(anyWorkspaceDist, [], "no generated dist from any of the nine workspace packages may be a runtime input");
+  assert.deepEqual(anyWorkspaceDist, [], "generated workspace dist must not be a runtime input");
   assert.equal(workspaceInputs.every(path => workspaceNames.some(name => path.startsWith(join(f.root, "packages", name, "src") + sep))), true);
   const bridgePath = join(f.root, reviewedLeaf);
   assert.equal(paths.includes(bridgePath), true, "actual metafile must contain the reviewed authored bridge");
   const review = JSON.parse(readFileSync(f.reviewPath, "utf8"));
   const authored = readFileSync(bridgePath);
   assert.equal(hash(authored), review.packagingSha256[reviewedLeaf]);
+  for (const name of [
+    "packages/core/src/official-plugin-runtime.ts",
+    "packages/daemon/src/features/plugins/plugin-download.ts",
+    "packages/daemon/src/features/plugins/remote-catalog.ts",
+    "packages/daemon/src/features/plugins/remote-package.ts",
+    "packages/plugin-sdk/src/distribution.ts",
+  ]) {
+    const path = join(f.root, name);
+    assert.ok(workspaceInputs.includes(path), name);
+    assert.equal(review.packagingSha256[name], hash(readFileSync(path)), name);
+  }
   const bridgeInputName = Object.keys(observed.metafile.inputs).find(name => resolve(f.root, "apps/desktop", name) === bridgePath);
   assert.equal(observed.metafile.inputs[bridgeInputName].bytes, authored.length);
   // The disposable fixture runs the local source-input observer, which binds
@@ -657,13 +669,13 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
   assert.deepEqual(observed.outputFiles, [{ path: bundle.pins.path, sha256: bundle.pins.sha256, sizeBytes: bundle.pins.sizeBytes }],
     "original emitted API pins must match the untouched true esbuild output, not a synthesized result");
   return { entryPoint: "packages/daemon/src/cli.ts", runtimeInputs: paths.length, authoredWorkspaceRuntimeInputs: workspaceInputs.length,
-    nineWorkspaceDistRuntimeInputs: anyWorkspaceDist.length, reviewedBridgeSha256: hash(authored),
+    workspaceDistRuntimeInputs: anyWorkspaceDist.length, reviewedBridgeSha256: hash(authored),
     reviewedAuthoredRuntimeSha256, reviewedAuthoredTypeOnlySha256,
     originalEsbuildOutputSha256: observed.outputFiles[0].sha256 };
 }
 
 /**
- * Disposable test-only approved rows, faithful nine-package workspace inputs,
+ * Disposable test-only approved rows, faithful workspace inputs,
  * real existing esbuild, original native publication and original CLI APIs.
  * Only native compiler bodies and codesign transforms are explicitly replaced.
  * There is no fake esbuild result, generated-output execution or product approval.

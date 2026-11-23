@@ -20,7 +20,7 @@ export function createDevelopmentBundledPluginStagerForTest(overrides = {}) {
 async function stageDevelopmentBundledPluginsWithFileSystem(input, fileSystem) {
   const desktopRoot = resolve(input.desktopRoot ?? defaultDesktopRoot);
   const configuration = JSON.parse(await fileSystem.readFile(resolve(desktopRoot, "package.json"), "utf8"));
-  const resources = configuration?.build?.extraResources?.filter(entry => entry?.to === "bundled") ?? [];
+  const resources = configuration?.lingBundledPluginResources?.filter(entry => entry?.to === "bundled") ?? [];
   const resource = resources.length === 1 ? resources[0] : undefined;
   if (!resource || typeof resource.from !== "string" || !Array.isArray(resource.filter)) {
     throw new Error("bundled_plugin_metadata_missing");

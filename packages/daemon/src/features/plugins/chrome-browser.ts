@@ -57,6 +57,7 @@ export class ChromeBrowserPluginService {
     readonly getStore: (cwd: string) => ChromeBrowserPluginStore;
     readonly storeUrl?: string;
     readonly hostPath?: string;
+    readonly packagedDesktop?: boolean;
     readonly installHost?: typeof installBrowserHost;
   }) {}
 
@@ -206,6 +207,10 @@ export class ChromeBrowserPluginService {
 
   async repairHost(cwd: string, now = new Date().toISOString()): Promise<ManagedPluginHealthSnapshot> {
     if (!this.supportsWorkspace(cwd)) throw new Error("chrome_browser_workspace_mismatch");
+    if (this.options.packagedDesktop && !this.options.hostPath) {
+      this.options.controller.observeNativeState({ cwd, hostState: "missing" });
+      return this.sync(cwd, now);
+    }
     const hostPath = this.options.hostPath ?? defaultDevelopmentBrowserHostPath();
     const status = await (this.options.installHost ?? installBrowserHost)({ hostPath });
     this.options.controller.observeNativeState({ cwd, hostState: status.installed ? "ready" : "missing" });

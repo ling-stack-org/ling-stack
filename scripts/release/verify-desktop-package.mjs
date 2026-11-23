@@ -60,11 +60,20 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
   if (distribution.length === 0 || !isDeepStrictEqual(distribution, expectedDistribution)) throw new Error("Packaged distribution materials differ from this build");
   execFileSync(process.execPath, [join(desktopRoot, "scripts/distribution/materials.mjs"), "verify", "--platform", mac ? "darwin-arm64" : "win32-x64",
     "--resources", resources], { cwd: root, encoding: "utf8", timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
-  const required = [exe, archive, join(resources, "web/index.html"), join(resources, "browser-extension/ling-for-chrome.zip"),
-    join(resources, "browser-host", mac ? "ling-browser-host" : "ling-browser-host.exe"),
+  const pluginMode = metadata.lingPluginResourceMode ?? "bundled";
+  if (pluginMode !== "bundled" && pluginMode !== "on-demand") throw new Error("Unknown Desktop plugin resource mode");
+  const expectedPluginMode = process.env.LING_PLUGIN_EXTERNAL_ONLY === "1" ? "on-demand" : "bundled";
+  if (pluginMode !== expectedPluginMode) throw new Error("Packaged plugin resource mode does not match the requested build");
+  const pluginResources = pluginMode === "bundled"
+    ? [
+        join(resources, "browser-extension/ling-for-chrome.zip"),
+        join(resources, "browser-host", mac ? "ling-browser-host" : "ling-browser-host.exe"),
+        mac ? join(resources, "office-driver/darwin-arm64/OfficeDriver.app/Contents/MacOS/ling-office-driver")
+          : join(resources, "office-driver/win32-x64/ling-office-driver.exe"),
+      ]
+    : [];
+  const required = [exe, archive, join(resources, "web/index.html"), ...pluginResources,
     join(resources, "image-sanitizer", mac ? "ling-image-sanitizer" : "ling-image-sanitizer.exe"),
-    mac ? join(resources, "office-driver/darwin-arm64/OfficeDriver.app/Contents/MacOS/ling-office-driver")
-      : join(resources, "office-driver/win32-x64/ling-office-driver.exe"),
     ...(mac ? [join(resources, "office-local/office-local.node"), join(resources, "restricted-command/ling-sandbox-runner")]
       : [join(resources, "engine-supervisor/ling-engine-supervisor.exe")])];
   const files = [];
@@ -83,7 +92,15 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
       { env, timeout: 30_000, encoding: "utf8" }).trim();
     if (state !== "NotSigned") throw new Error("Expected a Windows development executable without publisher signing");
   }
-  return { files, payload: await inventoryApplicationTree(app, { allowLinks: mac }),
+  const payload = await inventoryApplicationTree(app, { allowLinks: mac });
+  const prefix = mac ? "Contents/Resources/" : "resources/";
+  const bundledPluginPath = /^(?:(?:bundled|browser-extension|browser-host|office-driver)(?:\/|$)|providers\/cua-driver\/(?!packaged-provider-capabilities\.json$|runtime-trust-policy\.json$))/u;
+  if (pluginMode === "on-demand" && (payload.some(entry => entry.name.startsWith(prefix)
+    && bundledPluginPath.test(entry.name.slice(prefix.length)))
+    || asar.listPackage(archive).some(name => /(?:^|[/\\])dist[/\\](?:office-driver|daemon[/\\]bundled)(?:[/\\]|$)/u.test(name)))) {
+    throw new Error("Unexpected bundled plugin resource in the on-demand Desktop payload");
+  }
+  return { files, payload, pluginMode, installedPayloadBytes: payload.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0),
     gstack: bundle.identity, distributionFileCount: distribution.length };
 }
 

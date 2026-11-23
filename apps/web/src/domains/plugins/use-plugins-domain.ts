@@ -289,17 +289,25 @@ export function usePluginsDomain(input: {
   }
 
   async function installRemotePlugin(pluginId: string, request: PluginActionRequest, version?: string): Promise<void> {
-    await mutatePlugin(pluginId, "install", request, async (cwd) => {
+    await runPluginOperation(pluginId, "install", request, async (cwd) => {
       const response = await installManagedPluginRemote(cwd, pluginId, version ? { version } : {});
-      return response.plugin;
-    }, () => input.translate("Plugin package installed."));
+      return {
+        value: undefined,
+        plugin: response.plugin,
+        successMessage: response.package.cacheRef.startsWith("host/official-remote/")
+          ? input.translate("Restart Ling, then check again.")
+          : input.translate("Plugin package installed."),
+      };
+    });
   }
 
   async function rollbackPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
     await mutatePlugin(pluginId, "refresh-package", request, async (cwd) => {
       const response = await rollbackManagedPlugin(cwd, pluginId);
       return response.plugin;
-    }, () => input.translate("Plugin package rolled back."));
+    }, (plugin) => plugin.package?.cacheRef.startsWith("host/official-remote/")
+      ? input.translate("Restart Ling, then check again.")
+      : input.translate("Plugin package rolled back."));
   }
 
   async function uninstallPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {

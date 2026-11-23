@@ -616,12 +616,15 @@ export function createDaemonServer(
       ?? readChromeBrowserExtensionIds(process.env.LING_CHROME_EXTENSION_IDS),
     getStore: (cwd) => storeRegistry.getStore(cwd),
   });
+  const chromeBrowserHostPath = dependencies.chromeBrowserHostPath ?? process.env.LING_BROWSER_HOST_PATH;
+  const packagedDesktop = process.env.LING_STACK_PACKAGED_DESKTOP === "1";
   const chromeBrowserPlugin = new ChromeBrowserPluginService({
     controller: chromeBrowserSessions,
     getStore: (cwd) => storeRegistry.getStore(cwd),
     storeUrl: normalizeChromeBrowserStoreUrl(process.env.LING_CHROME_EXTENSION_STORE_URL)
       ?? `https://chromewebstore.google.com/detail/${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}`,
-    ...(process.env.LING_BROWSER_HOST_PATH ? { hostPath: process.env.LING_BROWSER_HOST_PATH } : {}),
+    hostPath: chromeBrowserHostPath,
+    packagedDesktop,
   });
   let lastChromeBrowserProjection = "";
   chromeBrowserSessions.setStateChangeListener((cwd, snapshot) => {
@@ -1158,14 +1161,12 @@ export function createDaemonServer(
     port: resolvedConfig.port,
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
   });
-  const chromeBrowserNativeBroker = (dependencies.chromeBrowserNativeMessagingEnabled
-    ?? process.env.NODE_TEST_CONTEXT === undefined)
+  const chromeBrowserNativeBroker = (!packagedDesktop || chromeBrowserHostPath)
+    && (dependencies.chromeBrowserNativeMessagingEnabled ?? process.env.NODE_TEST_CONTEXT === undefined)
     ? createChromeBrowserNativeBroker({
         controller: chromeBrowserSessions,
         workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
-        ...(dependencies.chromeBrowserHostPath ?? process.env.LING_BROWSER_HOST_PATH
-          ? { hostPath: dependencies.chromeBrowserHostPath ?? process.env.LING_BROWSER_HOST_PATH }
-          : {}),
+        hostPath: chromeBrowserHostPath,
         ...(dependencies.chromeBrowserRuntimeDescriptorPath ?? process.env.LING_BROWSER_HOST_RUNTIME_DESCRIPTOR
           ? { descriptorPath: dependencies.chromeBrowserRuntimeDescriptorPath ?? process.env.LING_BROWSER_HOST_RUNTIME_DESCRIPTOR }
           : {}),

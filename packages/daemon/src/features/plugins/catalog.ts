@@ -61,6 +61,7 @@ export function listManagedPluginViews(input: {
   readonly includeHidden?: boolean;
   readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
@@ -96,6 +97,7 @@ export function getManagedPluginView(input: {
   readonly includeEvents?: boolean;
   readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
@@ -209,6 +211,7 @@ function createManagedPluginView(input: {
   readonly now: string;
   readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
@@ -367,6 +370,7 @@ function createManagedPluginView(input: {
     ? "official-remote"
     : input.descriptor.sourceKind;
   const packagedPlugin = effectiveSourceKind === "bundled" || effectiveSourceKind === "official-remote";
+  const catalogManagedCua = bundledProjection && input.cuaDriverFeatureFlags?.catalogManaged === true;
   const runtimeProvidedByLing = isRuntimeProvidedByLing(input.descriptor.id);
   const runtimePreviewAvailable = packagedPlugin || runtimeProvidedByLing;
   const runtimePreview = runtimePreviewAvailable
@@ -413,10 +417,12 @@ function createManagedPluginView(input: {
       canCheckUpdate: effectiveSourceKind === "official-remote",
       canApplyPreset: !bundledProjection && !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
       canInstall: !blocked && bundledPackageAvailable && packageView?.status !== "installed",
-      canInstallRemote: !blocked && !bundledProjection && effectiveSourceKind === "official-remote" && packageView?.status !== "installed",
-      canUninstall: !blocked && packagedPlugin && packageView?.status === "installed",
-      canRefreshPackage: !blocked && bundledPackageAvailable && packageView?.status === "installed",
-      canRollback: !blocked && effectiveSourceKind === "official-remote" && Boolean(packageView?.previousVersion),
+      canInstallRemote: (catalogManagedCua || !blocked && !bundledProjection && effectiveSourceKind === "official-remote")
+        && packageView?.status !== "installed",
+      canUninstall: !blocked && !bundledProjection && packagedPlugin && packageView?.status === "installed",
+      canRefreshPackage: !blocked && !bundledProjection && bundledPackageAvailable && packageView?.status === "installed",
+      canRollback: (catalogManagedCua || !blocked && !bundledProjection) && effectiveSourceKind === "official-remote"
+        && Boolean(packageView?.previousVersion),
       canRuntimePreview: runtimePreviewAvailable,
     },
   };

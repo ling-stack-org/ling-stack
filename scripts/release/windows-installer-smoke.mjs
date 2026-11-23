@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { createServer } from "node:net";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { runOwnedWindowsProcess } from "../../apps/desktop/scripts/cua-driver-package-atomic-publish.mjs";
 import { inventoryApplicationTree } from "./desktop-payload.mjs";
 
 const product = "Ling Stack", uninstallerName = "Uninstall Ling Stack.exe";
@@ -43,12 +45,13 @@ export async function smokeWindowsInstaller({ installer, unpacked, candidate }) 
 $installArgs = @('/S'); if ($env:LING_INSTALL_SMOKE_CUSTOM_PATH -eq 'true') { $installArgs += ('/D=' + $env:LING_INSTALL_SMOKE_PATH) }
 $p = Start-Process -FilePath $env:LING_INSTALL_SMOKE_EXE -ArgumentList $installArgs -PassThru -Wait;
 if ($p.ExitCode -ne 0) { throw ('Installer failed: ' + $p.ExitCode) }`,
-  { LING_INSTALL_SMOKE_EXE: resolve(installer), LING_INSTALL_SMOKE_CUSTOM_PATH: String(customPath) });
+  { LING_INSTALL_SMOKE_EXE: resolve(installer), LING_INSTALL_SMOKE_CUSTOM_PATH: String(customPath) }, 420_000);
   const runUninstaller = () => powershell(`$ErrorActionPreference = 'Stop';
 $p = Start-Process -FilePath (Join-Path $env:LING_INSTALL_SMOKE_PATH 'Uninstall Ling Stack.exe') -ArgumentList '/S' -PassThru -Wait;
 if ($p.ExitCode -ne 0) { throw ('Uninstaller failed: ' + $p.ExitCode) }`);
   const baseline = await inventoryApplicationTree(unpacked);
   let installed = false;
+  let installedStartup;
   try {
     const before = inspect();
     if (before.entries.length || before.installKeys.length || before.shortcuts.length) throw new Error("Refusing installer smoke over an existing Ling installation or shortcut");
@@ -80,6 +83,7 @@ if ($p.ExitCode -ne 0) { throw ('Uninstaller failed: ' + $p.ExitCode) }`);
       if (!runtime.split(/\r?\n/u).some(line => line.startsWith("LING_INSTALL_RUNTIME=") && JSON.parse(line.slice(21)).electron)) {
         throw new Error("Installed Electron runtime failed to start");
       }
+      if (iteration === 0) installedStartup = await smokeInstalledDesktopStartup(join(installPath, "Ling Stack.exe"), temporary);
     }
     runUninstaller();
     installed = false;
@@ -87,7 +91,7 @@ if ($p.ExitCode -ne 0) { throw ('Uninstaller failed: ' + $p.ExitCode) }`);
     if (after.entries.length || after.installKeys.length || after.shortcuts.length) throw new Error("Uninstaller left its application registration or shortcuts behind");
     await lstat(installPath).then(() => { throw new Error("Uninstaller left its application directory behind"); }, error => { if (error.code !== "ENOENT") throw error; });
     return { status: "passed", environment: "github-hosted-windows-x64", install: "passed", sameVersionUpgrade: "passed",
-      uninstall: "passed", installedPayloadFiles: baseline.length, guiAndModelAcceptance: "not_run" };
+      installedStartup, uninstall: "passed", installedPayloadFiles: baseline.length, guiAndModelAcceptance: "not_run" };
   } catch (error) {
     // Diagnose only this invocation's new directory and its installer process
     // tree. Preserve the original failure and the unchanged acceptance limits.
@@ -129,4 +133,69 @@ for ($i = 0; $i -lt 8; $i++) {
       if (!exists) await rm(temporary, { recursive: true });
     }
   }
+}
+
+/** Exercise the installed packaged shell with isolated state before uninstalling it. */
+async function smokeInstalledDesktopStartup(executable, temporary) {
+  const profile = join(temporary, "desktop-startup");
+  const userData = join(profile, "user-data");
+  const workspace = join(profile, "workspace");
+  await mkdir(workspace, { recursive: true });
+  const port = await availableLoopbackPort();
+  const env = { ...process.env,
+    LING_STACK_HOME: join(profile, "ling-home"),
+    LING_STACK_DEFAULT_WORKSPACE_CWD: workspace,
+    LING_STACK_DAEMON_URL: `http://127.0.0.1:${port}`,
+  };
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env.NODE_OPTIONS;
+  console.log("Windows installer smoke: starting the installed Desktop with an empty profile");
+  const started = performance.now();
+  let launchError;
+  try {
+    await runOwnedWindowsProcess(executable, ["--ling-desktop-smoke-headless", `--user-data-dir=${userData}`], {
+      cwd: workspace, env, timeout: 240_000, maxBuffer: 1024 * 1024,
+    });
+  } catch (error) { launchError = error; }
+  const startupLog = await readFile(join(userData, "desktop-startup.log"), "utf8").catch(error => {
+    if (error.code === "ENOENT") return "";
+    throw error;
+  });
+  const events = startupLog.split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line));
+  const eventNames = events.map(event => event.event);
+  console.log("Windows installed Desktop startup events: " + eventNames.join(", "));
+  if (launchError) {
+    throw new Error(`Installed Desktop failed to start and exit normally (${launchError.signal ?? launchError.code ?? "unknown"})`);
+  }
+  const appReady = events.findIndex(event => event.event === "app.ready" && event.packaged === true && event.smokeHeadless === true);
+  const daemonConnected = events.findIndex(event => event.event === "daemon.connected" && event.ownedByDesktop === true);
+  const rendererLoaded = eventNames.indexOf("main_window.loaded");
+  if (appReady < 0 || daemonConnected <= appReady || rendererLoaded <= daemonConnected
+    || eventNames.includes("app.startup_failed") || eventNames.includes("app.shutdown_failed")) {
+    throw new Error("Installed Desktop did not complete an owned startup and exit");
+  }
+  const preparing = events.find(event => event.event === "daemon.resources_preparing");
+  const ready = events.find(event => event.event === "daemon.resources_ready");
+  const resourcePreparationMs = Date.parse(ready?.ts) - Date.parse(preparing?.ts);
+  if (!Number.isFinite(resourcePreparationMs) || resourcePreparationMs < 0) {
+    throw new Error("Installed Desktop did not record packaged resource preparation");
+  }
+  return { status: "passed", durationMs: Math.round(performance.now() - started),
+    resourcePreparationMs, desktopOwnedDaemon: true, normalExit: true };
+}
+
+async function availableLoopbackPort() {
+  const server = createServer();
+  await new Promise((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Could not reserve a loopback port for installed Desktop startup");
+  }
+  const port = address.port;
+  await new Promise((resolveClose, rejectClose) => server.close(error => error ? rejectClose(error) : resolveClose()));
+  return port;
 }

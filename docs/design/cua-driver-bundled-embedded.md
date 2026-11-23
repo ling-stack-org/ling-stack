@@ -2,6 +2,12 @@
 
 ## Status
 
+The [Cua Driver provider repository](https://github.com/ling-stack-org/ling-plugin-cua-driver)
+owns the source build and promotion runbooks. The [official plugin distribution](plugin-independent-packaging.md)
+can select a signed provider cache at Desktop startup while reusing the embedded
+process, platform identity, and lease contracts below. The default package and release
+acceptance still follow the compatibility lane.
+
 The earlier external-provider detection and guided-install flow is implemented and remains the
 `external_local` compatibility path. Packaged Desktop now uses the bundled Computer Control product surface below;
 the old guided-install plan no longer owns future work.
@@ -12,7 +18,7 @@ This update supersedes the earlier decision that the canonical Cua Driver row is
 normal packaged-Desktop entry point. The runtime identities do not change, but the product
 surface does:
 
-- `trusted-local:cua-driver` remains the canonical plugin id used by activation, health,
+- `official:cua-driver` is the canonical plugin ID used by activation, health,
   approvals, teammate bindings and audit;
 - `mcp_cua_driver` remains the logical MCP server id used by tool discovery and execution;
 - when `distribution="bundled_embedded"`, neither identity is shown in the ordinary Plugin
@@ -29,7 +35,7 @@ break existing execution policy.
 
 ```text
 Settings > Device > Computer Control
-  -> canonical trusted-local:cua-driver projection
+  -> official:cua-driver projection
   -> requested/effective activation transaction
   -> Desktop-owned readiness, lease and child lifetime
   -> hidden mcp_cua_driver execution resource
@@ -719,10 +725,9 @@ main window:
 
 ## Compatibility And Migration
 
-The canonical internal plugin id remains `trusted-local:cua-driver` for the first migration
-slice even though packaged Desktop now prefers an embedded distribution. Renaming the id
-would create unnecessary SQLite, API, saved-binding, approval and audit migration risk.
-In bundled mode the id is not product-visible; the user-facing name is Computer Control.
+The canonical plugin ID is `official:cua-driver`. The workspace migration consolidates
+legacy `trusted-local:cua-driver` and `bundled:cua-driver` records under that ID. Computer
+Control settings manage activation in packaged Desktop. [Workspace migration](../../packages/core/src/storage/sqlite/migrations.ts)
 
 The fixed logical MCP server id remains `mcp_cua_driver`. Its runtime source is selected
 by an explicit distribution mode:
