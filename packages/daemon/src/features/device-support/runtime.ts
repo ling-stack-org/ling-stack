@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   DeviceAccessGrantV1, DeviceActionApprovalPayload, DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1,
-  DevicePlannerProviderHandoffV1, DeviceProfileV1, DeviceTaskGraphV1, JsonValue,
+  DevicePlannerProviderHandoffV1, DeviceProfileV1, DeviceTaskGraphV1, DeviceTaskV1, JsonValue,
 } from "@ling-stack/contracts";
 import {
   type ApprovalRequest,
@@ -14,8 +14,8 @@ import {
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
   DeviceBrokerError,
+  DeviceDiagnosisGraphs,
   DeviceFabricError,
-  DeviceTaskGraphCoordinator,
   devicePlaybookNodeId,
   DeviceAccessManager,
   DeviceCapabilityBroker,
@@ -35,6 +35,7 @@ import {
   SqliteDeviceFabricStore,
   SqliteDeviceProtocolStore,
   SqliteDeviceSupportStore,
+  requireWorkspaceDeviceTask,
   type DevicePlaybookRunResultV1,
 } from "@ling-stack/core";
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
@@ -90,6 +91,8 @@ export interface DeviceSupportRuntime {
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
   readonly edgeJournal: EdgeRuntimeJournal;
+  readDiagnosisGraph(taskId: string): DeviceTaskGraphV1 | undefined;
+  resumeDiagnosis(taskId: string): Promise<DevicePlaybookRunResultV1>;
   readonly access: DeviceAccessManager;
   readonly resourceTrustConfigured: boolean;
   readonly broker: DeviceCapabilityBroker;
@@ -255,7 +258,7 @@ export function createDeviceSupportRuntime(options: {
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
   const edgeJournal = new EdgeRuntimeJournal({ persistence: fabricStore });
-  const taskGraphCoordinator = new DeviceTaskGraphCoordinator({ persistence: fabricStore, now });
+  const diagnosisGraphs = new DeviceDiagnosisGraphs(store, fabricStore, now);
   const fleetProjection = new DeviceFleetProjection();
   let localDiagnosis: { readonly key: string; readonly pending: Promise<DevicePlaybookRunResultV1> } | undefined;
   const activeTargets = new Set<string>();
@@ -265,7 +268,7 @@ export function createDeviceSupportRuntime(options: {
       && profile.adapterId === adapter.manifest.adapterId && profile.transports.includes("local_process"));
     const target = registered
       ?? await broker.discover(adapter.manifest.adapterId, { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
-    return runDiagnosis(target, target.device.id, createPcSoftwareDiagnosisPlaybook(), request);
+    return withDeviceTarget(target.device.id, () => runDiagnosis(target, target.device.id, createPcSoftwareDiagnosisPlaybook(), request));
   }
 
   async function runDiagnosis(
@@ -300,7 +303,6 @@ export function createDeviceSupportRuntime(options: {
       updatedAt: timestamp,
     });
     let proposalId: string;
-    let acceptedGraph: DeviceTaskGraphV1;
     let selectedPlaybook = playbook;
     try {
       const planningInput = (at: string) => {
@@ -338,23 +340,22 @@ export function createDeviceSupportRuntime(options: {
         });
         selectedPlaybook = { ...playbook, steps };
       }
-      store.recordPlanningAcceptance(plan.acceptance, plan.source, plan.fallbackReason, providerHandoff);
-      taskGraphCoordinator.validateGraph(plan.acceptance.graph);
-      fabricStore.saveTaskGraph(plan.acceptance.graph);
+      store.recordPlanningAcceptance(plan.acceptance, plan.source, plan.fallbackReason, providerHandoff, selectedPlaybook);
       proposalId = plan.acceptance.proposalId;
-      acceptedGraph = plan.acceptance.graph;
     } catch (error) {
       store.withWriteTransaction(() => {
         if (store.getTask(task.id)?.status === "planning") store.transitionTask(task.id, "failed", {}, now());
       });
       throw error;
     }
+    return executeDiagnosis(task, target.device.id, snapshot.snapshotId, selectedPlaybook, proposalId);
+  }
+
+  async function executeDiagnosis(task: DeviceTaskV1, deviceId: string, snapshotId: string,
+    playbook: DevicePlaybookV1, proposalId: string): Promise<DevicePlaybookRunResultV1> {
     const result = await runDeviceReadOnlyPlaybook({
-      broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
-      playbook: selectedPlaybook, proposalId,
-      taskGraph: { coordinator: taskGraphCoordinator, graph: acceptedGraph },
+      broker, task, targetDeviceId: deviceId, capabilitySnapshotId: snapshotId, playbook, proposalId, taskGraphs: diagnosisGraphs,
     });
-    const deviceId = target.device.id;
     const values = diagnosisReportedValues(result, store.getCurrentCapabilitySnapshot(deviceId), store);
     if (values.length) fabricStore.recordReportedTwinValues({ deviceId, values, recordedAt: now() });
     return result;
@@ -471,6 +472,17 @@ export function createDeviceSupportRuntime(options: {
     collaboration,
     edgeRuntimes,
     edgeJournal,
+    readDiagnosisGraph: taskId => diagnosisGraphs.read(taskId),
+    resumeDiagnosis(taskId) {
+      const task = requireWorkspaceDeviceTask(store, taskId, DEFAULT_WORKSPACE_ID);
+      const plan = store.listPlanningAcceptances(task.id).at(-1);
+      const node = plan?.graph.nodes[0];
+      if (!plan?.playbook || !node || plan.graph.nodes.some(item => item.targetDeviceId !== node.targetDeviceId
+        || item.capabilitySnapshotId !== node.capabilitySnapshotId)) {
+        throw new DeviceBrokerError("missing_target", "the task has no retained diagnosis playbook");
+      }
+      return withDeviceTarget(node.targetDeviceId, () => executeDiagnosis(task, node.targetDeviceId, node.capabilitySnapshotId, plan.playbook!, plan.proposalId));
+    },
     access,
     resourceTrustConfigured: options.resourceTrust !== undefined,
     broker,

@@ -28,7 +28,7 @@ export async function handleDeviceSupportRoute(
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/protocol/")) return await handleDeviceProtocolRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/fabric/edge-runtimes")) return await handleEdgeRuntimeRoute(url, request, response, runtime);
-  const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace|conformance)$/u.exec(url.pathname);
+  const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace|conformance|resume)$/u.exec(url.pathname);
   const deviceOperation = /^\/v1\/device-support\/devices\/([^/]+)\/(dispatch-stop|retirement)$/u.exec(url.pathname);
   const accessGrantOperation = /^\/v1\/device-support\/devices\/([^/]+)\/access-grants\/([^/]+)$/u.exec(url.pathname);
   const configuredTargetRoute = /^\/v1\/device-support\/(linux|android)\/(targets|enroll|diagnose)$/u.exec(url.pathname);
@@ -45,7 +45,8 @@ export async function handleDeviceSupportRoute(
     && !fabricGraph && !fabricTaskGraph) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
-    writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
+    if (taskPath[2] === "resume") await resumeDiagnosis(taskPath[1]!, request, response, runtime);
+    else writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
     return true;
   }
   if (deviceOperation) {
@@ -196,16 +197,13 @@ function writeFabricTaskGraph(encodedGraphId: string, request: IncomingMessage, 
   }
   try {
     const graphId = readDeviceReference(encodedGraphId);
-    const graph = runtime.fabricStore.getTaskGraph(graphId);
-    if (!graph || graph.nodes.some(node => runtime.store.getDevice(node.targetDeviceId)?.device.ownerScope !== DEFAULT_WORKSPACE_ID)) {
+    requireWorkspaceDeviceTask(runtime.store, graphId, DEFAULT_WORKSPACE_ID);
+    const graph = runtime.readDiagnosisGraph(graphId);
+    if (!graph) {
       throw new DeviceBrokerError("missing_target", "device task graph is unavailable in this workspace");
     }
     writePrivateJson(response, 200, graph);
   } catch (error) {
-    if (error instanceof DeviceBrokerError && error.code === "missing_target") {
-      writePrivateJson(response, 404, { error: "missing_target" });
-      return;
-    }
     writeDeviceOperationError(response, error);
   }
 }
@@ -591,6 +589,20 @@ function writeTaskProjection(
     } else {
       writePrivateJson(response, 503, { error: "service_unavailable" });
     }
+  }
+}
+
+async function resumeDiagnosis(encodedTaskId: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("Allow", "POST");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const { status, report } = await runtime.resumeDiagnosis(readDeviceReference(encodedTaskId));
+    writePrivateJson(response, 200, { status, report });
+  } catch (error) {
+    writeDeviceOperationError(response, error);
   }
 }
 

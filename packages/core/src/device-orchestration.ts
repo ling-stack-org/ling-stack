@@ -62,7 +62,7 @@ export class DeviceModelOrchestrator {
       }
       const capability = target.snapshot.capabilities.find(item => item.id === node.capabilityId);
       if (!capability) throw new DeviceFabricError("target_missing", "planner node capability is unavailable on this target");
-      if (node.attemptId || node.resultRef || (node.status !== "created" && node.status !== "planning")) {
+      if (node.attemptId || node.attemptGraphRevision !== undefined || node.resultRef || (node.status !== "created" && node.status !== "planning")) {
         throw new DeviceFabricError("safety_denied", "planner proposal cannot include execution evidence");
       }
       if (capability.sideEffect !== "read_only" || capability.approvalClass !== "allow") requiredApprovalNodeIds.push(node.nodeId);

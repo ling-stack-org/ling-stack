@@ -545,10 +545,20 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<DeviceTaskGraphV1>(row.graph_json, "task graph") : undefined;
   }
 
+  updateTaskGraph<T>(graphId: string, update: (current: DeviceTaskGraphV1) => T): T {
+    return this.withWriteTransaction(() => {
+      const current = this.getTaskGraph(graphId);
+      if (!current) throw new DeviceFabricError("target_missing", "task graph is missing");
+      return update(current);
+    });
+  }
+
   recordTaskGraphReceipt(
     receipt: DeviceTaskGraphNodeReceiptV1, advance: (current: DeviceTaskGraphV1) => DeviceTaskGraphV1,
+    authorize?: () => void,
   ): DeviceTaskGraphV1 {
     return this.withWriteTransaction(() => {
+      authorize?.();
       const current = this.getTaskGraph(receipt.graphId);
       if (!current) throw new DeviceFabricError("target_missing", "task graph is missing");
       const serialized = JSON.stringify(receipt);
@@ -605,6 +615,12 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment") : undefined;
   }
 
+  getEdgeRuntimePublicKey(runtimeId: string, revision: number, grantId: string): string | undefined {
+    const row = this.database.prepare("SELECT public_key_spki FROM device_edge_runtime_keys WHERE runtime_id=? AND revision=? AND grant_id=?")
+      .get(runtimeId, revision, grantId) as Row | undefined;
+    return row === undefined ? undefined : readString(row, "public_key_spki");
+  }
+
   listEdgeRuntimes(): readonly EdgeRuntimeEnrollmentV1[] {
     return (this.database.prepare("SELECT runtime_json FROM device_edge_runtimes ORDER BY runtime_id").all() as Row[])
       .map(row => parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment"));
@@ -652,6 +668,10 @@ export class SqliteDeviceFabricStore {
         contractMajor: grant.contractMajor, supportedTransports: grant.supportedTransports,
         status: "enrolled", revision: grant.expectedRevision + 1, lastSeenAt: now,
       });
+      this.database.prepare(`
+        INSERT INTO device_edge_runtime_keys(runtime_id,revision,grant_id,public_key_spki) VALUES(?,?,?,?)
+        ON CONFLICT(runtime_id) DO UPDATE SET revision=excluded.revision,grant_id=excluded.grant_id,public_key_spki=excluded.public_key_spki
+      `).run(runtimeId, runtime.revision, grantId, readString(row, "public_key_spki"));
       this.database.prepare("UPDATE device_edge_enrollment_grants SET confirmed_revision=? WHERE grant_id=?")
         .run(runtime.revision, grantId);
       return { runtime, replayed: false };
@@ -681,6 +701,7 @@ export class SqliteDeviceFabricStore {
       }
       const revoked = this.saveEdgeRuntime({ ...current, status: "revoked", revision: expectedRevision + 1 });
       this.database.prepare("DELETE FROM device_edge_enrollment_grants WHERE runtime_id=?").run(runtimeId);
+      this.database.prepare("DELETE FROM device_edge_runtime_keys WHERE runtime_id=?").run(runtimeId);
       return revoked;
     });
   }
@@ -710,10 +731,11 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<EdgeRuntimePlacementDecisionV1>(row.decision_json, "edge placement decision") : undefined;
   }
 
-  appendEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean } {
+  appendEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1, authorize?: () => void): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean } {
     assertEdgeRuntimeJournalEntry(entry);
     const serialized = JSON.stringify(entry);
     return this.withWriteTransaction(() => {
+      authorize?.();
       const byId = this.database.prepare("SELECT entry_json FROM device_edge_runtime_journal WHERE entry_id=?").get(entry.entryId) as Row | undefined;
       if (byId) {
         const existing = parseJson<EdgeRuntimeJournalEntryV1>(byId.entry_json, "edge journal entry");
@@ -733,6 +755,12 @@ export class SqliteDeviceFabricStore {
         .run(entry.runtimeId, entry.ownerTaskId, entry.sequence, entry.entryId, serialized, entry.recordedAt);
       return { entry, replayed: false };
     });
+  }
+
+  getEdgeRuntimeJournalEntry(runtimeId: string, ownerTaskId: string, entryId: string): EdgeRuntimeJournalEntryV1 | undefined {
+    const row = this.database.prepare("SELECT entry_json FROM device_edge_runtime_journal WHERE runtime_id=? AND owner_task_id=? AND entry_id=?")
+      .get(runtimeId, ownerTaskId, entryId) as Row | undefined;
+    return row ? parseJson<EdgeRuntimeJournalEntryV1>(row.entry_json, "edge journal entry") : undefined;
   }
 
   listEdgeRuntimeJournalEntries(runtimeId: string, ownerTaskId: string, afterSequence = 0, limit = 100): readonly EdgeRuntimeJournalEntryV1[] {
@@ -1033,6 +1061,12 @@ export class SqliteDeviceFabricStore {
         revision INTEGER NOT NULL,
         runtime_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS device_edge_runtime_keys (
+        runtime_id TEXT PRIMARY KEY NOT NULL REFERENCES device_edge_runtimes(runtime_id),
+        revision INTEGER NOT NULL,
+        grant_id TEXT NOT NULL,
+        public_key_spki TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS device_edge_enrollment_grants (
         runtime_id TEXT PRIMARY KEY NOT NULL,
         grant_id TEXT UNIQUE NOT NULL,
@@ -1041,6 +1075,10 @@ export class SqliteDeviceFabricStore {
         expires_at TEXT NOT NULL,
         confirmed_revision INTEGER
       );
+      INSERT OR IGNORE INTO device_edge_runtime_keys(runtime_id,revision,grant_id,public_key_spki)
+        SELECT runtime.runtime_id,runtime.revision,grant.grant_id,grant.public_key_spki
+          FROM device_edge_runtimes AS runtime JOIN device_edge_enrollment_grants AS grant USING (runtime_id)
+          WHERE runtime.revision=grant.confirmed_revision AND json_extract(runtime.runtime_json,'$.status')='enrolled';
       CREATE TABLE IF NOT EXISTS device_edge_runtime_placements (
         decision_id TEXT PRIMARY KEY NOT NULL,
         runtime_id TEXT NOT NULL REFERENCES device_edge_runtimes(runtime_id),

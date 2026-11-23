@@ -12,6 +12,7 @@ import type {
   DeviceObservationV1,
   DeviceProfileV1,
   DeviceTaskAttemptV1,
+  DeviceTaskGraphV1,
   DeviceTaskV1,
 } from "@ling-stack/contracts";
 import {
@@ -21,11 +22,11 @@ import {
   digestRequest,
 } from "../dist/device-support.js";
 import { DeviceAccessManager } from "../dist/device-access.js";
-import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
+import { createHomeAssistantOfflinePlaybook, createLinuxWifiDiagnosisPlaybook, createPcSoftwareDiagnosisPlaybook, isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
 import { readOwnedDeviceTaskJournal } from "../dist/device-task-event-projector.js";
 import { readOwnedDeviceTaskTrace } from "../dist/device-task-trace.js";
 import { readOwnedDeviceAttemptConformance } from "../dist/device-task-conformance.js";
-import { DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
+import { DeviceDiagnosisGraphs } from "../dist/device-diagnosis-graph.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
@@ -954,9 +955,10 @@ test("idempotent retry returns the recorded attempt and a restart preserves an u
   second.close();
 });
 
-test("read-only playbooks execute a bounded capability sequence and reject injected fields", async () => {
+test("read-only playbooks honor dependency order and link actual journal attempts", async t => {
   const { store, broker } = brokerFixture();
   const fabric = new SqliteDeviceFabricStore();
+  t.after(() => { fabric.close(); store.close(); });
   const playbook = {
     id: "linux-network-diagnosis",
     version: "1.0.0",
@@ -965,45 +967,169 @@ test("read-only playbooks execute a bounded capability sequence and reject injec
     riskClass: "read_only",
     localFallback: true,
     steps: [
-      { id: "network", capabilityId: readCapability.id, input: { includeDns: true } },
       { id: "network-repeat", capabilityId: readCapability.id, input: { includeDns: false } },
+      { id: "network", capabilityId: readCapability.id, input: { includeDns: true } },
     ],
   } as const;
   assert.equal(isDevicePlaybookV1(playbook), true);
   assert.equal(isDevicePlaybookV1({ ...playbook, injected: "ignore" }), false);
   store.createTask(task("playbook-task"), now);
-  const graph = {
+  const graph: DeviceTaskGraphV1 = {
     graphId: "playbook-task",
     revision: 1,
     status: "planned",
     createdAt: now,
     updatedAt: now,
     nodes: [
-      { nodeId: "linux-network-diagnosis:network", targetDeviceId: profile.device.id, ownerKind: "daemon", ownerId: "daemon-1", capabilityId: readCapability.id, capabilitySnapshotId: "snapshot-1", dependencies: [], status: "planning" },
       { nodeId: "linux-network-diagnosis:network-repeat", targetDeviceId: profile.device.id, ownerKind: "daemon", ownerId: "daemon-1", capabilityId: readCapability.id, capabilitySnapshotId: "snapshot-1", dependencies: ["linux-network-diagnosis:network"], status: "planning" },
+      { nodeId: "linux-network-diagnosis:network", targetDeviceId: profile.device.id, ownerKind: "daemon", ownerId: "daemon-1", capabilityId: readCapability.id, capabilitySnapshotId: "snapshot-1", dependencies: [], status: "planning" },
     ],
-  } as const;
-  fabric.saveTaskGraph(graph);
-  const result = await runDeviceReadOnlyPlaybook({
+  };
+  const proposalId = "diagnosis-proposal";
+  store.recordPlanningAcceptance({
+    proposalId, taskId: graph.graphId, contextId: "context-1", contextDigest: "fixture",
+    requiredApprovalNodeIds: [], graph, acceptedAt: now,
+  }, "local_playbook");
+  await assert.rejects(() => broker.execute(request(readCapability.id, graph.graphId), undefined, {
+    planningNode: { proposalId, nodeId: graph.nodes[0]!.nodeId },
+  }), /completed dependencies/u);
+  assert.deepEqual(store.listAttempts(graph.graphId), []);
+  const taskGraphs = new DeviceDiagnosisGraphs(store, fabric, () => now);
+  const input = {
     broker,
     task: task("playbook-task"),
     targetDeviceId: profile.device.id,
     capabilitySnapshotId: "snapshot-1",
     playbook,
-    taskGraph: { coordinator: new DeviceTaskGraphCoordinator({ persistence: fabric, now: () => now }), graph },
+    taskGraphs, proposalId,
     now: () => now,
-  });
+  };
+  const result = await runDeviceReadOnlyPlaybook(input);
   assert.equal(result.status, "succeeded");
   assert.equal(result.attempts.length, 2);
   assert.equal(store.getTask("playbook-task")?.status, "succeeded");
   const settledGraph = fabric.getTaskGraph(graph.graphId);
   assert.equal(settledGraph?.status, "succeeded");
-  assert.deepEqual(settledGraph?.nodes.map(node => ({ status: node.status, attemptId: node.attemptId })), [
-    { status: "succeeded", attemptId: "playbook-task:network" },
-    { status: "succeeded", attemptId: "playbook-task:network-repeat" },
-  ]);
-  store.close();
-  fabric.close();
+  assert.deepEqual(result.attempts.map(record => record.request.normalizedInput), [{ includeDns: true }, { includeDns: false }]);
+  assert.deepEqual(settledGraph?.nodes.map(node => node.attemptId), result.attempts.map(record => record.attempt.attemptId).reverse());
+  assert.ok(settledGraph?.nodes.every(node => node.resultRef === node.attemptId));
+  assert.deepEqual(await runDeviceReadOnlyPlaybook(input), result);
+  assert.deepEqual(taskGraphs.read(graph.graphId), settledGraph);
+});
+
+test("diagnosis graph recovers a committed attempt after a failed receipt write and restart", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-diagnosis-graph-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const databasePath = join(root, "device.sqlite");
+  const diagnosis = task("interrupted-diagnosis");
+  const playbook = createLinuxWifiDiagnosisPlaybook();
+  const steps = [{ ...playbook.steps[0]!, capabilityId: readCapability.id }];
+  const proposalId = "interrupted-plan";
+  const graph: DeviceTaskGraphV1 = {
+    graphId: diagnosis.id, revision: 1, status: "planned", createdAt: now, updatedAt: now,
+    nodes: [{ nodeId: `${playbook.id}:${steps[0]!.id}`, targetDeviceId: profile.device.id, ownerKind: "daemon", ownerId: diagnosis.ownerId,
+      capabilityId: readCapability.id, capabilitySnapshotId: "snapshot-1", dependencies: [], status: "planning" }],
+  };
+  const first = new SqliteDeviceSupportStore({ databasePath });
+  const firstFabric = new SqliteDeviceFabricStore({ databasePath });
+  let attemptId: string;
+  try {
+    const broker = new DeviceCapabilityBroker({ store: first, now: () => now });
+    broker.registerAdapter(createAdapter());
+    broker.registerDevice(manifest.adapterId, profile);
+    first.saveCapabilitySnapshot(snapshot(), now);
+    broker.createTask(diagnosis);
+    first.recordPlanningAcceptance({
+      proposalId, taskId: diagnosis.id, contextId: "context-1", contextDigest: "fixture",
+      requiredApprovalNodeIds: [], graph, acceptedAt: now,
+    }, "local_playbook");
+    firstFabric.database.exec(`
+      CREATE TEMP TRIGGER fail_graph_receipt BEFORE INSERT ON device_task_graph_receipts
+      BEGIN SELECT RAISE(ABORT, 'fixture receipt write failure'); END;
+    `);
+    await assert.rejects(() => runDeviceReadOnlyPlaybook({
+      broker, task: diagnosis, targetDeviceId: profile.device.id, capabilitySnapshotId: "snapshot-1",
+      playbook: { ...playbook, steps }, proposalId, taskGraphs: new DeviceDiagnosisGraphs(first, firstFabric, () => now),
+    }), /receipt write failure/u);
+    const [record] = first.listAttempts(diagnosis.id);
+    assert.equal(record?.attempt.receipt?.status, "completed");
+    attemptId = record.attempt.attemptId;
+    assert.equal(firstFabric.getTaskGraph(diagnosis.id)?.nodes[0]?.status, "executing");
+  } finally {
+    firstFabric.close();
+    first.close();
+  }
+  const reopened = new SqliteDeviceSupportStore({ databasePath });
+  const reopenedFabric = new SqliteDeviceFabricStore({ databasePath });
+  try {
+    assert.deepEqual(reopened.recoverAfterRestart(later), []);
+    assert.equal(reopened.getTask(diagnosis.id)?.status, "succeeded");
+    const projection = new DeviceDiagnosisGraphs(reopened, reopenedFabric, () => later);
+    const saved = projection.read(diagnosis.id);
+    assert.equal(saved?.status, "succeeded");
+    assert.equal(saved?.nodes[0]?.attemptId, attemptId);
+    assert.equal(saved?.nodes[0]?.resultRef, attemptId);
+    assert.deepEqual(projection.read(diagnosis.id), saved);
+    assert.equal(reopened.listAttempts(diagnosis.id).length, 1);
+  } finally {
+    reopenedFabric.close();
+    reopened.close();
+  }
+});
+
+test("fresh readback unblocks the dependent diagnosis step without repeating the original attempt", async t => {
+  const { store, broker } = brokerFixture();
+  const fabric = new SqliteDeviceFabricStore();
+  t.after(() => { store.close(); fabric.close(); });
+  const adapter = createAdapter();
+  const checked = { ...readCapability, id: "linux.inspect.verified_network", verificationCapabilityId: readCapability.id };
+  const capabilities = [checked, readCapability];
+  const diagnosis = { ...task("diagnosis-with-readback"), capabilitySnapshotIds: ["snapshot-readback"] };
+  const profileSnapshot = { ...snapshot(), snapshotId: "snapshot-readback", capabilities };
+  let calls = 0;
+  broker.registerAdapter({
+    ...adapter,
+    manifest: { ...manifest, capabilities },
+    async execute(input) {
+      calls += 1;
+      if (input.capability.id === checked.id) throw new Error("Interrupted read");
+      return adapter.execute(input);
+    },
+  });
+  store.saveCapabilitySnapshot(profileSnapshot, now);
+  broker.createTask(diagnosis);
+  const playbook = { ...createLinuxWifiDiagnosisPlaybook(), steps: [
+    { id: "check", capabilityId: checked.id, input: {}, expectedVerification: { connected: true } },
+    { id: "inspect", capabilityId: readCapability.id, input: {} },
+  ] };
+  const first = `${playbook.id}:check`;
+  const proposalId = "diagnosis-readback-plan";
+  const graph: DeviceTaskGraphV1 = {
+    graphId: diagnosis.id, revision: 1, status: "planned", createdAt: now, updatedAt: now,
+    nodes: playbook.steps.map(step => ({
+      nodeId: `${playbook.id}:${step.id}`, targetDeviceId: profile.device.id, ownerKind: "daemon", ownerId: diagnosis.ownerId,
+      capabilityId: step.capabilityId, capabilitySnapshotId: profileSnapshot.snapshotId,
+      dependencies: step.id === "check" ? [] : [first], status: "planning",
+    })),
+  };
+  store.recordPlanningAcceptance({
+    proposalId, taskId: diagnosis.id, contextId: "context-1", contextDigest: "fixture", graph, requiredApprovalNodeIds: [], acceptedAt: now,
+  }, "local_playbook", undefined, undefined, playbook);
+  const taskGraphs = new DeviceDiagnosisGraphs(store, fabric, () => now);
+  const input = { broker, task: diagnosis, targetDeviceId: profile.device.id, capabilitySnapshotId: profileSnapshot.snapshotId, playbook, proposalId, taskGraphs };
+  const interrupted = await runDeviceReadOnlyPlaybook(input);
+  assert.equal(interrupted.status, "unknown");
+  assert.equal(calls, 1);
+  assert.equal((await runDeviceReadOnlyPlaybook(input)).status, "unknown");
+  const attempt = interrupted.attempts[0]!.attempt;
+  const readback = await broker.reconcileTask({ taskId: diagnosis.id, attemptId: attempt.attemptId, capabilitySnapshotId: profileSnapshot.snapshotId });
+  assert.equal(readback.status, "verified");
+  assert.equal(store.getTask(diagnosis.id)?.status, "partial");
+  const resumed = await runDeviceReadOnlyPlaybook(input);
+  assert.equal(resumed.status, "succeeded");
+  assert.equal(calls, 2);
+  assert.equal(resumed.attempts[0]?.attempt.status, "unknown");
+  assert.equal(taskGraphs.read(diagnosis.id)?.nodes[0]?.resultRef, readback.reconciliationId);
 });
 
 test("built-in diagnosis playbooks keep their device scope and read-only fallback contract", () => {

@@ -415,6 +415,7 @@ import { handleSkillsMarketplaceInspect } from "../features/skills/marketplace-r
 import { handleDeliverablesBuild, handleSpreadsheetPreview } from "../features/deliverables/routes.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 import { handleDeviceApprovalItem, handleDeviceSupportRoute } from "../features/device-support/routes.js";
+import { handleSignedEdgeEvidenceRoute } from "../features/device-support/edge-routes.js";
 import { appendApprovalCreatedControlPlaneEvent, appendApprovalResolvedControlPlaneEvent } from "../features/runs/approval-decision-projection.js";
 
 export async function routeRequest(
@@ -466,6 +467,7 @@ export async function routeRequest(
 
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const chromePairing = url.pathname === "/browser-extension/v1/pair";
+  if (await handleSignedEdgeEvidenceRoute(url, request, response, context.deviceSupport)) return;
 
   // A loopback daemon without a bearer token is only callable by the local
   // Ling page; pairing and automation ingress enforce their own origin boundary.

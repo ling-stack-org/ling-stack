@@ -2,6 +2,7 @@ export * from "./canonical.js";
 export * from "./device-artifact-signing.js";
 export { validateDeviceArtifactOffer } from "./validation/device-artifact.js";
 export * from "./edge-runtime-enrollment.js";
+export * from "./edge-runtime-operations.js";
 export * from "./envelopes.js";
 export * from "./es256.js";
 export * from "./errors.js";

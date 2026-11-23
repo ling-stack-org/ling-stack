@@ -121,7 +121,7 @@ test("cross-runtime receipts match the current route and persisted node attempt"
   store.close();
   store = new SqliteDeviceFabricStore({ databasePath });
   const reopened = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
-  assert.deepEqual(reopened.recordNodeReceipt(graph, receipt, authority), settled);
+  assert.deepEqual(reopened.recordNodeReceipt(settled, receipt, authority), settled);
   const advanced = store.saveTaskGraph({ ...settled, revision: settled.revision + 1 });
   assert.deepEqual(reopened.recordNodeReceipt(graph, receipt, authority), advanced);
   assert.throws(() => reopened.recordNodeReceipt(graph, { ...receipt, resultRef: "changed-result" }, authority), /different receipt/u);

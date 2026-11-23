@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -7,19 +8,22 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { WebSocketServer } from "ws";
 
 import type {
   ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
-  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
-  DeviceTwinValueV1, EdgeRuntimeEnrollmentGrantV1,
+  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskGraphNodeReceiptV1, DeviceTaskGraphV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
+  DeviceTwinValueV1, EdgeRuntimeEnrollmentGrantV1, EdgeRuntimeJournalEntryV1, EdgeRuntimePlacementDecisionV1,
 } from "@ling-stack/contracts";
 import {
-  buildOwnedDevicePlanningInput, createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
+  buildOwnedDevicePlanningInput, createEnvSecretResolver, createPcSoftwareDiagnosisPlaybook, createSqliteRunStore, DEFAULT_WORKSPACE_ID,
+  devicePlaybookNodeId, DeviceBrokerError, DeviceTaskGraphCoordinator, digestRequest,
   HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceAttemptConformance, readOwnedDeviceTaskTrace,
   SqliteDeviceFabricStore, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
-import { canonicalJsonBytes, edgeRuntimeEnrollmentProofBytes } from "@ling-stack/remote-protocol";
+import { canonicalJsonBytes, edgeRuntimeEnrollmentProofBytes, edgeRuntimeJournalEntryBytes, edgeRuntimeTaskGraphReceiptBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
@@ -32,6 +36,9 @@ interface ProjectedTwin {
 
 test("the Daemon enrolls an Edge runtime with the approved key and fences proofs across restart and revocation", async t => {
   const cwd = mkdtempSync(join(tmpdir(), "ling-edge-enrollment-"));
+  const workspace = createSqliteRunStore(cwd);
+  const { databasePath } = workspace.paths;
+  workspace.close();
   const authToken = "edge-enrollment-test-fixture";
   const key = generateKeyPairSync("ed25519");
   const otherKey = generateKeyPairSync("ed25519");
@@ -94,6 +101,36 @@ test("the Daemon enrolls an Edge runtime with the approved key and fences proofs
   assert.equal(enrollment.runtime.status, "enrolled");
   assert.equal(enrollment.runtime.revision, 1);
   assert.equal(enrollment.replayed, false);
+  const graphId = "edge-task-1";
+  const runtimeId = "bench-edge";
+  const attemptId = "edge-operation-1";
+  const at = new Date().toISOString();
+  const node = {
+    nodeId: "inspect-registers", targetDeviceId: "bench-controller", capabilityId: "modbus.read_registers",
+    capabilitySnapshotId: "edge-snapshot-1", ownerKind: "edge", ownerId: runtimeId, dependencies: [], status: "planning",
+  } as const;
+  const fabric = new SqliteDeviceFabricStore({ databasePath });
+  t.after(() => fabric.close());
+  const placement = fabric.recordEdgeRuntimePlacement({
+    runtimeId, ownerTaskId: graphId, targetDeviceId: node.targetDeviceId, capabilityId: node.capabilityId, sideEffect: "read_only",
+    hasLocalExecutor: true, offlineRecoverySupported: false, evaluatedAt: at,
+  }).decision;
+  const plan = fabric.saveTaskGraph({ graphId, revision: 1, status: "planned", nodes: [node], createdAt: at, updatedAt: at });
+  const executing = new DeviceTaskGraphCoordinator({ persistence: fabric, now: () => at }).bindNodeAttempt(plan, node.nodeId, attemptId, 1);
+  const binding = { grantId: replacementGrant.grantId, runtimeRevision: 1, placementId: placement.decisionId };
+  const journalEntry: EdgeRuntimeJournalEntryV1 = {
+    entryId: "edge-journal-1", runtimeId, ownerTaskId: graphId, sequence: 1,
+    operationId: attemptId, kind: "task_started", outcome: "pending", recordedAt: at,
+  };
+  const peerHeaders = { "Content-Type": "application/json" };
+  const signedEntry = (payload: EdgeRuntimeJournalEntryV1, signingKey = key) => ({
+    binding, payload, signature: sign(null, edgeRuntimeJournalEntryBytes(binding, payload), signingKey.privateKey).toString("base64url"),
+  });
+  const append = (entry: ReturnType<typeof signedEntry>) => send("/bench-edge/journal", entry, "POST", peerHeaders);
+  assert.equal((await append(signedEntry(journalEntry, otherKey))).status, 403);
+  assert.equal((await append(signedEntry({ ...journalEntry, operationId: "other-attempt" }))).status, 403);
+  assert.equal((await append(signedEntry(journalEntry))).status, 201);
+  assert.deepEqual(await (await append(signedEntry(journalEntry))).json(), { entry: journalEntry, replayed: true });
   assert.equal((await send(revoke, { grantId: replacementGrant.grantId }, "PUT")).status, 409);
   assert.doesNotMatch(JSON.stringify(enrollment), /publicKey|signature/i);
   await daemon!.stop();
@@ -102,6 +139,25 @@ test("the Daemon enrolls an Edge runtime with the approved key and fences proofs
   const replay = await send(proof, signed(replacementGrant));
   assert.equal(replay.status, 200);
   assert.deepEqual(await replay.json(), { ...enrollment, replayed: true });
+  const completed: EdgeRuntimeJournalEntryV1 = {
+    ...journalEntry, entryId: "edge-journal-2", sequence: 2, kind: "task_completed", outcome: "completed", payloadDigest: "a".repeat(64),
+  };
+  const receipt: DeviceTaskGraphNodeReceiptV1 = {
+    graphId, graphRevision: executing.revision, nodeId: node.nodeId, ownerKind: node.ownerKind, ownerId: runtimeId,
+    targetDeviceId: node.targetDeviceId, capabilitySnapshotId: node.capabilitySnapshotId, attemptId, routeGeneration: 1,
+    status: "succeeded", resultRef: completed.entryId, receivedAt: at,
+  };
+  const signedReceipt = (payload: DeviceTaskGraphNodeReceiptV1) => ({
+    binding, payload, signature: sign(null, edgeRuntimeTaskGraphReceiptBytes(binding, payload), key.privateKey).toString("base64url"),
+  });
+  const settle = (evidence: ReturnType<typeof signedReceipt>) => send("/bench-edge/task-graph-receipt", evidence, "POST", peerHeaders);
+  assert.equal((await settle(signedReceipt(receipt))).status, 403);
+  assert.equal((await append(signedEntry(completed))).status, 201);
+  assert.equal((await settle(signedReceipt({ ...receipt, capabilitySnapshotId: "wrong-snapshot" }))).status, 403);
+  const view = { graphId, revision: 3, nodeId: node.nodeId, status: "succeeded" };
+  assert.deepEqual(await (await settle(signedReceipt(receipt))).json(), view);
+  assert.deepEqual(await (await settle(signedReceipt(receipt))).json(), view);
+  assert.equal(fabric.getTaskGraph(graphId)?.nodes[0]?.resultRef, completed.entryId);
   assert.equal((await send(revoke, { expectedRevision: 2 }, "PUT")).status, 409);
   const revoked = await send(revoke, { expectedRevision: 1 }, "PUT");
   assert.equal(revoked.status, 200);
@@ -109,6 +165,144 @@ test("the Daemon enrolls an Edge runtime with the approved key and fences proofs
   assert.deepEqual(await revoked.json(), revokedRecord);
   assert.deepEqual(await (await send(revoke, { expectedRevision: 1 }, "PUT")).json(), revokedRecord);
   assert.equal((await send(proof, signed(replacementGrant))).status, 404);
+  assert.equal((await append(signedEntry(completed))).status, 403);
+  assert.equal((await settle(signedReceipt(receipt))).status, 403);
+  assert.deepEqual(fabric.listEdgeRuntimeJournalEntries(runtimeId, graphId), [journalEntry, completed]);
+});
+
+test("an Edge process retains its diagnosis and resumes signed delivery across Daemon restart and revocation", { timeout: 20_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-edge-diagnosis-"));
+  const key = generateKeyPairSync("ed25519");
+  const runtimeId = "network-probe";
+  const authToken = "fixture-edge-operator";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const stateDirectory = join(cwd, "owner");
+  const privateKeyFile = join(cwd, "edge-key.pem");
+  const configFile = join(cwd, "edge.json");
+  writeFileSync(privateKeyFile, key.privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+  const cli = fileURLToPath(new URL("../dist/ling-edge-cli.js", import.meta.url));
+  const start = async () => {
+    const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return { daemon, origin: `http://127.0.0.1:${address.port}` };
+  };
+  let host = await start();
+  const prefix = `/v1/device-support/fabric/edge-runtimes/${runtimeId}`;
+  const send = (path: string, payload: object, method = "POST") => fetch(`${host.origin}${prefix}/${path}`, {
+    method, headers, body: JSON.stringify(payload),
+  });
+  let interrupt: { route: "journal" | "task-graph-receipt"; remaining: number } | undefined;
+  const link = createServer(async (request, response) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const delivered = await fetch(`${host.origin}${request.url}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: Buffer.concat(chunks),
+      });
+      const body = await delivered.text();
+      if (delivered.ok && interrupt && request.url === `${prefix}/${interrupt.route}` && --interrupt.remaining === 0) {
+        interrupt = undefined;
+        response.destroy();
+        return;
+      }
+      response.writeHead(delivered.status, { "Content-Type": "application/json" }).end(body);
+    } catch {
+      response.writeHead(502).end();
+    }
+  });
+  t.after(async () => {
+    link.closeAllConnections();
+    await new Promise<void>(resolve => link.close(() => resolve()));
+    await host.daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  link.listen(0, "127.0.0.1");
+  await once(link, "listening");
+  const address = link.address();
+  assert.ok(address && typeof address === "object");
+  const linkedOrigin = `http://127.0.0.1:${address.port}`;
+
+  const response = await send("enrollment", { displayName: "Edge network probe", contractMajor: 1, expectedRevision: 0,
+    supportedTransports: ["local_process"], publicKeySpki: key.publicKey.export({ type: "spki", format: "der" }).toString("base64url") });
+  assert.equal(response.status, 201);
+  const { grant } = await response.json() as { grant: EdgeRuntimeEnrollmentGrantV1 };
+  assert.equal((await send("enrollment/proof", {
+    grantId: grant.grantId, signature: sign(null, edgeRuntimeEnrollmentProofBytes(grant), key.privateKey).toString("base64url"),
+  })).status, 201);
+  assert.equal((await fetch(`${host.origin}${prefix}/diagnoses`, { method: "POST" })).status, 401);
+  const queue = async (requestId: string) => {
+    const queued = await send("diagnoses", { expectedRevision: 1, requestId });
+    assert.equal(queued.status, 201);
+    return await queued.json() as { graph: DeviceTaskGraphV1; placement: EdgeRuntimePlacementDecisionV1 };
+  };
+  const inspect = async (graphId: string) => {
+    const read = await fetch(`${host.origin}${prefix}/diagnoses/${graphId}`, { headers });
+    assert.equal(read.status, 200);
+    return await read.json() as { graph: DeviceTaskGraphV1; observation?: { connected: boolean } };
+  };
+  const run = (work: Awaited<ReturnType<typeof queue>>) => {
+    writeFileSync(configFile, JSON.stringify({ origin: linkedOrigin, runtimeId, graphId: work.graph.graphId, privateKeyFile, stateDirectory,
+      binding: { grantId: grant.grantId, runtimeRevision: 1, placementId: work.placement.decisionId } }), { mode: 0o600 });
+    return promisify(execFile)(process.execPath, [cli, "diagnose", configFile], { timeout: 6_000, maxBuffer: 8_192 });
+  };
+  const work = await queue("read-network");
+  assert.equal(work.graph.status, "planned");
+  interrupt = { route: "task-graph-receipt", remaining: 1 };
+  await assert.rejects(run(work), { code: 1 });
+  const result = await inspect(work.graph.graphId);
+  assert.equal(result.graph.status, "succeeded");
+  assert.equal(typeof result.observation?.connected, "boolean");
+  const owner = new SqliteDeviceFabricStore({ databasePath: join(stateDirectory, "edge.sqlite") });
+  try {
+    const entries = owner.listEdgeRuntimeJournalEntries(runtimeId, work.graph.graphId);
+    assert.deepEqual(entries.map(entry => entry.outcome), ["pending", "completed"]);
+    assert.ok(entries.every(entry => entry.operationId === result.graph.nodes[0]?.attemptId));
+    assert.deepEqual(entries[1]?.networkObservation, result.observation);
+    await host.daemon.stop();
+    host = await start();
+    const resumed = JSON.parse((await run(work)).stdout);
+    assert.equal(resumed.attemptId, result.graph.nodes[0]?.attemptId);
+    assert.deepEqual(resumed.observation, result.observation);
+    assert.deepEqual(await inspect(work.graph.graphId), result);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, work.graph.graphId), entries);
+    const replay = await send("diagnoses", { expectedRevision: 1, requestId: "read-network" });
+    assert.equal(replay.status, 200);
+    assert.deepEqual((await replay.json()).graph, result.graph);
+
+    const interrupted = await queue("interrupted-network");
+    interrupt = { route: "journal", remaining: 2 };
+    await assert.rejects(run(interrupted), { code: 1 });
+    const pending = await inspect(interrupted.graph.graphId);
+    assert.equal(pending.graph.status, "executing");
+    assert.equal(JSON.parse((await run(interrupted)).stdout).status, "succeeded");
+    const recovered = await inspect(interrupted.graph.graphId);
+    assert.equal(recovered.graph.status, "succeeded");
+    assert.equal(recovered.graph.nodes[0]?.attemptId, pending.graph.nodes[0]?.attemptId);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, interrupted.graph.graphId).map(entry => entry.outcome), ["pending", "completed"]);
+
+    const uncertain = await queue("uncertain-network");
+    interrupt = { route: "journal", remaining: 1 };
+    await assert.rejects(run(uncertain), { code: 1 });
+    const inFlight = await inspect(uncertain.graph.graphId);
+    assert.equal(JSON.parse((await run(uncertain)).stdout).status, "unknown");
+    const unresolved = await inspect(uncertain.graph.graphId);
+    assert.equal(unresolved.graph.status, "unknown");
+    assert.equal(unresolved.graph.nodes[0]?.attemptId, inFlight.graph.nodes[0]?.attemptId);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, uncertain.graph.graphId).map(entry => entry.outcome), ["pending", "unknown"]);
+
+    const revokedWork = await queue("before-revocation");
+    assert.equal((await send("revocation", { expectedRevision: 1 }, "PUT")).status, 200);
+    await assert.rejects(run(revokedWork), /HTTP 403/u);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, revokedWork.graph.graphId), []);
+    assert.equal((await inspect(revokedWork.graph.graphId)).graph.nodes[0]?.attemptId, undefined);
+    assert.equal((await send("diagnoses", { expectedRevision: 2, requestId: "after-revocation" })).status, 403);
+  } finally {
+    owner.close();
+  }
 });
 
 test("the Daemon registers configured Android ADB and OBD bridges as device targets", async t => {
@@ -1234,7 +1428,7 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.equal(taskGraph?.status, "succeeded");
     assert.equal(taskGraph?.revision, 11);
     assert.ok(taskGraph?.nodes.every(node => node.status === "succeeded" && node.attemptId));
-    assert.deepEqual(taskGraph?.nodes.map(node => node.resultRef), taskGraph?.nodes.map(node => `${report.taskId}:${node.nodeId.split(":").at(-1)}:succeeded`));
+    assert.deepEqual(taskGraph?.nodes.map(node => node.resultRef), report.actions.map(action => action.attemptId));
   } finally {
     reports.close();
   }
@@ -1425,6 +1619,88 @@ test("a PC adapter upgrade refreshes the enrolled target while retaining its his
   } finally {
     upgraded.close();
   }
+});
+
+test("the authenticated Daemon resumes a diagnosis between owner attempts after restart", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-graph-resume-"));
+  const workspace = createSqliteRunStore(cwd);
+  const { databasePath } = workspace.paths;
+  const authToken = "fixture-resume-operator";
+  const headers = { Authorization: `Bearer ${authToken}` };
+  const first = createDeviceSupportRuntime({ databasePath });
+  const taskId = "device_task_resumable_diagnosis";
+  const proposalId = "resumable-diagnosis";
+  let retainedAttemptId: string;
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  t.after(async () => {
+    await daemon?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  try {
+    const target = await first.broker.discover("pc-target-executor", { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
+    const deviceId = target.device.id;
+    const snapshot = first.store.getCurrentCapabilitySnapshot(deviceId)!;
+    const at = new Date().toISOString();
+    const basePlaybook = createPcSoftwareDiagnosisPlaybook();
+    const playbook = { ...basePlaybook, steps: basePlaybook.steps.slice(0, 2) };
+    const nodeIds = playbook.steps.map(step => devicePlaybookNodeId(playbook.id, step.id));
+    const task = first.broker.createTask({
+      id: taskId, ownerKind: "daemon", ownerId: deviceId, targetDeviceIds: [deviceId], status: "planning",
+      capabilitySnapshotIds: [snapshot.snapshotId], createdAt: at, updatedAt: at,
+    });
+    const graph: DeviceTaskGraphV1 = {
+      graphId: taskId, revision: 1, status: "planned", createdAt: at, updatedAt: at,
+      nodes: playbook.steps.map((step, index) => ({
+        nodeId: nodeIds[index]!, targetDeviceId: deviceId, ownerKind: task.ownerKind, ownerId: task.ownerId,
+        capabilityId: step.capabilityId, capabilitySnapshotId: snapshot.snapshotId,
+        dependencies: index === 0 ? [] : [nodeIds[index - 1]!], status: "planning",
+      })),
+    };
+    first.store.recordPlanningAcceptance({
+      proposalId, taskId, contextId: "context-resume", contextDigest: "fixture", graph, requiredApprovalNodeIds: [], acceptedAt: at,
+    }, "local_playbook", undefined, undefined, playbook);
+    const [step] = playbook.steps;
+    const actionId = `${taskId}:${step!.id}`;
+    const { attempt } = await first.broker.execute({
+      actionId, taskId, targetDeviceId: deviceId, capabilityId: step!.capabilityId, capabilitySchemaVersion: "1.0",
+      capabilitySnapshotId: snapshot.snapshotId, normalizedInput: step!.input, idempotencyKey: actionId,
+    }, undefined, { finalizeTask: false, onlyUnattendedReads: true, planningNode: { proposalId, nodeId: nodeIds[0]! } });
+    assert.equal(attempt.status, "completed");
+    retainedAttemptId = attempt.attemptId;
+  } finally {
+    first.close();
+  }
+
+  daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, { storeFactory: () => workspace });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const root = `http://127.0.0.1:${address.port}/v1/device-support`;
+  const resumeUrl = `${root}/tasks/${taskId}/resume`;
+  const graphUrl = `${root}/fabric/task-graphs/${taskId}`;
+  assert.equal((await fetch(graphUrl)).status, 401);
+  assert.equal((await fetch(resumeUrl, { method: "POST", headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  const partial = await (await fetch(graphUrl, { headers })).json() as DeviceTaskGraphV1;
+  assert.equal(partial.status, "partial");
+  assert.deepEqual(partial.nodes.map(node => node.attemptId), [retainedAttemptId, undefined]);
+  const resume = await fetch(resumeUrl, { method: "POST", headers });
+  const { status, report } = await resume.json() as { status: string; report: DeviceDiagnosisReportV1 };
+  assert.equal(resume.status, 200);
+  assert.equal(status, "succeeded");
+  assert.equal(report.taskId, taskId);
+  assert.equal(report.actions[0]?.attemptId, retainedAttemptId);
+  const settled = await (await fetch(graphUrl, { headers })).json() as DeviceTaskGraphV1;
+  assert.equal(settled.status, "succeeded");
+  assert.deepEqual(settled.nodes.map(node => node.resultRef), report.actions.map(action => action.attemptId));
+  assert.equal((await fetch(resumeUrl, { method: "POST", headers })).status, 200);
+  const store = new SqliteDeviceSupportStore({ databasePath });
+  try {
+    assert.equal(store.getTask(taskId)?.status, "succeeded");
+    assert.equal(store.listAttempts(taskId).length, 2);
+  } finally {
+    store.close();
+  }
+  assert.deepEqual(await (await fetch(graphUrl, { headers })).json(), settled);
 });
 
 test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback and invalid-plan evidence", { timeout: 30_000 }, async t => {

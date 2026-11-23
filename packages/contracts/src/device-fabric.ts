@@ -112,6 +112,8 @@ export interface DeviceTaskGraphNodeV1 {
   readonly dependencies: readonly string[];
   readonly status: DeviceTaskStatusV1;
   readonly attemptId?: string;
+  readonly attemptGraphRevision?: number;
+  readonly ownerRouteGeneration?: number;
   readonly resultRef?: string;
 }
 
@@ -179,6 +181,18 @@ export interface EdgeRuntimePlacementDecisionV1 {
   readonly evaluatedAt: string;
 }
 
+export const EDGE_LOCAL_NETWORK_CAPABILITY_ID = "edge.inspect.network" as const;
+
+export interface EdgeRuntimeDiagnosisWorkV1 {
+  readonly graphId: string;
+  readonly graphRevision: number;
+  readonly nodeId: string;
+  readonly targetDeviceId: string;
+  readonly capabilityId: typeof EDGE_LOCAL_NETWORK_CAPABILITY_ID;
+  readonly capabilitySnapshotId: string;
+  readonly attemptId: string;
+}
+
 export interface DeviceBridgeFrameV1 {
   readonly frameId: string;
   readonly runtimeId: string;
@@ -189,7 +203,7 @@ export interface DeviceBridgeFrameV1 {
   readonly sentAt: string;
 }
 
-export type EdgeRuntimeJournalOutcomeV1 = "pending" | "sent" | "received" | "completed" | "unknown" | "cancelled";
+export type EdgeRuntimeJournalOutcomeV1 = "pending" | "sent" | "received" | "completed" | "failed" | "unknown" | "cancelled";
 
 export interface EdgeRuntimeJournalEntryV1 {
   readonly entryId: string;
@@ -197,9 +211,10 @@ export interface EdgeRuntimeJournalEntryV1 {
   readonly ownerTaskId: string;
   readonly sequence: number;
   readonly operationId: string;
-  readonly kind: "task_started" | "frame_sent" | "frame_received" | "task_completed" | "task_unknown" | "task_cancelled";
+  readonly kind: "task_started" | "frame_sent" | "frame_received" | "task_completed" | "task_failed" | "task_unknown" | "task_cancelled";
   readonly outcome: EdgeRuntimeJournalOutcomeV1;
   readonly payloadDigest?: string;
+  readonly networkObservation?: { readonly connected: boolean };
   readonly recordedAt: string;
 }
 

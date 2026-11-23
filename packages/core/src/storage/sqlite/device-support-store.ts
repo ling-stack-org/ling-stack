@@ -35,6 +35,8 @@ import {
 } from "@ling-stack/contracts";
 
 import { DeviceBrokerError, type DeviceSupportStoreAttemptRecord } from "../../device-support.js";
+import { matchesPlannedDeviceAttempt, readDiagnosisAttemptStatus } from "../../device-diagnosis-graph.js";
+import type { DevicePlaybookV1 } from "../../device-playbooks.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { readSqliteSnapshot, withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
@@ -69,6 +71,7 @@ export type RecordedDevicePlan = DevicePlannerAcceptanceV1 & {
   readonly source: "runner" | "local_playbook";
   readonly fallbackReason?: "runner_unavailable";
   readonly providerHandoff?: DevicePlannerProviderHandoffV1;
+  readonly playbook?: DevicePlaybookV1;
 };
 
 export interface RecordedDeviceCapabilitySnapshot {
@@ -291,6 +294,7 @@ export class SqliteDeviceSupportStore {
     source: RecordedDevicePlan["source"],
     fallbackReason?: RecordedDevicePlan["fallbackReason"],
     providerHandoff?: DevicePlannerProviderHandoffV1,
+    playbook?: DevicePlaybookV1,
   ): void {
     this.withWriteTransaction(() => {
       const task = this.requireTask(acceptance.taskId);
@@ -318,6 +322,7 @@ export class SqliteDeviceSupportStore {
       const record = {
         source, ...acceptance, ...(fallbackReason ? { fallbackReason } : {}),
         ...(providerHandoff ? { providerHandoff } : {}),
+        ...(playbook ? { playbook } : {}),
       } satisfies RecordedDevicePlan;
       const prior = this.listPlanningAcceptances(task.id).find(plan => plan.proposalId === acceptance.proposalId);
       if (prior) {
@@ -523,8 +528,13 @@ export class SqliteDeviceSupportStore {
 
   getActiveAttempt(taskId: string): DeviceSupportStoreAttemptRecord | undefined {
     const row = this.database.prepare(`
-      SELECT attempt_json, request_json, request_digest FROM device_task_attempts
+      SELECT attempt_json, request_json, request_digest FROM device_task_attempts AS attempt
       WHERE task_id=? AND json_extract(attempt_json,'$.status') IN ('prepared','dispatched','unknown')
+        AND NOT EXISTS (
+          SELECT 1 FROM device_task_events AS evidence WHERE evidence.task_id=attempt.task_id AND evidence.type='attempt_reconciled'
+            AND json_extract(evidence.body_json,'$.attemptId')=attempt.attempt_id
+            AND json_extract(evidence.body_json,'$.status')='verified'
+        )
       ORDER BY json_extract(attempt_json,'$.status')='unknown', created_at DESC, attempt_id DESC LIMIT 1
     `).get(taskId) as Row | undefined;
     return row ? this.parseAttempt(row) : undefined;
@@ -542,6 +552,14 @@ export class SqliteDeviceSupportStore {
   listAttempts(taskId: string): readonly DeviceSupportStoreAttemptRecord[] {
     return (this.database.prepare("SELECT attempt_json,request_json,request_digest FROM device_task_attempts WHERE task_id=? ORDER BY created_at,attempt_id").all(taskId) as Row[])
       .map(row => this.parseAttempt(row));
+  }
+
+  listPlannedAttempts(taskId: string, proposalId: string): readonly DeviceSupportStoreAttemptRecord[] {
+    const rows = this.database.prepare(`
+      SELECT attempt_json,request_json,request_digest FROM device_task_attempts
+      WHERE task_id=? AND json_extract(attempt_json,'$.planningNode.proposalId')=? ORDER BY rowid
+    `).all(taskId, proposalId) as Row[];
+    return rows.map(row => this.parseAttempt(row));
   }
 
   updateAttempt(attemptId: string, patch: DeviceAttemptPatch, now: string): DeviceSupportStoreAttemptRecord {
@@ -656,11 +674,19 @@ export class SqliteDeviceSupportStore {
     return this.withWriteTransaction(() => this.stopDaemonTaskInTransaction(this.requireTask(taskId), now));
   }
 
+  hasTaskStopRequest(taskId: string): boolean {
+    return this.database.prepare("SELECT 1 FROM device_task_events WHERE task_id=? AND type='task_stop_requested' LIMIT 1").get(taskId) !== undefined;
+  }
+
   private stopDaemonTaskInTransaction(task: DeviceTaskV1, now: string): DeviceTaskV1 {
     if (task.ownerKind !== "daemon") throw new Error("Device task belongs to another runtime");
-    if (["succeeded", "failed", "cancelled", "unknown"].includes(task.status)) return task;
+    if (["succeeded", "failed", "cancelled"].includes(task.status)) return task;
     const leased = this.getLeasedAttempt(task.id);
     const attempt = leased?.attempt ?? this.getActiveAttempt(task.id)?.attempt;
+    if (task.status === "unknown") {
+      if (!this.hasTaskStopRequest(task.id)) this.appendEvent(task.id, "task_stop_requested", { attemptId: attempt?.attemptId, status: task.status }, now);
+      return task;
+    }
     const intentRecorded = attempt?.status === "prepared" || attempt?.status === "dispatched";
     const status = leased || intentRecorded || attempt?.status === "unknown" || task.status === "verifying" ? "unknown" : "cancelled";
     if (intentRecorded) this.updateAttempt(attempt.attemptId, { status: "unknown" }, now);
@@ -672,7 +698,10 @@ export class SqliteDeviceSupportStore {
     const task = this.requireTask(record.taskId);
     this.appendEvent(task.id, "attempt_reconciled", { ...record }, record.recordedAt);
     if (task.status === "unknown") {
-      this.writeTaskTransition(task, record.status === "verified" ? "succeeded" : "unknown", {
+      const plan = this.listPlanningAcceptances(task.id).at(-1);
+      const status = record.status !== "verified" ? "unknown" : plan?.playbook
+        ? (this.hasTaskStopRequest(task.id) ? "cancelled" : this.settledDiagnosisStatus(task, plan)) : "succeeded";
+      this.writeTaskTransition(task, status, {
         lastVerificationId: record.reconciliationId,
       }, record.recordedAt);
     }
@@ -709,7 +738,9 @@ export class SqliteDeviceSupportStore {
       for (const taskId of interruptedTaskIds) {
         const task = this.requireTask(taskId);
         if (!["unknown", "succeeded", "failed", "cancelled"].includes(task.status)) {
-          this.writeTaskTransition(task, "unknown", {}, now);
+          const plan = this.listPlanningAcceptances(task.id).at(-1);
+          const status = plan && task.status === "executing" ? this.settledDiagnosisStatus(task, plan) : "unknown";
+          this.writeTaskTransition(task, status, {}, now);
         }
       }
       // Attempt leases are held until the adapter settles or its daemon restarts.
@@ -720,6 +751,22 @@ export class SqliteDeviceSupportStore {
       `).run();
       return recovered;
     });
+  }
+
+  private settledDiagnosisStatus(task: DeviceTaskV1, plan: RecordedDevicePlan): DeviceTaskStatusV1 {
+    const attempts = this.listAttempts(task.id);
+    const last = attempts.find(record => record.request.actionId === task.currentActionId);
+    if (!last || last.attempt.planningNode?.proposalId !== plan.proposalId) return "unknown";
+    const reconciled = new Set(this.listReconciliations(task.id).filter(item => item.status === "verified").map(item => item.attemptId));
+    const settled = new Map<string, ReturnType<typeof readDiagnosisAttemptStatus>>();
+    for (const record of attempts) {
+      const node = plan.graph.nodes.find(item => matchesPlannedDeviceAttempt(item, record));
+      const status = reconciled.has(record.attempt.attemptId) ? "succeeded" : readDiagnosisAttemptStatus(this, record);
+      if (!node || record.attempt.planningNode?.proposalId !== plan.proposalId || settled.has(node.nodeId) || status === "unknown") return "unknown";
+      settled.set(node.nodeId, status);
+    }
+    if (plan.graph.nodes.every(node => settled.get(node.nodeId) === "succeeded")) return "succeeded";
+    return [...settled.values()].includes("succeeded") ? "partial" : "failed";
   }
 
   listEvents(taskId: string, page?: { readonly offset: number; readonly limit: number }): readonly DeviceTaskEvent[] {

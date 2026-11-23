@@ -223,6 +223,15 @@ cancellation and unresolved outcome. A downstream step receives the named
 predecessor result. A missing or stale observation surfaces as a condition for
 the user or the planner to resolve.
 
+The Daemon records its accepted diagnosis playbook with the plan in the owner
+journal. The broker matches each requested step to that playbook and checks the
+attempt and verification records of its prerequisites before dispatch.
+`GET /v1/device-support/fabric/task-graphs/:taskId` projects the graph from that
+journal. Each attempted node references the original attempt ID or the later
+reconciliation ID. `POST /v1/device-support/tasks/:taskId/resume` replays retained
+results and runs eligible pending steps with the original capability snapshot.
+If a step has an unknown outcome, its dependents wait for readback evidence.
+
 ### 5.3 PC-assisted head-unit application task
 
 ~~~mermaid
@@ -312,6 +321,43 @@ A proof replay returns the same enrollment while its revision is current.
 `PUT /:runtimeId/revocation` accepts a `grantId` to cancel that pending grant,
 or `expectedRevision` to revoke the current runtime. The list projection omits
 the key fingerprint and grant. [Daemon routes](../../packages/daemon/src/features/device-support/edge-routes.ts)
+
+### Signed Edge task evidence
+
+The local operator creates a diagnosis on an enrolled Edge host with
+`POST /:runtimeId/diagnoses` using `requestId` and `expectedRevision`. The Daemon
+records the graph and placement. It accepts a signed `POST /:runtimeId/diagnosis-claim`
+for that graph and returns the original node and attempt on replay.
+`GET /:runtimeId/diagnoses/:graphId` gives the operator the retained graph and
+the accepted local network observation.
+
+The loopback Edge routes accept `{ binding, payload, signature }`. The signed
+`binding` contains `grantId`, `runtimeRevision`, and `placementId`. For a claim,
+the canonical JSON object uses purpose `ling.edge-runtime-diagnosis-claim.v1`
+and contains `binding` and `graphId`. The `POST /:runtimeId/journal` signature
+uses purpose `ling.edge-runtime-journal.v1` and contains `binding` and `entry`,
+where `entry` is the `EdgeRuntimeJournalEntryV1` payload. The Daemon checks the
+enrolled key, dispatch binding and journal sequence in the append transaction.
+An identical entry ID and payload returns the original entry.
+
+An Edge owner can submit a graph result through
+`POST /:runtimeId/task-graph-receipt`. Its payload is a
+`DeviceTaskGraphNodeReceiptV1` with `ownerKind: "edge"`, `ownerId` equal to the
+runtime ID, and `routeGeneration` equal to the enrollment revision. The signed
+bytes use `{ purpose: "ling.edge-runtime-task-graph-receipt.v1", binding,
+receipt: payload }`. The Daemon validates the graph revision, target, capability
+snapshot, attempt, owner, route, and original journal result in the receipt
+transaction. [Operation signing helpers](../../packages/remote-protocol/src/edge-runtime-operations.ts)
+
+The Daemon package exposes `ling-edge diagnose <configuration.json>`. The
+configuration fields are `origin`, `runtimeId`, `graphId`, `binding`,
+`privateKeyFile`, and `stateDirectory`. Use the loopback coordinator origin or
+a loopback endpoint of an authenticated link. The executor records its start and
+local network observation under a directory lock, signs and sends the evidence,
+and reopens its journal for the same graph on a subsequent invocation. A journal
+that contains the dispatch intent without a terminal entry resumes as unknown.
+Revocation denies new claims and evidence submissions under the revoked key.
+[Edge executor](../../packages/daemon/src/ling-edge-cli.ts)
 
 ## 7. Event and telemetry plane
 

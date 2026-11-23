@@ -38,6 +38,8 @@ import type { SqliteDeviceSupportStore } from "./storage/sqlite/device-support-s
 import type { DeviceAccessManager } from "./device-access.js";
 import { isCurrentDeviceObservation } from "./device-diagnosis.js";
 import { DeviceFabricError } from "./device-fabric.js";
+import { matchesPlannedDeviceAttempt, readDiagnosisAttemptStatus } from "./device-diagnosis-graph.js";
+import { devicePlaybookNodeId } from "./device-playbooks.js";
 
 export interface DeviceAdapterDiscoveryInput {
   readonly connectionRef: string;
@@ -583,6 +585,23 @@ export class DeviceCapabilityBroker {
         || node.ownerId !== task.ownerId || node.ownerKind !== task.ownerKind
         || node.capabilityId !== capability.id || node.capabilitySnapshotId !== snapshot.snapshotId) {
         throw new DeviceBrokerError("target_changed", "device action does not match the accepted plan node");
+      }
+      if (plan.playbook) {
+        const step = plan.playbook.steps.find(item => devicePlaybookNodeId(plan.playbook!.id, item.id) === planningNode.nodeId);
+        if (!step || step.capabilityId !== request.capabilityId || canonicalJson(step.input) !== canonicalJson(request.normalizedInput)
+          || canonicalJson(step.expectedVerification) !== canonicalJson(request.expectedVerification)) {
+          throw new DeviceBrokerError("target_changed", "device action inputs do not match the accepted playbook step");
+        }
+      }
+      const attempts = this.store.listPlannedAttempts(task.id, plan.proposalId);
+      const reconciled = this.store.listReconciliations(task.id).filter(record => record.status === "verified");
+      if (attempts.some(record => matchesPlannedDeviceAttempt(node, record)) || node.dependencies.some(dependency => {
+        const prerequisite = plan.graph.nodes.find(candidate => candidate.nodeId === dependency);
+        const result = prerequisite && attempts.find(record => matchesPlannedDeviceAttempt(prerequisite, record));
+        return !result || (readDiagnosisAttemptStatus(this.store, result) !== "succeeded"
+          && !reconciled.some(record => record.attemptId === result.attempt.attemptId));
+      })) {
+        throw new DeviceBrokerError("target_changed", "device action requires a ready plan node and completed dependencies");
       }
     }
     const accessGrant = this.taskAccessGrant(task, profile.device.id, capability);
