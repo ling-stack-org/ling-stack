@@ -238,7 +238,8 @@ developer clients and physical hardware or vehicle acceptance remain open.
 
 ## Device Support Platform native workbench continuation 2026-11-23
 
-- D10 now admits `workbench` jobs through the authenticated developer session. The
+- D10 now admits `workbench` jobs through the authenticated developer session in
+  commit `fb586052c`. The
   contract names `ssh`, `adb` or `vendor`, a bounded operation and an optional
   operator-selected evidence digest. The host executor declares the operation's
   side-effect class. Model turns do not receive an unscoped terminal interface.
