@@ -321,6 +321,9 @@ jobs:
       - name: Verify actual final archives, bundled resources and runtime structure
         if: env.DESKTOP_OPERATION == 'build'
         run: node scripts/release/verify-desktop-package.mjs
+      - name: Start an isolated installation copied from the verified DMG
+        if: env.DESKTOP_OPERATION == 'build' && matrix.target == 'macos-arm64'
+        run: node scripts/release/macos-installed-startup.mjs
       - name: Collect fresh install archives and evidence
         if: env.DESKTOP_OPERATION == 'build'
         env:

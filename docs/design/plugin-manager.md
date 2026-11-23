@@ -95,12 +95,13 @@ distribution-specific contract lives in the Bundled Embedded Cua Driver document
 
 ## Trust Tiers
 
-Stage 1 uses three product-facing tiers:
+Stage 1 uses four product-facing tiers:
 
 | Tier | Source | Code loading | Example | Default posture |
 | --- | --- | --- | --- | --- |
 | Built-in | Compiled into Ling packages | None | Product-managed built-in capability bundles | Enabled by product defaults |
 | Bundled | Shipped with Ling distribution | Static manifest and optional local assets | Browser MCP preset, GitHub MCP preset | Installable/enabled by user |
+| Official remote | Signed Ling catalog and platform package | Desktop verifies cached native runtimes at startup | Excel helper, Chrome Native Host, Cua Driver provider | Installed on demand and enabled per workspace |
 | Trusted local preset | User confirms an installed local binary or endpoint | No plugin code loaded by Ling | `cua-driver mcp` | Disabled until explicitly added |
 
 External trusted and external untrusted tiers are intentionally excluded from stage 1.
@@ -119,6 +120,9 @@ flowchart TD
   API --> Catalog[Plugin Catalog]
   Catalog --> BuiltIn[Built-in registry metadata]
   Catalog --> Bundled[Bundled manifests]
+  Catalog --> Official[Signed Ling catalog]
+  Official --> Cache[Verified user-level runtime cache]
+  Cache --> Desktop[Desktop native runtime]
   Catalog --> Presets[Trusted local presets]
   API --> Registry[LingExtensionRegistry]
   API --> MCP[MCP server config and tool catalog]
@@ -184,7 +188,7 @@ Ling should borrow the same separation of concerns:
 | --- | --- | --- |
 | Manifest/schema | A package-level declaration of id, version, interface metadata, skills, MCP servers, apps, hooks, and assets. | Stage 1 descriptors cover managed metadata; a strict package manifest belongs to Stage 2. |
 | Marketplace/source | An index of plugins and their built-in, bundled, trusted local, Git, or remote source. | Stage 1 uses built-in descriptors and trusted local presets only. Bundled/local indexes come next; Git and remote sources are later. |
-| Install cache | A Ling-owned materialized plugin directory with versioned state. | Stage 1 persists managed state and linked resources; Stage 2 adds a package cache for trusted local and bundled bundles. |
+| Install cache | A Ling-owned materialized plugin directory with versioned state. | Official native packages share a user-level cache with current and previous selections. Workspace stores retain enablement and linked resources. |
 | Runtime capability injection | Merge enabled plugin skills, MCP servers, apps, hooks, and summaries into session/runtime capabilities. | Stage 1 surfaces contributions and applies MCP presets; later stages inject package capabilities into run snapshots. |
 | MCP/app/hook policy overlay | User/workspace/admin policy over plugin-provided MCP servers, app connectors, hooks, and tools. | Stage 1 preserves existing MCP and approval gates; later stages add per-plugin overlays. |
 

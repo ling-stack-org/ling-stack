@@ -2,7 +2,7 @@
 
 ## 状态
 
-三个生产者仓库已承接各自的源码、构建和发布文档。Office 和 Chrome 的 macOS arm64、Windows x64 候选归档已通过构建。Cua Driver 的 Windows x64 原生构建和 macOS arm64 复核候选已完成双跑，两个平台锁提案均待独立复核。正式签名资产、首次目录发布、两个平台的安装验收和体积对照是默认瘦包切换的前置条件。迁移期间保留兼容打包。
+三个独立仓库负责各自的源码、构建和发布文档。Office 和 Chrome 已生成 macOS arm64、Windows x64 构建候选。Cua Driver 的双平台签名前产物已完成独立复核和锁定构建验证，平台锁已合入生产者主分支。两平台开发包已完成同版本体积对照和冷启动验证。切换默认打包前，需发布正式签名资产与官方目录，并完成两平台的正式安装验收。当前默认沿用兼容包。[Cua Driver 平台锁](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/5)
 
 | 插件 | 独立仓库职责 | Ling 主仓职责 |
 | --- | --- | --- |
@@ -54,10 +54,10 @@ Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容�
 
 - 使用隔离用户配置、本地开发目录和临时包签名，Office 候选在真实 daemon 中通过首次安装、更新、重新读取和离线回滚。macOS helper 在三个阶段均响应 `driver_status`。更新测试使用同一 helper 的另一归档版本。macOS 候选 helper 的预检识别到 Excel 16.91 正在运行，并返回 `permission_required`。签名版仍需经过系统 Automation 授权和实际工作簿操作验收。自动化回归覆盖空工作区安装、跨工作区显示和回滚、保留工作区启用状态，以及缓存篡改拒绝。
 - Windows x64 未签名开发包对照使用同一源码 `0621af8a89e513bcc6cfd23820c921a18c71c3da`、Electron 45.3.1 和同版 gstack。两个 runner 独立生成的 gstack 清单摘要不同。瘦包 EXE 从 788,979,385 减到 743,359,437 字节，降幅 5.78%。解包后常规文件从 2,667,154,320 减到 2,531,662,529 字节，降幅 5.08%。两组均通过空白配置安装、资源鉴权、连接自有 daemon、加载主窗口、正常退出、同版本覆盖安装和卸载。兼容包和瘦包的资源准备分别耗时 133.4 秒和 135.1 秒。交互界面、三个插件和已有配置迁移仍需正式安装版验收。[兼容包验证](https://github.com/ling-stack-org/ling-stack/actions/runs/45134711982/job/137558831585) · [瘦包验证](https://github.com/ling-stack-org/ling-stack/actions/runs/45124319679/job/137525817393)
-- macOS arm64 的同源码开发对照固定在 `e3eb23bcee73a614e02c1b2fd48c6b38c1995bfb`。两组通过 App 的 ad-hoc 代码签名、DMG 校验和与 ZIP 完整性检查。DMG 从 271,297,948 减到 270,888,791 字节，ZIP 从 261,662,802 减到 261,263,318 字节，解包后常规文件从 780,023,183 减到 778,940,565 字节。开发对照未纳入包内 gstack，也未纳入生产 Cua Driver provider。完整资源候选的云端检查通过了 gstack 和受限命令运行时指纹，15 项 Office addon 原生输入均匹配，源码 `0621af8a89e5` 在 Office 打包闭包的独立审查前置检查停止。完整资源 DMG 仍需在独立审查后重新构建，验证安装、首次启动和体积。[macOS 开发对照](https://github.com/ling-stack-org/ling-stack/actions/runs/45073421597) · [macOS 完整资源候选](https://github.com/ling-stack-org/ling-stack/actions/runs/45124319679/job/137525817396)
+- macOS arm64 完整资源开发包对照固定在 `3efb4c6fdd945737c400d6a22f8110b5671e6f28` 和 Electron 45.3.1。两个 runner 使用同一 gstack 源码与适配版本，各自生成资源清单。两组通过 ad-hoc 签名、DMG／ZIP 内容校验和包内浏览器的首次下载与缓存检查。DMG 从 794,367,394 减到 793,954,963 字节，降幅 0.052%。ZIP 从 787,616,620 减到 787,220,224 字节，解包后常规文件从 2,213,098,165 减到 2,212,015,547 字节。开发包未包含正式 Cua Driver provider。
+- macOS 两个原始构建在安装启动步骤记录了 daemon 资源准备失败。校验相同 DMG 的 SHA-256 后，在 Apple Silicon 本机使用真实路径的临时目录复制和启动两个应用。两组均通过空白配置、自有 daemon、主窗口和正常退出。兼容包和瘦包的资源准备分别耗时 28.6 秒和 29.1 秒。正式签名、公证及交互验收仍待完成。[兼容包归档证据](https://github.com/ling-stack-org/ling-stack/actions/runs/45153324087/job/137620864591) · [瘦包归档证据](https://github.com/ling-stack-org/ling-stack/actions/runs/45153323784/job/137620983485)
 - Ling for Chrome 的 macOS 候选包在真实 Chrome 的隔离配置中验证了 Native Messaging 自动连接、全部六项浏览器工具、暂停恢复以及禁用后重新启用。Chrome Web Store 发布的 0.1.2 与候选归档的可执行代码及弹窗文件逐项一致，差异在四个图标、更新地址和商店元数据。商店安装的扩展仍需和正式签名的 Native Host 一起验收。[Chrome 候选构建](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45081594739) · [Chrome Web Store](https://chromewebstore.google.com/detail/ling-for-chrome/mbmlnnfhebclljonhedpjghbhibfapei)
-- Cua Driver 的 Windows x64 两次原生构建通过。两个 runner 验证了 Medium 完整性、状态目录用户 ACL、链接拒绝、配置持久化和 MCP 会话，8 个产物摘要一致。按产物 ID 下载的复验生成了字节一致的平台锁提案，状态为 `MANUAL_REVIEW_REQUIRED`。平台锁通过独立复核并提交后，须重新生成绑定该锁的原生构建证明。[Windows A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45086277445) · [Windows 平台锁提案复验](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45091335162)
-- 已提交的 Darwin 平台记录绑定补丁集 `edb89636dab1`。使用 `2262742c7256` 的两次原生构建均未命中原最终链接摘要。复核分支固定两台 runner 都观测到的 `0edf30c01f3b`，两个 macOS arm64 原生构建和运行探针通过，7 个稳定产物摘要一致。Darwin 平台锁提案更新补丁集和签名前可执行文件摘要，状态为 `MANUAL_REVIEW_REQUIRED`。独立复核并更新正式输入锚点后，还需重建绑定新锁的原生产物。[原 macOS A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45090597255) · [macOS 复核候选](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45098824506) · [Cua Driver 发布说明](https://github.com/ling-stack-org/ling-plugin-cua-driver/blob/main/docs/RELEASE.md)
+- Cua Driver 的独立复核根据四个原始归档核对了源码提交、补丁、二进制摘要和两平台锁。新锁在四台独立 runner 上完成原生重建与 MCP 探针，macOS 的 7 个稳定文件和 Windows 的 8 个稳定文件分别逐项一致。Windows 探针覆盖 Medium 完整性、状态目录用户 ACL、链接拒绝和配置持久化。生产者主分支与重建提交 `cb4c332cfab7` 的源码树相同，产物处于签名前阶段。[macOS A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45160025646) · [Windows A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45160031136) · [平台锁 PR](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/5)
 
 ## 瘦包对照和切换
 
