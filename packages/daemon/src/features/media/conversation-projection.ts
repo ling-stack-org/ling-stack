@@ -28,6 +28,13 @@ export function buildConversationGeneratedMediaProjection(input: {
       const mediaJob = input.store.getMediaJob(mediaJobId);
       if (!target || !mediaJob || !isConversationMediaOperation(mediaJob.operation)) continue;
 
+      const artifactOrder = new Map(mediaJob.artifactIds.map((id, index) => [id, index]));
+      const unlistedIndex = mediaJob.artifactIds.length;
+      const artifacts = input.store.listMediaJobArtifacts(mediaJobId).sort((left, right) =>
+        (artifactOrder.get(left.id) ?? unlistedIndex) - (artifactOrder.get(right.id) ?? unlistedIndex)
+        || left.createdAt.localeCompare(right.createdAt)
+        || left.id.localeCompare(right.id),
+      );
       seenMediaJobIds.add(mediaJobId);
       projection.push({
         mediaJobId,
@@ -37,9 +44,7 @@ export function buildConversationGeneratedMediaProjection(input: {
         target,
         prompt: mediaJob.prompt,
         status: mediaJob.status,
-        artifacts: input.store
-          .listMediaJobArtifacts(mediaJobId)
-          .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
+        artifacts,
         ...(mediaJob.status === "failed" ? {
           failureCode: conversationMediaFailureCode(workUnit.errorCode, mediaJob.errorMessage),
         } : {}),
