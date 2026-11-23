@@ -19,7 +19,7 @@ export async function workItemHandoffCandidatesCurrent(store: RunStore, step: Ch
     const handoff = source && readWorkflowStageHandoff(store, {
       workItemId: item.id, planRevision: item.planRevision, sourceStepId, sourceRevision: source.updatedAt, targetStepId: step.id,
     });
-    if (!handoff?.decision.candidateDigest) continue;
+    if (handoff?.record.action !== "accepted" || !handoff.decision.candidateDigest) continue;
     const sourceRun = handoff.decision.sourceRunId && store.getRun(handoff.decision.sourceRunId);
     if (!sourceRun) return false;
     if (!captured.has(sourceRun.cwd)) captured.set(sourceRun.cwd, await readCompleteHandoffCandidate(sourceRun.cwd));

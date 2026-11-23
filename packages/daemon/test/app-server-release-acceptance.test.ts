@@ -2803,8 +2803,28 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   }), { code: "stale_revision" });
   await assert.rejects(resumedClient.call("workItem/handoff/return", { ...offeredHandoff, expectedSourceRevision: new Date(0).toISOString(),
     reason: "candidate_stale" }), { code: "stale_revision" });
+  const { candidate: oldCandidate } = await resumedClient.call<LingAppServerCaptureChangesResult>("changes/capture");
+  async function checkHandoffCandidate(candidate: LingAppServerCandidateReference, idempotencyKey: string) {
+    const verificationPlan = await resumedClient.call<LingAppServerVerifyPlanResult>("verify/plan", {
+      ...changeBasis, candidate, requestedChecks: ["verify-contract-handoff"],
+    });
+    const { operationId } = await resumedClient.call<LingAppServerVerifyOperation>("verify/start", {
+      planId: verificationPlan.planId, planRevision: verificationPlan.planRevision,
+      candidateDigest: candidate.candidateDigest, idempotencyKey,
+    });
+    const verified = await waitFor(async () => {
+      const { operation } = await resumedClient.call<LingAppServerVerifyStatusResult>("verify/status", { operationId });
+      return operation.completedAt ? operation : undefined;
+    });
+    assert.equal(verified.status, "passed");
+    assert.ok(verified.checks[0]?.producerRefs.length);
+    return { operationId, checkId: "verify-contract-handoff" };
+  }
+  const oldVerification = await checkHandoffCandidate(oldCandidate, "qa-old-check");
+  const returnRequest = { ...offeredHandoff, reason: "required_check_incomplete",
+    expectedCandidateDigest: oldCandidate.candidateDigest };
   const returnedHandoff = await resumedClient.call<LingAppServerWorkItemCollaborationAppendResult>(
-    "workItem/handoff/return", { ...offeredHandoff, reason: "required_check_incomplete" });
+    "workItem/handoff/return", returnRequest);
   const returnedStage = (await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id);
   assert.equal(returnedStage?.handoffs?.[0]?.status, "returned");
   assert.equal(returnedStage.handoffs[0]?.reason, "required_check_incomplete");
@@ -2813,26 +2833,41 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
     ...offeredHandoff, expectedWorkItemRevision: returnedHandoff.workItemRevision, idempotencyKey: "qa-accept-returned",
   }), { code: "stale_revision" });
   const oldSource = resumedStore.getChannelWorkflowStep(p01.id);
-  assert.ok(oldSource?.metadata?.outputArtifactId);
+  assert.ok(oldSource?.metadata?.outputArtifactId && oldSource.runId);
+  const oldPacket = resumedStore.getArtifact(oldSource.metadata.outputArtifactId);
+  assert.ok(oldPacket?.sealedPayload);
+  const repairedAt = new Date(Math.max(Date.now(), Date.parse(oldSource.updatedAt) + 1)).toISOString();
+  const repairedPacket = resumedStore.createArtifact({ runId: oldSource.runId, type: "json",
+    path: oldPacket.path, sealedPayload: oldPacket.sealedPayload, createdAt: repairedAt });
+  const repairedSource = resumedStore.updateChannelWorkflowStep(p01.id, {
+    metadata: { ...oldSource.metadata, outputArtifactId: repairedPacket.id },
+  }, repairedAt);
+  assert.ok(repairedSource && repairedSource.updatedAt !== oldSource.updatedAt);
+  const pendingRepair = (await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id)?.handoffs?.[0];
+  assert.equal(pendingRepair?.sourceRevision, repairedSource.updatedAt);
+  assert.equal(pendingRepair?.receiptId, returnedHandoff.record.id);
+  assert.equal(pendingRepair?.status, "returned");
+  assert.equal(pendingRepair?.candidateDigest, oldCandidate.candidateDigest);
+  const repairedOffer = { ...offeredHandoff, expectedSourceRevision: repairedSource.updatedAt,
+    expectedWorkItemRevision: returnedHandoff.workItemRevision };
+  await assert.rejects(resumedClient.call("workItem/handoff/accept", {
+    ...repairedOffer, idempotencyKey: "skip-the-return",
+  }), { code: "stale_revision" });
+  await assert.rejects(resumedClient.call("workItem/handoff/accept", {
+    ...repairedOffer, idempotencyKey: "reuse-returned-candidate", previousHandoffId: returnedHandoff.record.id,
+    expectedCandidateDigest: oldCandidate.candidateDigest, verification: oldVerification,
+  }), { code: "work_item_handoff_source_revision_required" });
+  await writeFile(join(fixture.cwd, "contract.md"), "Preserve the established contract.\n");
   const { candidate } = await resumedClient.call<LingAppServerCaptureChangesResult>("changes/capture");
+  assert.notEqual(candidate.candidateDigest, oldCandidate.candidateDigest);
   const repair = {
-    ...offeredHandoff, previousHandoffId: returnedHandoff.record.id, expectedCandidateDigest: candidate.candidateDigest,
-    expectedWorkItemRevision: returnedHandoff.workItemRevision, idempotencyKey: "qa-accept-repaired-contract",
+    ...repairedOffer, previousHandoffId: returnedHandoff.record.id, expectedCandidateDigest: candidate.candidateDigest,
+    idempotencyKey: "qa-accept-repaired-contract",
   };
   await assert.rejects(resumedClient.call("workItem/handoff/accept", repair), { code: "work_item_handoff_verification_required" });
-  const verificationPlan = await resumedClient.call<LingAppServerVerifyPlanResult>("verify/plan", {
-    ...changeBasis, candidate, requestedChecks: ["verify-contract-handoff"],
-  });
-  const { operationId } = await resumedClient.call<LingAppServerVerifyOperation>("verify/start", {
-    planId: verificationPlan.planId, planRevision: verificationPlan.planRevision,
-    candidateDigest: candidate.candidateDigest, idempotencyKey: "qa-repair-check",
-  });
-  const verified = await waitFor(async () => {
-    const { operation } = await resumedClient.call<LingAppServerVerifyStatusResult>("verify/status", { operationId });
-    return operation.completedAt ? operation : undefined;
-  });
-  assert.equal(verified.status, "passed");
-  assert.ok(verified.checks[0]?.producerRefs.length);
+  await assert.rejects(resumedClient.call("workItem/handoff/accept", { ...repair, verification: oldVerification }),
+    { code: "work_item_handoff_verification_required" });
+  const verification = await checkHandoffCandidate(candidate, "qa-repair-check");
   const implementationChange = {
     ...changeBasis, expectedWorkItemRevision: returnedHandoff.workItemRevision,
     affectedStageIds: ["P02"], reason: "Reconsider the implementation approach", idempotencyKey: "implementation-scope",
@@ -2860,13 +2895,12 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   await assert.rejects(resumedClient.call("workItem/question/ask", {
     ...ask, expectedWorkItemRevision: question.workItemRevision, waitingStepId: p02.id, respondentStepId: qa.id, idempotencyKey: "mutual-wait",
   }), { code: "work_item_question_cycle" });
-  const handoff = { ...repair, expectedWorkItemRevision: question.workItemRevision,
-    verification: { operationId, checkId: "verify-contract-handoff" } };
+  const handoff = { ...repair, expectedWorkItemRevision: question.workItemRevision, verification };
   await writeFile(inputFile, "Changed after QA read\n");
   await assert.rejects(resumedClient.call("workItem/handoff/accept", handoff), { code: "work_item_handoff_candidate_stale" });
   await writeFile(inputFile, "Verified compatibility input\n");
   await assert.rejects(resumedClient.call("workItem/handoff/accept", {
-    ...handoff, verification: { operationId, checkId: "different-check" },
+    ...handoff, verification: { ...verification, checkId: "different-check" },
   }), { code: "work_item_handoff_verification_required" });
   const handoffPath = `${itemPath}/handoff`;
   const { daemonUrl, authToken } = fixture.transportOptions();
@@ -2891,8 +2925,8 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.deepEqual(new Set([acceptedHandoff.status, repeatedHandoff.status]), new Set(["appended", "replayed"]));
   assert.equal(acceptedHandoff.record.id, repeatedHandoff.record.id);
   assert.equal(acceptedHandoff.record.parentRecordId, returnedHandoff.record.id);
-  assert.ok(acceptedHandoff.record.sourceRefs.some(source => source.id === oldSource.metadata?.outputArtifactId));
-  assert.ok(acceptedHandoff.record.sourceRefs.some(source => source.type === "verification" && source.id === operationId));
+  assert.ok(acceptedHandoff.record.sourceRefs.some(source => source.id === repairedPacket.id));
+  assert.ok(acceptedHandoff.record.sourceRefs.some(source => source.type === "verification" && source.id === verification.operationId));
   const awaitingReply = (await readBrief(resumedClient)).workflow?.steps.find(step => step.stepId === qa.id);
   assert.equal(awaitingReply?.handoffs?.[0]?.status, "accepted");
   assert.equal(awaitingReply.handoffs[0]?.candidateDigest, candidate.candidateDigest);
@@ -2993,9 +3027,7 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   const restoredHandoff = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/accept", handoff);
   assert.equal(restoredHandoff.status, "replayed");
   assert.equal(restoredHandoff.record.id, acceptedHandoff.record.id);
-  const replayedReturn = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/return", {
-    ...offeredHandoff, reason: "required_check_incomplete",
-  });
+  const replayedReturn = await decisionClient.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/handoff/return", returnRequest);
   assert.equal(replayedReturn.record.id, returnedHandoff.record.id);
   const handoffObserver = await fixture.connect("/app-server/rpc", fixture.cwd, `las1.${grant.grantId}.${observerSecret}`);
   await assert.rejects(handoffObserver.call("workItem/message/send", stageMessage), { code: "capability_denied" });

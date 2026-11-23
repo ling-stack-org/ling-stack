@@ -995,6 +995,7 @@ export interface LingAppServerStageHandoffParams {
   readonly expectedTargetRevision: string;
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
+  /** The offered candidate on return and the current worktree candidate on acceptance. */
   readonly expectedCandidateDigest?: string;
   readonly previousHandoffId?: string;
   readonly verification?: { readonly operationId: string; readonly checkId: string };

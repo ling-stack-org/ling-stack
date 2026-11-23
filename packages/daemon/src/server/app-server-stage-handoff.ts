@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, type LingAppServerStageHandoffParams,
   type LingAppServerStageHandoffReturnReason, type LingAppServerVerifyOperation, type LingAppServerVerifyPlanResult } from "@ling-stack/contracts";
 import {
-  appendWorkItemCollaboration, readWorkflowStageHandoffReceipt, workflowStageHandoffId,
+  appendWorkItemCollaboration, readWorkflowStageHandoff, readWorkflowStageHandoffReceipt, workflowStageHandoffId,
   type AppendWorkItemCollaborationResult, type RunStore, type WorkflowStageHandoffDecision,
 } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
@@ -36,7 +36,7 @@ export function readStageHandoffParams(record: Record<string, unknown>, action: 
     || previousHandoffId !== undefined && action !== "accepted"
     || rawVerification !== undefined && (!isRecord(rawVerification) || !previousHandoffId || !expectedCandidateDigest)
     || action === "accepted" && reason !== undefined || detail !== undefined && (typeof detail !== "string" || detail.length > 1200)
-    || expectedCandidateDigest !== undefined && (action !== "accepted" || typeof expectedCandidateDigest !== "string" || !/^[a-f0-9]{64}$/u.test(expectedCandidateDigest))
+    || expectedCandidateDigest !== undefined && (typeof expectedCandidateDigest !== "string" || !/^[a-f0-9]{64}$/u.test(expectedCandidateDigest))
     || typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1) throw invalid();
   return {
     workItemId: required("workItemId"), planRevision: required("planRevision"),
@@ -96,7 +96,7 @@ export async function settleAppServerStageHandoff(
   store: RunStore, input: LingAppServerStageHandoffParams, action: "accepted" | "returned", activeRuns: ActiveRunRegistry, now: string,
 ): Promise<AppendWorkItemCollaborationResult> {
   const { workItemId, planRevision, sourceStepId, targetStepId, expectedSourceRevision, expectedTargetRevision, idempotencyKey,
-    previousHandoffId, verification } = input;
+    expectedCandidateDigest, previousHandoffId, verification } = input;
   const item = store.getWorkItem(workItemId);
   if (!item) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
   const subject = { workItemId, planRevision, sourceStepId, sourceRevision: expectedSourceRevision, targetStepId };
@@ -106,7 +106,7 @@ export async function settleAppServerStageHandoff(
     const { record, decision } = existing;
     if (record.idempotencyKey !== idempotencyKey) throw new AppServerCollaborationError("stale_revision", "This source revision already has a handoff decision.");
     if (record.action !== action || decision.targetRevision !== expectedTargetRevision
-      || decision.reason !== input.reason || decision.detail !== input.detail || decision.candidateDigest !== input.expectedCandidateDigest
+      || decision.reason !== input.reason || decision.detail !== input.detail || decision.candidateDigest !== expectedCandidateDigest
       || decision.verification?.operationId !== verification?.operationId || decision.verification?.checkId !== verification?.checkId) {
       throw new AppServerCollaborationError("idempotency_conflict", "The handoff key was used with a different decision.");
     }
@@ -115,10 +115,6 @@ export async function settleAppServerStageHandoff(
   };
   const prior = replay();
   if (prior) return prior;
-  const returned = previousHandoffId ? readWorkflowStageHandoffReceipt(store, subject) : undefined;
-  if (previousHandoffId && (action !== "accepted" || returned?.record.id !== previousHandoffId || returned.record.action !== "returned")) {
-    throw new AppServerCollaborationError("stale_revision", "The previous handoff is not the return receipt for this source revision.");
-  }
 
   const source = store.getChannelWorkflowStep(sourceStepId);
   const target = store.getChannelWorkflowStep(targetStepId);
@@ -133,11 +129,14 @@ export async function settleAppServerStageHandoff(
     throw new HttpError(409, "resume_blocked", "The Work Item is not ready to settle this handoff.");
   }
   if (source.status !== "succeeded") throw new HttpError(409, "resume_blocked", "The supplying stage needs an accepted result.");
-  if (previousHandoffId && returned) {
-    const returnedDecision = returned.decision;
-    if (returnedDecision.candidateDigest && returnedDecision.candidateDigest === input.expectedCandidateDigest) {
-      throw new HttpError(409, "work_item_handoff_source_revision_required", "Repair must use a new candidate revision.");
-    }
+  const currentHandoff = readWorkflowStageHandoff(store, subject);
+  const returned = currentHandoff?.record.action === "returned" ? currentHandoff : undefined;
+  if (currentHandoff?.record.action === "accepted" || previousHandoffId !== returned?.record.id) {
+    throw new AppServerCollaborationError("stale_revision", "Use the current return receipt to accept its repaired handoff.");
+  }
+  const returnedCandidate = returned?.decision.candidateDigest;
+  if (returnedCandidate && returnedCandidate === expectedCandidateDigest) {
+    throw new HttpError(409, "work_item_handoff_source_revision_required", "Repair must use a new candidate revision.");
   }
   const artifactId = source.metadata?.outputArtifactId;
   const sourceRun = source.runId ? store.getRun(source.runId) : undefined;
@@ -147,48 +146,53 @@ export async function settleAppServerStageHandoff(
     throw new HttpError(409, "resume_blocked", "The supplying stage needs a current result packet from its original Run.");
   }
   const requiresVerification = returned?.decision.reason === "required_check_incomplete" || returned?.decision.reason === "candidate_stale";
-  if (requiresVerification && (!verification || !input.expectedCandidateDigest)) throw handoffVerificationRequired();
-  const assertRepairEvidence = (): void => {
+  if (requiresVerification && (!verification || !expectedCandidateDigest)) throw handoffVerificationRequired();
+  if (returnedCandidate && !expectedCandidateDigest) {
+    throw new HttpError(409, "work_item_handoff_candidate_required", "Supply the repaired candidate for this returned handoff.");
+  }
+  const assertCurrent = (): void => {
+    const latestSource = store.getChannelWorkflowStep(sourceStepId);
+    const latestTarget = store.getChannelWorkflowStep(targetStepId);
+    if (latestSource?.updatedAt !== source.updatedAt || latestSource.status !== "succeeded" || latestSource.runId !== source.runId
+      || latestSource.metadata?.outputArtifactId !== artifactId || latestTarget?.updatedAt !== target.updatedAt
+      || latestTarget.toParticipantId !== target.toParticipantId || latestTarget.status !== "queued") {
+      throw new AppServerCollaborationError("stale_revision", "The supplying or receiving stage changed while settling the handoff.");
+    }
+    if (action === "accepted" && !workflowStepParticipantAvailable(store, latestTarget)) {
+      throw new HttpError(409, "work_item_handoff_recipient_unavailable", "The assigned participant cannot currently receive the handoff.");
+    }
     if (verification && !hasCurrentHandoffVerification(store, input, sourceRun?.cwd, returned?.record.createdAt)) {
       throw handoffVerificationRequired();
     }
     if (returned?.decision.reason === "upstream_effect_unknown") {
-      const unit = sourceRun?.workUnitId && store.getWorkUnit(sourceRun.workUnitId);
-      if (!unit || !continuationSourceReady(store, unit, activeRuns, `work-item-handoff:${previousHandoffId}`, () => undefined)) {
+      const originalRun = returned.decision.sourceRunId ? store.getRun(returned.decision.sourceRunId) : undefined;
+      const unit = originalRun?.workUnitId ? store.getWorkUnit(originalRun.workUnitId) : undefined;
+      if (!originalRun || !unit || unit.linkedRunId !== originalRun.id
+        || !continuationSourceReady(store, unit, activeRuns, `work-item-handoff:${previousHandoffId}`, () => undefined)) {
         throw new HttpError(409, "resume_blocked", "The supplying Run still needs verified execution and effect settlement.");
       }
     }
   };
-  if (input.expectedCandidateDigest && sourceRun) {
+  if (action === "accepted" && expectedCandidateDigest && sourceRun) {
     const candidate = await readCompleteHandoffCandidate(sourceRun.cwd);
     const committed = replay();
     if (committed) return committed;
-    if (candidate !== input.expectedCandidateDigest) throw new HttpError(409, "work_item_handoff_candidate_stale", "The supplying worktree's candidate changed.");
-    const latestSource = store.getChannelWorkflowStep(sourceStepId);
-    const latestTarget = store.getChannelWorkflowStep(targetStepId);
-    if (latestSource?.updatedAt !== source.updatedAt || latestSource.runId !== source.runId
-      || latestSource.metadata?.outputArtifactId !== artifactId || latestTarget?.updatedAt !== target.updatedAt
-      || latestTarget.toParticipantId !== target.toParticipantId || latestTarget.status !== "queued") {
-      throw new AppServerCollaborationError("stale_revision", "The handoff changed while capturing the candidate.");
-    }
-  }
-  if (action === "accepted" && !workflowStepParticipantAvailable(store, target)) {
-    throw new HttpError(409, "work_item_handoff_recipient_unavailable", "The assigned participant cannot currently receive the handoff.");
+    if (candidate !== expectedCandidateDigest) throw new HttpError(409, "work_item_handoff_candidate_stale", "The supplying worktree's candidate changed.");
   }
   const payload: WorkflowStageHandoffDecision = {
     recipientId: target.toParticipantId, targetRevision: target.updatedAt, sourceArtifactId: artifactId, sourceRunId: sourceRun?.id,
-    reason: input.reason, detail: input.detail, candidateDigest: input.expectedCandidateDigest,
+    reason: input.reason, detail: input.detail, candidateDigest: expectedCandidateDigest,
     ...(verification ? { verification } : {}),
   };
   const result = appendWorkItemCollaboration(store, {
     id: workflowStageHandoffId(subject, previousHandoffId), workItemId, expectedWorkItemRevision: input.expectedWorkItemRevision,
     kind: "handoff", action, actorId: "local-user", idempotencyKey, payload, parentRecordId: previousHandoffId,
-    ...(returned ? { assertCurrent: assertRepairEvidence } : {}),
+    assertCurrent,
     sourceRefs: [
       { type: "workflow_step", id: source.id, revision: source.updatedAt },
       { type: "workflow_step", id: target.id, revision: target.updatedAt },
       ...(artifactId ? [{ type: "artifact", id: artifactId }] : []),
-      ...(input.expectedCandidateDigest ? [{ type: "candidate", id: input.expectedCandidateDigest, digest: input.expectedCandidateDigest }] : []),
+      ...(expectedCandidateDigest ? [{ type: "candidate", id: expectedCandidateDigest, digest: expectedCandidateDigest }] : []),
       ...(verification ? [{ type: "verification", id: verification.operationId, revision: verification.checkId }] : []),
     ],
   }, now, store.paths.cwd);

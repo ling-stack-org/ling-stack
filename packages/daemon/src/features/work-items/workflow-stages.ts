@@ -120,7 +120,7 @@ function readStageHandoffs(
     const subject = { workItemId, planRevision, ...basis, targetStepId: step.id };
     const handoff = readWorkflowStageHandoff(store, subject);
     if (handoff?.record.action === "returned") return [{
-      ...basis, status: "returned", receiptId: handoff.record.id, reason: handoff.decision.reason,
+      ...basis, status: "returned", receiptId: handoff.record.id, reason: handoff.decision.reason, candidateDigest: handoff.decision.candidateDigest,
     }];
     if (handoff && stageHandoffAdmitsTarget(store, subject, source, step)) return [{
       ...basis, status: "accepted", receiptId: handoff.record.id, candidateDigest: handoff.decision.candidateDigest,

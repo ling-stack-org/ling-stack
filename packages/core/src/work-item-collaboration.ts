@@ -102,11 +102,13 @@ export function readWorkItemCollaborationRecord(
 }
 
 export function listWorkItemCollaboration(
-  store: CollaborationStore,
-  input: { readonly workItemId: string; readonly kind?: LingAppServerCollaborationKind; readonly afterRevision?: number; readonly limit?: number },
+  store: Pick<RunStore, "listWorkItemEvidence">,
+  input: { readonly workItemId: string; readonly kind?: LingAppServerCollaborationKind; readonly afterRevision?: number;
+    readonly limit?: number; readonly recordIdPrefix?: string },
 ): { readonly records: readonly WorkItemCollaborationRecord[]; readonly nextAfterRevision: number } {
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
-  const entries = store.listWorkItemEvidence({ workItemId: input.workItemId, afterSequence: input.afterRevision ?? 0, limit });
+  const entries = store.listWorkItemEvidence({ workItemId: input.workItemId, afterSequence: input.afterRevision ?? 0, limit,
+    recordIdPrefix: input.recordIdPrefix });
   const records = entries.flatMap((entry) => {
     if (!entry.content.startsWith(WORK_ITEM_COLLABORATION_CONTENT_PREFIX)) return [];
     try {

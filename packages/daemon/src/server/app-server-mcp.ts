@@ -152,15 +152,16 @@ export async function runLingAppServerMcp(
       expectedSourceRevision: objectId, expectedTargetRevision: objectId,
       expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey,
       detail: z.string().max(1200).optional(),
+      expectedCandidateDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     };
     if (methods.has("workItem/handoff/accept")) server.registerTool("ling_stage_handoff_accept", {
       description: "Accept the current supplying stage packet. To repair a return, supply the previous handoff ID and any required independent verification for the current candidate.",
-      inputSchema: z.strictObject({ ...stageHandoff, expectedCandidateDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+      inputSchema: z.strictObject({ ...stageHandoff,
         previousHandoffId: objectId.optional(), verification: z.strictObject({ operationId: objectId, checkId: objectId }).optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.settleWorkItemStageHandoff("accept", params)));
     if (methods.has("workItem/handoff/return")) server.registerTool("ling_stage_handoff_return", {
-      description: "Return the current supplying stage packet with a reason. The receiving stage continues to wait for an accepted packet.",
+      description: "Return the supplying stage packet with a reason and its offered candidate digest, when available. The receiving stage waits for an accepted repair.",
       inputSchema: z.strictObject({ ...stageHandoff, reason: z.enum(LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS) }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.settleWorkItemStageHandoff("return", params)));
