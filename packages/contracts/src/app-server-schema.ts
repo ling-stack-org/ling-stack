@@ -105,6 +105,13 @@ const collaborationAppend = { ...workItemTarget, idempotencyKey: stringSchema, a
 const deliberationSettlement = { ...workItemTarget, roundId: stringSchema, expectedRoundRevision: integerSchema,
   expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema, reason: stringSchema };
 const deliberationSettlementFields = ["workItemId", "roundId", "expectedRoundRevision", "expectedWorkItemRevision", "idempotencyKey", "reason"];
+const reviewResultFields = ["operationId", "assessmentId", "candidateDigest", "status"];
+const reviewResult = {
+  operationId: stringSchema, assessmentId: stringSchema, candidateDigest: stringSchema,
+  status: { enum: ["queued", "running", "completed", "partial", "failed", "cancelled"] },
+  workItem: objectWith({ ...workItemTarget, acceptedPlanRevision: stringSchema, controlGeneration: integerSchema },
+    ["workItemId", "controlGeneration"]),
+};
 const worktreeTarget = { ownerKind: { enum: ["channel", "teammate"] }, ownerId: stringSchema };
 const changeWorktree = objectWith(worktreeTarget, ["ownerKind", "ownerId"]);
 const changeSource = { cwd: stringSchema, sourceWorktree: changeWorktree };
@@ -466,9 +473,12 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ operationId: stringSchema, expectedRevision: stringSchema, idempotencyKey: stringSchema }, ["operationId", "idempotencyKey"]), result };
     case "review/start":
       return { params: objectWith({ candidate, ...workItemTarget, idempotencyKey: stringSchema, reviewRulesRefs: stringArraySchema,
-        providerPresetId: stringSchema }, ["candidate", "idempotencyKey"]), result: operationResult };
+        providerPresetId: stringSchema, baseInstructions: stringSchema, planRevision: stringSchema }, ["candidate", "idempotencyKey"]),
+        result: objectWith(reviewResult, reviewResultFields) };
     case "review/status":
-      return { params: objectWith({ assessmentId: stringSchema, operationId: stringSchema }), result: operationResult };
+      return { params: objectWith({ assessmentId: stringSchema, operationId: stringSchema }),
+        result: objectWith({ ...reviewResult, revision: stringSchema, findingIds: stringArraySchema,
+          summary: stringSchema, errorMessage: stringSchema, reviewRules: objectSchema }, [...reviewResultFields, "revision", "findingIds"]) };
     case "review/finding/update":
       return { params: objectWith({ assessmentId: stringSchema, findingId: stringSchema, disposition: { enum: ["open", "acknowledged", "resolved", "dismissed"] },
         expectedRevision: stringSchema, idempotencyKey: stringSchema }, ["assessmentId", "findingId", "disposition", "idempotencyKey"]), result };

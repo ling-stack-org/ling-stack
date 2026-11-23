@@ -25,6 +25,7 @@
 - Host 登记的 Verify 配方可以选择受影响路径，并把独立 verifier source 的摘要、coverage 和 producer refs 封存到每个检查结果。
 - 复核工作台的「验证」页使用和 App Server 相同的 Verify operation。浏览器验收在隔离仓库中从 Web 触发已登记的 Chromium 检查，读取实际断言输出，刷新后恢复原结果并显示候选漂移。
 - Goal 的 `verification_passed` 条件要求同一 Thread 的已完成 Verify operation、当前候选摘要、匹配的 verifier basis、coverage 和 producer refs。候选漂移、检查来源漂移、缺少独立证据和过期的接受版本都会阻止完成。
+- 工作项 Review 在捕获候选后核对 Work Item、接受的 Plan 修订和控制代次，并在 assessment 事务中封存该归属。真实 Daemon 回归覆盖工作项不匹配、旧 Plan、暂停期间拒绝新 Review，以及重启后重读原审查和发现项处置回执。
 - App Server 可以为已绑定的频道或队友会话创建、刷新和归档托管工作树。归档按检视过的候选和目录身份校验，恢复日志保留同一预览请求的归档快照。
 - 普通会话可从最新已收敛的 Turn 封存 Handoff。接手保留 Goal ID、累计用量、预算和监督状态。回归覆盖转移 Goal 后、受理子会话 Turn 前失败，重启后复用转移回执并派发一次。候选、Goal 或计划变化时需要更新 Handoff。
 - App Server operator grant 支持 workspace、Thread 和 Work Item 范围，按 scope 分开观察、控制、审批和答复权限。grant 的 revision、过期和撤销参与握手、请求和推送路径。

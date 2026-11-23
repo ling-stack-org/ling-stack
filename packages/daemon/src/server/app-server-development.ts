@@ -297,6 +297,11 @@ export class AppServerDevelopmentService {
     if (typeof key !== "string" || !key.trim() || key.length > 200) {
       throw new HttpError(400, "invalid_params", "A review idempotency key of up to 200 characters is required.");
     }
+    if ([input.workItemId, input.planRevision].some(value => value !== undefined
+      && (typeof value !== "string" || !value.trim() || value.length > 256))
+      || input.planRevision !== undefined && input.workItemId === undefined) {
+      throw new HttpError(400, "invalid_params", "Supply a valid Work Item and its accepted Plan revision.");
+    }
     const rulesRefs = parseReviewRuleRefs(input.reviewRulesRefs);
     let request: CreateCodeAssessmentRequest;
     try {
@@ -311,7 +316,8 @@ export class AppServerDevelopmentService {
     }
     const kind = reviewFocus === "simplification" ? "simplify_submission" : "review_submission";
     const assessmentId = `assessment_app_${reviewFocus === "simplification" ? "simplify_" : ""}${digest(key)}`;
-    const fingerprint = digest(JSON.stringify([input.workItemId, input.candidate.candidateDigest, request, rulesRefs]));
+    const fingerprint = digest(JSON.stringify([input.workItemId, input.candidate.candidateDigest, request, rulesRefs,
+      ...(input.planRevision !== undefined ? [input.planRevision] : [])]));
     const prior = store.getAppServerState(kind, assessmentId);
     if (prior) {
       assertReviewFingerprint(prior.payload, fingerprint);
@@ -324,9 +330,27 @@ export class AppServerDevelopmentService {
       assertReviewFingerprint(pending.fingerprint, fingerprint);
       return await pending.result;
     }
+    const item = input.workItemId ? store.getWorkItem(input.workItemId) : undefined;
+    if (input.workItemId && !item) throw new HttpError(404, "review_scope_not_found", "The Work Item is unavailable.");
+    const workItem = item ? { workItemId: item.id, acceptedPlanRevision: item.planRevision,
+      controlGeneration: item.control.generation } : undefined;
+    if (input.planRevision !== undefined && input.planRevision !== workItem?.acceptedPlanRevision) {
+      throw new HttpError(409, "stale_revision", "The accepted Work Item Plan changed.");
+    }
+    const assertCurrent = workItem && (() => {
+      const current = store.getWorkItem(workItem.workItemId);
+      if (!current || current.planRevision !== workItem.acceptedPlanRevision || current.control.generation !== workItem.controlGeneration) {
+        throw new HttpError(409, "stale_revision", "The Work Item or its accepted Plan changed.");
+      }
+      if (current.control.state !== "active" || current.holds.some(hold => hold.blocksNewAdmission)
+        || ["done", "cancelled", "archived", "superseded"].includes(current.status)) {
+        throw new HttpError(409, "resume_blocked", "The Work Item is not admitting a new review.");
+      }
+    });
+    assertCurrent?.();
     if (!this.options.startCodeAssessmentRun) throw new Error("Code assessment runner is unavailable.");
     const result = startCodeAssessment(store, request, this.options.startCodeAssessmentRun, {
-      assessmentId, candidateDigest: input.candidate.candidateDigest, idempotencyKey: key, fingerprint, rulesRefs, reviewFocus,
+      assessmentId, candidateDigest: input.candidate.candidateDigest, idempotencyKey: key, fingerprint, rulesRefs, reviewFocus, workItem, assertCurrent,
     });
     this.pendingReviews.set(pendingKey, { fingerprint, result });
     try {
@@ -657,6 +681,7 @@ function reviewStartResult(detail: CodeAssessmentDetail): LingAppServerReviewSta
     assessmentId: detail.assessment.id,
     candidateDigest: detail.snapshot.digest,
     status: assessmentStatus(detail),
+    ...(detail.assessment.workItem ? { workItem: detail.assessment.workItem } : {}),
   };
 }
 

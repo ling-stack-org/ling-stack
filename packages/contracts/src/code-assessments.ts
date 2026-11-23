@@ -78,6 +78,12 @@ export interface CodeAssessmentReviewRules {
   readonly omitted: readonly string[];
 }
 
+export interface CodeAssessmentWorkItemScope {
+  readonly workItemId: string;
+  readonly acceptedPlanRevision?: string;
+  readonly controlGeneration: number;
+}
+
 export interface CodeAssessment {
   readonly id: string;
   readonly kind: CodeAssessmentKind;
@@ -95,6 +101,7 @@ export interface CodeAssessment {
   readonly instructions?: string;
   readonly reviewFocus?: "simplification";
   readonly reviewRules?: CodeAssessmentReviewRules;
+  readonly workItem?: CodeAssessmentWorkItemScope;
   readonly runId?: string;
   readonly phaseRuns?: readonly CodeAssessmentPhaseRun[];
   readonly threatModelArtifactId?: string;

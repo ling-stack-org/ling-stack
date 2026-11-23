@@ -8,7 +8,8 @@ export interface CodeAssessmentStore {
     readonly instructions?: string;
     readonly reviewFocus?: CodeAssessment["reviewFocus"];
     readonly reviewRules?: CodeAssessmentReviewRules;
-    readonly submission?: { readonly idempotencyKey: string; readonly fingerprint: string };
+    readonly submission?: { readonly idempotencyKey: string; readonly fingerprint: string;
+      readonly workItem?: CodeAssessment["workItem"]; readonly assertCurrent?: () => void };
     readonly snapshot: CodeAssessmentSnapshot;
     readonly preparedAt?: string;
     readonly captureStartedAt?: string;

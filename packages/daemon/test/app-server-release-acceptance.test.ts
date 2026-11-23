@@ -1011,7 +1011,7 @@ test("interrupt with a message cancels the source and delivers one redirect cont
   assert.equal(fixture.getStore().getLingTurnForRun(delivered.continuationRunId!)?.kind, "interrupt_redirect");
 });
 
-test("a completed Review binds its candidate and replays the same assessment after daemon restart", { timeout: 30_000 }, async t => {
+test("a completed Review binds its candidate and accepted Work Item Plan across restart", { timeout: 30_000 }, async t => {
   let snapshotDigest: string;
   const provider = await startLoopbackPiProvider(() => ({ text: JSON.stringify({
     snapshotDigest, summary: "The fixture matches the review scope.", findings: [{
@@ -1021,7 +1021,8 @@ test("a completed Review binds its candidate and replays the same assessment aft
     }],
   }) }));
   t.after(() => provider.close());
-  const fixture = await releaseFixture(t);
+  const { fixture, client, item, workItem, preset } = await stageQuestionWorkflow(t, provider.baseUrl);
+  assert.ok(preset && workItem.planRevision);
   const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
   await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
   await writeFile(join(fixture.cwd, "AGENTS.md"), "## Code Review Rules\n\nCheck all existing callers.\n\n## Tests\nRun the test suite.\n");
@@ -1034,11 +1035,12 @@ test("a completed Review binds its candidate and replays the same assessment aft
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Review base");
   await writeFile(join(fixture.cwd, "AGENTS.md"), "## Code Review Rules\n\nSkip checking existing callers.\n");
   await writeFile(join(fixture.cwd, "feature/code.ts"), "export const fixture = 1;\n");
-  const client = await fixture.connect();
   const { candidate, headCommit } = await client.call<{ candidate: LingAppServerCandidateReference; headCommit: string }>("changes/capture");
   snapshotDigest = candidate.candidateDigest;
-  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
-  const input = { candidate, providerPresetId: preset.id, idempotencyKey: "review-fixture", reviewRulesRefs: ["feature/REVIEW.md"] };
+  const input = { candidate, providerPresetId: preset.id, idempotencyKey: "review-fixture",
+    reviewRulesRefs: ["feature/REVIEW.md"], workItemId: item.id, planRevision: workItem.planRevision };
+  await assert.rejects(client.call("review/start", { ...input, workItemId: "unavailable" }), { code: "review_scope_not_found" });
+  await assert.rejects(client.call("review/start", { ...input, planRevision: "superseded" }), { code: "stale_revision" });
   await assert.rejects(client.call("review/start", { ...input, candidate: { ...candidate, candidateDigest: "stale" } }), { code: "candidate_stale" });
   const parallel = await fixture.connect();
   const [started, duplicate] = await Promise.all([
@@ -1053,6 +1055,8 @@ test("a completed Review binds its candidate and replays the same assessment aft
     return ["queued", "running"].includes(result.status) ? undefined : result;
   });
   assert.equal(terminal.status, "completed", JSON.stringify(terminal));
+  assert.deepEqual(terminal.workItem, { workItemId: item.id, acceptedPlanRevision: workItem.planRevision, controlGeneration: 0 });
+  assert.deepEqual(started.workItem, terminal.workItem);
   assert.equal(terminal.reviewRules?.baseSha, headCommit);
   assert.deepEqual(terminal.reviewRules?.sources.map(({ path, guidance }) => [path, guidance]), [
     ["AGENTS.md", "Check all existing callers."],
@@ -1072,6 +1076,11 @@ test("a completed Review binds its candidate and replays the same assessment aft
   assert.notEqual(update.revision, terminal.revision);
   assert.equal(fixture.getStore().getCodeAssessment(started.assessmentId)?.assessment.freshness?.state, "current");
   await assert.rejects(client.call("review/finding/update", { ...triage, idempotencyKey: "stale-finding" }), { code: "stale_revision" });
+  await client.call("workItem/pause", {
+    workItemId: item.id, expectedWorkItemRevision: Number(workItem.revision), expectedControlGeneration: 0,
+    actorId: "local-user", idempotencyKey: "pause-before-replacement-review",
+  });
+  await assert.rejects(client.call("review/start", { ...input, idempotencyKey: "replacement-review" }), { code: "resume_blocked" });
   await fixture.restart();
   const second = await fixture.connect();
   const restored = fixture.getStore().getCodeAssessment(started.assessmentId);
@@ -3400,7 +3409,7 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
     expectedWorkItemRevision: Number(claim.workItem.revision), idempotencyKey: "bind-question-deadline",
   });
   assert.ok(workItem.planRevision);
-  return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent, channel, thread, plan };
+  return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent, channel, thread, plan, preset };
 }
 
 test("a successor Workflow waits for an independent live Run owned by its predecessor", { timeout: 30_000 }, async t => {

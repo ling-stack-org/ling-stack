@@ -1711,6 +1711,7 @@ export interface LingAppServerVerifyCancelResult {
 export interface LingAppServerReviewStartParams {
   readonly cwd?: string;
   readonly workItemId?: string;
+  readonly planRevision?: string;
   readonly candidate: LingAppServerCandidateReference;
   readonly baseInstructions?: string;
   readonly reviewRulesRefs?: readonly string[];
@@ -1723,6 +1724,7 @@ export interface LingAppServerReviewStartResult {
   readonly assessmentId: string;
   readonly candidateDigest: string;
   readonly status: "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
+  readonly workItem?: import("./code-assessments.js").CodeAssessmentWorkItemScope;
 }
 
 export interface LingAppServerReviewStatusParams {
@@ -1731,11 +1733,7 @@ export interface LingAppServerReviewStatusParams {
   readonly assessmentId?: string;
 }
 
-export interface LingAppServerReviewStatusResult {
-  readonly operationId: string;
-  readonly assessmentId: string;
-  readonly candidateDigest: string;
-  readonly status: LingAppServerReviewStartResult["status"];
+export interface LingAppServerReviewStatusResult extends LingAppServerReviewStartResult {
   readonly revision: string;
   readonly findingIds: readonly string[];
   readonly summary?: string;
