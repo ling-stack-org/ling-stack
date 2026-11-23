@@ -14,19 +14,7 @@ import { SqliteControlPlaneStore } from "./control-plane-store.js";
 export class SqliteAppServerStateStore {
   constructor(private readonly context: SqliteStoreContext, private readonly events = new SqliteControlPlaneStore(context)) {}
 
-  /**
-   * Some migration fixtures intentionally stop before the App Server state
-   * migration. Treat that older schema as an empty state store so legacy
-   * workflow admission keeps its pre-App-Server behavior.
-   */
-  private hasStateTable(): boolean {
-    return Boolean(this.context.database.prepare(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_server_state'",
-    ).get());
-  }
-
   get(kind: AppServerStateKind, recordId: string, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord | undefined {
-    if (!this.hasStateTable()) return undefined;
     const row = this.context.database.prepare(`
       SELECT * FROM app_server_state WHERE workspace_id = ? AND kind = ? AND record_id = ?
     `).get(workspaceId, kind, recordId) as Record<string, SQLOutputValue> | undefined;
@@ -34,7 +22,6 @@ export class SqliteAppServerStateStore {
   }
 
   findByIdempotencyKey(kind: AppServerStateKind, idempotencyKey: string, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord | undefined {
-    if (!this.hasStateTable()) return undefined;
     const row = this.context.database.prepare(`
       SELECT * FROM app_server_state WHERE workspace_id = ? AND kind = ? AND idempotency_key = ?
     `).get(workspaceId, kind, idempotencyKey);
@@ -42,7 +29,6 @@ export class SqliteAppServerStateStore {
   }
 
   list(kind?: AppServerStateKind, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord[] {
-    if (!this.hasStateTable()) return [];
     const rows = kind === undefined
       ? this.context.database.prepare("SELECT * FROM app_server_state WHERE workspace_id = ? ORDER BY updated_at DESC, record_id ASC").all(workspaceId)
       : this.context.database.prepare("SELECT * FROM app_server_state WHERE workspace_id = ? AND kind = ? ORDER BY updated_at DESC, record_id ASC").all(workspaceId, kind);
@@ -50,7 +36,6 @@ export class SqliteAppServerStateStore {
   }
 
   latestVerification(threadId?: string, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord | undefined {
-    if (!this.hasStateTable()) return undefined;
     const row = threadId === undefined
       ? this.context.database.prepare(`SELECT * FROM app_server_state WHERE workspace_id = ? AND kind = 'verify_operation'
           ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workspaceId)
@@ -60,7 +45,6 @@ export class SqliteAppServerStateStore {
   }
 
   pendingGitHubIntakeDispatches(updatedBefore: string, limit: number, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord[] {
-    if (!this.hasStateTable()) return [];
     const rows = this.context.database.prepare(`
       SELECT * FROM app_server_state
       WHERE workspace_id = ? AND kind = 'github_intake_dispatch'
@@ -133,7 +117,6 @@ export class SqliteAppServerStateStore {
   }
 
   delete(kind: AppServerStateKind, recordId: string, workspaceId = DEFAULT_WORKSPACE_ID): boolean {
-    if (!this.hasStateTable()) return false;
     const result = this.context.database.prepare(`
       DELETE FROM app_server_state WHERE workspace_id = ? AND kind = ? AND record_id = ?
     `).run(workspaceId, kind, recordId);
