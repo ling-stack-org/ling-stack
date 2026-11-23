@@ -2710,13 +2710,13 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
   acceptWorkItem(id: string, input: import("./work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemAcceptanceResult | undefined;
   bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string,
-    previousWorkflowSettled?: (workflowId: string) => boolean): {
+    previousWorkflowSettled?: (workflowId: string, retainedRunIds: ReadonlySet<string>) => boolean): {
     readonly binding: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBinding;
     readonly workItem: WorkItem;
     readonly replayed: boolean;
     readonly event?: ControlPlaneEvent;
   };
-  getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep): string | undefined;
+  getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined;
   getWorkItemStageRetryBudget(step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkItemStageRetryBudget | undefined;
   getWorkItemWorkflowUsage(item: WorkItem, now: string): import("./work-item-types.js").WorkItemWorkflowUsage | undefined;
   getWorkItemStageProgress(item: WorkItem, step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkflowStageProgress | undefined;

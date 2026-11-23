@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { LingAppServerStageBallotTally, LingAppServerStageHandoffProgress, LingAppServerWorkItemStageDecision, LingAppServerWorkItemWorkflowBinding,
   LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
-import { readWorkItemCollaborationRecord, readWorkflowStageHandoff, stageHandoffAdmitsTarget, workItemWorkflowDecisionId } from "@ling-stack/core";
+import { readRetainedWorkflowStageExecution, readWorkItemCollaborationRecord, readWorkflowStageHandoff, stageHandoffAdmitsTarget, workItemWorkflowDecisionId } from "@ling-stack/core";
 import type { ChannelWorkflowStep, RunStore, WorkItem } from "@ling-stack/core";
 import { workflowStepParticipantAvailable } from "../channels/workflow-participant-run-profile.js";
 import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
@@ -18,8 +18,9 @@ export function readWorkItemWorkflowBinding(store: RunStore, workflowId: string)
 
 export function readWorkItemRetainedStageInputs(store: RunStore, step: ChannelWorkflowStep) {
   if (!step.metadata?.planStageId) return [];
-  const retained = readWorkItemWorkflowBinding(store, step.workflowId)?.retainedStageResults ?? [];
-  return retained.filter(result => result.targetStepId === step.id).map(result => {
+  const binding = readWorkItemWorkflowBinding(store, step.workflowId);
+  const retained = readWorkItemRetainedStageResults(store, binding, step.id);
+  return retained.map(result => {
     const packet = store.getArtifact(result.sourceArtifactId)?.sealedPayload;
     return {
       stageId: result.sourceStageId, resultArtifactId: result.sourceArtifactId,
@@ -28,11 +29,23 @@ export function readWorkItemRetainedStageInputs(store: RunStore, step: ChannelWo
   });
 }
 
-export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRegistry, workflowId: string): boolean {
+export function readWorkItemRetainedStageResults(store: RunStore, binding: LingAppServerWorkItemWorkflowBinding | undefined, targetStepId?: string) {
+  const matches = (source: { readonly targetStepId: string }) => !targetStepId || source.targetStepId === targetStepId;
+  const availableExecutions = (binding?.retainedStageExecutions ?? []).filter(matches).flatMap(execution => {
+    const progress = readRetainedWorkflowStageExecution(store, execution);
+    return progress.status === "available" ? [progress.result] : [];
+  });
+  return [...(binding?.retainedStageResults ?? []).filter(matches), ...availableExecutions];
+}
+
+export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRegistry, workflowId: string,
+  retainedRunIds: ReadonlySet<string>): boolean {
   return store.listChannelWorkflowSteps({ workflowId, complete: true }).every(step => {
-    if (["claimed", "running", "waiting_for_approval", "waiting_for_input"].includes(step.status)
-      || store.getBlockingResourceLease("workflow_step", step.id)) return false;
+    const retained = step.runId && retainedRunIds.has(step.runId);
+    if (!retained && (["claimed", "running", "waiting_for_approval", "waiting_for_input"].includes(step.status)
+      || store.getBlockingResourceLease("workflow_step", step.id))) return false;
     return store.listRuns({ workflowStepId: step.id, complete: true }).every(run => {
+      if (retained && run.id === step.runId) return true;
       const unit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
       return Boolean(unit?.linkedRunId === run.id
         && continuationSourceReady(store, unit, activeRuns, "work-item-replan", () => undefined));
@@ -77,8 +90,12 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
           ...(retryBudget ? { retryBudget } : {}),
           decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),
           handoffs: readStageHandoffs(store, item.id, item.planRevision!, step),
-          ...(binding.retainedStageResults?.length ? {
-            retainedStageResults: binding.retainedStageResults.filter(result => result.targetStepId === step.id),
+          ...(binding.retainedStageResults?.length || binding.retainedStageExecutions?.length ? {
+            retainedStageResults: readWorkItemRetainedStageResults(store, binding, step.id),
+          } : {}),
+          ...(binding.retainedStageExecutions?.length ? {
+            retainedStageExecutions: binding.retainedStageExecutions.filter(execution => execution.targetStepId === step.id)
+              .map(execution => ({ ...execution, status: readRetainedWorkflowStageExecution(store, execution).status })),
           } : {}),
         } : {}),
       };

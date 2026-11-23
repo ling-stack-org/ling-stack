@@ -154,6 +154,7 @@ export { nativeTaskIntakeRevision, nativeWorkIntakeReceiptId, nativeWorkIntakeRe
 export * from "./work-item-evidence-types.js";
 export * from "./work-item-collaboration.js";
 export * from "./work-item-workflow-decision.js";
+export * from "./work-item-retained-workflow-stage.js";
 export * from "./work-item-workflow-handoff.js";
 export * from "./work-item-workflow-question.js";
 export * from "./work-item-stage-coordination.js";

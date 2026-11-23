@@ -40,8 +40,8 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemSourceReceipt, WorkItemLinkedExecution,
-  LingAppServerRetainedWorkflowStageResult, LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding,
-  LingAppServerWorkflowStageResultSource } from "@ling-stack/contracts";
+  LingAppServerRetainedWorkflowStageExecution, LingAppServerRetainedWorkflowStageResult,
+  LingAppServerWorkItemWorkflowBindParams, LingAppServerWorkItemWorkflowBinding } from "@ling-stack/contracts";
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
@@ -53,6 +53,7 @@ import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import { readWorkItemWorkflowUsage } from "./work-item-workflow-usage.js";
 import { readWorkItemStageProgress } from "./work-item-workflow-progress.js";
 import { defaultGoalSupervisionPolicy } from "../../goal-supervision.js";
+import { ownsRetainableWorkflowStageExecution, readRetainedWorkflowStageExecution, readRetainedWorkflowStageResult } from "../../work-item-retained-workflow-stage.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -644,13 +645,16 @@ export class SqliteWorkItemStore {
   }
 
   bindWorkflow(input: LingAppServerWorkItemWorkflowBindParams, now: string, state: SqliteAppServerStateStore,
-    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string }, previousWorkflowSettled?: (workflowId: string) => boolean) {
+    events: { readonly store: SqliteControlPlaneStore; readonly cwd: string },
+    previousWorkflowSettled?: (workflowId: string, retainedRunIds: ReadonlySet<string>) => boolean) {
     const { workItemId, planId, expectedPlanRevision, expectedWorkItemRevision, idempotencyKey, previousWorkflowId,
-      resolvedPlanChangeIds, retainStageResults } = input;
+      resolvedPlanChangeIds, retainStageResults, retainStageExecutions } = input;
     const fingerprint = createHash("sha256").update(JSON.stringify([workItemId, planId, expectedPlanRevision, expectedWorkItemRevision,
       ...(previousWorkflowId === undefined ? [] : [previousWorkflowId]),
       ...(resolvedPlanChangeIds?.length ? [[...resolvedPlanChangeIds].sort()] : []),
-      ...(retainStageResults?.length ? [retainStageResults.map(result => [result.sourceStepId, result.expectedSourceRevision, result.targetStepId])] : [])])).digest("hex");
+      ...(retainStageResults?.length ? [retainStageResults.map(result => [result.sourceStepId, result.expectedSourceRevision, result.targetStepId])] : []),
+      ...(retainStageExecutions?.length ? [{ retainStageExecutions: retainStageExecutions.map(source =>
+        [source.sourceStepId, source.expectedSourceRevision, source.targetStepId, source.sourceRunId]) }] : [])])).digest("hex");
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
     try {
@@ -670,8 +674,8 @@ export class SqliteWorkItemStore {
         || !acceptance) throw new Error("work_item_workflow_not_found");
       if (item.revision !== expectedWorkItemRevision || plan.revision !== expectedPlanRevision
         || item.workflowId !== previousWorkflowId || state.get("work_item_workflow", workflow.id)) throw new Error("work_item_workflow_stale");
+      const prior = previousWorkflowId ? state.get("work_item_workflow", previousWorkflowId)?.payload as WorkItemWorkflowLink | undefined : undefined;
       if (previousWorkflowId) {
-        const prior = state.get("work_item_workflow", previousWorkflowId)?.payload as WorkItemWorkflowLink | undefined;
         const parent = prior && this.ports.getProposedPlanArtifact(prior.binding.planId);
         if (!prior || prior.binding.workItemId !== item.id || !parent || parent.supersededByPlanId !== plan.id
           || plan.parentPlanId !== parent.id || parent.acceptedWorkflowId !== previousWorkflowId
@@ -690,25 +694,50 @@ export class SqliteWorkItemStore {
         || acceptance.dispatch && !this.conversationDispatchSettled(acceptance, item)
         || !["ready", "running", "waiting", "review"].includes(item.status)
         || !["draft", "ready"].includes(workflow.status)) throw new Error("work_item_workflow_held");
-      if (previousWorkflowId && !readSqliteWithinTransaction(database, () => previousWorkflowSettled?.(previousWorkflowId))) {
-        throw new Error("work_item_workflow_predecessor_unsettled");
-      }
       const affected = new Set(item.holds.filter(hold => resolvedChanges.has(hold.id)).flatMap(hold => hold.workflowStepIds ?? []));
       const stageResults: LingAppServerRetainedWorkflowStageResult[] = [];
-      if (retainStageResults?.length) {
-        if (!previousWorkflowId || !resolvedChanges.size) throw new Error("work_item_workflow_retained_result_stale");
-        for (const input of retainStageResults) {
-          const target = this.ports.getChannelWorkflowStep(input.targetStepId);
-          const result = this.readRetainedStageResult(previousWorkflowId, input);
-          if (!result || affected.has(result.sourceStepId) || target?.workflowId !== workflow.id || target.status !== "queued") {
+      const stageExecutions: LingAppServerRetainedWorkflowStageExecution[] = [];
+      const priorExecutions = prior?.binding.retainedStageExecutions ?? [];
+      const priorSources = [...prior?.binding.retainedStageResults ?? [], ...priorExecutions];
+      const currentSource = (stepId: string, targetId: string, revision: string): ChannelWorkflowStep => {
+        const source = this.ports.getChannelWorkflowStep(stepId);
+        const target = this.ports.getChannelWorkflowStep(targetId);
+        if (!previousWorkflowId || !resolvedChanges.size || !source || !source.runId || source.updatedAt !== revision
+          || (source.workflowId === previousWorkflowId ? affected.has(source.id) : !priorSources.some(candidate =>
+            candidate.sourceStepId === source.id && candidate.sourceRunId === source.runId && !affected.has(candidate.targetStepId)))
+          || target?.workflowId !== workflow.id || target.status !== "queued") throw new Error("work_item_workflow_retained_result_stale");
+        return source;
+      };
+      for (const input of retainStageResults ?? []) {
+        const source = currentSource(input.sourceStepId, input.targetStepId, input.expectedSourceRevision);
+        const result = readRetainedWorkflowStageResult(this.ports, source.workflowId, input);
+        if (!result) throw new Error("work_item_workflow_retained_result_stale");
+        stageResults.push(result);
+      }
+      if (retainStageExecutions?.length) {
+        const successorStageIds = new Set(this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true })
+          .map(step => step.metadata?.planStageId));
+        for (const input of retainStageExecutions) {
+          const source = currentSource(input.sourceStepId, input.targetStepId, input.expectedSourceRevision);
+          const sourceStageId = source.metadata?.planStageId;
+          if (!sourceStageId || successorStageIds.has(sourceStageId) || source.metadata?.planBallotKey
+            || !ownsRetainableWorkflowStageExecution(this.ports, source, input.sourceRunId)) {
             throw new Error("work_item_workflow_retained_result_stale");
           }
-          stageResults.push(result);
+          stageExecutions.push({ ...input, sourceWorkflowId: source.workflowId, sourceStageId });
+        }
+      }
+      if (previousWorkflowId) {
+        const carriedRuns = new Set(stageExecutions.map(execution => execution.sourceRunId));
+        const predecessors = new Set([previousWorkflowId, ...priorExecutions.map(execution => execution.sourceWorkflowId)]);
+        if (!readSqliteWithinTransaction(database, () => [...predecessors].every(id => previousWorkflowSettled?.(id, carriedRuns)))) {
+          throw new Error("work_item_workflow_predecessor_unsettled");
         }
       }
       const binding: LingAppServerWorkItemWorkflowBinding = { workItemId, workflowId: workflow.id, threadId: plan.threadId,
         planId, planRevision: plan.revision, linkedAt: now, ...(previousWorkflowId ? { previousWorkflowId } : {}),
-        ...(stageResults.length ? { retainedStageResults: stageResults } : {}) };
+        ...(stageResults.length ? { retainedStageResults: stageResults } : {}),
+        ...(stageExecutions.length ? { retainedStageExecutions: stageExecutions } : {}) };
       const progressStageIds = previousWorkflowId && affected.size
         ? this.ports.listChannelWorkflowSteps({ workflowId: previousWorkflowId, complete: true }).flatMap(step =>
             affected.has(step.id) && step.metadata?.planStageId ? [step.metadata.planStageId] : []) : [];
@@ -740,22 +769,7 @@ export class SqliteWorkItemStore {
         AND status IN ('queued','running','waiting_for_approval','waiting_for_input') LIMIT 1`).get(threadId));
   }
 
-  private readRetainedStageResult(sourceWorkflowId: string, input: LingAppServerWorkflowStageResultSource): LingAppServerRetainedWorkflowStageResult | undefined {
-    const source = this.ports.getChannelWorkflowStep(input.sourceStepId);
-    const sourceStageId = source?.metadata?.planStageId;
-    const sourceRunId = source?.runId;
-    const sourceArtifactId = source?.metadata?.outputArtifactId;
-    if (!source || source.workflowId !== sourceWorkflowId || source.updatedAt !== input.expectedSourceRevision
-      || source.status !== "succeeded" || !sourceStageId || !sourceRunId || !sourceArtifactId) return undefined;
-    const run = this.ports.getRun(sourceRunId);
-    const artifact = this.ports.getArtifact(sourceArtifactId);
-    const packet = artifact?.sealedPayload as { readonly workflowId?: string; readonly workflowStepId?: string; readonly runId?: string } | undefined;
-    if (run?.status !== "succeeded" || run.workflowStepId !== source.id || artifact?.runId !== run.id
-      || packet?.workflowId !== sourceWorkflowId || packet.workflowStepId !== source.id || packet.runId !== run.id) return undefined;
-    return { ...input, sourceWorkflowId, sourceStageId, sourceRunId, sourceArtifactId };
-  }
-
-  getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore, step?: ChannelWorkflowStep): string | undefined {
+  getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined {
     const link = state.get("work_item_workflow", workflowId)?.payload as WorkItemWorkflowLink | undefined;
     if (!link) {
       const planId = this.ports.getChannelWorkflow(workflowId)?.metadata?.sourceProposedPlanId;
@@ -767,6 +781,15 @@ export class SqliteWorkItemStore {
     }
     const binding = link.binding;
     const item = this.getWorkItem(binding.workItemId);
+    if (item?.workflowId && item.workflowId !== workflowId && executionRunId && step
+      && ownsRetainableWorkflowStageExecution(this.ports, step, executionRunId)) {
+      const current = state.get("work_item_workflow", item.workflowId)?.payload as WorkItemWorkflowLink | undefined;
+      const executions = current?.binding.retainedStageExecutions?.filter(execution =>
+        execution.sourceWorkflowId === workflowId && execution.sourceStepId === step.id && execution.sourceRunId === executionRunId);
+      if (current?.binding.workItemId === item.id && executions?.length) {
+        return this.getWorkflowAdmissionBlocker(item.workflowId, state);
+      }
+    }
     const plan = this.ports.getProposedPlanArtifact(binding.planId);
     if (!item || item.workflowId !== workflowId || item.planRevision !== `${binding.planId}:${binding.planRevision}`
       || !plan?.acceptedAt || plan.status !== "accepted" || plan.acceptedWorkflowId !== workflowId) return "work_item_workflow_stale";
@@ -784,9 +807,15 @@ export class SqliteWorkItemStore {
     }
     if (step && binding.retainedStageResults?.some(retained => {
       if (retained.targetStepId !== step.id) return false;
-      const current = this.readRetainedStageResult(retained.sourceWorkflowId, retained);
+      const current = readRetainedWorkflowStageResult(this.ports, retained.sourceWorkflowId, retained);
       return current?.sourceRunId !== retained.sourceRunId || current.sourceArtifactId !== retained.sourceArtifactId;
     })) return "work_item_retained_stage_stale";
+    for (const execution of binding.retainedStageExecutions ?? []) {
+      if (execution.targetStepId !== step?.id) continue;
+      const progress = readRetainedWorkflowStageExecution(this.ports, execution);
+      if (progress.status !== "available") return progress.status === "pending"
+        ? "work_item_retained_stage_pending" : "work_item_retained_stage_unavailable";
+    }
     const successor = plan.supersededByPlanId ? this.ports.getProposedPlanArtifact(plan.supersededByPlanId) : undefined;
     if (successor?.status === "accepted" && successor.acceptedWorkflowId
       && !(scopedHolds.length && step?.runId && ["running", "waiting_for_input", "waiting_for_approval"].includes(step.status))) {

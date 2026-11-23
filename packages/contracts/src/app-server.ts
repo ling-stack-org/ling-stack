@@ -714,6 +714,7 @@ export interface LingAppServerWorkItemWorkflowBindParams {
   readonly previousWorkflowId?: string;
   readonly resolvedPlanChangeIds?: readonly string[];
   readonly retainStageResults?: readonly LingAppServerWorkflowStageResultSource[];
+  readonly retainStageExecutions?: readonly LingAppServerWorkflowStageExecutionSource[];
 }
 
 export interface LingAppServerWorkflowStageResultSource {
@@ -729,6 +730,15 @@ export interface LingAppServerRetainedWorkflowStageResult extends LingAppServerW
   readonly sourceArtifactId: string;
 }
 
+export interface LingAppServerWorkflowStageExecutionSource extends LingAppServerWorkflowStageResultSource {
+  readonly sourceRunId: string;
+}
+
+export interface LingAppServerRetainedWorkflowStageExecution extends LingAppServerWorkflowStageExecutionSource {
+  readonly sourceWorkflowId: string;
+  readonly sourceStageId: string;
+}
+
 export interface LingAppServerWorkItemWorkflowBinding {
   readonly workItemId: string;
   readonly workflowId: string;
@@ -738,6 +748,7 @@ export interface LingAppServerWorkItemWorkflowBinding {
   readonly linkedAt: string;
   readonly previousWorkflowId?: string;
   readonly retainedStageResults?: readonly LingAppServerRetainedWorkflowStageResult[];
+  readonly retainedStageExecutions?: readonly LingAppServerRetainedWorkflowStageExecution[];
 }
 
 export interface LingAppServerWorkItemWorkflowBindResult extends LingAppServerWorkItemResult {
@@ -791,6 +802,9 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly decision?: LingAppServerWorkItemStageDecision;
     readonly handoffs?: readonly LingAppServerStageHandoffProgress[];
     readonly retainedStageResults?: readonly LingAppServerRetainedWorkflowStageResult[];
+    readonly retainedStageExecutions?: readonly (LingAppServerRetainedWorkflowStageExecution & {
+      readonly status: "pending" | "available" | "unavailable";
+    })[];
     readonly briefBasis?: {
       readonly transitionId: string;
       readonly committedAt: string;

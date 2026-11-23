@@ -6225,13 +6225,13 @@ export class SqliteRunStore implements RunStore {
   }
 
   bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string,
-    previousWorkflowSettled?: (workflowId: string) => boolean) {
+    previousWorkflowSettled?: (workflowId: string, retainedRunIds: ReadonlySet<string>) => boolean) {
     return this.workItems.bindWorkflow(input, now, this.appServerState, { store: this.controlPlane, cwd: this.paths.cwd }, previousWorkflowSettled);
   }
 
-  getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep): string | undefined {
+  getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined {
     if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
-    return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState, step);
+    return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState, step, executionRunId);
   }
 
   getWorkItemStageRetryBudget(step: ChannelWorkflowStep) {

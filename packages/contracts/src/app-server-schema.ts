@@ -297,11 +297,13 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       const resultSource = { sourceStepId: stringSchema, expectedSourceRevision: stringSchema, targetStepId: stringSchema };
       return { params: objectWith({ ...workItemTarget, planId: stringSchema, expectedWorkItemRevision: integerSchema,
         expectedPlanRevision: integerSchema, idempotencyKey: stringSchema, previousWorkflowId: stringSchema, resolvedPlanChangeIds: stringArraySchema,
-        retainStageResults: { type: "array", items: objectWith(resultSource, Object.keys(resultSource)) } },
+        retainStageResults: { type: "array", items: objectWith(resultSource, Object.keys(resultSource)) },
+        retainStageExecutions: { type: "array", items: objectWith({ ...resultSource, sourceRunId: stringSchema }, [...Object.keys(resultSource), "sourceRunId"]) } },
       ["workItemId", "planId", "expectedWorkItemRevision", "expectedPlanRevision", "idempotencyKey"]),
       result: objectWith({ cwd: stringSchema, workItem: objectSchema, replayed: booleanSchema,
         binding: objectWith({ ...workItemTarget, ...threadTarget, workflowId: stringSchema, planId: stringSchema,
-          planRevision: integerSchema, linkedAt: stringSchema, previousWorkflowId: stringSchema, retainedStageResults: arraySchema },
+          planRevision: integerSchema, linkedAt: stringSchema, previousWorkflowId: stringSchema,
+          retainedStageResults: arraySchema, retainedStageExecutions: arraySchema },
         ["workItemId", "threadId", "workflowId", "planId", "planRevision", "linkedAt"]) }, ["cwd", "workItem", "binding", "replayed"]) };
     }
     case "workItem/plan/change/request":

@@ -282,13 +282,17 @@ test("Goal completion requires a current candidate and a Host-verified independe
   assert.deepEqual(original.checks[0].producerRefs, planned.checks[0].producerRefs);
   assert.match(original.checks[0].execution?.output ?? "", /verified accepted behavior/u);
 
-  await writeFile(join(fixture.cwd, "candidate-test.cjs"), "console.log('changed candidate tests');\n");
+  await writeFile(manifest, JSON.stringify({ scripts: { test: "node candidate-weak-test.cjs" } }));
+  await writeFile(join(fixture.cwd, "candidate-weak-test.cjs"), "console.log('test passes without checking behavior');\n");
+  await writeFile(join(fixture.cwd, "subject.txt"), "regressed behavior\n");
   await assert.rejects(complete(client, original.operationId), /goal_verification_candidate_stale/u);
   const ordinary = await runCheck(await createPlan(["test"]));
   assert.equal(ordinary.status, "passed");
   assert.deepEqual(ordinary.checks[0].producerRefs, []);
   await assert.rejects(complete(client, ordinary.operationId), /goal_verification_basis_mismatch/u);
+  assert.equal((await runCheck(await createPlan())).status, "failed");
 
+  await writeFile(join(fixture.cwd, "subject.txt"), "accepted behavior\n");
   await writeFile(join(fixture.root, "trusted-check.cjs"), verifier + "\n");
   const drifted = await runCheck(await createPlan());
   assert.equal(drifted.status, "blocked");
@@ -3326,6 +3330,118 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
   assert.ok(workItem.planRevision);
   return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent, channel, thread, plan };
 }
+
+test("a successor Workflow waits for an independent live Run owned by its predecessor", { timeout: 30_000 }, async t => {
+  let finishOriginal!: () => void;
+  const originalGate = new Promise<void>(resolve => { finishOriginal = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, invocation: number) => {
+    if (invocation === 1) {
+      await originalGate;
+      return { tool: "read", input: { path: "compatibility.txt" } };
+    }
+    return { text: invocation === 2 ? "Independent evidence verified." : "Accepted successor completed." };
+  });
+  t.after(() => { finishOriginal(); return provider.close(); });
+  const { fixture, store, client, item, workItem, workflowId, waiting: affected, respondent: independent, thread, plan } =
+    await stageQuestionWorkflow(t, provider.baseUrl, true);
+  await writeFile(join(fixture.cwd, "compatibility.txt"), "Preserve the independent compatibility check.\n");
+  const target = { workItemId: item.id };
+  const start = (stepId: string) => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const address = new URL(`/workflow-steps/${stepId}/start`, daemonUrl);
+    address.searchParams.set("cwd", fixture.cwd);
+    return fetch(address, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
+  };
+  const started = await start(independent.id);
+  if (!started.ok) throw new Error(await started.text());
+  void started.text();
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const original = store.getChannelWorkflowStep(independent.id);
+  assert.ok(original?.runId);
+  const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", target);
+  const change = await client.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/request", {
+    ...target, planRevision: workItem.planRevision, expectedWorkItemRevision: Number(before.workItem.revision),
+    affectedStageIds: ["QA"], reason: "Revise only the implementation contract", idempotencyKey: "retain-active-change",
+  });
+  const pause = await client.call<LingAppServerWorkItemControlResult>("workItem/pause", {
+    ...target, expectedWorkItemRevision: Number(change.workItem.revision), expectedControlGeneration: 0,
+    actorId: "local-user", idempotencyKey: "retain-active-pause",
+  });
+  const originalPlan = store.getProposedPlanArtifact(plan.id);
+  assert.ok(originalPlan);
+  const { plan: draft } = await client.call<ProposedPlanActionResponse>("plan/refine", {
+    threadId: thread.id, planId: originalPlan.id, expectedRevision: originalPlan.revision,
+    draft: { title: "Revise P01", bodyMarkdown: "Apply the new P01 contract and reuse the independent QA result." },
+  });
+  const accepted = await client.call<ProposedPlanActionResponse>("plan/accept", {
+    threadId: thread.id, planId: draft.id, expectedRevision: draft.revision, mode: "workflow",
+    workflowStepPreviews: [{ title: "Apply P02", stageId: "P02", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" }],
+  });
+  assert.ok(accepted.workflowId);
+  const [replacement] = store.listChannelWorkflowSteps({ workflowId: accepted.workflowId, complete: true });
+  assert.ok(replacement);
+  const binding = {
+    ...target, previousWorkflowId: workflowId, planId: accepted.plan.id, expectedPlanRevision: accepted.plan.revision,
+    expectedWorkItemRevision: Number(pause.workItem.revision), resolvedPlanChangeIds: [change.receipt.changeId], idempotencyKey: "retain-active-bind",
+  };
+  const bind = (input: object, connection = client) =>
+    connection.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", input);
+  await assert.rejects(bind(binding), { code: "resume_blocked" });
+  const source = { sourceStepId: original.id, expectedSourceRevision: original.updatedAt, sourceRunId: original.runId, targetStepId: replacement.id };
+  await assert.rejects(bind({ ...binding, retainStageExecutions: [{ ...source, sourceRunId: "incorrect-run" }] }), { code: "stale_revision" });
+  const bindRequest = { ...binding, retainStageExecutions: [source] };
+  const bound = await bind(bindRequest);
+  assert.deepEqual(bound.binding.retainedStageExecutions, [{ ...source, sourceWorkflowId: workflowId, sourceStageId: "P01" }]);
+  const read = async (connection = client) => {
+    const { workflow } = await connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", target);
+    const stage = workflow?.steps.find(step => step.stepId === replacement.id);
+    assert.ok(stage);
+    return stage;
+  };
+  assert.equal((await read()).retainedStageExecutions?.[0]?.status, "pending");
+  await client.call("workItem/resume", {
+    ...target, expectedWorkItemRevision: Number(bound.workItem.revision), expectedControlGeneration: 1,
+    actorId: "local-user", idempotencyKey: "retain-active-resume",
+  });
+  const waiting = await start(replacement.id);
+  assert.equal(waiting.status, 409);
+  assert.equal((await waiting.json()).error, "work_item_retained_stage_pending");
+  const stale = await start(affected.id);
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).error, "work_item_workflow_stale");
+  finishOriginal();
+  const finished = await waitFor(() => {
+    const step = store.getChannelWorkflowStep(original.id);
+    return step?.status === "succeeded" && step.metadata?.outputArtifactId ? step : undefined;
+  });
+  assert.equal(finished.runId, original.runId);
+  assert.match(JSON.stringify(provider.requests[1]), /Preserve the independent compatibility check/u);
+  const ready = await read();
+  assert.equal(ready.retainedStageExecutions?.[0]?.status, "available");
+  assert.equal(ready.retainedStageResults?.[0]?.sourceArtifactId, finished.metadata?.outputArtifactId);
+  assert.equal(ready.retainedStageResults?.[0]?.expectedSourceRevision, finished.updatedAt);
+  const artifact = await client.call<{ artifact: { id: string } }>("artifact/read", {
+    ...target, artifactId: finished.metadata?.outputArtifactId,
+  });
+  assert.equal(artifact.artifact.id, finished.metadata?.outputArtifactId);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.deepEqual((await bind(bindRequest, restored)).binding, bound.binding);
+  assert.equal((await read(restored)).retainedStageExecutions?.[0]?.status, "available");
+  const currentStore = fixture.getStore();
+  if (currentStore.getChannelWorkflowStep(replacement.id)?.status === "queued") {
+    const next = await start(replacement.id);
+    assert.ok(next.ok, await next.clone().text());
+    await next.text();
+  }
+  await waitFor(() => currentStore.getChannelWorkflowStep(replacement.id)?.status === "succeeded" ? true : undefined);
+  assert.match(JSON.stringify(provider.requests[2]), /Retained upstream results from the predecessor Plan/u);
+  assert.match(JSON.stringify(provider.requests[2]), /Independent evidence verified/u);
+  assert.equal(provider.requests.length, 3);
+  assert.deepEqual(currentStore.listRuns({ workflowStepId: original.id }).map(run => run.id), [original.runId]);
+  assert.equal(currentStore.listRuns({ workflowStepId: replacement.id }).length, 1);
+});
 
 test("the Work Item retry budget uses owned Run history after restart and admits a sibling's first start", { timeout: 20_000 }, async t => {
   const provider = await startLoopbackPiProvider(() => ({ text: "Independent contract verified." }));
