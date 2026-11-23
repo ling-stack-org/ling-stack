@@ -1,5 +1,5 @@
 import { lstat, opendir, realpath } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import type { DeviceStorageCategory, DeviceStorageCategorySize, DeviceStorageScope, DeviceStorageSnapshot } from "@ling-stack/contracts";
 
 export interface OwnedStorageRoots {
@@ -28,6 +28,14 @@ async function hasUntrustedSymlinkAncestor(path: string): Promise<boolean> {
     const parent = dirname(current);
     if (parent === current) return false;
     current = parent;
+  }
+}
+
+async function hasSymlinkedFinalPath(path: string): Promise<boolean> {
+  try {
+    return resolve(await realpath(dirname(path)), basename(path)) !== await realpath(path);
+  } catch {
+    return true;
   }
 }
 
@@ -87,7 +95,8 @@ export async function scanOwnedStorage(input: OwnedStorageRoots, options: { read
     if (!checkBudget()) break;
     try {
       const stat = await lstat(root);
-      if (!stat.isDirectory() || stat.isSymbolicLink() || await hasUntrustedSymlinkAncestor(root) || !await realpath(root)) {
+      if (!stat.isDirectory() || stat.isSymbolicLink() || await hasUntrustedSymlinkAncestor(root)
+        || await hasSymlinkedFinalPath(root)) {
         mark(root, "unavailable_path"); continue;
       }
     } catch { mark(root, "unavailable_path"); continue; }
@@ -97,7 +106,7 @@ export async function scanOwnedStorage(input: OwnedStorageRoots, options: { read
       if (visitedDirectories.has(directory)) continue;
       visitedDirectories.add(directory);
       try {
-        if (directory !== root && (await hasUntrustedSymlinkAncestor(directory) || !await realpath(directory))) {
+        if (directory !== root && (await hasUntrustedSymlinkAncestor(directory) || await hasSymlinkedFinalPath(directory))) {
           mark(directory, "unavailable_path"); continue;
         }
         for await (const entry of await opendir(directory)) {
@@ -113,7 +122,7 @@ export async function scanOwnedStorage(input: OwnedStorageRoots, options: { read
               pending.push(path); continue;
             }
             if (!stat.isFile()) continue;
-            if (!await realpath(path)) { mark(path, "unavailable_path"); continue; }
+            if (await hasSymlinkedFinalPath(path)) { mark(path, "unavailable_path"); continue; }
             const identity = `${stat.dev}:${stat.ino}`;
             if (seenFiles.has(identity)) continue;
             seenFiles.add(identity);

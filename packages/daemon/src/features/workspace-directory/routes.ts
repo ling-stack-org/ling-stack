@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { lstatSync, realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { createWorkspaceRegistryStore, registerResolvedWorkspace } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -123,10 +123,15 @@ function workspacePathAvailable(cwd: string, defaultCwd: string, stores: RunStor
     const lexical = lstatSync(cwd);
     if (lexical.isSymbolicLink() || !lexical.isDirectory()) return false;
     const physicalPath = realpathSync(cwd);
+    if (joinPhysical(dirname(cwd), basename(cwd)) !== physicalPath) return false;
     return (cwd === defaultCwd ? stores.isTrustedWorkspaceRoot(physicalPath) : true)
       && statSync(physicalPath).isDirectory();
   }
   catch { return false; }
+}
+
+function joinPhysical(parent: string, leaf: string): string {
+  return resolve(realpathSync(parent), leaf);
 }
 
 export async function handleWorkspaceTerminalCommand(
