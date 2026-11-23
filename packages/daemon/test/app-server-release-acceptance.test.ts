@@ -1286,6 +1286,7 @@ test("Codex control host streams Ling, accepts explicit controls, and replays cu
   };
   assert.deepEqual(await steerInView(unexpected), { status: "unknown", failureCode: "unexpected_reply", replayed: true });
   assert.deepEqual(await steerInView(lostReply), { status: "unknown", failureCode: "transport_failed", replayed: true });
+  assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 3);
   assert.deepEqual(await steerInView(unsent), { status: "accepted" });
   assert.deepEqual(await steerInView(unsent), { status: "accepted", replayed: true });
   assert.equal((await readFile(writes, "utf8")).trim().split("\n").length, 4);
@@ -2218,7 +2219,11 @@ test("GitHub delivery requires current queue membership and a provider-attested 
   const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
   await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
   git("init", "-q", "-b", "main");
-  git("add", ".");
+  git("add", ".gitignore");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Baseline");
+  git("switch", "-c", "queue-candidate");
+  await writeFile(join(fixture.cwd, "candidate.txt"), "Committed queue input\n");
+  git("add", "candidate.txt");
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
   head = git("rev-parse", "HEAD");
   const client = await fixture.connect();

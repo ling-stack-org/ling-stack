@@ -19,7 +19,7 @@ export function readGitHubDelivery(store: RunStore, workItemId: string, delivery
 export async function reconcileGitHubDelivery(
   context: Pick<DaemonContext, "storeRegistry" | "config" | "externalWorkFetch" | "secretResolver" | "controlPlaneEvents">,
   params: LingAppServerReconcileGitHubDeliveryParams & { readonly cwd: string },
-  scope: "head" | "working_tree" = "head",
+  basis: "committed_head" | "clean_checkout" = "committed_head",
 ): Promise<LingAppServerGitHubDelivery> {
   const { cwd, threadId, workItemId, expectedWorkItemRevision, candidateDigest, repository, pullRequestNumber } = params;
   const store = context.storeRegistry.getStore(cwd);
@@ -34,10 +34,13 @@ export async function reconcileGitHubDelivery(
   }
   const client = gitHubReadClient(context, cwd, repository);
   const previous = store.getAppServerState("github_delivery_current", workItemId);
-  const capture = () => scope === "head"
+  const capture = () => basis === "committed_head"
     ? captureCommittedHeadSnapshot(cwd) : captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
   const candidate = await capture();
-  if (candidate.coverage !== "complete" || (scope === "working_tree" && candidate.totalFileCount !== 0) || candidate.digest !== candidateDigest) {
+  if (basis === "clean_checkout" && candidate.totalFileCount !== 0) {
+    throw new HttpError(409, "candidate_stale", "An uncommitted local delta cannot use GitHub delivery evidence.");
+  }
+  if (candidate.coverage !== "complete" || candidate.digest !== candidateDigest) {
     throw new HttpError(409, "candidate_stale", "Delivery requires the current committed candidate with full capture coverage.");
   }
   const observation = await observeGitHubDelivery(client, pullRequestNumber, previous?.payload as LingAppServerGitHubDelivery | undefined);

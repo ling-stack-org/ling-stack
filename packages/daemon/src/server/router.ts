@@ -1432,7 +1432,7 @@ export async function routeRequest(
   if (lingThreadRoute) {
     await handleLingThreadItem(request, response, url, storeRegistry, lingThreadRoute, {
       maxBodyBytes: config.maxBodyBytes,
-      reconcileGitHubDelivery: params => reconcileGitHubDelivery(context, params, "working_tree"),
+      reconcileGitHubDelivery: params => reconcileGitHubDelivery(context, params, "clean_checkout"),
       startResumeRun: async (runRequest) =>
         await startDetachedRunAndResolveReady((onRunReady) =>
           executeRunRequest(

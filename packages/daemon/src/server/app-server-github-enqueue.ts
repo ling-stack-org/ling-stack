@@ -72,7 +72,7 @@ export async function enqueueGitHubDelivery(
   const fresh = await reconcileGitHubDelivery(context, {
     cwd, workItemId: delivery.workItemId, threadId: delivery.threadId, expectedWorkItemRevision: input.expectedWorkItemRevision,
     repository: delivery.subject.repository, pullRequestNumber: delivery.subject.number, candidateDigest: delivery.candidateDigest,
-  }, "working_tree");
+  }, "clean_checkout");
   if (fresh.deliveryId !== input.deliveryId || fresh.checks.some(({ check, outcome }) => check.basis === "head" && outcome !== "passed")) {
     throw new HttpError(409, "stale_revision", "The delivery or a required head check changed before queue admission.");
   }

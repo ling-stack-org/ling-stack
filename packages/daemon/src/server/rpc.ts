@@ -2189,7 +2189,7 @@ class RpcConnection {
       evidenceRefs: record.evidenceRefs ?? record.completionEvidenceRefs,
       completionVerificationSummary: record.completionVerificationSummary ?? record.verificationSummary,
     });
-    const prepared = await bindGoalAcceptanceEvidence(store, goal, input, params => reconcileGitHubDelivery(this.context, params, "working_tree"));
+    const prepared = await bindGoalAcceptanceEvidence(store, goal, input, params => reconcileGitHubDelivery(this.context, params, "clean_checkout"));
     const updated = store.updateLingThreadGoal(goal.id, prepared, new Date().toISOString());
     if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
     this.publishThreadGoal(store, cwd, updated);
