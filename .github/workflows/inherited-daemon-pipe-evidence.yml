@@ -58,8 +58,8 @@ jobs:
             await Promise.all([end(sockets[0], 'authority'), end(sockets[1], 'ready'), end(sockets[2], 'blocked')]);
           `;
           const file = openSync(join(process.env.RUNNER_TEMP, 'regular-descriptor.txt'), 'wx+');
-          try {
-            const child = spawn(process.env.LING_PIPE_ELECTRON_EXE, ['--input-type=module', '-e', code], {
+          const verify = async (source) => {
+            const child = spawn(process.env.LING_PIPE_ELECTRON_EXE, ['--input-type=module', '-e', source], {
               env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
               stdio: ['ignore', 'pipe', 'inherit', 'pipe', 'pipe', 'pipe', file],
             });
@@ -73,7 +73,24 @@ jobs:
             console.log(stdout.trim());
             assert.equal((await exited)[0], 0);
             assert.deepEqual(receipts, ['authority', 'ready', 'draining,blocked']);
-            console.log('Inherited pipe I/O and regular-file rejection passed.');
+          };
+          try {
+            await verify(code);
+            console.log('Stream I/O and regular-file rejection passed.');
+            await verify(`
+              import assert from 'node:assert/strict';
+              import { closeSync, constants, fstatSync, writeSync } from 'node:fs';
+              const fifo = fd => (fstatSync(fd).mode & constants.S_IFMT) === constants.S_IFIFO;
+              assert.ok([3, 4, 5].every(fifo));
+              assert.equal(fifo(6), false);
+              for (const [fd, text] of [[5, 'draining,'], [3, 'authority'], [4, 'ready'], [5, 'blocked']]) {
+                const bytes = Buffer.from(text);
+                assert.equal(writeSync(fd, bytes, 0, bytes.length), bytes.length);
+              }
+              for (const fd of [3, 4, 5]) closeSync(fd);
+              console.log(JSON.stringify({ fifoMode: constants.S_IFIFO, typeMask: constants.S_IFMT }));
+            `);
+            console.log('Exact FIFO-mode check and synchronous pipe writes passed.');
           } finally { closeSync(file); }
           '@ | node --input-type=module
           if ($LASTEXITCODE -ne 0) { throw 'Inherited daemon pipe probe failed.' }
