@@ -1,0 +1,79 @@
+name: Windows inherited daemon pipe evidence
+
+on:
+  push:
+    branches: [codex/verify-installed-windows-plugin-modes]
+    paths: [.github/workflows/inherited-daemon-pipe-evidence.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  pipe:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - name: Verify and unpack the Desktop Electron runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'electron-win32-x64.zip'
+          $destination = Join-Path $env:RUNNER_TEMP 'electron-runtime'
+          curl.exe --fail --location --retry 2 'https://github.com/electron/electron/releases/download/v45.3.1/electron-v45.3.1-win32-x64.zip' --output $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Electron download failed.' }
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne 'd92d1aa4700e3a7e7f174731f5086ebd9c21f9773e642b260160fe0a6ebe12d2') { throw 'Electron archive digest changed.' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value ('LING_PIPE_ELECTRON_EXE=' + (Join-Path $destination 'electron.exe'))
+      - name: Check inherited pipe I/O and reject a regular file
+        shell: pwsh
+        run: |
+          @'
+          import assert from 'node:assert/strict';
+          import { spawn } from 'node:child_process';
+          import { once } from 'node:events';
+          import { closeSync, openSync } from 'node:fs';
+          import { join } from 'node:path';
+
+          const code = `
+            import assert from 'node:assert/strict';
+            import { fstatSync } from 'node:fs';
+            import { Socket } from 'node:net';
+            const channels = [3, 4, 5];
+            const types = channels.map(fd => {
+              const stat = fstatSync(fd);
+              return { fd, mode: stat.mode, fifo: stat.isFIFO(), socket: stat.isSocket(), character: stat.isCharacterDevice() };
+            });
+            console.log(JSON.stringify({ electron: process.versions.electron, node: process.versions.node, uv: process.versions.uv, types }));
+            assert.equal(fstatSync(6).isFile(), true);
+            assert.throws(() => new Socket({ fd: 6, readable: false }), { code: 'ERR_INVALID_FD_TYPE' });
+            const sockets = channels.map(fd => new Socket({ fd, readable: false, writable: true }));
+            const write = (socket, bytes) => new Promise((resolve, reject) => {
+              socket.once('error', reject); socket.write(bytes, resolve);
+            });
+            const end = (socket, bytes) => new Promise((resolve, reject) => {
+              socket.once('error', reject); socket.end(bytes, resolve);
+            });
+            await write(sockets[2], 'draining,');
+            await Promise.all([end(sockets[0], 'authority'), end(sockets[1], 'ready'), end(sockets[2], 'blocked')]);
+          `;
+          const file = openSync(join(process.env.RUNNER_TEMP, 'regular-descriptor.txt'), 'wx+');
+          try {
+            const child = spawn(process.env.LING_PIPE_ELECTRON_EXE, ['--input-type=module', '-e', code], {
+              env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+              stdio: ['ignore', 'pipe', 'inherit', 'pipe', 'pipe', 'pipe', file],
+            });
+            const exited = once(child, 'close');
+            const read = async (stream) => {
+              let data = '';
+              for await (const chunk of stream) data += chunk.toString('utf8');
+              return data;
+            };
+            const [stdout, ...receipts] = await Promise.all([1, 3, 4, 5].map(index => read(child.stdio[index])));
+            console.log(stdout.trim());
+            assert.equal((await exited)[0], 0);
+            assert.deepEqual(receipts, ['authority', 'ready', 'draining,blocked']);
+            console.log('Inherited pipe I/O and regular-file rejection passed.');
+          } finally { closeSync(file); }
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { throw 'Inherited daemon pipe probe failed.' }
