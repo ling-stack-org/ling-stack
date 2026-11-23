@@ -99,7 +99,7 @@
 "packages/daemon/src/features/work-summary/service.ts":"d81d750e08f96ab7ece9fa190b919e2cd6bd9de640f1dee6e11b7e95c2d89c93",
 "packages/daemon/src/shared/html-text.ts":"7f60e054030a40f98cc4f9af2eff4e7f2cec62c6e8ccd01748ad6514b64478c2",
 "packages/daemon/src/features/conversations/context-compaction-projection.ts":"864e2ff72cf2af7eca0c8bc3aa54130324aef31e20b02de703166888dfe5cbe4",
-"apps/desktop/main/daemon-lifecycle.ts":"865383a8a540326a0b4dabac2bb9ed2504b2b831afd40ff37cbe0e9560087be0",
+"apps/desktop/main/daemon-lifecycle.ts":"93b3423c29ba834ca7211f9b154286cb459616751f536bca48302a2ecdb709d3",
 "apps/desktop/main/local-services.ts":"5ca0bd4c4a59c5e984f3e7546ab4233228000486568c13dbc306ba40791c439c",
 "apps/desktop/main/main.ts":"3b826c634b30025f0d331bfc620f30df88799f9a2e4af395f9fc4534ba1c7b70",
 "apps/desktop/main/companion-window.ts":"5b690652e5819ba006ae2cca1d47f1e9601741dc7ecf765c1a6e30c7b432ce45",

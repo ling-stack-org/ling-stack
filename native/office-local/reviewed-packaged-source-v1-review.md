@@ -1,8 +1,32 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
+Current source prerequisite: [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
+which carries forward the [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Cold-start resource authentication rebind
+
+Date 2026-11-23. This development-only rebind updates the fixed packaging record after
+hosted macOS arm64 replay showed that the previous 60-second resource-authentication
+deadline was shorter than the observed cold path. The Desktop keeps the ordinary 20-second
+service-readiness deadline. macOS and Windows now share a 180-second resource bootstrap
+deadline, while Linux and other development paths retain the core 60-second bound.
+
+The only changed fixed packaging input is
+`apps/desktop/main/daemon-lifecycle.ts`, whose digest is
+`93b3423c29ba834ca7211f9b154286cb459616751f536bca48302a2ecdb709d3`.
+All other 2,012 packaging inputs and all 15 Office native inputs still match the prior
+record. The updated record is 260,282 bytes, and the fixed-order packaging aggregate is
+`4eed3e6f07ea4a43e1e84ba7d702d352ebb50744c7bb5f8a2248b687755613b7`.
+The updated record SHA-256 is
+`cae50b780f148108a0ef65b946c7f5fd7fba1527be2fe938019f58f08da879a6`.
+
+The focused Desktop lifecycle and TypeScript checks pass 56/56. Hosted daemon-only replay
+passed for bundled and on-demand DMGs with resource preparation of 115.672 and 136.420
+seconds, respectively. This record permits the development package to run that measured
+path. It does not approve platform signing, notarization, production publication or GUI
+plugin acceptance.
 
 ## Official Plugin Packaging Source Closure
 
