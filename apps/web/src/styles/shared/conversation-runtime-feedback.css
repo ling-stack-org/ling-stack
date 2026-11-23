@@ -23,6 +23,10 @@
   box-shadow: none;
 }
 
+.conversation-composer-frame > .conversation-composer-status-strip {
+  margin-bottom: 0;
+}
+
 .conversation-composer-status-strip.attention {
   border-color: var(--ling-status-warning-border);
   background: var(--ling-status-warning-bg);
