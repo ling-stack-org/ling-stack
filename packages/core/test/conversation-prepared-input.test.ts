@@ -4,11 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
-import test from "node:test";
-import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
+import test, { type TestContext } from "node:test";
+import {
+  createSqliteRunStore,
+  resolveRuntimePaths,
+  type ConversationAcceptedInputSnapshot,
+  type ConversationPreparedInputSnapshot,
+  type SaveConversationPreparedInput,
+  type SaveConversationPreparedInputResult,
+} from "../dist/index.js";
 
 const now = "2026-09-08T10:00:00.000Z";
-async function fixture(t) {
+async function fixture(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-prepared-input-test-"));
   const f = { cwd, store: createSqliteRunStore(cwd) };
   const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
@@ -26,11 +33,14 @@ async function fixture(t) {
     payload: { frozenHistory: "ACCEPTED" },
   }), now).acceptedSnapshot;
   const input = { sourceItemId: accepted.sourceItemId, stage: "request", parentSnapshotId: accepted.id,
-    parentFingerprint: accepted.fingerprint, payload: { task: { prompt: "MATERIALIZED-A" }, tone: "precise" } };
+    parentFingerprint: accepted.fingerprint, payload: { task: { prompt: "MATERIALIZED-A" }, tone: "precise" } } satisfies SaveConversationPreparedInput;
   return Object.assign(f, { database, thread, accepted, input });
 }
-function executionInput(f, request) {
-  return { sourceItemId: f.accepted.sourceItemId, stage: "execution", parentSnapshotId: request.id,
+function executionInput(
+  accepted: Pick<ConversationAcceptedInputSnapshot, "sourceItemId">,
+  request: Pick<ConversationPreparedInputSnapshot, "id" | "fingerprint">,
+): SaveConversationPreparedInput {
+  return { sourceItemId: accepted.sourceItemId, stage: "execution", parentSnapshotId: request.id,
     parentFingerprint: request.fingerprint, payload: { appendSystemPrompt: ["MEMORY-A", "SKILL-A"], tools: ["read"] } };
 }
 
@@ -51,7 +61,7 @@ test("no-Run preparation first writer wins and reopens with the exact payload", 
 test("request and execution snapshots bind exact predecessors without polluting accepted or fork getters", async (t) => {
   const f = await fixture(t);
   const request = f.store.saveConversationPreparedInput(f.input, now).snapshot;
-  const execution = f.store.saveConversationPreparedInput(executionInput(f, request), now).snapshot;
+  const execution = f.store.saveConversationPreparedInput(executionInput(f.accepted, request), now).snapshot;
   assert.equal(execution.parentSnapshotId, request.id);
   assert.equal(execution.acceptedSnapshotId, f.accepted.id);
   assert.equal(execution.acceptedFingerprint, f.accepted.fingerprint);
@@ -59,14 +69,14 @@ test("request and execution snapshots bind exact predecessors without polluting 
   assert.equal(f.store.getConversationContextSnapshot(request.id), undefined);
   assert.equal(f.store.getConversationContextSnapshot(execution.id), undefined);
   assert.deepEqual(f.store.listConversationContextSnapshots({ threadId: f.thread.id }), []);
-  assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_context_snapshots").get().n, 3);
+  assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_context_snapshots").get()?.n, 3);
 });
 
 test("missing or stale parent is rejected before returning any existing winner", async (t) => {
   const f = await fixture(t);
   const request = f.store.saveConversationPreparedInput(f.input, now).snapshot;
   for (const invalid of [{ ...f.input, parentFingerprint: "stale" }, { ...f.input, parentSnapshotId: "foreign" },
-    { ...executionInput(f, request), parentFingerprint: "stale" }, { ...executionInput(f, request), sourceItemId: "foreign-item" }]) {
+    { ...executionInput(f.accepted, request), parentFingerprint: "stale" }, { ...executionInput(f.accepted, request), sourceItemId: "foreign-item" }]) {
     assert.throws(() => f.store.saveConversationPreparedInput(invalid, now), /prepared.*parent|prepared.*source/i);
   }
   f.database.prepare("DELETE FROM conversation_context_snapshots WHERE id=?").run(f.accepted.id);
@@ -75,13 +85,14 @@ test("missing or stale parent is rejected before returning any existing winner",
 
 test("execution preparation cannot precede request preparation", async (t) => {
   const f = await fixture(t);
-  assert.throws(() => f.store.saveConversationPreparedInput(executionInput(f, { id: "absent", fingerprint: "absent" }), now), /prepared.*parent/i);
-  assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_context_snapshots").get().n, 1);
+  assert.throws(() => f.store.saveConversationPreparedInput(executionInput(f.accepted, { id: "absent", fingerprint: "absent" }), now), /prepared.*parent/i);
+  assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_context_snapshots").get()?.n, 1);
 });
 
 test("payload errors, secrets, and serialization writes leave acceptance intact and no prepared row", async (t) => {
   const f = await fixture(t);
-  const cyclic = {}; cyclic.self = cyclic;
+  const cyclic: { self?: unknown } = {};
+  cyclic.self = cyclic;
   for (const payload of [cyclic, undefined, { apiKey: "not-a-real-key" }, { text: "Bearer not-a-real-token" },
     { toJSON() { f.store.createLingThread({ kind: "conversation", title: "UNEXPECTED", objective: "Side effect" }, now); return {}; } }]) {
     assert.throws(() => f.store.saveConversationPreparedInput({ ...f.input, payload }, now));
@@ -109,7 +120,7 @@ test("insert and deferred commit failures do not leave prepared evidence", async
   assert.ok(f.store.saveConversationPreparedInput(f.input, now).snapshot);
 });
 
-for (const field of ["use", "version", "payload", "fingerprint", "thread", "id", "source"]) {
+for (const field of ["use", "version", "payload", "fingerprint", "thread", "id", "source"] as const) {
   test(`prepared ${field} corruption fails closed on read and rewrite`, async (t) => {
     const f = await fixture(t);
     const saved = f.store.saveConversationPreparedInput(f.input, now).snapshot;
@@ -139,19 +150,21 @@ test("independent SQLite writers converge on one complete snapshot without a fak
       input: { ...f.input, payload: { task: { prompt: label.repeat(10_000) } } } },
   }));
   t.after(() => Promise.all(workers.map((worker) => worker.terminate())));
-  const ready = [];
+  type WorkerOutcome = { value: SaveConversationPreparedInputResult; error?: never } | { value?: never; error: string };
+  const ready: Promise<void>[] = [];
   const outcomes = workers.map((worker) => {
-    let markReady; ready.push(new Promise((resolve) => { markReady = resolve; }));
-    return new Promise((resolve, reject) => {
-      worker.on("message", (message) => message === "ready" ? markReady() : resolve(message));
+    let markReady!: () => void;
+    ready.push(new Promise<void>((resolve) => { markReady = resolve; }));
+    return new Promise<WorkerOutcome>((resolve, reject) => {
+      worker.on("message", (message: "ready" | WorkerOutcome) => message === "ready" ? markReady() : resolve(message));
       worker.on("error", reject);
     });
   });
   await Promise.all(ready); Atomics.store(signal, 0, 1); Atomics.notify(signal, 0);
   const results = await Promise.all(outcomes);
-  assert.ok(results.every((result) => !result.error), JSON.stringify(results));
+  assert.ok(results.every((result) => result.value !== undefined), JSON.stringify(results));
   assert.deepEqual(results[0].value.snapshot, results[1].value.snapshot);
   assert.deepEqual(results.map((result) => result.value.idempotentReplay).sort(), [false, true]);
-  assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_context_snapshots WHERE snapshot_use='normal_conversation_prepared_request'").get().n, 1);
+  assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_context_snapshots WHERE snapshot_use='normal_conversation_prepared_request'").get()?.n, 1);
   assert.equal(f.store.listRuns().length, 0);
 });
