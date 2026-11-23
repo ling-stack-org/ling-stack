@@ -133,15 +133,18 @@ internal class UsbModbusReader(private val context: Context) {
       try {
         port.open(connection)
         port.setParameters(baudRate, 8, stopBits, parityMode)
-        port.purgeHwBuffers(true, true)
-        val frameGapMs = if (baudRate > 19200) 2L
-          else ceil(3.5 * (9 + stopBits + if (parity == "none") 0 else 1) * 1000 / baudRate).toLong()
-        SystemClock.sleep(frameGapMs)
+        val frameGapMs = if (baudRate > 19200) 2
+          else ceil(3.5 * (9 + stopBits + if (parity == "none") 0 else 1) * 1000 / baudRate).toInt()
+        val chunk = ByteArray(512)
+        // Reading through a quiet interval also drains adapters without a hardware purge command.
+        waitForModbusBusIdle(maxOf(20, frameGapMs), SystemClock::elapsedRealtime) { timeout ->
+          check(!session.cancelled.get()) { "usb_operation_cancelled" }
+          port.read(chunk, timeout)
+        }
         check(!session.cancelled.get()) { "usb_operation_cancelled" }
         val sentAtMs = System.currentTimeMillis().toDouble()
         port.write(request, 1_000)
         val reply = ModbusRegisterReply()
-        val chunk = ByteArray(512)
         val deadline = SystemClock.elapsedRealtime() + 2_000
         while (!session.cancelled.get() && !reply.finished && SystemClock.elapsedRealtime() < deadline) {
           try {
@@ -176,6 +179,14 @@ internal class UsbModbusReader(private val context: Context) {
   }
 
   private fun portId(port: UsbSerialPort): String = "${port.driver.device.deviceName}:${port.portNumber}"
+}
+
+internal fun waitForModbusBusIdle(quietMs: Int, elapsedRealtime: () -> Long, read: (Int) -> Int) {
+  val deadline = elapsedRealtime() + 250
+  while (elapsedRealtime() + quietMs <= deadline) {
+    if (read(quietMs) == 0) return
+  }
+  error("usb_target_busy")
 }
 
 internal fun decodeRegisterRead(hex: String): ByteArray {

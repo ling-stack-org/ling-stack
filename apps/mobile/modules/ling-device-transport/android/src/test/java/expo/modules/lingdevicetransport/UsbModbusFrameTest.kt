@@ -1,12 +1,38 @@
 package expo.modules.lingdevicetransport
 
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UsbModbusFrameTest {
+  @Test
+  fun waitsThroughBufferedInputBeforeModbusDispatch() {
+    val reads = ArrayDeque(listOf(3, 4, 0))
+    var now = 0L
+    waitForModbusBusIdle(20, { now }) { timeout ->
+      assertEquals(20, timeout)
+      now += timeout
+      reads.removeFirst()
+    }
+    assertTrue(reads.isEmpty())
+  }
+
+  @Test
+  fun returnsBusyWhenSerialInputDoesNotBecomeQuiet() {
+    var now = 0L
+    val failure = assertThrows(IllegalStateException::class.java) {
+      waitForModbusBusIdle(20, { now }) { timeout ->
+        now += timeout
+        1
+      }
+    }
+    assertEquals("usb_target_busy", failure.message)
+    assertEquals(240L, now)
+  }
+
   @Test
   fun validatesReadRequestBeforeOpeningSerialPort() {
     val request = byteArrayOf(1, 3, 0, 0, 0, 1, 0x84.toByte(), 0x0a)
