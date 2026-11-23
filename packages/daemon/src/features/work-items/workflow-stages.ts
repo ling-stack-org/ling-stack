@@ -58,31 +58,35 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
     status: workflow.status,
     admissionBlocker,
     ...(steps.length > limit ? { nextOffset: offset + limit } : {}),
-    steps: steps.slice(0, limit).map(step => ({
-      stepId: step.id, stageId: step.metadata?.planStageId,
-      title: step.title.slice(0, 250), status: step.status, participantLabel: step.toParticipantLabel.slice(0, 160),
-      dependencyIds: step.metadata?.dependsOnStepIds?.slice(0, 20) ?? [], updatedAt: step.updatedAt,
-      ...(!admissionBlocker && step.status === "queued"
-        ? { admissionBlocker: readStageAdmissionBlocker(store, step) } : {}),
-      ...(includeEvidence || liveReceivers ? { messageReceiver: readStageMessageReceiver(store, step, liveReceivers) } : {}),
-      ...(includeEvidence ? {
-        runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
-        briefBasis: readStageBriefBasis(store, step),
-        decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),
-        handoffs: readStageHandoffs(store, item.id, item.planRevision!, step),
-        ...(binding.retainedStageResults?.length ? {
-          retainedStageResults: binding.retainedStageResults.filter(result => result.targetStepId === step.id),
+    steps: steps.slice(0, limit).map(step => {
+      const canStart = !admissionBlocker && (step.status === "queued" || step.status === "blocked");
+      const retryBudget = includeEvidence || canStart ? store.getWorkItemStageRetryBudget(step) : undefined;
+      return {
+        stepId: step.id, stageId: step.metadata?.planStageId,
+        title: step.title.slice(0, 250), status: step.status, participantLabel: step.toParticipantLabel.slice(0, 160),
+        dependencyIds: step.metadata?.dependsOnStepIds?.slice(0, 20) ?? [], updatedAt: step.updatedAt,
+        ...(canStart ? { admissionBlocker: readStageAdmissionBlocker(store, step, retryBudget?.exhausted) } : {}),
+        ...(includeEvidence || liveReceivers ? { messageReceiver: readStageMessageReceiver(store, step, liveReceivers) } : {}),
+        ...(includeEvidence ? {
+          runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
+          briefBasis: readStageBriefBasis(store, step),
+          ...(retryBudget ? { retryBudget } : {}),
+          decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),
+          handoffs: readStageHandoffs(store, item.id, item.planRevision!, step),
+          ...(binding.retainedStageResults?.length ? {
+            retainedStageResults: binding.retainedStageResults.filter(result => result.targetStepId === step.id),
+          } : {}),
         } : {}),
-      } : {}),
-    })),
+      };
+    }),
   };
 }
 
-function readStageAdmissionBlocker(store: RunStore, step: ChannelWorkflowStep): string | undefined {
+function readStageAdmissionBlocker(store: RunStore, step: ChannelWorkflowStep, retryBudgetExhausted?: boolean): string | undefined {
   const blocker = store.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step);
   if ((!blocker || blocker === "work_item_handoff_pending") && step.metadata?.requiredPlanHandoffStepIds?.length
     && !workflowStepParticipantAvailable(store, step)) return "work_item_handoff_recipient_unavailable";
-  return blocker;
+  return blocker ?? (retryBudgetExhausted ? "work_item_stage_retry_budget_exhausted" : undefined);
 }
 
 function readStageHandoffs(

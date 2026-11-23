@@ -33,7 +33,7 @@ import {
   type WorkItemSourceType,
 } from "../../work-item-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
+import { readNumber, readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { mapWorkItem } from "./runtime-work-mappers.js";
 import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -816,6 +816,41 @@ export class SqliteWorkItemStore {
     const { workItemId, planId, planRevision } = link.binding;
     const selected = readSelectedWorkflowDecision(this.ports, { workItemId, planRevision: `${planId}:${planRevision}`, workflowStepId: step.id });
     return selected && required.options.includes(selected.option) ? selected : undefined;
+  }
+
+  getStageRetryBudget(step: ChannelWorkflowStep, state: SqliteAppServerStateStore):
+    import("@ling-stack/contracts").LingAppServerWorkItemStageRetryBudget | undefined {
+    const stageId = step.metadata?.planStageId;
+    if (!stageId) return undefined;
+    const link = state.get("work_item_workflow", step.workflowId)?.payload as WorkItemWorkflowLink | undefined;
+    const item = link && this.getWorkItem(link.binding.workItemId);
+    if (!item || item.workflowId !== step.workflowId) return undefined;
+
+    // A preparing owner reserves capacity during the interval before Run creation.
+    const counts = this.context.database.prepare(`
+      WITH stage_starts AS (
+        SELECT json_extract(s.metadata_json, '$.planStageId') AS stage_id,
+          (SELECT COUNT(DISTINCT r.task_id) FROM run_sessions r WHERE r.workflow_step_id=s.id) +
+          CASE WHEN s.status='running' AND json_extract(s.metadata_json, '$.startOwner.phase')='preparing'
+            AND NOT EXISTS (SELECT 1 FROM run_sessions r WHERE r.workflow_step_id=s.id AND r.task_id=s.task_id)
+          THEN 1 ELSE 0 END AS attempts
+        FROM app_server_state link
+        JOIN channel_workflow_steps s ON s.workspace_id=link.workspace_id AND s.workflow_id=link.record_id
+        WHERE link.workspace_id=? AND link.kind='work_item_workflow'
+          AND json_extract(link.payload_json, '$.binding.workItemId')=?
+          AND json_type(s.metadata_json, '$.planStageId')='text'
+      ), stage_totals AS (SELECT stage_id, SUM(attempts) AS starts FROM stage_starts GROUP BY stage_id)
+      SELECT COALESCE(MAX(CASE WHEN stage_id=? THEN starts END), 0) AS starts,
+        COALESCE(SUM(MAX(starts-1, 0)), 0) AS retries
+      FROM stage_totals
+    `).get(item.workspaceId, item.id, stageId)!;
+    const starts = readNumber(counts, "starts");
+    const workItemRetriesRemaining = Math.max(0, item.retryBudget - readNumber(counts, "retries"));
+    const policy = step.metadata?.policy;
+    const stageLimit = policy?.retryable === false ? 0 : policy?.maxRetries ?? item.retryBudget;
+    const stageRetriesRemaining = Math.max(0, stageLimit - Math.max(0, starts - 1));
+    return { starts, workItemRetriesRemaining, stageRetriesRemaining,
+      exhausted: starts > 0 && (workItemRetriesRemaining === 0 || stageRetriesRemaining === 0) };
   }
 
   listActiveWorkflowIds(limit: number): readonly string[] {

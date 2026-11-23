@@ -23,7 +23,7 @@ import { workflowParallelAdmissionAllowed } from "./workflow-parallel-parent-gua
 import { workflowIsolationSelectionReady } from "./workflow-isolation-selection.js";
 import type { RuntimeHostCapacityJournal } from "../../runtime-host-capacity-store-bridge.js";
 
-type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "getChannelWorkflowStepStartAdmission" | "createApprovalRequest" | "getWorkItemWorkflowAdmissionBlocker">;
+type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "getChannelWorkflowStepStartAdmission" | "createApprovalRequest" | "getWorkItemWorkflowAdmissionBlocker" | "getWorkItemStageRetryBudget">;
 
 function isNativeProfileBinding(value: unknown): boolean {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -42,6 +42,9 @@ export class SqliteChannelWorkflowStartStore {
       if (!step || !sameExpected(step, input.expected)) return { status: "stale", code: "workflow_start_basis_stale" };
       const workItemBlocker = this.ports.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step);
       if (workItemBlocker) return { status: "invalid", code: workItemBlocker };
+      if (this.ports.getWorkItemStageRetryBudget(step)?.exhausted) {
+        return { status: "invalid", code: "work_item_stage_retry_budget_exhausted" };
+      }
       if (!workflowIsolationSelectionReady(this.context.database, step.workflowId)) {
         return { status: "invalid", code: "workflow_isolation_selection_not_ready" };
       }

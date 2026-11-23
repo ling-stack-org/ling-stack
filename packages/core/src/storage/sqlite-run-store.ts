@@ -6233,6 +6233,11 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState, step);
   }
 
+  getWorkItemStageRetryBudget(step: ChannelWorkflowStep) {
+    if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
+    return this.workItems.getStageRetryBudget(step, this.appServerState);
+  }
+
   getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep) {
     return this.workItems.getWorkflowStepDecision(step, this.appServerState);
   }

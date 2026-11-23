@@ -44,6 +44,7 @@
 - 操作方通过 SDK 为已绑定工作项的活跃 Pi 阶段签发 Run/Attempt grant。持有该 grant 的阶段客户端可以发问、作为指定答复方回答、发送定向消息并读取自己的协作回执。Daemon 在 SQLite 写事务核对当前归属。两个并行 Pi 阶段的联合回归验证问答和消息分别进入目标 Attempt 的下一次 Provider 请求，投递回执可在重启后读取，阶段结束后授权失效。 [App Server 验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 - `workItem/create` 可按原生 ID 显式挂接现有频道 Task 或 AutomationRun。Host 从原执行记录确认归属和状态。并发提交及重启仍读取同一条 Work Item；原执行所有者持有开始、取消和恢复权限。验收中先运行一次 Automation，再从两个客户端挂接同一执行，Provider 总调用数为一次。
 - 频道 Turn 可以按工作项 ID 和已观察版本提交普通补充。HTTP 和 SSE 使用同一份消息及证据回执。定向回归核对跨频道拒绝、过期版本回滚、同键并发提交、Work Item 事件和零 Run 派发。接受的计划仍通过协调入口处理阶段投递和需求变更。
+- Work Item 下的 Workflow 按稳定阶段 ID 累计实际启动记录，在启动事务中检查工作项与阶段的重试额度。阶段读取返回已启动次数和剩余额度。回归使用原生 Run 历史验证耗尽后的重启仍拒绝重试，同时允许独立阶段首次运行。
 - Host 注册频道 Task 和 Automation 定义的接单策略后，同一事务保存原生执行、策略回执和适用的 Work Item。HTTP、App Server 和 MCP 使用同一份回执，建议由原 Task 或 Automation 所有者派发。联合回归通过 HTTP 和 SDK 并发确认一次调度建议，重启后执行原 AutomationRun 一次，并从 Work Item 订阅读取 Task 的实际派发状态。免打扰、并发、启动额度和暂停原因保存在原回执。显式复核复用原生执行 ID。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。
 
@@ -79,7 +80,7 @@ Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI std
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入。专用 TLS 监听器实测分离控制和答复权限，支持用户答复原回执与撤权。审批和答复仍需在其他宿主和实际远程部署验收。目标游标已绑定存储代次、授权代次和目标，本机兼容用例覆盖上一版源码与候选组合。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
 | F1、F2 | 普通会话 Handoff 的候选封存、Goal 预算承接与接手已接入。CLI `app-server codex-host --thread <id> --state <file> --view` 在回环地址提供双端会话视图。本机 Codex 0.171.0-alpha.13、实际 Ling Daemon 与受控 Provider 联调验证两端状态、Ling 在途排队、活跃 Codex Turn 指导、浏览器重连补齐、回执重放和审批提醒。故障回归覆盖原状态库升级、未写出的请求在重连后补投一次，以及已发出但缺少有效回执时保留待确认结果。跨 Workflow Agent 的预算承接仍待验收。 |
-| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端按 Run/Attempt 授权收发并读取回执，Pi 在下一次模型输入接收消息和问答。还需 Device Fabric 桥接与反馈、承接尚未收敛的独立阶段、Runner 自动挂载问答工具、计划前和在途审议、跨 Run 预算与完整 O9 联合验收。 |
+| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端按 Run/Attempt 授权收发并读取回执，Pi 在下一次模型输入接收消息和问答。Workflow 执行使用工作项重试上限。还需 Device Fabric 桥接与反馈、承接尚未收敛的独立阶段、Runner 自动挂载问答工具、计划前和在途审议、跨 Run 用量和停滞证据及完整 O9 联合验收。 |
 | G | 独立恢复日志已验证 SQLite 快照恢复、撤权、旧游标失效和 GitHub 对账后派发。上一版源码通过同一套本地兼容验收。签名安装产物、实际远程 WSS、带独立检查 App 的 Ling 主动入队及三个真实 Provider 自研试点仍需对应环境的证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
 
 ## 目标与开工顺序

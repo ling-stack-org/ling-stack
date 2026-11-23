@@ -778,6 +778,7 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly participantLabel: string;
     readonly dependencyIds: readonly string[];
     readonly admissionBlocker?: string;
+    readonly retryBudget?: LingAppServerWorkItemStageRetryBudget;
     readonly updatedAt: string;
     readonly runId?: string;
     readonly outputArtifactId?: string;
@@ -791,6 +792,13 @@ export interface LingAppServerWorkItemWorkflowStages {
       readonly committedAt: string;
     };
   }[];
+}
+
+export interface LingAppServerWorkItemStageRetryBudget {
+  readonly starts: number;
+  readonly stageRetriesRemaining: number;
+  readonly workItemRetriesRemaining: number;
+  readonly exhausted: boolean;
 }
 
 export interface LingAppServerWorkItemControlResult extends LingAppServerWorkItemResult {

@@ -3259,7 +3259,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.deepEqual(replayedMessage.record.payload, delivered?.payload);
 });
 
-async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false) {
+async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false, retryBudget?: number) {
   const fixture = await releaseFixture(t);
   const store = fixture.getStore();
   const now = new Date().toISOString();
@@ -3293,7 +3293,7 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
     } }, now));
   }
   const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "question-deadline", title: "Review",
-    channelId: channel.id, initialStatus: "ready" }, now);
+    channelId: channel.id, initialStatus: "ready", retryBudget }, now);
   const claim = await client.call<LingAppServerWorkItemAcceptResult>("workItem/accept", {
     workItemId: item.id, expectedWorkItemRevision: item.revision, idempotencyKey: "accept-question-deadline",
   });
@@ -3304,6 +3304,47 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
   assert.ok(workItem.planRevision);
   return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent };
 }
+
+test("the Work Item retry budget uses owned Run history after restart and admits a sibling's first start", { timeout: 20_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Independent contract verified." }));
+  t.after(() => provider.close());
+  const { fixture, store, client, item, waiting, respondent } = await stageQuestionWorkflow(t, provider.baseUrl, false, 1);
+  const now = new Date().toISOString();
+  for (const sequence of [1, 2]) {
+    const task = store.createTask({ channelId: waiting.channelId, title: waiting.title, prompt: waiting.prompt,
+      assigneeTeammateId: waiting.toParticipantId }, now);
+    const run = store.createRun({
+      id: `historical-stage-run-${sequence}`, cwd: fixture.cwd, taskId: task.id, channelId: waiting.channelId,
+      teammateId: waiting.toParticipantId, workflowStepId: waiting.id, providerName: "fixture",
+      providerModel: "static-tools", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now,
+    });
+    assert.ok(store.transitionRunStatus({ runId: run.id, event: "runner_failed", actor: "system", endedAt: now, now }).ok);
+  }
+  const read = async (connection = client) => connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
+  const budget = (await read()).workflow?.steps.find(step => step.stepId === waiting.id);
+  assert.equal(budget?.admissionBlocker, "work_item_stage_retry_budget_exhausted");
+  assert.deepEqual(budget.retryBudget, { starts: 2, stageRetriesRemaining: 0, workItemRetriesRemaining: 0, exhausted: true });
+  await fixture.restart();
+  const current = fixture.getStore();
+  const restored = await fixture.connect();
+  assert.deepEqual((await read(restored)).workflow?.steps.find(step => step.stepId === waiting.id)?.retryBudget, budget.retryBudget);
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const start = (stepId: string) => {
+    const address = new URL(`/workflow-steps/${stepId}/start`, daemonUrl);
+    address.searchParams.set("cwd", fixture.cwd);
+    return fetch(address, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
+  };
+  const blocked = await start(waiting.id);
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json()).error, "work_item_stage_retry_budget_exhausted");
+  const independent = await start(respondent.id);
+  assert.ok(independent.ok, await independent.clone().text());
+  await independent.text();
+  await waitFor(() => current.getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(provider.requests.length, 1);
+  assert.equal(current.listRuns({ workflowStepId: waiting.id }).length, 2);
+});
 
 test("a reply at a stage question deadline is durable history and does not release the waiting step", { timeout: 15_000 }, async t => {
   const { fixture, store, client, item, workItem, workflowId, waiting, respondent } = await stageQuestionWorkflow(t);

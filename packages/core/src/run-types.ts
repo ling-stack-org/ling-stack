@@ -2717,6 +2717,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
     readonly event?: ControlPlaneEvent;
   };
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep): string | undefined;
+  getWorkItemStageRetryBudget(step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkItemStageRetryBudget | undefined;
   getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep): { readonly id: string; readonly option: string } | undefined;
   listActiveWorkItemWorkflowIds(limit: number): readonly string[];
   applyWorkItemPlanChange(input: import("./work-item-types.js").WorkItemPlanChangeInput, now: string,

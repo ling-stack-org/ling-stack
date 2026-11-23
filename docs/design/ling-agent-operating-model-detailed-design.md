@@ -307,6 +307,13 @@ Resolve observations against a stable Work Item, affected stage or dependency, a
 
 Evaluate newly committed outcomes and eligible continuation checkpoints under the existing Goal and Workflow limits. Charge elapsed and model/tool usage to the accepted Work Item/Goal and its policy. An automatic continuation is counted once at owner admission and reconciled once with its resulting evidence delta. Re-observing it, restarting the daemon, or switching an Attempt, participant or adapter retains the relevant counters, spend and deadline. For Goals, apply the configured `maxContinuations` and `maxNoEvidenceContinuations` and their existing budget rules. Work Items without a Goal use the accepted Workflow retry bounds and Work Item budget. An unbounded or unspecified retry policy requires explicit follow-up.
 
+The Workflow start owner uses the Work Item retry budget and any stricter
+stage policy when admitting a new stage start. It groups starts by the stable
+stage ID across the Work Item's bound Workflows and counts each owned Task
+once. A preparing start reserves a slot before its Run is committed. A
+stage's first start leaves the shared retry allowance available. The stage
+read exposes starts and remaining stage and Work Item retry allowances.
+
 When the next automatic step exceeds the allowance, or the blocker needs a user decision, policy repair or effect reconciliation, park that automatic path with a typed reason, affected criteria, last verified delta, remaining budget and recovery owner. Keep independent eligible work under its own gates. Resume through a current evidence delta or an authorized continuation or Plan change, within the owner's current authority and remaining limits. Pausing automation preserves open questions, write leases and effect receipts for their owning lifecycles.
 
 [Goal supervision](../../packages/core/src/goal-supervision.ts) · [Execution loop detector](../../packages/daemon/src/features/runs/execution-loop-detector.ts)

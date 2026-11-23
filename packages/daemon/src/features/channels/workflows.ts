@@ -749,6 +749,10 @@ export async function prepareWorkflowStepStart(
   if (workItemBlocker) {
     return { kind: "error", statusCode: 409, code: workItemBlocker, message: "The Work Item cannot start a Workflow step." };
   }
+  if (store.getWorkItemStageRetryBudget(step)?.exhausted) {
+    return { kind: "error", statusCode: 409, code: "work_item_stage_retry_budget_exhausted",
+      message: "The Workflow stage or Work Item has no retry capacity remaining." };
+  }
   const needsHandoff = Boolean(step.metadata?.requiredPlanHandoffStepIds?.length);
   const unavailableHandoffRecipient = {
     kind: "error", statusCode: 409, code: "work_item_handoff_recipient_unavailable",
