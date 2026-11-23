@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -390,6 +390,7 @@ function repositoryFixture(t: TestContext) {
   copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
   copyFileSync(new URL("./secret-scan.mjs", import.meta.url), join(root, "scripts/ci/secret-scan.mjs"));
+  copyFileSync(new URL("./workflow-scope.mjs", import.meta.url), join(root, "scripts/ci/workflow-scope.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
   copyFileSync(new URL("../release/desktop-release.mjs", import.meta.url), join(root, "scripts/release/desktop-release.mjs"));
   copyFileSync(new URL("./package-validation-scope.mjs", import.meta.url), join(root, "scripts/ci/package-validation-scope.mjs"));
@@ -441,6 +442,59 @@ test("only a verified documentation history can skip the common job and merge ga
   const reverted = repo.classify(base);
   assert.equal(reverted.mode, "docs");
   assert.equal(reverted.documentationOnly, false);
+});
+
+test("catalog App SHA updates select Common and retain the full fallback for workflow changes", t => {
+  const repo = repositoryFixture(t);
+  const first = ".github/workflows/sync-translation-catalogs.yml";
+  const second = ".github/workflows/translate-pr-catalogs.yml";
+  const baseline = new Map([first, second].map(file => [file, readFileSync(new URL("../../" + file, import.meta.url), "utf8")]));
+  const update = (source: string) => source.replace(/(uses: actions\/create-github-app-token@)[a-f0-9]{40}(?: # v\d+\.\d+\.\d+)?/u,
+    (_, prefix) => prefix + "3".repeat(40) + " # v3.99.0");
+  for (const [file, source] of baseline) repo.write(file, source);
+  const base = repo.commit();
+  for (const [file, source] of baseline) repo.write(file, update(source));
+  repo.commit();
+
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.documentationOnly, undefined);
+  assert.deepEqual(scope.files, [first, second]);
+  assert.deepEqual(scope.packages, []);
+  assert.deepEqual(scope.testPackages, []);
+  assert.deepEqual(scope.typecheckPackages, []);
+  assert.deepEqual(scope.daemonPlatforms, []);
+  assert.equal(scope.dependencyPolicy, false);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.macosNative, false);
+  assert.match(scope.reason, /catalog App action pin update/u);
+  assert.equal(repo.classify(base, "--force-full=true").mode, "full");
+  assert.equal(classify([first, second]).mode, "full");
+
+  const pinUpdate = repo.git("rev-parse", "HEAD");
+  const updated = update(baseline.get(second)!);
+  for (const different of [
+    updated.replace("permission-contents: write", "permission-contents: read"),
+    updated.replace("contents: read", "contents: write"),
+    updated.replace("pull_request:", "pull_request_target:"),
+    updated.replace("actions/create-github-app-token@", "fork/create-github-app-token@"),
+    updated.replace(/3{40} # v3\.99\.0/u, "v3"),
+    baseline.get(second)!.replace(/# v\d+\.\d+\.\d+/u, "# v3.99.0"),
+  ]) {
+    repo.write(second, different);
+    repo.commit();
+    assert.equal(repo.classify(base).mode, "full");
+  }
+
+  repo.write(second, updated);
+  repo.write("packages/core/src/probe.ts", "export {};\n");
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+
+  repo.git("rm", "--", "packages/core/src/probe.ts", second);
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+  assert.equal(repo.classify(pinUpdate).mode, "full");
 });
 
 test("new standard workspace packages select their own CI even with an isolated lock importer", t => {
