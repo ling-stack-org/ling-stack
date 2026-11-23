@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { ConversationItemStoreError } from "../dist/conversation-item-store-types.js";
+import type { ConversationAssistantMessagePayloadV1, ConversationUserMessagePayloadV1 } from "@ling-stack/contracts";
+import { ConversationItemStoreError, type AppendConversationItemInput } from "../dist/conversation-item-store-types.js";
 import { SqliteConversationItemStore } from "../dist/storage/sqlite/conversation-item-store.js";
 
 const now = "2026-08-09T12:00:00.000Z";
@@ -16,7 +17,8 @@ test("ConversationItemStore allocates monotonic sequences and replays idempotent
     assert.equal(first.sequence, 1);
     assert.deepEqual(replay, first);
     assert.equal(second.sequence, 2);
-    assert.equal(database.prepare("SELECT next_item_sequence FROM ling_threads WHERE id = 'thread-1'").get().next_item_sequence, 3);
+    const thread = database.prepare("SELECT next_item_sequence FROM ling_threads WHERE id = 'thread-1'").get();
+    assert.equal(thread?.next_item_sequence, 3);
   } finally {
     database.close();
   }
@@ -67,12 +69,12 @@ test("ConversationItemStore updates only the expected pending revision and then 
       actorType: "ling_agent",
       actorId: "ling-agent",
       visibility: "channel",
-      payload: {
+      payload: legacyAssistantPayload({
         body: "",
         format: "markdown",
         streaming: true,
         deliveryStatus: "pending",
-      },
+      }),
       idempotencyKey: "assistant-1",
     }, now);
     assert.throws(
@@ -85,12 +87,12 @@ test("ConversationItemStore updates only the expected pending revision and then 
     const committed = store.updatePendingConversationItem(pending.id, {
       expectedRevision: 0,
       status: "committed",
-      payload: {
+      payload: legacyAssistantPayload({
         body: "Completed response.",
         format: "markdown",
         streaming: false,
         deliveryStatus: "ready",
-      },
+      }),
     }, later);
     assert.equal(committed.revision, 1);
     assert.equal(committed.status, "committed");
@@ -120,12 +122,12 @@ test("ConversationItemStore lists the complete effective committed turn without 
       actorType: "ling_agent",
       actorId: "ling-agent",
       visibility: "channel",
-      payload: {
+      payload: legacyAssistantPayload({
         body: "First answer.",
         format: "markdown",
         streaming: false,
         deliveryStatus: "ready",
-      },
+      }),
       idempotencyKey: "turn-assistant",
     }, now);
     const replacement = store.appendConversationItem({
@@ -137,12 +139,12 @@ test("ConversationItemStore lists the complete effective committed turn without 
       actorType: "ling_agent",
       actorId: "ling-agent",
       visibility: "channel",
-      payload: {
+      payload: legacyAssistantPayload({
         body: "Corrected answer.",
         format: "markdown",
         streaming: false,
         deliveryStatus: "ready",
-      },
+      }),
       supersedesItemId: assistant.id,
       idempotencyKey: "turn-assistant-corrected",
     }, later);
@@ -155,12 +157,12 @@ test("ConversationItemStore lists the complete effective committed turn without 
       actorType: "ling_agent",
       actorId: "ling-agent",
       visibility: "channel",
-      payload: {
+      payload: legacyAssistantPayload({
         body: "Pending answer.",
         format: "markdown",
         streaming: true,
         deliveryStatus: "pending",
-      },
+      }),
       idempotencyKey: "turn-assistant-pending",
     }, later);
 
@@ -321,7 +323,9 @@ function createStore() {
   return { database, store: new SqliteConversationItemStore({ database }) };
 }
 
-function userInput(overrides = {}) {
+type UserItemInput = AppendConversationItemInput<"user_message">;
+
+function userInput(overrides: Partial<UserItemInput> = {}): UserItemInput {
   return {
     channelId: "channel-1",
     threadId: "thread-1",
@@ -334,7 +338,7 @@ function userInput(overrides = {}) {
   };
 }
 
-function userPayload() {
+function userPayload(): ConversationUserMessagePayloadV1 {
   return {
     body: "Start the work.",
     format: "plain_text",
@@ -343,4 +347,9 @@ function userPayload() {
     linkPreviewIds: [],
     fileRefs: [],
   };
+}
+
+function legacyAssistantPayload(payload: Omit<ConversationAssistantMessagePayloadV1, "presentationRole">): ConversationAssistantMessagePayloadV1 {
+  // The store accepts older assistant payloads with the presentation role omitted.
+  return payload as ConversationAssistantMessagePayloadV1;
 }
