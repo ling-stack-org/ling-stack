@@ -10,17 +10,16 @@ import java.util.concurrent.ConcurrentHashMap
 
 class LingDeviceTransportModule : Module() {
   private val sessions = ConcurrentHashMap<String, PinnedSshSession>()
-  private val usbModbus = lazy { UsbModbusReader(checkNotNull(appContext.reactContext)) }
+  private val usbHost = lazy { UsbHostPermission(checkNotNull(appContext.reactContext)) }
+  private val usbModbus = lazy { UsbModbusReader(usbHost.value) }
+  private val usbAndroid = lazy { UsbAndroidPackages(usbHost.value) }
 
   override fun definition() = ModuleDefinition {
     Name("LingDeviceTransport")
 
     AsyncFunction("inspectAndroidApk") { fileUri: String ->
-      val root = File(appContext.persistentFilesDirectory, "device-artifacts").canonicalFile
-      val file = File(URI.create(fileUri)).canonicalFile
-      require(file.path.startsWith(root.path + File.separator) && file.isFile) { "apk_archive_path_invalid" }
       val context = checkNotNull(appContext.reactContext)
-      AndroidApkArchive.inspect(context.packageManager, file)
+      AndroidApkArchive.inspect(context.packageManager, requirePrivateApk(fileUri))
     }
 
     Function("reserve") {
@@ -56,12 +55,45 @@ class LingDeviceTransportModule : Module() {
 
     Function("releaseUsbModbusPort") { id: String -> usbModbus.value.release(id) }
 
+    AsyncFunction("listUsbAndroidTargets") { usbAndroid.value.list() }
+
+    AsyncFunction("authorizeUsbAndroidTarget") Coroutine { id: String, vendorId: Int, productId: Int ->
+      usbAndroid.value.authorize(id, vendorId, productId)
+    }
+
+    Function("reserveUsbAndroidTarget") { id: String, vendorId: Int, productId: Int ->
+      usbAndroid.value.reserve(id, vendorId, productId)
+    }
+
+    AsyncFunction("connectUsbAndroidTarget") { id: String -> usbAndroid.value.connect(id) }
+
+    AsyncFunction("installUsbAndroidApk") { id: String, uri: String, digest: String ->
+      usbAndroid.value.install(id, requirePrivateApk(uri, sealed = true), digest)
+    }
+
+    AsyncFunction("readUsbAndroidInstalledPackage") { id: String, packageId: String ->
+      usbAndroid.value.readPackage(id, packageId)
+    }
+
+    Function("releaseUsbAndroidTarget") { id: String -> usbAndroid.value.release(id) }
+
     OnDestroy {
       for (session in sessions.values) session.close()
       sessions.clear()
       if (usbModbus.isInitialized()) usbModbus.value.close()
+      if (usbAndroid.isInitialized()) usbAndroid.value.close()
     }
   }
 
   private fun requireSession(id: String): PinnedSshSession = sessions[id] ?: error("ssh_session_closed")
+
+  private fun requirePrivateApk(fileUri: String, sealed: Boolean = false): File {
+    val root = File(appContext.persistentFilesDirectory, "device-artifacts").canonicalFile
+    val file = File(URI.create(fileUri)).canonicalFile
+    require(file.path.startsWith(root.path + File.separator) && file.isFile) { "apk_archive_path_invalid" }
+    if (sealed) {
+      require(file.parentFile?.name == "verified" && file.parentFile?.parentFile?.parentFile == root) { "apk_archive_path_invalid" }
+    }
+    return file
+  }
 }

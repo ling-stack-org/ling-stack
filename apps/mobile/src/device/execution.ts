@@ -497,9 +497,15 @@ export class MobileDeviceExecution {
     const recovered: MobileAttemptRecord[] = [];
     for (const task of await this.#journal.listTasks()) {
       if (task.ownerKind !== "mobile" || task.ownerId !== this.#ownerId || this.#active.has(task.id)) continue;
+      const attempts = await this.#journal.listAttempts(task.id);
+      if (task.status === "executing" && task.currentActionId && !attempts.some(record => record.attempt.actionId === task.currentActionId)) {
+        // The owner records dispatch intent before calling the transport.
+        await this.#journal.saveTask({ ...task, status: "cancelled", updatedAt: this.#now() });
+        continue;
+      }
       let interrupted = task.status === "executing" || task.status === "verifying";
       let reconciled: DeviceTaskReconciliationV1 | undefined;
-      for (const record of await this.#journal.listAttempts(task.id)) {
+      for (const record of attempts) {
         if (task.status === "unknown" && record.attempt.actionId === task.currentActionId
           && record.attempt.ownerKind === task.ownerKind && record.attempt.ownerId === task.ownerId
           && task.targetDeviceIds.includes(record.attempt.targetDeviceId)) {

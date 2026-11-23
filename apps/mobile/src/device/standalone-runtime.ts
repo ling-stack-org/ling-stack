@@ -21,6 +21,8 @@ import {
   encodeUsbModbusRequest, prepareUsbModbusDiagnosis, replayUsbModbusObservation, usbModbusPlaybookId,
   type UsbModbusBridge, type UsbModbusPort, type UsbModbusReplay, type UsbModbusSession, type UsbModbusSettings,
 } from "./usb-modbus.ts";
+import { createPhoneUsbAndroidRuntime, readUsbAndroidDiagnosis, readUsbAndroidInstall } from "./usb-android-runtime.ts";
+import type { UsbAndroidBridge } from "./usb-android.ts";
 
 const ownerKey = "ling:standalone-device-owner:v1";
 const homeAssistantPlaybookId = "home-assistant-offline-diagnosis@1.0.0";
@@ -65,6 +67,7 @@ export async function createStandaloneDeviceRuntime(options: {
   readonly fetch: HomeAssistantFetch;
   readonly openLinuxSsh?: OpenLinuxSshConnection;
   readonly usbModbus?: UsbModbusBridge;
+  readonly usbAndroid?: UsbAndroidBridge;
   readonly openArtifactFile?: OpenPhoneTaskArtifactFile;
   readonly now?: () => string;
 }) {
@@ -88,7 +91,16 @@ export async function createStandaloneDeviceRuntime(options: {
   }) : undefined;
   let targetWrites = Promise.resolve();
   const linuxTargetsKey = "ling:standalone-linux-targets:v1:" + ownerId;
-  const activeLocalReads = new Set<AbortController>();
+  const activeLocalOperations = new Set<AbortController>();
+  const usbAndroid = options.usbAndroid && options.openArtifactFile && artifacts ? createPhoneUsbAndroidRuntime({
+    bridge: options.usbAndroid, ownerId, policyRevision, now, randomId: options.randomId, journal, execution,
+    openFile: options.openArtifactFile, listSaved: artifacts.listSaved, readProjection, foregroundOperations: activeLocalOperations,
+    async waitForForeground() {
+      const expectedRecovery = recovery;
+      await expectedRecovery;
+      if (!foreground || expectedRecovery !== recovery) throw new Error("usb_android_backgrounded");
+    },
+  }) : undefined;
 
   async function projectHomeRun(evidence: MobileTaskEvidence): Promise<PhoneHomeAssistantRun | undefined> {
     const run = projectHomeAssistantRun(evidence);
@@ -102,12 +114,13 @@ export async function createStandaloneDeviceRuntime(options: {
     artifacts,
     linuxSshAvailable: options.openLinuxSsh !== undefined,
     usbModbusAvailable: options.usbModbus !== undefined,
+    usbAndroid,
     setForeground(active: boolean): Promise<void> {
       if (active === foreground) return recovery;
       foreground = active;
       execution.setForeground(active);
       if (active) recovery = recovery.catch(() => undefined).then(async () => { await execution.recoverAfterResume(); });
-      else for (const operation of activeLocalReads) operation.abort();
+      else for (const operation of activeLocalOperations) operation.abort();
       return recovery;
     },
 
@@ -248,7 +261,7 @@ export async function createStandaloneDeviceRuntime(options: {
       await expectedRecovery;
       const controller = new AbortController();
       const cancel = () => controller.abort();
-      activeLocalReads.add(controller);
+      activeLocalOperations.add(controller);
       input.signal?.addEventListener("abort", cancel, { once: true });
       try {
         const taskId = await options.randomId("device_task");
@@ -279,7 +292,7 @@ export async function createStandaloneDeviceRuntime(options: {
         }
         return run;
       } finally {
-        activeLocalReads.delete(controller);
+        activeLocalOperations.delete(controller);
         input.signal?.removeEventListener("abort", cancel);
       }
     },
@@ -321,7 +334,7 @@ export async function createStandaloneDeviceRuntime(options: {
         session?.close();
         session = undefined;
       };
-      activeLocalReads.add(controller);
+      activeLocalOperations.add(controller);
       input.signal?.addEventListener("abort", cancel, { once: true });
       controller.signal.addEventListener("abort", close, { once: true });
       try {
@@ -346,7 +359,7 @@ export async function createStandaloneDeviceRuntime(options: {
         if (!run) throw new Error("usb_task_evidence_missing");
         return run;
       } finally {
-        activeLocalReads.delete(controller);
+        activeLocalOperations.delete(controller);
         input.signal?.removeEventListener("abort", cancel);
         controller.signal.removeEventListener("abort", close);
         close();
@@ -362,6 +375,7 @@ export async function createStandaloneDeviceRuntime(options: {
       await recovery;
       return readUsbModbusAttempt(await journal.readTaskEvidence(taskId))?.replay;
     },
+
   };
 }
 
@@ -484,7 +498,8 @@ function projectPhoneTask(evidence: MobileTaskEvidence, ownerId: string): Remote
   const [targetDeviceId] = task.targetDeviceIds;
   const linux = readLinuxSshAttempt(evidence);
   const home = readHomeAssistantAttempt(evidence);
-  const record = linux?.record ?? home?.record ?? readUsbModbusAttempt(evidence)?.record;
+  const record = linux?.record ?? home?.record ?? readUsbModbusAttempt(evidence)?.record
+    ?? readUsbAndroidDiagnosis(evidence)?.record ?? readUsbAndroidInstall(evidence)?.record;
   if (!record) return undefined;
   const { request, attempt } = record;
   if (!attempt.connectionRevision || attempt.ownerKind !== "mobile" || attempt.ownerId !== ownerId

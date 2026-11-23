@@ -511,6 +511,34 @@ installation has its own approval and readback evidence.
 [Offer service](../../packages/daemon/src/features/remote-access/phone-task-artifacts.ts)
 [Mobile verification](../../apps/mobile/src/device/phone-task-artifacts.ts)
 
+### Phone-owned USB ADB APK deployment
+
+On Android, open **手机设备诊断 → Android USB** and connect the target with a
+data-capable USB cable. Ling lists USB Host interfaces that expose the ADB bulk
+transport. The operator grants the Android USB permission and accepts Ling's
+ADB host key on the target. Ling records the target's hardware serial, model,
+Android release, build fingerprint and connection revision before showing an
+installation action.
+
+The APK can come from the phone's file picker or from an accepted paired-PC
+artifact. The phone checks the sealed file's size and SHA-256, package ID,
+decimal version code and signer certificate fingerprints. A paired artifact
+also has to match the current phone-task projection and target binding. The
+install action is a mutating developer operation. The phone requires an
+explicit confirmation, binds the action to the current USB target and sends
+the APK through the native ADB transport.
+
+After `pm install` returns, the phone reads the selected package with
+`pm path`, `dumpsys package` and a base-APK digest where the target exposes it.
+The task is verified only when package ID, version code and installed digest
+match the approved APK. A lost response leaves the task `unknown`. Reconnect
+the same target and choose **回读这次安装结果** to settle the original attempt
+from a fresh package and digest readback. A different USB device, changed serial,
+changed build fingerprint, expired approval or a backgrounded app stops the
+operation without a second install.
+[Mobile USB ADB runtime](../../apps/mobile/src/device/usb-android-runtime.ts)
+[Native ADB transport](../../apps/mobile/modules/ling-device-transport/android/src/main/java/expo/modules/lingdevicetransport/UsbAndroidPackages.kt)
+
 ### Build an APK on the assisting PC
 
 Provide the absolute path to a host-owned build configuration through

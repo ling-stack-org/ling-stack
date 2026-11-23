@@ -1,6 +1,7 @@
 import { requireOptionalNativeModule } from "expo";
 import type { AndroidApkIdentityV1, LinuxSshReadOperation, LinuxSshReadResult } from "@ling-stack/contracts";
 import type { UsbModbusPort, UsbModbusTransfer } from "../../src/device/usb-modbus";
+import type { UsbAndroidDevice, UsbAndroidIdentity, UsbAndroidPackage } from "../../src/device/usb-android";
 export type { LinuxSshReadOperation } from "@ling-stack/contracts";
 
 interface LingDeviceTransportNativeModule {
@@ -20,6 +21,13 @@ interface LingDeviceTransportNativeModule {
     sessionId: string, baudRate: number, parity: string, stopBits: number, requestHex: string,
   ): Promise<UsbModbusTransfer>;
   releaseUsbModbusPort?(sessionId: string): void;
+  listUsbAndroidTargets?(): Promise<readonly UsbAndroidDevice[]>;
+  authorizeUsbAndroidTarget?(portId: string, vendorId: number, productId: number): Promise<void>;
+  reserveUsbAndroidTarget?(portId: string, vendorId: number, productId: number): string;
+  connectUsbAndroidTarget?(sessionId: string): Promise<UsbAndroidIdentity>;
+  installUsbAndroidApk?(sessionId: string, uri: string, digest: string): Promise<boolean>;
+  readUsbAndroidInstalledPackage?(sessionId: string, packageId: string): Promise<UsbAndroidPackage>;
+  releaseUsbAndroidTarget?(sessionId: string): void;
 }
 
 export const lingDeviceTransport = requireOptionalNativeModule<LingDeviceTransportNativeModule>("LingDeviceTransport");

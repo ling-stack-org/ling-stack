@@ -9,6 +9,7 @@ import type { PhoneHomeAssistantRun, PhoneLinuxSshRun, StandaloneDeviceRuntime }
 import type { MobileThemeTokens } from "../../theme/mobile-theme";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
 import { PhoneTaskCollaborationPanel } from "./PhoneTaskCollaborationPanel";
+import { UsbAndroidPanel } from "./UsbAndroidPanel";
 import { UsbModbusPanel } from "./UsbModbusPanel";
 
 type HomeAssistantScreenOperation =
@@ -19,7 +20,7 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
   const state = useStandaloneDeviceRuntime();
   const { theme } = useMobileTheme();
   const styles = createStyles(theme);
-  const [selected, setSelected] = useState<"home" | "linux" | "modbus">("home");
+  const [selected, setSelected] = useState<"home" | "linux" | "modbus" | "android">("home");
   const [origin, setOrigin] = useState("");
   const [entityId, setEntityId] = useState("");
   const [token, setToken] = useState("");
@@ -102,8 +103,12 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
   };
 
   const runtime = state.status === "ready" ? state.runtime : undefined;
-  const tabs = ([["home", "Home Assistant"], ["linux", "Linux SSH"], ["modbus", "USB Modbus"]] as const)
-    .filter(([id]) => id === "home" || (id === "linux" ? runtime?.linuxSshAvailable : runtime?.usbModbusAvailable));
+  const tabs = [
+    ["home", "Home Assistant", true],
+    ["linux", "Linux SSH", runtime?.linuxSshAvailable],
+    ["modbus", "USB Modbus", runtime?.usbModbusAvailable],
+    ["android", "Android USB", runtime?.usbAndroid !== undefined],
+  ] as const;
   return (
     <SafeAreaView edges={onClose ? ["top", "bottom"] : ["bottom"]} style={styles.screen}>
       {onClose ? (
@@ -113,9 +118,9 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
         </View>
       ) : null}
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {tabs.length > 1 ? (
+        {tabs.some(([id, , available]) => id !== "home" && available) ? (
           <View style={styles.selector}>
-            {tabs.map(([id, label]) => (
+            {tabs.filter(([, , available]) => available).map(([id, label]) => (
               <Pressable key={id} accessibilityRole="button" accessibilityState={{ selected: selected === id }}
                 disabled={!!running} onPress={() => setSelected(id)} style={[styles.option, selected === id && styles.selectedOption]}>
                 <Text style={styles.label}>{label}</Text>
@@ -123,7 +128,10 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
             ))}
           </View>
         ) : null}
-        {selected === "modbus" && runtime?.usbModbusAvailable ? (
+        {selected === "android" && runtime?.usbAndroid ? (
+          <UsbAndroidPanel runtime={runtime} android={runtime.usbAndroid} styles={styles}
+            renderTrace={taskId => <DeviceTraceShareButton runtime={runtime} taskId={taskId} styles={styles} />} />
+        ) : selected === "modbus" && runtime?.usbModbusAvailable ? (
           <UsbModbusPanel runtime={runtime} styles={styles} renderTaskActions={run => <>
             <DeviceTraceShareButton runtime={runtime} taskId={run.taskId} styles={styles} />
             <PhoneTaskCollaborationPanel runtime={runtime} taskId={run.taskId} updatedAt={run.updatedAt} styles={styles} />

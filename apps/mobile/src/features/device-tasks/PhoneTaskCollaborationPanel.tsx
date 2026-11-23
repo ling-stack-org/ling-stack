@@ -12,6 +12,7 @@ type PanelProps = {
   readonly runtime: StandaloneDeviceRuntime;
   readonly taskId: string;
   readonly updatedAt: string;
+  readonly selectApk?: (fileId: string) => void;
   readonly styles: {
     readonly shareButton: ViewStyle;
     readonly row: ViewStyle;
@@ -37,8 +38,8 @@ export function PhoneTaskCollaborationPanel(props: PanelProps) {
     {peer ? <ConnectedCollaborationPanel key={peer.scope} {...props} peer={peer}
       artifactPeer={remoteState.policy?.capabilities.includes("device.artifact") ? client : undefined}
       refreshSaved={refreshSaved} /> : null}
-    {props.runtime.artifacts ? <SavedPhoneTaskArtifacts taskId={props.taskId} refresh={savedRevision}
-      artifacts={props.runtime.artifacts} styles={props.styles} /> : null}
+    {props.runtime.artifacts ? <SavedPhoneTaskArtifacts key={props.taskId} taskId={props.taskId} refresh={savedRevision}
+      artifacts={props.runtime.artifacts} styles={props.styles} selectApk={props.selectApk} /> : null}
   </>;
 }
 

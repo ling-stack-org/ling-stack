@@ -98,11 +98,12 @@ export function PhoneTaskArtifactOffers({ share, peer, artifacts, styles, refres
   </>;
 }
 
-export function SavedPhoneTaskArtifacts({ taskId, refresh, artifacts, styles }: {
+export function SavedPhoneTaskArtifacts({ taskId, refresh, artifacts, styles, selectApk }: {
   readonly taskId: string;
   readonly refresh: number;
   readonly artifacts: ArtifactReceiver;
   readonly styles: ArtifactStyles;
+  readonly selectApk?: (fileId: string) => void;
 }) {
   const [saved, setSaved] = useState<readonly SavedPhoneTaskArtifact[]>([]);
   const [error, setError] = useState<string>();
@@ -131,6 +132,8 @@ export function SavedPhoneTaskArtifacts({ taskId, refresh, artifacts, styles }: 
       <ApkIdentity offer={item.offer} styles={styles} />
       {item.apkVerification ? <Text style={styles.note}>{item.apkVerification === "android_package_manager"
         ? "本机 Android 已核验 APK 签名和证书" : "已核验配对电脑的 APK 签名证明和文件摘要"}</Text> : null}
+      {selectApk && item.apkVerification ? <ArtifactButton label="检查此 APK 并准备安装" styles={styles}
+        disabled={exporting} onPress={() => selectApk(item.fileId)} /> : null}
       <ArtifactButton label="导出已校验文件" styles={styles} disabled={exporting} onPress={() => void exportFile(item.fileId)} />
     </View>)}
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}

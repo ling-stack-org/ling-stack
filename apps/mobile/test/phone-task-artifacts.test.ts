@@ -37,6 +37,7 @@ test("phone discards a corrupt assembly and leaves no verified receipt", async (
     ownerId: "owner", foreground: () => true, now: () => time, readProjection: async () => projection,
     storage: { async getItem(key) { return values.get(key) ?? null; }, async setItem(key, value) { values.set(key, value); } },
     openFile: () => ({
+      uri() { return "file:///fixture.apk"; },
       async size() { return received.length; },
       async append(offset, part) { assert.equal(received.length, offset); received = Buffer.concat([received, part]); },
       async digest() { return sha256(received); },
@@ -90,6 +91,7 @@ test("phone records APK verification before publishing a receipt and resumes wit
   let attempts = 0;
   let sealed = false;
   const file: PhoneTaskArtifactFile = {
+    uri() { return "file:///fixture.apk"; },
     async size() { return received.length; },
     async append(offset, part) { assert.equal(received.length, offset); received = Buffer.concat([received, part]); },
     async digest() { return sha256(received); },

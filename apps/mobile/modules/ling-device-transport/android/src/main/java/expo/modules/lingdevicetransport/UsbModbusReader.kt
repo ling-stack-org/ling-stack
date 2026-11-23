@@ -1,17 +1,8 @@
 package expo.modules.lingdevicetransport
 
-import android.app.PendingIntent
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.hardware.usb.UsbManager
 import android.os.SystemClock
-import androidx.core.content.ContextCompat
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
@@ -19,12 +10,11 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
 
-internal class UsbModbusReader(private val context: Context) {
-  private val manager = context.getSystemService(UsbManager::class.java)
+internal class UsbModbusReader(private val permission: UsbHostPermission) {
+  private val manager = permission.manager
   private val prober = UsbSerialProber.getDefaultProber()
   private val sessions = ConcurrentHashMap<String, Session>()
   private val busyPorts = ConcurrentHashMap.newKeySet<String>()
-  private val askingPermission = AtomicBoolean()
 
   private data class Session(
     val portId: String,
@@ -56,34 +46,7 @@ internal class UsbModbusReader(private val context: Context) {
   suspend fun authorize(portId: String, vendorId: Int, productId: Int) {
     val usb = manager ?: error("usb_target_missing")
     val device = selectPort(portId, vendorId, productId).driver.device
-    if (!usb.hasPermission(device)) {
-      check(askingPermission.compareAndSet(false, true)) { "usb_target_busy" }
-      try {
-        val reply = CompletableDeferred<Unit>()
-        val action = context.packageName + ".USB_DEVICE_PERMISSION." + UUID.randomUUID()
-        val receiver = object : BroadcastReceiver() {
-          override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == action) reply.complete(Unit)
-          }
-        }
-        val intent = Intent(action).setPackage(context.packageName)
-        val callback = PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT)
-        val answered = try {
-          ContextCompat.registerReceiver(context, receiver, IntentFilter(action), ContextCompat.RECEIVER_NOT_EXPORTED)
-          try {
-            usb.requestPermission(device, callback)
-            withTimeoutOrNull(45_000) { reply.await() }
-          } finally {
-            context.unregisterReceiver(receiver)
-          }
-        } finally {
-          callback.cancel()
-        }
-        check(answered != null) { "usb_permission_denied" }
-      } finally {
-        askingPermission.set(false)
-      }
-    }
+    permission.request(device)
     check(usb.hasPermission(selectPort(portId, vendorId, productId).driver.device)) { "usb_permission_denied" }
   }
 

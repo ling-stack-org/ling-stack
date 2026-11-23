@@ -11,6 +11,7 @@ export type PhoneTaskArtifactPeer = Pick<RemoteSessionClient,
   "listDeviceArtifacts" | "decideDeviceArtifact" | "readDeviceArtifactChunk" | "confirmDeviceArtifactReceived">;
 
 export interface PhoneTaskArtifactFile {
+  uri?(): string;
   size(): Promise<number>;
   append(offset: number, bytes: Uint8Array): Promise<void>;
   digest(): Promise<string>;
