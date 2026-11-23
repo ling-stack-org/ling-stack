@@ -130,9 +130,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: macos-arm64
-            material-platform: darwin-arm64
-            runner: macos-26
           - target: windows-x64
             material-platform: win32-x64
             runner: windows-2025
@@ -356,49 +353,3 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 14
-
-  draft:
-    if: inputs.operation == 'build' && inputs.create_draft && inputs.plugin_mode != 'on-demand'
-    needs: [candidate, package]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ needs.candidate.outputs.source-sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      # Keep the write-capable release implementation on the protected default
-      # branch; the candidate checkout is data, not executable release policy.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: refs/heads/main
-          path: .trusted-main
-          fetch-depth: 0
-          persist-credentials: false
-          clean: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 22.22.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          pattern: desktop-candidate-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/desktop-inputs
-      - name: Verify both platforms and create a new Draft without replacing releases
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DESKTOP_SOURCE_SHA: ${{ needs.candidate.outputs.source-sha }}
-          DESKTOP_RELEASE_TAG: ${{ needs.candidate.outputs.tag }}
-          DESKTOP_CREATE_DRAFT: "true"
-          DESKTOP_INPUT_ROOT: ${{ runner.temp }}/desktop-inputs
-          DESKTOP_OUTPUT_ROOT: ${{ runner.temp }}/desktop-release
-          DESKTOP_SOURCE_ROOT: ${{ github.workspace }}
-          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          set -euo pipefail
-          node .trusted-main/scripts/release/desktop-release.mjs assemble
-          node .trusted-main/scripts/release/create-desktop-draft.mjs
