@@ -236,17 +236,18 @@ export async function runTestShard(suiteName, argv) {
   if (!Number.isInteger(shard) || !Number.isInteger(shardCount) || shardCount < 1 || shard < 0 || shard >= shardCount) {
     throw new RangeError(`expected --shard in [0, ${shardCount - 1}]`);
   }
-  const discovered = await discoverSuiteFiles(config);
-  let shards = assignTestShards(discovered, shardCount, { ...config, concurrency });
+  let shards;
   let timings = {};
   if (args["--plan"]) {
     const plan = JSON.parse(await readFile(args["--plan"], "utf8"));
     const suite = plan.suites?.[suiteName];
     if (plan.version !== 1 || suite?.shardCount !== shardCount || suite.platform !== process.platform
       || suite.concurrency !== concurrency) throw new Error("Invalid test plan for this suite/platform");
-    assertSuiteCoverage(suite, discovered);
+    assertSuiteCoverage(suite, await discoverSuiteFiles(config, plan.testProfile));
     shards = suite.shards;
     timings = suite.timings ?? {};
+  } else {
+    shards = assignTestShards(await discoverSuiteFiles(config), shardCount, { ...config, concurrency });
   }
   const files = shards[shard].files;
   console.log(`${suiteName} shard ${shard + 1}/${shardCount}: ${files.length} files, weight ${shards[shard].weight.toFixed(2)}.`);
