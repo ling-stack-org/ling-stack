@@ -1,428 +1,82 @@
-name: Desktop candidate
-run-name: Desktop ${{ inputs.operation || (github.event_name == 'workflow_call' && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }} · ${{ inputs.release_tag || github.ref_name || github.event.pull_request.head.sha }}
+name: Replay verified macOS installers
+run-name: "Replay verified macOS DMGs"
 
 on:
   workflow_dispatch:
-    inputs:
-      operation:
-        description: Inspect prerequisites or build both unsigned candidates
-        type: choice
-        options: [inspect, build]
-        default: inspect
-      source_sha:
-        description: Full reviewed source commit SHA
-        type: string
-        required: true
-      release_tag:
-        description: New release tag matching VERSION (for example v0.1.3)
-        type: string
-        required: true
-      plugin_mode:
-        description: Plugin resources in the candidate
-        type: choice
-        options: [bundled, on-demand]
-        default: bundled
-      create_draft:
-        description: Create a Draft release after BOTH builds pass (source must be on main)
-        type: boolean
-        default: false
-  workflow_call:
-    inputs:
-      operation:
-        description: Inspect prerequisites or build both unsigned candidates
-        type: string
-        required: false
-        default: inspect
-      source_sha:
-        description: Full reviewed source commit SHA
-        type: string
-        required: true
-      release_tag:
-        description: New release tag matching VERSION
-        type: string
-        required: true
-      create_draft:
-        description: Create a Draft release after BOTH builds pass
-        type: boolean
-        required: false
-        default: false
-      plugin_mode:
-        description: Plugin resources in the candidate
-        type: string
-        required: false
-        default: bundled
-  # Explicit maintainer opt-in permits inspecting a new workflow before landing it.
-  pull_request:
-    types: [labeled]
 
 permissions:
   contents: read
-
-concurrency:
-  # Unrelated label events must not replace a queued native package build.
-  group: desktop-plugin-macos-${{ inputs.plugin_mode || 'bundled' }}
-  cancel-in-progress: false
+  actions: read
 
 jobs:
-  candidate:
-    if: github.event_name != 'pull_request' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      source-sha: ${{ steps.candidate.outputs.source-sha }}
-      tag: ${{ steps.candidate.outputs.tag }}
-      version: ${{ steps.candidate.outputs.version }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      # The tag may contain arbitrary source, so never use its release policy
-      # until a policy copy from the protected default branch has accepted it.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: refs/heads/main
-          path: .trusted-main
-          fetch-depth: 0
-          persist-credentials: false
-          clean: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 22.22.1
-      - name: Validate immutable source and matching product versions
-        id: candidate
-        shell: bash
-        env:
-          DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
-          DESKTOP_RELEASE_TAG: ${{ inputs.release_tag || '' }}
-          DESKTOP_CREATE_DRAFT: ${{ inputs.create_draft && inputs.operation == 'build' }}
-          DESKTOP_PLUGIN_MODE: ${{ inputs.plugin_mode || 'bundled' }}
-          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            DESKTOP_RELEASE_TAG="v$(node -p 'require("./package.json").version')"
-            export DESKTOP_RELEASE_TAG
-          fi
-          node --input-type=module <<'NODE'
-          import { appendFile } from "node:fs/promises";
-          import { readCandidate } from "./.trusted-main/scripts/release/desktop-release.mjs";
-          if (process.env.DESKTOP_PLUGIN_MODE === "on-demand" && process.env.DESKTOP_CREATE_DRAFT === "true") {
-            throw new Error("On-demand packages are validation candidates until installed acceptance passes.");
-          }
-          const candidate = await readCandidate({
-            root: process.env.GITHUB_WORKSPACE,
-            sha: process.env.DESKTOP_SOURCE_SHA,
-            tag: process.env.DESKTOP_RELEASE_TAG,
-            requireMain: process.env.DESKTOP_CREATE_DRAFT === "true",
-            allowExistingTag: process.env.DESKTOP_ALLOW_EXISTING_TAG === "true",
-          });
-          if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
-            `source-sha=${candidate.sourceSha}\ntag=${candidate.tag}\nversion=${candidate.version}\n`);
-          console.log(JSON.stringify(candidate, null, 2));
-          NODE
-
-  package:
-    needs: candidate
-    name: ${{ matrix.target }} · ${{ inputs.operation || (github.event_name == 'workflow_call' && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
+  replay:
+    name: "Replay ${{ matrix.mode }} DMG"
+    runs-on: macos-26
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: macos-arm64
-            material-platform: darwin-arm64
-            runner: macos-26
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+          - mode: bundled
+            archives: "14813976689"
+            archives-sha: "7622cbf96548eaa0bb284f14da899674145c0ab796b3a9d58df9119a54ce4ce7"
+            evidence: "14813686720"
+            evidence-sha: "314d115e8b35864051fa800e4d273684bb53395093e7d112be0959330ca8161d"
+          - mode: on-demand
+            archives: "14814906515"
+            archives-sha: "a948235aa6faca4b0b8b386e4afd482456f5fcd734be5762cf9c88415f9a8458"
+            evidence: "14815351072"
+            evidence-sha: "fdf192a6edd0df0c7869fd7f41248fcb54c8259369a2450443dd69393130e706"
     env:
-      DESKTOP_SOURCE_SHA: ${{ needs.candidate.outputs.source-sha }}
-      DESKTOP_RELEASE_TAG: ${{ needs.candidate.outputs.tag }}
-      DESKTOP_TARGET: ${{ matrix.target }}
-      DESKTOP_MATERIAL_PLATFORM: ${{ matrix.material-platform }}
-      DESKTOP_OPERATION: ${{ inputs.operation || (github.event_name == 'workflow_call' && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
-      RUSTUP_TOOLCHAIN: 1.97.1
-      # The fixed macOS config selects ad-hoc signing and rejects CSC overrides.
-      LING_CUA_SIGNING_TIER: unsigned_dev
-      LING_CUA_DISTRIBUTION_CHANNEL: development
-      LING_CUA_DRIVER_PACKAGE_PROVIDER: "0"
-      LING_PLUGIN_EXTERNAL_ONLY: ${{ inputs.plugin_mode == 'on-demand' && '1' || '0' }}
-    defaults:
-      run:
-        shell: bash
+      DESKTOP_SOURCE_SHA: 3efb4c6fdd945737c400d6a22f8110b5671e6f28
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ needs.candidate.outputs.source-sha }}
-          fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
-        with:
-          version: 10.0.0
-          run_install: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
-          cache: pnpm
-      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
-        if: runner.os == 'Windows'
-        with:
-          dotnet-version: 8.0.x
-      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
-        if: runner.os == 'Windows'
-        with:
-          arch: x64
-      - name: Bind Rust to the configured x64 MSVC linker
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not $env:VCToolsInstallDir) { throw 'MSVC toolchain directory is unavailable' }
-          $linker = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'
-          if (-not (Test-Path -LiteralPath $linker -PathType Leaf)) { throw "MSVC linker is unavailable: $linker" }
-          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        if: env.DESKTOP_OPERATION == 'build'
-        with:
-          go-version: 1.26.3
-          cache: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        if: env.DESKTOP_OPERATION == 'build'
-        with:
-          bun-version: 1.4.4
-      - name: Install pinned Rust toolchain and locked workspace dependencies
-        run: |
-          set -euo pipefail
-          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
-          corepack enable
-          corepack pnpm install --frozen-lockfile
-      - name: Materialize and check the pinned Electron runtime before collecting notices
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          node --input-type=module <<'NODE'
-          import { execFileSync } from "node:child_process";
-          import { createRequire } from "node:module";
-          const require = createRequire(process.cwd() + "/apps/desktop/package.json");
-          const expected = require("./package.json").devDependencies.electron;
-          if (require("electron/package.json").version !== expected) throw new Error("desktop_electron_package_version_mismatch");
-          // Electron's pinned entry materializes its checksummed native dist on first require.
-          const executable = require("electron");
-          const actual = JSON.parse(execFileSync(executable,
-            ["-p", "JSON.stringify({version:process.versions.electron,platform:process.platform,arch:process.arch})"],
-            { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 30000, maxBuffer: 1048576 }).trim());
-          if (actual.version !== expected || actual.platform !== process.platform || actual.arch !== process.arch)
-            throw new Error("desktop_electron_native_runtime_mismatch");
-          console.log(JSON.stringify({ status: "passed", ...actual }));
-          NODE
-      - name: Generate reviewed localization catalog bindings
-        run: corepack pnpm --filter @ling-stack/localization catalog:compile
-      - name: Observe tools and source prerequisites without granting approval
-        run: node scripts/release/desktop-prerequisites.mjs inspect
-      - name: Build the source and browser manifest verifier dependencies
-        if: env.DESKTOP_OPERATION == 'build'
-        run: corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/core...' build
-      - name: Check release, installer and material contracts on the native host
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          export LING_BUN_ENTRY_PROBE_BINARY=bun
-          node --test --test-concurrency=1 scripts/ci/desktop-release.test.mjs scripts/ci/desktop-package.test.mjs \
-            scripts/ci/desktop-bun-entry.test.mjs \
-            scripts/gstack/source-checkout.test.mjs \
-            scripts/gstack/filter-upstream-self-test-packages.test.mjs \
-            scripts/gstack/prepare-desktop-candidate.test.mjs scripts/gstack/prepare-platform-resource-stage.test.mjs \
-            scripts/gstack/native-runtime-observer-path.test.mjs \
-            scripts/gstack/publish-staged-directory.test.mjs \
-            scripts/gstack/testsavant-model-cache.test.mjs scripts/gstack/testsavant-model-state.test.mjs \
-            scripts/gstack/browser-acquisition.test.mjs scripts/gstack/packaged-browse-launch.test.mjs \
-            apps/desktop/tests/packaged-gstack-identity.test.mjs \
-            apps/desktop/tests/distribution*.test.mjs
-      - name: Check browser publication with bounded managed fixtures
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          node --input-type=module <<'NODE'
-          import { join } from "node:path";
-          import { initResourceWorkspace } from "./scripts/gstack/resource-workspace.mjs";
-          import { managedNodeArguments, runManagedNode } from "./scripts/gstack/run-managed.mjs";
-          const root = join(process.env.RUNNER_TEMP, "gstack-contract-fixtures");
-          await initResourceWorkspace({ root, ciEphemeral: true });
-          const testFiles = ["scripts/gstack/collect-browser-archives.test.mjs", "scripts/gstack/browser-publication-pipeline.test.mjs",
-            "scripts/gstack/materialize-playwright-browser.test.mjs"];
-          const result = await runManagedNode({ root, additionalBytes: 0,
-            args: managedNodeArguments("test", testFiles) });
-          if (result.exitCode !== 0) throw new Error(`gstack_browser_contracts_failed:${result.reason ?? result.exitCode}`);
-          NODE
-      - name: Inspect current distribution inputs without approving redistribution
-        run: |
-          node apps/desktop/scripts/distribution/materials.mjs inspect \
-            --platform "$DESKTOP_MATERIAL_PLATFORM" \
-            > .codex-artifacts/desktop-release/distribution-inspection.json
-      - name: Produce complete package-owned gstack resources from pinned upstream inputs
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          set -euo pipefail
-          desktop_bun="$(command -v bun)"
-          desktop_shell="$(command -v bash)"
-          desktop_go="$(command -v go)"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            desktop_bun="$(cygpath -m "$desktop_bun")"
-            desktop_shell="$(cygpath -m "$desktop_shell")"
-            desktop_go="$(cygpath -m "$desktop_go")"
-          fi
-          node scripts/gstack/prepare-desktop-candidate.mjs \
-            --workspace "$RUNNER_TEMP/gstack-candidate" \
-            --bun "$desktop_bun" --shell "$desktop_shell" --go "$desktop_go" --ci-ephemeral \
-            --selection "$GITHUB_WORKSPACE/.ling-stack/build/gstack-desktop-selection.json"
-      - name: Require original native and resource prerequisites before packaging
-        if: env.DESKTOP_OPERATION == 'build'
-        run: node scripts/release/desktop-prerequisites.mjs require
-      - name: Build workspace dependencies for the Desktop candidate
-        if: env.DESKTOP_OPERATION == 'build'
-        run: corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/desktop...' build
-      - name: Build native inputs before collecting their locked source and notices
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          set -euo pipefail
-          corepack pnpm --filter @ling-stack/browser-host build:native
-          if [[ "$DESKTOP_TARGET" == "windows-x64" ]]; then
-            corepack pnpm --filter @ling-stack/daemon build:engine-supervisor
-          else
-            rustup run 1.97.1 cargo fetch --locked --manifest-path native/sandbox/Cargo.toml
-          fi
-      - name: Check the actual hosted Office compiler and embedded Electron runtime
-        if: env.DESKTOP_OPERATION == 'build' && runner.os == 'macOS'
-        run: |
-          set -euo pipefail
-          desktop_electron="$(node -p 'require("node:module").createRequire(process.cwd()+"/apps/desktop/package.json")("electron")')"
-          desktop_actor="$(node -p 'require("node:fs").realpathSync(process.execPath)')"
-          node native/office-local/scripts/build.mjs --out "$RUNNER_TEMP/office-native-smoke" --headers "$LING_OFFICE_NODE_HEADERS"
-          ELECTRON_RUN_AS_NODE=1 OFFICE_LOCAL_TEST_ACTOR_NODE="$desktop_actor" \
-            "$desktop_electron" native/office-local/tests/run-isolated.mjs \
-            "$RUNNER_TEMP/office-native-smoke/office-local.node" "$RUNNER_TEMP/office-native-smoke-tests"
-      - name: Generate version-matched notices, original licenses and SBOM
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          node apps/desktop/scripts/distribution/materials.mjs prepare \
-            --platform "$DESKTOP_MATERIAL_PLATFORM" \
-            --gstack-workspace "$RUNNER_TEMP/gstack-candidate"
-      - name: Package the native unsigned development candidate
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          set -euo pipefail
-          if [[ "$DESKTOP_TARGET" == "macos-arm64" ]]; then
-            LING_PACKAGED_RELEASE_REVIEW_REQUIRED=1 \
-              NODE_OPTIONS="--import=$GITHUB_WORKSPACE/scripts/release/desktop-package-diagnostics.mjs" \
-              corepack pnpm --filter @ling-stack/desktop package:mac
-          else
-            corepack pnpm --filter @ling-stack/desktop package:win
-          fi
-      - name: Verify actual final archives, bundled resources and runtime structure
-        if: env.DESKTOP_OPERATION == 'build'
-        run: node scripts/release/verify-desktop-package.mjs
-      - name: Start an isolated installation copied from the verified DMG
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          node --input-type=module <<'NODE'
-          import { once } from "node:events";
-          import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
-          import { createServer } from "node:net";
-          import { join, resolve } from "node:path";
-          import { runOwnedProcess } from "./apps/desktop/scripts/cua-driver-owned-process.mjs";
-          import { extractCuaDriverFinalArtifact } from "./apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs";
-          import { extractedApplicationPath } from "./scripts/release/desktop-payload.mjs";
-          import { fileRecord } from "./scripts/release/desktop-release.mjs";
-
-          const evidence = ".codex-artifacts/desktop-release";
-          const report = JSON.parse(await readFile(join(evidence, "package-verification.json"), "utf8"));
-          const dmg = report.archives.find(archive => archive.name.endsWith(".dmg"));
-          if (!dmg || report.target !== "macos-arm64" || report.sourceSha !== process.env.DESKTOP_SOURCE_SHA) {
-            throw new Error("A verified DMG for the selected source is required");
-          }
-          const image = resolve("apps/desktop/release", dmg.name);
-          const observed = await fileRecord(image);
-          if (observed.sha256 !== dmg.sha256 || observed.sizeBytes !== dmg.sizeBytes) throw new Error("DMG changed after verification");
-
-          const root = await mkdtemp(join(process.env.RUNNER_TEMP, "ling-mac-installed-"));
-          const userData = join(root, "user-data");
-          const workspace = join(root, "workspace");
-          const home = join(root, "home");
-          const installed = join(root, "Applications", "Ling Stack.app");
-          await Promise.all([mkdir(join(root, "Applications")), mkdir(workspace), mkdir(home)]);
-          const extraction = await extractCuaDriverFinalArtifact(image, { platform: "darwin", artifactRole: "outer-dmg" });
-          try {
-            await runOwnedProcess("/usr/bin/ditto", [await extractedApplicationPath(extraction.artifactRoot, "macos-arm64"), installed], {
-              timeout: 120_000,
-            });
-          } finally { await extraction.cleanup(); }
-          await runOwnedProcess("/usr/bin/codesign", ["--verify", "--deep", "--strict", installed], { timeout: 60_000 });
-
-          const listener = createServer();
-          const listening = once(listener, "listening");
-          listener.listen(0, "127.0.0.1");
-          await listening;
-          const port = listener.address().port;
-          await new Promise((done, fail) => listener.close(error => error ? fail(error) : done()));
-          const env = { ...process.env, HOME: home, LING_STACK_HOME: join(root, "ling-home"), LING_STACK_DEFAULT_WORKSPACE_CWD: workspace,
-            LING_STACK_DAEMON_URL: `http://127.0.0.1:${port}` };
-          delete env.ELECTRON_RUN_AS_NODE;
-          delete env.NODE_OPTIONS;
-          const started = performance.now();
-          let failure;
-          try {
-            await runOwnedProcess(join(installed, "Contents/MacOS/Ling Stack"),
-              ["--ling-desktop-smoke-headless", `--user-data-dir=${userData}`], { cwd: workspace, env, timeout: 180_000 });
-          } catch (error) { failure = error; }
-          const startupLog = await readFile(join(userData, "desktop-startup.log"), "utf8").catch(error => {
-            if (error.code !== "ENOENT") throw error;
-            return "";
-          });
-          const events = startupLog.split(/\r?\n/u).filter(Boolean).map(line => JSON.parse(line));
-          const names = events.map(event => event.event);
-          console.log("Installed macOS Desktop events", names);
-          if (failure) throw failure;
-          const app = events.findIndex(event => event.event === "app.ready" && event.packaged === true);
-          const daemon = events.findIndex(event => event.event === "daemon.connected" && event.ownedByDesktop === true);
-          const renderer = names.indexOf("main_window.loaded");
-          if (app < 0 || daemon <= app || renderer <= daemon || names.includes("app.startup_failed") || names.includes("app.shutdown_failed")) {
-            throw new Error("The installed Desktop did not complete owned startup");
-          }
-          await writeFile(join(evidence, "macos-installed-startup.json"), JSON.stringify({
-            sourceSha: report.sourceSha, target: report.target, pluginMode: report.pluginMode, dmgSha256: observed.sha256,
-            status: "passed", daemonOwnedByDesktop: true, normalExit: true, durationMs: Math.round(performance.now() - started),
-            signingTier: report.signingTier, interactiveAcceptance: "not_run",
-          }, null, 2) + "\n", { flag: "wx" });
-          NODE
-      - name: Collect fresh install archives and evidence
-        if: env.DESKTOP_OPERATION == 'build'
+      - name: Retrieve the retained archives by immutable artifact ID
         env:
-          DESKTOP_OUTPUT_ROOT: ${{ runner.temp }}/desktop-${{ matrix.target }}
-        run: node scripts/release/desktop-release.mjs collect
-      - name: Retain verified candidate downloads
-        if: env.DESKTOP_OPERATION == 'build'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: desktop-candidate-${{ matrix.target }}
-          path: ${{ runner.temp }}/desktop-${{ matrix.target }}/*
-          if-no-files-found: error
-          retention-days: 14
-      - name: Collect bounded gstack source and import graph evidence
-        if: always() && env.DESKTOP_OPERATION == 'build'
-        run: node scripts/release/collect-gstack-evidence.mjs
-      - name: Retain failed macOS archives for diagnosis without admitting a candidate
-        if: failure() && env.DESKTOP_OPERATION == 'build' && runner.os == 'macOS'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: desktop-unverified-archives-${{ matrix.target }}
-          path: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*.zip
-          if-no-files-found: warn
-          retention-days: 3
-      - name: Retain prerequisite and platform evidence, including blocked checks
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVES_ID: ${{ matrix.archives }}
+          ARCHIVES_SHA: ${{ matrix.archives-sha }}
+          EVIDENCE_ID: ${{ matrix.evidence }}
+          EVIDENCE_SHA: ${{ matrix.evidence-sha }}
+        run: |
+          set -euo pipefail
+          replay="$RUNNER_TEMP/mac-replay"
+          mkdir "$replay"
+          for category in ARCHIVES EVIDENCE; do
+            id_var="${category}_ID"
+            sha_var="${category}_SHA"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${!id_var}/zip" > "$replay/$category.zip"
+            printf '%s  %s\n' "${!sha_var}" "$replay/$category.zip" | shasum -a 256 -c -
+          done
+          python3 - "$replay" <<'PY'
+          import json
+          import shutil
+          import sys
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          directory = Path(sys.argv[1])
+          with ZipFile(directory / "EVIDENCE.zip") as evidence:
+              report_bytes = evidence.read("package-verification.json")
+          (directory / "package-verification.json").write_bytes(report_bytes)
+          report = json.loads(report_bytes)
+          name = next(x["name"] for x in report["archives"] if x["name"].endswith(".dmg"))
+          assert name == "Ling-Stack-0.6.1-macos-arm64.dmg"
+          with ZipFile(directory / "ARCHIVES.zip") as archives:
+              member = next(x for x in archives.infolist() if Path(x.filename).name == name)
+              with archives.open(member) as source, (directory / name).open("xb") as dest:
+                  shutil.copyfileobj(source, dest)
+          PY
+      - name: Check cold startup of the copied app in a canonical directory
+        run: node scripts/release/macos-installed-startup.mjs "$RUNNER_TEMP/mac-replay" "$RUNNER_TEMP/mac-replay"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: desktop-evidence-${{ matrix.target }}
-          path: .codex-artifacts/desktop-release/**
-          include-hidden-files: true
+          name: macos-installed-replay-${{ matrix.mode }}
+          path: ${{ runner.temp }}/mac-replay/macos-installed-startup.json
           if-no-files-found: warn
-          retention-days: 14
