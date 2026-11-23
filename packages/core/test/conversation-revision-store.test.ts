@@ -1,4 +1,3 @@
-import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +9,9 @@ import {
   createBuiltinAiTeammateId,
   createSqliteRunStore,
   resolveRuntimePaths,
+  type CommitConversationMessageEditInput,
 } from "../dist/index.js";
+import { appendChannelItemFixture, getChannelItemViewFixture } from "./channel-conversation-fixture.mjs";
 
 const emptyContent = {
   mentions: [],
@@ -55,7 +56,7 @@ test("channel message edits create revisions, supersede the old turn, and replay
     const turn = store.getLingTurn(item.turnId);
     assert.ok(turn);
 
-    const input = {
+    const input: CommitConversationMessageEditInput = {
       surface: "channel_root",
       ownerId: channel.id,
       laneId: item.threadId,

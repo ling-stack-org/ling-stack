@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { classifyChangedFiles } from "./classify-scope.mjs";
+import { deviceSuiteFiles } from "./device-test-profile.mjs";
 
 type ScopeInput = Parameters<typeof classifyChangedFiles>[0];
 type PackageEntry = NonNullable<ScopeInput["packageEntries"]>[number];
@@ -339,6 +340,19 @@ test("macOS helper smoke follows explicit native surface paths", () => {
   assert.equal(classify(["native/unknown.rs"]).mode, "full");
 });
 
+test("README changes under a native surface are documentation", () => {
+  const readme = "apps/desktop/native/locked-use/README.md";
+  const documentation = classify([readme]);
+  assert.equal(documentation.mode, "docs");
+  assert.equal(documentation.macosNative, false);
+  assert.equal(documentation.macosHelper, false);
+
+  const mobile = classify([readme, "apps/mobile/src/App.tsx"]);
+  assert.deepEqual(mobile.packages, ["@ling-stack/mobile"]);
+  assert.equal(mobile.daemon, false);
+  assert.equal(mobile.macosNative, false);
+});
+
 test("Chrome extension and Mobile changes select their own checks", () => {
   const chrome = classify(["apps/chrome-extension/src/background.js"]);
   assert.deepEqual(chrome.packages, ["@ling-stack/chrome-extension"]);
@@ -388,6 +402,7 @@ function repositoryFixture(t: TestContext) {
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
   copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
+  copyFileSync(new URL("./device-test-profile.mjs", import.meta.url), join(root, "scripts/ci/device-test-profile.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
   copyFileSync(new URL("./secret-scan.mjs", import.meta.url), join(root, "scripts/ci/secret-scan.mjs"));
   copyFileSync(new URL("./workflow-scope.mjs", import.meta.url), join(root, "scripts/ci/workflow-scope.mjs"));
@@ -405,6 +420,80 @@ function repositoryFixture(t: TestContext) {
     "--event=pull_request", `--base=${base}`, "--head=HEAD", ...options], { encoding: "utf8" }));
   return { root, git, write, commit, classify };
 }
+
+test("shared Device recovery changes keep consumer builds and typechecks and run focused Core and Linux tests", t => {
+  const repo = repositoryFixture(t);
+  for (const file of ["test-shard-plan.mjs", "daemon-test-platforms.mjs"]) {
+    copyFileSync(new URL(`./${file}`, import.meta.url), join(repo.root, "scripts/ci", file));
+  }
+  const unrelatedCore = "test/runtime-host-capacity-migration.test.ts";
+  const unrelatedDaemon = "test/engine-lifecycle.test.mjs";
+  for (const file of [...deviceSuiteFiles.core, unrelatedCore]) repo.write(`packages/core/${file}`, "export {};\n");
+  for (const file of [...deviceSuiteFiles["daemon-linux"], unrelatedDaemon]) repo.write(`packages/daemon/${file}`, "export {};\n");
+  repo.write("scripts/ci/daemon-test-platforms.json", JSON.stringify({
+    version: 1, linux: deviceSuiteFiles["daemon-linux"], darwin: [unrelatedDaemon],
+  }));
+  repo.write("packages/contracts/test/device.test.ts", "export {};\n");
+  repo.write("apps/mobile/test/standalone-device-runtime.test.ts", "export {};\n");
+  for (const [name, dependency] of [["remote-protocol", "contracts"], ["remote-client", "remote-protocol"]]) {
+    repo.write(`packages/${name}/package.json`, JSON.stringify({
+      name: `@ling-stack/${name}`, dependencies: { [`@ling-stack/${dependency}`]: "workspace:*" },
+      scripts: { test: "node --test", typecheck: "tsc" },
+    }));
+  }
+  const base = repo.commit();
+  for (const file of ["packages/contracts/src/device.ts", "packages/contracts/src/device-fabric.ts",
+    "packages/core/src/device-task-trace.ts", "apps/mobile/src/device/execution.ts"]) {
+    repo.write(file, "export const device = true;\n");
+  }
+  repo.write("docs/device.md", "# Device\n");
+  repo.commit();
+
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.testProfile, "device");
+  assert.deepEqual(scope.testPackages, ["@ling-stack/contracts", "@ling-stack/core", "@ling-stack/daemon", "@ling-stack/mobile",
+    "@ling-stack/remote-client", "@ling-stack/remote-protocol"]);
+  assert.deepEqual(scope.daemonPlatforms, ["linux"]);
+  assert.equal(scope.linuxContract, true);
+  assert.equal(scope.assurance, true);
+  assert.equal(scope.macosNative, false);
+  assert.ok(scope.packages.includes("@ling-stack/cli"));
+  assert.ok(scope.typecheckPackages.includes("@ling-stack/cli"));
+  assert.ok(scope.typecheckPackages.includes("@ling-stack/runner-pi"));
+
+  repo.write(".git/scope.json", JSON.stringify(scope));
+  execFileSync(process.execPath, ["scripts/ci/test-shard-plan.mjs", "--scope=.git/scope.json", "--output=.git/plan.json"], { cwd: repo.root });
+  const plan = JSON.parse(readFileSync(join(repo.root, ".git/plan.json"), "utf8"));
+  assert.equal(plan.testProfile, "device");
+  assert.deepEqual(Object.keys(plan.suites), ["core", "daemon-linux"]);
+  assert.deepEqual(plan.suites.core.files, [...deviceSuiteFiles.core].sort());
+  assert.deepEqual(plan.suites["daemon-linux"].files, [...deviceSuiteFiles["daemon-linux"]].sort());
+  assert.equal(plan.suites.core.shards.length, 1);
+  assert.equal(plan.daemonMatrix.include.length, 1);
+  assert.equal(plan.daemonMatrix.include[0].runner, "ubuntu-latest");
+
+  const missing = "packages/daemon/test/device-support-runtime.test.ts";
+  rmSync(join(repo.root, missing));
+  const fallback = repo.classify(base);
+  assert.equal(fallback.testProfile, undefined);
+  assert.deepEqual(fallback.daemonPlatforms, ["linux", "darwin"]);
+  repo.git("restore", "--", missing);
+
+  const full = repo.classify(base, "--force-full=true");
+  assert.equal(full.mode, "full");
+  assert.equal(full.testProfile, undefined);
+  assert.deepEqual(full.daemonPlatforms, ["linux", "darwin"]);
+
+  repo.write("packages/core/src/index.ts", "export {};\n");
+  repo.commit();
+  const mixed = repo.classify(base);
+  assert.equal(mixed.testProfile, undefined);
+  assert.ok(mixed.testPackages.includes("@ling-stack/cli"));
+  assert.deepEqual(mixed.daemonPlatforms, ["linux", "darwin"]);
+  assert.deepEqual(mixed.packages, scope.packages);
+  assert.deepEqual(mixed.typecheckPackages, scope.typecheckPackages);
+});
 
 test("the Git boundary retains the entire PR and both sides of source-to-doc renames", (t) => {
   const repo = repositoryFixture(t);
@@ -562,9 +651,9 @@ test("verified local output deletions keep the changed paths and use the fast la
   assert.deepEqual(scope.files, [script, report]);
   assert.deepEqual(scope.packages, []);
   assert.equal(scope.assurance, false);
-  assert.match(scope.reason, /output cleanup/u);
+  assert.match(scope.reason, /local artifact cleanup/u);
   assert.equal(classify([report]).mode, "full");
-  assert.equal(classify([report], { deletedOutputFiles: [report], forceFull: true }).mode, "full");
+  assert.equal(classify([report], { deletedLocalArtifacts: [report], forceFull: true }).mode, "full");
 
   repo.write("packages/providers/src/capture.mjs", scriptSource);
   repo.commit();
@@ -588,6 +677,46 @@ test("local output additions and modifications retain full regression", t => {
   repo.write(notes, "# QA notes\n");
   repo.commit();
   assert.equal(repo.classify(base).mode, "full");
+});
+
+test("a Git-verified Codex environment deletion with native docs selects only common checks", t => {
+  const repo = repositoryFixture(t);
+  const environment = ".codex/environments/environment.toml";
+  const otherConfig = ".codex/environments/other.toml";
+  const readme = "apps/desktop/native/locked-use/README.md";
+  repo.write(environment, 'name = "Local checks"\n');
+  repo.write(otherConfig, 'name = "Other checks"\n');
+  repo.write(readme, "# Local checks\n");
+  const base = repo.commit();
+
+  repo.write(environment, 'name = "Updated checks"\n');
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+
+  repo.git("rm", environment);
+  repo.write(readme, "# Run checks from the terminal\n");
+  const cleanup = repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "docs");
+  assert.notEqual(scope.documentationOnly, true);
+  assert.deepEqual(scope.files, [environment, readme]);
+  assert.deepEqual(scope.packages, []);
+  assert.deepEqual(scope.testPackages, []);
+  assert.deepEqual(scope.typecheckPackages, []);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.macosNative, false);
+  assert.equal(scope.macosHelper, false);
+  assert.equal(repo.classify(base, "--force-full=true").mode, "full");
+  assert.equal(classify([environment]).mode, "full");
+
+  repo.git("rm", otherConfig);
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+
+  repo.write(environment, 'name = "Local checks"\n');
+  repo.write(otherConfig, 'name = "Other checks"\n');
+  repo.commit();
+  assert.equal(repo.classify(cleanup).mode, "full");
 });
 
 test("the Git boundary verifies old manifest identity before narrowing package edits", (t) => {

@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
+import { deviceSuiteFiles, deviceTestPackages, matchesDeviceTestProfile } from "./device-test-profile.mjs";
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
@@ -10,6 +11,7 @@ import { isCatalogWorkflowPinUpdate } from "./workflow-scope.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
+const CODEX_ENVIRONMENT_FILE = ".codex/environments/environment.toml";
 const LOCKFILE = "pnpm-lock.yaml";
 const WEB_PACKAGE = "@ling-stack/web";
 const WORKSPACE_TEST_CONFIG = /^(?:packages|apps)\/[^/]+\/tsconfig\.tests?\.json$/u;
@@ -81,7 +83,7 @@ function isAssurancePath(file) {
  * Classify a pull request by the narrowest safe CI scope.
  *
  * Unrecognized paths and unverified shared inputs select the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
+ * @param {{files: string[], deletedLocalArtifacts?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -101,9 +103,9 @@ export function classifyChangedFiles(input) {
     return buildScope("affected", files, packages, "verified catalog App action pin update, with workflow contracts checked in Common");
   }
 
-  // Keep deleted local artifacts in the audit while narrowing product selection.
-  const deletedOutputs = new Set(input.deletedOutputFiles?.filter(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY)));
-  const scopeFiles = deletedOutputs.size === 0 ? files : normalizeFiles(input.files.filter(file => !deletedOutputs.has(file)));
+  // Keep deleted local artifacts in the audit while excluding them from product selection.
+  const deletedLocalArtifacts = new Set(input.deletedLocalArtifacts?.filter(isLocalArtifactPath));
+  const scopeFiles = files.filter(file => !deletedLocalArtifacts.has(file));
 
   if (scopeFiles.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
     && !versionPaths.has(file)
@@ -113,7 +115,7 @@ export function classifyChangedFiles(input) {
   }
 
   if (scopeFiles.every((file) => isDocumentationPath(file) || isMaintenancePath(file))) {
-    const reason = deletedOutputs.size > 0 ? "verified local output cleanup and common checks only"
+    const reason = scopeFiles.length < files.length ? "verified local artifact cleanup and common checks only"
       : scopeFiles.some(isMaintenancePath) ? "documentation and allowlisted maintenance checks only"
         : "documentation and documentation assets only";
     return buildScope("docs", files, packages, reason);
@@ -234,22 +236,28 @@ export function classifyChangedFiles(input) {
     return buildScope("full", files, packages, `platform package requires the full supported CI lane: ${unsupportedAffected.map((entry) => entry.name).join(", ")}`);
   }
 
-  const testPackages = affectedEntries
+  const affectedTestPackages = affectedEntries
     .filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
+  const deviceProfile = affectedTestPackages.includes("@ling-stack/core") && affectedTestPackages.includes("@ling-stack/daemon")
+    && [...testSupportImporters].every(name => deviceTestPackages.includes(name))
+    && matchesDeviceTestProfile(scopeFiles.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file)))
+    && hasDeviceTestCoverage();
+  const testPackages = deviceProfile
+    ? affectedTestPackages.filter(name => deviceTestPackages.includes(name))
+    : affectedTestPackages;
   const typecheckPackages = affectedEntries
     .filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
-  const validationBuildDependencies = [...new Set([...testPackages, ...typecheckPackages]
+  const validationBuildDependencies = [...new Set([...affectedTestPackages, ...typecheckPackages]
     .flatMap(name => VALIDATION_BUILD_DEPENDENCIES.get(name) ?? []))];
   if (validationBuildDependencies.some(name => !packages.some(entry => entry.name === name))) {
     return buildScope("full", files, packages, "a workspace validation build dependency could not be verified");
   }
-  const daemonPlatforms = affectedNames.has("@ling-stack/daemon")
-    ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters })
-    : [];
+  const daemonPlatforms = deviceProfile ? ["linux"] : affectedNames.has("@ling-stack/daemon")
+    ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters }) : [];
   const linuxContract = affectedNames.has("@ling-stack/daemon") && daemonPlatforms.includes("linux");
 
   return {
@@ -268,8 +276,10 @@ export function classifyChangedFiles(input) {
     macosNative: nativeSurfaceChanged || nativeRelease,
     macosHelper: nativeSurfaceChanged,
     nativeRelease,
+    ...(deviceProfile ? { testProfile: /** @type {const} */ ("device") } : {}),
     productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
-    reason: versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
+    reason: deviceProfile ? "device recovery and task trace tests with transitive consumer typechecks"
+      : versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
       : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
       : changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
       ? "test or test-support changes in affected workspace packages"
@@ -278,7 +288,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, documentationOnly?: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device", documentationOnly?: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -329,13 +339,19 @@ function isMaintenancePath(file) {
 }
 
 /** @param {string} file */
+function isLocalArtifactPath(file) {
+  return file.startsWith(LOCAL_OUTPUT_DIRECTORY) || file === CODEX_ENVIRONMENT_FILE;
+}
+
+/** @param {string} file */
 function isTestPath(file) {
   return TEST_PATH_PATTERN.test(file);
 }
 
 /** @param {string} file */
 function isMacosNativePath(file) {
-  return !NATIVE_RELEASE_REVIEW_FILES.has(file) && MACOS_NATIVE_PATH_PATTERNS.some((pattern) => pattern.test(file));
+  return !NATIVE_RELEASE_REVIEW_FILES.has(file) && MACOS_NATIVE_PATH_PATTERNS.some(pattern => pattern.test(file))
+    && !isDocumentationPath(file);
 }
 
 /** @param {string} file */
@@ -392,6 +408,17 @@ function loadDaemonPlatformManifest() {
     daemonPlatformManifest = undefined;
     return undefined;
   }
+}
+
+function hasDeviceTestCoverage() {
+  const platforms = loadDaemonPlatformManifest();
+  if (!deviceSuiteFiles["daemon-linux"].every(file => platforms?.get(file) === "linux")) return false;
+  return [
+    ...deviceSuiteFiles.core.map(file => `packages/core/${file}`),
+    ...deviceSuiteFiles["daemon-linux"].map(file => `packages/daemon/${file}`),
+    "apps/mobile/test/standalone-device-runtime.test.ts",
+    "packages/contracts/test/device.test.ts",
+  ].every(file => lstatSync(resolve(repositoryRoot, file), { throwIfNoEntry: false })?.isFile());
 }
 
 /** @param {PackageEntry} entry */
@@ -627,7 +654,7 @@ const args = parseArgs(process.argv.slice(2));
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const eventName = args.event ?? process.env.GITHUB_EVENT_NAME ?? "pull_request";
   let files;
-  let deletedOutputFiles;
+  let deletedLocalArtifacts;
   let basePackageEntries;
   const baseTestConfigs = new Map();
   let versionChange;
@@ -642,9 +669,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (args["force-full"] !== "true") {
       catalogWorkflowPinUpdate = isCatalogWorkflowPinUpdate({ files, base, head: args.head, git });
     }
-    if (files.some(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY))) {
-      deletedOutputFiles = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
-        base, args.head, "--", LOCAL_OUTPUT_DIRECTORY]).split("\0").filter(Boolean);
+    if (files.some(isLocalArtifactPath)) {
+      deletedLocalArtifacts = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
+        base, args.head, "--", LOCAL_OUTPUT_DIRECTORY, CODEX_ENVIRONMENT_FILE]).split("\0").filter(Boolean);
     }
     const changedTestConfigs = files.filter(file => WORKSPACE_TEST_CONFIG.test(file));
     if (changedTestConfigs.length > 0 || files.some(file => file.endsWith("/package.json"))) {
@@ -669,7 +696,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } else {
     files = [];
   }
-  const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName, catalogWorkflowPinUpdate,
+  const scope = classifyChangedFiles({ files, deletedLocalArtifacts, eventName, catalogWorkflowPinUpdate,
     forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, addedLockImporters });
   if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
     scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });

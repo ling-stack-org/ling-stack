@@ -18,7 +18,7 @@ The first command builds release executables and `.app`/`.bundle` components,
 applies ad hoc signatures, verifies the signatures, and runs deterministic policy,
 authorization mechanism ABI and live kernel-verifier checks. It runs no system
 authorization right, lock request, input interception, permission prompt or service
-installation. The Run action in `.codex/environments/environment.toml` invokes it.
+installation.
 `--debug` runs the offline policy checker under LLDB after building.
 
 The second command runs XCTest policy/transport/recovery and Guardian input tests.
