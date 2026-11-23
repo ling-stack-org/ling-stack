@@ -12,6 +12,7 @@ export interface WorkspaceChangeFile {
   readonly additions: number;
   readonly deletions: number;
   readonly diff?: string;
+  readonly layers?: readonly { readonly kind: "staged" | "unstaged"; readonly diff: string; readonly truncated: boolean }[];
   readonly truncated: boolean;
 }
 
@@ -56,6 +57,13 @@ export interface WorkspaceChangeReview {
   readonly additions?: number;
   readonly deletions?: number;
   readonly unavailableReason?: string;
+}
+
+export interface WorkspaceChangeReviewPreviewRequest {
+  readonly cwd: string;
+  readonly scope: WorkspaceChangeReview["scope"];
+  readonly revision: string;
+  readonly fileId: string;
 }
 
 export interface WorkspaceChangeReviewFile {
@@ -365,6 +373,14 @@ export interface WorkspaceFileCapabilityPreviewRequest {
   readonly scope: WorkspaceFileCapabilityScope;
   readonly maxBytes?: number;
   readonly line?: number;
+}
+
+/** A file capability can disclose only its own run-scoped historical change. */
+export interface WorkspaceFileCapabilityChangeResponse {
+  readonly state: "exact" | "unavailable";
+  readonly revision?: string;
+  readonly file?: WorkspaceChangeReviewFile;
+  readonly unavailableReason?: string;
 }
 
 export interface WorkspaceFileOpenOption {

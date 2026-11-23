@@ -135,6 +135,7 @@
 }
 
 .workspace-change-file-section.collapsed > header { border-bottom: 0; }
+.workspace-change-file-view, .workspace-change-file-section > .workspace-file-changes-summary { padding: var(--ling-space-2) var(--ling-space-3); }
 
 .workspace-change-file-toggle {
   display: grid;

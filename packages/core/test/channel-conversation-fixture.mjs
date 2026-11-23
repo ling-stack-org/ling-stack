@@ -1,9 +1,23 @@
+// @ts-check
+
 import { randomUUID } from "node:crypto";
 import { projectConversationItemToChannelMessage } from "../dist/index.js";
+
+/** @typedef {import("../dist/index.js").SqliteRunStore} Store */
+/** @typedef {import("../dist/index.js").ChannelMessage} ChannelMessage */
+/**
+ * @typedef {Pick<ChannelMessage, "channelId" | "authorType" | "body">
+ *   & Partial<Pick<ChannelMessage, "id" | "threadId" | "kind" | "authorId" | "mentions" |
+ *   "attachmentIds" | "linkPreviewIds" | "fileRefs" | "linkedTaskId" | "linkedRunId" | "status" | "errorMessage">>
+ *   & { topicAnchorItemId?: string, replyToItemId?: string }} AppendInput
+ */
 
 /**
  * Test-only convenience for fixtures that need a message-shaped presentation view.
  * It writes exclusively through the canonical ConversationItem/LingTurn stores.
+ * @param {Store} store
+ * @param {AppendInput} input
+ * @param {string} now
  */
 export function appendChannelItemFixture(store, input, now) {
   const channel = store.getChannel(input.channelId);
@@ -47,6 +61,11 @@ export function appendChannelItemFixture(store, input, now) {
   if (thread.channelId !== input.channelId) {
     throw new Error(`Conversation thread does not belong to channel: ${thread.id}`);
   }
+  const replySourceItem = topicAnchorItem ?? replyToItem;
+  /** @type {import("@ling-stack/contracts").ConversationDomainRef[]} */
+  const linkedRefs = [];
+  if (input.linkedTaskId) linkedRefs.push({ type: "task", id: input.linkedTaskId });
+  if (input.linkedRunId) linkedRefs.push({ type: "run", id: input.linkedRunId });
 
   if (input.authorType === "local-user" && (input.kind === undefined || input.kind === "message")) {
     const result = store.appendConversationUserTurn({
@@ -72,12 +91,9 @@ export function appendChannelItemFixture(store, input, now) {
         attachmentIds: input.attachmentIds ?? [],
         linkPreviewIds: input.linkPreviewIds ?? [],
         fileRefs: input.fileRefs ?? [],
-        ...((topicAnchorItem ?? replyToItem) ? { replyToItemId: (topicAnchorItem ?? replyToItem).id } : {}),
+        ...(replySourceItem ? { replyToItemId: replySourceItem.id } : {}),
       },
-      domainRefs: [
-        ...(input.linkedTaskId ? [{ type: "task", id: input.linkedTaskId }] : []),
-        ...(input.linkedRunId ? [{ type: "run", id: input.linkedRunId }] : []),
-      ],
+      domainRefs: linkedRefs,
       idempotencyKey: `fixture-channel-item:${input.id ?? randomUUID()}`,
     }, now);
     return projectConversationItemToChannelMessage(result.item, { linkedRunId: input.linkedRunId });
@@ -105,14 +121,11 @@ export function appendChannelItemFixture(store, input, now) {
       streaming: status === "pending",
       deliveryStatus: status,
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+      presentationRole: "narration",
     },
-    domainRefs: [
-      ...((topicAnchorItem ?? replyToItem)
-        ? [{ type: "conversation_item", id: (topicAnchorItem ?? replyToItem).id }]
-        : []),
-      ...(input.linkedTaskId ? [{ type: "task", id: input.linkedTaskId }] : []),
-      ...(input.linkedRunId ? [{ type: "run", id: input.linkedRunId }] : []),
-    ],
+    domainRefs: replySourceItem
+      ? [{ type: "conversation_item", id: replySourceItem.id }, ...linkedRefs]
+      : linkedRefs,
     ...(input.id ? { idempotencyKey: `channel-item:${input.id}` } : {}),
   } : {
     ...(input.id ? { id: input.id } : {}),
@@ -125,15 +138,13 @@ export function appendChannelItemFixture(store, input, now) {
     ...(input.authorId ? { actorId: input.authorId } : {}),
     visibility: "channel",
     payload: { eventType: input.kind ?? "system", summary: input.body },
-    domainRefs: [
-      ...(input.linkedTaskId ? [{ type: "task", id: input.linkedTaskId }] : []),
-      ...(input.linkedRunId ? [{ type: "run", id: input.linkedRunId }] : []),
-    ],
+    domainRefs: linkedRefs,
     ...(input.id ? { idempotencyKey: `channel-item:${input.id}` } : {}),
   }, now);
   return projectConversationItemToChannelMessage(item, { linkedRunId: input.linkedRunId });
 }
 
+/** @param {Store} store @param {string} itemId */
 export function getChannelItemViewFixture(store, itemId) {
   const item = store.getEffectiveConversationItem(itemId);
   if (!item?.channelId) return undefined;
@@ -143,6 +154,10 @@ export function getChannelItemViewFixture(store, itemId) {
   });
 }
 
+/**
+ * @param {Store} store
+ * @param {Omit<import("../dist/index.js").ListConversationItemsByChannelOptions, "kinds" | "effectiveOnly">} options
+ */
 export function listChannelItemViewsFixture(store, options) {
   return store.listConversationItemsByChannelPage({
     channelId: options.channelId,
@@ -155,6 +170,10 @@ export function listChannelItemViewsFixture(store, options) {
   }).items.map((item) => getChannelItemViewFixture(store, item.id));
 }
 
+/**
+ * @param {Store} store
+ * @param {Omit<import("../dist/index.js").ListConversationItemsOptions, "effectiveOnly">} options
+ */
 export function listChannelItemViewPageFixture(store, options) {
   const page = store.listConversationItemsPage({
     threadId: options.threadId,
@@ -169,6 +188,12 @@ export function listChannelItemViewPageFixture(store, options) {
   };
 }
 
+/**
+ * @param {Store} store
+ * @param {string} itemId
+ * @param {Partial<Pick<ChannelMessage, "body" | "status" | "linkedRunId">> & { errorMessage?: string | null }} input
+ * @param {string} now
+ */
 export function updateChannelItemFixture(store, itemId, input, now) {
   const item = store.getConversationItem(itemId);
   if (!item) return undefined;
@@ -194,6 +219,7 @@ export function updateChannelItemFixture(store, itemId, input, now) {
           : item.payload.errorMessage
             ? { errorMessage: item.payload.errorMessage }
             : {}),
+      presentationRole: item.payload.presentationRole,
     },
     status: status === "failed" ? "failed" : terminal ? "committed" : "pending",
   }, now);

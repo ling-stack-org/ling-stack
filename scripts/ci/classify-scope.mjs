@@ -7,6 +7,7 @@ import { deviceSuiteFiles, deviceTestPackages, matchesDeviceTestProfile } from "
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
+import { isCatalogWorkflowPinUpdate } from "./workflow-scope.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
@@ -80,10 +81,8 @@ function isAssurancePath(file) {
 /**
  * Classify a pull request by the narrowest safe CI scope.
  *
- * The classifier is intentionally conservative: a path that is not recognized
- * as documentation, allowlisted maintenance, verified local output cleanup, or
- * a workspace package escalates to the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
+ * Unrecognized paths and unverified shared inputs select the full CI lane.
+ * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -97,6 +96,10 @@ export function classifyChangedFiles(input) {
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
+  }
+
+  if (input.catalogWorkflowPinUpdate) {
+    return buildScope("affected", files, packages, "verified catalog App action pin update, with workflow contracts checked in Common");
   }
 
   // Keep deleted local artifacts in the audit while narrowing product selection.
@@ -649,12 +652,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const baseTestConfigs = new Map();
   let versionChange;
   let addedLockImporters;
+  let catalogWorkflowPinUpdate;
   if (args.files) {
     files = JSON.parse(args.files);
   } else if (eventName === "pull_request" && args.base && args.head) {
-    const git = (argv) => execFileSync("git", argv, { cwd: repositoryRoot, encoding: "utf8" });
+    const git = (argv, encoding = "utf8") => execFileSync("git", argv, { cwd: repositoryRoot, encoding });
     const base = git(["merge-base", args.base, args.head]).trim();
     files = git(["diff", "--no-renames", "--name-only", "-z", base, args.head, "--"]).split("\0").filter(Boolean);
+    if (args["force-full"] !== "true") {
+      catalogWorkflowPinUpdate = isCatalogWorkflowPinUpdate({ files, base, head: args.head, git });
+    }
     if (files.some(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY))) {
       deletedOutputFiles = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
         base, args.head, "--", LOCAL_OUTPUT_DIRECTORY]).split("\0").filter(Boolean);
@@ -682,7 +689,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } else {
     files = [];
   }
-  const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName,
+  const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName, catalogWorkflowPinUpdate,
     forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, addedLockImporters });
   if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
     scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });
