@@ -104,6 +104,70 @@ test("event retention commits with the append and reports gaps after durable ent
   assert.equal(store.readEvents("task:task-1", 1, 2).hasGap, false);
 });
 
+test("Edge health admits bounded samples with contiguous cursors across reopen and enrollment changes", t => {
+  const dir = mkdtempSync(join(tmpdir(), "ling-edge-health-"));
+  const databasePath = join(dir, "fabric.sqlite");
+  const open = () => new SqliteDeviceFabricStore({ databasePath, maxEventsPerStream: 2 });
+  let store = open();
+  t.after(() => {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const runtime: EdgeRuntimeEnrollmentV1 = {
+    runtimeId: "edge-health-fixture", displayName: "Edge health", publicKeyFingerprint: "fixture-key",
+    contractMajor: 1, supportedTransports: ["local_process"], revision: 1, status: "enrolled", lastSeenAt: now,
+  };
+  const at = (ms: number) => new Date(Date.parse(now) + ms).toISOString();
+  const sample = (id: string, ms: number, connected: boolean) => ({ sampleId: id, observedAt: at(ms), connected });
+  const first = sample("a", 1, true);
+  const append = (observation: ReturnType<typeof sample>, ms: number, runtimeRevision = 1) =>
+    store.recordEdgeRuntimeHealth({ runtimeId: runtime.runtimeId, runtimeRevision, sample: observation, now: at(ms), authorize: () => {} });
+  const read = (ms: number, generation?: number, afterSequence = 0) =>
+    store.readEdgeRuntimeHealthPage({ runtimeId: runtime.runtimeId, generation, afterSequence, limit: 1, now: at(ms) });
+  store.saveEdgeRuntime(runtime);
+  assert.equal(read(0).sampleState, "unavailable");
+  const durable = event(1, { retentionClass: "durable", kind: "permission_revoked" });
+  store.appendEvent(durable, now);
+  const accepted = append(first, 2);
+  assert.ok(accepted.status === "accepted" && !accepted.replayed);
+  assert.deepEqual(append(sample("b", 10, false), 10), { status: "sampled", retryAfterMs: 4_992 });
+  assert.deepEqual(append(sample("future", 10_100, false), 10), { status: "stale" });
+
+  store.close();
+  store = open();
+  assert.deepEqual(append(first, 10), { ...accepted, replayed: true });
+  assert.throws(() => append({ ...first, connected: false }, 10), { code: "revision_conflict" });
+  assert.deepEqual(append(sample("b", 20, false), 20), { status: "sampled", retryAfterMs: 4_982 });
+  assert.equal(append(sample("b", 5_002, false), 5_002).status, "accepted");
+  const firstPage = read(5_002);
+  assert.equal(firstPage.hasMore, true);
+  assert.deepEqual(firstPage.events, [accepted.event]);
+  const secondPage = read(5_002, 1, 1);
+  assert.equal(secondPage.hasMore, false);
+  assert.equal(secondPage.events[0]?.sequence, 2);
+  assert.deepEqual(secondPage.events[0]?.payload, { connected: false });
+  assert.equal(append(sample("c", 10_002, true), 10_002).status, "accepted");
+  const reset = read(10_002);
+  assert.equal(reset.requiresSnapshot, true);
+  assert.equal(reset.latestSample?.sequence, 3);
+  assert.deepEqual(reset.events, []);
+  assert.deepEqual(append(sample("expired", 10_003, true), 130_003), { status: "stale" });
+  assert.equal(read(130_003, 1, 3).sampleState, "stale");
+  assert.deepEqual(store.readEvents("task:task-1").events.map(entry => entry.eventId), [durable.eventId]);
+  assert.equal(store.getEdgeRuntime(runtime.runtimeId)?.lastSeenAt, at(10_002));
+
+  store.revokeEdgeRuntimeEnrollment(runtime.runtimeId, 1);
+  assert.equal(read(10_003, 1, 2).sampleState, "stale");
+  assert.throws(() => append(sample("d", 15_003, true), 15_003), { code: "safety_denied" });
+  store.saveEdgeRuntime({ ...runtime, revision: 3, lastSeenAt: at(15_003) });
+  assert.equal(read(15_003, 1, 3).requiresSnapshot, true);
+  assert.equal(read(15_003).sampleState, "unavailable");
+  const reenrolled = append(sample("d", 15_004, true), 15_004, 3);
+  assert.ok(reenrolled.status === "accepted");
+  assert.equal(reenrolled.event.sequence, 1);
+  assert.equal(read(15_004).generation, 3);
+});
+
 test("peer snapshots recover the authorized event stream without rewinding its projection", t => {
   const registry = new LingServerPeerRegistry();
   registry.registerInstallation({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" });

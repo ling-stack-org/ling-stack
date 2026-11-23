@@ -25,6 +25,8 @@ import {
   type DeviceTwinReportedValueV1,
   type EdgeRuntimeEnrollmentGrantV1,
   type EdgeRuntimeEnrollmentV1,
+  type EdgeRuntimeHealthAdmissionV1,
+  type EdgeRuntimeHealthPageV1,
   type EdgeRuntimeJournalEntryV1,
   type EdgeRuntimePlacementDecisionV1,
   type JsonValue,
@@ -34,6 +36,9 @@ import {
   assertEdgeRuntimeJournalEntry, assertIdentityChange, assertIdentitySplitDestination,
   DeviceFabricError, EdgeRuntimePlacementPolicy, isAllowedDeviceLifecycleTransition,
 } from "../../device-fabric.js";
+import {
+  readEdgeRuntimeHealthPage, recordEdgeRuntimeHealth, type EdgeHealthPageInput, type EdgeHealthRecordInput,
+} from "./device-edge-health-store.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { readSqliteSnapshot, withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
@@ -129,12 +134,16 @@ export class SqliteDeviceFabricStore {
       const latestSequence = latest?.sequence === null || latest?.sequence === undefined ? 0 : Number(latest.sequence);
       if (event.sequence <= latestSequence) throw new DeviceFabricError("revision_conflict", "event sequence must advance within its stream");
 
-      this.database.prepare("INSERT INTO device_fabric_events(stream_id,generation,sequence,event_id,envelope_json,occurred_at,created_at) VALUES(?,?,?,?,?,?,?)")
-        .run(streamId, generation, event.sequence, event.eventId, JSON.stringify(normalized), event.occurredAt, now);
-      this.database.prepare("DELETE FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence <= ? AND COALESCE(json_extract(envelope_json,'$.retentionClass'),'bounded') <> 'durable'")
-        .run(streamId, generation, event.sequence - this.#maxEventsPerStream);
+      this.insertDeviceEvent(normalized, streamId, generation, now);
       return { event: normalized, replayed: false };
     });
+  }
+
+  private insertDeviceEvent(event: DeviceEventEnvelopeV1, streamId: string, generation: number, now: string): void {
+    this.database.prepare("INSERT INTO device_fabric_events(stream_id,generation,sequence,event_id,envelope_json,occurred_at,created_at) VALUES(?,?,?,?,?,?,?)")
+      .run(streamId, generation, event.sequence, event.eventId, JSON.stringify(event), event.occurredAt, now);
+    this.database.prepare("DELETE FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence <= ? AND COALESCE(json_extract(envelope_json,'$.retentionClass'),'bounded') <> 'durable'")
+      .run(streamId, generation, event.sequence - this.#maxEventsPerStream);
   }
 
   readEvents(streamId: string, generation = 1, afterSequence = 0, limit = 100): DeviceEventReadResult {
@@ -628,6 +637,15 @@ export class SqliteDeviceFabricStore {
   listEdgeRuntimes(): readonly EdgeRuntimeEnrollmentV1[] {
     return (this.database.prepare("SELECT runtime_json FROM device_edge_runtimes ORDER BY runtime_id").all() as Row[])
       .map(row => parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment"));
+  }
+
+  recordEdgeRuntimeHealth(input: EdgeHealthRecordInput): EdgeRuntimeHealthAdmissionV1 {
+    return this.withWriteTransaction(() => recordEdgeRuntimeHealth(this, input,
+      (event, streamId, generation, now) => this.insertDeviceEvent(event, streamId, generation, now)));
+  }
+
+  readEdgeRuntimeHealthPage(input: EdgeHealthPageInput): EdgeRuntimeHealthPageV1 {
+    return readSqliteSnapshot(this.database, () => readEdgeRuntimeHealthPage(this, input));
   }
 
   issueEdgeRuntimeGrant(grant: EdgeRuntimeEnrollmentGrantV1, publicKeySpki: string, now: string): void {

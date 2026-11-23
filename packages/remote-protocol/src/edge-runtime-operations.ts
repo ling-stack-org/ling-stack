@@ -1,10 +1,19 @@
-import type { DeviceTaskGraphNodeReceiptV1, EdgeRuntimeJournalEntryV1 } from "@ling-stack/contracts";
+import type { DeviceTaskGraphNodeReceiptV1, EdgeRuntimeHealthSampleV1, EdgeRuntimeJournalEntryV1 } from "@ling-stack/contracts";
 import { canonicalJsonBytes } from "./canonical.js";
 
-export interface EdgeRuntimeEvidenceBindingV1 {
+export interface EdgeRuntimeKeyBindingV1 {
   readonly grantId: string;
   readonly runtimeRevision: number;
+}
+
+export interface EdgeRuntimeEvidenceBindingV1 extends EdgeRuntimeKeyBindingV1 {
   readonly placementId: string;
+}
+
+export function edgeRuntimeHealthSampleBytes(
+  runtimeId: string, binding: EdgeRuntimeKeyBindingV1, sample: EdgeRuntimeHealthSampleV1,
+): Uint8Array {
+  return canonicalJsonBytes({ purpose: "ling.edge-runtime-health.v1", runtimeId, binding, sample });
 }
 
 export function edgeRuntimeDiagnosisClaimBytes(binding: EdgeRuntimeEvidenceBindingV1, graphId: string): Uint8Array {

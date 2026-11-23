@@ -15,8 +15,8 @@ import { WebSocketServer } from "ws";
 import type {
   ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
   DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskGraphNodeReceiptV1, DeviceTaskGraphV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
-  DeviceTwinValueV1, EdgeDeviceAttemptConformanceReportV1, EdgeDeviceJournalPageV1, EdgeRuntimeEnrollmentGrantV1, EdgeRuntimeJournalEntryV1,
-  EdgeRuntimePlacementDecisionV1,
+  DeviceTwinValueV1, EdgeDeviceAttemptConformanceReportV1, EdgeDeviceJournalPageV1, EdgeRuntimeEnrollmentGrantV1,
+  EdgeRuntimeHealthAdmissionV1, EdgeRuntimeHealthPageV1, EdgeRuntimeHealthSampleV1, EdgeRuntimeJournalEntryV1, EdgeRuntimePlacementDecisionV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createPcSoftwareDiagnosisPlaybook, createSqliteRunStore, DEFAULT_WORKSPACE_ID,
@@ -24,7 +24,9 @@ import {
   HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceAttemptConformance, readOwnedDeviceTaskTrace,
   SqliteDeviceFabricStore, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
-import { canonicalJsonBytes, edgeRuntimeEnrollmentProofBytes, edgeRuntimeJournalEntryBytes, edgeRuntimeTaskGraphReceiptBytes } from "@ling-stack/remote-protocol";
+import {
+  canonicalJsonBytes, edgeRuntimeEnrollmentProofBytes, edgeRuntimeHealthSampleBytes, edgeRuntimeJournalEntryBytes, edgeRuntimeTaskGraphReceiptBytes,
+} from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
@@ -234,6 +236,38 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
   assert.equal((await send("enrollment/proof", {
     grantId: grant.grantId, signature: sign(null, edgeRuntimeEnrollmentProofBytes(grant), key.privateKey).toString("base64url"),
   })).status, 201);
+  const healthConfig = join(cwd, "edge-health.json");
+  const healthBinding = { grantId: grant.grantId, runtimeRevision: 1 };
+  writeFileSync(healthConfig, JSON.stringify({ origin: linkedOrigin, runtimeId, privateKeyFile, binding: healthBinding }), { mode: 0o600 });
+  const healthCommand = () => promisify(execFile)(process.execPath, [cli, "health", healthConfig], { timeout: 6_000, maxBuffer: 8_192 });
+  const healthUrl = () => `${host.origin}${prefix}/health`;
+  const readHealth = async (query = "") => {
+    const read = await fetch(healthUrl() + "/events" + query, { headers });
+    assert.equal(read.status, 200);
+    return await read.json() as EdgeRuntimeHealthPageV1;
+  };
+  const publishHealth = (payload: EdgeRuntimeHealthSampleV1, signed = payload) => fetch(healthUrl(), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ binding: healthBinding, payload,
+      signature: sign(null, edgeRuntimeHealthSampleBytes(runtimeId, healthBinding, signed), key.privateKey).toString("base64url") }),
+  });
+  assert.equal((await fetch(healthUrl() + "/events")).status, 401);
+  assert.equal((await readHealth()).sampleState, "unavailable");
+  const health = JSON.parse((await healthCommand()).stdout) as EdgeRuntimeHealthAdmissionV1;
+  assert.ok(health.status === "accepted" && !health.replayed);
+  const healthPage = await readHealth();
+  assert.equal(healthPage.sampleState, "fresh");
+  assert.deepEqual(healthPage.events, [health.event]);
+  assert.equal(typeof health.event.observedAt, "string");
+  const healthData = health.event.payload as { readonly connected: boolean };
+  assert.equal(typeof healthData.connected, "boolean");
+  const originalSample = {
+    sampleId: health.event.eventId.split(":").at(-1)!, observedAt: health.event.observedAt!, connected: healthData.connected,
+  };
+  const changedSample = { ...originalSample, connected: !originalSample.connected };
+  assert.equal((await publishHealth(changedSample, originalSample)).status, 403);
+  assert.equal((await publishHealth(changedSample)).status, 409);
+  assert.equal((await fetch(healthUrl() + "/events?generation=0", { headers })).status, 400);
   assert.equal((await fetch(`${host.origin}${prefix}/diagnoses`, { method: "POST" })).status, 401);
   const queue = async (requestId: string) => {
     const queued = await send("diagnoses", { expectedRevision: 1, requestId });
@@ -297,6 +331,11 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     assert.deepEqual(entries[1]?.networkObservation, result.observation);
     await host.daemon.stop();
     host = await start();
+    const retainedHealth = await readHealth("?generation=1&afterSequence=1");
+    assert.equal(retainedHealth.requiresSnapshot, false);
+    assert.deepEqual(retainedHealth.events, []);
+    assert.deepEqual(retainedHealth.latestSample, health.event);
+    assert.deepEqual(await (await publishHealth(originalSample)).json(), { ...health, replayed: true });
     const resumed = JSON.parse((await run(work)).stdout);
     assert.equal(resumed.attemptId, result.graph.nodes[0]?.attemptId);
     assert.deepEqual(resumed.observation, result.observation);
@@ -343,6 +382,11 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     const revokedWork = await queue("before-revocation");
     assert.equal((await send("revocation", { expectedRevision: 1 }, "PUT")).status, 200);
     await assert.rejects(run(revokedWork), /HTTP 403/u);
+    await assert.rejects(healthCommand(), /HTTP 403/u);
+    const revokedHealth = await readHealth();
+    assert.equal(revokedHealth.sampleState, "stale");
+    assert.equal(revokedHealth.runtimeStatus, "revoked");
+    assert.deepEqual(revokedHealth.events, [health.event]);
     assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, revokedWork.graph.graphId), []);
     assert.equal((await inspect(revokedWork.graph.graphId)).graph.nodes[0]?.attemptId, undefined);
     assert.equal((await send("diagnoses", { expectedRevision: 2, requestId: "after-revocation" })).status, 403);

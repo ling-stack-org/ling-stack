@@ -78,7 +78,7 @@ export function readEdgeDiagnosis(runtime: DeviceSupportRuntime, runtimeId: stri
 }
 
 export function readEdgeDiagnosisEvents(runtime: DeviceSupportRuntime, runtimeId: string, graphId: string, cursor: {
-  readonly generation: number;
+  readonly generation?: number;
   readonly afterSequence: number;
   readonly limit: number;
 }): EdgeDeviceJournalPageV1 {
@@ -89,7 +89,7 @@ export function readEdgeDiagnosisEvents(runtime: DeviceSupportRuntime, runtimeId
     const streamId = edgeJournalStreamId(graphId);
     const generation = 1;
     const latestSequence = entries.at(-1)?.sequence ?? 0;
-    const requiresSnapshot = cursor.generation !== generation || cursor.afterSequence > latestSequence;
+    const requiresSnapshot = (cursor.generation ?? generation) !== generation || cursor.afterSequence > latestSequence;
     const page = requiresSnapshot ? [] : entries.slice(cursor.afterSequence, cursor.afterSequence + cursor.limit);
     return {
       graph, streamId, generation, latestSequence, requiresSnapshot,

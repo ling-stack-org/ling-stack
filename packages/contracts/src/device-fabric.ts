@@ -253,6 +253,25 @@ export interface EdgeDeviceJournalPageV1 extends Omit<DeviceTaskJournalPageV1, "
   readonly graph: DeviceTaskGraphV1;
 }
 
+export interface EdgeRuntimeHealthSampleV1 {
+  readonly sampleId: string;
+  readonly observedAt: string;
+  readonly connected: boolean;
+}
+
+export type EdgeRuntimeHealthAdmissionV1 =
+  | { readonly status: "accepted"; readonly event: DeviceEventEnvelopeV1; readonly replayed: boolean }
+  | { readonly status: "sampled"; readonly retryAfterMs: number }
+  | { readonly status: "stale" };
+
+export interface EdgeRuntimeHealthPageV1 extends Omit<DeviceTaskJournalPageV1, "task"> {
+  readonly runtimeId: string;
+  readonly runtimeRevision: number;
+  readonly runtimeStatus: EdgeRuntimeEnrollmentV1["status"];
+  readonly sampleState: "unavailable" | "fresh" | "stale";
+  readonly latestSample?: DeviceEventEnvelopeV1;
+}
+
 export const DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1 = {
   task_created: { sourceKind: "runtime", fields: ["status"] },
   task_transition: { sourceKind: "runtime", fields: ["from", "to"] },

@@ -379,6 +379,28 @@ or workspace scope, redaction class and the related attempt when applicable.
   Use the existing owner journals and peer sync for the durability contract. Evaluate a
   broker such as NATS where measured edge workloads need one.
 
+An enrolled Edge runtime can publish a signed network health sample through its
+authenticated coordinator link. Each sample carries its observation time and
+whether a non-loopback interface has a usable address. The coordinator admits at most one sample
+per runtime enrollment in a five-second interval and discards observations
+older than two minutes. The admission result distinguishes a stored sample
+from a sample omitted by spacing or age. Accepted samples receive contiguous
+coordinator cursors. The persisted stream supplies the sampling interval and
+last accepted result after a process restart. Enrollment revisions separate
+the health streams when the operator replaces a key.
+
+`ling-edge health <configuration.json>` reads the host interfaces and sends
+one sample. The configuration contains `origin`, `runtimeId`, `privateKeyFile`,
+and `binding` with `grantId` and `runtimeRevision`. The CLI sends
+`POST /:runtimeId/health` with the signed binding and a payload containing
+`sampleId`, `observedAt`, and `connected`. The signature covers the
+`ling.edge-runtime-health.v1` purpose, runtime identity, binding and sample.
+The local operator reads `GET /:runtimeId/health/events` under the Edge
+enrollment prefix. The page supplies the latest sample and its freshness
+when its cursor needs a snapshot. After revocation the prior enrollment's
+latest sample is available as historical, stale evidence.
+[Edge health routes](../../packages/daemon/src/features/device-support/edge-routes.ts)
+
 ## 8. Model context and AI orchestration
 
 Build a bounded context pack per task from resolved targets, allowed relationships,

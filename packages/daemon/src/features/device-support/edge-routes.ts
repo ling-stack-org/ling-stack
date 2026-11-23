@@ -3,12 +3,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
   DEVICE_CONTRACT_MAJOR_V1, DEVICE_TRANSPORTS_V1, EDGE_LOCAL_NETWORK_CAPABILITY_ID, type DeviceTaskGraphNodeReceiptV1, type DeviceTransportV1,
-  type EdgeRuntimeEnrollmentV1,
+  type EdgeRuntimeEnrollmentV1, type EdgeRuntimeHealthSampleV1,
 } from "@ling-stack/contracts";
 import { assertEdgeRuntimeJournalEntry, DeviceFabricError, DeviceTaskGraphCoordinator } from "@ling-stack/core";
 import {
-  edgeRuntimeDiagnosisClaimBytes, edgeRuntimeEnrollmentProofBytes, edgeRuntimeJournalEntryBytes, edgeRuntimeTaskGraphReceiptBytes,
-  isEdgeTaskGraphReceipt, type EdgeRuntimeEvidenceBindingV1,
+  edgeRuntimeDiagnosisClaimBytes, edgeRuntimeEnrollmentProofBytes, edgeRuntimeHealthSampleBytes, edgeRuntimeJournalEntryBytes, edgeRuntimeTaskGraphReceiptBytes,
+  isEdgeTaskGraphReceipt, type EdgeRuntimeEvidenceBindingV1, type EdgeRuntimeKeyBindingV1,
 } from "@ling-stack/remote-protocol";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
@@ -22,12 +22,12 @@ const enrollmentGrantLifetimeMs = 5 * 60_000;
 export async function handleEdgeRuntimeRoute(
   url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
-  const path = /^\/v1\/device-support\/fabric\/edge-runtimes(?:\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(enrollment|enrollment\/proof|revocation|diagnoses)(?:\/(edge_diagnosis_[0-9a-f]{64})(?:\/(events|conformance))?)?)?$/u.exec(url.pathname);
+  const path = /^\/v1\/device-support\/fabric\/edge-runtimes(?:\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(enrollment|enrollment\/proof|revocation|health\/events|diagnoses)(?:\/(edge_diagnosis_[0-9a-f]{64})(?:\/(events|conformance))?)?)?$/u.exec(url.pathname);
   if (!path) return false;
   const [, runtimeId, operation, diagnosisId, projection] = path;
   if (diagnosisId !== undefined && operation !== "diagnoses") return false;
   if (!allowLocalServiceRequest(request, response)) return true;
-  const method = operation === "revocation" ? "PUT" : operation && !diagnosisId ? "POST" : "GET";
+  const method = operation === "revocation" ? "PUT" : operation && operation !== "health/events" && !diagnosisId ? "POST" : "GET";
   if (request.method !== method) {
     response.setHeader("Allow", method);
     writePrivateJson(response, 405, { error: "method_not_allowed" });
@@ -39,6 +39,12 @@ export async function handleEdgeRuntimeRoute(
       writePrivateJson(response, 200, {
         generatedAt: runtime.broker.now(), runtimes: runtime.edgeRuntimes.list().map(publicRuntime),
       });
+      return true;
+    }
+    if (operation === "health/events") {
+      const cursor = readEdgeJournalCursor(url.searchParams);
+      if (!cursor) writePrivateJson(response, 400, { error: "invalid_request" });
+      else writePrivateJson(response, 200, store.readEdgeRuntimeHealthPage({ ...cursor, runtimeId, now: runtime.broker.now() }));
       return true;
     }
     if (diagnosisId !== undefined) {
@@ -108,20 +114,20 @@ export async function handleEdgeRuntimeRoute(
 }
 
 function readEdgeJournalCursor(params: URLSearchParams) {
-  const defaults = { generation: 1, afterSequence: 0, limit: 50 };
+  const defaults: { generation?: number; afterSequence: number; limit: number } = { generation: undefined, afterSequence: 0, limit: 50 };
   for (const [key, value] of params) {
     if (!Object.hasOwn(defaults, key) || params.getAll(key).length !== 1 || !/^\d+$/u.test(value)) return undefined;
     const number = Number(value);
     if (!Number.isSafeInteger(number)) return undefined;
     defaults[key as keyof typeof defaults] = number;
   }
-  return defaults.generation >= 1 && defaults.limit >= 1 && defaults.limit <= 100 ? defaults : undefined;
+  return (defaults.generation === undefined || defaults.generation >= 1) && defaults.limit >= 1 && defaults.limit <= 100 ? defaults : undefined;
 }
 
 export async function handleSignedEdgeEvidenceRoute(
   url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
-  const path = /^\/v1\/device-support\/fabric\/edge-runtimes\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(diagnosis-claim|journal|task-graph-receipt)$/u.exec(url.pathname);
+  const path = /^\/v1\/device-support\/fabric\/edge-runtimes\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(diagnosis-claim|journal|task-graph-receipt|health)$/u.exec(url.pathname);
   if (!path) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (request.method !== "POST") {
@@ -130,7 +136,13 @@ export async function handleSignedEdgeEvidenceRoute(
     return true;
   }
   const runtimeId = path[1]!;
-  const envelope = readEvidenceEnvelope(await readJsonBody(request, 4096).catch(() => undefined));
+  const body = await readJsonBody(request, 4096).catch(() => undefined);
+  if (path[2] === "health") {
+    if (url.search) writePrivateJson(response, 400, { error: "invalid_request" });
+    else writeEdgeHealthAdmission(runtime, runtimeId, body, response);
+    return true;
+  }
+  const envelope = readEvidenceEnvelope(body);
   if (!envelope || url.search) {
     writePrivateJson(response, 400, { error: "invalid_request" });
     return true;
@@ -223,7 +235,7 @@ function boundEdgeGraph(runtime: DeviceSupportRuntime, runtimeId: string, bindin
 }
 
 function verifyEdgeEvidence(
-  runtime: DeviceSupportRuntime, runtimeId: string, binding: EdgeRuntimeEvidenceBindingV1, bytes: Uint8Array, signature: Buffer,
+  runtime: DeviceSupportRuntime, runtimeId: string, binding: EdgeRuntimeKeyBindingV1, bytes: Uint8Array, signature: Buffer,
 ): void {
   const store = runtime.fabricStore;
   const enrolled = store.getEdgeRuntime(runtimeId);
@@ -235,14 +247,44 @@ function verifyEdgeEvidence(
 }
 
 function readEvidenceEnvelope(body: unknown): { binding: EdgeRuntimeEvidenceBindingV1; payload: unknown; signature: Buffer } | undefined {
-  if (!isRecord(body) || Object.keys(body).length !== 3 || !isRecord(body.binding) || Object.keys(body.binding).length !== 3) return undefined;
+  const envelope = readSignedEdgeEnvelope(body, 3);
+  if (!envelope || typeof envelope.placementId !== "string" || !/^edge_placement_[0-9a-f]{64}$/u.test(envelope.placementId)) return undefined;
+  return { binding: { ...envelope.binding, placementId: envelope.placementId }, payload: envelope.payload, signature: envelope.signature };
+}
+
+function readSignedEdgeEnvelope(body: unknown, bindingFieldCount: number) {
+  if (!isRecord(body) || Object.keys(body).length !== 3 || !isRecord(body.binding) || Object.keys(body.binding).length !== bindingFieldCount) return undefined;
   const { grantId, runtimeRevision, placementId } = body.binding;
-  if (!isGrantId(grantId) || !isRevision(runtimeRevision) || runtimeRevision < 1 || typeof placementId !== "string"
-    || !/^edge_placement_[0-9a-f]{64}$/u.test(placementId) || typeof body.signature !== "string"
+  if (!isGrantId(grantId) || !isRevision(runtimeRevision) || runtimeRevision < 1 || typeof body.signature !== "string"
     || !/^[A-Za-z0-9_-]{86}$/u.test(body.signature) || !Object.hasOwn(body, "payload")) return undefined;
   const signature = Buffer.from(body.signature, "base64url");
   if (signature.toString("base64url") !== body.signature) return undefined;
-  return { binding: { grantId, runtimeRevision, placementId }, payload: body.payload, signature };
+  return { binding: { grantId, runtimeRevision }, placementId, payload: body.payload, signature };
+}
+
+function writeEdgeHealthAdmission(runtime: DeviceSupportRuntime, runtimeId: string, body: unknown, response: ServerResponse): void {
+  const envelope = readSignedEdgeEnvelope(body, 2);
+  const payload = envelope?.payload;
+  if (!envelope || !isRecord(payload) || Object.keys(payload).length !== 3
+    || typeof payload.sampleId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(payload.sampleId)
+    || typeof payload.connected !== "boolean" || typeof payload.observedAt !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(payload.observedAt)
+    || !Number.isFinite(Date.parse(payload.observedAt))) {
+    writePrivateJson(response, 400, { error: "invalid_request" });
+    return;
+  }
+  const sample: EdgeRuntimeHealthSampleV1 = { sampleId: payload.sampleId, observedAt: payload.observedAt, connected: payload.connected };
+  const { binding, signature } = envelope;
+  const bytes = edgeRuntimeHealthSampleBytes(runtimeId, binding, sample);
+  try {
+    const result = runtime.fabricStore.recordEdgeRuntimeHealth({
+      runtimeId, runtimeRevision: binding.runtimeRevision, sample, now: runtime.broker.now(),
+      authorize: () => verifyEdgeEvidence(runtime, runtimeId, binding, bytes, signature),
+    });
+    writePrivateJson(response, result.status === "accepted" && !result.replayed ? 201 : 200, result);
+  } catch (error) {
+    writeEdgeRuntimeError(response, error);
+  }
 }
 
 function writeEdgeRuntimeError(response: ServerResponse, error: unknown): void {
