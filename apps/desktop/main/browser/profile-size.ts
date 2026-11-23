@@ -2,6 +2,15 @@ import { lstat, opendir, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { DeviceStorageCategorySize } from "@ling-stack/contracts";
 
+async function statIfPresent(path: string) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 export async function measureBrowserProfileSize(storagePath: string | null, metadataPath?: string): Promise<DeviceStorageCategorySize> {
   if (!storagePath) return { category: "browser", knownBytes: 0, status: "unavailable", reason: "browser_profile_unavailable" };
   const root = resolve(storagePath);
@@ -11,14 +20,12 @@ export async function measureBrowserProfileSize(storagePath: string | null, meta
     ({ category: "browser", knownBytes: bytes, status: "partial", reason });
   const budgetLimit = () => Date.now() > deadline ? partial("deadline") : entries >= 300_000 ? partial("entry_limit") : undefined;
   try {
-    const stat = await lstat(root);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("invalid_profile_path");
-    await realpath(root);
-    const pending = [root];
+    const pending = (await statIfPresent(root)) ? [root] : [];
     while (pending.length) {
       const directoryLimit = budgetLimit();
       if (directoryLimit) return directoryLimit;
       const directory = pending.pop()!;
+      if (await realpath(directory) !== directory) return partial("read_error");
       for await (const entry of await opendir(directory)) {
         const entryLimit = budgetLimit();
         if (entryLimit) return entryLimit;
@@ -30,14 +37,17 @@ export async function measureBrowserProfileSize(storagePath: string | null, meta
         else if (stat.isFile()) bytes += stat.size;
       }
     }
-    if (metadataPath) { const stat = await lstat(metadataPath).catch(() => undefined); if (stat?.isFile() && !stat.isSymbolicLink()) bytes += stat.size; }
+    if (metadataPath) {
+      const metadata = resolve(metadataPath);
+      const stat = await statIfPresent(metadata);
+      if (stat?.isFile()) {
+        if (await realpath(metadata) !== metadata) return partial("read_error");
+        bytes += stat.size;
+      }
+    }
     if (Date.now() > deadline) return partial("deadline");
     return { category: "browser", knownBytes: bytes, status: "complete" };
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      if (metadataPath) { const stat = await lstat(metadataPath).catch(() => undefined); if (stat?.isFile() && !stat.isSymbolicLink()) bytes += stat.size; }
-      return { category: "browser", knownBytes: bytes, status: "complete" };
-    }
+  } catch {
     return partial("read_error");
   }
 }

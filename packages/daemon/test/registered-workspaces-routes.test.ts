@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,8 +8,10 @@ import { createDaemonServer } from "../dist/index.js";
 import { createSqliteWorkspaceFixture } from "./test-support/sqlite-workspace-fixture.ts";
 
 test("registered workspace selection only activates known available local paths", async t => {
-  const cwd = await createSqliteWorkspaceFixture(join(tmpdir(), "ling-workspace-switch-"));
-  const other = await mkdtemp(join(tmpdir(), "ling-workspace-switch-other-"));
+  const temp = await realpath(tmpdir());
+  const cwd = await createSqliteWorkspaceFixture(join(temp, "ling-workspace-switch-"));
+  const other = await mkdtemp(join(temp, "ling-workspace-switch-other-"));
+  const target = await mkdtemp(join(temp, "ling-workspace-switch-unregistered-"));
   const prior = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(cwd, "user-root");
   const store = createSqliteRunStore(cwd);
@@ -18,7 +20,8 @@ test("registered workspace selection only activates known available local paths"
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { storeFactory: () => store });
   t.after(async () => { await daemon.stop(); store.close(); if (prior === undefined) delete process.env.LING_STACK_HOME;
     else process.env.LING_STACK_HOME = prior; await rm(cwd, { recursive: true, force: true });
-    await rm(other, { recursive: true, force: true }); });
+    await rm(other, { recursive: true, force: true });
+    await rm(target, { recursive: true, force: true }); });
   await daemon.start();
   const address = daemon.server.address(); assert.ok(address && typeof address === "object");
   const base = `http://127.0.0.1:${address.port}`;
@@ -35,4 +38,9 @@ test("registered workspace selection only activates known available local paths"
   assert.equal((await activate(other, "https://foreign.invalid")).status, 403);
   await rm(other, { recursive: true });
   assert.equal((await activate(other)).status, 409);
+  await symlink(target, other, "junction");
+  const linked = await (await fetch(`${base}/workspaces/registered`)).json() as { workspaces: { cwd: string; available: boolean }[] };
+  assert.equal(linked.workspaces.find(item => item.cwd === other)?.available, false);
+  assert.equal((await activate(other)).status, 409);
+  assert.equal((await fetch(`${base}/device-storage/scans?cwd=${encodeURIComponent(target)}`)).status, 403);
 });

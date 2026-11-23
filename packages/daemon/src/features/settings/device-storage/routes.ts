@@ -1,40 +1,43 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { lstat, realpath } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createWorkspaceRegistryStore, resolveUserConfigPaths, type WorkspaceRegistryEntry } from "@ling-stack/core";
 import type { DeviceStorageScanJob, DeviceStorageScope, DeviceStorageSnapshot } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../../config.js";
 import type { RunStoreRegistry } from "../../../runtime/store-registry.js";
-import { allowLocalWorkspaceRequest } from "../../../shared/local-workspace-access.js";
+import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../../shared/request.js";
 import { writeJson } from "../../../shared/response.js";
 import { listManagedWorktrees } from "../../workspaces/worktree-management.js";
 import { scanOwnedStorage } from "./scanner.js";
 
-interface ScanEntry { readonly cwd: string; readonly controller: AbortController; job: DeviceStorageScanJob }
+interface ScanEntry { readonly cwd: string; readonly controller: AbortController; job: DeviceStorageScanJob; running: boolean }
 const jobs = new Map<string, ScanEntry>();
+const scanBudgetMs = 30_000;
 
 export async function handleDeviceStorageScans(request: IncomingMessage, response: ServerResponse, url: URL,
   config: ResolvedDaemonConfig, stores: RunStoreRegistry): Promise<void> {
   const cwd = url.searchParams.get("cwd");
   if (!cwd) { writeJson(response, 400, { error: "bad_request" }); return; }
+  if (!allowLocalServiceRequest(request, response)) return;
   if (!allowLocalWorkspaceRequest({ request, response, storeRegistry: stores, cwd })) return;
   if (url.pathname === "/device-storage/scans" && request.method === "POST") {
     const body = await readJsonBody(request, config.maxBodyBytes);
+    const scope = (body as { scope?: unknown } | null)?.scope;
     if (!body || typeof body !== "object" || Array.isArray(body)
-      || Object.keys(body).some(key => key !== "scope") || !["all", "current"].includes(String((body as { scope?: unknown }).scope))) {
+      || Object.keys(body).length !== 1 || (scope !== "all" && scope !== "current")) {
       writeJson(response, 400, { error: "bad_request" }); return;
     }
-    const scope = (body as { scope: DeviceStorageScope }).scope;
     for (const entry of jobs.values()) if (entry.cwd === cwd && entry.job.status === "scanning") entry.controller.abort();
-    if ([...jobs.values()].filter(entry => entry.job.status === "scanning").length >= 2) { writeJson(response, 429, { error: "scan_busy" }); return; }
+    if ([...jobs.values()].filter(entry => entry.running).length >= 2) { writeJson(response, 429, { error: "scan_busy" }); return; }
     const id = randomUUID(), controller = new AbortController();
-    const entry: ScanEntry = { cwd, controller, job: { id, status: "scanning" } };
+    const entry: ScanEntry = { cwd, controller, job: { id, status: "scanning" }, running: true };
     jobs.set(id, entry);
     void scanForWorkspace(stores, cwd, scope, controller.signal).then(snapshot => {
       entry.job = { id, status: controller.signal.aborted ? "cancelled" : snapshot.complete ? "complete" : "partial", snapshot };
-    }).catch(() => { entry.job = { id, status: "partial" }; });
-    if (jobs.size > 20) for (const [key, old] of jobs) { if (old.job.status !== "scanning") { jobs.delete(key); if (jobs.size <= 20) break; } }
+    }).catch(() => { entry.job = { id, status: controller.signal.aborted ? "cancelled" : "partial" }; })
+      .finally(() => { entry.running = false; });
+    if (jobs.size > 20) for (const [key, old] of jobs) { if (!old.running) { jobs.delete(key); if (jobs.size <= 20) break; } }
     writeJson(response, 202, entry.job); return;
   }
   const match = /^\/device-storage\/scans\/([0-9a-f-]{36})$/u.exec(url.pathname);
@@ -46,27 +49,41 @@ export async function handleDeviceStorageScans(request: IncomingMessage, respons
 }
 
 async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, scope: DeviceStorageScope, signal: AbortSignal): Promise<DeviceStorageSnapshot> {
+  const deadline = Date.now() + scanBudgetMs;
   const registry = createWorkspaceRegistryStore();
-  const registered: WorkspaceRegistryEntry[] = [];
+  const selected: WorkspaceRegistryEntry[] = [];
+  let workspaceInventoryIncomplete = false;
+  let worktreeInventoryIncomplete = false;
   try {
-    let cursor = "";
-    for (;;) {
-      const page = registry.listWorkspaces(cursor, 500);
-      registered.push(...page);
-      if (page.length < 500 || registered.length >= 5_000) break;
-      cursor = page.at(-1)!.workspaceId;
+    const current = registry.getWorkspaceByCanonicalCwd(cwd);
+    if (!current) throw new Error("workspace_not_registered");
+    if (scope === "current") selected.push(current);
+    else {
+      let cursor = "";
+      while (!signal.aborted && Date.now() < deadline) {
+        const page = registry.listWorkspaces(cursor, 500);
+        selected.push(...page);
+        if (page.length < 500) break;
+        if (selected.length >= 5_000) { workspaceInventoryIncomplete = true; break; }
+        cursor = page.at(-1)!.workspaceId;
+      }
+      if (!selected.some(item => item.workspaceId === current.workspaceId)) selected.push(current);
     }
   } finally { registry.close(); }
-  const selected = scope === "all" ? registered : registered.filter(item => item.canonicalCwd === cwd);
-  if (!selected.some(item => item.canonicalCwd === cwd)) throw new Error("workspace_not_registered");
   const workspaceRoots = selected.map(item => item.stateRoot);
   const worktreeRoots: string[] = [];
-  let worktreeInventoryIncomplete = registered.length >= 5_000;
   for (const workspace of selected) {
-    if (signal.aborted) break;
-    if (!existsSync(workspace.stateRoot) || !existsSync(workspace.canonicalCwd)) { worktreeInventoryIncomplete = true; continue; }
+    if (signal.aborted || Date.now() >= deadline) break;
     try {
-      const inventory = await listManagedWorktrees(stores.getStore(workspace.canonicalCwd), workspace.canonicalCwd);
+      const [workspaceInfo, stateInfo] = await Promise.all([lstat(workspace.canonicalCwd), lstat(workspace.stateRoot)]);
+      if (workspaceInfo.isSymbolicLink() || !workspaceInfo.isDirectory() || stateInfo.isSymbolicLink() || !stateInfo.isDirectory()) {
+        worktreeInventoryIncomplete = true; continue;
+      }
+      await Promise.all([realpath(workspace.canonicalCwd), realpath(workspace.stateRoot)]);
+      if (signal.aborted || Date.now() >= deadline) break;
+      const store = stores.getInitializedStore(workspace.canonicalCwd);
+      if (!store) { worktreeInventoryIncomplete = true; continue; }
+      const inventory = await listManagedWorktrees(store, workspace.canonicalCwd);
       worktreeInventoryIncomplete ||= inventory.limitReached;
       for (const item of inventory.entries) {
         if (item.status === "blocked") worktreeInventoryIncomplete = true;
@@ -76,5 +93,6 @@ async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, scope: De
     } catch { worktreeInventoryIncomplete = true; }
   }
   return scanOwnedStorage({ scope, userRoot: scope === "all" ? resolveUserConfigPaths().rootDir : undefined,
-    workspaceRoots, worktreeRoots, worktreeInventoryIncomplete }, { signal });
+    workspaceRoots, worktreeRoots, workspaceInventoryIncomplete, worktreeInventoryIncomplete },
+  { signal, deadlineMs: Math.max(0, deadline - Date.now()) });
 }

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, statSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createWorkspaceRegistryStore, registerResolvedWorkspace } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -47,10 +47,14 @@ export async function handleWorkspaceDirectorySelect(
   }
 
   try {
-    const selected = await selectWorkspaceDirectory({ defaultPath: cwd });
+    let selected = await selectWorkspaceDirectory({ defaultPath: cwd });
     if (!selected.cancelled && selected.path) {
-      if (url.searchParams.get("register") === "1") registerResolvedWorkspace(selected.path);
-      storeRegistry.trustWorkspaceRoot(selected.path);
+      if (url.searchParams.get("register") === "1") {
+        const selectedPath = realpathSync(selected.path);
+        registerResolvedWorkspace(selectedPath);
+        selected = { ...selected, path: selectedPath };
+      }
+      storeRegistry.trustWorkspaceRoot(selected.path!);
     }
     writeJson(response, 200, selected);
   } catch (error) {
@@ -79,7 +83,7 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
         scanned += page.length;
         for (const item of page) {
           if (item.archivedAt) continue;
-          const available = workspacePathAvailable(item.canonicalCwd);
+          const available = workspacePathAvailable(item.canonicalCwd, config.defaultWorkspaceCwd, storeRegistry);
           workspaces.push({ workspaceId: item.workspaceId, cwd: item.canonicalCwd, name: item.displayName, available });
         }
         if (page.length < 500 || scanned >= 5_000) break;
@@ -88,7 +92,7 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
       if (!workspaces.some(item => item.cwd === config.defaultWorkspaceCwd)) {
         workspaces.unshift({ workspaceId: "default", cwd: config.defaultWorkspaceCwd,
           name: config.defaultWorkspaceCwd.split(/[\\/]/u).at(-1) ?? config.defaultWorkspaceCwd,
-          available: workspacePathAvailable(config.defaultWorkspaceCwd) });
+          available: workspacePathAvailable(config.defaultWorkspaceCwd, config.defaultWorkspaceCwd, storeRegistry) });
       }
       writeJson(response, 200, { workspaces });
       return;
@@ -102,10 +106,10 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
       const cwd = (body as { cwd: string }).cwd;
       const item = registry.getWorkspaceByCanonicalCwd(cwd);
       if (cwd !== config.defaultWorkspaceCwd && !item) { writeJson(response, 404, { error: "workspace_not_registered" }); return; }
-      if (!workspacePathAvailable(cwd)) {
+      if (!workspacePathAvailable(cwd, config.defaultWorkspaceCwd, storeRegistry)) {
         writeJson(response, 409, { error: "workspace_unavailable" }); return;
       }
-      storeRegistry.trustWorkspaceRoot(cwd);
+      if (cwd !== config.defaultWorkspaceCwd) storeRegistry.trustWorkspaceRoot(cwd);
       writeJson(response, 200, { cwd });
       return;
     }
@@ -113,8 +117,15 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
   } finally { registry.close(); }
 }
 
-function workspacePathAvailable(cwd: string): boolean {
-  try { return existsSync(cwd) && statSync(cwd).isDirectory() && resolve(cwd) === cwd; }
+function workspacePathAvailable(cwd: string, defaultCwd: string, stores: RunStoreRegistry): boolean {
+  if (resolve(cwd) !== cwd) return false;
+  try {
+    const lexical = lstatSync(cwd);
+    if (lexical.isSymbolicLink() || !lexical.isDirectory()) return false;
+    const physicalPath = realpathSync(cwd);
+    return (cwd === defaultCwd ? stores.isTrustedWorkspaceRoot(physicalPath) : true)
+      && statSync(physicalPath).isDirectory();
+  }
   catch { return false; }
 }
 

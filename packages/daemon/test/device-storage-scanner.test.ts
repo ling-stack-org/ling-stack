@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, link, symlink, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, link, realpath, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { scanOwnedStorage } from "../dist/features/settings/device-storage/scanner.js";
 
 test("device storage counts owned files once without following symlinks", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ling-storage-scan-"));
+  const root = await mkdtemp(join(await realpath(tmpdir()), "ling-storage-scan-"));
   try {
     const userRoot = join(root, "user"), workspaceRoot = join(userRoot, "workspaces", "one");
     const sessions = join(workspaceRoot, "sessions"), plugins = join(userRoot, "plugins"), worktree = join(root, "managed-worktree");
@@ -26,11 +26,24 @@ test("device storage counts owned files once without following symlinks", async 
 });
 
 test("device storage reports incomplete paths and aborted scans", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ling-storage-partial-"));
+  const root = await mkdtemp(join(await realpath(tmpdir()), "ling-storage-partial-"));
   try {
     const controller = new AbortController(); controller.abort();
     const result = await scanOwnedStorage({ scope: "current", workspaceRoots: [root, join(root, "missing")], worktreeRoots: [] }, { signal: controller.signal });
     assert.equal(result.complete, false);
     assert.equal(result.categories.find(item => item.category === "other")?.status, "partial");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("device storage rejects a recorded root beneath a symlinked parent", async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), "ling-storage-symlinked-parent-"));
+  try {
+    const foreign = join(root, "foreign"), linked = join(root, "linked");
+    await mkdir(join(foreign, "state", "sessions"), { recursive: true });
+    await writeFile(join(foreign, "state", "sessions", "outside"), Buffer.alloc(19));
+    await symlink(foreign, linked, "junction");
+    const result = await scanOwnedStorage({ scope: "current", workspaceRoots: [join(linked, "state")], worktreeRoots: [] });
+    assert.equal(result.knownBytes, 0);
+    assert.equal(result.categories.find(item => item.category === "other")?.reason, "unavailable_path");
   } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,7 +11,7 @@ import { createManagedWorktreeBinding } from "../dist/features/channels/workspac
 import { createSqliteWorkspaceFixture } from "./test-support/sqlite-workspace-fixture.ts";
 
 test("device storage scans trusted workspaces and marks excluded blocked worktrees as partial", async t => {
-  const cwd = await createSqliteWorkspaceFixture(join(tmpdir(), "ling-device-storage-route-"));
+  const cwd = await createSqliteWorkspaceFixture(join(await realpath(tmpdir()), "ling-device-storage-route-"));
   const prior = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(cwd, "test-user-root");
   const store = createSqliteRunStore(cwd);
