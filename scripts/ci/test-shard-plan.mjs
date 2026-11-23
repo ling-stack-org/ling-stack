@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadDaemonTestPlatforms } from "./daemon-test-platforms.mjs";
 import { DAEMON_DEPENDENCY_TEST_FILENAMES } from "./dependency-security.mjs";
+import { deviceSuiteFiles, deviceTestPackages } from "./device-test-profile.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const daemonSuite = { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 4, concurrency: 3,
@@ -48,10 +49,19 @@ export async function discoverTestFiles(cwd, excluded = []) {
     .sort().map(file => `test/${file}`);
 }
 
-export async function discoverSuiteFiles(config) {
+export async function discoverSuiteFiles(config, testProfile) {
   const discovered = await discoverTestFiles(config.cwd, config.excluded);
-  if (config.packageName !== "@ling-stack/daemon") return discovered;
-  return (await loadDaemonTestPlatforms(discovered))[config.platform];
+  const files = config.packageName === "@ling-stack/daemon"
+    ? (await loadDaemonTestPlatforms(discovered))[config.platform] : discovered;
+  if (testProfile === undefined) return files;
+
+  const focused = testProfile === "device" && (config.packageName === "@ling-stack/core"
+    ? deviceSuiteFiles.core : config.packageName === "@ling-stack/daemon" && config.platform === "linux"
+      ? deviceSuiteFiles["daemon-linux"] : undefined);
+  if (!focused || focused.some(file => !files.includes(file))) {
+    throw new Error(`Invalid ${testProfile} test selection for ${config.packageName} on ${config.platform}`);
+  }
+  return [...focused].sort();
 }
 
 /** Timing hints only change placement, never discovery, coverage or deadlines. */
@@ -100,9 +110,14 @@ export async function loadTimingHints(path) {
   }
 }
 
-export async function createTestPlan(packages, { timings = { suites: {} }, daemonPlatforms } = {}) {
+export async function createTestPlan(packages, { timings = { suites: {} }, daemonPlatforms, testProfile } = {}) {
   if (!Array.isArray(packages) || packages.some(name => typeof name !== "string")) throw new TypeError("packages must be a string array");
   const selectedDaemonPlatforms = normalizeDaemonPlatforms(daemonPlatforms, packages.includes("@ling-stack/daemon"));
+  if (testProfile !== undefined && (testProfile !== "device"
+    || !packages.includes("@ling-stack/core") || !packages.includes("@ling-stack/daemon")
+    || packages.some(name => !deviceTestPackages.includes(name)) || selectedDaemonPlatforms.join() !== "linux")) {
+    throw new Error(`Invalid ${testProfile} test plan scope`);
+  }
   // Combined Core/Linux-Daemon runs reserve the runner-capacity layout used by
   // the full matrix. A Darwin-only Daemon plan keeps Core at its isolated count.
   const combined = packages.includes("@ling-stack/core") && selectedDaemonPlatforms.includes("linux");
@@ -113,9 +128,9 @@ export async function createTestPlan(packages, { timings = { suites: {} }, daemo
     if (!packages.includes(config.packageName)) continue;
     if (name === "daemon" && !selectedDaemonPlatforms.includes("darwin")) continue;
     if (name === "daemon-linux" && !selectedDaemonPlatforms.includes("linux")) continue;
-    const shardCount = combined && name === "core" ? 5
+    const shardCount = testProfile === "device" ? 1 : combined && name === "core" ? 5
       : combined && name === "daemon-linux" ? 6 : config.shardCount;
-    const files = await discoverSuiteFiles(config);
+    const files = await discoverSuiteFiles(config, testProfile);
     if (files.length === 0) throw new Error(`No tests discovered for ${name}`);
     const hints = timings.suites?.[name];
     const durations = hints?.platform === config.platform ? hints.durationsMs : {};
@@ -123,7 +138,7 @@ export async function createTestPlan(packages, { timings = { suites: {} }, daemo
       shards: assignTestShards(files, shardCount, { ...config, timings: durations ?? {} }) };
   }
   const shardedPackages = Object.values(testSuites).map(config => config.packageName);
-  return { version: 1, suites, daemonMatrix: { include: Object.entries(suites)
+  return { version: 1, ...(testProfile === undefined ? {} : { testProfile }), suites, daemonMatrix: { include: Object.entries(suites)
     .filter(([name]) => name.startsWith("daemon"))
     .flatMap(([suite, config]) => Array.from({ length: config.shardCount }, (_, shard) => ({
       suite, shard, runner: config.platform === "darwin" ? "macos-26" : "ubuntu-latest",
@@ -199,7 +214,7 @@ export function parseArguments(argv, allowed) {
 }
 
 async function main() {
-  const args = parseArguments(process.argv.slice(2), ["--packages", "--daemon-platforms", "--timings", "--output", "--plan", "--reports"]);
+  const args = parseArguments(process.argv.slice(2), ["--scope", "--packages", "--daemon-platforms", "--timings", "--output", "--plan", "--reports"]);
   let result;
   if (args["--reports"]) {
     const plan = JSON.parse(await readFile(args["--plan"], "utf8"));
@@ -209,8 +224,16 @@ async function main() {
     result = mergeTestReports(plan, reports);
     console.log(`Verified complete test coverage for ${Object.keys(plan.suites).join(", ")}.`);
   } else {
-    result = await createTestPlan(JSON.parse(args["--packages"]), {
+    if (args["--scope"] && (args["--packages"] || args["--daemon-platforms"])) {
+      throw new Error("--scope already specifies packages and Daemon platforms");
+    }
+    const scope = args["--scope"] ? JSON.parse(await readFile(args["--scope"], "utf8")) : {
+      testPackages: JSON.parse(args["--packages"]),
       daemonPlatforms: args["--daemon-platforms"] ? JSON.parse(args["--daemon-platforms"]) : undefined,
+    };
+    result = await createTestPlan(scope.testPackages, {
+      daemonPlatforms: scope.daemonPlatforms,
+      testProfile: scope.testProfile,
       timings: args["--timings"] ? await loadTimingHints(args["--timings"]) : undefined,
     });
     console.log(JSON.stringify(result.unitMatrix));
