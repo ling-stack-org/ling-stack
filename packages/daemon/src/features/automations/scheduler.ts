@@ -128,9 +128,6 @@ export class AutomationSchedulerRegistry {
       }
       this.refreshStateSummary(entry);
       this.stoppedWorkspaces.delete(cwd);
-      // stopAll closes every coordination timer as part of daemon shutdown.
-      // Starting one workspace again re-enables deadline restoration for that
-      // workspace while stoppedWorkspaces continues to fence the others.
       this.coordinationStopping = false;
       this.restoreCoordinationDeadlines(cwd);
       this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
@@ -222,9 +219,7 @@ export class AutomationSchedulerRegistry {
 
   stopAll(): void {
     this.coordinationStopping = true;
-    for (const timer of this.coordinationTimers.values()) clearTimeout(timer);
-    this.coordinationTimers.clear();
-    for (const cwd of [...this.entriesByCwd.keys()]) {
+    for (const cwd of new Set([...this.entriesByCwd.keys(), ...this.coordinationTimers.keys()])) {
       this.stop(cwd);
     }
   }
