@@ -236,6 +236,31 @@ developer clients and physical hardware or vehicle acceptance remain open.
 
 [Current evidence and open acceptance by slice](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
+## Device Support Platform Android USB Modbus continuation 2026-11-23
+
+- The implementation branch `codex/device-platform-complete-implementation-20261123`
+  is based on `origin/main@1c20cc079` and contains the Android USB Modbus slice in
+  commits `3eec0fa5f` and `6c315cd85`. The native module enumerates USB Host serial
+  ports, requests OS permission, pins VID/PID and serial identity when available,
+  reads a documented Modbus function 03 or 04 request, and keeps bounded captures
+  in the phone-owned journal.
+- The phone panel supports port refresh, authorization, UART settings, register
+  reads, CRC and response diagnostics, digest-checked replay, raw capture sharing,
+  and background cancellation. The shared contracts and Core codec are reused by
+  the PC serial adapter. The Android driver path drains a quiet interval instead
+  of requiring `purgeHwBuffers`, which supports adapters whose driver does not
+  implement a hardware purge.
+- Evidence passed: Mobile typecheck and 130 tests, the focused USB fixture with
+  seven cases, Android native `UsbModbusFrameTest` with five cases, Android ARM64
+  Release assembly and emulator entry/refresh, iOS production bundle export,
+  macOS native PTY Modbus capture with register 0 equal to 10, Core/Daemon build,
+  typecheck and 30 focused tests, Contracts 195 tests, docs/public checks, and the
+  PC-to-phone capture export replayed by the Core codec. The emulator had no USB
+  accessory attached, so physical permission, detach/reconnect and known-value
+  RS-485 bench evidence remain open.
+
+[Current evidence and open acceptance by slice](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+
 ## Typed Transcript Handoff
 
 ### Current design handoff: Codex-style simple transcript
