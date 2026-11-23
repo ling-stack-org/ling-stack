@@ -165,6 +165,13 @@ attached to its approval and expiry. Reconnect rebuilds observations, pending st
 and receipts. A repair with a declared recovery step uses the runtime's own recovery
 contract and authority checks.
 
+The Daemon publishes reported Twin values from the public facts of a diagnosis.
+Every value links to its owner task, completed adapter attempt, observation and
+current device profile and connection revisions. It commits a diagnosis in one
+Twin revision. The local graph projects evidence references and freshness for
+each enrolled device, including the last observations after a disconnect.
+[D14 acceptance](ling-device-support-platform-implementation-plan.md#d14-semantic-device-graph-and-twin)
+
 ## 5. Cross-device task graph
 
 ### 5.1 Graph and dispatch contracts

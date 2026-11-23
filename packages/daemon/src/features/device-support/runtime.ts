@@ -55,7 +55,7 @@ import { createDeviceApprovalQueue } from "./approval-queue.js";
 import { createDeviceDeveloperJobs, retainedAndroidDeployResult, type DeviceDeveloperExecutor } from "./developer-jobs.js";
 import type { AndroidApkLibrary } from "./android-apks.js";
 import type { AndroidProjectBuilds } from "./android-project-builds.js";
-import { homeAssistantReportedValue } from "./home-assistant-twin.js";
+import { diagnosisReportedValues } from "./diagnosis-twin.js";
 
 interface ConfiguredDeviceTargetSummary {
   readonly connectionId: string;
@@ -343,10 +343,14 @@ export function createDeviceSupportRuntime(options: {
       });
       throw error;
     }
-    return await runDeviceReadOnlyPlaybook({
+    const result = await runDeviceReadOnlyPlaybook({
       broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
       playbook: selectedPlaybook, proposalId,
     });
+    const deviceId = target.device.id;
+    const values = diagnosisReportedValues(result, store.getCurrentCapabilitySnapshot(deviceId), store);
+    if (values.length) fabricStore.recordReportedTwinValues({ deviceId, values, recordedAt: now() });
+    return result;
   }
 
   function hasCurrentLinuxConnection(profile: DeviceProfileV1): boolean {
@@ -475,13 +479,7 @@ export function createDeviceSupportRuntime(options: {
       const playbook = request.entryId === undefined
         ? createHomeAssistantOfflinePlaybook(entityId, { maxReportAgeMs: request.maxReportAgeMs })
         : createHomeAssistantIntegrationDiagnosisPlaybook(request.entryId, entityId);
-      return withHomeAssistant(async target => {
-        const { id: deviceId } = target.device;
-        const result = await runDiagnosis(target, deviceId, playbook, request);
-        const value = homeAssistantReportedValue(result, store.getCurrentCapabilitySnapshot(deviceId));
-        if (value) fabricStore.recordReportedTwinValue({ deviceId, value, recordedAt: now() });
-        return result;
-      });
+      return withHomeAssistant(target => runDiagnosis(target, target.device.id, playbook, request));
     },
     async proposeHomeAssistantReload({ entryId, entityId }) {
       return withHomeAssistant(async (target, adapter) => {

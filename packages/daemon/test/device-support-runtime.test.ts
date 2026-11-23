@@ -11,7 +11,8 @@ import { WebSocketServer } from "ws";
 
 import type {
   ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
-  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1, EdgeRuntimeEnrollmentGrantV1,
+  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
+  DeviceTwinValueV1, EdgeRuntimeEnrollmentGrantV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
@@ -22,6 +23,12 @@ import { canonicalJsonBytes, edgeRuntimeEnrollmentProofBytes } from "@ling-stack
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
+
+interface ProjectedTwin {
+  readonly deviceId: string;
+  readonly revision: number;
+  readonly values: readonly (Pick<DeviceTwinValueV1, "key" | "quality" | "reportedEvidence"> & { readonly hasReported: boolean })[];
+}
 
 test("the Daemon enrolls an Edge runtime with the approved key and fences proofs across restart and revocation", async t => {
   const cwd = mkdtempSync(join(tmpdir(), "ling-edge-enrollment-"));
@@ -198,18 +205,19 @@ test("the configured PC ADB target journals diagnosis and developer log capture 
   const { profile } = await enrollment.json() as { profile: DeviceProfileV1 };
   assert.equal(profile.device.id, candidates.targets[0].deviceId);
   assert.equal(profile.device.kind, "head_unit");
-  const readGraphNode = async () => {
+  const readGraph = async () => {
     const response = await fetch(base + "/fabric/graph", { headers });
     assert.equal(response.status, 200);
     const graph = await response.json() as {
       nodes: { nodeId: string; deviceId: string; source?: string; connectionRevision?: string; lifecycleStatus?: string }[];
+      twins: readonly ProjectedTwin[];
     };
     assert.doesNotMatch(JSON.stringify(graph), /fixture-hardware-id|fixture-head-unit/u);
     const matches = graph.nodes.filter(node => node.deviceId === profile.device.id);
     assert.equal(matches.length, 1);
-    return matches[0]!;
+    return { node: matches[0]!, twin: graph.twins.find(twin => twin.deviceId === profile.device.id) };
   };
-  const enrolledNode = await readGraphNode();
+  const { node: enrolledNode } = await readGraph();
   assert.equal(enrolledNode.source, "registry");
   assert.equal(enrolledNode.lifecycleStatus, "healthy");
   assert.equal(enrolledNode.connectionRevision, profile.device.profileRevision);
@@ -250,9 +258,13 @@ test("the configured PC ADB target journals diagnosis and developer log capture 
   transportId = "18";
   const reconnected = await diagnosis();
   assert.equal(reconnected.status, "succeeded");
-  const reconnectedNode = await readGraphNode();
+  const { node: reconnectedNode, twin } = await readGraph();
   assert.equal(reconnectedNode.nodeId, enrolledNode.nodeId);
   assert.notEqual(reconnectedNode.connectionRevision, enrolledNode.connectionRevision);
+  assert.deepEqual(twin?.values.map(value => value.key), ["android.device", "android.packages"]);
+  assert.ok(twin?.values.every(value => value.hasReported && value.quality === "good"
+    && value.reportedEvidence?.taskId === reconnected.report.taskId
+    && value.reportedEvidence.connectionRevision === reconnectedNode.connectionRevision));
   const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     const original = store.listAttempts(first.report.taskId)[0]?.attempt;
@@ -269,6 +281,10 @@ test("the configured PC ADB target journals diagnosis and developer log capture 
   assert.equal(changed.status, "partial");
   assert.ok(changed.report.actions.some(action => action.errorCode === "target_changed"));
   assert.deepEqual(changed.report.facts.map(fact => fact.value), [{ androidVersion: "7.1.2" }]);
+  const { twin: disconnected } = await readGraph();
+  assert.ok(disconnected?.values.every(value => value.quality === "stale"));
+  assert.equal(disconnected?.values.find(value => value.key === "android.packages")?.reportedEvidence?.taskId,
+    reconnected.report.taskId);
   assert.equal(packageReads, 3);
 });
 
@@ -1137,6 +1153,16 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   assert.ok(liveFleet.items[0]?.capabilitySnapshotId);
   assert.ok(liveFleet.items[0]?.lastSeenAt);
   assert.equal(liveFleet.items[0]?.runtimeStatus, undefined);
+  const graphResponse = await fetch(new URL("../fabric/graph", url), { headers });
+  assert.equal(graphResponse.status, 200);
+  const { twins } = await graphResponse.json() as { readonly twins: readonly ProjectedTwin[] };
+  const twin = twins.find(item => item.deviceId === liveFleet.items[0]?.deviceId);
+  assert.ok(twin);
+  assert.equal(twin.revision, 1);
+  assert.deepEqual(twin.values.map(value => value.reportedEvidence?.observationId), report.facts.map(fact => fact.observationId));
+  assert.ok(twin.values.every(value => !Object.hasOwn(value, "reported") && value.hasReported
+    && value.reportedEvidence?.taskId === report.taskId
+    && report.actions.some(action => action.attemptId === value.reportedEvidence?.attemptId)));
 
   const eventsUrl = `http://127.0.0.1:${address.port}/v1/device-support/tasks/${encodeURIComponent(report.taskId)}/events`;
   assert.equal((await fetch(eventsUrl, { headers: { ...headers, "X-Forwarded-For": "192.0.2.42" } })).status, 403);

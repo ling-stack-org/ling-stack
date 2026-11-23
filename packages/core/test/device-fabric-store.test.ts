@@ -339,6 +339,17 @@ test("reported twin values retain their evidence and preserve pending and verifi
     ...update, value: { ...value, observedAt: now, reported: "unavailable",
       reportedEvidence: { ...value.reportedEvidence, observationId: "older-observation" } },
   }), reported);
+  const secondReading = {
+    ...value, key: "sensor.kitchen", reportedEvidence: { ...value.reportedEvidence, observationId: "observation-2" },
+  };
+  const thirdReading = {
+    ...value, key: "sensor.office", reportedEvidence: { ...value.reportedEvidence, observationId: "observation-3" },
+  };
+  const batch = { deviceId, recordedAt: observedAt, values: [value, secondReading, thirdReading] };
+  const updated = store.recordReportedTwinValues(batch);
+  assert.equal(updated?.revision, 3);
+  assert.deepEqual(updated?.values, [...reported.values, secondReading, thirdReading]);
+  assert.deepEqual(store.recordReportedTwinValues(batch), updated);
 });
 
 test("fabric store records identity evidence and replays the original graph revision after reopen", t => {

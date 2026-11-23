@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, HardwareProtocolTransportRegistry, HardwareProtocolWorkbench,
   modbusRtuRegisterCodec, runDeviceReadOnlyPlaybook, SqliteDeviceProtocolStore, SqliteDeviceSupportStore } from "@ling-stack/core";
 import { ModbusSerialAdapter, modbusRegisterDiagnosis } from "../dist/features/device-support/adapters/modbus-serial.js";
+import { diagnosisReportedValues } from "../dist/features/device-support/diagnosis-twin.js";
 import { bindModbusSerialTarget, readModbusSerialTargets, type ConfiguredModbusSerialTarget } from "../dist/features/device-support/modbus-serial-targets.js";
 import { createDaemonServer } from "../dist/index.js";
 
@@ -90,6 +91,9 @@ test("the broker reports only complete, matching Modbus readings and retains cap
         assert.deepEqual(fact.value, status === "read"
           ? { status, unitAddress: 1, table: "holding", startAddress: 0, registers: [10] }
           : { status });
+        const readings = diagnosisReportedValues(result, snapshot, deviceStore);
+        assert.deepEqual(readings.map(value => [value.key, value.reportedEvidence.observationId]),
+          status === "read" ? [["modbus.rtu.read_registers", fact.observationId]] : []);
         const rawObservation = deviceStore.getObservation(task.id, fact.observationId);
         assert.ok(rawObservation);
         const { captureId } = rawObservation.value as { captureId: string };

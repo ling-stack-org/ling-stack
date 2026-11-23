@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { DeviceDiagnosisReportV1, DeviceProfileV1, DeviceTaskJournalPageV1, DeviceTaskTraceV1 } from "@ling-stack/contracts";
+import type { DeviceDiagnosisReportV1, DeviceProfileV1, DeviceTaskJournalPageV1, DeviceTaskTraceV1, DeviceTwinValueV1 } from "@ling-stack/contracts";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, SqliteDeviceSupportStore } from "@ling-stack/core";
 import { createDaemonServer, type DaemonServer } from "../dist/index.js";
 import type { LocalProcessRunner } from "../dist/features/device-support/adapters/local-pc-executor.js";
@@ -135,6 +135,15 @@ test("Linux SSH enrollment, diagnosis, and reconnection use the exact configured
     assert.equal(response.status, 200);
     return await response.json() as DeviceTaskTraceV1;
   };
+  const readTwin = async (deviceId: string) => {
+    const response = await fetch(baseUrl + "/fabric/graph", { headers });
+    assert.equal(response.status, 200);
+    const graph = await response.json() as {
+      twins: readonly { deviceId: string; values: readonly Pick<DeviceTwinValueV1, "key" | "quality" | "reportedEvidence">[] }[];
+    };
+    assert.doesNotMatch(JSON.stringify(graph), /Fixture Hotspot|192\.0\.2\.|checking\.example\.test/u);
+    return graph.twins.find(twin => twin.deviceId === deviceId)?.values.find(value => value.key === "linux.wifi");
+  };
 
   await start();
   assert.equal((await fetch(baseUrl + "/linux/targets")).status, 401);
@@ -162,6 +171,8 @@ test("Linux SSH enrollment, diagnosis, and reconnection use the exact configured
   ]);
   assert.deepEqual(taskB.report.hypotheses.map(hypothesis => hypothesis.code), ["dns_issue"]);
   assert.doesNotMatch(JSON.stringify(taskA), /Fixture Hotspot|192\.0\.2\.25|checking\.example\.test/u);
+  assert.equal((await readTwin(enrolledA.device.id))?.reportedEvidence?.observationId, taskA.report.facts[0]?.observationId);
+  assert.equal((await readTwin(enrolledB.device.id))?.reportedEvidence?.observationId, taskB.report.facts[0]?.observationId);
 
   const journalResponse = await fetch(baseUrl + "/tasks/" + encodeURIComponent(taskA.report.taskId) + "/events", { headers });
   assert.equal(journalResponse.status, 200);
@@ -181,6 +192,9 @@ test("Linux SSH enrollment, diagnosis, and reconnection use the exact configured
   assert.deepEqual(failed.report.facts, []);
   assert.doesNotMatch(JSON.stringify(failed), /credential detail/u);
   assert.equal((await getTargets()).targets[0]?.status, "offline");
+  const stale = await readTwin(enrolledA.device.id);
+  assert.equal(stale?.quality, "stale");
+  assert.equal(stale?.reportedEvidence?.taskId, taskA.report.taskId);
   assert.ok(trustFiles.size > 0);
   await daemon!.stop();
   daemon = undefined;
@@ -202,6 +216,9 @@ test("Linux SSH enrollment, diagnosis, and reconnection use the exact configured
   assert.equal(resumedSnapshot.deviceId, originalSnapshot.deviceId);
   assert.notEqual(resumedSnapshot.snapshotId, originalSnapshot.snapshotId);
   assert.notEqual(resumedSnapshot.connectionRevision, originalSnapshot.connectionRevision);
+  const resumedTwin = await readTwin(enrolledA.device.id);
+  assert.equal(resumedTwin?.reportedEvidence?.taskId, resumed.report.taskId);
+  assert.equal(resumedTwin?.reportedEvidence?.connectionRevision, resumedSnapshot.connectionRevision);
   assert.doesNotMatch(JSON.stringify(originalTrace), /identityFile|hostKey|192\.0\.2\./u);
 
   const store = new SqliteDeviceSupportStore({ databasePath });

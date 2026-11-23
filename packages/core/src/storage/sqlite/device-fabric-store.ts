@@ -500,17 +500,31 @@ export class SqliteDeviceFabricStore {
     readonly value: DeviceTwinReportedValueV1;
     readonly recordedAt: string;
   }): DeviceTwinV1 {
+    const { deviceId, value, recordedAt } = input;
+    return this.recordReportedTwinValues({ deviceId, values: [value], recordedAt })!;
+  }
+
+  recordReportedTwinValues(input: {
+    readonly deviceId: string;
+    readonly values: readonly DeviceTwinReportedValueV1[];
+    readonly recordedAt: string;
+  }): DeviceTwinV1 | undefined {
     return this.withWriteTransaction(() => {
-      const { deviceId, value, recordedAt } = input;
+      const { deviceId, values, recordedAt } = input;
       const current = this.getTwin(deviceId);
-      const previous = current?.values.find(candidate => candidate.key === value.key);
-      if (current && previous && (previous.reportedEvidence?.observationId === value.reportedEvidence.observationId
-        || Date.parse(previous.observedAt) > Date.parse(value.observedAt))) return current;
-      const values = current?.values ?? [];
-      const next = previous
-        ? values.map(item => item.key === value.key ? { ...item, ...value } : item)
-        : [...values, value];
-      return this.saveTwin({ deviceId, revision: (current?.revision ?? 0) + 1, values: next, updatedAt: recordedAt });
+      const properties = new Map(current?.values.map(value => [value.key, value]));
+      let changed = false;
+      for (const value of values) {
+        const previous = properties.get(value.key);
+        if (previous && (previous.reportedEvidence?.observationId === value.reportedEvidence.observationId
+          || Date.parse(previous.observedAt) > Date.parse(value.observedAt))) continue;
+        properties.set(value.key, { ...previous, ...value });
+        changed = true;
+      }
+      if (!changed) return current;
+      return this.saveTwin({
+        deviceId, revision: (current?.revision ?? 0) + 1, values: [...properties.values()], updatedAt: recordedAt,
+      });
     });
   }
 
