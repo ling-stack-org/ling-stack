@@ -173,15 +173,35 @@ export function NormalConversationComposer({
       surface="normal_conversation"
       density="floating"
       className="conversation-home-composer normal-conversation-composer"
-      aboveComposerNode={threadId && onOpenReview ? (
-        <ConversationChangeSummary
-          cwd={workspaceCwd}
-          threadId={threadId}
-          active={activeRun}
-          submitting={sendBusy}
-          onOpenReview={onOpenReview}
-        />
-      ) : null}
+      aboveComposerNode={(
+        <>
+          {threadId && onOpenReview ? (
+            <ConversationChangeSummary
+              cwd={workspaceCwd}
+              threadId={threadId}
+              active={activeRun}
+              submitting={sendBusy}
+              onOpenReview={onOpenReview}
+            />
+          ) : null}
+          {!modelReady && !activeRun ? (
+            <ConversationStatusStrip
+              className="conversation-composer-status-strip normal-conversation-model-status attention"
+              icon={<CircleAlert size={15} />}
+              title={t("Model needs setup")}
+              description={activeModelOption?.blocker || t("Please configure a chat model before sending.")}
+              statusNode={<StatusIndicator label={t("Blocked")} tone="warning" />}
+              metaItems={[{ id: "model", label: t("Model"), value: activeModelLabel }]}
+              actions={onOpenModelWorkbench ? [{
+                id: "configure-model",
+                label: t("Configure model"),
+                icon: <SlidersHorizontal size={14} />,
+                onClick: onOpenModelWorkbench,
+              }] : []}
+            />
+          ) : null}
+        </>
+      )}
       ariaLabel={t("New conversation composer")}
       toolbarClassName="conversation-home-toolbar normal-conversation-composer-toolbar"
       leftToolsClassName="conversation-home-tools normal-conversation-composer-tools"
@@ -192,22 +212,6 @@ export function NormalConversationComposer({
         metrics={runtimeMetrics}
         locale={locale}
       />}
-      statusNode={!modelReady && !activeRun ? (
-        <ConversationStatusStrip
-          className="conversation-composer-status-strip normal-conversation-model-status attention"
-          icon={<CircleAlert size={15} />}
-          title={t("Model needs setup")}
-          description={activeModelOption?.blocker || t("Please configure a chat model before sending.")}
-          statusNode={<StatusIndicator label={t("Blocked")} tone="warning" />}
-          metaItems={[{ id: "model", label: t("Model"), value: activeModelLabel }]}
-          actions={onOpenModelWorkbench ? [{
-            id: "configure-model",
-            label: t("Configure model"),
-            icon: <SlidersHorizontal size={14} />,
-            onClick: onOpenModelWorkbench,
-          }] : []}
-        />
-      ) : null}
       dropZoneClassName={dragActive ? "active" : undefined}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
