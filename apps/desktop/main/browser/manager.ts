@@ -1,6 +1,7 @@
 import { BrowserDebugLog, debugUrl } from "./debug.js";
 import { BrowserWebMcp } from "./webmcp.js";
 import { BrowserManagement } from "./management.js";
+import { measureBrowserProfileSize } from "./profile-size.js";
 import { browserAnnotationScript } from "./annotation-runtime.js";
 import { parseBrowserAnnotationAnchor, type DesktopBrowserAnnotation } from "../../shared/browser-annotations.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -10,7 +11,10 @@ import {
   DESKTOP_BROWSER_MAX_TABS, DESKTOP_BROWSER_PROTOCOL, parseDesktopBrowserUrl, sameDesktopBrowserScope,
   type DesktopBrowserScope, type DesktopBrowserState, type DesktopBrowserTab, type DesktopBrowserCommand,
 } from "@ling-stack/contracts";
-import type { DesktopBrowserPreferences, DesktopBrowserUserAction, DesktopBrowserViewport, DesktopBrowserWorkspace, DesktopBrowserWorkspaceState } from "../../shared/browser-capabilities.js";
+import type { DesktopBrowserPreferences, DesktopBrowserSettingsAction, DesktopBrowserUserAction, DesktopBrowserViewport, DesktopBrowserWorkspace, DesktopBrowserWorkspaceState } from "../../shared/browser-capabilities.js";
+import type { BrowserManagementState } from "../../shared/browser-management.js";
+import type { DeviceStorageCategorySize, DeviceStorageScope } from "@ling-stack/contracts";
+import { createWorkspaceRegistryStore } from "@ling-stack/core";
 import { browserPageScript } from "./page-runtime.js";
 import { assertBrowserNetworkUrl, isBrowserLoopback } from "./url-policy.js";
 import { configureBrowserSession } from "./session.js";
@@ -105,6 +109,58 @@ export class DesktopBrowserManager {
       ...(this.persistenceError ? { persistenceError: true } : {}), ...(activeTabId ? { activeTabId } : {}) };
   }
 
+  async settingsState(workspaceCwd: string): Promise<BrowserManagementState> {
+    this.assertWorkspaceCwd(workspaceCwd);
+    await this.management.ready();
+    return this.management.state();
+  }
+  async profileSize(workspaceCwd: string, scope: DeviceStorageScope = "current"): Promise<DeviceStorageCategorySize> {
+    this.assertWorkspaceCwd(workspaceCwd);
+    if (scope === "current") return measureBrowserProfileSize(this.session.getStoragePath(), this.profileStore.metadataPath);
+    const registry = createWorkspaceRegistryStore();
+    const workspaces: string[] = [];
+    try {
+      let cursor = "";
+      for (;;) {
+        const page = registry.listWorkspaces(cursor, 500);
+        workspaces.push(...page.map(entry => entry.canonicalCwd));
+        if (page.length < 500 || workspaces.length >= 5_000) break;
+        cursor = page.at(-1)!.workspaceId;
+      }
+    } finally { registry.close(); }
+    let bytes = 0;
+    let incomplete = workspaces.length >= 5_000;
+    for (const cwd of new Set(workspaces)) {
+      const partition = this.electron.session.fromPartition(desktopBrowserPartition(cwd));
+      const metadata = new BrowserProfileStore(cwd, this.options.profileDirectory);
+      const result = await measureBrowserProfileSize(partition.getStoragePath(), metadata.metadataPath);
+      bytes += result.knownBytes;
+      incomplete ||= result.status !== "complete";
+    }
+    return { category: "browser", knownBytes: bytes, status: incomplete ? "partial" : "complete",
+      ...(incomplete ? { reason: "browser_profile_unavailable" as const } : {}) };
+  }
+
+  async actSettings(input: DesktopBrowserSettingsAction, assertCurrent: () => void = () => {}): Promise<BrowserManagementState> {
+    this.assertWorkspaceCwd(input.workspaceCwd);
+    await this.management.ready();
+    assertCurrent();
+    if (this.clearing) throw new BrowserPageError("browser_data_clearing");
+    if (input.action === "history_clear") this.management.clearHistory(input.since, input.id);
+    else if (input.action === "download_preferences") { this.management.store.data.askBeforeDownload = input.askBeforeDownload; this.management.store.save(); this.changed(); }
+    else if (input.action === "download_directory") await this.management.chooseDownloadDirectory();
+    else if (input.action === "device_permission") {
+      this.pause(); await this.management.setDeviceRule(input.rule);
+      for (const tab of this.tabs.values()) if (new URL(tab.url).origin === input.rule.origin) { this.invalidate(tab); tab.view.webContents.reload(); }
+    } else if (input.action === "clear_data") {
+      this.clearing = true; this.pause(); this.hide();
+      try { if (await this.management.clear(input)) { for (const tab of [...this.tabs.values()]) this.closeTab(tab); this.rotateGeneration(); } }
+      finally { this.clearing = false; }
+    }
+    assertCurrent();
+    return this.management.state();
+  }
+
   async restore(): Promise<void> {
     if (this.restoring || !this.restoration.length || this.disposed) return;
     this.restoring = true;
@@ -130,23 +186,16 @@ export class DesktopBrowserManager {
     assertCurrent();
     if (this.clearing) throw new BrowserPageError("browser_data_clearing");
     if (input.action === "activate_workspace" || input.action === "deactivate_workspace") return this.workspace(input);
-    if (input.action === "history_clear") this.management.clearHistory(input.since, input.id);
-    else if (input.action === "download_preferences") { this.management.store.data.askBeforeDownload = input.askBeforeDownload; this.management.store.save(); this.changed(); }
-    else if (input.action === "download_directory") await this.management.chooseDownloadDirectory();
-    else if (input.action === "download_cancel" || input.action === "download_show") this.management.downloadAction(input.id, input.action === "download_cancel" ? "cancel" : "show");
-    else if (input.action === "device_permission") {
-      this.pause(); await this.management.setDeviceRule(input.rule);
-      for (const tab of this.tabs.values()) if (new URL(tab.url).origin === input.rule.origin) { this.invalidate(tab); tab.view.webContents.reload(); }
+    if (input.action === "history_clear" || input.action === "download_preferences" || input.action === "download_directory"
+      || input.action === "device_permission" || input.action === "clear_data") {
+      await this.actSettings(input, assertCurrent);
+      return this.workspace(input);
     }
+    if (input.action === "download_cancel" || input.action === "download_show") this.management.downloadAction(input.id, input.action === "download_cancel" ? "cancel" : "show");
     else if (input.action === "import_preview") await this.management.previewImport();
     else if (input.action === "import_apply") this.management.applyImport(input.urls);
     else if (input.action === "extension_install") { this.pause(); await this.management.installExtension(); }
     else if (input.action === "extension_remove") { this.pause(); this.management.removeExtension(input.id); }
-    else if (input.action === "clear_data") {
-      this.clearing = true; this.pause(); this.hide();
-      try { if (await this.management.clear(input)) { for (const tab of [...this.tabs.values()]) this.closeTab(tab); this.rotateGeneration(); } }
-      finally { this.clearing = false; }
-    }
     else return this.actPage(input as Exclude<DesktopBrowserUserAction, { action: "activate_workspace" | "deactivate_workspace" | "history_clear" | "clear_data" | "download_preferences" | "download_directory" | "download_cancel" | "download_show" | "device_permission" | "import_preview" | "import_apply" | "extension_install" | "extension_remove" }>, assertCurrent);
     assertCurrent(); return this.workspace(input);
   }
@@ -441,7 +490,8 @@ export class DesktopBrowserManager {
       loading: !wc.isDestroyed() && wc.isLoading(), canGoBack: !wc.isDestroyed() && wc.navigationHistory.canGoBack(),
       canGoForward: !wc.isDestroyed() && wc.navigationHistory.canGoForward(), control: tab.control, ...(tab.error ? { error: tab.error } : {}) };
   }
-  private assertWorkspace(input: DesktopBrowserWorkspace): void { if (this.disposed || input.workspaceCwd !== this.options.workspaceCwd) throw new BrowserPageError("browser_workspace_unavailable"); }
+  private assertWorkspace(input: DesktopBrowserWorkspace): void { this.assertWorkspaceCwd(input.workspaceCwd); }
+  private assertWorkspaceCwd(workspaceCwd: string): void { if (this.disposed || workspaceCwd !== this.options.workspaceCwd) throw new BrowserPageError("browser_workspace_unavailable"); }
   private assertCommand(command: DesktopBrowserCommand, signal: AbortSignal): void {
     if (this.clearing) throw new BrowserPageError("browser_data_clearing");
     if (!this.workspaceActive) throw new BrowserPageError("browser_workspace_paused");

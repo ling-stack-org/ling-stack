@@ -56,7 +56,8 @@ test("standard Electron browser performs scoped tools through its authenticated 
   await buildWebFixture({ root: webRoot, configFile: join(webRoot, "vite.config.ts"), logLevel: "error",
     build: { outDir: webOutput, emptyOutDir: true, rollupOptions: { input: join(webRoot, "e2e/support/desktop-browser.html") } } });
   const html = join(webOutput, "e2e/support/desktop-browser.html");
-  await build({ entryPoints: [join(support, "browser-electron-app.ts")], outfile: appFile, bundle: true, platform: "node", format: "esm", external: ["electron"], logLevel: "silent" });
+  await build({ entryPoints: [join(support, "browser-electron-app.ts")], outfile: appFile, bundle: true, platform: "node", format: "esm", external: ["electron"],
+    banner: { js: "import { createRequire as lingFixtureCreateRequire } from 'node:module'; const require = lingFixtureCreateRequire(import.meta.url);" }, logLevel: "silent" });
   await build({ entryPoints: [fileURLToPath(new URL("../main/browser/schema-worker.ts", import.meta.url))], outfile: join(temporary, "schema-worker.js"), bundle: true, platform: "node", format: "cjs", logLevel: "silent" });
   await build({ entryPoints: [join(support, "browser-electron-preload.ts")], outfile: preload, bundle: true, platform: "node", format: "cjs", external: ["electron"], logLevel: "silent" });
   const launcher = join(temporary, "launch.cjs");
@@ -66,6 +67,15 @@ test("standard Electron browser performs scoped tools through its authenticated 
   electron = await launchBrowser();
   t.diagnostic(await electron.evaluate(() => `Electron ${process.versions.electron}, Chromium ${process.versions.chrome}, ${process.platform}/${process.arch}`));
   const host = await electron.firstWindow(); await host.waitForLoadState();
+  const settings = await host.evaluate(cwd => window.lingDesktop!.browser!.getSettingsState(cwd), workspaceCwd);
+  assert.equal(settings.devices.length, 0);
+  const profileSize = await host.evaluate(cwd => window.lingDesktop!.browser!.getProfileSize(cwd, "current"), workspaceCwd);
+  assert.equal(profileSize.category, "browser");
+  assert.equal(profileSize.status, "complete");
+  const deniedDevice = await host.evaluate(({ cwd, origin }) => window.lingDesktop!.browser!.actSettings({ workspaceCwd: cwd,
+    action: "device_permission", rule: { origin, permission: "camera", decision: "deny" } }),
+  { cwd: workspaceCwd, origin: new URL(siteUrl).origin });
+  assert.deepEqual(deniedDevice.devices, [{ origin: new URL(siteUrl).origin, permission: "camera", decision: "deny" }]);
   const errors: string[] = []; host.on("pageerror", error => errors.push(error.message));
   const workspace = { workspaceCwd, scope };
   const address = host.getByRole("textbox", { name: "Browser address" });

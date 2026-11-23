@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { createSqliteRunStore, registerResolvedWorkspace } from "../../core/dist/index.js";
+import { createDaemonServer } from "../dist/index.js";
+import { createSqliteWorkspaceFixture } from "./test-support/sqlite-workspace-fixture.ts";
+
+test("registered workspace selection only activates known available local paths", async t => {
+  const cwd = await createSqliteWorkspaceFixture(join(tmpdir(), "ling-workspace-switch-"));
+  const other = await mkdtemp(join(tmpdir(), "ling-workspace-switch-other-"));
+  const prior = process.env.LING_STACK_HOME;
+  process.env.LING_STACK_HOME = join(cwd, "user-root");
+  const store = createSqliteRunStore(cwd);
+  registerResolvedWorkspace(cwd);
+  registerResolvedWorkspace(other);
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { storeFactory: () => store });
+  t.after(async () => { await daemon.stop(); store.close(); if (prior === undefined) delete process.env.LING_STACK_HOME;
+    else process.env.LING_STACK_HOME = prior; await rm(cwd, { recursive: true, force: true });
+    await rm(other, { recursive: true, force: true }); });
+  await daemon.start();
+  const address = daemon.server.address(); assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  const list = await fetch(`${base}/workspaces/registered`);
+  assert.equal(list.status, 200);
+  assert.ok((await list.json() as { workspaces: { cwd: string }[] }).workspaces.some(item => item.cwd === other));
+  const activate = (path: string, origin?: string) => fetch(`${base}/workspaces/activate`, { method: "POST",
+    headers: { "content-type": "application/json", ...(origin ? { Origin: origin } : {}) }, body: JSON.stringify({ cwd: path }) });
+  const protectedUrl = `${base}/device-storage/scans?cwd=${encodeURIComponent(other)}`;
+  assert.equal((await fetch(protectedUrl)).status, 403);
+  assert.equal((await activate(other)).status, 200);
+  assert.equal((await fetch(protectedUrl)).status, 404);
+  assert.equal((await activate(join(cwd, "missing"))).status, 404);
+  assert.equal((await activate(other, "https://foreign.invalid")).status, 403);
+  await rm(other, { recursive: true });
+  assert.equal((await activate(other)).status, 409);
+});

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type { ComputerControlController } from "../../domains/computer-control/use-computer-control-controller.js";
 import { shouldHideCuaDriverInternalRows, CUA_DRIVER_MCP_SERVER_ID } from "../../domains/computer-control/computer-control-surface.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
@@ -32,6 +32,9 @@ import { HumanQaSettingsPanel } from "./human-qa/HumanQaSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
 import { WorktreeSettingsPanel } from "./WorktreeSettingsPanel.js";
+import { WorkspaceSwitcherDialog } from "./WorkspaceSwitcherDialog.js";
+import { BrowserSettingsPanel } from "./BrowserSettingsPanel.js";
+import { DeviceStorageSettingsPanel } from "./DeviceStorageSettingsPanel.js";
 import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
 import { SettingsShell, type SettingsContentState, type SettingsShellGroup } from "./SettingsShell.js";
 import { SettingsWorkspaceToolSurface } from "./SettingsWorkspaceToolSurface.js";
@@ -49,6 +52,7 @@ import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPa
 import { ExecutionEnginesSettingsPage } from "./execution-engines/ExecutionEnginesSettingsPage.js";
 import { CompanionSettingsPage } from "../companions/CompanionSettingsPage.js";
 import { ReleaseUpdateCard } from "./ReleaseUpdateCard.js";
+import { Button, Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "../../shared/ui/index.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -119,6 +123,9 @@ export function SettingsPage({
   runsLoading,
   onCloseWorkspaceTool,
   onBackToApplication,
+  onWorkspaceChange,
+  onOpenPlugins,
+  onOpenConversations,
 }: {
   readonly cwd: string;
   readonly computerControl: ComputerControlController;
@@ -193,12 +200,22 @@ export function SettingsPage({
   readonly runsLoading: boolean;
   readonly onCloseWorkspaceTool?: () => void;
   readonly onBackToApplication?: () => void;
+  readonly onWorkspaceChange?: (cwd: string) => Promise<void>;
+  readonly onOpenPlugins?: () => void;
+  readonly onOpenConversations?: () => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
+  const worktreeGuard = useRef<{ readonly dirty: boolean; readonly save: () => Promise<boolean> } | undefined>(undefined);
+  const [pendingNavigation, setPendingNavigation] = useState<SettingsSectionId | "back" | "switch">();
+  const [workspaceSwitcherOpen, setWorkspaceSwitcherOpen] = useState(false);
+  const [pendingWorkspaceCwd, setPendingWorkspaceCwd] = useState("");
+  const [savingDraft, setSavingDraft] = useState(false);
+  const registerWorktreeGuard = useCallback((guard: { readonly dirty: boolean; readonly save: () => Promise<boolean> } | undefined) => { worktreeGuard.current = guard; }, []);
   const computerControlVisible = computerControl.surfaceMode === "computer_control"
     || (typeof window !== "undefined" && Boolean(window.lingDesktop?.lockedTaskContinuation));
   const mobileAccessVisible = typeof window !== "undefined" && Boolean(window.lingDesktop?.mobileAccess);
+  const browserVisible = typeof window !== "undefined" && Boolean(window.lingDesktop?.browser);
   useEffect(() => {
     if (!computerControlVisible && activeSection === "computer-control") {
       setActiveSection("personal-profile");
@@ -209,6 +226,9 @@ export function SettingsPage({
       setActiveSection("personal-profile");
     }
   }, [activeSection, mobileAccessVisible]);
+  useEffect(() => {
+    if (!browserVisible && activeSection === "browser") setActiveSection("personal-profile");
+  }, [activeSection, browserVisible]);
   const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
   const activeWorkspaceToolView = workspaceToolView && workspaceToolSection && workspaceToolDetail !== undefined && workspaceToolDetail !== null
@@ -249,6 +269,8 @@ export function SettingsPage({
       hidden: item.pending === true,
       ...(item.id === "computer-control" ? { hidden: !computerControlVisible } : {}),
       ...(item.id === "mobile-access" ? { hidden: !mobileAccessVisible } : {}),
+      ...(item.id === "browser" ? { hidden: !browserVisible } : {}),
+      ...(item.id === "device-storage" ? { hidden: !browserVisible } : {}),
     })),
   }));
   const workspaceToolDefinition = workspaceToolSection
@@ -270,7 +292,14 @@ export function SettingsPage({
     ? mcpTools.filter((tool) => tool.serverId !== CUA_DRIVER_MCP_SERVER_ID)
     : mcpTools;
 
-  const selectSettingsSection = (sectionId: SettingsSectionId): void => {
+  const performNavigation = (sectionId: SettingsSectionId | "back" | "switch"): void => {
+    if (sectionId === "switch") {
+      const target = pendingWorkspaceCwd;
+      setPendingWorkspaceCwd("");
+      if (target) void onWorkspaceChange?.(target);
+      return;
+    }
+    if (sectionId === "back") { onBackToApplication?.(); return; }
     setActiveSection(sectionId);
     onCloseRunDiagnostics();
     if (sectionId === "model-workbench") {
@@ -287,6 +316,10 @@ export function SettingsPage({
     }
     onCloseWorkspaceTool?.();
   };
+  const selectSettingsSection = (sectionId: SettingsSectionId): void => {
+    if (sectionId !== activeSection && worktreeGuard.current?.dirty) { setPendingNavigation(sectionId); return; }
+    performNavigation(sectionId);
+  };
 
   return (
     <SettingsShell
@@ -297,7 +330,7 @@ export function SettingsPage({
       contentState={contentState}
       groups={shellGroups}
       navigationLabel={t("Settings sections")}
-      onBack={onBackToApplication}
+      onBack={() => { if (worktreeGuard.current?.dirty) setPendingNavigation("back"); else onBackToApplication?.(); }}
       onSelectSection={selectSettingsSection}
     >
         {runDiagnosticsOpen ? (
@@ -327,7 +360,12 @@ export function SettingsPage({
         ) : null}
 
         {visibleActiveSection === "personalization" && !workspaceToolDetailOpen ? <PersonalizationSettingsPanel cwd={cwd} /> : null}
-        {visibleActiveSection === "worktrees" && !workspaceToolDetailOpen ? <WorktreeSettingsPanel key={cwd} cwd={cwd} /> : null}
+        {visibleActiveSection === "worktrees" && !workspaceToolDetailOpen ? <WorktreeSettingsPanel key={cwd} cwd={cwd} registerGuard={registerWorktreeGuard}
+          onSwitchWorkspace={() => setWorkspaceSwitcherOpen(true)} /> : null}
+        {visibleActiveSection === "browser" && browserVisible && !workspaceToolDetailOpen ? <BrowserSettingsPanel key={cwd} cwd={cwd} /> : null}
+        {visibleActiveSection === "device-storage" && browserVisible && !workspaceToolDetailOpen ? <DeviceStorageSettingsPanel key={cwd} cwd={cwd}
+          onOpenConversations={() => onOpenConversations?.()} onOpenPlugins={() => onOpenPlugins?.()}
+          onOpenWorktrees={() => selectSettingsSection("worktrees")} onOpenBrowser={() => selectSettingsSection("browser")} /> : null}
 
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel
@@ -423,6 +461,23 @@ export function SettingsPage({
           <HumanQaSettingsPanel key={cwd} cwd={cwd} />
           </div>
         ) : null}
+        <WorkspaceSwitcherDialog cwd={cwd} open={workspaceSwitcherOpen} onClose={() => setWorkspaceSwitcherOpen(false)}
+          onSelect={nextCwd => {
+            setWorkspaceSwitcherOpen(false);
+            if (nextCwd === cwd) return;
+            if (worktreeGuard.current?.dirty) { setPendingWorkspaceCwd(nextCwd); setPendingNavigation("switch"); }
+            else void onWorkspaceChange?.(nextCwd);
+          }} />
+        <Dialog open={pendingNavigation !== undefined} busy={savingDraft} onOpenChange={open => { if (!open) { setPendingNavigation(undefined); setPendingWorkspaceCwd(""); } }}>
+          <DialogContent size="sm"><DialogHeader title={t("Save worktree changes?")} closeLabel={t("Close")} />
+            <DialogBody>{t("You have unsaved worktree settings.")}</DialogBody>
+            <DialogFooter><Button variant="ghost" disabled={savingDraft} onClick={() => { setPendingNavigation(undefined); setPendingWorkspaceCwd(""); }}>{t("Stay")}</Button>
+              <Button variant="secondary" disabled={savingDraft} onClick={() => { const target = pendingNavigation; setPendingNavigation(undefined); if (target) performNavigation(target); }}>{t("Discard")}</Button>
+              <Button loading={savingDraft} onClick={() => { const target = pendingNavigation; const save = worktreeGuard.current?.save; if (!target || !save) return;
+                setSavingDraft(true); void save().then(ok => { if (ok) { setPendingNavigation(undefined); performNavigation(target); } }).finally(() => setSavingDraft(false)); }}>{t("Save")}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
     </SettingsShell>
   );
 }

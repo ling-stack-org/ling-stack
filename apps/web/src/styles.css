@@ -108,6 +108,8 @@
 @import "./styles/settings-default-authorization.css";
 @import "./styles/settings-personalization.css";
 @import "./styles/settings-worktrees.css";
+@import "./styles/settings-browser.css";
+@import "./styles/settings-device-storage.css";
 @import "./styles/profile-crop-dialog.css";
 @import "./styles/profile-settings.css";
 @import "./styles/profile-settings-activity.css";

@@ -26,6 +26,16 @@ export function mountBrowserFixture(): void {
   const read = (workspace: DesktopBrowserWorkspace): DesktopBrowserWorkspaceState => ({ ...(states.get(JSON.stringify(workspace)) ?? { generation: 1, revision: 0, tabs: [] }), preferences, ...(management ? { management } : {}) });
   const capability: DesktopBrowserCapabilities = {
     getState: async workspace => read(workspace),
+    getSettingsState: async () => management ?? { history: [], downloads: [], devices: [], downloadDirectory: "/downloads", askBeforeDownload: true, extensions: [] },
+    getProfileSize: async () => ({ category: "browser", knownBytes: 1024, status: "complete" }),
+    actSettings: async action => {
+      if (!management) management = { history: [], downloads: [], devices: [], downloadDirectory: "/downloads", askBeforeDownload: true, extensions: [] };
+      if (action.action === "history_clear") management = { ...management, history: management.history.filter(item => action.id ? item.id !== action.id : item.visitedAt < action.since) };
+      if (action.action === "download_preferences") management = { ...management, askBeforeDownload: action.askBeforeDownload };
+      if (action.action === "clear_data" && action.history) management = { ...management, history: [] };
+      listeners.forEach(listener => listener());
+      return management;
+    },
     async act(action) {
       calls.push(action);
       const workspace = { workspaceCwd: action.workspaceCwd, scope: action.scope }, state = read(workspace);

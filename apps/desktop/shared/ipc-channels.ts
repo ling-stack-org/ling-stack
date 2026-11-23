@@ -3,6 +3,9 @@ import type { DesktopThemePackageIpcChannelKey } from "./theme-package-capabilit
 export const DESKTOP_BROWSER_IPC_CHANNELS = {
   state: "ling-desktop:browser:state",
   act: "ling-desktop:browser:act",
+  settingsState: "ling-desktop:browser:settings-state",
+  profileSize: "ling-desktop:browser:profile-size",
+  settingsAct: "ling-desktop:browser:settings-act",
   viewport: "ling-desktop:browser:viewport",
   changed: "ling-desktop:browser:changed",
   focusAddress: "ling-desktop:browser:focus-address",

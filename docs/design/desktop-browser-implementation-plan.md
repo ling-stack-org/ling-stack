@@ -1,8 +1,8 @@
 # Desktop 内置浏览器实施计划
 
-Status: M0–M5 source implementation and macOS arm64 source acceptance verified; packaged/cross-platform release gates remain open
+Status: M0–M5 source implementation and macOS arm64 source acceptance verified; M6 Settings source and Web E2E verified, native acceptance pending; packaged/cross-platform release gates remain open
 Owner: Desktop、daemon、Web、approval 与 release maintainers
-Last verified: 2026-11-17
+Last verified: 2026-11-23 (Settings design and current source; earlier native acceptance remains dated 2026-11-17)
 Baseline: `origin/main` at `27a9ccb23`; branch `codex/desktop-browser-inapp`; no release claim
 Verification scope: Ling source, installed Electron declarations, and a pinned static reference archive
 Canonical replacement: none; the external Chrome contract remains independently authoritative
@@ -82,6 +82,7 @@ macOS arm64 源码验收采用真实 Electron 与受控本地站点，覆盖共�
 | 开发模式 | 有界诊断、tab-scoped CDP、逐次 native Allow once 和敏感域拒绝 | 真实错误站点诊断与安装包验收 | M5 |
 | WebMCP | 公开 `document.modelContext` 的发现、调用、toolchange 失效、审批和有界 schema/result | 不支持该公开 API 的 Chromium 显示 unavailable；签名包现场验收 | M5 |
 | 浏览器配套管理 | Chromium bookmarks JSON 预览/选择导入、当前 profile unpacked MV3 加载/卸载 | Chrome API 兼容矩阵、Windows/签名包验收；密码/联系人管理仍不支持 | M5 |
+| 独立 Settings 入口 | 工作区级管理接口、可编辑默认规则、历史、下载、设备权限和清理入口已接入集中 Settings 页面 | macOS/Windows Desktop 交互与安装包验收 | M6，源码实现 |
 
 可复用的是审批、工具绑定、Run/WorkUnit、取消、artifact、控制面事件、共享 UI 和本机
 Desktop bridge 的模式。Chrome Native Messaging Host 只承担 Chrome 通信，不承担内置
@@ -336,6 +337,52 @@ Electron 测试覆盖其他 workspace。真实 daemon 站点 deny/revoke 中途�
 | 扩展管理 | 当前 profile 的用户选择 unpacked MV3 目录、manifest 预览、native 确认、加载/卸载 | 基于实际兼容矩阵宣称支持，不假定具备完整 Chrome Web Store 兼容性；重启不自动加载可变目录 |
 | 验证码与登录交接 | 停止自动操作、用户接管、完成后重新 snapshot 和恢复 | 不因失败循环输入或提交；自动验证码选项需另有可用执行后端才进入实现 |
 
+### M6 — 独立浏览器设置页（源码实现）
+
+[Settings 概念图](prototypes/settings-storage-browser/03-browser-permissions.png)
+把“浏览器”放在 Ling 全屏设置的“设备”分组，只管理内置浏览器。外部 Chrome 插件保留
+自己的 profile、权限和入口。没有 Desktop 浏览器能力的 Web 客户端不展示原生管理操作。
+
+**当前边界：**`DesktopBrowserPolicy` 已有可持久化的 `defaults` 和逐 origin 规则。
+历史、下载、清理和设备权限属于 Desktop profile；集中 Settings 使用独立的工作区级
+管理 IPC，不捏造会话 scope 调用 `getState`/`act`。Web 客户端不显示本机管理入口。
+
+| 区域 | 产品与数据合同 |
+| --- | --- |
+| 工作区 | 顶部显示当前工作区。策略和原生 profile 按规范工作区身份隔离；切换时取消在途读取与草稿。工作区切换由应用现有选择流程负责。 |
+| 默认规则 | 浏览、下载和智能体读历史初始为“每次询问”。新增可持久化的 `defaults`，旧 `{rules: []}` 读取为安全默认值。网站规则的“允许”只放宽该层限制，不能越过 MCP 绑定、上层 Deny、审批或敏感动作保护。 |
+| 网站工具 | 默认关闭。origin 规则可以覆盖默认值，但仍需运行时具备 WebMCP 能力并通过工具审批；运行时不可用时显示不可用，不给出可用开关。 |
+| 单站点 | 输入规范化为精确 HTTP(S) origin，含协议和端口。规则覆盖该 origin 的完整默认组合；右侧详情面板添加/编辑，显式保存或重置。重复、无效和超过上限的 origin 在表单中报错；跨 origin 导航重新求值。 |
+| 浏览器数据 | 历史、下载偏好、设备权限及选择性清理通过新的工作区级 Desktop 管理能力访问。清理 Cookie/站点数据前显示 profile 和可能退出登录的后果；下载目录中的文件不计入 Ling 设备存储。 |
+| 高级 CDP | `fullCdp` 只按 origin 配置，默认关闭并折叠展示。每次命令仍由原生 Allow once 弹窗确认，不增加全局免审批开关。 |
+
+实施按以下边界推进：
+
+1. **合同与持久化：**扩展
+   `packages/contracts/src/desktop-browser-policy.ts` 的默认规则与有效规则求值，
+   保持旧记录可读，不在读取时强制写回。Core/daemon 的工作区设置解析同步扩展。
+   决策顺序固定为“上层 Deny → 网站限制 → 现有 MCP 审批”；网站 Allow 本身不派发动作。
+2. **Desktop 管理接口：**在 `apps/desktop/main/browser/` 和
+   `apps/desktop/shared/browser-capabilities.ts` 加类型化的工作区级 state/action，
+   复用 `BrowserManagement` 数据 owner。校验主窗口发送者和工作区身份；只开放
+   历史/数据/下载偏好/设备权限等管理动作，不通过该接口开放标签页控制、页面内容、
+   凭据或任意文件路径。
+3. **设置界面：**在 `settings-shell-model.ts` 按 Desktop capability 展示
+   Browser 项，在 `apps/web/src/features/settings/` 建页面，与
+   `BrowserSitePolicyPanel` 共享表单和状态模型。会话侧栏保留快捷入口，读写同一
+   工作区策略及原生数据；设置页不挂隐藏浏览器标签页。
+4. **状态与撤销：**默认规则、单站点规则各有独立 busy/error。加载失败保留上次结果但
+   标明过期，不能渲染成可编辑的成功默认值。删除站点规则后回到当前默认值。
+   撤销影响后续派发时，旧工具租约/ref 必须失效。
+5. **设计系统：**复用共享 `Select`、`Switch`、`DataRow`、`Button` 与详情
+   Sheet；亮暗主题右侧内容保持实色。CDP 风险说明在主界面简短展示，细节按需展开。
+
+验收覆盖旧策略读取、默认/站点优先级、撤销后拒绝、站点 Allow 后工具审批仍生效、
+跨 origin 跳转、WebMCP 不可用、CDP 原生确认、profile 隔离、没有打开聊天时进入设置、
+以及清理浏览器数据不影响 Ling 主 UI 或其他工作区。依次运行 Contracts、Core/daemon、
+Desktop IPC/runtime 与 Web Settings E2E 和类型检查；用受控本地站点在 macOS、Windows
+做真实 Desktop 交互与截图。M0–M5 的既有 macOS 源码验收不证明 M6 或打包版已验收。
+
 ## 7. 验证与交付门
 
 每阶段只运行相关测试和 owning package 验证；失败或新增风险再扩大范围。新增模块测试
@@ -362,10 +409,12 @@ Electron GUI 验收使用本地可控站点，避免对真实第三方账号发�
 
 ## 8. 建议执行顺序与待证事项
 
-关键路径：`M0 → M1 → M2 → M3`；`M2 → M4 → M5`。M0–M5 的源代码、合同和 macOS
-arm64 受控站点证据已在本分支完成；工具命名、独立 workspace profile、策略和 runtime
-协议已固定。剩余工作属于真实模型、Windows、签名/安装包、CI 审查和合并门，不再新增
-未验收的产品开关。
+关键路径：`M0 → M1 → M2 → M3`；`M2 → M4 → M5`，独立 Settings
+入口在现有 profile 与策略之上作为 M6 推进。M0–M5 的源代码、合同和 macOS arm64
+受控站点证据属于既有基线；M6 默认规则编辑和工作区级管理接口已实现，
+真实 Desktop 交互、双平台和安装包仍待验收。
+原有工具命名、独立 workspace profile 和 runtime 协议保持约束。发布仍需真实模型、
+Windows、签名/安装包及 CI 证据；未验收的设置开关不提前展示为可用。
 
 后续交付仍需要补齐以下证据：
 

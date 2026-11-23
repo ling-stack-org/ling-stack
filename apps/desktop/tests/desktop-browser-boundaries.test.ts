@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
 import { assertBrowserNetworkUrl, isBrowserPublicAddress } from "../dist/main/browser/url-policy.js";
-import { assertBrowserIpcSender, parseBrowserUserAction, parseBrowserViewport } from "../dist/main/browser/ipc.js";
+import { assertBrowserIpcSender, parseBrowserSettingsAction, parseBrowserUserAction, parseBrowserViewport } from "../dist/main/browser/ipc.js";
 import { desktopBrowserPartition } from "../dist/main/browser/manager.js";
 
 test("browser network permits explicit loopback previews, blocks application origin and private destinations", async () => {
@@ -45,4 +45,11 @@ test("browser IPC parsers enforce typed payloads and bounded geometry", () => {
   assert.throws(() => parseBrowserUserAction({ ...workspace, action: "open", url: "https://example.com", bridgeToken: "forged" }));
   assert.throws(() => parseBrowserViewport({ ...workspace, generation: 1, visible: true, bounds: { x: 0, y: 0, width: Infinity, height: 1 } }));
   assert.equal(parseBrowserUserAction({ ...workspace, action: "open", url: "http://localhost:3000" }).action, "open");
+  assert.deepEqual(parseBrowserSettingsAction({ workspaceCwd: "/w", action: "download_preferences", askBeforeDownload: true }),
+    { workspaceCwd: "/w", action: "download_preferences", askBeforeDownload: true });
+  for (const action of [
+    { workspaceCwd: "/w", action: "open", url: "https://example.com" },
+    { workspaceCwd: "/w", action: "clear_data", cookies: true, cache: false, storage: false, history: false, scope: workspace.scope },
+    { workspaceCwd: "/w", action: "device_permission", rule: { origin: "https://example.com/path", permission: "camera", decision: "allow" } },
+  ]) assert.throws(() => parseBrowserSettingsAction(action));
 });

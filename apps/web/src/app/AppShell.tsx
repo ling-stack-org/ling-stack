@@ -97,11 +97,15 @@ import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
 import { getApproval } from "../api/approvals.js";
 import { getUserProfile } from "../api/profile.js";
 import {
+  clearActiveWorkspaceCwd,
   clearSavedWorkspaceCwd,
   getViteDefaultWorkspaceCwd,
+  readActiveWorkspaceCwd,
   readInitialWorkspaceCwd,
   readSavedWorkspaceCwd,
+  saveActiveWorkspaceCwd,
 } from "../lib/local-storage.js";
+import { activateRegisteredWorkspace } from "../api/workspace-directory.js";
 import {
   readRunWorkspaceCwd,
 } from "../lib/run-evidence.js";
@@ -249,7 +253,7 @@ export function AppShell(): React.JSX.Element {
   const narrowViewport = useAppNarrowViewport();
   const desktopPlatform = typeof window === "undefined" ? undefined : window.lingDesktop?.platform;
   const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
-  const initialWorkspaceCwd = desktopHosted ? "" : readInitialWorkspaceCwd();
+  const initialWorkspaceCwd = desktopHosted ? "" : (readActiveWorkspaceCwd() || readInitialWorkspaceCwd());
   const [form, setForm] = useState<RunFormState>(() => ({
     ...defaultForm,
     cwd: initialWorkspaceCwd,
@@ -2214,39 +2218,50 @@ export function AppShell(): React.JSX.Element {
       });
       const viteDefaultWorkspaceCwd = getViteDefaultWorkspaceCwd();
       const defaultWorkspaceCwd = health.defaultWorkspaceCwd?.trim() || viteDefaultWorkspaceCwd;
+      let selectedWorkspaceCwd = defaultWorkspaceCwd;
+      const savedActiveCwd = readActiveWorkspaceCwd();
+      if (health.ok && savedActiveCwd && savedActiveCwd !== defaultWorkspaceCwd) {
+        try {
+          await activateRegisteredWorkspace(savedActiveCwd);
+          selectedWorkspaceCwd = savedActiveCwd;
+        } catch {
+          clearActiveWorkspaceCwd();
+        }
+      }
+      if (daemonObservationRef.current.epoch !== observationEpoch) return;
       const savedWorkspaceCwd = readSavedWorkspaceCwd();
       const canApplyDaemonDefault =
-        desktopHosted ||
+        desktopHosted || Boolean(savedActiveCwd) ||
         (!savedWorkspaceCwd && (!form.cwd.trim() || form.cwd.trim() === viteDefaultWorkspaceCwd));
-      if (health.ok && defaultWorkspaceCwd && canApplyDaemonDefault) {
+      if (health.ok && selectedWorkspaceCwd && canApplyDaemonDefault) {
         if (desktopHosted) {
           if (savedWorkspaceCwd) {
             clearSavedWorkspaceCwd();
           }
-          if (daemonObservationRef.current.workspaceCwd !== defaultWorkspaceCwd) {
-            updateWorkspaceCwd(defaultWorkspaceCwd);
+          if (daemonObservationRef.current.workspaceCwd !== selectedWorkspaceCwd) {
+            updateWorkspaceCwd(selectedWorkspaceCwd);
           }
         } else {
           setForm((current) =>
-            current.cwd.trim() && current.cwd.trim() !== viteDefaultWorkspaceCwd
+            !savedActiveCwd && current.cwd.trim() && current.cwd.trim() !== viteDefaultWorkspaceCwd
               ? current
-              : { ...current, cwd: defaultWorkspaceCwd },
+              : { ...current, cwd: selectedWorkspaceCwd },
           );
           setChannelForm((current) =>
-            current.boundPath.trim() && current.boundPath.trim() !== viteDefaultWorkspaceCwd
+            !savedActiveCwd && current.boundPath.trim() && current.boundPath.trim() !== viteDefaultWorkspaceCwd
               ? current
-              : { ...current, boundPath: defaultWorkspaceCwd },
+              : { ...current, boundPath: selectedWorkspaceCwd },
           );
         }
         void Promise.all([
-          refreshProviders(defaultWorkspaceCwd),
-          refreshAiTeammates(defaultWorkspaceCwd),
-          refreshMcp(defaultWorkspaceCwd),
-          refreshRuns(defaultWorkspaceCwd),
-          refreshApprovals(defaultWorkspaceCwd),
-          refreshRuntimeState(defaultWorkspaceCwd),
-          refreshWorkItems(defaultWorkspaceCwd),
-          loadStartupStatus(defaultWorkspaceCwd),
+          refreshProviders(selectedWorkspaceCwd),
+          refreshAiTeammates(selectedWorkspaceCwd),
+          refreshMcp(selectedWorkspaceCwd),
+          refreshRuns(selectedWorkspaceCwd),
+          refreshApprovals(selectedWorkspaceCwd),
+          refreshRuntimeState(selectedWorkspaceCwd),
+          refreshWorkItems(selectedWorkspaceCwd),
+          loadStartupStatus(selectedWorkspaceCwd),
         ]).catch(() => undefined);
       }
     } catch {
@@ -3563,6 +3578,20 @@ export function AppShell(): React.JSX.Element {
                     mcpError={mcpDomain.error}
                     initialSection={settingsInitialSection}
                     onBackToApplication={returnFromSettingsView}
+                    onWorkspaceChange={async nextCwd => {
+                      try {
+                        await activateRegisteredWorkspace(nextCwd);
+                        saveActiveWorkspaceCwd(nextCwd);
+                        setSettingsInitialSection("worktrees");
+                        updateWorkspaceCwd(nextCwd);
+                        setSelectedChannelBranchId("");
+                        setActiveSidebarTarget("workspace");
+                      } catch {
+                        showToast({ message: t("Workspace needs attention"), tone: "error", scope: "settings:workspaces:switch" });
+                      }
+                    }}
+                    onOpenPlugins={() => setActiveView("plugins")}
+                    onOpenConversations={() => setActiveView("threads")}
                     workspaceDefaultAuthorizationMode={workspaceSettings?.defaultAuthorizationMode}
                     workspaceDefaultWorkspaceAccessMode={workspaceSettings?.defaultWorkspaceAccessMode}
                     workspaceDefaultPermissionMode={workspaceSettings?.defaultPermissionMode}

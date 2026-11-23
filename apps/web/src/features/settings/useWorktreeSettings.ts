@@ -55,8 +55,8 @@ export function useWorktreeSettings(cwd: string) {
     return () => { sequence.current++; };
   }, [cwd]);
 
-  async function save(): Promise<void> {
-    if (!data || busy || loading) return;
+  async function save(): Promise<boolean> {
+    if (!data || busy || loading) return false;
     setBusy("save");
     setError("");
     try {
@@ -79,7 +79,8 @@ export function useWorktreeSettings(cwd: string) {
       // The effective directory includes the daemon's workspace identity namespace.
       const next = await listManagedWorktrees(cwd);
       setData(next);
-    } catch (caught) { setError(errorMessage(caught)); }
+      return true;
+    } catch (caught) { setError(errorMessage(caught)); return false; }
     finally { setBusy(""); }
   }
 
