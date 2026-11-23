@@ -94,3 +94,36 @@ jobs:
           } finally { closeSync(file); }
           '@ | node --input-type=module
           if ($LASTEXITCODE -ne 0) { throw 'Inherited daemon pipe probe failed.' }
+      - name: Verify the daemon command pipe and a clean Electron child exit
+        shell: pwsh
+        run: |
+          @'
+          import assert from 'node:assert/strict';
+          import { spawn } from 'node:child_process';
+          import { once } from 'node:events';
+
+          const source = `
+            import assert from 'node:assert/strict';
+            import { closeSync, constants, fstatSync, writeSync } from 'node:fs';
+            import { Socket } from 'node:net';
+            assert.equal(fstatSync(6).mode & constants.S_IFMT, constants.S_IFIFO);
+            const input = new Socket({ fd: 6, readable: true, writable: false });
+            let request = '';
+            for await (const chunk of input) request += chunk.toString('utf8');
+            assert.equal(request, 'shutdown\\n');
+            assert.equal(writeSync(5, 'draining'), 8);
+            closeSync(5);
+          `;
+          const child = spawn(process.env.LING_PIPE_ELECTRON_EXE, ['--input-type=module', '-e', source], {
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+            stdio: ['ignore', 'ignore', 'inherit', 'ignore', 'ignore', 'pipe', 'pipe'],
+          });
+          const exited = once(child, 'close');
+          let phase = '';
+          child.stdio[5].on('data', chunk => { phase += chunk.toString('utf8'); });
+          child.stdio[6].end('shutdown\n');
+          assert.deepEqual(await exited, [0, null]);
+          assert.equal(phase, 'draining');
+          console.log('FD6 command and EOF delivered before the daemon exit receipt.');
+          '@ | node --input-type=module
+          if ($LASTEXITCODE -ne 0) { throw 'Owned Windows daemon shutdown probe failed.' }
