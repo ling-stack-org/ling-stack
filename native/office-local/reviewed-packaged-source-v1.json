@@ -1090,7 +1090,7 @@
 "packages/daemon/src/features/office-documents/office-local-snapshot.ts":"477930990d802a119f787a43599fdb6058be7352f681116d4c9ee82a2f8694ac",
 "packages/daemon/src/features/office-documents/office-local-terminal.ts":"077808605470d58b7d74998d88a778971844cb6a646b8601dd697f17ccafda0c",
 "packages/daemon/src/features/office-documents/office-local-writer.ts":"fecce8028b3dbf3659604204b02d11c39ef491a937b467b88510ea79d1f53aa1",
-"packages/daemon/src/features/plugins/bundled-index.ts":"21db138671f336fdee6b1a0b442ac0ea2bdec4041529cbc2dcfd2d4801a70673",
+"packages/daemon/src/features/plugins/bundled-index.ts":"9c0025d1aa6bb1538501b29fda5b4dafc2d1b4ff512b9efc2ea3584ffe3b8feb",
 "packages/daemon/src/features/plugins/catalog.ts":"5e4cfb19f732882a6c48d4ff59b540baaf83e6c2c1ebd1e709894c8ab0bd68d6",
 "packages/daemon/src/features/plugins/chrome-browser-generation-broker.ts":"0a3b2eac903413c789ed71edbefef8401f4cca72008f00a0647867eeb5677384",
 "packages/daemon/src/features/plugins/chrome-browser.ts":"d046eff5030a2b3294a5d64900e794e7d76e4e8a2ffe112da5424afab79e29cb",
