@@ -54,8 +54,10 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
    Mac 输出 arm64 DMG/ZIP；Windows 输出 x64 Setup EXE。没有 Intel Mac、Windows ARM64 或自动升级产物。
 5. 在测试账号/测试机完成安装、启动、真实模型任务、退出重启、卸载，以及本版本涉及的
    Office、浏览器、Computer Use 等功能验收，记录未覆盖项。流水线会在临时 Windows runner
-   验证静默安装、同版本覆盖升级、完整文件比对、Electron 启动和卸载清理；这些检查与归档校验
-   不能替代真实桌面和模型验收，见 [开发候选验收](development-packages.md)。
+   验证静默安装、同版本覆盖升级、完整文件比对和卸载清理。首次安装后用空白用户配置启动
+   实际安装的应用，并验证资源鉴权、由 Desktop 启动的 daemon 连接、主窗口加载和正常退出。
+   Windows 安装版证据记录启动和资源准备耗时。交互界面、模型及插件功能按
+   [开发候选验收](development-packages.md) 在测试机验证。
    两端还会在私有缓存中验证随包 CLI 的真实浏览器首次下载、页面交互、停止及缓存重启，
    保存 `browser-acquisition-smoke.json`。零请求缓存检查和不可用代理重启属于受控网络模拟，
    不代表操作系统断网或完整 GUI、模型、Office 验收。

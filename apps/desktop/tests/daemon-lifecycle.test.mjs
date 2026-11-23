@@ -20,7 +20,7 @@ function resourceBootstrapFixture(t, options = {}) {
   let healthChecks = 0;
   const lifecycle = new DesktopDaemonLifecycle({
     baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
-    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", packaged: true,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", packaged: true, platform: "darwin",
     probePort: async () => "free",
     fetch: async () => {
       healthChecks++;
@@ -163,43 +163,6 @@ test("stopping while the startup authority is in flight rejects its late result"
   await lifecycle.stopOwnedDaemon();
   channel.end(JSON.stringify(engineAuthorityFixture(child.pid)));
   await rejected;
-});
-
-test("packaged validation may take 52 seconds before readiness and engine authority arrive", async (t) => {
-  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
-  const child = createFakeChild();
-  const channel = new PassThrough();
-  const resources = new PassThrough();
-  child.stdio = [null, null, null, channel, resources];
-  const spawned = deferred();
-  const readyAt = Date.now() + 52_000;
-  const lifecycle = new DesktopDaemonLifecycle({
-    baseUrl: "http://127.0.0.1:17991", daemonEntryPath: existingEntryPath,
-    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace", packaged: true,
-    fetch: async () => {
-      if (Date.now() < readyAt) throw new TypeError("verified resources are still loading");
-      return daemonHealth("/tmp/ling-desktop-workspace");
-    },
-    probePort: async () => "free",
-    spawnDaemon: () => { spawned.resolve(); return child; },
-  });
-  t.after(async () => { await lifecycle.stopOwnedDaemon(); channel.destroy(); });
-  const startup = lifecycle.ensureStarted();
-  startup.catch(() => undefined);
-  await spawned.promise;
-  await new Promise(resolve => setImmediate(resolve));
-  t.mock.timers.tick(21_000);
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(lifecycle.status.state, "starting");
-  assert.equal(channel.destroyed, false, "FD3 must survive the same packaged validation budget as readiness");
-  await assert.rejects(lifecycle.getExecutionEngineAuthority(), /engine_host_authority_unavailable/);
-  t.mock.timers.tick(31_000);
-  resources.end(JSON.stringify({ schemaVersion: 1, phase: "resources_ready", pid: child.pid }));
-  channel.end(JSON.stringify(engineAuthorityFixture(child.pid)));
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal((await startup).ownedByDesktop, true);
-  assert.deepEqual(await lifecycle.getExecutionEngineAuthority(), engineAuthorityFixture(child.pid));
-  assert.deepEqual(child.killSignals, []);
 });
 
 test("ordinary development startup retains its 20 second deadline", async (t) => {

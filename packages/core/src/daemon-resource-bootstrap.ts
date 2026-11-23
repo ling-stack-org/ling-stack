@@ -29,6 +29,7 @@ export function writeDaemonResourceBootstrap(input: { readonly fd: number }): vo
 export function readDaemonResourceBootstrap(input: {
   readonly channel: Readable;
   readonly pid: number;
+  readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -56,7 +57,7 @@ export function readDaemonResourceBootstrap(input: {
       else resolve();
     };
     const unavailable = (): void => finish("daemon_resource_bootstrap_unavailable");
-    const timer = setTimeout(() => finish("daemon_resource_bootstrap_timeout"), DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS);
+    const timer = setTimeout(() => finish("daemon_resource_bootstrap_timeout"), input.timeoutMs ?? DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS);
     const data = (chunk: Buffer): void => {
       size += chunk.length;
       if (size > 1024) { finish("daemon_resource_bootstrap_invalid"); return; }
