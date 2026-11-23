@@ -95,11 +95,13 @@ async function inspectChangedFile(cwd: string, file: WorkspaceGitStatusFile, net
     additions: inspected.additions,
     deletions: inspected.deletions,
     diff: bounded.text || undefined,
+    ...(inspected.layers ? { layers: inspected.layers } : {}),
     truncated: inspected.truncated || bounded.truncated,
   };
 }
 
 interface InspectedDiff {
+  readonly layers?: WorkspaceChangeFile["layers"];
   readonly diff: string;
   readonly additions: number;
   readonly deletions: number;
@@ -144,6 +146,7 @@ async function trackedFileDiff(cwd: string, file: WorkspaceGitStatusFile, netFro
   const layers = await Promise.all((modes.length > 0 ? modes : [["HEAD"]]).map((mode) => trackedDiffLayer(cwd, mode, paths)));
   return {
     diff: layers.map((layer) => layer.diff).filter(Boolean).join("\n"),
+    ...(!netFromHead && file.staged && file.unstaged ? { layers: layers.map((layer, index) => ({ kind: index === 0 ? "staged" as const : "unstaged" as const, diff: layer.diff, truncated: layer.truncated })) } : {}),
     additions: layers.reduce((sum, layer) => sum + layer.additions, 0),
     deletions: layers.reduce((sum, layer) => sum + layer.deletions, 0),
     truncated: layers.some((layer) => layer.truncated),

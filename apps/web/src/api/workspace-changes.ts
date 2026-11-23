@@ -132,3 +132,11 @@ export function issueWorkspaceFileCapability(input: WorkspaceFileCapabilityReque
 export function previewWorkspaceFileCapability(input: WorkspaceFileCapabilityPreviewRequest): Promise<import("@ling-stack/contracts").PreviewContentResponse> {
   return daemonClient.previewWorkspaceFileCapability(input);
 }
+
+export function getWorkspaceFileCapabilityChanges(input: WorkspaceFileCapabilityPreviewRequest): Promise<import("@ling-stack/contracts").WorkspaceFileCapabilityChangeResponse> {
+  return daemonClient.getWorkspaceFileCapabilityChanges(input);
+}
+
+export function previewWorkspaceReviewFile(input: import("@ling-stack/contracts").WorkspaceChangeReviewPreviewRequest): Promise<import("@ling-stack/contracts").PreviewContentResponse> {
+  return daemonClient.previewWorkspaceReviewFile(input);
+}

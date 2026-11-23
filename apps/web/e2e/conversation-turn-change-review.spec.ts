@@ -26,6 +26,11 @@ test("child file review reuses the root right dock but requests only its own Run
     ...(["architect", "designer", "engineer", "qa"] as const).map((roleKey) => createMockTeammate({ id: `teammate_builtin_${roleKey}`, templateId: roleKey, roleKey, displayName: `Ling ${roleKey}` }))];
   await mockDaemon(page, state);
   const requests: string[] = [];
+  const previewRequests: unknown[] = [];
+  await page.route("**/workspace-files/review-preview", async route => {
+    previewRequests.push(route.request().postDataJSON());
+    await route.fulfill({ json: { ref: { id: "current", source: "workspace_file", scope: "workspace", label: "Current file", previewable: true }, kind: "plain_text", text: "CURRENT CONTENT", truncated: false, redactionNotes: [] } });
+  });
   await page.route(/\/(runs|turns|workflows)\/[^/]+\/workspace-changes(?:\?.*)?$/u, async (route) => {
     const url = new URL(route.request().url()); const [, collection, encodedId] = url.pathname.split("/");
     const kind = collection === "runs" ? "run" : collection === "turns" ? "turn" : "workflow";
@@ -48,6 +53,14 @@ test("child file review reuses the root right dock but requests only its own Run
   await expect(review).toHaveAttribute("data-workspace-change-review-id", "demo_work_cell_channel_engineering_run_engineer");
   await expect(review.locator(".workspace-change-file-section")).toHaveCount(2);
   await expect(review).not.toContainText("channel.spec.ts");
+  const section = review.locator(".workspace-change-file-section").first();
+  await section.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(section).toContainText("CURRENT CONTENT");
+  expect(previewRequests[0]).toMatchObject({ scope: { kind: "run", id: "demo_work_cell_channel_engineering_run_engineer" }, revision: "demo_work_cell_channel_engineering_run_engineer:1", fileId: expect.any(String) });
+  await page.screenshot({ path: testInfo.outputPath("simulation-scoped-current-file.png") });
+  await section.getByRole("button", { name: "Changes", exact: true }).click();
+  await expect(section).toContainText("owned child");
+
   for (const name of ["ConversationWorkCell.tsx", "components.css"]) {
     await card.getByRole("button", { name, exact: true }).click();
     await expect(review.locator(".workspace-change-file-section.selected strong")).toHaveText(name);
