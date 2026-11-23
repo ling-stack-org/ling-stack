@@ -1027,6 +1027,7 @@ async function handlePluginCheck(input: {
         pluginId: input.pluginId,
         now,
         cacheRef: input.store.getManagedPluginPackage(input.pluginId)?.cacheRef,
+        lingVersion: LING_PRODUCT_VERSION,
       });
       const rolledBackDescriptor = rolledBack.plugin.validation.compiledDescriptor;
       if (rolledBackDescriptor) {
