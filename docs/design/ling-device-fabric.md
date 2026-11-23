@@ -359,6 +359,13 @@ that contains the dispatch intent without a terminal entry resumes as unknown.
 Revocation denies new claims and evidence submissions under the revoked key.
 [Edge executor](../../packages/daemon/src/ling-edge-cli.ts)
 
+The local operator stops a diagnosis with `PUT /:runtimeId/diagnoses/:graphId/stop`
+and the graph's `expectedRevision`. A queued or claimed diagnosis with no
+accepted journal start becomes cancelled. Once the coordinator accepts the
+journal start, a stop records an unknown outcome until the owner reports
+evidence. The owner can recover the same attempt to submit that evidence.
+The receipt keeps the graph revision from the original dispatch.
+
 ## 7. Event and telemetry plane
 
 Every event identifies its owner stream, generation, sequence, subject and schema

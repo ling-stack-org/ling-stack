@@ -235,7 +235,7 @@ export class DeviceTaskGraphCoordinator {
     const node = currentGraph.nodes.find(item => item.nodeId === nodeId);
     if (!node) throw new DeviceFabricError("target_missing", "task graph node is missing");
     if (currentGraph.cancellationRequestedAt && (node.status !== "unknown"
-      || !resultRef || !["succeeded", "failed", "cancelled"].includes(status))) {
+      || !resultRef || !["succeeded", "failed", "cancelled", "unknown"].includes(status))) {
       throw new DeviceFabricError("safety_denied", "a stopped graph only accepts terminal evidence for unresolved nodes");
     }
     const nodes = currentGraph.nodes.map(item => item.nodeId === nodeId ? { ...item, status, ...(resultRef ? { resultRef } : {}) } : item);
@@ -270,10 +270,11 @@ export class DeviceTaskGraphCoordinator {
       throw new DeviceFabricError("safety_denied", "task graph node receipt does not match its owner and attempt");
     }
     const advance = (current: DeviceTaskGraphV1) => {
-      if (current.revision !== receipt.graphRevision) {
+      const node = current.nodes.find(item => item.nodeId === receipt.nodeId);
+      const stoppedAttempt = current.cancellationRequestedAt && node?.status === "unknown" && node.attemptGraphRevision === receipt.graphRevision;
+      if (current.revision !== receipt.graphRevision && !stoppedAttempt) {
         throw new DeviceFabricError("revision_conflict", "task graph node receipt is stale");
       }
-      const node = current.nodes.find(item => item.nodeId === receipt.nodeId);
       if (!node || !["executing", "verifying", "unknown"].includes(node.status)
         || node.ownerKind !== receipt.ownerKind || node.ownerId !== receipt.ownerId
         || node.targetDeviceId !== receipt.targetDeviceId || node.capabilitySnapshotId !== receipt.capabilitySnapshotId

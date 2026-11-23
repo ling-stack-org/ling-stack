@@ -191,6 +191,7 @@ export interface EdgeRuntimeDiagnosisWorkV1 {
   readonly capabilityId: typeof EDGE_LOCAL_NETWORK_CAPABILITY_ID;
   readonly capabilitySnapshotId: string;
   readonly attemptId: string;
+  readonly stopRequested?: true;
 }
 
 export interface DeviceBridgeFrameV1 {

@@ -14,7 +14,9 @@ import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
-import { claimEdgeDiagnosis, isEdgeDiagnosisId, queueEdgeDiagnosis, readEdgeDiagnosis, readEdgeDiagnosisConformance, readEdgeDiagnosisEvents } from "./edge-work.js";
+import {
+  claimEdgeDiagnosis, isEdgeDiagnosisId, queueEdgeDiagnosis, readEdgeDiagnosis, readEdgeDiagnosisConformance, readEdgeDiagnosisEvents, stopEdgeDiagnosis,
+} from "./edge-work.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const enrollmentGrantLifetimeMs = 5 * 60_000;
@@ -22,12 +24,13 @@ const enrollmentGrantLifetimeMs = 5 * 60_000;
 export async function handleEdgeRuntimeRoute(
   url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
-  const path = /^\/v1\/device-support\/fabric\/edge-runtimes(?:\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(enrollment|enrollment\/proof|revocation|health\/events|diagnoses)(?:\/(edge_diagnosis_[0-9a-f]{64})(?:\/(events|conformance))?)?)?$/u.exec(url.pathname);
+  const path = /^\/v1\/device-support\/fabric\/edge-runtimes(?:\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(enrollment|enrollment\/proof|revocation|health\/events|diagnoses)(?:\/(edge_diagnosis_[0-9a-f]{64})(?:\/(events|conformance|stop))?)?)?$/u.exec(url.pathname);
   if (!path) return false;
   const [, runtimeId, operation, diagnosisId, projection] = path;
   if (diagnosisId !== undefined && operation !== "diagnoses") return false;
   if (!allowLocalServiceRequest(request, response)) return true;
-  const method = operation === "revocation" ? "PUT" : operation && operation !== "health/events" && !diagnosisId ? "POST" : "GET";
+  const method = operation === "revocation" || projection === "stop" ? "PUT"
+    : operation && operation !== "health/events" && !diagnosisId ? "POST" : "GET";
   if (request.method !== method) {
     response.setHeader("Allow", method);
     writePrivateJson(response, 405, { error: "method_not_allowed" });
@@ -54,6 +57,13 @@ export async function handleEdgeRuntimeRoute(
         else writePrivateJson(response, 200, readEdgeDiagnosisEvents(runtime, runtimeId, diagnosisId, cursor));
       } else if (projection === "conformance") {
         writePrivateJson(response, 200, readEdgeDiagnosisConformance(runtime, runtimeId, diagnosisId));
+      } else if (projection === "stop") {
+        const body = await readJsonBody(request, 4096).catch(() => undefined);
+        if (url.search || !isRecord(body) || Object.keys(body).length !== 1 || !isRevision(body.expectedRevision) || body.expectedRevision < 1) {
+          writePrivateJson(response, 400, { error: "invalid_request" });
+        } else {
+          writePrivateJson(response, 200, { graph: stopEdgeDiagnosis(runtime, runtimeId, diagnosisId, body.expectedRevision) });
+        }
       } else {
         writePrivateJson(response, 200, readEdgeDiagnosis(runtime, runtimeId, diagnosisId));
       }
@@ -172,13 +182,16 @@ export async function handleSignedEdgeEvidenceRoute(
       const bytes = edgeRuntimeJournalEntryBytes(binding, payload);
       const saved = store.appendEdgeRuntimeJournalEntry(payload, () => {
         verifyEdgeEvidence(runtime, runtimeId, binding, bytes, signature);
-        const { node } = boundEdgeGraph(runtime, runtimeId, binding, payload.ownerTaskId, payload.operationId);
+        const { graph, node } = boundEdgeGraph(runtime, runtimeId, binding, payload.ownerTaskId, payload.operationId);
         const diagnosis = node.capabilityId === EDGE_LOCAL_NETWORK_CAPABILITY_ID;
         const phaseAllowed = payload.sequence === 1 && payload.kind === "task_started"
           || payload.sequence === 2 && ["task_completed", "task_failed", "task_unknown"].includes(payload.kind);
         if ((payload.networkObservation && !diagnosis) || (diagnosis && (!phaseAllowed
           || payload.entryId !== `${payload.operationId}:${payload.sequence}` || (payload.kind === "task_completed" && !payload.networkObservation)))) {
           throw new DeviceFabricError("safety_denied", "edge observation is outside the dispatched capability");
+        }
+        if (diagnosis && graph.cancellationRequestedAt && !store.getEdgeRuntimeJournalEntry(runtimeId, payload.ownerTaskId, payload.operationId + ":1")) {
+          throw new DeviceFabricError("safety_denied", "edge diagnosis stopped before journal start");
         }
       });
       writePrivateJson(response, saved.replayed ? 200 : 201, saved);
@@ -195,7 +208,9 @@ export async function handleSignedEdgeEvidenceRoute(
     const bytes = edgeRuntimeTaskGraphReceiptBytes(binding, payload);
     verifyEdgeEvidence(runtime, runtimeId, binding, bytes, signature);
     const { graph, node } = boundEdgeGraph(runtime, runtimeId, binding, payload.graphId, payload.attemptId);
-    if (node.nodeId !== payload.nodeId) throw new DeviceFabricError("safety_denied", "edge receipt targets another node");
+    if (node.nodeId !== payload.nodeId || (node.attemptGraphRevision !== undefined && node.attemptGraphRevision !== payload.graphRevision)) {
+      throw new DeviceFabricError("safety_denied", "edge receipt is outside its node or dispatch revision");
+    }
     const coordinator = new DeviceTaskGraphCoordinator({ persistence: store, now: runtime.broker.now });
     const settled = coordinator.recordNodeReceipt(graph, payload, {
       ownerKind: "edge", ownerId: runtimeId, routeGeneration: binding.runtimeRevision,

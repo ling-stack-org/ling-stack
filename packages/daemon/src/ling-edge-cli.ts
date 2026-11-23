@@ -81,6 +81,7 @@ async function run(config: DiagnosisConfig): Promise<void> {
         throw new Error("The local journal belongs to a different diagnosis attempt.");
       }
       const retainedStart = entries[0];
+      if (work.stopRequested && !retainedStart) throw new Error("The local Edge journal has no record for the stopped attempt.");
       const start = retainedStart ?? recordEntry(1, { kind: "task_started", outcome: "pending" });
       if (start.kind !== "task_started") throw new Error("The local Edge journal is missing its dispatch intent.");
       const acknowledged = await sendEntry(start);
@@ -88,7 +89,9 @@ async function run(config: DiagnosisConfig): Promise<void> {
         throw new Error("Coordinator returned an invalid Edge dispatch acknowledgement.");
       }
       let terminal = entries[1];
-      if (!terminal && (retainedStart || acknowledged.replayed)) terminal = recordEntry(2, { kind: "task_unknown", outcome: "unknown" });
+      if (!terminal && (work.stopRequested || retainedStart || acknowledged.replayed)) {
+        terminal = recordEntry(2, { kind: "task_unknown", outcome: "unknown" });
+      }
       if (!terminal) {
         const { connected } = await new LocalPcTargetExecutor().readNetwork();
         const networkObservation = { connected };
@@ -122,11 +125,13 @@ function readWork(value: unknown, graphId: string): EdgeRuntimeDiagnosisWorkV1 {
     || value.nodeId !== "inspect-network" || typeof value.attemptId !== "string" || !/^edge_attempt_[0-9a-f]{64}$/u.test(value.attemptId)
     || typeof value.targetDeviceId !== "string" || !/^edge_host_[0-9a-f]{64}$/u.test(value.targetDeviceId)
     || typeof value.capabilitySnapshotId !== "string" || !/^edge_snapshot_[0-9a-f]{64}$/u.test(value.capabilitySnapshotId)
-    || typeof value.graphRevision !== "number" || !Number.isSafeInteger(value.graphRevision) || value.graphRevision < 2) {
+    || typeof value.graphRevision !== "number" || !Number.isSafeInteger(value.graphRevision) || value.graphRevision < 2
+    || (value.stopRequested !== undefined && value.stopRequested !== true)) {
     throw new Error("Coordinator returned an invalid Edge diagnosis.");
   }
   return { graphId, graphRevision: value.graphRevision, nodeId: value.nodeId, targetDeviceId: value.targetDeviceId,
-    capabilityId: value.capabilityId, capabilitySnapshotId: value.capabilitySnapshotId, attemptId: value.attemptId };
+    capabilityId: value.capabilityId, capabilitySnapshotId: value.capabilitySnapshotId, attemptId: value.attemptId,
+    ...(value.stopRequested ? { stopRequested: true } : {}) };
 }
 
 async function readLinkConfig(file: string) {

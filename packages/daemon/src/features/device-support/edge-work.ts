@@ -55,7 +55,8 @@ export function claimEdgeDiagnosis(
       || placement.runtimeRevision !== binding.runtimeRevision || node.ownerRouteGeneration !== binding.runtimeRevision) {
       throw new DeviceFabricError("safety_denied", "edge claim is outside its placement");
     }
-    if (current.cancellationRequestedAt || current.status === "cancelled") {
+    if (current.cancellationRequestedAt
+      && (!node.attemptId || !store.getEdgeRuntimeJournalEntry(runtimeId, graphId, node.attemptId + ":1"))) {
       throw new DeviceFabricError("safety_denied", "edge diagnosis is cancelled");
     }
     const coordinator = new DeviceTaskGraphCoordinator({ persistence: store, now: runtime.broker.now });
@@ -64,7 +65,27 @@ export function claimEdgeDiagnosis(
     const dispatched = requireDiagnosisNode(graph, runtimeId);
     return { graphId, graphRevision: dispatched.attemptGraphRevision!, nodeId: dispatched.nodeId,
       targetDeviceId: dispatched.targetDeviceId, capabilityId: EDGE_LOCAL_NETWORK_CAPABILITY_ID,
-      capabilitySnapshotId: dispatched.capabilitySnapshotId, attemptId };
+      capabilitySnapshotId: dispatched.capabilitySnapshotId, attemptId,
+      ...(graph.cancellationRequestedAt ? { stopRequested: true } : {}) };
+  });
+}
+
+export function stopEdgeDiagnosis(runtime: DeviceSupportRuntime, runtimeId: string, graphId: string, expectedRevision: number): DeviceTaskGraphV1 {
+  const store = runtime.fabricStore;
+  return store.updateTaskGraph(graphId, graph => {
+    const node = requireDiagnosisNode(graph, runtimeId);
+    if (graph.cancellationRequestedAt) return graph;
+    if (graph.revision !== expectedRevision) throw new DeviceFabricError("revision_conflict", "edge diagnosis revision changed");
+    if (["succeeded", "failed", "cancelled"].includes(graph.status)) return graph;
+    if (node.attemptId && node.status === "executing"
+      && !store.getEdgeRuntimeJournalEntry(runtimeId, graphId, node.attemptId + ":1")) {
+      const stoppedAt = runtime.broker.now();
+      return store.saveTaskGraph({
+        ...graph, revision: graph.revision + 1, status: "cancelled", cancellationRequestedAt: stoppedAt, updatedAt: stoppedAt,
+        nodes: [{ ...node, status: "cancelled" }],
+      });
+    }
+    return new DeviceTaskGraphCoordinator({ persistence: store, now: runtime.broker.now }).cancelGraph(graph);
   });
 }
 

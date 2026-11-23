@@ -200,7 +200,7 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
   const send = (path: string, payload: object, method = "POST") => fetch(`${host.origin}${prefix}/${path}`, {
     method, headers, body: JSON.stringify(payload),
   });
-  let interrupt: { route: "journal" | "task-graph-receipt"; remaining: number } | undefined;
+  let interrupt: { route: "diagnosis-claim" | "journal" | "task-graph-receipt"; remaining: number } | undefined;
   const link = createServer(async (request, response) => {
     try {
       const chunks: Buffer[] = [];
@@ -372,6 +372,9 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     interrupt = { route: "journal", remaining: 1 };
     await assert.rejects(run(uncertain), { code: 1 });
     const inFlight = await inspect(uncertain.graph.graphId);
+    const stop = (graph: DeviceTaskGraphV1, expectedRevision = graph.revision) =>
+      send("diagnoses/" + graph.graphId + "/stop", { expectedRevision }, "PUT");
+    assert.equal((await stop(inFlight.graph)).status, 200);
     assert.equal(JSON.parse((await run(uncertain)).stdout).status, "unknown");
     const unresolved = await inspect(uncertain.graph.graphId);
     assert.equal(unresolved.graph.status, "unknown");
@@ -379,7 +382,44 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, uncertain.graph.graphId).map(entry => entry.outcome), ["pending", "unknown"]);
     const unknownReport = await conformance(uncertain.graph.graphId);
     assert.equal(unknownReport.source.outcome, "unknown");
+    assert.equal(unknownReport.checks.find(check => check.id === "owner_receipt")?.status, "pass");
     assert.equal(unknownReport.checks.find(check => check.id === "network_observation")?.status, "skip");
+
+    const queuedStop = await queue("stop-before-claim");
+    assert.equal((await stop(queuedStop.graph, 2)).status, 409);
+    assert.equal((await stop(queuedStop.graph)).status, 200);
+    assert.equal((await inspect(queuedStop.graph.graphId)).graph.status, "cancelled");
+    await assert.rejects(run(queuedStop), /HTTP 403/u);
+
+    const claimedStop = await queue("stop-before-start");
+    interrupt = { route: "diagnosis-claim", remaining: 1 };
+    await assert.rejects(run(claimedStop), { code: 1 });
+    const claimed = await inspect(claimedStop.graph.graphId);
+    assert.equal(claimed.graph.status, "executing");
+    assert.equal((await stop(claimed.graph)).status, 200);
+    const cancelled = await inspect(claimed.graph.graphId);
+    assert.equal(cancelled.graph.status, "cancelled");
+    assert.equal(cancelled.graph.nodes[0]?.attemptId, claimed.graph.nodes[0]?.attemptId);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, claimed.graph.graphId), []);
+    await assert.rejects(run(claimedStop), /HTTP 403/u);
+
+    const startedStop = await queue("stop-with-start");
+    interrupt = { route: "journal", remaining: 2 };
+    await assert.rejects(run(startedStop), { code: 1 });
+    const started = (await inspect(startedStop.graph.graphId)).graph;
+    assert.equal((await stop(started)).status, 200);
+    const stopped = (await inspect(started.graphId)).graph;
+    assert.equal(stopped.status, "unknown");
+    assert.equal(stopped.nodes[0]?.attemptId, started.nodes[0]?.attemptId);
+    interrupt = { route: "task-graph-receipt", remaining: 1 };
+    await assert.rejects(run(startedStop), { code: 1 });
+    const late = (await inspect(started.graphId)).graph;
+    assert.equal(late.status, "cancelled");
+    assert.equal(late.nodes[0]?.status, "succeeded");
+    assert.equal(late.nodes[0]?.attemptId, stopped.nodes[0]?.attemptId);
+    assert.equal(JSON.parse((await run(startedStop)).stdout).status, "succeeded");
+    assert.deepEqual(await (await stop(started)).json(), { graph: late });
+    assert.ok((await conformance(started.graphId)).checks.every(check => check.status === "pass"));
 
     const revokedWork = await queue("before-revocation");
     assert.equal((await send("revocation", { expectedRevision: 1 }, "PUT")).status, 200);
