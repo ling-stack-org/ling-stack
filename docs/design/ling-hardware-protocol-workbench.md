@@ -247,6 +247,22 @@ fields, including checksum status, frame digest, direction and time.
 
 The decoder runs against the session's recorded profile and codec revisions.
 `GET` on the same replay URL reconstructs the result from the retained bytes.
+
+An operator can publish a hardware protocol profile through the signed Daemon
+resource API. Use a `profile` manifest with the entrypoint
+`hardware-protocol-profile.json`. Its UTF-8 JSON payload declares
+`schemaVersion: 1`, the ID of an installed codec, capability IDs and optional
+supported models. The manifest supplies the resource ID, version, license, device
+kinds and supported firmware. The Daemon validates the profile and codec before
+activation. Profiles use the transport of the installed codec and the
+workbench's target and transport authorization.
+
+The profile list shows compatible active imports alongside the built-in
+profiles. Sessions pin the resource digest and codec version. New capture and
+replay require the selected resource revision to remain active. A completed
+capture keeps its original input, binding and digest across update, disable,
+rollback and Daemon restart.
+[Signed resources](ling-device-fabric.md#daemon-resource-imports)
 Submitting the same capture after a restart resumes the existing job. A changed
 target, authorization revision or capture digest requires a matching session and job.
 [Daemon replay route](../../packages/daemon/src/features/device-support/protocol-routes.ts)

@@ -1,4 +1,5 @@
 import type { DeviceKindV1, DeviceTaskStatusV1, JsonValue } from "./device.js";
+import type { HardwareProtocolCaptureV1 } from "./device-protocol.js";
 
 export type DeviceSessionModeV1 = "standard" | "developer";
 
@@ -20,6 +21,10 @@ export interface DeviceDeveloperSessionV1 {
     readonly profileVersion: string;
     readonly codecId: string;
     readonly codecVersion: string;
+    readonly profileResource?: {
+      readonly digest: string;
+      readonly transport: HardwareProtocolCaptureV1["transport"];
+    };
     readonly liveTransport?: {
       readonly transportId: string;
       readonly targetProfileRevision: string;

@@ -43,6 +43,30 @@ export interface HardwareProtocolProfileV1 {
   readonly license: string;
 }
 
+export const HARDWARE_PROTOCOL_PROFILE_ENTRYPOINT_V1 = "hardware-protocol-profile.json";
+
+export interface HardwareProtocolProfileResourceV1 {
+  readonly schemaVersion: 1;
+  readonly codecId: string;
+  readonly capabilityIds: readonly string[];
+  readonly supportedModels?: readonly string[];
+}
+
+export function isHardwareProtocolProfileResourceV1(value: unknown): value is HardwareProtocolProfileResourceV1 {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const { schemaVersion, codecId, capabilityIds, supportedModels } = value as Record<string, unknown>;
+  return Object.keys(value).every(key => ["schemaVersion", "codecId", "capabilityIds", "supportedModels"].includes(key))
+    && schemaVersion === 1 && typeof codecId === "string" && /^[a-zA-Z0-9][a-zA-Z0-9:_.-]{0,127}$/u.test(codecId)
+    && isProfileStringList(capabilityIds) && capabilityIds.every(id => /^[a-z][a-z0-9_.-]*$/u.test(id))
+    && (supportedModels === undefined || isProfileStringList(supportedModels));
+}
+
+function isProfileStringList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length > 0 && value.length <= 64 && new Set(value).size === value.length
+    && value.every(item => typeof item === "string" && item.length > 0 && item.length <= 128 && item.trim() === item
+      && !/[\u0000-\u001f\u007f]/u.test(item));
+}
+
 export interface HardwareProtocolDecodedFrameV1 {
   readonly sequence: number;
   readonly messageType: string;

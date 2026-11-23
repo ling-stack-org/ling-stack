@@ -84,6 +84,12 @@ export interface DeviceResourceCompatibility {
   readonly isFirmwareSupported?: (ranges: readonly string[], firmwareVersion: string) => boolean;
 }
 
+export type DeviceResourceActivationValidator = (input: {
+  readonly manifest: DeviceResourceManifestV1;
+  readonly payload: Uint8Array;
+  readonly current?: DeviceResourceRecord;
+}) => void;
+
 export class SqliteDeviceFabricStore {
   readonly database: DatabaseSync;
   readonly #maxEventsPerStream: number;
@@ -205,7 +211,10 @@ export class SqliteDeviceFabricStore {
     };
   }
 
-  installResource(manifest: DeviceResourceManifestV1, payload: Uint8Array, installedAt = new Date().toISOString(), compatibility: DeviceResourceCompatibility = {}): { readonly record: DeviceResourceRecord; readonly replayed: boolean } {
+  installResource(
+    manifest: DeviceResourceManifestV1, payload: Uint8Array, installedAt = new Date().toISOString(),
+    compatibility: DeviceResourceCompatibility = {}, validateActivation?: DeviceResourceActivationValidator,
+  ): { readonly record: DeviceResourceRecord; readonly replayed: boolean } {
     this.assertResourcePolicy(manifest, compatibility);
     const bytes = Buffer.from(payload);
     const payloadDigest = createHash("sha256").update(bytes).digest("hex");
@@ -213,6 +222,7 @@ export class SqliteDeviceFabricStore {
     return this.withWriteTransaction(() => {
       this.assertResourceDependencies(manifest, compatibility);
       const current = this.getResource(manifest.resourceId);
+      validateActivation?.({ manifest, payload: bytes, current });
       if (current?.manifest.version === manifest.version && (current.payloadDigest !== payloadDigest
         || (this.#verifyResourceSignature !== undefined && current.manifest.signature !== manifest.signature))) {
         throw new DeviceFabricError("resource_conflict", "resource version is bound to another signed manifest or payload");
@@ -233,7 +243,7 @@ export class SqliteDeviceFabricStore {
     });
   }
 
-  rollbackResource(resourceId: string, compatibility: DeviceResourceCompatibility = {}): DeviceResourceRecord {
+  rollbackResource(resourceId: string, compatibility: DeviceResourceCompatibility = {}, validateActivation?: DeviceResourceActivationValidator): DeviceResourceRecord {
     return this.withWriteTransaction(() => {
       const row = this.database.prepare(`
         SELECT revision_id,manifest_json,payload_digest,installed_at FROM device_resource_history
@@ -251,9 +261,11 @@ export class SqliteDeviceFabricStore {
       }
       this.assertResourcePolicy(record.manifest, compatibility);
       this.assertResourceDependencies(record.manifest, compatibility);
-      if (!this.readResourcePayload(resourceId, record.payloadDigest)) {
+      const payload = this.readResourcePayload(resourceId, record.payloadDigest);
+      if (!payload) {
         throw new DeviceFabricError("resource_conflict", "resource rollback payload is missing");
       }
+      validateActivation?.({ manifest: record.manifest, payload, current: this.getResource(resourceId) });
       this.activateResource(record);
       this.database.prepare("DELETE FROM device_resource_history WHERE revision_id=?").run(row.revision_id!);
       return record;
@@ -266,6 +278,17 @@ export class SqliteDeviceFabricStore {
     const status = readString(row, "status");
     if (status !== "active" && status !== "disabled") throw new DeviceFabricError("resource_conflict", "stored resource status is invalid");
     return { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at"), status, ...(typeof row.status_reason === "string" ? { statusReason: row.status_reason } : {}) };
+  }
+
+  listActiveResourceIds(kind: DeviceResourceManifestV1["kind"], entrypoint: string): readonly string[] {
+    const rows = this.database.prepare(`
+      SELECT active.resource_id FROM device_resource_active AS active
+      LEFT JOIN device_resource_state AS state USING (resource_id)
+      WHERE COALESCE(state.status,'active')='active'
+        AND json_extract(active.manifest_json,'$.kind')=? AND json_extract(active.manifest_json,'$.entrypoint')=?
+      ORDER BY active.resource_id
+    `).all(kind, entrypoint) as Row[];
+    return rows.map(row => readString(row, "resource_id"));
   }
 
   readActiveResourcePayload(resourceId: string, compatibility: DeviceResourceCompatibility = {}): Uint8Array | undefined {

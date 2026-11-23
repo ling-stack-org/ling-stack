@@ -88,13 +88,22 @@ export class HardwareProtocolProfileRegistry {
 
   resolve(input: { readonly profileId?: string; readonly deviceKind: DeviceKindV1; readonly model?: string; readonly firmwareVersion?: string }): HardwareProtocolProfileV1 {
     const candidates = this.list().filter(profile => (input.profileId === undefined || profile.profileId === input.profileId)
-      && profile.supportedDeviceKinds.includes(input.deviceKind)
-      && (profile.supportedModels === undefined || (input.model !== undefined && profile.supportedModels.includes(input.model)))
-      && (profile.supportedFirmwareRanges === undefined || (input.firmwareVersion !== undefined && profile.supportedFirmwareRanges.includes(input.firmwareVersion))));
+      && hardwareProtocolProfileMatches(profile, input));
     if (candidates.length > 1) throw new DeviceFabricError("resource_conflict", "multiple protocol profiles match the target");
     if (!candidates[0]) throw new DeviceFabricError("target_missing", "no protocol profile matches the target facts");
     return candidates[0];
   }
+}
+
+export function hardwareProtocolProfileMatches(profile: HardwareProtocolProfileV1, target: {
+  readonly deviceKind: DeviceKindV1;
+  readonly model?: string;
+  readonly firmwareVersion?: string;
+}): boolean {
+  return profile.supportedDeviceKinds.includes(target.deviceKind)
+    && (profile.supportedModels === undefined || (target.model !== undefined && profile.supportedModels.includes(target.model)))
+    && (profile.supportedFirmwareRanges === undefined
+      || (target.firmwareVersion !== undefined && profile.supportedFirmwareRanges.includes(target.firmwareVersion)));
 }
 
 export function assertValidHardwareProtocolCapture(capture: HardwareProtocolCaptureV1): void {

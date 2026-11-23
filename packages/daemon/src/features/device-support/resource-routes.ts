@@ -1,18 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { isDeviceResourceManifestV1 } from "@ling-stack/contracts";
-import { DeviceFabricError, type DeviceResourceCompatibility } from "@ling-stack/core";
+import { DeviceFabricError, type DeviceResourceActivationValidator } from "@ling-stack/core";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
+import { hostDeviceResourceCompatibility, validateProtocolResourceActivation } from "./protocol-resources.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const maxPayloadBytes = 4 * 1024 * 1024;
 const maxImportBodyBytes = 6 * 1024 * 1024;
-const resourcePlatforms: Partial<Record<NodeJS.Platform, DeviceResourceCompatibility["platform"]>> = {
-  darwin: "macos", linux: "linux", win32: "windows",
-};
-
 export async function handleDeviceResourceRoute(
   url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
@@ -31,7 +28,8 @@ export async function handleDeviceResourceRoute(
     return true;
   }
   const store = runtime.fabricStore;
-  const compatibility: DeviceResourceCompatibility = { platform: resourcePlatforms[process.platform] };
+  const compatibility = hostDeviceResourceCompatibility();
+  const validateActivation: DeviceResourceActivationValidator = input => validateProtocolResourceActivation(runtime, input);
   try {
     if (resourceId === undefined) {
       const body = await readJsonBody(request, maxImportBodyBytes).catch(() => undefined);
@@ -40,10 +38,10 @@ export async function handleDeviceResourceRoute(
         writePrivateJson(response, 400, { error: "invalid_resource_import" });
         return true;
       }
-      const result = store.installResource(resource.manifest, resource.payload, undefined, compatibility);
+      const result = store.installResource(resource.manifest, resource.payload, undefined, compatibility, validateActivation);
       writePrivateJson(response, result.replayed ? 200 : 201, result);
     } else if (action === "rollback") {
-      writePrivateJson(response, 200, { record: store.rollbackResource(resourceId, compatibility) });
+      writePrivateJson(response, 200, { record: store.rollbackResource(resourceId, compatibility, validateActivation) });
     } else if (action === "disable") {
       store.setResourceStatus(resourceId, "disabled", "disabled by operator");
       writePrivateJson(response, 200, { record: store.getResource(resourceId) });

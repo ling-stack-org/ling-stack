@@ -8,6 +8,7 @@ import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
+import { assertActiveProtocolProfile, listProtocolProfiles, resolveProtocolProfile } from "./protocol-resources.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const protocolPath = "/v1/device-support/protocol";
@@ -31,7 +32,7 @@ export async function handleDeviceProtocolRoute(
   }
   try {
     if (profiles) {
-      writePrivateJson(response, 200, { profiles: runtime.protocolProfiles.list() });
+      writePrivateJson(response, 200, { profiles: listProtocolProfiles(runtime) });
       return true;
     }
     if (transports) {
@@ -56,10 +57,7 @@ export async function handleDeviceProtocolRoute(
       if (profile && profile.device.ownerScope !== DEFAULT_WORKSPACE_ID) {
         throw new DeviceFabricError("target_missing", "protocol target is outside the current workspace");
       }
-      const protocol = runtime.protocolProfiles.resolve({
-        profileId: body.profileId, deviceKind: profile?.device.kind ?? "hardware",
-        model: profile?.device.model, firmwareVersion: profile?.device.firmwareVersion,
-      });
+      const { profile: protocol, digest } = resolveProtocolProfile(runtime, body.profileId, profile);
       const codec = runtime.protocolWorkbench.getCodecManifest(protocol.codecId);
       if (!codec) throw new DeviceFabricError("target_missing", "protocol codec is unavailable");
       const transport = body.transportId === undefined ? undefined : runtime.protocolTransports.get(body.transportId);
@@ -76,6 +74,7 @@ export async function handleDeviceProtocolRoute(
         authorizationRevision: randomUUID(), revision: 1, createdAt: now, updatedAt: now,
         protocolReplay: {
           profileId: protocol.profileId, profileVersion: protocol.version, codecId: codec.codecId, codecVersion: codec.version,
+          ...(digest ? { profileResource: { digest, transport: protocol.transport } } : {}),
           ...(transport && profile ? { liveTransport: {
             transportId: transport.transportId, connectionRevision: transport.connectionRevision,
             targetProfileRevision: profile.profileRevision,
@@ -110,10 +109,11 @@ export async function handleDeviceProtocolRoute(
       throw new DeviceFabricError("safety_denied", "protocol replay session authorization changed");
     }
     const capture = { ...body.capture, captureId: `${session.sessionId}:${body.capture.captureId}` };
+    const existing = runtime.developerSessions.getJob(jobId);
+    if (existing?.status !== "completed") assertActiveProtocolProfile(runtime, active);
     const replay = decodeReplay(runtime, active, capture);
     const artifactDigest = captureDigest(capture);
     const now = new Date().toISOString();
-    const existing = runtime.developerSessions.getJob(jobId);
     const started = runtime.developerSessions.startJob({
       jobId, sessionId: active.sessionId, kind: "workbench", status: "running", targetDeviceId: active.targetDeviceId,
       taskStatus: "executing", artifactDigest, revision: 1, updatedAt: now,
@@ -172,10 +172,12 @@ function decodeReplay(
   capture: HardwareProtocolCaptureV1,
 ) {
   const binding = session.protocolReplay;
-  const profile = runtime.protocolStore.getProfile(binding.profileId);
+  const profile = binding.profileResource ? undefined : runtime.protocolStore.getProfile(binding.profileId);
+  const transport = binding.profileResource?.transport
+    ?? (profile?.version === binding.profileVersion && profile.codecId === binding.codecId ? profile.transport : undefined);
   const codec = runtime.protocolWorkbench.getCodecManifest(binding.codecId);
-  if (!profile || !codec || profile.version !== binding.profileVersion || codec.version !== binding.codecVersion || profile.codecId !== codec.codecId
-    || capture.transport !== profile.transport || capture.targetDeviceId !== session.targetDeviceId
+  if (!codec || codec.version !== binding.codecVersion || codec.transport !== transport
+    || capture.transport !== transport || capture.targetDeviceId !== session.targetDeviceId
     || capture.source !== (binding.liveTransport ? "live" : "imported")) {
     throw new DeviceFabricError("target_changed", "protocol replay target, profile or codec changed");
   }
@@ -208,6 +210,7 @@ async function handleLiveCapture(
     return;
   }
   if (previous) throw new DeviceFabricError("revision_conflict", "protocol capture already has a dispatch record");
+  assertActiveProtocolProfile(runtime, active);
   const binding = active.protocolReplay.liveTransport!;
   const target = runtime.store.getDevice(active.targetDeviceId);
   const transport = runtime.protocolTransports.get(binding.transportId);

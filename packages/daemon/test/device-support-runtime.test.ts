@@ -17,7 +17,9 @@ import type {
   DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskGraphNodeReceiptV1, DeviceTaskGraphV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
   DeviceTwinValueV1, EdgeDeviceAttemptConformanceReportV1, EdgeDeviceJournalPageV1, EdgeRuntimeEnrollmentGrantV1,
   EdgeRuntimeHealthAdmissionV1, EdgeRuntimeHealthPageV1, EdgeRuntimeHealthSampleV1, EdgeRuntimeJournalEntryV1, EdgeRuntimePlacementDecisionV1,
+  HardwareProtocolProfileResourceV1, HardwareProtocolProfileV1,
 } from "@ling-stack/contracts";
+import { HARDWARE_PROTOCOL_PROFILE_ENTRYPOINT_V1 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createPcSoftwareDiagnosisPlaybook, createSqliteRunStore, DEFAULT_WORKSPACE_ID,
   devicePlaybookNodeId, DeviceBrokerError, DeviceTaskGraphCoordinator, digestRequest,
@@ -1326,9 +1328,8 @@ test("the local protocol workbench imports target-bound capture evidence and res
   assert.deepEqual(await repeated.json(), result);
 });
 
-test("the local daemon activates and rolls back Ed25519-signed resource imports", async t => {
+test("the local daemon activates signed resources and pins protocol profiles in workbench evidence", async t => {
   const root = mkdtempSync(join(tmpdir(), "ling-device-resource-policy-"));
-  const workspace = createSqliteRunStore(root);
   const trustPath = join(root, "device-resource-trust.json");
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const keyId = "fixture-release";
@@ -1338,21 +1339,28 @@ test("the local daemon activates and rolls back Ed25519-signed resource imports"
   }));
   const authToken = "fixture-daemon-authority";
   const headers = { Authorization: "Bearer " + authToken, "Content-Type": "application/json" };
-  const daemon = createDaemonServer({
-    host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: root, deviceSupport: { resourceTrustFile: trustPath },
-  }, { storeFactory: () => workspace });
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  async function start() {
+    const workspace = createSqliteRunStore(root);
+    daemon = createDaemonServer({
+      host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: root, deviceSupport: { resourceTrustFile: trustPath },
+    }, { storeFactory: () => workspace });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return "http://127.0.0.1:" + address.port + "/v1/device-support";
+  }
   t.after(async () => {
-    await daemon.stop();
+    await daemon?.stop();
     rmSync(root, { recursive: true, force: true });
   });
-  await daemon.start();
-  const address = daemon.server.address();
-  assert.ok(address && typeof address === "object");
-  const url = "http://127.0.0.1:" + address.port + "/v1/device-support/resources";
+  let base = await start();
+  const url = base + "/resources";
   const resourceUrl = url + "/profile-fixture";
-  const post = (value: unknown, extraHeaders: Record<string, string> = {}) => fetch(url, {
+  const postTo = (path: string, value: unknown, extraHeaders: Record<string, string> = {}) => fetch(base + path, {
     method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(value),
   });
+  const post = (value: unknown, extraHeaders?: Record<string, string>) => postTo("/resources", value, extraHeaders);
   const manifestBase = {
     resourceId: "profile-fixture", version: "1.0.0", kind: "schema", license: "MIT",
     dependencies: [], supportedDeviceKinds: ["linux"], entrypoint: "profile.json", contractMajor: 1,
@@ -1394,6 +1402,68 @@ test("the local daemon activates and rolls back Ed25519-signed resource imports"
   assert.equal(disabled.status, 200);
   const status = await (await fetch(resourceUrl, { headers })).json() as { record: { status: string } };
   assert.equal(status.record.status, "disabled");
+
+  const protocolResource = { resourceId: "temperature-registers", supportedDeviceKinds: ["hardware"], kind: "profile",
+    entrypoint: HARDWARE_PROTOCOL_PROFILE_ENTRYPOINT_V1 } as const;
+  const definition = {
+    schemaVersion: 1, codecId: modbusRtuRegisterCodec.manifest.codecId, capabilityIds: ["protocol.read_registers"],
+  } satisfies HardwareProtocolProfileResourceV1;
+  const signedProfile = (value: object, fields?: Partial<Omit<DeviceResourceManifestV1, "signature" | "digest">>) =>
+    signedFile(JSON.stringify(value), { ...protocolResource, ...fields });
+  const v1 = signedProfile(definition);
+  assert.equal((await post(signedProfile({ ...definition, executable: "untrusted" }))).status, 409);
+  assert.equal((await post(signedProfile(definition, { resourceId: "modbus-rtu-registers" }))).status, 409);
+  assert.equal((await post(v1)).status, 201);
+  const listProfiles = async () => {
+    const response = await fetch(base + "/protocol/profiles", { headers });
+    assert.equal(response.status, 200);
+    return (await response.json() as { profiles: HardwareProtocolProfileV1[] }).profiles;
+  };
+  assert.equal((await listProfiles()).find(profile => profile.profileId === protocolResource.resourceId)?.version, "1.0.0");
+  const targetDeviceId = "offline-temperature-sensor";
+  const openSession = async () => {
+    const response = await postTo("/protocol/sessions", { profileId: protocolResource.resourceId, targetDeviceId });
+    assert.equal(response.status, 201);
+    return (await response.json() as { session: DeviceDeveloperSessionV1 }).session;
+  };
+  const v1Complete = await openSession();
+  const v1Waiting = await openSession();
+  assert.deepEqual(v1Complete.protocolReplay?.profileResource, { digest: v1.manifest.digest, transport: "rs485" });
+  const at = "2026-11-21T00:00:00.000Z";
+  const capture = new HardwareProtocolWorkbench().capture({
+    captureId: "sample", targetDeviceId, transport: "rs485", source: "imported", createdAt: at,
+    frames: [{ direction: "rx", bytes: Buffer.from("010302000a3843", "hex"), capturedAt: at }],
+  });
+  const replayPath = (session: DeviceDeveloperSessionV1) => "/protocol/sessions/" + session.sessionId + "/replay";
+  const replay = (session: DeviceDeveloperSessionV1) => postTo(replayPath(session), { authorizationRevision: session.authorizationRevision, capture });
+  const initial = await replay(v1Complete);
+  assert.equal(initial.status, 201);
+  const evidence = await initial.json();
+  assert.equal(evidence.replay.frames[0].fields.register0, 10);
+  assert.equal(evidence.replay.profileResource.digest, v1.manifest.digest);
+  assert.equal((await post(signedProfile({ ...definition, codecId: "unavailable" }, { version: "2.0.0" }))).status, 409);
+  assert.equal((await post(signedFile("other profile kind", { resourceId: protocolResource.resourceId, version: "2.0.0" }))).status, 409);
+  assert.equal((await listProfiles()).find(profile => profile.profileId === protocolResource.resourceId)?.version, "1.0.0");
+  const v2 = signedProfile(definition, { version: "2.0.0" });
+  assert.equal((await post(v2)).status, 201);
+  const v2Waiting = await openSession();
+  assert.equal(v2Waiting.protocolReplay?.profileVersion, "2.0.0");
+  assert.equal((await replay(v1Waiting)).status, 409);
+
+  const profilePath = "/resources/" + protocolResource.resourceId;
+  assert.equal((await fetch(base + profilePath + "/rollback", { method: "POST", headers })).status, 200);
+  assert.equal((await replay(v1Waiting)).status, 201);
+  assert.equal((await replay(v2Waiting)).status, 409);
+  assert.equal((await fetch(base + profilePath + "/disable", { method: "POST", headers })).status, 200);
+  assert.equal((await listProfiles()).some(profile => profile.profileId === protocolResource.resourceId), false);
+  assert.equal((await postTo("/protocol/sessions", { profileId: protocolResource.resourceId, targetDeviceId })).status, 404);
+  await daemon?.stop();
+  daemon = undefined;
+  base = await start();
+  assert.deepEqual(await (await fetch(base + replayPath(v1Complete), { headers })).json(), evidence);
+  const exactReplay = await replay(v1Complete);
+  assert.equal(exactReplay.status, 200);
+  assert.deepEqual(await exactReplay.json(), evidence);
 });
 
 test("the local daemon exposes its PC report and sequenced task journal only on direct loopback", { timeout: 15_000 }, async t => {
