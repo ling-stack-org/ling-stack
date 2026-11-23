@@ -14,6 +14,42 @@ import { SqliteDeviceDeveloperStore } from "../dist/storage/sqlite/device-develo
 
 const now = "2026-11-21T00:00:00.000Z";
 
+test("a project build publishes the job and exact APK artifact in one SQLite transaction", t => {
+  const store = new SqliteDeviceDeveloperStore();
+  t.after(() => store.close());
+  const coordinator = new DeviceDeveloperSessionCoordinator({ store });
+  const session = coordinator.createSession({
+    sessionId: "pc-build", workspaceId: "workspace", ownerKind: "daemon", ownerId: "workspace", targetDeviceId: "pc",
+    targetKind: "pc", mode: "developer", authorizationRevision: "auth", status: "authorized", revision: 1,
+    createdAt: now, updatedAt: now,
+  });
+  const job = coordinator.startJob({
+    jobId: "build", sessionId: session.sessionId, buildId: "android-debug", kind: "build", status: "running",
+    targetDeviceId: session.targetDeviceId, authorizationRevision: session.authorizationRevision,
+    taskStatus: "executing", revision: 1, updatedAt: now,
+  });
+  const artifact = {
+    artifactId: "pc-artifact", workspaceId: session.workspaceId, targetDeviceId: job.targetDeviceId, packageId: "org.example.preview",
+    digest: "sha256:" + "a".repeat(64), sizeBytes: 80, createdAt: now,
+    androidApk: { versionCode: "71", signerCertificateSha256: ["b".repeat(64)] },
+    build: { jobId: job.jobId, buildId: "android-debug", fileName: "preview.apk", configurationDigest: "sha256:" + "c".repeat(64),
+      toolchain: "Android SDK", variant: "debug", sourceRevision: "1".repeat(40), sourceModified: false },
+  };
+  assert.throws(() => coordinator.completeBuildJob(job.jobId, { ...artifact, targetDeviceId: "other-pc" }, now), /admitted job/u);
+  store.database.exec("CREATE TRIGGER reject_job_update BEFORE UPDATE ON device_developer_jobs BEGIN SELECT RAISE(ABORT, 'fixture write failed'); END");
+  assert.throws(() => coordinator.completeBuildJob(job.jobId, artifact, now), /fixture write failed/u);
+  assert.equal(coordinator.getArtifact(artifact.artifactId), undefined);
+  assert.deepEqual(coordinator.getJob(job.jobId), job);
+  assert.equal(coordinator.getSession(session.sessionId)?.status, "running");
+  store.database.exec("DROP TRIGGER reject_job_update");
+  const completed = coordinator.completeBuildJob(job.jobId, artifact, now);
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.outputRef, artifact.artifactId);
+  assert.equal(completed.outputDigest, artifact.digest.slice(7));
+  assert.deepEqual(coordinator.getArtifact(artifact.artifactId), artifact);
+  assert.deepEqual(coordinator.admitJob(job), { job: completed, admitted: false });
+});
+
 test("developer sessions bind artifacts to the target and record job state", () => {
   const coordinator = new DeviceDeveloperSessionCoordinator();
   coordinator.createSession({ sessionId: "session-1", workspaceId: "workspace-1", ownerKind: "daemon", ownerId: "daemon-1", targetDeviceId: "android-1", targetKind: "android", mode: "developer", authorizationRevision: "auth-0", status: "created", revision: 1, createdAt: now, updatedAt: now });

@@ -11,6 +11,10 @@ export interface RemoteDeviceArtifactOfferInputV1 {
   readonly proposalId: string;
 }
 
+export interface RemoteDeviceArtifactBuildOfferInputV1 extends RemoteDeviceArtifactOfferInputV1 {
+  readonly buildJobId: string;
+}
+
 export interface RemoteDeviceArtifactManifestV1 {
   readonly version: 1;
   readonly gatewayId: string;

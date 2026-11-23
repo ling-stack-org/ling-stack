@@ -166,6 +166,7 @@ import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
 import { PhoneTaskCollaboration } from "./features/remote-access/phone-task-collaboration.js";
 import { PhoneTaskArtifacts } from "./features/remote-access/phone-task-artifacts.js";
+import { AndroidProjectBuilds, readAndroidProjectBuilds } from "./features/device-support/android-project-builds.js";
 import { parseHomeAssistantOrigin } from "./features/device-support/adapters/home-assistant.js";
 import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
 import { bindAndroidAdbTargets, readAndroidAdbConfiguration } from "./features/device-support/android-adb-targets.js";
@@ -312,6 +313,7 @@ export function createDaemonServer(
   const resolvedConfig = resolveConfig(config);
   const linuxSshTargets = readLinuxSshTargets(config.deviceSupport?.linuxSshTargetsFile ?? process.env.LING_STACK_DEVICE_SSH_TARGETS_FILE);
   const androidAdbConfiguration = readAndroidAdbConfiguration(config.deviceSupport?.androidAdbTargetsFile ?? process.env.LING_STACK_DEVICE_ADB_TARGETS_FILE);
+  const androidProjectBuilds = readAndroidProjectBuilds(config.deviceSupport?.androidProjectBuildsFile ?? process.env.LING_STACK_DEVICE_ANDROID_BUILDS_FILE);
   const modbusSerialTargets = readModbusSerialTargets(config.deviceSupport?.modbusSerialTargetsFile ?? process.env.LING_STACK_DEVICE_MODBUS_SERIAL_TARGETS_FILE);
   const deviceResourceTrust = readDeviceResourceTrustPolicy(config.deviceSupport?.resourceTrustFile ?? process.env.LING_STACK_DEVICE_RESOURCE_TRUST_FILE);
   const homeAssistantOrigin = config.deviceSupport?.homeAssistant?.origin ?? process.env.LING_STACK_DEVICE_HOME_ASSISTANT_ORIGIN;
@@ -1063,6 +1065,8 @@ export function createDaemonServer(
     androidAdbExecutor: dependencies.androidAdbExecutor,
     androidAdbTargets: androidAdb.targets,
     androidApks: androidAdb.apks,
+    androidProjectBuilds: new AndroidProjectBuilds(resolvedConfig.defaultWorkspaceCwd,
+      join(dirname(defaultWorkspaceStore.paths.databasePath), "android-project-build-logs"), androidProjectBuilds, androidAdb.apks),
     obdExecutor: dependencies.obdExecutor,
     developerExecutor: dependencies.developerExecutor,
     modbusSerialTargets,

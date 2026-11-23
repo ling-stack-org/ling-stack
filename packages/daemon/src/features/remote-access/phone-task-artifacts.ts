@@ -8,7 +8,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_ARTIFACT_MAX_BYTES, REMOTE_DEVICE_COLLABORATION_MAX_MS,
   REMOTE_DEVICE_COLLABORATION_MAX_PROPOSALS, REMOTE_PROTOCOL_LIMITS, isAndroidApkFileName, isRemoteDeviceArtifactName,
-  type AndroidApkIdentityV1,
+  type AndroidApkIdentityV1, type RemoteDeviceArtifactBuildOfferInputV1,
   type DeviceCollaborationProposalV1, type RemoteDeviceArtifactCommandV1, type RemoteDeviceArtifactManifestV1,
   type RemoteDeviceArtifactOfferInputV1, type RemoteDeviceArtifactOfferV1, type RemoteDeviceArtifactResultV1,
 } from "@ling-stack/contracts";
@@ -17,6 +17,7 @@ import {
   deviceArtifactChunkBytes, deviceArtifactManifestBytes, deviceArtifactReceiptBytes, phoneTaskProjectionDigest, validateDeviceArtifactOffer,
 } from "@ling-stack/remote-protocol";
 import type { AndroidApkLibrary } from "../device-support/android-apks.js";
+import { readProjectBuildArtifact } from "../device-support/android-project-builds.js";
 import { RemoteAccessError } from "./errors.js";
 import type { PhoneTaskCollaboration, PhoneTaskCollaborationPrincipal } from "./phone-task-collaboration.js";
 
@@ -31,6 +32,16 @@ interface StagedArtifact {
 
 type SignArtifact = (input: Uint8Array) => string;
 type VerifyArtifact = (input: Uint8Array, signature: string) => boolean;
+type OfferContext = {
+  readonly currentPrincipal: () => PhoneTaskCollaborationPrincipal | undefined;
+  readonly now: () => string;
+  readonly sign: SignArtifact;
+};
+type FileOfferInput = RemoteDeviceArtifactOfferInputV1 & {
+  readonly name: string;
+  readonly sizeBytes: number;
+  readonly build?: { readonly jobId: string; readonly digest: string };
+};
 
 export class PhoneTaskArtifacts {
   private uploading = false;
@@ -48,9 +59,9 @@ export class PhoneTaskArtifacts {
 
   async offerFromPc(
     initialPrincipal: PhoneTaskCollaborationPrincipal,
-    input: RemoteDeviceArtifactOfferInputV1 & { readonly name: string; readonly sizeBytes: number },
+    input: FileOfferInput,
     source: Readable,
-    context: { readonly currentPrincipal: () => PhoneTaskCollaborationPrincipal | undefined; readonly now: () => string; readonly sign: SignArtifact },
+    context: OfferContext,
   ): Promise<RemoteDeviceArtifactOfferV1> {
     if (!isRemoteDeviceArtifactName(input.name) || Buffer.byteLength(input.name) > 320) {
       throw new RemoteAccessError("binding_changed", "Choose an artifact with a valid file name.");
@@ -69,6 +80,9 @@ export class PhoneTaskArtifacts {
     let retained = false;
     try {
       staged = await this.stage(source, input.sizeBytes);
+      if (input.build && input.build.digest !== staged.digest) {
+        throw new RemoteAccessError("binding_changed", "The project build APK changed.");
+      }
       let androidApk: AndroidApkIdentityV1 | undefined;
       if (isApk) {
         const verified = await this.androidApks!.verifyStaged(this.blobPath(staged.blobId), staged.digest);
@@ -84,6 +98,19 @@ export class PhoneTaskArtifacts {
       if (staged && !retained) await rm(this.blobPath(staged.blobId), { force: true }).catch(() => undefined);
       this.uploading = false;
     }
+  }
+
+  async offerFromBuild(principal: PhoneTaskCollaborationPrincipal, input: RemoteDeviceArtifactBuildOfferInputV1, context: OfferContext) {
+    this.collaboration.currentShare(principal, input, context.now());
+    const { buildJobId, ...offer } = input;
+    const retained = readProjectBuildArtifact(this.store, principal.workspaceId, buildJobId);
+    if (!this.androidApks || !retained) throw new RemoteAccessError("pc_unavailable", "The selected project build did not retain a verified APK.");
+    return await this.androidApks.withApk(retained.artifact.digest, AbortSignal.timeout(30_000), async (source, sizeBytes) => {
+      if (sizeBytes !== retained.artifact.sizeBytes) throw new RemoteAccessError("binding_changed", "The project build APK changed.");
+      return await this.offerFromPc(principal, {
+        ...offer, name: retained.build.fileName, sizeBytes, build: { jobId: buildJobId, digest: retained.artifact.digest },
+      }, source, context);
+    });
   }
 
   async fromPhone(
@@ -179,7 +206,7 @@ export class PhoneTaskArtifacts {
   }
 
   private publish(
-    principal: PhoneTaskCollaborationPrincipal, input: RemoteDeviceArtifactOfferInputV1 & { readonly name: string },
+    principal: PhoneTaskCollaborationPrincipal, input: FileOfferInput,
     artifact: StagedArtifact, now: string, sign: SignArtifact, androidApk?: AndroidApkIdentityV1,
   ): { readonly offer: RemoteDeviceArtifactOfferV1; readonly retained: boolean } {
     return this.store.withWriteTransaction(() => {
@@ -195,9 +222,10 @@ export class PhoneTaskArtifacts {
         ...(androidApk ? { androidApk } : {}),
       };
       if (this.store.getProposal(input.proposalId)) {
-        const offer = this.offer(this.requireProposal(share, input.proposalId));
+        const previous = this.requireProposal(share, input.proposalId);
+        const offer = this.offer(previous);
         if (offer.manifest.digest !== manifest.digest || offer.manifest.sizeBytes !== manifest.sizeBytes || offer.manifest.name !== manifest.name
-          || !isDeepStrictEqual(offer.manifest.androidApk, manifest.androidApk)) {
+          || !isDeepStrictEqual(offer.manifest.androidApk, manifest.androidApk) || this.readPayload(previous).buildJobId !== input.build?.jobId) {
           throw new RemoteAccessError("idempotency_conflict", "The proposal already refers to another artifact.");
         }
         return { offer, retained: false };
@@ -205,7 +233,8 @@ export class PhoneTaskArtifacts {
       if (share.proposalIds.length >= REMOTE_DEVICE_COLLABORATION_MAX_PROPOSALS) {
         throw new RemoteAccessError("rate_limited", "The proposal limit for this task revision has been reached.");
       }
-      const payload = { manifest: { ...manifest }, signature: sign(deviceArtifactManifestBytes(manifest)), blobId: artifact.blobId };
+      const payload = { manifest: { ...manifest }, signature: sign(deviceArtifactManifestBytes(manifest)), blobId: artifact.blobId,
+        ...(input.build ? { buildJobId: input.build.jobId } : {}) };
       const proposal = this.store.saveProposal({
         proposalId: input.proposalId, taskId: projection.taskId, ownerKind: "mobile", ownerId: projection.ownerId,
         proposerKind: "daemon", proposerId: principal.gatewayId, targetDeviceId: projection.targetDeviceId, kind: "artifact",
@@ -260,7 +289,8 @@ export class PhoneTaskArtifacts {
   private readPayload({ payload }: DeviceCollaborationProposalV1) {
     if (!payload || typeof payload !== "object" || !("blobId" in payload) || typeof payload.blobId !== "string"
       || !("manifest" in payload) || !("signature" in payload)) throw new Error("Invalid stored artifact proposal");
-    return { manifest: payload.manifest, signature: payload.signature, blobId: payload.blobId };
+    return { manifest: payload.manifest, signature: payload.signature, blobId: payload.blobId,
+      buildJobId: "buildJobId" in payload ? payload.buildJobId : undefined };
   }
 
   private blobPath(blobId: string): string {

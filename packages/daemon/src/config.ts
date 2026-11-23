@@ -30,6 +30,7 @@ export interface DaemonConfig {
   readonly deviceSupport?: {
     readonly linuxSshTargetsFile?: string;
     readonly androidAdbTargetsFile?: string;
+    readonly androidProjectBuildsFile?: string;
     readonly modbusSerialTargetsFile?: string;
     readonly resourceTrustFile?: string;
     readonly homeAssistant?: { readonly origin: string; readonly tokenRef: string };

@@ -54,6 +54,7 @@ import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 import { createDeviceApprovalQueue } from "./approval-queue.js";
 import { createDeviceDeveloperJobs, retainedAndroidDeployResult, type DeviceDeveloperExecutor } from "./developer-jobs.js";
 import type { AndroidApkLibrary } from "./android-apks.js";
+import type { AndroidProjectBuilds } from "./android-project-builds.js";
 import { homeAssistantReportedValue } from "./home-assistant-twin.js";
 
 interface ConfiguredDeviceTargetSummary {
@@ -83,6 +84,7 @@ export interface DeviceSupportRuntime {
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly developerJobs: ReturnType<typeof createDeviceDeveloperJobs>;
   readonly androidApks?: AndroidApkLibrary;
+  readonly androidProjectBuilds?: AndroidProjectBuilds;
   canDeployAndroid(deviceId: string): boolean;
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
@@ -135,6 +137,7 @@ export function createDeviceSupportRuntime(options: {
   readonly androidAdbExecutor?: AndroidAdbExecutor;
   readonly androidAdbTargets?: readonly BoundAndroidAdbTarget[];
   readonly androidApks?: AndroidApkLibrary;
+  readonly androidProjectBuilds?: AndroidProjectBuilds;
   readonly obdExecutor?: ObdExecutor;
   readonly developerExecutor?: DeviceDeveloperExecutor;
 }): DeviceSupportRuntime {
@@ -246,6 +249,7 @@ export function createDeviceSupportRuntime(options: {
   const planner = new DeviceRunnerPlanningBridge();
   const developerJobs = createDeviceDeveloperJobs({
     broker, sessions: developerSessions, executor: options.developerExecutor, canDeployAndroid, now,
+    androidProjectBuilds: options.androidProjectBuilds,
   });
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
@@ -451,6 +455,7 @@ export function createDeviceSupportRuntime(options: {
     developerSessions,
     developerJobs,
     androidApks: options.androidApks,
+    androidProjectBuilds: options.androidProjectBuilds,
     canDeployAndroid,
     collaboration,
     edgeRuntimes,

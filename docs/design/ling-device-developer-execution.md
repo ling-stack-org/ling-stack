@@ -478,6 +478,60 @@ installation has its own approval and readback evidence.
 [Offer service](../../packages/daemon/src/features/remote-access/phone-task-artifacts.ts)
 [Mobile verification](../../apps/mobile/src/device/phone-task-artifacts.ts)
 
+### Build an APK on the assisting PC
+
+Provide the absolute path to a host-owned build configuration through
+`LING_STACK_DEVICE_ANDROID_BUILDS_FILE` or
+`deviceSupport.androidProjectBuildsFile`. Enable `apkTools` on the same Daemon.
+Each configured build selects a project inside the current PC workspace.
+The APK path is relative to the project directory.
+
+```json
+{
+  "version": 1,
+  "builds": [
+    {
+      "buildId": "head-unit-debug",
+      "directory": "head-unit-app",
+      "executable": "<absolute path to gradlew>",
+      "args": ["assembleDebug"],
+      "apkPath": "app/build/outputs/apk/debug/app-debug.apk",
+      "toolchain": "Gradle and Android SDK",
+      "variant": "debug"
+    }
+  ]
+}
+```
+
+Use the authenticated loopback Daemon to discover the local PC and create a
+developer session for it. Choose a build from
+`GET /v1/device-support/developer/project-builds`. Authorize the session, then
+submit a job to its `/jobs` route with `kind: "build"`, `jobId`, `buildId`,
+`authorizationRevision`, and `expectedSessionRevision`. The PC starts the
+configured executable in the project directory. SDK paths and common process
+settings are inherited. A build can list additional project environment keys
+in `passEnvironment`. The job record carries the configured toolchain and
+variant through its output artifact, with the Git revision and worktree status
+when available. The session's `/jobs/{jobId}/build-log` route returns the bounded
+stdout and stderr from the finished process.
+
+When the job finishes and the APK verifies, the Daemon commits the job outcome,
+artifact identity and session revision together. Read the outcome through
+`/jobs/{jobId}` after reconnecting. Repeating a job ID with the same input
+returns the recorded outcome.
+
+The local Mobile Access management route accepts
+`POST /v1/mobile-access/device-collaboration/artifacts/from-build` with the
+active `shareId`, `expectedRevision`, a `proposalId` and `buildJobId`. The
+Gateway resolves the retained APK from the completed job in its workspace,
+verifies its SHA-256 and uses the same signed-offer flow as a selected file.
+This preserves the reviewed build bytes when the project's output path is
+overwritten. The phone accepts the offer and verifies the file against its
+task's target and connection revision. Device installation uses the phone's
+local developer authorization.
+[PC build service](../../packages/daemon/src/features/device-support/android-project-builds.ts)
+[Native peer acceptance fixture](../../packages/daemon/test/ling-server-native-peer.test.ts)
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with

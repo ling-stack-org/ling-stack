@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
 import { once } from "node:events";
-import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,11 +11,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import type {
-  AndroidApkIdentityV1, LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceArtifactOfferV1,
+  AndroidApkIdentityV1, DeviceDeveloperArtifactV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1,
+  LingServerPairingMigrationPublicationV1, LingServerPairingMigrationV1, RemoteDeviceArtifactOfferV1,
   RemoteDeviceCollaborationViewV1, RemoteP256PublicJwkV1,
 } from "@ling-stack/contracts";
 import { REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V8 } from "@ling-stack/contracts";
-import { createEnvSecretResolver, createSqliteRunStore } from "@ling-stack/core";
+import { createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import {
   RemoteSessionClient, createFetchRemoteHttpClient, type RemoteBindingV1, type RemoteDeviceKeyAdapter,
 } from "@ling-stack/remote-client";
@@ -28,6 +29,8 @@ import type { OpenPhoneTaskArtifactFile } from "../../../apps/mobile/src/device/
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 import { localProcessRunner, type LocalProcessRunner } from "../dist/features/device-support/adapters/local-pc-executor.js";
 import { AndroidApkLibrary } from "../dist/features/device-support/android-apks.js";
+import { AndroidProjectBuilds, readAndroidProjectBuilds } from "../dist/features/device-support/android-project-builds.js";
+import { handleDeviceDeveloperRoute } from "../dist/features/device-support/developer-routes.js";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createPhoneTaskAnalysisDrafter } from "../dist/features/device-support/diagnosis-planner.js";
 import { createDefaultRunnerRegistry } from "../dist/index.js";
@@ -45,6 +48,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     assert.ok(worker);
     const root = await mkdtemp(join(tmpdir(), "ling-native-peer-"));
     const apkFixture = await createApkFixture(root);
+    const project = await createProjectFixture(root);
     const certificatePath = join(root, "tls.pem");
     const privateKeyPath = join(root, "tls.key");
     execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
@@ -77,6 +81,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     const channel = workspace.createChannel({ name: "Peer continuity", boundPath: root }, now());
     const createDeviceRuntime = () => createDeviceSupportRuntime({
       databasePath: join(root, "device-owner.sqlite"), now,
+      androidProjectBuilds: new AndroidProjectBuilds(root, join(root, "build-logs"), readAndroidProjectBuilds(project.configuration), apkFixture.library),
       homeAssistant: {
         baseUrl: "https://ha.fixture.example", token: "fixture-token",
         fetchImpl: async input => {
@@ -133,6 +138,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     state.writeState({ ...originalState, enabled: true, gatewayOrigin, deviceEpoch: device.deviceEpoch, pairedDevice: device });
     const gatewayKey = state.readOrCreateIdentity();
     const managementCapability = randomUUID();
+    const developerHeaders = { Authorization: "Bearer " + randomUUID(), "Content-Type": "application/json" };
     const managementOrigin = "http://127.0.0.1";
     const createGateway = () => {
       const phoneTaskCollaboration = new PhoneTaskCollaboration(devices.developerStore);
@@ -145,11 +151,23 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     gateway = createGateway();
     await gateway.startIfEnabled();
     management = createServer(async (request, response) => {
+      const url = new URL(request.url ?? "/", managementOrigin);
+      if (url.pathname.startsWith("/v1/device-support/developer/")) {
+        if (request.headers.authorization !== developerHeaders.Authorization) {
+          response.writeHead(401).end();
+          return;
+        }
+        if (await handleDeviceDeveloperRoute(url, request, response, devices)) return;
+      }
       if (!await gateway?.handleManagementRequest(request, response)) response.writeHead(404).end();
     });
     const managementPort = await listen(management);
     const collaborationUrl = managementOrigin + ":" + managementPort + "/v1/mobile-access/device-collaboration";
     const collaborationHeaders = { Origin: managementOrigin, "X-Ling-Mobile-Management-Capability": managementCapability };
+    const developerUrl = managementOrigin + ":" + managementPort + "/v1/device-support/developer";
+    const developerPost = (path: string, body: object) => fetch(developerUrl + path, {
+      method: "POST", headers: developerHeaders, body: JSON.stringify(body),
+    });
     const draftAnalysis = (share: RemoteDeviceCollaborationViewV1, csrfToken = gateway!.csrfToken) => fetch(collaborationUrl + "/draft", {
       method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": csrfToken, "Content-Type": "application/json" },
       body: JSON.stringify({ shareId: share.shareId, expectedRevision: share.revision, locale: "en-US" }),
@@ -228,6 +246,30 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     assert.equal(initialJournal.task.taskId, taskId);
     assert.equal(initialJournal.events.length, 1);
     assert.equal(initialJournal.hasMore, true);
+    const pc = await devices.broker.discover("pc-target-executor", { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
+    const projects = await fetch(developerUrl + "/project-builds", { headers: developerHeaders });
+    assert.deepEqual(await projects.json(), { builds: [{ buildId: "test-debug", directory: "app-workspace", variant: "debug", toolchain: "Android SDK Build Tools" }] });
+    const sessionResponse = await developerPost("/sessions", { targetDeviceId: pc.device.id, mode: "developer" });
+    assert.equal(sessionResponse.status, 201);
+    const { session: created } = await sessionResponse.json() as { session: DeviceDeveloperSessionV1 };
+    const sessionPath = "/sessions/" + created.sessionId;
+    const authorizedResponse = await developerPost(sessionPath + "/authorize", { expectedRevision: created.revision });
+    assert.equal(authorizedResponse.status, 200);
+    const { session: authorized } = await authorizedResponse.json() as { session: DeviceDeveloperSessionV1 };
+    const projectJob = { jobId: "pc-android-project-build", kind: "build", buildId: "test-debug",
+      expectedSessionRevision: authorized.revision, authorizationRevision: authorized.authorizationRevision };
+    const buildResponse = await developerPost(sessionPath + "/jobs", projectJob);
+    assert.equal(buildResponse.status, 201);
+    const built = await buildResponse.json() as { job: DeviceDeveloperJobV1; artifact: DeviceDeveloperArtifactV1 };
+    assert.equal(built.job.status, "completed");
+    assert.equal(built.artifact.build?.sourceRevision, project.revision);
+    assert.equal(built.artifact.build?.sourceModified, false);
+    assert.equal(built.artifact.build?.jobId, built.job.jobId);
+    assert.equal(built.artifact.digest, "sha256:" + built.job.outputDigest);
+    assert.equal(built.artifact.digest, sha256Digest(await readFile(project.output)));
+    const buildLogResponse = await fetch(developerUrl + sessionPath + "/jobs/" + projectJob.jobId + "/build-log", { headers: developerHeaders });
+    assert.equal(buildLogResponse.status, 200);
+    assert.match((await buildLogResponse.json() as { stdout: string }).stdout, /project APK built/u);
     const phoneStorage = new Map<string, string>();
     const storage = {
       async getItem(key: string) { return phoneStorage.get(key) ?? null; },
@@ -381,6 +423,25 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     assert.equal(roundTrip.status, 200);
     assert.deepEqual(await roundTrip.json(), { offers: [receivedArtifact] });
     assert.equal(devices.developerStore.getPhoneArtifactReceipt("pc-build-artifact")?.digest, sha256Digest(artifactBytes));
+    const replayBuild = await developerPost(sessionPath + "/jobs", projectJob);
+    assert.equal(replayBuild.status, 200);
+    assert.deepEqual(await replayBuild.json(), built);
+    assert.equal(await readFile(project.callLog, "utf8"), "build\n");
+    assert.equal((await developerPost(sessionPath + "/jobs", { ...projectJob, buildId: "different" })).status, 409);
+    await writeFile(project.output, "changed project output");
+    const buildShare = (buildJobId: string) => fetch(collaborationUrl + "/artifacts/from-build", {
+      method: "POST", headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": gateway!.csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ shareId: share.shareId, expectedRevision: share.revision, proposalId: "project-apk", buildJobId }),
+    });
+    assert.equal((await buildShare("missing-build")).status, 409);
+    const fromBuild = await buildShare(projectJob.jobId);
+    assert.equal(fromBuild.status, 201);
+    const projectOffer = await fromBuild.json() as RemoteDeviceArtifactOfferV1;
+    assert.equal(projectOffer.manifest.digest, built.artifact.digest);
+    assert.equal(projectOffer.manifest.androidApk?.packageId, built.artifact.packageId);
+    assert.deepEqual(await (await buildShare(projectJob.jobId)).json(), projectOffer);
+    const receivedBuild = await phone.artifacts.receive({ offer: await phone.artifacts.decide(projectOffer, "accepted", client), peer: client });
+    assert.equal(receivedBuild.receipt?.digest, built.artifact.digest);
     const unsigned = await offerArtifact("unsigned-apk", "unsigned.apk", apkFixture.unsigned);
     assert.equal(unsigned.status, 400);
     assert.match(await unsigned.text(), /APK signature could not be verified/u);
@@ -389,7 +450,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     const apkOffer = await apkUpload.json() as RemoteDeviceArtifactOfferV1;
     assert.equal(apkOffer.manifest.digest, sha256Digest(apkFixture.signed));
     assert.deepEqual(apkOffer.manifest.androidApk, apkFixture.identity);
-    assert.deepEqual(await client.listDeviceArtifacts(share.shareId, share.revision), [receivedArtifact, apkOffer]);
+    assert.deepEqual(await client.listDeviceArtifacts(share.shareId, share.revision), [receivedArtifact, receivedBuild, apkOffer]);
     await assert.rejects(client.decideDeviceArtifact({
       ...apkOffer, manifest: { ...apkOffer.manifest, androidApk: { ...apkFixture.identity, versionCode: "4294967339", legacyVersionCode: "43" } },
     }, "accepted"), /artifact_signature_invalid/u);
@@ -422,7 +483,7 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
         if (protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V7) {
           assert.deepEqual(offers, [receivedArtifact]);
           await assert.rejects(compat.readDeviceArtifactChunk(apkOffer.manifest, 0), /Update Ling Mobile/u);
-        } else assert.deepEqual(offers, [receivedArtifact, receivedApk]);
+        } else assert.deepEqual(offers, [receivedArtifact, receivedBuild, receivedApk]);
       } finally {
         compat.disconnect();
       }
@@ -502,6 +563,58 @@ async function createApkFixture(root: string) {
     },
   };
   return { identity, signed, unsigned, library: new AndroidApkLibrary(join(root, "apk-library"), tools, native ? localProcessRunner : fixtureRunner) };
+}
+
+async function createProjectFixture(root: string) {
+  const project = join(root, "app-workspace");
+  const output = join(project, "out", "project-debug.apk");
+  const callLog = join(project, "out", "build-count");
+  const configuration = join(root, "android-builds.json");
+  await mkdir(project);
+  const native = process.env.LING_TEST_ANDROID_FIXTURE_DIR;
+  const steps: string[] = [];
+  if (native) {
+    const java = process.env.LING_TEST_ANDROID_JAVA ?? "java";
+    const keytool = join(java, "..", "keytool");
+    const key = join(root, "test-signing.jks");
+    execFileSync(keytool, ["-genkeypair", "-keyalg", "RSA", "-keysize", "2048", "-keystore", key, "-storepass", "build-fixture-only",
+      "-keypass", "build-fixture-only", "-alias", "fixture", "-dname", "CN=Ling Build Fixture", "-validity", "30"], { stdio: "ignore" });
+    steps.push(
+      `execFileSync(${JSON.stringify(join(native, "aapt2"))}, ${JSON.stringify([
+        "link", "-I", join(native, "android.jar"), "--manifest", "AndroidManifest.xml", "-o", "out/unsigned.apk",
+      ])});`,
+      `execFileSync(${JSON.stringify(java)}, ${JSON.stringify([
+        "-jar", join(native, "apksigner.jar"), "sign", "--ks", key, "--ks-pass", "pass:build-fixture-only",
+        "--out", "out/project-debug.apk", "out/unsigned.apk",
+      ])});`,
+    );
+  } else steps.push('writeFileSync("out/project-debug.apk", "signed apk fixture");');
+  await writeFile(join(project, "AndroidManifest.xml"), [
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.lingstack.projectfixture" android:versionCode="71">',
+    '  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="30" />',
+    '  <application android:hasCode="false" android:label="Ling project APK fixture" />',
+    "</manifest>",
+  ].join("\n"));
+  await writeFile(join(project, ".gitignore"), "out/\n");
+  await writeFile(join(project, "build.mjs"), [
+    'import { execFileSync } from "node:child_process";',
+    'import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";',
+    'mkdirSync("out", { recursive: true });',
+    ...steps,
+    'appendFileSync("out/build-count", "build\\n");',
+    'console.log("project APK built");',
+  ].join("\n"));
+  const git = (...args: string[]) => execFileSync("git", ["-C", project, ...args], { encoding: "utf8" });
+  git("init", "--quiet");
+  git("add", ".");
+  git("-c", "user.name=Ling Test", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+    "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Android fixture sources");
+  const revision = git("rev-parse", "HEAD").trim();
+  await writeFile(configuration, JSON.stringify({ version: 1, builds: [{
+    buildId: "test-debug", directory: "app-workspace", executable: process.execPath, args: ["build.mjs"],
+    apkPath: "out/project-debug.apk", variant: "debug", toolchain: "Android SDK Build Tools",
+  }] }));
+  return { output, callLog, configuration, revision };
 }
 
 function pairedKey() {

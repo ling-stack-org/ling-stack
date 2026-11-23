@@ -299,6 +299,23 @@ export class RemoteAccessController {
           response.off("close", cancel);
         }
       }
+      if (url.pathname === `${MANAGEMENT_PREFIX}/device-collaboration/artifacts/from-build` && this.options.phoneTaskArtifacts) {
+        if (request.method !== "POST") {
+          writeManagementJson(response, 405, { error: "method_not_allowed", message: "Use POST to share a project build." }, origin);
+          return true;
+        }
+        const { buildJobId, ...offerInput } = requireRecord(await readJson(request));
+        if (!isRemoteDeviceArtifactOfferInputV1(offerInput) || typeof buildJobId !== "string" || !/^[a-z0-9_-]{1,128}$/iu.test(buildJobId)) {
+          throw new Error("Invalid project build offer.");
+        }
+        const principal = this.currentCollaborationPrincipal();
+        if (!principal) throw new RemoteAccessError("binding_changed", "Pair a phone before sharing an artifact.");
+        const offer = await this.options.phoneTaskArtifacts.offerFromBuild(principal, { ...offerInput, buildJobId }, {
+          currentPrincipal: () => this.currentCollaborationPrincipal(), now: this.now, sign: bytes => this.signArtifact(bytes),
+        });
+        if (!response.destroyed) writeManagementJson(response, 201, offer, origin);
+        return true;
+      }
       if (url.pathname === `${MANAGEMENT_PREFIX}/device-collaboration/artifacts` && this.options.phoneTaskArtifacts) {
         const upload = request.method === "POST";
         if (!upload && request.method !== "GET") {

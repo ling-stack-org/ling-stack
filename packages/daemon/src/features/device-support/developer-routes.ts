@@ -8,13 +8,15 @@ import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
 import { androidAdbAdapterId, androidAdbInstallCapability, androidAdbLogCapability } from "./adapters/android-adb.js";
+import { readProjectBuildArtifact } from "./android-project-builds.js";
 import { assertDeveloperTargetActive, requireCurrentDeveloperTarget } from "./developer-jobs.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const developerPath = "/v1/device-support/developer/sessions";
-const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs|artifact)(?:\/([^/]+)(?:\/(logcat|readback))?)?)?$/u;
+const buildsPath = "/v1/device-support/developer/project-builds";
+const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs|artifact)(?:\/([^/]+)(?:\/(logcat|readback|build-log))?)?)?$/u;
 const jobKinds = ["build", "deploy", "launch", "logs", "test", "retest"] as const satisfies readonly DeviceDeveloperJobV1["kind"][];
-const jobFields = new Set(["jobId", "kind", "artifactDigest", "authorizationRevision", "expectedSessionRevision"]);
+const jobFields = new Set(["jobId", "kind", "artifactDigest", "buildId", "authorizationRevision", "expectedSessionRevision"]);
 
 export async function handleDeviceDeveloperRoute(
   url: URL,
@@ -23,11 +25,12 @@ export async function handleDeviceDeveloperRoute(
   runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
   const match = sessionPath.exec(url.pathname);
-  if (!match && url.pathname !== developerPath) return false;
+  const listBuilds = url.pathname === buildsPath;
+  if (!match && url.pathname !== developerPath && !listBuilds) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   const [sessionId, operation, jobId, projection] = match?.slice(1) ?? [];
   if (jobId && operation !== "jobs") return false;
-  const write = !sessionId || (operation !== undefined && !jobId) || projection === "readback";
+  const write = !listBuilds && (!sessionId || (operation !== undefined && !jobId) || projection === "readback");
   const methods = operation === "artifact" ? ["GET", "POST"] : [write ? "POST" : "GET"];
   if (!methods.includes(request.method ?? "")) {
     response.setHeader("Allow", methods.join(", "));
@@ -35,6 +38,10 @@ export async function handleDeviceDeveloperRoute(
     return true;
   }
   try {
+    if (listBuilds) {
+      writePrivateJson(response, 200, { builds: runtime.androidProjectBuilds?.list() ?? [] });
+      return true;
+    }
     if (!sessionId) {
       await createSession(request, response, runtime);
       return true;
@@ -67,7 +74,16 @@ export async function handleDeviceDeveloperRoute(
       }
       const result = await reconcileAndroidDeployment(runtime, session, job);
       if (!response.destroyed) writePrivateJson(response, 200, result);
-    } else writePrivateJson(response, 200, projection === "logcat" ? readDeveloperLogcat(runtime, session, job) : { job });
+    } else if (projection === "build-log") {
+      const log = job.kind === "build" && job.buildId ? await runtime.androidProjectBuilds?.readLog(job.jobId) : undefined;
+      if (!log) throw new DeviceBrokerError("missing_target", "project build log is unavailable");
+      writePrivateJson(response, 200, { jobId: job.jobId, ...log });
+    } else if (projection === "logcat") {
+      writePrivateJson(response, 200, readDeveloperLogcat(runtime, session, job));
+    } else {
+      const build = job.buildId ? readProjectBuildArtifact(runtime.developerStore, session.workspaceId, job.jobId) : undefined;
+      writePrivateJson(response, 200, { job, ...(build ? { artifact: build.artifact } : {}) });
+    }
   } catch (error) {
     if (!response.destroyed) writeDeveloperError(response, error);
   }
@@ -174,17 +190,22 @@ async function createJob(request: IncomingMessage, response: ServerResponse, run
   if (!isRecord(body) || !kind || typeof body.jobId !== "string" || !/^[a-z0-9_-]{1,128}$/iu.test(body.jobId)
     || Object.keys(body).some(key => !jobFields.has(key))
     || (body.artifactDigest !== undefined && !boundedReference(body.artifactDigest))
+    || (body.buildId !== undefined && (kind !== "build" || typeof body.buildId !== "string"
+      || !/^[a-z0-9_-]{1,128}$/iu.test(body.buildId) || body.artifactDigest !== undefined))
     || (body.expectedSessionRevision !== undefined && (typeof body.expectedSessionRevision !== "number"
       || !Number.isSafeInteger(body.expectedSessionRevision) || body.expectedSessionRevision < 1))
     || !boundedReference(body.authorizationRevision)) {
     throw new DeviceBrokerError("invalid_request", "invalid developer job");
   }
-  const { job, admitted } = await runtime.developerJobs.submit(requireSession(runtime, sessionId), {
+  const session = requireSession(runtime, sessionId);
+  const { job, admitted } = await runtime.developerJobs.submit(session, {
     jobId: body.jobId, kind, authorizationRevision: body.authorizationRevision,
     ...(body.artifactDigest ? { artifactDigest: body.artifactDigest } : {}),
+    ...(typeof body.buildId === "string" ? { buildId: body.buildId } : {}),
     ...(typeof body.expectedSessionRevision === "number" ? { expectedSessionRevision: body.expectedSessionRevision } : {}),
   });
-  if (!response.destroyed) writePrivateJson(response, admitted ? 201 : 200, { job });
+  const build = job.buildId ? readProjectBuildArtifact(runtime.developerStore, session.workspaceId, job.jobId) : undefined;
+  if (!response.destroyed) writePrivateJson(response, admitted ? 201 : 200, { job, ...(build ? { artifact: build.artifact } : {}) });
 }
 
 async function createSession(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): Promise<void> {

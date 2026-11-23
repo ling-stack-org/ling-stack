@@ -56,12 +56,12 @@ export class DeviceDeveloperSessionCoordinator {
       const current = this.getArtifact(artifact.artifactId);
       if (current && (current.digest !== artifact.digest || current.workspaceId !== artifact.workspaceId
         || current.targetDeviceId !== artifact.targetDeviceId || current.packageId !== artifact.packageId
-        || current.sizeBytes !== artifact.sizeBytes || !isDeepStrictEqual(current.androidApk, artifact.androidApk))) {
+        || current.sizeBytes !== artifact.sizeBytes || !isDeepStrictEqual(current.androidApk, artifact.androidApk)
+        || !isDeepStrictEqual(current.build, artifact.build))) {
         throw new DeviceFabricError("revision_conflict", "artifact id is bound to another artifact identity");
       }
       if (!current) {
-        if (this.#store) this.#store.saveArtifact(artifact);
-        else this.#artifacts.set(artifact.artifactId, artifact);
+        this.saveArtifact(artifact);
       }
       if (current && session.artifactId === artifact.artifactId) return session;
       return this.saveSession({ ...session, artifactId: artifact.artifactId, artifactDigest: artifact.digest,
@@ -79,7 +79,8 @@ export class DeviceDeveloperSessionCoordinator {
       const current = this.getJob(input.jobId);
       if (current) {
         if (current.sessionId !== input.sessionId || current.kind !== input.kind || current.targetDeviceId !== input.targetDeviceId
-          || current.artifactDigest !== input.artifactDigest || current.authorizationRevision !== input.authorizationRevision) {
+          || current.artifactDigest !== input.artifactDigest || current.authorizationRevision !== input.authorizationRevision
+          || current.buildId !== input.buildId) {
           throw new DeviceFabricError("revision_conflict", "developer job id is bound to another job");
         }
         return { job: current, admitted: false };
@@ -133,15 +134,27 @@ export class DeviceDeveloperSessionCoordinator {
         && (outputDigest === undefined || outputDigest === job.outputDigest)) return job;
       if (isTerminalDeveloperJob(job.status)) throw new DeviceFabricError("revision_conflict", "developer job has a retained outcome");
       if (status === "queued") throw new DeviceFabricError("revision_conflict", "developer job cannot return to its queue");
-      const session = this.requireSession(job.sessionId);
-      const next = { ...job, status, ...(outputRef ? { outputRef } : {}), ...(outputDigest ? { outputDigest } : {}),
-        taskStatus: taskStatus ?? job.taskStatus, revision: job.revision + 1, updatedAt };
-      this.saveJob(next);
-      if (isTerminalDeveloperJob(status) && session.status !== "revoked") {
-        const sessionStatus = status === "completed" ? "completed" : status === "unknown" ? "paused" : "failed";
-        this.saveSession({ ...session, status: sessionStatus, revision: session.revision + 1, updatedAt });
+      return this.recordOutcome(job, this.requireSession(job.sessionId), status, updatedAt, outputRef, taskStatus, outputDigest);
+    });
+  }
+
+  completeBuildJob(jobId: string, artifact: DeviceDeveloperArtifactV1, updatedAt: string): DeviceDeveloperJobV1 {
+    return this.write(() => {
+      const job = this.getJob(jobId);
+      if (!job || job.kind !== "build" || job.status !== "running" || !job.buildId) {
+        throw new DeviceFabricError("revision_conflict", "project build job is no longer running");
       }
-      return next;
+      const session = this.requireSession(job.sessionId);
+      if (session.status !== "running" || session.authorizationRevision !== job.authorizationRevision) {
+        throw new DeviceFabricError("safety_denied", "project build authorization changed");
+      }
+      if (artifact.workspaceId !== session.workspaceId || artifact.targetDeviceId !== job.targetDeviceId
+        || artifact.build?.jobId !== jobId || artifact.build.buildId !== job.buildId || !artifact.packageId || !artifact.androidApk
+        || !/^sha256:[a-f0-9]{64}$/u.test(artifact.digest) || this.getArtifact(artifact.artifactId)) {
+        throw new DeviceFabricError("revision_conflict", "project build artifact does not match the admitted job");
+      }
+      this.saveArtifact(artifact);
+      return this.recordOutcome(job, session, "completed", updatedAt, artifact.artifactId, "succeeded", artifact.digest.slice(7));
     });
   }
 
@@ -170,6 +183,25 @@ export class DeviceDeveloperSessionCoordinator {
   private saveJob(job: DeviceDeveloperJobV1): void {
     if (this.#store) this.#store.saveJob(job);
     else this.#jobs.set(job.jobId, job);
+  }
+
+  private saveArtifact(artifact: DeviceDeveloperArtifactV1): void {
+    if (this.#store) this.#store.saveArtifact(artifact);
+    else this.#artifacts.set(artifact.artifactId, artifact);
+  }
+
+  private recordOutcome(
+    job: DeviceDeveloperJobV1, session: DeviceDeveloperSessionV1, status: DeviceDeveloperJobV1["status"],
+    updatedAt: string, outputRef?: string, taskStatus?: DeviceDeveloperJobV1["taskStatus"], outputDigest?: string,
+  ): DeviceDeveloperJobV1 {
+    const next = { ...job, status, ...(outputRef ? { outputRef } : {}), ...(outputDigest ? { outputDigest } : {}),
+      taskStatus: taskStatus ?? job.taskStatus, revision: job.revision + 1, updatedAt };
+    this.saveJob(next);
+    if (isTerminalDeveloperJob(status) && session.status !== "revoked") {
+      const sessionStatus = status === "completed" ? "completed" : status === "unknown" ? "paused" : "failed";
+      this.saveSession({ ...session, status: sessionStatus, revision: session.revision + 1, updatedAt });
+    }
+    return next;
   }
 
   private write<T>(work: () => T): T {

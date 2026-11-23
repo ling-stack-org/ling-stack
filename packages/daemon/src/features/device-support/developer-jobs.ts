@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto";
 import type { DeviceActionRequestV1, DeviceDeveloperExecutorResultV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceProfileV1 } from "@ling-stack/contracts";
 import { DeviceBrokerError, digestRequest, type DeviceCapabilityBroker, type DeviceDeveloperSessionCoordinator, type SqliteDeviceSupportStore } from "@ling-stack/core";
 
 import { androidAdbAdapterId, androidAdbInstallCapability, androidAdbLogCapability } from "./adapters/android-adb.js";
+import type { AndroidProjectBuilds } from "./android-project-builds.js";
 
 export interface DeviceDeveloperExecutor {
   execute(input: {
@@ -11,7 +13,7 @@ export interface DeviceDeveloperExecutor {
   }): Promise<DeviceDeveloperExecutorResultV1>;
 }
 
-type JobRequest = Pick<DeviceDeveloperJobV1, "jobId" | "artifactDigest"> & {
+type JobRequest = Pick<DeviceDeveloperJobV1, "jobId" | "artifactDigest" | "buildId"> & {
   readonly kind: Exclude<DeviceDeveloperJobV1["kind"], "workbench">;
   readonly authorizationRevision: string;
   readonly expectedSessionRevision?: number;
@@ -21,6 +23,7 @@ export function createDeviceDeveloperJobs(options: {
   readonly broker: DeviceCapabilityBroker;
   readonly sessions: DeviceDeveloperSessionCoordinator;
   readonly executor?: DeviceDeveloperExecutor;
+  readonly androidProjectBuilds?: AndroidProjectBuilds;
   readonly canDeployAndroid?: (deviceId: string) => boolean;
   readonly now: () => string;
 }) {
@@ -42,11 +45,19 @@ export function createDeviceDeveloperJobs(options: {
       }
       const target = requireCurrentDeveloperTarget(store, session);
       const profile = store.getDevice(target.deviceId)!;
+      const projectBuild = request.buildId ? options.androidProjectBuilds?.get(request.buildId) : undefined;
+      if (request.buildId && (!projectBuild || request.kind !== "build" || profile.adapterId !== "pc-target-executor"
+        || !profile.transports.includes("local_process"))) {
+        throw new DeviceBrokerError("unsupported_capability", "Select a configured build in the PC workspace");
+      }
+      if (projectBuild && expectedSessionRevision !== session.revision) {
+        throw new DeviceBrokerError("target_changed", "The reviewed project build session changed");
+      }
       const executor = options.executor;
       const logCapabilityId = request.kind === "logs" ? resolveDefaultLogCapability(broker, profile) : undefined;
       const nativeDeploy = !executor && request.kind === "deploy" && profile.adapterId === androidAdbAdapterId
         && options.canDeployAndroid?.(target.deviceId) === true;
-      if (!executor && !logCapabilityId && !nativeDeploy) {
+      if (!executor && !logCapabilityId && !nativeDeploy && !projectBuild) {
         throw new DeviceBrokerError("unsupported_capability", "the target does not provide this developer job");
       }
       const apk = nativeDeploy && session.artifactId ? sessions.getArtifact(session.artifactId) : undefined;
@@ -62,10 +73,33 @@ export function createDeviceDeveloperJobs(options: {
       const { job, admitted } = sessions.admitJob(input);
       if (!admitted) return { job, admitted };
 
-      const signal = AbortSignal.timeout(60_000);
+      const signal = AbortSignal.timeout(projectBuild ? 30 * 60_000 : 60_000);
       let result: DeviceDeveloperExecutorResultV1 | undefined;
       try {
-        if (executor) result = await executor.execute({ session, job, signal });
+        if (projectBuild) {
+          const assertCurrent = () => {
+            signal.throwIfAborted();
+            requireCurrentDeveloperTarget(store, session);
+            const current = sessions.getSession(session.sessionId);
+            if (current?.status !== "running" || current.authorizationRevision !== session.authorizationRevision) {
+              throw new DeviceBrokerError("permission_denied", "Project build authorization changed");
+            }
+          };
+          const artifact = await options.androidProjectBuilds!.run(projectBuild, job.jobId, signal, assertCurrent)
+            .catch(error => {
+              if (error instanceof DeviceBrokerError && error.code === "invalid_request") return undefined;
+              throw error;
+            });
+          assertCurrent();
+          if (artifact) {
+            const artifactId = "android-build:" + createHash("sha256").update(JSON.stringify([job.jobId, artifact.digest])).digest("hex");
+            const settled = sessions.completeBuildJob(job.jobId, {
+              ...artifact, artifactId, workspaceId: session.workspaceId, targetDeviceId: job.targetDeviceId, createdAt: now(),
+            }, now());
+            return { job: settled, admitted };
+          }
+          result = { status: "failed", taskStatus: "failed" };
+        } else if (executor) result = await executor.execute({ session, job, signal });
         else if (nativeDeploy && apk && packageId && versionCode) {
           result = await deployAndroidApk(broker, sessions, session, job, { artifactDigest: apk.digest, packageId, versionCode }, signal);
         } else result = await captureDeviceLogs(broker, session, job, logCapabilityId!, signal);

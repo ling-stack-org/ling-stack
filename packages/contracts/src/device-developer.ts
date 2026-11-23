@@ -40,6 +40,7 @@ export interface DeviceDeveloperJobV1 {
   readonly kind: "build" | "deploy" | "launch" | "logs" | "test" | "retest" | "workbench";
   readonly status: "queued" | "running" | "completed" | "failed" | "unknown" | "cancelled";
   readonly artifactDigest?: string;
+  readonly buildId?: string;
   readonly targetDeviceId: string;
   readonly authorizationRevision?: string;
   readonly taskStatus: DeviceTaskStatusV1;
@@ -80,6 +81,16 @@ export interface DeviceDeveloperArtifactV1 {
   readonly sizeBytes: number;
   readonly packageId?: string;
   readonly androidApk?: Omit<AndroidApkIdentityV1, "packageId">;
+  readonly build?: {
+    readonly jobId: string;
+    readonly buildId: string;
+    readonly fileName: string;
+    readonly configurationDigest: string;
+    readonly toolchain: string;
+    readonly variant: string;
+    readonly sourceRevision?: string;
+    readonly sourceModified?: boolean;
+  };
   readonly createdAt: string;
 }
 
