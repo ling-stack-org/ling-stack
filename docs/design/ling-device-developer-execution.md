@@ -2,7 +2,7 @@
 
 Status: proposed design and acceptance criteria
 Owner: Ling platform maintainers
-Last verified: 2026-11-20 (D12 communication paths)
+Last verified: 2026-11-24 (phone-owned USB ADB deployment and scoped log capture)
 Document type: developer sessions, communication, and device workflows
 
 Related documents:
@@ -457,7 +457,7 @@ journal, with the readback recorded under its own revision.
 
 ### Collaborate from a phone-owned diagnosis
 
-On a paired phone, find a Linux SSH or Home Assistant task in **手机设备诊断**
+On a paired phone, find a device task in **手机设备诊断**
 and choose **请配对电脑协助**. Confirm the 30-minute share. In Ling Desktop, open
 **Settings → Mobile Access → Phone device tasks** to view the target reference,
 diagnostic facts and verification state. Use **Send analysis** to attach a note
@@ -516,9 +516,9 @@ installation has its own approval and readback evidence.
 On Android, open **手机设备诊断 → Android USB** and connect the target with a
 data-capable USB cable. Ling lists USB Host interfaces that expose the ADB bulk
 transport. The operator grants the Android USB permission and accepts Ling's
-ADB host key on the target. Ling records the target's hardware serial, model,
-Android release, build fingerprint and connection revision before showing an
-installation action.
+ADB host key on the target. Ling derives the device and firmware identifiers
+from the hardware and build evidence. The phone journal retains the model,
+Android release and connection revision with the identity observation.
 
 The APK can come from the phone's file picker or from an accepted paired-PC
 artifact. The phone checks the sealed file's size and SHA-256, package ID,
@@ -538,6 +538,16 @@ changed build fingerprint, expired approval or a backgrounded app stops the
 operation without a second install.
 [Mobile USB ADB runtime](../../apps/mobile/src/device/usb-android-runtime.ts)
 [Native ADB transport](../../apps/mobile/modules/ling-device-transport/android/src/main/java/expo/modules/lingdevicetransport/UsbAndroidPackages.kt)
+
+The same device identity supports bounded application log capture. Enter a
+validated Android log tag and choose **采集应用日志**. The native transport
+reads the main and crash buffers with a bounded `logcat` command. Ling stores
+the tag and capture status in the task journal while marking the log text
+sensitive. The phone shows the retained text to the operator. Trace and conformance
+exports contain the attempt status. The route checks target identity again
+before opening the log stream.
+[Mobile log capture](../../apps/mobile/src/device/usb-android-runtime.ts)
+[ADB log transport](../../apps/mobile/modules/ling-device-transport/android/src/main/java/expo/modules/lingdevicetransport/AdbPackageConnection.kt)
 
 ### Build an APK on the assisting PC
 

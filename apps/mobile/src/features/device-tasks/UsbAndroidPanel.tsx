@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Alert, Pressable, Text, View, type TextStyle, type ViewStyle } from "react-native";
+import { Alert, Pressable, Text, TextInput, View, type TextStyle, type ViewStyle } from "react-native";
 
 import type { StandaloneDeviceRuntime } from "../../device/standalone-runtime";
-import type { AndroidApkSelection, UsbAndroidDevice } from "../../device/usb-android";
+import { isUsbAndroidLogTag, type AndroidApkSelection, type UsbAndroidDevice } from "../../device/usb-android";
 import type {
-  PhoneUsbAndroidDiagnosis, PhoneUsbAndroidInstall, PhoneUsbAndroidReview, PhoneUsbAndroidRuntime,
+  PhoneUsbAndroidDiagnosis, PhoneUsbAndroidInstall, PhoneUsbAndroidLogRun, PhoneUsbAndroidReview, PhoneUsbAndroidRuntime,
 } from "../../device/usb-android-runtime";
 import { discardLocalAndroidApk, pickLocalAndroidApk } from "../../platform/phone-task-artifact-file";
 import { PhoneTaskCollaborationPanel } from "./PhoneTaskCollaborationPanel";
@@ -17,6 +17,7 @@ type PanelStyles = {
   readonly error: TextStyle;
   readonly row: ViewStyle;
   readonly field: ViewStyle;
+  readonly input: TextStyle;
   readonly shareButton: ViewStyle;
   readonly action: ViewStyle;
   readonly actionText: TextStyle;
@@ -34,6 +35,9 @@ export function UsbAndroidPanel({ runtime, android, styles, renderTrace }: {
   const [diagnoses, setDiagnoses] = useState<readonly PhoneUsbAndroidDiagnosis[]>([]);
   const [diagnosisId, setDiagnosisId] = useState<string>();
   const [installs, setInstalls] = useState<readonly PhoneUsbAndroidInstall[]>([]);
+  const [logs, setLogs] = useState<readonly PhoneUsbAndroidLogRun[]>([]);
+  const [logTag, setLogTag] = useState("");
+  const [expandedLogId, setExpandedLogId] = useState<string>();
   const [review, setReview] = useState<PhoneUsbAndroidReview>();
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
@@ -44,13 +48,14 @@ export function UsbAndroidPanel({ runtime, android, styles, renderTrace }: {
 
   useEffect(() => {
     let mounted = true;
-    void Promise.all([android.listTargets(), android.listDiagnoses(), android.listInstalls()]).then(([ports, reads, writes]) => {
+    void Promise.all([android.listTargets(), android.listDiagnoses(), android.listInstalls(), android.listLogs()]).then(([ports, reads, writes, captures]) => {
       if (!mounted || operation.current) return;
       setTargets(ports);
       if (ports.length === 1) setPortId(ports[0]?.portId);
       setDiagnoses(reads);
       setDiagnosisId(reads[0]?.taskId);
       setInstalls(writes);
+      setLogs(captures);
     }).catch(() => { if (mounted) setError("无法读取 USB 设备或手机上的安装记录。"); });
     return () => {
       mounted = false;
@@ -116,6 +121,17 @@ export function UsbAndroidPanel({ runtime, android, styles, renderTrace }: {
       ]);
   }
 
+  function captureLogs() {
+    const tag = logTag.trim();
+    if (!target?.permissionGranted || !diagnosis || !isUsbAndroidLogTag(tag)) return;
+    void perform("正在采集日志…", async signal => {
+      const run = await android.captureLogs({ target, diagnosisTaskId: diagnosis.taskId, tag, signal });
+      if (signal.aborted) return;
+      setLogs(previous => [run, ...previous.filter(item => item.taskId !== run.taskId)].slice(0, 8));
+      setExpandedLogId(run.taskId);
+    });
+  }
+
   function button(label: string, onPress: () => void, disabled = Boolean(busy), primary = false) {
     return <Pressable accessibilityRole="button" disabled={disabled} accessibilityState={{ disabled }} onPress={onPress}
       style={[primary ? styles.action : styles.shareButton, disabled && styles.disabled]}>
@@ -172,6 +188,12 @@ export function UsbAndroidPanel({ runtime, android, styles, renderTrace }: {
           await selectApk(diagnosis.taskId, { source: "paired_pc", fileId }, signal);
         })} />
     </View> : null}
+    {diagnosis && target?.permissionGranted ? <View style={styles.field}>
+      <Text style={styles.label}>应用日志标签</Text>
+      <TextInput accessibilityLabel="应用日志标签" style={styles.input} value={logTag} onChangeText={setLogTag}
+        autoCapitalize="none" autoCorrect={false} maxLength={120} editable={!busy} />
+      {button("采集应用日志", captureLogs, Boolean(busy) || !isUsbAndroidLogTag(logTag.trim()))}
+    </View> : null}
     {review ? <View style={styles.row}>
       <Text style={styles.label}>{review.fileName}</Text>
       <Text selectable style={styles.note}>{review.identity.packageId} · 版本 {review.identity.versionCode}</Text>
@@ -199,6 +221,20 @@ export function UsbAndroidPanel({ runtime, android, styles, renderTrace }: {
           <PhoneTaskCollaborationPanel runtime={runtime} taskId={run.taskId} updatedAt={run.updatedAt} styles={styles} />
         </View>
       ))}
+    </View> : null}
+    {logs.length > 0 ? <View style={styles.field}>
+      <Text accessibilityRole="header" style={styles.heading}>手机上的应用日志</Text>
+      {logs.map(run => <View key={run.taskId} style={styles.row}>
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded: expandedLogId === run.taskId }}
+          onPress={() => setExpandedLogId(previous => previous === run.taskId ? undefined : run.taskId)} style={styles.shareButton}>
+          <Text style={styles.label}>{run.tag} · {run.targetDeviceId.slice(-12)}</Text>
+          <Text style={styles.note}>{new Date(run.updatedAt).toLocaleString()}</Text>
+        </Pressable>
+        {expandedLogId === run.taskId ? <>
+          <Text selectable style={styles.note}>{run.text || (run.status === "succeeded" ? "本次采集没有匹配的日志。" : "本次采集未完成。")}</Text>
+          {renderTrace(run.taskId)}
+        </> : null}
+      </View>)}
     </View> : null}
   </>;
 }

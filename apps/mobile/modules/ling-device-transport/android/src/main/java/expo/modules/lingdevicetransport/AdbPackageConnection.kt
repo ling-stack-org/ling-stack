@@ -61,7 +61,8 @@ internal class AdbPackageConnection(private val link: AdbPackageLink) : Closeabl
   }
 
   fun identity(deadline: Long): AdbAndroidIdentity {
-    val output = run("getprop ro.serialno; getprop ro.product.model; getprop ro.build.version.release; getprop ro.build.fingerprint", deadline)
+    val output = run("serial=\$(getprop ro.serialno); [ -n \"\$serial\" ] || serial=\$(getprop ro.boot.serialno); " +
+      "printf '%s\\n' \"\$serial\"; getprop ro.product.model; getprop ro.build.version.release; getprop ro.build.fingerprint", deadline)
     val lines = output.trimEnd('\r', '\n').split('\n').map { it.trimEnd('\r') }
     if (lines.size != 4 || !lines[0].matches(Regex("[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"))
       || !lines[2].matches(Regex("[0-9][A-Za-z0-9.-]{0,31}"))
@@ -116,24 +117,34 @@ internal class AdbPackageConnection(private val link: AdbPackageLink) : Closeabl
     return AdbInstalledPackage(version, digest)
   }
 
+  fun logs(tag: String, deadline: Long): String {
+    require(tag.matches(LOG_TAG)) { "adb_invalid_log_tag" }
+    val command = "logcat -b main -b crash -d -t 200 -v threadtime '$tag:V' '*:S'; " +
+      "printf '\\nling-log-result:%s\\n' \"\$?\""
+    val completed = run(command, deadline, outputLimit = MAX_LOG_OUTPUT).trimEnd('\r', '\n')
+    val end = completed.lastIndexOf('\n')
+    if (end < 0 || completed.substring(end + 1) != "ling-log-result:0") throw IOException("adb_log_read_failed")
+    return completed.substring(0, end).takeLast(MAX_RETAINED_LOG_CHARS)
+  }
+
   override fun close() = link.close()
 
-  private fun run(command: String, deadline: Long): String {
-    val stream = open(command, deadline)
+  private fun run(command: String, deadline: Long, outputLimit: Int = MAX_OUTPUT): String {
+    val stream = open(command, deadline, outputLimit)
     while (!stream.closed) stream.read(deadline)
     return stream.output.toString(Charsets.UTF_8.name())
   }
 
-  private fun open(command: String, deadline: Long): AdbStream {
+  private fun open(command: String, deadline: Long, outputLimit: Int = MAX_OUTPUT): AdbStream {
     check(authenticated) { "adb_authorization_required" }
     val id = ++nextStreamId
     send(OPEN, id, 0, ("exec:" + command + "\u0000").encodeToByteArray(), deadline)
     val reply = receive(deadline)
     protocol(reply.command == OKAY && reply.arg0 != 0 && reply.arg1 == id && reply.payload.isEmpty())
-    return AdbStream(id, reply.arg0)
+    return AdbStream(id, reply.arg0, outputLimit)
   }
 
-  private inner class AdbStream(private val localId: Int, private val remoteId: Int) {
+  private inner class AdbStream(private val localId: Int, private val remoteId: Int, private val outputLimit: Int) {
     val output = ByteArrayOutputStream()
     var closed = false
       private set
@@ -152,7 +163,7 @@ internal class AdbPackageConnection(private val link: AdbPackageLink) : Closeabl
       protocol(packet.arg0 == remoteId && packet.arg1 == localId)
       when (packet.command) {
         WRITE -> {
-          protocol(output.size() + packet.payload.size <= MAX_OUTPUT)
+          protocol(output.size() + packet.payload.size <= outputLimit)
           output.write(packet.payload)
           send(OKAY, localId, remoteId, EMPTY, deadline)
         }
@@ -198,6 +209,8 @@ internal class AdbPackageConnection(private val link: AdbPackageLink) : Closeabl
     private const val VERSION = 0x01000000
     private const val MAX_PAYLOAD = 4096
     private const val MAX_OUTPUT = 64 * 1024
+    private const val MAX_LOG_OUTPUT = 1024 * 1024
+    private const val MAX_RETAINED_LOG_CHARS = 32 * 1024
     internal const val MAX_APK_BYTES = 256L * 1024L * 1024L
     private const val CONNECT = 0x4e584e43
     private const val AUTH = 0x48545541
@@ -207,6 +220,7 @@ internal class AdbPackageConnection(private val link: AdbPackageLink) : Closeabl
     private const val CLOSE = 0x45534c43
     private val EMPTY = ByteArray(0)
     private val VERSION_CODE = Regex("^versionCode=([0-9]{1,19})(?:\\s|$)")
+    private val LOG_TAG = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,119}")
 
     private fun checksum(bytes: ByteArray) = bytes.sumOf { it.toInt() and 0xff }
 

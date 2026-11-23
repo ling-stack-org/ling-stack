@@ -27,6 +27,7 @@ interface LingDeviceTransportNativeModule {
   connectUsbAndroidTarget?(sessionId: string): Promise<UsbAndroidIdentity>;
   installUsbAndroidApk?(sessionId: string, uri: string, digest: string): Promise<boolean>;
   readUsbAndroidInstalledPackage?(sessionId: string, packageId: string): Promise<UsbAndroidPackage>;
+  readUsbAndroidLogs?(sessionId: string, tag: string): Promise<string>;
   releaseUsbAndroidTarget?(sessionId: string): void;
 }
 

@@ -31,6 +31,7 @@ export interface UsbAndroidSession {
   readonly identity: UsbAndroidIdentity;
   install(uri: string, digest: string): Promise<boolean>;
   readPackage(packageId: string): Promise<UsbAndroidPackage>;
+  readLogs(tag: string): Promise<string>;
   close(): void;
 }
 
@@ -54,6 +55,12 @@ export interface AndroidDeploymentInput {
 
 export const usbAndroidIdentifyPlaybook = "android-usb-identify@1.0.0";
 export const usbAndroidInstallPlaybook = "android-usb-install-apk@1.0.0";
+export const usbAndroidLogsPlaybook = "android-usb-capture-logs@1.0.0";
+export const usbAndroidLogCapabilityId = "android.usb.capture_logs";
+const logTagPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/u;
+export function isUsbAndroidLogTag(value: unknown): value is string {
+  return typeof value === "string" && logTagPattern.test(value);
+}
 const adapterId = "android-usb-adb-mobile";
 const adapterVersion = "1.0.0";
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
@@ -70,6 +77,14 @@ const readCapability = {
 const identityCapability = {
   ...readCapability, id: "android.usb.identify", semanticVerb: "inspect.device",
   inputSchema: { type: "object", additionalProperties: false },
+} satisfies CapabilityDescriptorV1;
+
+const logsCapability = {
+  ...readCapability, id: usbAndroidLogCapabilityId, semanticVerb: "capture.logs",
+  inputSchema: {
+    type: "object", required: ["tag"], additionalProperties: false, properties: { tag: { type: "string" } },
+  },
+  responseBytesLimit: 256 * 1024,
 } satisfies CapabilityDescriptorV1;
 
 const installCapability = {
@@ -128,7 +143,7 @@ export function prepareUsbAndroidDevice(input: {
   const snapshot: DeviceCapabilitySnapshotV1 = {
     snapshotId: deviceId + ":" + connectionRevision,
     deviceId, adapterId, adapterVersion, contractMajor: 1, connectionRevision,
-    capabilities: [identityCapability, readCapability, installCapability], observedAt, freshnessUntil: freshUntil(observedAt),
+    capabilities: [identityCapability, readCapability, logsCapability, installCapability], observedAt, freshnessUntil: freshUntil(observedAt),
   };
   const rule = deployment && { packageId: deployment.packageId, versionCode: deployment.versionCode, artifactDigest: deployment.artifactDigest };
   const installInput = deployment && { ...deployment };
@@ -152,6 +167,15 @@ export function prepareUsbAndroidDevice(input: {
       const prefix = request.taskId + ":" + request.actionId;
       if (matches(request, identityCapability)) {
         return receipt("completed", undefined, observation(prefix + ":identity", "android.usb.identity", { model, androidVersion }, now()));
+      }
+      if (matches(request, logsCapability)) {
+        const args = request.normalizedInput;
+        const tag = args && typeof args === "object" && "tag" in args ? args.tag : undefined;
+        if (!isUsbAndroidLogTag(tag)) return receipt("rejected", "invalid_request");
+        const logs = await whileConnected(session, signal, () => session.readLogs(tag));
+        return receipt("completed", undefined, {
+          ...observation(prefix + ":logs", "android.usb.logcat", { tag, text: logs }, now()), redactionClass: "sensitive",
+        });
       }
       if (!apkUri || !installInput || !matches(request, installCapability)
         || digest(request.normalizedInput) !== digest(installInput)) return receipt("rejected", "invalid_request");

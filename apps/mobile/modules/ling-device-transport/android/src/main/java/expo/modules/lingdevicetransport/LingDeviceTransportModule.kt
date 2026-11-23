@@ -75,6 +75,10 @@ class LingDeviceTransportModule : Module() {
       usbAndroid.value.readPackage(id, packageId)
     }
 
+    AsyncFunction("readUsbAndroidLogs") { id: String, tag: String ->
+      usbAndroid.value.readLogs(id, tag)
+    }
+
     Function("releaseUsbAndroidTarget") { id: String -> usbAndroid.value.release(id) }
 
     OnDestroy {

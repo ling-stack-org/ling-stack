@@ -7,6 +7,7 @@ import { MobileDeviceExecution } from "../src/device/execution.ts";
 import { createPhoneUsbAndroidRuntime } from "../src/device/usb-android-runtime.ts";
 import type { UsbAndroidBridge, UsbAndroidDevice, UsbAndroidSession } from "../src/device/usb-android.ts";
 import type { OpenPhoneTaskArtifactFile } from "../src/device/phone-task-artifacts.ts";
+import { projectMobileTaskEvidenceExport } from "../src/device/conformance.ts";
 
 class MemoryStorage implements MobileStorageLike {
   readonly values = new Map<string, string>();
@@ -30,8 +31,9 @@ function createFixture(options: { readonly loseInstallReply?: boolean } = {}) {
   execution.setForeground(true);
   let installs = 0;
   let reads = 0;
+  let hardwareDigest = "1".repeat(64);
   const session: UsbAndroidSession = {
-    identity: { hardwareDigest: "1".repeat(64), firmwareDigest: "2".repeat(64), model: "Head Unit", androidVersion: "11" },
+    get identity() { return { hardwareDigest, firmwareDigest: "2".repeat(64), model: "Head Unit", androidVersion: "11" }; },
     async install(uri, receivedDigest) {
       assert.equal(uri, "file:///private/device-artifacts/apk1/verified/head-unit.apk");
       assert.equal(receivedDigest, digest);
@@ -44,6 +46,7 @@ function createFixture(options: { readonly loseInstallReply?: boolean } = {}) {
       reads += 1;
       return { present: true, versionCode: identity.versionCode, digest };
     },
+    async readLogs(tag) { return tag ? `[${tag}] connected\n` : "connected\n"; },
     close() {},
   };
   const bridge: UsbAndroidBridge = {
@@ -64,12 +67,18 @@ function createFixture(options: { readonly loseInstallReply?: boolean } = {}) {
     async export() {},
     async inspectAndroidApk() { return identity; },
   });
+  let idSequence = 0;
   const runtime = createPhoneUsbAndroidRuntime({
-    bridge, ownerId: "phone_owner_fixture_12345678", policyRevision: "device-policy-v1", randomId: async prefix => prefix + "_1234567890abcdef",
+    bridge, ownerId: "phone_owner_fixture_12345678", policyRevision: "device-policy-v1",
+    randomId: async prefix => prefix + "_1234567890abcdef" + (++idSequence),
     now, journal, execution, openFile: file, async listSaved() { return []; }, async readProjection() { return undefined; },
     async waitForForeground() {}, foregroundOperations: new Set(),
   });
-  return { runtime, journal, target, file, get installs() { return installs; }, get reads() { return reads; } };
+  return {
+    runtime, journal, target,
+    changeTarget() { hardwareDigest = "3".repeat(64); },
+    get installs() { return installs; }, get reads() { return reads; },
+  };
 }
 
 test("phone-owned USB Android install binds APK identity and verifies installed bytes", async () => {
@@ -106,4 +115,30 @@ test("phone-owned USB Android retains a lost install reply until package readbac
   assert.equal(settled.installedDigest, digest);
   assert.equal(fixture.installs, 1);
   assert.equal(fixture.reads, 1);
+});
+
+test("USB Android rejects an APK installation when the connected target changed after review", async () => {
+  const fixture = createFixture();
+  const diagnosis = await fixture.runtime.identify({ target: fixture.target });
+  const review = await fixture.runtime.review(diagnosis.taskId, { source: "phone_file", fileId: "apk1", name: "head-unit.apk" });
+  fixture.changeTarget();
+  await assert.rejects(fixture.runtime.install({ target: fixture.target, review }), /usb_target_changed/u);
+  assert.equal(fixture.installs, 0);
+  assert.deepEqual(await fixture.runtime.listInstalls(), []);
+});
+
+test("phone-owned USB Android captures bounded logs under the enrolled target", async () => {
+  const fixture = createFixture();
+  const diagnosis = await fixture.runtime.identify({ target: fixture.target });
+  await assert.rejects(fixture.runtime.captureLogs({ target: fixture.target, diagnosisTaskId: diagnosis.taskId, tag: "*:V" }), /invalid_log_tag/u);
+  const run = await fixture.runtime.captureLogs({ target: fixture.target, diagnosisTaskId: diagnosis.taskId, tag: "DiPlay" });
+  assert.equal(run.status, "succeeded");
+  assert.equal(run.tag, "DiPlay");
+  assert.equal(run.text, "[DiPlay] connected\n");
+  assert.deepEqual(await fixture.runtime.listLogs(), [run]);
+  const evidence = await fixture.journal.readTaskEvidence(run.taskId);
+  assert.equal(evidence.observations[0]?.redactionClass, "sensitive");
+  const exported = projectMobileTaskEvidenceExport(evidence, "phone_owner_fixture_12345678");
+  assert.ok(exported);
+  assert.doesNotMatch(JSON.stringify(exported), /\[DiPlay\] connected/u);
 });

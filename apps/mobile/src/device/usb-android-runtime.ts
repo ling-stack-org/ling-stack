@@ -8,11 +8,15 @@ import type { MobileTaskEvidence } from "./journal.ts";
 import type { OpenPhoneTaskArtifactFile, SavedPhoneTaskArtifact } from "./phone-task-artifacts.ts";
 import { createMobilePlaybookAction, runMobileReadOnlyPlaybook, runMobileSetupPlaybook } from "./playbook.ts";
 import {
-  prepareUsbAndroidDevice, readAndroidDeployment, usbAndroidIdentifyPlaybook, usbAndroidInstallPlaybook,
+  isUsbAndroidLogTag, prepareUsbAndroidDevice, readAndroidDeployment,
+  usbAndroidIdentifyPlaybook, usbAndroidInstallPlaybook, usbAndroidLogCapabilityId, usbAndroidLogsPlaybook,
   type AndroidApkSelection, type UsbAndroidBridge, type UsbAndroidDevice, type UsbAndroidSession,
 } from "./usb-android.ts";
 
 type UsbTarget = { readonly target: UsbAndroidDevice; readonly signal?: AbortSignal };
+const identifyActionId = usbAndroidIdentifyPlaybook + ":identify";
+const installActionId = usbAndroidInstallPlaybook + ":install";
+const logsActionId = usbAndroidLogsPlaybook + ":capture-logs";
 
 export interface PhoneUsbAndroidReview {
   readonly diagnosisTaskId: string;
@@ -22,6 +26,15 @@ export interface PhoneUsbAndroidReview {
   readonly fileName: string;
   readonly digest: string;
   readonly identity: AndroidApkIdentityV1;
+}
+
+export interface PhoneUsbAndroidLogRun {
+  readonly taskId: string;
+  readonly targetDeviceId: string;
+  readonly updatedAt: string;
+  readonly status: DeviceTaskV1["status"];
+  readonly tag: string;
+  readonly text?: string;
 }
 
 export function createPhoneUsbAndroidRuntime(options: {
@@ -40,7 +53,6 @@ export function createPhoneUsbAndroidRuntime(options: {
 }) {
   const { bridge, ownerId, policyRevision, now, journal, execution } = options;
   const installing = new Set<string>();
-  const installActionId = usbAndroidInstallPlaybook + ":install";
 
   async function diagnosis(taskId: string) {
     const record = readUsbAndroidDiagnosis(await journal.readTaskEvidence(taskId));
@@ -79,7 +91,7 @@ export function createPhoneUsbAndroidRuntime(options: {
       || (manifest?.androidApk && canonicalizeJson(identity) !== canonicalizeJson(manifest.androidApk))) {
       throw new Error("phone_task_apk_identity_mismatch");
     }
-    return { file, identity, digest, name, uri: apkUri };
+    return { identity, digest, name, uri: apkUri };
   }
 
   async function inForeground<T>(signal: AbortSignal | undefined, run: (foregroundSignal: AbortSignal) => Promise<T>) {
@@ -132,6 +144,26 @@ export function createPhoneUsbAndroidRuntime(options: {
         await runMobileReadOnlyPlaybook({ playbookId: usbAndroidIdentifyPlaybook, profile, snapshot, transport, task, execution, signal, steps: [identityStep] });
         return (await diagnosis(task.id)).identity;
       }));
+    },
+    captureLogs(input: UsbTarget & { readonly diagnosisTaskId: string; readonly tag: string }) {
+      return inForeground(input.signal, async signal => {
+        const baseline = await diagnosis(input.diagnosisTaskId);
+        if (!isUsbAndroidLogTag(input.tag)) throw new Error("adb_invalid_log_tag");
+        return usingTarget(input.target, signal, async (session, connectionRevision) => {
+          const { profile, snapshot, transport } = prepareUsbAndroidDevice({ session, ownerId, connectionRevision, now });
+          if (profile.device.id !== baseline.identity.targetDeviceId || profile.profileRevision !== baseline.profileRevision) throw new Error("usb_target_changed");
+          const task: DeviceTaskV1 = {
+            id: await options.randomId("device_task"), ownerKind: "mobile", ownerId, targetDeviceIds: [profile.device.id],
+            status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: snapshot.observedAt, updatedAt: snapshot.observedAt,
+          };
+          const step = { stepId: "capture-logs", capabilityId: usbAndroidLogCapabilityId, capabilitySchemaVersion: "1.0",
+            normalizedInput: { tag: input.tag } };
+          await runMobileReadOnlyPlaybook({ playbookId: usbAndroidLogsPlaybook, profile, snapshot, transport, task, execution, signal, steps: [step] });
+          const run = projectUsbAndroidLogs(await journal.readTaskEvidence(task.id));
+          if (!run) throw new Error("adb_log_record_unavailable");
+          return run;
+        });
+      });
     },
     async review(taskId: string, selection: AndroidApkSelection): Promise<PhoneUsbAndroidReview> {
       const { identity, profileRevision } = await diagnosis(taskId);
@@ -213,11 +245,15 @@ export function createPhoneUsbAndroidRuntime(options: {
     },
     async listDiagnoses() {
       await options.waitForForeground();
-      return recent(journal, evidence => readUsbAndroidDiagnosis(evidence)?.identity);
+      return recent(journal, identifyActionId, evidence => readUsbAndroidDiagnosis(evidence)?.identity);
     },
     async listInstalls() {
       await options.waitForForeground();
-      return recent(journal, projectUsbAndroidInstall);
+      return recent(journal, installActionId, projectUsbAndroidInstall);
+    },
+    async listLogs() {
+      await options.waitForForeground();
+      return recent(journal, logsActionId, projectUsbAndroidLogs);
     },
   };
 }
@@ -226,7 +262,7 @@ export type PhoneUsbAndroidRuntime = ReturnType<typeof createPhoneUsbAndroidRunt
 
 export function readUsbAndroidDiagnosis(evidence: MobileTaskEvidence) {
   const { task } = evidence;
-  const record = evidence.attempts.find(item => item.request.actionId === usbAndroidIdentifyPlaybook + ":identify");
+  const record = evidence.attempts.find(item => item.request.actionId === identifyActionId);
   if (task?.status !== "succeeded" || !record?.attempt.adapterBinding || record.attempt.receipt?.status !== "completed") return undefined;
   const targetDeviceId = record.request.targetDeviceId;
   const observation = evidence.observations.find(item => item.subjectId === targetDeviceId && item.redactionClass === "public"
@@ -241,8 +277,20 @@ export function readUsbAndroidDiagnosis(evidence: MobileTaskEvidence) {
 
 export type PhoneUsbAndroidDiagnosis = NonNullable<ReturnType<typeof readUsbAndroidDiagnosis>>["identity"];
 
+function projectUsbAndroidLogs(evidence: MobileTaskEvidence): PhoneUsbAndroidLogRun | undefined {
+  const { task } = evidence;
+  const record = evidence.attempts.find(item => item.request.actionId === logsActionId);
+  const args = record?.request.normalizedInput;
+  if (!task || !record || !args || typeof args !== "object" || !("tag" in args) || !isUsbAndroidLogTag(args.tag)) return undefined;
+  const observation = evidence.observations.find(item => item.source === "android.usb.logcat" && item.redactionClass === "sensitive"
+    && item.subjectId === record.request.targetDeviceId && record.attempt.receipt?.observationIds.includes(item.id));
+  const value = observation?.value;
+  return { taskId: task.id, targetDeviceId: record.request.targetDeviceId, updatedAt: task.updatedAt, status: task.status,
+    tag: args.tag, ...(value && typeof value === "object" && "text" in value && typeof value.text === "string" ? { text: value.text } : {}) };
+}
+
 export function readUsbAndroidInstall(evidence: MobileTaskEvidence) {
-  const record = evidence.attempts.find(item => item.request.actionId === usbAndroidInstallPlaybook + ":install");
+  const record = evidence.attempts.find(item => item.request.actionId === installActionId);
   const deployment = record && readAndroidDeployment(record.request.normalizedInput);
   return record && deployment ? { record, deployment } : undefined;
 }
@@ -269,12 +317,13 @@ export type PhoneUsbAndroidInstall = NonNullable<ReturnType<typeof projectUsbAnd
 
 async function recent<T>(
   journal: MobileDeviceJournal & { readTaskEvidence(taskId: string): Promise<MobileTaskEvidence> },
+  actionId: string,
   project: (evidence: MobileTaskEvidence) => T | undefined,
 ): Promise<readonly T[]> {
   const items: T[] = [];
   const tasks = [...await journal.listTasks()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   for (const task of tasks) {
-    if (task.currentActionId !== usbAndroidIdentifyPlaybook + ":identify" && task.currentActionId !== usbAndroidInstallPlaybook + ":install") continue;
+    if (task.currentActionId !== actionId) continue;
     const item = project(await journal.readTaskEvidence(task.id));
     if (item) items.push(item);
     if (items.length === 8) break;

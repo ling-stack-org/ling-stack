@@ -124,6 +124,11 @@ internal class UsbAndroidPackages(private val permission: UsbHostPermission) {
     }
   }
 
+  fun readLogs(sessionId: String, tag: String): String = useSession(sessionId) { session ->
+    val deadline = SystemClock.elapsedRealtime() + 20_000
+    boundConnection(session, deadline).logs(tag, deadline)
+  }
+
   fun release(sessionId: String) {
     val session = synchronized(sessions) { sessions[sessionId] } ?: return
     if (!session.closed.compareAndSet(false, true)) return
@@ -144,7 +149,9 @@ internal class UsbAndroidPackages(private val permission: UsbHostPermission) {
     val expected = checkNotNull(session.identity) { "adb_authorization_required" }
     val port = session.port
     val live = select(port.id, port.device.vendorId, port.device.productId)
-    check(live.device.deviceId == port.device.deviceId && connection.identity(deadline) == expected) { "usb_target_changed" }
+    check(manager?.hasPermission(live.device) == true) { "usb_permission_denied" }
+    check(live.device.deviceId == port.device.deviceId && live.device.serialNumber == session.serial
+      && connection.identity(deadline) == expected) { "usb_target_changed" }
     return connection
   }
 

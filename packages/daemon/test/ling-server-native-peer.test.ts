@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type {
   AndroidApkIdentityV1, DeviceDeveloperArtifactV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1,
@@ -26,6 +27,7 @@ import { createStandaloneDeviceRuntime } from "../../../apps/mobile/src/device/s
 import type { HomeAssistantFetch } from "../../../apps/mobile/src/device/home-assistant.ts";
 import type { PhoneTaskCollaborationPeer } from "../../../apps/mobile/src/device/phone-task-collaboration.ts";
 import type { OpenPhoneTaskArtifactFile } from "../../../apps/mobile/src/device/phone-task-artifacts.ts";
+import type { UsbAndroidBridge } from "../../../apps/mobile/src/device/usb-android.ts";
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
 import { localProcessRunner, type LocalProcessRunner } from "../dist/features/device-support/adapters/local-pc-executor.js";
 import { AndroidApkLibrary } from "../dist/features/device-support/android-apks.js";
@@ -290,11 +292,14 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     const fileRoot = join(root, "phone-artifacts");
     await mkdir(fileRoot);
     let exported: Buffer | undefined;
+    const buildIdentity = { packageId: built.artifact.packageId!, ...built.artifact.androidApk! };
+    let verifyOnAndroid = false;
     const artifactFile: OpenPhoneTaskArtifactFile = (fileId) => {
       const stagingPath = join(fileRoot, fileId + ".staging");
       const verifiedPath = join(fileRoot, fileId + ".verified");
       const current = async () => await stat(verifiedPath).then(() => verifiedPath, () => stagingPath);
       return {
+        uri: () => pathToFileURL(verifiedPath).href,
         async size() { return await stat(await current()).then(value => value.size, () => 0); },
         async append(offset, bytes) {
           assert.equal(await this.size(), offset);
@@ -304,11 +309,41 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
         async reset() { await Promise.all([rm(stagingPath, { force: true }), rm(verifiedPath, { force: true })]); },
         async seal() { if (await current() === stagingPath) await rename(stagingPath, verifiedPath); },
         async export() { exported = await readFile(verifiedPath); },
+        ...(verifyOnAndroid ? { async inspectAndroidApk() {
+          assert.equal(await this.digest(), built.artifact.digest);
+          return buildIdentity;
+        } } : {}),
       };
+    };
+    const usbTarget = { portId: "fixture:usb", vendorId: 1, productId: 2, label: "Android test target", permissionGranted: true };
+    let apkInstalls = 0;
+    let installedDigest: string | undefined;
+    const usbAndroid: UsbAndroidBridge = {
+      async list() { return [usbTarget]; },
+      async authorize(target) { assert.deepEqual(target, usbTarget); },
+      async open(target) {
+        assert.deepEqual(target, usbTarget);
+        return {
+          identity: { hardwareDigest: "a".repeat(64), firmwareDigest: "b".repeat(64), model: usbTarget.label, androidVersion: "11" },
+          async install(uri, expectedDigest) {
+            assert.equal(sha256Digest(await readFile(fileURLToPath(uri))), expectedDigest);
+            assert.equal(expectedDigest, built.artifact.digest);
+            installedDigest = expectedDigest;
+            apkInstalls += 1;
+            throw new Error("fixture dropped the installation acknowledgement");
+          },
+          async readPackage(packageId) {
+            assert.equal(packageId, buildIdentity.packageId);
+            return { present: Boolean(installedDigest), versionCode: buildIdentity.versionCode, digest: installedDigest };
+          },
+          async readLogs() { return ""; },
+          close() {},
+        };
+      },
     };
     const openPhone = async () => {
       const runtime = await createStandaloneDeviceRuntime({
-        storage, now, randomId: prefix => prefix + "_" + randomUUID(), fetch: phoneFetch, openArtifactFile: artifactFile,
+        storage, now, randomId: prefix => prefix + "_" + randomUUID(), fetch: phoneFetch, usbAndroid, openArtifactFile: artifactFile,
       });
       await runtime.setForeground(true);
       return runtime;
@@ -527,6 +562,43 @@ test("the native Gateway resumes the phone journal and signed artifact transfer 
     await assert.rejects(client.readDeviceArtifactChunk(approvedArtifact.manifest, 9), /ended/u);
     await phone.artifacts.export(phoneRecovery.taskId, savedArtifact.fileId);
     assert.deepEqual(exported, artifactBytes);
+
+    verifyOnAndroid = true;
+    assert.ok(phone.usbAndroid);
+    const androidDiagnosis = await phone.usbAndroid.identify({ target: usbTarget });
+    const androidShare = await phone.collaborate(androidDiagnosis.taskId, phonePeer, { kind: "share" });
+    assert.ok(androidShare?.state === "active");
+    const androidOfferResponse = await fetch(collaborationUrl + "/artifacts/from-build", {
+      method: "POST",
+      headers: { ...collaborationHeaders, "X-Ling-Csrf-Token": gateway.csrfToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ shareId: androidShare.shareId, expectedRevision: androidShare.revision, proposalId: "usb-build-apk", buildJobId: projectJob.jobId }),
+    });
+    assert.equal(androidOfferResponse.status, 201);
+    const androidOffer = await androidOfferResponse.json() as RemoteDeviceArtifactOfferV1;
+    const acceptedApk = await phone.artifacts.decide(androidOffer, "accepted", client);
+    const savedApk = await phone.artifacts.receive({ offer: acceptedApk, peer: client });
+    assert.equal(savedApk.receipt?.apkVerification, "android_package_manager");
+    const [selected] = await phone.artifacts.listSaved(androidDiagnosis.taskId);
+    assert.ok(selected);
+    const review = await phone.usbAndroid.review(androidDiagnosis.taskId, { source: "paired_pc", fileId: selected.fileId });
+    const deployment = await phone.usbAndroid.install({ target: usbTarget, review });
+    assert.equal(deployment.status, "unknown");
+    assert.equal(apkInstalls, 1);
+    const deploymentShare = await phone.collaborate(deployment.taskId, phonePeer, { kind: "share" });
+    assert.ok(deploymentShare?.state === "active");
+    phone = await openPhone();
+    assert.ok(phone.usbAndroid);
+    const readback = await phone.usbAndroid.readback({ target: usbTarget, taskId: deployment.taskId });
+    assert.equal(readback.status, "succeeded");
+    assert.equal(readback.installedVersionCode, buildIdentity.versionCode);
+    assert.equal(readback.installedDigest, built.artifact.digest);
+    const sharedReadback = await phone.collaborate(deployment.taskId, phonePeer, { kind: "sync" });
+    assert.ok(sharedReadback?.state === "active");
+    assert.equal(sharedReadback.projection.targetDeviceId, androidShare.projection.targetDeviceId);
+    assert.equal(sharedReadback.projection.attempt.attemptId, deploymentShare.projection.attempt.attemptId);
+    assert.equal(sharedReadback.projection.attempt.verification?.status, "verified");
+    assert.equal(apkInstalls, 1);
+
     control.registry.revokeBinding(publication.binding.bindingId, publication.binding.revision + 1);
     await waitFor(() => client?.state.connection !== "connected", 12_000);
     await assert.rejects(client.connect(), { status: 403 });
