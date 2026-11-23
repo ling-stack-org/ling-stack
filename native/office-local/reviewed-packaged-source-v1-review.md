@@ -1,9 +1,26 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
-which carries forward the [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
+Current source prerequisite: [Plugin rollback compatibility](#plugin-rollback-compatibility),
+which carries forward the [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind)
+and the [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Plugin rollback compatibility
+
+Date 2026-11-24. This development packaging record binds source commit
+`25a1e7924f757894cea2e3268cb4b77c24decda2`. Automatic and manual rollback both
+validate the previous package against the current Ling version before changing
+the selected cache pointer.
+
+Independent source review verified that only
+`packages/daemon/src/features/plugins/routes.ts` changes within the fixed
+packaging inputs. Its digest is
+`1b29db59dde7ec4778ae5681ba0c57cc535d599331ca9302d247c6b41bf306fe`.
+The other 2,012 packaging inputs and all 15 Office native inputs match the
+preceding record. The record remains 260,282 bytes. The fixed-order packaging
+aggregate is `d7e48c47fdc2d5fff5ab208ab2c7509401285517cd1a8f2db389cb9c7bc79c33`.
+Record SHA-256 is `42a778f180223e36fd26d87ab0bf1c8f907686cec34f47eaa1f272f620b4007f`.
 
 ## Cold-start resource authentication rebind
 
