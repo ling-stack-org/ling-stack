@@ -129,6 +129,14 @@ export function classifyChangedFiles(input) {
   }
 
   if (scopeFiles.some(isCiControlPath)
+    && scopeFiles.some(file => isAssurancePath(file) || isMacosNativePath(file)
+      || NATIVE_RELEASE_REVIEW_FILES.has(file)
+      || (!isDocumentationPath(file) && !isMaintenancePath(file) && !isCiControlPath(file)
+        && !findOwningPackage(file, packages)))) {
+    return buildScope("full", files, packages, "CI control changes mixed with shared or unrecognized product inputs");
+  }
+
+  if (scopeFiles.some(isCiControlPath)
     && scopeFiles.every(file => isDocumentationPath(file) || isMaintenancePath(file) || isCiControlPath(file))) {
     return buildScope("full", files, packages, "CI control changes mixed with documentation or maintenance inputs");
   }
