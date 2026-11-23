@@ -70,12 +70,18 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
   if (!automation) {
     throw new HttpError(404, "automation_not_found", `Automation not found: ${input.automationId}`);
   }
+  if (automation.status === "archived" || automation.status === "disabled" || automation.status === "paused") {
+    throw new HttpError(409, "automation_not_runnable", `Automation is ${automation.status}: ${automation.id}`);
+  }
+  const thread = store.getLingThread(automation.threadId);
+  if (!thread || thread.status === "archived") {
+    throw new HttpError(409, "automation_thread_unavailable", `Automation thread is unavailable: ${automation.threadId}`);
+  }
   const coordination = store.getAutomationCoordinationSchedule(automation.id);
   const now = new Date().toISOString();
   const triggerType = input.request.triggerType ?? "manual";
   const idempotencyKey = input.request.idempotencyKey ?? createAutomationIdempotencyKey(automation.id, triggerType, input.request.scheduledFor);
-  const thread = store.getLingThread(automation.threadId);
-  if (coordination && thread && !input.request.intakeReceiptId && !input.intakeDispatch) {
+  if (coordination && !input.request.intakeReceiptId && !input.intakeDispatch) {
     if (triggerType !== "manual" && triggerType !== "schedule"
       || triggerType === "schedule" && idempotencyKey !== `automation:${automation.id}:schedule:${input.request.scheduledFor}`) {
       throw new HttpError(409, "coordination_trigger_unavailable", "Coordination uses the configured schedule or Run now.");
@@ -86,12 +92,6 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
     }, now, input.cwd);
     if (event) input.onCoordinationRound?.(input.cwd, event);
     return { cwd: input.cwd, automation, thread, automationRun: round ? { ...automationRun, coordinationRoundId: round.recordId } : automationRun };
-  }
-  if (automation.status === "archived" || automation.status === "disabled" || automation.status === "paused") {
-    throw new HttpError(409, "automation_not_runnable", `Automation is ${automation.status}: ${automation.id}`);
-  }
-  if (!thread || thread.status === "archived") {
-    throw new HttpError(409, "automation_thread_unavailable", `Automation thread is unavailable: ${automation.threadId}`);
   }
 
   if (input.request.intakeReceiptId) {

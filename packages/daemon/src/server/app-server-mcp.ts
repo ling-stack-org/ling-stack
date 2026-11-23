@@ -9,6 +9,12 @@ import { connectToAppServer, type AppServerLocalTransportOptions } from "./app-s
 
 const objectId = z.string().min(1).max(256);
 const requestKey = z.string().min(1).max(128);
+const candidateDigest = z.string().regex(/^[a-f0-9]{64}$/u);
+const candidate = z.strictObject({
+  workspaceId: z.string().min(1).max(4096), candidateDigest, worktreeId: objectId.optional(),
+  baseCommit: objectId.optional(), headCommit: objectId.optional(),
+  filePaths: z.array(z.string().min(1).max(4096)).max(1000).optional(),
+});
 const changeWorktree = z.strictObject({ ownerKind: z.enum(["channel", "teammate"]), ownerId: z.string().min(1).max(200) });
 const transferInput = {
   sourceWorktree: changeWorktree.optional(), targetWorktree: changeWorktree, candidateDigest: z.string().length(64),
@@ -237,6 +243,47 @@ export async function runLingAppServerMcp(
         limit: z.number().int().min(1).max(50).optional(), sourceWorktree: changeWorktree.optional() }),
       annotations: { readOnlyHint: true },
     }, async params => describe(await client.readChanges(params)));
+    if (methods.has("verify/plan")) server.registerTool("ling_verify_plan", {
+      description: "Select registered verification checks for a captured candidate. Supply the Work Item and accepted Plan when the checks belong to a staged workflow.",
+      inputSchema: z.strictObject({ candidate, threadId: objectId.optional(), workItemId: objectId.optional(), planRevision: objectId.optional(),
+        requestedChecks: z.array(z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/u)).max(64).optional(), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.planVerification(params)));
+    if (methods.has("verify/start")) server.registerTool("ling_verify_start", {
+      description: "Run a verification plan against its candidate digest. Reuse the request key when retrying.",
+      inputSchema: z.strictObject({ planId: objectId, planRevision: objectId, candidateDigest, idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.startVerification(params)));
+    if (methods.has("verify/status")) server.registerTool("ling_verify_status", {
+      description: "Read the committed verification results and structured evidence for an operation.",
+      inputSchema: z.strictObject({ operationId: objectId }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.getVerificationStatus(params)));
+    if (methods.has("verify/cancel")) server.registerTool("ling_verify_cancel", {
+      description: "Request cancellation of a verification. Check its status for a confirmed outcome.",
+      inputSchema: z.strictObject({ operationId: objectId, expectedRevision: objectId.optional(), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true },
+    }, async params => describe(await client.cancelVerification(params)));
+    if (methods.has("review/start")) server.registerTool("ling_review_start", {
+      description: "Start a code review of a captured candidate, with the Work Item and accepted Plan revision when applicable.",
+      inputSchema: z.strictObject({ candidate, workItemId: objectId.optional(), planRevision: objectId.optional(), providerPresetId: objectId.optional(),
+        baseInstructions: z.string().max(8000).optional(), reviewRulesRefs: z.array(z.string().min(1).max(1024)).max(24).optional(),
+        idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.startReview(params)));
+    if (methods.has("review/status")) server.registerTool("ling_review_status", {
+      description: "Read a review's result, revision, candidate, and Work Item binding.",
+      inputSchema: z.strictObject({ operationId: objectId }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.getReviewStatus(params)));
+    if (methods.has("review/finding/update")) server.registerTool("ling_review_finding_update", {
+      description: "Record a finding's disposition. Resolving a finding checks the current candidate.",
+      inputSchema: z.strictObject({ assessmentId: objectId, findingId: objectId,
+        disposition: z.enum(["open", "acknowledged", "resolved", "dismissed"]),
+        closeReason: z.enum(["false_positive", "accepted_risk", "not_reproducible", "duplicate", "out_of_scope"]).optional(),
+        reason: z.string().max(2000).optional(), expectedRevision: objectId.optional(), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.updateReviewFinding(params)));
     if (methods.has("changes/apply/preview")) server.registerTool("ling_changes_preview_recovery", {
       description: "Preview undo or reapply for a completed Ling Turn before committing the workspace recovery.",
       inputSchema: z.strictObject({ threadId: objectId, turnId: objectId, action: z.enum(["undo", "reapply"]) }),

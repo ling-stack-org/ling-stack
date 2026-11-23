@@ -106,13 +106,14 @@ test("App Server deduplicates verification starts and restores completed checks,
   const subscription = await peer.call<{ cursor: string }>("workItem/subscribe", { workItemId: workItem.workItemId });
   const { candidate, coverage } = await client.call<{ candidate: LingAppServerCandidateReference; coverage: string }>("changes/capture");
   assert.equal(coverage, "complete");
-  const plan = await client.call<LingAppServerVerifyPlanResult>("verify/plan", {
-    candidate, workItemId: workItem.workItemId, requestedChecks: ["test", "browser-missing-recipe"],
+  const mcp = await connectReleaseMcp(t, fixture.transportOptions());
+  const plan = await mcp.callTool<LingAppServerVerifyPlanResult>("ling_verify_plan", {
+    candidate, workItemId: workItem.workItemId, requestedChecks: ["test", "browser-missing-recipe"], idempotencyKey: "mcp-verify-plan",
   });
   const input = { planId: plan.planId, planRevision: plan.planRevision, candidateDigest: candidate.candidateDigest, idempotencyKey: "verify-receipt" };
   const [first, duplicate] = await Promise.all([
     client.call<LingAppServerVerifyOperation>("verify/start", input),
-    peer.call<LingAppServerVerifyOperation>("verify/start", input),
+    mcp.callTool<LingAppServerVerifyOperation>("ling_verify_start", input),
   ]);
   assert.equal(duplicate.operationId, first.operationId);
   const finished = await waitFor(async () => {
@@ -125,6 +126,8 @@ test("App Server deduplicates verification starts and restores completed checks,
   assert.match(finished.checks[0]?.execution?.output ?? "", /verified fixture behavior/u);
   assert.equal(finished.checks[0]?.execution?.timedOut, false);
   assert.equal(finished.checks[1]?.execution, undefined);
+  assert.deepEqual(await mcp.callTool("ling_verify_status", { operationId: first.operationId }), { operation: finished });
+  await mcp.close();
   const { daemonUrl, authToken } = fixture.transportOptions();
   const verificationResponse = await fetch(`${daemonUrl}/workspace/verification?cwd=${encodeURIComponent(fixture.cwd)}`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -156,7 +159,8 @@ test("App Server deduplicates verification starts and restores completed checks,
   await waitFor(async () => await readFile(marker, "utf8") === "checked\nchecked\n" ? true : undefined);
   const { operation: active } = await restored.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: stopping.operationId });
   const cancel = { operationId: stopping.operationId, expectedRevision: active.revision, idempotencyKey: "cancel-live-check" };
-  const receipt = await restored.call<{ status: string }>("verify/cancel", cancel);
+  const cancellationMcp = await connectReleaseMcp(t, fixture.transportOptions());
+  const receipt = await cancellationMcp.callTool<{ status: string }>("ling_verify_cancel", cancel);
   assert.equal(receipt.status, "cancel_requested");
   const cancelled = await waitFor(async () => {
     const { operation } = await restored.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: stopping.operationId });
@@ -164,6 +168,7 @@ test("App Server deduplicates verification starts and restores completed checks,
   });
   assert.equal(cancelled.status, "cancelled");
   assert.deepEqual(cancelled.checks.map(check => check.status), ["cancelled", "not_run"]);
+  await cancellationMcp.close();
   await fixture.restart();
   const afterCancellation = await fixture.connect();
   assert.deepEqual(await afterCancellation.call("verify/status", { operationId: stopping.operationId }), { operation: cancelled });
@@ -1042,10 +1047,10 @@ test("a completed Review binds its candidate and accepted Work Item Plan across 
   await assert.rejects(client.call("review/start", { ...input, workItemId: "unavailable" }), { code: "review_scope_not_found" });
   await assert.rejects(client.call("review/start", { ...input, planRevision: "superseded" }), { code: "stale_revision" });
   await assert.rejects(client.call("review/start", { ...input, candidate: { ...candidate, candidateDigest: "stale" } }), { code: "candidate_stale" });
-  const parallel = await fixture.connect();
+  const mcp = await connectReleaseMcp(t, fixture.transportOptions());
   const [started, duplicate] = await Promise.all([
     client.call<LingAppServerReviewStartResult>("review/start", input),
-    parallel.call<LingAppServerReviewStartResult>("review/start", input),
+    mcp.callTool<LingAppServerReviewStartResult>("ling_review_start", input),
   ]);
   assert.equal(duplicate.operationId, started.operationId);
   assert.equal(duplicate.assessmentId, started.assessmentId);
@@ -1055,6 +1060,7 @@ test("a completed Review binds its candidate and accepted Work Item Plan across 
     return ["queued", "running"].includes(result.status) ? undefined : result;
   });
   assert.equal(terminal.status, "completed", JSON.stringify(terminal));
+  assert.deepEqual(await mcp.callTool("ling_review_status", status), terminal);
   assert.deepEqual(terminal.workItem, { workItemId: item.id, acceptedPlanRevision: workItem.planRevision, controlGeneration: 0 });
   assert.deepEqual(started.workItem, terminal.workItem);
   assert.equal(terminal.reviewRules?.baseSha, headCommit);
@@ -1071,7 +1077,7 @@ test("a completed Review binds its candidate and accepted Work Item Plan across 
     closeReason: "not_reproducible", reason: "The fixture has no reproducible caller impact.",
     expectedRevision: terminal.revision, idempotencyKey: "resolve-review-fixture",
   };
-  const update = await client.call<LingAppServerReviewFindingUpdateResult>("review/finding/update", triage);
+  const update = await mcp.callTool<LingAppServerReviewFindingUpdateResult>("ling_review_finding_update", triage);
   assert.equal(update.disposition, "resolved");
   assert.notEqual(update.revision, terminal.revision);
   assert.equal(fixture.getStore().getCodeAssessment(started.assessmentId)?.assessment.freshness?.state, "current");
@@ -1081,6 +1087,7 @@ test("a completed Review binds its candidate and accepted Work Item Plan across 
     actorId: "local-user", idempotencyKey: "pause-before-replacement-review",
   });
   await assert.rejects(client.call("review/start", { ...input, idempotencyKey: "replacement-review" }), { code: "resume_blocked" });
+  await mcp.close();
   await fixture.restart();
   const second = await fixture.connect();
   const restored = fixture.getStore().getCodeAssessment(started.assessmentId);
@@ -4299,6 +4306,20 @@ test("a scheduled coordination occurrence commits with its round, restores its d
   };
   const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
   const occurrence = { triggerType: "schedule", scheduledFor: due, idempotencyKey: `automation:${automation.id}:schedule:${due}` };
+  const assertNonRunnable = async () => {
+    for (const request of [{ idempotencyKey: "manual-while-stopped" }, occurrence]) {
+      const response = await runAutomation(request);
+      assert.equal(response.status, 409);
+      assert.equal((await response.json() as { error: string }).error, "automation_not_runnable");
+    }
+  };
+  for (const status of ["paused", "disabled"] as const) {
+    assert.ok(store.updateAutomationDefinition(automation.id, { status }, new Date().toISOString()));
+    await assertNonRunnable();
+    assert.equal(store.listAutomationRuns({ automationId: automation.id }).length, 0);
+    assert.equal(store.listWorkItemEvidence({ workItemId }).length, 0);
+  }
+  assert.ok(store.updateAutomationDefinition(automation.id, { status: "enabled", nextRunAt: due }, new Date().toISOString()));
   const database = new DatabaseSync(store.paths.databasePath);
   try {
     database.exec(`CREATE TRIGGER fixture_fail_coordination BEFORE INSERT ON control_plane_events
@@ -4382,6 +4403,11 @@ test("a scheduled coordination occurrence commits with its round, restores its d
   await assert.rejects(scoped.call("workItem/coordination/schedule/set", { ...policy, expectedRevision: 1 }), { code: "capability_denied" });
   await assert.rejects(scoped.call("workItem/accept", { workItemId, expectedWorkItemRevision: Number(current.workItem.revision),
     dispatch: { threadId: home.id, message: "Start on another thread" }, idempotencyKey: "scoped-accept" }), { code: "capability_denied" });
+  assert.ok(fixture.getStore().updateAutomationDefinition(automation.id, { status: "archived" }, new Date().toISOString()));
+  const retainedEvents = fixture.getStore().listWorkItemEvidence({ workItemId });
+  await assertNonRunnable();
+  assert.deepEqual(fixture.getStore().listWorkItemEvidence({ workItemId }), retainedEvents);
+  assert.equal(fixture.getStore().listAutomationRuns({ automationId: automation.id }).length, 2);
 });
 
 test("Work Item controls commit state, receipt and event together and replay after a later control", { timeout: 20_000 }, async t => {
@@ -4890,12 +4916,7 @@ function addLoopbackPreset(store: SqliteRunStore, baseUrl: string,
 
 test("the MCP bridge calls the bound App Server and replays the same Thread on retry", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
-  const input = new PassThrough(), output = new PassThrough();
-  const running = runLingAppServerMcp(fixture.transportOptions(), input, output);
-  t.after(async () => { input.end(); await running; });
-  const host = jsonLines(input, output);
-  await host.call("initialize", { protocolVersion: LATEST_PROTOCOL_VERSION, clientInfo: { name: "Fixture", version: "1" }, capabilities: {} });
-  host.send("notifications/initialized", {});
+  const { host, callTool } = await connectReleaseMcp(t, fixture.transportOptions());
   const { tools } = await host.call<{ tools: Array<{ name: string }> }>("tools/list");
   assert.ok(tools.some(tool => tool.name === "ling_turn_start"));
   assert.ok(tools.some(tool => tool.name === "ling_work_item_stages"));
@@ -4908,15 +4929,10 @@ test("the MCP bridge calls the bound App Server and replays the same Thread on r
   assert.ok(tools.some(tool => tool.name === "ling_skill_read"));
   assert.ok(tools.some(tool => tool.name === "ling_permission_profile_list"));
   assert.ok(tools.every(tool => !tool.name.includes("approval")));
-  const call = async (name: string, args: object) => {
-    const reply = await host.call<{ isError?: boolean; content: Array<{ text: string }> }>("tools/call", { name, arguments: args });
-    assert.ok(!reply.isError, reply.content[0]?.text);
-    return JSON.parse(reply.content[0]!.text) as ThreadRead;
-  };
   const request = { title: "MCP Thread", idempotencyKey: "identity" };
-  const first = await call("ling_thread_start", request);
-  assert.equal((await call("ling_thread_start", request)).thread.id, first.thread.id);
-  assert.equal((await call("ling_thread_read", { threadId: first.thread.id })).thread.id, first.thread.id);
+  const first = await callTool<ThreadRead>("ling_thread_start", request);
+  assert.equal((await callTool<ThreadRead>("ling_thread_start", request)).thread.id, first.thread.id);
+  assert.equal((await callTool<ThreadRead>("ling_thread_read", { threadId: first.thread.id })).thread.id, first.thread.id);
 });
 
 test("legacy RPC only exposes its existing methods and can still start and cancel a Run", { timeout: 20_000 }, async t => {
@@ -5307,6 +5323,24 @@ function jsonLines(input: Writable, output: Readable) {
     messages.delete(id);
     if (response.error) throw new Error(response.error.message);
     return response.result as T;
+  } };
+}
+
+async function connectReleaseMcp(t: TestContext, options: Parameters<typeof runLingAppServerMcp>[0]) {
+  const input = new PassThrough(), output = new PassThrough();
+  const running = runLingAppServerMcp(options, input, output);
+  const close = async () => {
+    if (!input.writableEnded) input.end();
+    await running;
+  };
+  t.after(close);
+  const host = jsonLines(input, output);
+  await host.call("initialize", { protocolVersion: LATEST_PROTOCOL_VERSION, clientInfo: { name: "Fixture", version: "1" }, capabilities: {} });
+  host.send("notifications/initialized", {});
+  return { host, close, async callTool<T>(name: string, args: object): Promise<T> {
+    const reply = await host.call<{ isError?: boolean; content: Array<{ text: string }> }>("tools/call", { name, arguments: args });
+    assert.ok(!reply.isError, reply.content[0]?.text);
+    return JSON.parse(reply.content[0]!.text) as T;
   } };
 }
 

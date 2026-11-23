@@ -26,6 +26,7 @@
 - 复核工作台的「验证」页使用和 App Server 相同的 Verify operation。浏览器验收在隔离仓库中从 Web 触发已登记的 Chromium 检查，读取实际断言输出，刷新后恢复原结果并显示候选漂移。
 - Goal 的 `verification_passed` 条件要求同一 Thread 的已完成 Verify operation、当前候选摘要、匹配的 verifier basis、coverage 和 producer refs。候选漂移、检查来源漂移、缺少独立证据和过期的接受版本都会阻止完成。
 - 工作项 Review 在捕获候选后核对 Work Item、接受的 Plan 修订和控制代次，并在 assessment 事务中封存该归属。真实 Daemon 回归覆盖工作项不匹配、旧 Plan、暂停期间拒绝新 Review，以及重启后重读原审查和发现项处置回执。
+- 认证 MCP bridge 根据可用 App Server 方法提供 Verify 计划、执行、查询和取消，以及 Review 启动、查询和发现项处置。实际回归从 MCP 与 WebSocket 并发提交相同候选，核对同一操作回执、一次执行，以及重启后通过 App Server 复用原结果。
 - App Server 可以为已绑定的频道或队友会话创建、刷新和归档托管工作树。归档按检视过的候选和目录身份校验，恢复日志保留同一预览请求的归档快照。
 - 普通会话可从最新已收敛的 Turn 封存 Handoff。接手保留 Goal ID、累计用量、预算和监督状态。回归覆盖转移 Goal 后、受理子会话 Turn 前失败，重启后复用转移回执并派发一次。候选、Goal 或计划变化时需要更新 Handoff。
 - App Server operator grant 支持 workspace、Thread 和 Work Item 范围，按 scope 分开观察、控制、审批和答复权限。grant 的 revision、过期和撤销参与握手、请求和推送路径。
@@ -67,7 +68,7 @@
 | E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。Verify 结果用绑定当前候选的 `verification_passed` 条件完成 Goal，独立 verifier basis、coverage 和 producer refs 不匹配时会被拒绝。Review 已验证候选绑定、发现项处置和 freshness 持久化。`simplify/start` 与 `simplify/status` 支持只读简化审查及重启重放。`github_delivered` 要求当前已提交候选、同 Thread 与 Work Item、已接受的检查政策和 Host 重新核对的实际合并结果。 |
 | O4 GitHub 证据核对 | 配置注册仓库、不可变仓库 ID 与分支政策。按 PR、实时 base、检查 App、冻结的 workflow 文件、实际测试对象和最近 attempt 核对证据。`changes/capture` 的 `scope: "head"` 提供已提交候选摘要，可以在本地有后续编辑时对账已经发生的合并。Goal 交付验收和队列准入仍核对干净的当前候选。队列响应丢失后先查原队列项。真实受保护仓库已验证 GitHub 原生合并队列和 Ling 对账。Schema 声明检查来源、受测提交、运行尝试和队列回执。 |
 | O1/O8/O9 接单、控制和协作 | 工作项创建、控制、接单、证据和协作写入各自与对应事件同事务提交。真实 Daemon 回归从同一个受控 GitHub Issue 的两个入口归并 Work Item，在接单前订阅，接通 P01、独立 QA 与等待裁决的 P02。覆盖暂停、重启、裁决恢复与原步骤派发一次。按下方矩阵继续验收阶段交接、自动审议、停滞和联合界面。 |
-| O7 定时协调轮次 | 已配置的 Automation 在同一事务中写入终态回执、轮次和事件。实际调度器从重启前的时段恢复。故障注入验证提交失败不会留下回执或轮次。回执重放复用原轮次。截止后生成简报和关闭事件，暂停的工作项产生跳过回执。该用例启动的 Runner 数量为零。 |
+| O7 定时协调轮次 | 已配置的 Automation 在同一事务中写入终态回执、轮次和事件。实际调度器从重启前的时段恢复。故障注入验证提交失败不会留下回执或轮次。回执重放复用原轮次。截止后生成简报和关闭事件，暂停的工作项产生跳过回执。已暂停、禁用或归档的 Automation 在「立即运行」和时段受理入口均返回 `automation_not_runnable`，保留既有记录。该用例启动的 Runner 数量为零。 |
 | O7/O9 阶段交接修复 | 源阶段修订更新后，已接受计划中的交接依赖仍保留原退回。真实 Daemon 回归覆盖省略退回回执、沿用旧候选或旧检查的拒绝，以及用当前结果包和可信检查并发接受。HTTP 与 App Server 返回同一接受回执，重启后复用退回与接受记录，QA 只启动一次。 |
 | O1 首次会话派发 | `workItem/accept` 可选定主执行会话，接单和首发意图同事务保存。正常会话 Run 创建核对该意图并原子更新 Work Item。脚本化 Pi Provider 验证了重启、两个并发受理、暂停恢复、实际派发一次，以及当前绑定阻止删除会话。Codex MCP 已提供同一创建和受理入口。 |
 
