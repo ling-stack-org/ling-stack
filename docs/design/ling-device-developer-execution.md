@@ -67,11 +67,11 @@ An operator selects the device and authorizes installation of the specific artif
 
 ### Native workbench job contract
 
-The authenticated developer session exposes native maintenance as a typed `workbench`
-job. The request names one host tool and one bounded operation. The host supplies the
-actual SSH, ADB or vendor-maintenance executor, so the model never receives an
-unscoped terminal channel. A request can carry a SHA-256 digest for evidence selected
-by the operator.
+Submit a native workbench job through
+`POST /v1/device-support/developer/sessions/{sessionId}/jobs` on the authenticated
+loopback listener. The request names one tool, one operation ID and an optional
+SHA-256 digest of operator-selected evidence. The host supplies the SSH, ADB or
+vendor tool integration and holds the native connection.
 
 ```json
 {
@@ -87,14 +87,16 @@ by the operator.
 }
 ```
 
-The executor declares whether the operation is read-only or mutating. Mutating
-operations check the target's dispatch-stop revision immediately before execution.
+The host's `DeviceDeveloperExecutor.nativeWorkbenchSideEffect` returns the
+side-effect class for a supported target and operation. Its `execute` method uses
+`assertCurrent()` before dispatch so mutating operations respect the target's
+dispatch-stop revision.
 Every job remains bound to the developer session's target and profile/connection
 revisions. Completion requires a readback containing the same target, revisions,
 observation time and evidence digest. A missing, foreign, stale or failed readback
-leaves the job failed or unknown and retains the original job record. The SQLite
-coordinator persists the request and readback together, so reconnects do not create
-another native dispatch.
+leaves the job failed or unknown and retains the original job record. SQLite
+keeps the request and readback together. Retrying the same job ID returns the
+retained record.
 
 ## 2. Execution architecture
 

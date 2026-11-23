@@ -32,6 +32,8 @@ are not published here. The relay URL and temporary development checkout are exa
 - [Device Support Platform Home Assistant and verification, 2026-11-22](#device-support-platform-home-assistant-and-verification-2026-11-22)
 - [Device Support Platform live capture, collaboration and semantic context, 2026-11-22](#device-support-platform-live-capture-collaboration-and-semantic-context-2026-11-22)
 - [Device Support Platform recovery, catalogs and conformance, 2026-11-22](#device-support-platform-recovery-catalogs-and-conformance-2026-11-22)
+- [Device Support Platform native workbench, 2026-11-23](#device-support-platform-native-workbench-continuation-2026-11-23)
+- [Device Support Platform Android USB Modbus, 2026-11-23](#device-support-platform-android-usb-modbus-continuation-2026-11-23)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
@@ -238,11 +240,10 @@ developer clients and physical hardware or vehicle acceptance remain open.
 
 ## Device Support Platform native workbench continuation 2026-11-23
 
-- D10 now admits `workbench` jobs through the authenticated developer session in
-  commit `fb586052c`. The
-  contract names `ssh`, `adb` or `vendor`, a bounded operation and an optional
-  operator-selected evidence digest. The host executor declares the operation's
-  side-effect class. Model turns do not receive an unscoped terminal interface.
+- D10 admits `workbench` jobs through the authenticated developer session in
+  commit `fb586052c`. The request names `ssh`, `adb` or `vendor`, an operation ID
+  and an optional operator-selected evidence digest. The host executor holds
+  the tool connection and declares the operation's side-effect class.
 - Mutating native workbench jobs check the target dispatch-stop revision immediately
   before execution. A completion must carry the session target, profile revision,
   connection revision, observation time and evidence digest in a verified readback.
@@ -259,22 +260,22 @@ developer clients and physical hardware or vehicle acceptance remain open.
   is based on `origin/main@1c20cc079` and contains the Android USB Modbus slice in
   commits `3eec0fa5f` and `6c315cd85`. The native module enumerates USB Host serial
   ports, requests OS permission, pins VID/PID and serial identity when available,
-  reads a documented Modbus function 03 or 04 request, and keeps bounded captures
+  sends a documented Modbus function 03 or 04 request, and keeps bounded captures
   in the phone-owned journal.
 - The phone panel supports port refresh, authorization, UART settings, register
   reads, CRC and response diagnostics, digest-checked replay, raw capture sharing,
   and background cancellation. The shared contracts and Core codec are reused by
-  the PC serial adapter. The Android driver path drains a quiet interval instead
-  of requiring `purgeHwBuffers`, which supports adapters whose driver does not
-  implement a hardware purge.
-- Evidence passed: Mobile typecheck and 130 tests, the focused USB fixture with
+  the PC serial adapter. The Android driver drains buffered input and waits for
+  a quiet interval before dispatch. This works with drivers that leave hardware
+  purge unimplemented.
+- Validation passed for Mobile typecheck and 130 tests, the focused USB fixture with
   seven cases, Android native `UsbModbusFrameTest` with five cases, Android ARM64
   Release assembly and emulator entry/refresh, iOS production bundle export,
   macOS native PTY Modbus capture with register 0 equal to 10, Core/Daemon build,
   typecheck and 30 focused tests, Contracts 195 tests, docs/public checks, and the
-  PC-to-phone capture export replayed by the Core codec. The emulator had no USB
-  accessory attached, so physical permission, detach/reconnect and known-value
-  RS-485 bench evidence remain open.
+  phone capture export replayed by the PC Core codec. The emulator exercised the
+  empty port list. Physical permission, detach/reconnect and known-value RS-485
+  bench evidence remain open.
 
 [Current evidence and open acceptance by slice](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
