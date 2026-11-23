@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { lstatSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { createWorkspaceRegistryStore, registerResolvedWorkspace } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -83,7 +83,7 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
         scanned += page.length;
         for (const item of page) {
           if (item.archivedAt) continue;
-          const available = workspacePathAvailable(item.canonicalCwd, config.defaultWorkspaceCwd, storeRegistry);
+          const available = availableWorkspaceRoot(item.canonicalCwd, config.defaultWorkspaceCwd, storeRegistry) !== undefined;
           workspaces.push({ workspaceId: item.workspaceId, cwd: item.canonicalCwd, name: item.displayName, available });
         }
         if (page.length < 500 || scanned >= 5_000) break;
@@ -92,7 +92,7 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
       if (!workspaces.some(item => item.cwd === config.defaultWorkspaceCwd)) {
         workspaces.unshift({ workspaceId: "default", cwd: config.defaultWorkspaceCwd,
           name: config.defaultWorkspaceCwd.split(/[\\/]/u).at(-1) ?? config.defaultWorkspaceCwd,
-          available: workspacePathAvailable(config.defaultWorkspaceCwd, config.defaultWorkspaceCwd, storeRegistry) });
+          available: availableWorkspaceRoot(config.defaultWorkspaceCwd, config.defaultWorkspaceCwd, storeRegistry) !== undefined });
       }
       writeJson(response, 200, { workspaces });
       return;
@@ -106,10 +106,10 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
       const cwd = (body as { cwd: string }).cwd;
       const item = registry.getWorkspaceByCanonicalCwd(cwd);
       if (cwd !== config.defaultWorkspaceCwd && !item) { writeJson(response, 404, { error: "workspace_not_registered" }); return; }
-      if (!workspacePathAvailable(cwd, config.defaultWorkspaceCwd, storeRegistry)) {
+      const physicalRoot = availableWorkspaceRoot(cwd, config.defaultWorkspaceCwd, storeRegistry);
+      if (!physicalRoot || cwd !== config.defaultWorkspaceCwd && !storeRegistry.trustWorkspaceRoot(cwd, physicalRoot)) {
         writeJson(response, 409, { error: "workspace_unavailable" }); return;
       }
-      if (cwd !== config.defaultWorkspaceCwd) storeRegistry.trustWorkspaceRoot(cwd);
       writeJson(response, 200, { cwd });
       return;
     }
@@ -117,21 +117,17 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
   } finally { registry.close(); }
 }
 
-function workspacePathAvailable(cwd: string, defaultCwd: string, stores: RunStoreRegistry): boolean {
-  if (resolve(cwd) !== cwd) return false;
+function availableWorkspaceRoot(cwd: string, defaultCwd: string, stores: RunStoreRegistry): string | undefined {
+  if (resolve(cwd) !== cwd) return undefined;
   try {
-    const lexical = lstatSync(cwd);
-    if (lexical.isSymbolicLink() || !lexical.isDirectory()) return false;
-    const physicalPath = realpathSync(cwd);
-    if (joinPhysical(dirname(cwd), basename(cwd)) !== physicalPath) return false;
-    return (cwd === defaultCwd ? stores.isTrustedWorkspaceRoot(physicalPath) : true)
-      && statSync(physicalPath).isDirectory();
-  }
-  catch { return false; }
-}
-
-function joinPhysical(parent: string, leaf: string): string {
-  return resolve(realpathSync(parent), leaf);
+    if (!lstatSync(cwd).isDirectory()) return undefined;
+    const physicalRoot = realpathSync(cwd);
+    const isDarwinSystemAlias = process.platform === "darwin" && (cwd.startsWith("/var/") || cwd.startsWith("/tmp/"))
+      && physicalRoot === `/private${cwd}`;
+    if (physicalRoot !== cwd && !isDarwinSystemAlias) return undefined;
+    if (cwd === defaultCwd && !stores.isTrustedWorkspaceRoot(physicalRoot)) return undefined;
+    return physicalRoot;
+  } catch { return undefined; }
 }
 
 export async function handleWorkspaceTerminalCommand(

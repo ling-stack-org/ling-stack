@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createWorkspaceRegistryStore, resolveUserConfigPaths, type WorkspaceRegistryEntry } from "@ling-stack/core";
@@ -12,6 +13,7 @@ import { listManagedWorktrees } from "../../workspaces/worktree-management.js";
 import { scanOwnedStorage } from "./scanner.js";
 
 interface ScanEntry { readonly cwd: string; readonly controller: AbortController; job: DeviceStorageScanJob; running: boolean }
+type ScanWorkspace = Pick<WorkspaceRegistryEntry, "canonicalCwd" | "stateRoot">;
 const jobs = new Map<string, ScanEntry>();
 const scanBudgetMs = 30_000;
 
@@ -33,7 +35,7 @@ export async function handleDeviceStorageScans(request: IncomingMessage, respons
     const id = randomUUID(), controller = new AbortController();
     const entry: ScanEntry = { cwd, controller, job: { id, status: "scanning" }, running: true };
     jobs.set(id, entry);
-    void scanForWorkspace(stores, cwd, scope, controller.signal).then(snapshot => {
+    void scanForWorkspace(stores, cwd, config.defaultWorkspaceCwd, scope, controller.signal).then(snapshot => {
       entry.job = { id, status: controller.signal.aborted ? "cancelled" : snapshot.complete ? "complete" : "partial", snapshot };
     }).catch(() => { entry.job = { id, status: controller.signal.aborted ? "cancelled" : "partial" }; })
       .finally(() => { entry.running = false; });
@@ -48,16 +50,20 @@ export async function handleDeviceStorageScans(request: IncomingMessage, respons
   writeJson(response, 405, { error: "method_not_allowed" });
 }
 
-async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, scope: DeviceStorageScope, signal: AbortSignal): Promise<DeviceStorageSnapshot> {
+async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, defaultCwd: string, scope: DeviceStorageScope,
+  signal: AbortSignal): Promise<DeviceStorageSnapshot> {
   const deadline = Date.now() + scanBudgetMs;
-  const registry = createWorkspaceRegistryStore();
-  const selected: WorkspaceRegistryEntry[] = [];
+  const userPaths = resolveUserConfigPaths();
+  const registry = existsSync(userPaths.globalDatabasePath) ? createWorkspaceRegistryStore({ userPaths }) : undefined;
+  const selected: ScanWorkspace[] = [];
   let workspaceInventoryIncomplete = false;
   let worktreeInventoryIncomplete = false;
   try {
-    const current = registry.getWorkspaceByCanonicalCwd(cwd);
+    const defaultStore = cwd === defaultCwd ? stores.getInitializedStore(cwd) : undefined;
+    const current = registry?.getWorkspaceByCanonicalCwd(cwd)
+      ?? (defaultStore ? { canonicalCwd: cwd, stateRoot: defaultStore.paths.rootDir } : undefined);
     if (!current) throw new Error("workspace_not_registered");
-    if (scope === "current") selected.push(current);
+    if (scope === "current" || !registry) selected.push(current);
     else {
       let cursor = "";
       while (!signal.aborted && Date.now() < deadline) {
@@ -67,9 +73,9 @@ async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, scope: De
         if (selected.length >= 5_000) { workspaceInventoryIncomplete = true; break; }
         cursor = page.at(-1)!.workspaceId;
       }
-      if (!selected.some(item => item.workspaceId === current.workspaceId)) selected.push(current);
+      if (!selected.some(item => item.canonicalCwd === current.canonicalCwd && item.stateRoot === current.stateRoot)) selected.push(current);
     }
-  } finally { registry.close(); }
+  } finally { registry?.close(); }
   const workspaceRoots = selected.map(item => item.stateRoot);
   const worktreeRoots: string[] = [];
   for (const workspace of selected) {
@@ -92,7 +98,7 @@ async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, scope: De
       worktreeRoots.push(...(inventory.snapshots ?? []).filter(item => item.state !== "restored").map(item => item.snapshotPath));
     } catch { worktreeInventoryIncomplete = true; }
   }
-  return scanOwnedStorage({ scope, userRoot: scope === "all" ? resolveUserConfigPaths().rootDir : undefined,
+  return scanOwnedStorage({ scope, userRoot: scope === "all" ? userPaths.rootDir : undefined,
     workspaceRoots, worktreeRoots, workspaceInventoryIncomplete, worktreeInventoryIncomplete },
   { signal, deadlineMs: Math.max(0, deadline - Date.now()) });
 }

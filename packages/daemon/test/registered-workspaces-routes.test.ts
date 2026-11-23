@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,11 +12,16 @@ test("registered workspace selection only activates known available local paths"
   const cwd = await createSqliteWorkspaceFixture(join(temp, "ling-workspace-switch-"));
   const other = await mkdtemp(join(temp, "ling-workspace-switch-other-"));
   const target = await mkdtemp(join(temp, "ling-workspace-switch-unregistered-"));
+  const nestedWorkspace = join(other, "nested");
+  const nestedTarget = join(target, "nested");
+  await mkdir(nestedWorkspace);
+  await mkdir(nestedTarget);
   const prior = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(cwd, "user-root");
   const store = createSqliteRunStore(cwd);
   registerResolvedWorkspace(cwd);
   registerResolvedWorkspace(other);
+  registerResolvedWorkspace(nestedWorkspace);
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { storeFactory: () => store });
   t.after(async () => { await daemon.stop(); store.close(); if (prior === undefined) delete process.env.LING_STACK_HOME;
     else process.env.LING_STACK_HOME = prior; await rm(cwd, { recursive: true, force: true });
@@ -41,6 +46,9 @@ test("registered workspace selection only activates known available local paths"
   await symlink(target, other, "junction");
   const linked = await (await fetch(`${base}/workspaces/registered`)).json() as { workspaces: { cwd: string; available: boolean }[] };
   assert.equal(linked.workspaces.find(item => item.cwd === other)?.available, false);
+  assert.equal(linked.workspaces.find(item => item.cwd === nestedWorkspace)?.available, false);
   assert.equal((await activate(other)).status, 409);
+  assert.equal((await activate(nestedWorkspace)).status, 409);
   assert.equal((await fetch(`${base}/device-storage/scans?cwd=${encodeURIComponent(target)}`)).status, 403);
+  assert.equal((await fetch(`${base}/device-storage/scans?cwd=${encodeURIComponent(nestedTarget)}`)).status, 403);
 });

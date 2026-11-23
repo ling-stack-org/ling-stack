@@ -57,7 +57,7 @@ export function BrowserSettingsPanel({ cwd }: { readonly cwd: string }): React.J
         <Input value={query} aria-label={t("Search browser history")} onChange={event => setQuery(event.currentTarget.value)} />
         <div className="settings-browser-history">{state.history.filter(item => `${item.title} ${item.url}`.toLowerCase().includes(query.toLowerCase())).slice(0, 50).map(item =>
           <div key={item.id}><span title={item.url}>{item.title || item.url}</span><Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => act({ action: "history_clear", since: 0, id: item.id })}>{t("Remove")}</Button></div>)}</div>
-        {state.history.length ? <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => act({ action: "history_clear", since: 0 })}>{t("Clear history")}</Button> : null}
+        {state.history.length ? <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => act({ action: "history_clear", since: BROWSER_HISTORY_CLEAR_ALL_SINCE })}>{t("Clear history")}</Button> : null}
       </section>
       <section><h2>{t("Downloads")}</h2>
         <div className="settings-browser-inline"><span>{state.downloadDirectory}</span><Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={() => act({ action: "download_directory" })}>{t("Choose download folder")}</Button></div>
