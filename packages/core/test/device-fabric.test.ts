@@ -139,6 +139,50 @@ test("expired in-memory task graph leases can be acquired by a new owner", () =>
   coordinator.acquireOwnerLease("pc-1", "mobile-1");
 });
 
+test("independently dispatched nodes settle against their own revisions across reopen", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-graph-parallel-receipts-"));
+  const databasePath = join(root, "fabric.sqlite");
+  let store = new SqliteDeviceFabricStore({ databasePath });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  let coordinator = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
+  const graph: DeviceTaskGraphV1 = {
+    graphId: "parallel-diagnosis", revision: 1, status: "planned", createdAt: now, updatedAt: now,
+    nodes: [
+      { nodeId: "edge", targetDeviceId: "edge-board", ownerKind: "edge", ownerId: "edge-runtime",
+        capabilityId: "linux.inspect.network", capabilitySnapshotId: "edge-snapshot", dependencies: [], status: "planning" },
+      { nodeId: "phone", targetDeviceId: "phone-board", ownerKind: "mobile", ownerId: "phone-runtime",
+        capabilityId: "protocol.read_registers", capabilitySnapshotId: "phone-snapshot", dependencies: [], status: "planning" },
+    ],
+  };
+  const edge = { ownerKind: "edge", ownerId: "edge-runtime", routeGeneration: 2 } as const;
+  const phone = { ownerKind: "mobile", ownerId: "phone-runtime", routeGeneration: 5 } as const;
+  store.saveTaskGraph(graph);
+  const edgeClaim = coordinator.bindNodeAttempt(graph, "edge", "edge-attempt", edge.routeGeneration);
+  const phoneClaim = coordinator.bindNodeAttempt(edgeClaim, "phone", "phone-attempt", phone.routeGeneration);
+  const edgeReceipt = {
+    ...edge, graphId: graph.graphId, graphRevision: edgeClaim.revision, nodeId: "edge", targetDeviceId: "edge-board",
+    capabilitySnapshotId: "edge-snapshot", attemptId: "edge-attempt", status: "succeeded", resultRef: "edge-observation", receivedAt: now,
+  } as const;
+  const phoneReceipt = {
+    ...phone, graphId: graph.graphId, graphRevision: phoneClaim.revision, nodeId: "phone", targetDeviceId: "phone-board",
+    capabilitySnapshotId: "phone-snapshot", attemptId: "phone-attempt", status: "succeeded", resultRef: "phone-observation", receivedAt: now,
+  } as const;
+  const phoneDone = coordinator.recordNodeReceipt(phoneClaim, phoneReceipt, phone);
+  assert.equal(phoneDone.status, "executing");
+  store.close();
+  store = new SqliteDeviceFabricStore({ databasePath });
+  coordinator = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
+  assert.throws(() => coordinator.recordNodeReceipt(phoneDone, { ...edgeReceipt, graphRevision: graph.revision }, edge), /stale/u);
+  assert.throws(() => coordinator.recordNodeReceipt(phoneDone, { ...edgeReceipt, targetDeviceId: "phone-board" }, edge), /stale|does not match/u);
+  const complete = coordinator.recordNodeReceipt(phoneDone, edgeReceipt, edge);
+  assert.equal(complete.status, "succeeded");
+  assert.deepEqual(complete.nodes.map(node => [node.nodeId, node.resultRef]), [["edge", "edge-observation"], ["phone", "phone-observation"]]);
+  assert.deepEqual(coordinator.recordNodeReceipt(edgeClaim, edgeReceipt, edge), complete);
+  assert.deepEqual(coordinator.recordNodeReceipt(phoneClaim, phoneReceipt, phone), complete);
+  assert.equal(store.getTaskGraphReceipt(graph.graphId, edgeClaim.revision)?.attemptId, "edge-attempt");
+  assert.equal(store.getTaskGraphReceipt(graph.graphId, phoneClaim.revision)?.attemptId, "phone-attempt");
+});
+
 test("stopping a graph preserves in-flight ownership until the owner supplies terminal evidence", () => {
   const coordinator = new DeviceTaskGraphCoordinator({ now: () => now });
   const graph: DeviceTaskGraphV1 = {

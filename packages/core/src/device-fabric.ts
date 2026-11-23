@@ -272,7 +272,9 @@ export class DeviceTaskGraphCoordinator {
     const advance = (current: DeviceTaskGraphV1) => {
       const node = current.nodes.find(item => item.nodeId === receipt.nodeId);
       const stoppedAttempt = current.cancellationRequestedAt && node?.status === "unknown" && node.attemptGraphRevision === receipt.graphRevision;
-      if (current.revision !== receipt.graphRevision && !stoppedAttempt) {
+      const concurrentAttempt = node?.attemptGraphRevision === receipt.graphRevision
+        && ["executing", "verifying", "unknown"].includes(node.status);
+      if (current.revision !== receipt.graphRevision && !stoppedAttempt && !concurrentAttempt) {
         throw new DeviceFabricError("revision_conflict", "task graph node receipt is stale");
       }
       if (!node || !["executing", "verifying", "unknown"].includes(node.status)
