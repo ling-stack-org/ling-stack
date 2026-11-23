@@ -1,0 +1,49 @@
+name: App Server on Windows
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/app-server-windows.yml
+      - pnpm-lock.yaml
+      - packages/api-client/src/app-server.ts
+      - packages/contracts/src/app-server*.ts
+      - packages/cli/src/main.ts
+      - packages/daemon/src/server/app-server*.ts
+      - packages/daemon/src/server/rpc.ts
+      - packages/daemon/test/app-server-release-acceptance.test.ts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-server-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  transport:
+    name: Windows stdio and WebSocket
+    runs-on: windows-2025
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 10.0.0
+          run_install: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+      - name: Install locked dependencies without build hooks
+        run: corepack pnpm install --frozen-lockfile --ignore-scripts
+      - name: Compile the Daemon and CLI transport
+        shell: bash
+        run: |
+          corepack pnpm --filter '@ling-stack/daemon^...' -r build:ci
+          corepack pnpm --filter @ling-stack/daemon exec tsc -p tsconfig.json
+          corepack pnpm --filter @ling-stack/cli build:ci
+      - name: Verify reconnect through native CLI stdio and WebSocket
+        run: node --test --test-name-pattern="native CLI stdio and WebSocket" packages/daemon/test/app-server-release-acceptance.test.ts

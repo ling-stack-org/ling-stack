@@ -30,6 +30,10 @@ export interface WorkItemStageQuestionPayload {
   readonly deadlineAt: string;
 }
 
+export function workItemStageQuestionExpired(question: WorkItemStageQuestionPayload, now: number): boolean {
+  return Date.parse(question.deadlineAt) <= now;
+}
+
 export function readWorkItemStageQuestion(store: Pick<QuestionStore, "getWorkItemEvidence">, workItemId: string, questionId: string) {
   if (!questionId.startsWith(WORKFLOW_STAGE_QUESTION_ID_PREFIX)) return undefined;
   const record = readWorkItemCollaborationRecord(store, workItemId, questionId);
@@ -39,10 +43,11 @@ export function readWorkItemStageQuestion(store: Pick<QuestionStore, "getWorkIte
     || typeof question.respondentStepId !== "string" || typeof question.question !== "string"
     || typeof question.deadlineAt !== "string") return undefined;
   const answer = readWorkItemCollaborationRecord(store, workItemId, workItemStageQuestionAnswerId(questionId));
-  const answerText = (answer?.payload as { readonly answer?: unknown } | undefined)?.answer;
-  const reply = answer?.kind === "question" && answer.action === "replied" && answer.parentRecordId === record.id
-    && typeof answerText === "string" ? { record: answer, text: answerText } : undefined;
-  return { record, question, reply };
+  const payload = answer?.payload as { readonly answer?: unknown; readonly historicalReason?: unknown } | undefined;
+  const response = answer?.kind === "question" && answer.action === "replied" && answer.parentRecordId === record.id
+    && typeof payload?.answer === "string" ? { record: answer, text: payload.answer } : undefined;
+  return { record, question, reply: payload?.historicalReason === undefined ? response : undefined,
+    historicalReply: payload?.historicalReason === undefined ? undefined : response };
 }
 
 export function listWorkItemStageQuestions(store: QuestionStore, workItemId: string, planRevision: string, waitingStepId?: string) {

@@ -1,7 +1,7 @@
 import type { LingAppServerStageQuestionAskParams, LingAppServerStageQuestionReplyParams } from "@ling-stack/contracts";
 import {
   appendWorkItemCollaboration, listWorkItemStageQuestions, readWorkItemStageQuestion, WORKFLOW_STAGE_QUESTION_LIMIT,
-  workItemStageQuestionAnswerId, workItemStageQuestionId, type RunStore,
+  workItemStageQuestionAnswerId, workItemStageQuestionExpired, workItemStageQuestionId, type RunStore,
   type AppendWorkItemCollaborationInput, type AppendWorkItemCollaborationResult, type ChannelWorkflowStep, type WorkItemCollaborationRecord,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
@@ -57,15 +57,21 @@ export function replyToWorkItemStageQuestion(store: RunStore, input: LingAppServ
   const question = readWorkItemStageQuestion(store, workItemId, questionId);
   if (!item || !question) throw new HttpError(404, "workspace_binding_invalid", "The stage question is unavailable.");
   const payload = { answer, questionRevision: expectedQuestionRevision, requestRevision: expectedWorkItemRevision };
-  if (question.reply) return replay(question.reply.record, idempotencyKey, payload, item.revision);
-
-  if (item.planRevision !== question.question.planRevision || item.revision !== expectedWorkItemRevision
-    || question.record.collaborationRevision !== expectedQuestionRevision) {
-    throw new HttpError(409, "stale_revision", "The Plan, Work Item or question revision changed.");
+  const previous = question.reply ?? question.historicalReply;
+  if (previous) {
+    const { historicalReason, ...inputBasis } = previous.record.payload as typeof payload & { historicalReason?: string };
+    return replay(previous.record, idempotencyKey, payload, item.revision, inputBasis);
   }
+
+  if (item.revision !== expectedWorkItemRevision || question.record.collaborationRevision !== expectedQuestionRevision) {
+    throw new HttpError(409, "stale_revision", "The Work Item or question revision changed.");
+  }
+  const historicalReason = item.planRevision !== question.question.planRevision ? "plan_superseded"
+    : workItemStageQuestionExpired(question.question, Date.parse(now)) ? "deadline_expired" : undefined;
   return appendQuestion(store, {
     id: workItemStageQuestionAnswerId(questionId), workItemId, expectedWorkItemRevision, idempotencyKey, kind: "question",
-    action: "replied", actorId: "local-user", parentRecordId: questionId, payload, visibility: "participants",
+    action: "replied", actorId: "local-user", parentRecordId: questionId,
+    payload: { ...payload, ...(historicalReason ? { historicalReason } : {}) }, visibility: "participants",
   }, now);
 }
 
@@ -81,11 +87,12 @@ export function readWorkItemStageQuestionInputs(store: RunStore, step: ChannelWo
   const binding = readWorkItemWorkflowBinding(store, step.workflowId);
   const item = binding && store.getWorkItem(binding.workItemId);
   if (!item || item.workflowId !== step.workflowId || !item.planRevision) return [];
+  const now = Date.now();
   return listWorkItemStageQuestions(store, item.id, item.planRevision).flatMap<StageQuestionInput>(({ record, question, reply }) => {
     if (question.waitingStepId === step.id && reply) {
       return [{ questionId: record.id, question: question.question, answer: reply.text, answerReceiptId: reply.record.id }];
     }
-    if (question.respondentStepId === step.id && !reply) {
+    if (question.respondentStepId === step.id && !reply && !workItemStageQuestionExpired(question, now)) {
       return [{ questionId: record.id, question: question.question }];
     }
     return [];
@@ -101,9 +108,10 @@ function readQuestionText(value: string, key: string, revision: number): string 
   return text;
 }
 
-function replay(record: WorkItemCollaborationRecord, key: string, payload: unknown, workItemRevision: number): AppendWorkItemCollaborationResult {
+function replay(record: WorkItemCollaborationRecord, key: string, payload: unknown, workItemRevision: number,
+  originalPayload: unknown = record.payload): AppendWorkItemCollaborationResult {
   if (record.idempotencyKey !== key) throw new HttpError(409, "stale_revision", "The question already has a reply.");
-  if (JSON.stringify(record.payload) !== JSON.stringify(payload)) throw new HttpError(409, "idempotency_conflict", "The request key belongs to different input.");
+  if (JSON.stringify(originalPayload) !== JSON.stringify(payload)) throw new HttpError(409, "idempotency_conflict", "The request key belongs to different input.");
   return { status: "replayed" as const, record: { ...record, workItemRevision }, workItemRevision };
 }
 

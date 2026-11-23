@@ -39,7 +39,7 @@
 - `workItem/plan/change/request` 按已接受的阶段依赖生成准入暂停范围，`workItem/plan/change/withdraw` 可释放这一项暂停。暂停、回执和事件一起提交。联合回归覆盖 P01 改动暂停下游阶段，P02 改动期间 QA 可完成交接，重启后恢复原暂停，以及后继 Workflow 绑定时按确认的变更 ID 解除暂停。
 - 绑定已接受的后继 Workflow 时，`retainStageResults` 可显式引用已收敛的独立阶段产物。后继阶段收到来源版本和原产物摘要，可打开所属 Run 的产物，仍按自己的当前验收依据核对结果。回归覆盖原 Run 只启动一次、接手前的过期引用、重复绑定和实际 Pi 输入。
 - `workItem/message/send` 支持向当前已接受计划的一项待执行阶段发送定向消息。重启后，Workflow 把原消息回执和正文交给对应参与者的 Pi 输入。其他阶段的模型输入及限域观察者的读接口不会收到正文。
-- 协调者可在两项待执行阶段之间记录同级问答。提问只暂停等待答复的阶段，已有阶段依赖继续由 Workflow 处理。回归覆盖互等拒绝、答复前重启、无关投票继续、一次答复回执和 QA 实际收到该答复。
+- 协调者可在两项待执行阶段之间记录同级问答。提问只暂停等待答复的阶段，已有阶段依赖继续由 Workflow 处理。迟到和旧计划答复保留在原问题记录中。回归覆盖互等拒绝、答复前重启、无关投票继续、一次答复回执、QA 实际收到答复以及逾期答复后的等待状态。
 - `workItem/create` 可按原生 ID 显式挂接现有频道 Task 或 AutomationRun。Host 从原执行记录确认归属和状态。并发提交及重启仍读取同一条 Work Item；原执行所有者持有开始、取消和恢复权限。验收中先运行一次 Automation，再从两个客户端挂接同一执行，Provider 总调用数为一次。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。
 
@@ -59,6 +59,8 @@
 | O1 首次会话派发 | `workItem/accept` 可选定主执行会话，接单和首发意图同事务保存。正常会话 Run 创建核对该意图并原子更新 Work Item。脚本化 Pi Provider 验证了重启、两个并发受理、暂停恢复、实际派发一次，以及当前绑定阻止删除会话。Codex MCP 已提供同一创建和受理入口。 |
 
 源码兼容用例由 `LING_APP_SERVER_PREVIOUS_BUILD` 指向已构建的上一版源码目录。`LING_APP_SERVER_CODEX_EXECUTABLE` 指向已安装的 Codex。两项均使用隔离状态和回环服务，配置 Pi Runner 使用脚本化 Provider。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
+
+Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI stdio 和受控 Daemon，在回环 WebSocket 上发起一个 Turn，用 stdio 接收终态，再重启 Daemon 并从原游标恢复事件。macOS 和 Linux 还验证私有 Unix socket 的连接与清理。 [Windows 传输验收](../../.github/workflows/app-server-windows.yml)
 
 ## 尚待完成的发布条件
 
