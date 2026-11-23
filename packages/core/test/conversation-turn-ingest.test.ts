@@ -3,10 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import {
   createSqliteRunStore,
   resolveRuntimePaths,
+  type AppendConversationUserTurnInput,
 } from "../dist/index.js";
 import { SqliteConversationItemStore } from "../dist/storage/sqlite/conversation-item-store.js";
 import { SqliteConversationTurnIngestStore } from "../dist/storage/sqlite/conversation-turn-ingest-store.js";
@@ -35,14 +36,14 @@ test("Conversation turn ingest atomically appends user item, turn and assignment
       fileRefs: [],
     },
     idempotencyKey: "channel-request-1",
-  };
+  } satisfies AppendConversationUserTurnInput;
   const created = ingest.appendUserTurn(input, now);
   assert.equal(created.idempotentReplay, false);
   assert.equal(created.item.id, input.itemId);
   assert.equal(created.item.turnId, input.turnId);
   assert.equal(created.item.sequence, 1);
-  assert.equal(fixture.database.prepare("SELECT source_item_id FROM ling_turns WHERE id = ?").get(input.turnId).source_item_id, input.itemId);
-  assert.equal(fixture.database.prepare("SELECT segment_id FROM turn_context_assignments WHERE turn_id = ?").get(input.turnId).segment_id, created.contextSegmentId);
+  assert.equal(fixture.database.prepare("SELECT source_item_id FROM ling_turns WHERE id = ?").get(input.turnId)?.source_item_id, input.itemId);
+  assert.equal(fixture.database.prepare("SELECT segment_id FROM turn_context_assignments WHERE turn_id = ?").get(input.turnId)?.segment_id, created.contextSegmentId);
 
   const replay = ingest.appendUserTurn(input, "2026-08-09T14:01:00.000Z");
   assert.equal(replay.idempotentReplay, true);
@@ -51,8 +52,8 @@ test("Conversation turn ingest atomically appends user item, turn and assignment
     ...input,
     payload: { ...input.payload, body: "Different request with a reused key." },
   }, "2026-08-09T14:01:01.000Z"), /idempotency key belongs to another input/);
-  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM ling_turns WHERE id = ?").get(input.turnId).count, 1);
-  assert.equal(fixture.database.prepare("SELECT next_item_sequence FROM ling_threads WHERE id = ?").get(input.threadId).next_item_sequence, 2);
+  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM ling_turns WHERE id = ?").get(input.turnId)?.count, 1);
+  assert.equal(fixture.database.prepare("SELECT next_item_sequence FROM ling_threads WHERE id = ?").get(input.threadId)?.next_item_sequence, 2);
 });
 
 test("Conversation turn ingest rolls the turn and sequence back when item validation fails", async (t) => {
@@ -76,12 +77,12 @@ test("Conversation turn ingest rolls the turn and sequence back when item valida
     },
     idempotencyKey: "invalid-input",
   }, now), /schema validation/);
-  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM ling_turns WHERE id = 'turn-invalid'").get().count, 0);
-  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM conversation_items WHERE id = 'item-invalid'").get().count, 0);
-  assert.equal(fixture.database.prepare("SELECT next_item_sequence FROM ling_threads WHERE id = ?").get(fixture.rootThreadId).next_item_sequence, 1);
+  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM ling_turns WHERE id = 'turn-invalid'").get()?.count, 0);
+  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM conversation_items WHERE id = 'item-invalid'").get()?.count, 0);
+  assert.equal(fixture.database.prepare("SELECT next_item_sequence FROM ling_threads WHERE id = ?").get(fixture.rootThreadId)?.next_item_sequence, 1);
 });
 
-async function createMigratedFixture(t) {
+async function createMigratedFixture(t: TestContext) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-conversation-ingest-"));
   const store = createSqliteRunStore(cwd);
   const channel = store.createChannel({ name: "Ingest", boundPath: cwd }, "2026-08-09T13:00:00.000Z");

@@ -233,8 +233,9 @@ for (const kind of ["request", "checkpoint", "seal"]) test(`actual ${kind} body 
 test("request, seal and original checkpoint remain recovery/audit pinned through explicit Host GC", async t => {
   const f = await fixture(t), sealed = f.seal(f.request(), f.checkpoint());
   const ids = [sealed.requestArtifactId, sealed.sealArtifactId, sealed.seal.modelViewArtifactId];
-  for (const artifactId of ids) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: at(), now: at() });
-  assert.deepEqual(f.store.collectHarnessArtifactBodies({ now: at() }).prunedArtifactIds, []);
+  const deadline = at();
+  for (const artifactId of ids) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: deadline, now: deadline });
+  assert.deepEqual(f.store.collectHarnessArtifactBodies({ now: deadline }).prunedArtifactIds, []);
   const pins = f.store.database.prepare("SELECT artifact_id,reason FROM harness_artifact_pins WHERE released_at IS NULL ORDER BY artifact_id,reason").all();
   for (const id of ids) assert.deepEqual(pins.filter(pin => pin.artifact_id === id).map(pin => pin.reason), ["audit_hold", "recovery"]);
 });
