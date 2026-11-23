@@ -66,6 +66,7 @@ import { createSystemKeychainSecretStore } from "./features/providers/keychain-s
 import { createEngineSecretStore, withEngineSecretResolver } from "./features/execution-engines/engine-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
+import { ProviderModelCatalogService } from "./features/providers/model-catalog-service.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { reconcileTeammateDirectRun, recoverPendingTeammateDirectMessages } from "./features/teammates/direct-message-lifecycle.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
@@ -306,6 +307,9 @@ export function createDaemonServer(
     ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
   const secretResolver = withEngineSecretResolver(engineSecretStore, baseSecretResolver);
   const defaultStoragePaths = resolveStoragePaths(resolvedConfig.defaultWorkspaceCwd);
+  const providerModelCatalog = dependencies.providerModelCatalog ?? new ProviderModelCatalogService(
+    join(defaultStoragePaths.user.stateDir, "provider-model-catalog.json"), fetch, resolvedConfig.port !== 0,
+  );
   // One daemon owns one installation-global Host budget. Workspace Stores only
   // receive the opaque binding below; they never open or choose this authority.
   const hostRunCapacity = createHostRunCapacityStore({
@@ -1095,6 +1099,7 @@ export function createDaemonServer(
     imDestinations,
     providerStartupRefresh,
     providerImportPreflight,
+    providerModelCatalog,
     startupState,
     startupOptionalWarmups,
     computerUsePreviews,
@@ -1234,6 +1239,7 @@ export function createDaemonServer(
       companionSchedulers?.waitForIdle() ?? Promise.resolve(),
       worktreeMaintenance.waitForIdle(),
       providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
+      providerModelCatalog.close(),
       harnessArtifactRetention.waitForIdle(),
       learningReviewCoordinator?.drain() ?? Promise.resolve(),
       Promise.all([...memorySemanticServices.values()].map(service => service.drain())),
@@ -1323,6 +1329,7 @@ export function createDaemonServer(
     engineManagement: engineManagement.credentials,
     start: async () => {
       cuaDriverActivationCoordinator.resetForDaemonStart();
+      await providerModelCatalog.initialize();
       if (!isLoopbackHost(resolvedConfig.host) && !resolvedConfig.authToken) {
         throw new Error(
           "daemon_bind_refused: non-loopback binds require an auth token (set LING_STACK_AUTH_TOKEN or config.authToken).",
@@ -1336,6 +1343,7 @@ export function createDaemonServer(
         });
       });
       await initializeDaemonWithCleanup(async () => {
+        providerModelCatalog.start();
         const defaultStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
         runtimeSupervisor.getRuntime(resolvedConfig.defaultWorkspaceCwd, defaultStore);
         workspaceCustodyReady = true;

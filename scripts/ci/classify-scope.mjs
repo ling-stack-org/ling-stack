@@ -2,17 +2,17 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isGeneratedProviderModelCatalogRefresh, PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest } from "../provider-model-catalog-format.mjs";
 import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
+import { isCatalogWorkflowPinUpdate } from "./workflow-scope.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
 const LOCKFILE = "pnpm-lock.yaml";
 const WEB_PACKAGE = "@ling-stack/web";
-const CORE_PACKAGE = "@ling-stack/core";
+const WORKSPACE_TEST_CONFIG = /^(?:packages|apps)\/[^/]+\/tsconfig\.tests?\.json$/u;
 
 const DOCUMENTATION_ROOT_FILES = new Set([
   "AGENTS.md",
@@ -80,10 +80,8 @@ function isAssurancePath(file) {
 /**
  * Classify a pull request by the narrowest safe CI scope.
  *
- * The classifier is intentionally conservative: a path that is not recognized
- * as documentation, allowlisted maintenance, verified local output cleanup, or
- * a workspace package escalates to the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>, generatedProviderCatalog?: boolean, addedLockImporters?: string[]}} input
+ * Unrecognized paths and unverified shared inputs select the full CI lane.
+ * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -97,6 +95,10 @@ export function classifyChangedFiles(input) {
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
+  }
+
+  if (input.catalogWorkflowPinUpdate) {
+    return buildScope("affected", files, packages, "verified catalog App action pin update, with workflow contracts checked in Common");
   }
 
   // Keep deleted local artifacts in the audit while narrowing product selection.
@@ -117,49 +119,42 @@ export function classifyChangedFiles(input) {
     return buildScope("docs", files, packages, reason);
   }
 
-  if (input.generatedProviderCatalog && scopeFiles.includes(PROVIDER_MODEL_CATALOG_PATH)
-    && scopeFiles.every(file => file === PROVIDER_MODEL_CATALOG_PATH || isDocumentationPath(file) || isMaintenancePath(file))) {
-    if (!packages.some(entry => entry.directory === "packages/core" && entry.name === CORE_PACKAGE
-      && entry.hasTestScript && entry.hasTypecheckScript)) {
-      return buildScope("full", files, packages, "provider catalog requires the Core package");
-    }
-    return {
-      ...buildScope("affected", files, packages, "verified generated provider model catalog refresh"),
-      packages: [CORE_PACKAGE],
-      typecheckPackages: [CORE_PACKAGE],
-      providerModelCatalog: true,
-    };
-  }
-
   const validationManifests = new Set();
   const validationInputs = new Set();
   const newPackages = new Set();
-  for (const file of scopeFiles.filter((file) => file.endsWith("/package.json"))) {
-    const directory = dirname(file);
-    const current = packages.find((entry) => entry.directory === directory);
-    const previous = input.basePackageEntries?.find((entry) => entry.directory === directory);
-    if (current && !previous && input.basePackageEntries
+  const testConfigDirectories = new Set(scopeFiles.filter(file => WORKSPACE_TEST_CONFIG.test(file)).map(file => dirname(file)));
+  const manifests = new Set(scopeFiles.filter(file => file.endsWith("/package.json")));
+  const validationDirectories = new Set([...Array.from(manifests, file => dirname(file)), ...testConfigDirectories]);
+  for (const directory of validationDirectories) {
+    const file = directory + "/package.json";
+    const manifestChanged = manifests.has(file);
+    const current = packages.find(entry => entry.directory === directory);
+    const previous = input.basePackageEntries?.find(entry => entry.directory === directory);
+    if (manifestChanged && current && !previous && input.basePackageEntries
       && !input.basePackageEntries.some(entry => entry.name === current.name)
       && packages.filter(entry => entry.name === current.name).length === 1
       && isStandardPackageAddition(current, scopeFiles)) {
       newPackages.add(directory);
       continue;
     }
+    const unverified = () => buildScope("full", files, packages, "unverified workspace package identity or validation scripts: " + file);
     if (!current || !previous || current.name !== previous.name
       || current.hasTestScript !== previous.hasTestScript || current.hasTypecheckScript !== previous.hasTypecheckScript
       || !current.scriptsFingerprint || !previous.scriptsFingerprint) {
-      return buildScope("full", files, packages, `unverified workspace package identity or validation scripts: ${file}`);
+      if (manifestChanged) return unverified();
+      continue;
     }
-    if (current.scriptsFingerprint !== previous.scriptsFingerprint) {
-      const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
-        directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
-        previousFiles: previous.files, changedFiles: scopeFiles });
-      if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
-        return buildScope("full", files, packages, `unverified workspace package identity or validation scripts: ${file}`);
-      }
-      validationManifests.add(file);
-      for (const input of validation.testInputs) validationInputs.add(input);
+    const scriptsChanged = current.scriptsFingerprint !== previous.scriptsFingerprint;
+    if (!scriptsChanged && !testConfigDirectories.has(directory)) continue;
+    const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
+      directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
+      previousFiles: previous.files, changedFiles: scopeFiles, previousTestConfigs: input.baseTestConfigs });
+    if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
+      if (scriptsChanged) return unverified();
+      continue;
     }
+    if (scriptsChanged) validationManifests.add(file);
+    for (const input of validation.testInputs) validationInputs.add(input);
   }
   if (scopedLockfile && input.addedLockImporters.some(directory => !newPackages.has(directory))) {
     return buildScope("full", files, packages, "lockfile changes require verified new workspace importers");
@@ -283,7 +278,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, providerModelCatalog?: boolean, documentationOnly?: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, documentationOnly?: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -634,20 +629,32 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   let files;
   let deletedOutputFiles;
   let basePackageEntries;
+  const baseTestConfigs = new Map();
   let versionChange;
-  let generatedProviderCatalog;
   let addedLockImporters;
+  let catalogWorkflowPinUpdate;
   if (args.files) {
     files = JSON.parse(args.files);
   } else if (eventName === "pull_request" && args.base && args.head) {
-    const git = (argv) => execFileSync("git", argv, { cwd: repositoryRoot, encoding: "utf8" });
+    const git = (argv, encoding = "utf8") => execFileSync("git", argv, { cwd: repositoryRoot, encoding });
     const base = git(["merge-base", args.base, args.head]).trim();
     files = git(["diff", "--no-renames", "--name-only", "-z", base, args.head, "--"]).split("\0").filter(Boolean);
+    if (args["force-full"] !== "true") {
+      catalogWorkflowPinUpdate = isCatalogWorkflowPinUpdate({ files, base, head: args.head, git });
+    }
     if (files.some(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY))) {
       deletedOutputFiles = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
         base, args.head, "--", LOCAL_OUTPUT_DIRECTORY]).split("\0").filter(Boolean);
     }
-    if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, base);
+    const changedTestConfigs = files.filter(file => WORKSPACE_TEST_CONFIG.test(file));
+    if (changedTestConfigs.length > 0 || files.some(file => file.endsWith("/package.json"))) {
+      basePackageEntries = discoverPackages(repositoryRoot, base);
+    }
+    for (const file of changedTestConfigs) {
+      if ([base, args.head].every(ref => /^100644 blob /u.test(git(["ls-tree", ref, "--", file])))) {
+        baseTestConfigs.set(file, git(["show", base + ":" + file]));
+      }
+    }
     if (args["force-full"] !== "true" && files.includes(LOCKFILE) && basePackageEntries) {
       const directories = files.filter(file => /^packages\/[a-z0-9-]+\/package\.json$/u.test(file))
         .map(dirname).filter(directory => !basePackageEntries.some(entry => entry.directory === directory));
@@ -658,18 +665,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
     }
     versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
-    if (args["force-full"] !== "true" && /^[a-f0-9]{64}$/u.test(args["catalog-proof"])
-      && files.includes(PROVIDER_MODEL_CATALOG_PATH) && [base, args.head].every(ref =>
-        /^100644 blob /u.test(git(["ls-tree", ref, "--", PROVIDER_MODEL_CATALOG_PATH])))) {
-      const after = git(["show", `${args.head}:${PROVIDER_MODEL_CATALOG_PATH}`]);
-      generatedProviderCatalog = args["catalog-proof"] === providerModelCatalogDigest(after)
-        && isGeneratedProviderModelCatalogRefresh(git(["show", `${base}:${PROVIDER_MODEL_CATALOG_PATH}`]), after);
-    }
+
   } else {
     files = [];
   }
-  const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName,
-    forceFull: args["force-full"] === "true", basePackageEntries, versionChange, generatedProviderCatalog, addedLockImporters });
+  const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName, catalogWorkflowPinUpdate,
+    forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, addedLockImporters });
   if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
     scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });
   }

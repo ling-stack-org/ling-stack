@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest, providerModelCatalogVersion, renderProviderModelCatalog } from "../provider-model-catalog-format.mjs";
 import { classifyChangedFiles } from "./classify-scope.mjs";
 
 type ScopeInput = Parameters<typeof classifyChangedFiles>[0];
@@ -14,6 +13,7 @@ const packageEntries: PackageEntry[] = [
   entry("@ling-stack/plugin-sdk", "packages/plugin-sdk", [], true, true),
   entry("@ling-stack/core", "packages/core", ["@ling-stack/contracts", "@ling-stack/plugin-sdk"], true, true),
   entry("@ling-stack/providers", "packages/providers", ["@ling-stack/plugin-sdk"], true, true),
+  entry("@ling-stack/runner-pi", "packages/runner-pi", ["@ling-stack/contracts"], true, true),
   entry("@ling-stack/daemon", "packages/daemon", ["@ling-stack/core", "@ling-stack/providers"], true, true),
   entry("@ling-stack/cli", "packages/cli", ["@ling-stack/daemon"], true, true),
   entry("@ling-stack/ui-react", "packages/ui-react", [], true, true),
@@ -23,6 +23,7 @@ const packageEntries: PackageEntry[] = [
   entry("@ling-stack/desktop", "apps/desktop", ["@ling-stack/ui-react"], true, true),
   entry("@ling-stack/mobile", "apps/mobile", [], true, true),
 ];
+const coreValidationBuildPackages = ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/runner-pi"];
 
 function entry(name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean): PackageEntry {
   return { name, directory, dependencies, hasTestScript, hasTypecheckScript, scriptsFingerprint: "[]" };
@@ -57,7 +58,7 @@ test("repository presentation assets use the fast lane and compose with source e
 test("package-owned image resources stay with their package without selecting the full lane", () => {
   const scope = classify(["packages/core/assets/provider-logo.png"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.deepEqual(scope.packages, ["@ling-stack/cli", ...coreValidationBuildPackages]);
   assert.equal(scope.dependencyPolicy, false);
 });
 
@@ -201,7 +202,7 @@ test("package-local manifests and tooling configurations select their own consum
   }
   const core = classify(["packages/core/package.json"]);
   assert.equal(core.mode, "affected");
-  assert.deepEqual(core.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.deepEqual(core.packages, ["@ling-stack/cli", ...coreValidationBuildPackages]);
   assert.equal(core.daemon, true);
   assert.equal(core.dependencyPolicy, true);
   const desktop = classify(["apps/desktop/package.json"]);
@@ -272,8 +273,21 @@ test("mixed changes union all affected packages without disabling a dependency l
 test("core changes include daemon, CLI, and Web consumers", () => {
   const scope = classify(["packages/core/src/index.ts"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.deepEqual(scope.packages, ["@ling-stack/cli", ...coreValidationBuildPackages]);
   assert.equal(scope.daemon, true);
+});
+
+test("Core test changes build cross-package fixtures and run only Core validation", () => {
+  const scope = classify(["packages/core/test/provider-configuration-snapshot.test.ts"]);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, coreValidationBuildPackages);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+  assert.deepEqual(scope.daemonPlatforms, []);
+  assert.equal(scope.linuxContract, false);
+  assert.equal(scope.macosNative, false);
 });
 
 test("daemon source changes include CLI but do not pull Web", () => {
@@ -374,10 +388,9 @@ function repositoryFixture(t: TestContext) {
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
   copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
-  copyFileSync(new URL("../provider-model-catalog-format.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-format.mjs"));
-  copyFileSync(new URL("../provider-model-catalog-normalization.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-normalization.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
   copyFileSync(new URL("./secret-scan.mjs", import.meta.url), join(root, "scripts/ci/secret-scan.mjs"));
+  copyFileSync(new URL("./workflow-scope.mjs", import.meta.url), join(root, "scripts/ci/workflow-scope.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
   copyFileSync(new URL("../release/desktop-release.mjs", import.meta.url), join(root, "scripts/release/desktop-release.mjs"));
   copyFileSync(new URL("./package-validation-scope.mjs", import.meta.url), join(root, "scripts/ci/package-validation-scope.mjs"));
@@ -429,6 +442,59 @@ test("only a verified documentation history can skip the common job and merge ga
   const reverted = repo.classify(base);
   assert.equal(reverted.mode, "docs");
   assert.equal(reverted.documentationOnly, false);
+});
+
+test("catalog App SHA updates select Common and retain the full fallback for workflow changes", t => {
+  const repo = repositoryFixture(t);
+  const first = ".github/workflows/sync-translation-catalogs.yml";
+  const second = ".github/workflows/translate-pr-catalogs.yml";
+  const baseline = new Map([first, second].map(file => [file, readFileSync(new URL("../../" + file, import.meta.url), "utf8")]));
+  const update = (source: string) => source.replace(/(uses: actions\/create-github-app-token@)[a-f0-9]{40}(?: # v\d+\.\d+\.\d+)?/u,
+    (_, prefix) => prefix + "3".repeat(40) + " # v3.99.0");
+  for (const [file, source] of baseline) repo.write(file, source);
+  const base = repo.commit();
+  for (const [file, source] of baseline) repo.write(file, update(source));
+  repo.commit();
+
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.documentationOnly, undefined);
+  assert.deepEqual(scope.files, [first, second]);
+  assert.deepEqual(scope.packages, []);
+  assert.deepEqual(scope.testPackages, []);
+  assert.deepEqual(scope.typecheckPackages, []);
+  assert.deepEqual(scope.daemonPlatforms, []);
+  assert.equal(scope.dependencyPolicy, false);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.macosNative, false);
+  assert.match(scope.reason, /catalog App action pin update/u);
+  assert.equal(repo.classify(base, "--force-full=true").mode, "full");
+  assert.equal(classify([first, second]).mode, "full");
+
+  const pinUpdate = repo.git("rev-parse", "HEAD");
+  const updated = update(baseline.get(second)!);
+  for (const different of [
+    updated.replace("permission-contents: write", "permission-contents: read"),
+    updated.replace("contents: read", "contents: write"),
+    updated.replace("pull_request:", "pull_request_target:"),
+    updated.replace("actions/create-github-app-token@", "fork/create-github-app-token@"),
+    updated.replace(/3{40} # v3\.99\.0/u, "v3"),
+    baseline.get(second)!.replace(/# v\d+\.\d+\.\d+/u, "# v3.99.0"),
+  ]) {
+    repo.write(second, different);
+    repo.commit();
+    assert.equal(repo.classify(base).mode, "full");
+  }
+
+  repo.write(second, updated);
+  repo.write("packages/core/src/probe.ts", "export {};\n");
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+
+  repo.git("rm", "--", "packages/core/src/probe.ts", second);
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+  assert.equal(repo.classify(pinUpdate).mode, "full");
 });
 
 test("new standard workspace packages select their own CI even with an isolated lock importer", t => {
@@ -562,71 +628,11 @@ test("the real package graph keeps Web's CLI and catalog consumers without build
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
 });
 
-test("Git verifies provider catalog data before selecting focused Core validation", t => {
-  const repo = repositoryFixture(t);
-  const render = (id: string, providerId = "openai", capabilities = ["chat"], updatedAt = "2026-11-20") => {
-    const records = [{ providerId: "google", id: "tts", input: ["text"], capabilities: [] }, { providerId, id, capabilities, updatedAt }];
-    return renderProviderModelCatalog({ records, version: providerModelCatalogVersion(records),
-      generatedAt: "2026-11-21T00:00:00.000Z" });
-  };
-  repo.write(PROVIDER_MODEL_CATALOG_PATH, render("baseline"));
-  const base = repo.commit();
-  const refreshed = render("candidate");
-  repo.write(PROVIDER_MODEL_CATALOG_PATH, refreshed);
-  repo.write("docs/ci.md", "# Catalog refresh\n");
-  repo.commit();
-  const proof = (source: string) => `--catalog-proof=${providerModelCatalogDigest(source)}`;
-  const scope = repo.classify(base, proof(refreshed));
+test("bundled provider catalog edits retain their transitive consumers", () => {
+  const scope = classify(["packages/core/src/provider-model-catalog.generated.ts"]);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
-  assert.deepEqual(scope.testPackages, []);
-  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
-  assert.equal(scope.providerModelCatalog, true);
-  assert.equal(scope.dependencyPolicy, false);
-  assert.equal(scope.assurance, false);
-  assert.equal(scope.daemon, false);
-  assert.deepEqual(scope.daemonPlatforms, []);
-  assert.equal(scope.macosNative, false);
-  assert.match(scope.reason, /generated provider model catalog/u);
-  assert.equal(repo.classify(base).providerModelCatalog, undefined);
-  assert.equal(repo.classify(base, proof(render("baseline"))).providerModelCatalog, undefined);
-
-  const bulkRecords = ["new-a", "new-b", "new-c"].map(id => ({ providerId: "openai", id, capabilities: ["chat"] }));
-  const bulkRefresh = renderProviderModelCatalog({ records: bulkRecords, version: providerModelCatalogVersion(bulkRecords),
-    generatedAt: "2026-11-21T00:00:00.000Z" });
-
-  for (const candidate of [
-    refreshed.replace('"candidate"', '"digest-mismatch"'),
-    refreshed.replace("export const providerModelCatalogRecords", "void 0;\nexport const providerModelCatalogRecords"),
-    render("candidate", "untrusted-provider"),
-    render("candidate", "openai", ["chat", "web_search"]),
-    render("candidate", "openai", []),
-    render("baseline", "openai", []),
-    refreshed.replace('"updatedAt": "2026-11-20"', '"updatedAt": "2026-11-21"'),
-    render("candidate", "openai", ["chat"], "2026-11-31"),
-    render("candidate", "openai", ["chat"], "2026-11-22"),
-    bulkRefresh,
-  ]) {
-    repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
-    repo.commit();
-    const rejected = repo.classify(base, proof(candidate));
-    assert.equal(rejected.providerModelCatalog, undefined);
-    assert.equal(rejected.daemon, true);
-    assert.equal(rejected.assurance, true);
-  }
-});
-
-test("provider catalog refreshes mixed with resolver source retain transitive consumers", () => {
-  const scope = classify([
-    PROVIDER_MODEL_CATALOG_PATH,
-    "packages/core/src/provider-model-catalog.ts",
-  ], { generatedProviderCatalog: true });
-  assert.equal(scope.mode, "affected");
-  for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli"]) {
-    assert.ok(scope.packages.includes(name), name);
-  }
+  for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli"]) assert.ok(scope.packages.includes(name), name);
   assert.equal(scope.daemon, true);
-  assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
   assert.equal(scope.assurance, true);
 });
 
@@ -725,7 +731,7 @@ test("a verified Node/TypeScript test migration retains complete owner validatio
   repo.commit();
   const scope = repo.classify(repo.base);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.packages, coreValidationBuildPackages);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
   assert.equal(scope.dependencyPolicy, false);
@@ -743,7 +749,7 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   repo.commit();
   const scope = repo.classify(repo.base);
   assert.equal(scope.mode, "affected");
-  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.packages, coreValidationBuildPackages);
   assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
   assert.equal(scope.dependencyPolicy, false);
@@ -940,13 +946,13 @@ test("workspace dependency builds and the owning package build closure retain pa
     baselineTypecheck: "corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
   });
   repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
-  for (const name of ["@ling-stack/core", "@ling-stack/contracts"]) {
+  for (const name of ["@ling-stack/core", "@ling-stack/contracts", "@ling-stack/daemon"]) {
     repo.manifest.scripts.typecheck = "corepack pnpm --filter " + name + "... run build:ci && corepack pnpm typecheck:ci";
     repo.saveManifest();
     repo.commit();
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "affected");
-    assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+    assert.deepEqual(scope.packages, coreValidationBuildPackages);
     assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
     assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
     assert.equal(scope.dependencyPolicy, false);
@@ -995,6 +1001,81 @@ test("validation migrations can reuse an unchanged isolated TypeScript configura
   assert.equal(scope.daemon, false);
 });
 
+test("isolated test config compiler options stay scoped with and without a test migration", t => {
+  const baselineConfig = {
+    extends: "./tsconfig.json",
+    compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", noEmit: true, target: "ES2022" },
+    include: ["test/**/*.ts"],
+  };
+  for (const { migrating, options } of [
+    { migrating: true, options: { target: "ES2024" } },
+    { migrating: false, options: { allowImportingTsExtensions: true, lib: ["ES2022"] } },
+  ]) {
+    const repo = validationMigration(t, { baselineConfig });
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+    const base = migrating ? repo.base : repo.commit();
+    const change = { ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, ...options } };
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(change));
+    repo.commit();
+    const scope = repo.classify(base);
+    assert.equal(scope.mode, "affected");
+    assert.deepEqual(scope.packages, coreValidationBuildPackages);
+    assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+    assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+    assert.equal(scope.dependencyPolicy, false);
+    assert.equal(scope.assurance, false);
+    assert.equal(scope.daemon, false);
+  }
+});
+
+test("test config discovery and module boundaries retain broader validation", t => {
+  const baselineConfig = {
+    extends: "./tsconfig.json",
+    compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", noEmit: true, target: "ES2022" },
+    include: ["test/**/*.ts"],
+  };
+  for (const change of [
+    { ...baselineConfig, include: ["src/**/*.ts", "test/**/*.ts"] },
+    { ...baselineConfig, files: ["test/probe.test.ts"] },
+    { ...baselineConfig, exclude: ["test/probe.test.ts"] },
+    { ...baselineConfig, references: [{ path: "../contracts" }] },
+    { ...baselineConfig, extends: "./tsconfig.other.json" },
+    { ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, moduleResolution: "Bundler" } },
+    { ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, noEmit: false } },
+  ]) {
+    const repo = validationMigration(t, { baselineConfig });
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+    const base = repo.commit();
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(change));
+    repo.commit();
+    const scope = repo.classify(base);
+    assert.equal(scope.reason, "workspace source change with transitive consumers", JSON.stringify(change));
+    assert.ok(scope.testPackages.includes("@ling-stack/daemon"), JSON.stringify(change));
+  }
+});
+
+test("an existing test config referenced from another workspace keeps its source scope", t => {
+  const baselineConfig = { compilerOptions: { noEmit: true }, include: ["test/**/*.ts"] };
+  const repo = validationMigration(t, { baselineConfig });
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+  const consumerConfig = "packages/daemon/tsconfig.json";
+  repo.write(consumerConfig, JSON.stringify({ extends: "../core/tsconfig.test" }));
+  const base = repo.commit();
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify({
+    ...baselineConfig, compilerOptions: { ...baselineConfig.compilerOptions, allowImportingTsExtensions: true },
+  }));
+  repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.reason, "workspace source change with transitive consumers");
+  assert.ok(scope.testPackages.includes("@ling-stack/daemon"));
+
+  repo.write(consumerConfig, JSON.stringify({ extends: "@ling-stack/core/tsconfig.test.json" }));
+  const consumerBase = repo.commit();
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+  repo.commit();
+  assert.ok(repo.classify(consumerBase).testPackages.includes("@ling-stack/daemon"));
+});
+
 test("a validation migration mixed with source or production config still selects transitive consumers", t => {
   for (const file of ["packages/core/src/probe.ts", "packages/core/tsconfig.json"]) {
     const repo = validationMigration(t);
@@ -1027,7 +1108,7 @@ test("opaque commands, build hooks, metadata changes and incomplete test discove
     repo => { repo.manifest.scripts["test:ci"] = "echo omitted"; },
     repo => { repo.manifest.scripts.typecheck = "echo omitted"; },
     repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/daemon build && corepack pnpm typecheck:ci"; },
-    repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/daemon... run build:ci && corepack pnpm typecheck:ci"; },
+    repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/mobile... run build:ci && corepack pnpm typecheck:ci"; },
     repo => {
       repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
       repo.manifest.scripts.typecheck = "corepack pnpm test && corepack pnpm typecheck:ci";

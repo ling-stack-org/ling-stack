@@ -24,6 +24,7 @@ import type { ChannelTurnDispatchWorkerRegistry } from "./features/channels/chan
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import type { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
+import type { ProviderModelCatalogService } from "./features/providers/model-catalog-service.js";
 import type { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import type { UserInputDeliveryWorker } from "./features/runs/user-input-delivery-worker.js";
 import type { NotificationHub } from "./features/notifications/hub.js";
@@ -158,6 +159,8 @@ export interface ExternalSecretStore extends SecretResolver {
 }
 
 export interface DaemonDependencies {
+  /** Trusted embedding/test seam for the installation-local public model catalog. */
+  readonly providerModelCatalog?: ProviderModelCatalogService;
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
@@ -250,6 +253,7 @@ export interface DaemonContext {
   readonly imDestinations: ImDestinationRegistry;
   readonly providerStartupRefresh: ProviderStartupRefreshService;
   readonly providerImportPreflight: ProviderImportPreflightService;
+  readonly providerModelCatalog: ProviderModelCatalogService;
   readonly startupState: StartupStateRegistry;
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;

@@ -17,6 +17,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 - 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
 - 已有包的源码和生产配置按新旧依赖边的并集选择本包和消费者。只迁移测试入口且生产清单字段、构建脚本和生命周期 hook 均不变时，CI 跑本包的完整测试、类型检查及共享测试夹具的实际使用方。分类器会核对 Node 测试发现、no-emit TypeScript 配置和已知包装命令，保留基线的测试文件和源代码类型检查。任意命令、名称过滤、未核验的脚本变化和未知路径回退全量。根清单的纯版本变更按版本消费者运行，共享构建配置、依赖解析、补丁和 CI 策略保留完整回归。
   本地 `test` 和 `typecheck` 可以先构建声明的工作区依赖和[登记的测试构建依赖](../../scripts/ci/package-validation-scope.mjs)。CI 只构建一次依赖闭包，再直接执行选择到的 `typecheck:ci` 和 `test:ci`。
+- 包内已有的 `tsconfig.test.json` 或 `tsconfig.tests.json` 仅修改 `target`、`lib` 或 `allowImportingTsExtensions` 时，分类器会比较 Git 基线和当前配置。两侧都须是接入包类型检查的独立 no-emit 测试配置，且测试发现、继承和模块解析设置一致。`target` 变更还要求显式设置 `module` 和 `moduleResolution`。符合条件时按包内测试选择范围，其他配置改动沿用源码或全量验证规则。
 
 - 两份固定发布审查清单 `native/office-local/reviewed-packaged-source-v1.json`、`native/sandbox/reviewed-codesign-source-v1.json` 选择 Daemon 构建依赖图及现有 macOS 任务中的 codesign publication、Office publication、Office daemon source-input 三个完整契约文件，不选择无关包或 Daemon 的类型检查和测试分片。`macos-native` 仍要求该任务成功；`macos-helper`、`native-release` 分别选择真实 helper smoke 和发布契约步骤。清单单独变化不编译 helper，混合原生源码改动保留两者；未识别的 Office 路径仍全量，Sandbox 目录其他文件保留 Daemon 验证与真实 helper smoke。全量回归保留原有真实 helper smoke，PR 同时修改审查清单时还执行发布契约。契约核对清单与固定源码 hash，并用明确的模拟编译／签名 fixture 检查发布边界，不生成审批记录，也不代表真实签名或打包验收。复用任务不增加完整矩阵的 runner 数。
 - [工作流](../../.github/workflows/ci.yml)由 Pull Request、手动运行和每日定时触发，没有 `main` push 触发。定时为每天 UTC 03:17，即北京时间 11:17；手动和定时运行始终走现有完整 Linux/macOS 矩阵，即使当天没有提交也执行。GitHub 定时任务可能排队或延迟，不保证准点启动。没有启用成功证据去重或每日 Linux 单独分档。
@@ -37,6 +38,8 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 
 Core 单独选择时使用八个 Linux shard，与 Daemon 同跑时使用五个；每个使用两个文件 worker、30 分钟队列上限，属于既有 `unit-tests` 必需矩阵。普通 packages 入口排除 Core 与 Daemon，避免重复执行；只有存在其他被选测试包时才生成该入口。仅改 Core 测试时生成八个 Core 入口，且不生成空 packages 入口；仅改 Daemon 测试时没有 Linux unit 入口。
+
+Core 的挂起恢复测试使用 Daemon 和 Runner Pi 的构建产物。Core 测试执行前会构建这两个依赖，测试矩阵仍根据改动范围选择。
 
 [分片计划](../../scripts/ci/test-shard-plan.mjs)在 scope 阶段统一生成并上传 `ci-test-plan`，各 shard 与新发现的 `test/*.test.mjs`、`test/*.test.ts` 核对完整且恰好一次的分配。计时提示仅影响外层分片和内部队列顺序；缺失或不可用时回退源码大小／类别估算，不减少覆盖。每文件日志及 JSON 计时报告上传为 `ci-test-report-core-*`／`ci-test-report-daemon-*`／`ci-test-report-daemon-linux-*`；汇总验证全部计划文件恰好通过一次后，仅默认分支运行可发布计时缓存。无关策略失败不阻止完整测试报告的计时保存，但仍使质量门失败；PR 不能发布计时基线。这些计时不是跳过测试的成功证据。
 
@@ -135,7 +138,7 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 | `.github/ISSUE_TEMPLATE/**` | 公共检查 | 修改 CI 工作流本身仍全量 |
 | 已登记的文档／检查脚本 | 对应脚本、其测试和公共检查 | 未登记脚本、分类器、任务执行器仍全量 |
 | 普通包源码 | 所属包、直接和间接使用方 | 构建继续补齐依赖闭包 |
-| 生成的 Provider 模型目录 `packages/core/src/provider-model-catalog.generated.ts` | 生成格式及版本摘要、Core 构建、类型检查和目录相关测试 | 目录格式无法验证，或同时改动解析器、生成器及其他源码时，按依赖范围选择任务 |
+| 内置 Provider 模型目录 `packages/core/src/provider-model-catalog.generated.ts` | 按 Core 源码依赖范围选择构建、测试及其消费者 | 不再对自动生成目录 PR 另设收窄规则 |
 | 测试与共享夹具 | 所属包和夹具使用方 | 无法识别共享关系时扩大范围 |
 | `native/` 和已登记原生接线 | native、相关 Daemon／Host 测试与平台契约 | 涉及共享启动、权限、运行时契约时扩大；未知 native 路径仍全量 |
 | 包内 TypeScript／构建配置、可核验且全部 scripts 不变的包 manifest（已实现） | 所属包及消费者；manifest 另选依赖策略 | manifest 身份变化、未识别的 scripts 变化或无法核验时全量；新旧依赖边并集不能丢失消费者 |

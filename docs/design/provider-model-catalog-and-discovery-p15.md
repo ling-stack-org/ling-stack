@@ -1,6 +1,6 @@
 # P15 Provider Model Catalog And Discovery
 
-Status: Implemented and verified
+Status: superseded for catalog synchronization by [Runtime Provider Model Catalog](runtime-provider-model-catalog.md)
 Owner: Provider platform
 Last verified: 2026-09-22
 
@@ -83,37 +83,10 @@ only fields used by Ling:
 - context and output-token limits;
 - upstream last-updated date.
 
-The initial source is the MIT-licensed `models.dev` catalog. A repository workflow runs
-the generator on a schedule, opens or updates a pull request, and requests auto-merge
-after the protected checks pass. It never commits to `main` directly and never
-auto-enables runtime adapters.
-
-The daily workflow runs at 10:23 Asia/Shanghai (`23 2 * * *` UTC), only from `main`.
-It uses a dedicated GitHub App installation token for both the catalog branch push
-and PR creation so PR events start CI automatically. The built-in `GITHUB_TOKEN`
-has read-only contents access. An organization owner or App manager must complete
-this one-time setup; repository admin access alone is insufficient:
-
-1. Create an organization-owned private GitHub App with only Contents and Pull requests
-   read/write repository permissions. No webhook, organization permission, Actions
-   write permission or branch-protection bypass is needed.
-2. Install it for the selected `ling-stack` repository only and generate its PEM RSA
-   private key. Keep the key out of source control and workflow logs.
-3. Enable the repository's **Allow auto-merge** setting. Keep the protected `main`
-   ruleset enabled so the required CI gate and resolved-review-thread policy remain
-   mandatory; do not grant the App a branch-protection bypass.
-4. Set repository variable `MODEL_CATALOG_APP_CLIENT_ID` to the App's Client ID and
-   repository secret `MODEL_CATALOG_APP_PRIVATE_KEY` to the private key. Merge the
-   workflow change through normal review, then dispatch it from `main` and verify
-   that its generated PR starts CI without a manual workflow approval, enters
-   auto-merge, and merges only after the protected checks pass.
-
-Missing or invalid configuration fails before token creation or any branch write;
-there is no built-in-token or personal-token fallback. Tokens are restricted to the
-current repository and revoked after the job. Normal CI and main branch protection
-still apply. The workflow requests squash auto-merge for only the exact, same-repository
-catalog branch PR authored by the configured App, pins the expected head commit, and
-never uses an administrator bypass.
+The catalog source remains the MIT-licensed `models.dev` catalog. The daemon refreshes
+normalized metadata into local state and retains a bundled offline bootstrap. It does not
+synchronize catalog data into the repository. Runtime behavior and acceptance are specified
+in [Runtime Provider Model Catalog](runtime-provider-model-catalog.md).
 
 ### Connector releases
 
@@ -244,11 +217,9 @@ The normal-conversation thinking slider shows only declared selectable levels, w
   with a catalog-only model list.
 - Empty provider result: show the existing empty result state; media routes may use their
   reviewed built-in candidates.
-- Catalog generation failure: fail CI and leave the previous snapshot unchanged.
-- Catalog snapshot missing or invalid: build/test fails; runtime does not silently fetch
-  executable code or accept malformed fields.
+- Catalog refresh or validation failure: retain the last valid local snapshot or bundled bootstrap.
 - Catalog stale: continue with provenance and conservative unknown-model handling.
-- Duplicate provider/model records: generator fails unless aliases resolve them explicitly.
+- Duplicate provider/model records: reject the refresh.
 
 ## Security And Privacy
 
@@ -257,12 +228,12 @@ The normal-conversation thinking slider shows only declared selectable levels, w
   provider preset and the provider kind, provider id, API protocol, Base URL and auth
   mode still match the saved connection. Changed connection details require saving or
   entering the key again before discovery.
-- Catalog synchronization runs in CI and does not receive user credentials.
-- The generated file contains data only and is committed for review.
+- Runtime catalog requests do not receive user credentials.
+- The local cache contains data only; the bundled bootstrap is reviewed with the release.
 - Generated media capabilities are ignored. Generation authority remains in the local
   adapter allowlist.
 - Remote records cannot change Base URL, headers, transport, permissions or enabled state.
-- The workflow opens a PR and never pushes catalog changes directly to `main`.
+- Catalog refresh never writes to the source repository.
 
 ## Acceptance
 
@@ -273,7 +244,7 @@ The normal-conversation thinking slider shows only declared selectable levels, w
 - An unknown model remains conservative and can still be manually imported.
 - Discovery responses expose fetch time and catalog provenance without secrets.
 - The model editor shows catalog freshness inside details and does not add a new card.
-- Catalog generation is deterministic, schema checked and PR based.
+- Runtime catalog refresh is bounded, schema checked and persisted locally.
 - Existing provider presets, checks, imports, defaults and generation adapters do not regress.
 
 ## Verification Record
