@@ -52,6 +52,9 @@ patchedDependencies:
   image-size@2.0.4:
     hash: 4045ad5d2de4ed47956f4f703fa65e6328c367e3e1acff969728cbb50b29187b
     path: patches/image-size@2.0.4.patch
+  react-native-webrtc@155.0.1:
+    hash: 3573c9b3abf11ee8737a0f15f37e2196eed39f97383d67c96943c8cd7eebb25d
+    path: patches/react-native-webrtc@155.0.1.patch
   sprintf-js@1.0.3:
     hash: bd6495e712b47ec612cde7288449c45ab0c719717b423e6a94b693e297bbb452
     path: patches/sprintf-js@1.0.3.patch
@@ -230,7 +233,7 @@ importers:
         version: 4.30.1(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
       react-native-webrtc:
         specifier: 155.0.1
-        version: 155.0.1(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))
+        version: 155.0.1(patch_hash=3573c9b3abf11ee8737a0f15f37e2196eed39f97383d67c96943c8cd7eebb25d)(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0))
     devDependencies:
       expo-doctor:
         specifier: 1.21.8
@@ -13288,7 +13291,7 @@ snapshots:
       react-native: 0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0)
       warn-once: 0.1.1
 
-  react-native-webrtc@155.0.1(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0)):
+  react-native-webrtc@155.0.1(patch_hash=3573c9b3abf11ee8737a0f15f37e2196eed39f97383d67c96943c8cd7eebb25d)(react-native@0.88.1(@babel/core@7.29.7)(@types/react@19.3.0)(react@19.3.0)):
     dependencies:
       base64-js: 1.5.1
       debug: 4.3.4

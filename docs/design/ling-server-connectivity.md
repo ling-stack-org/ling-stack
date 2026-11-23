@@ -60,7 +60,7 @@ flowchart LR
 | Ling Server control plane | Operator setup, enrolled installation and public-key registry, signed pair projections, presence, short-lived candidate exchange, and relay admission. |
 | STUN and TURN | Use a self-hosted coturn deployment for address discovery and relay, with endpoint-restricted network policy, expiring credentials, and allocation limits. |
 | Endpoint transport | Use WebRTC ICE, DTLS and SCTP, with a reliable ordered DataChannel. Candidate selection and peer authentication run on the participating devices. |
-| PC and Mobile integrations | Pion WebRTC in a bundled PC worker and a native libwebrtc-backed React Native module on Mobile are the library candidates. The PC worker has a private typed channel to the Gateway route adapter. iOS and Android use a native build. Verify the concrete libraries in the shipped runtimes. |
+| PC and Mobile integrations | Pion WebRTC runs in the bundled PC worker and React Native WebRTC runs in the native Mobile build. The PC worker has a private typed channel to the Gateway route adapter. Mobile settings display the authenticated session transport. [Native acceptance evidence](ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity) |
 | Ling application protocol | Reuse the Gateway capability allowlist, signed protocol framing and receipts, and the Remote Client sync state machine. Use D6 and D11 for their device-task and collaboration message families. |
 
 The peer transport adapter presents a connected, message-oriented channel to the

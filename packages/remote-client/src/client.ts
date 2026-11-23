@@ -70,6 +70,7 @@ export interface RemoteDeviceTaskJournalWatchOptions {
 }
 
 type DeviceJournalCursor = Pick<RemoteDeviceTaskJournalCommandV1, "generation" | "afterSequence" | "limit">;
+type RemoteConnectionTransport = "gateway_websocket" | "ling_server_webrtc";
 
 interface DeviceJournalWatch extends RemoteDeviceTaskJournalWatchOptions {
   readonly taskId: string;
@@ -110,6 +111,7 @@ export class RemoteSessionClient {
   private readonly streamSnapshots = new Map<string, string>();
   private readonly deviceJournalWatches = new Map<string, DeviceJournalWatch>();
   private socket?: RemoteMessageChannel;
+  private sessionTransport?: RemoteConnectionTransport;
   private detachSocket?: () => void;
   private authenticationAttempt?: AbortController;
   private connectPromise?: Promise<void>;
@@ -131,6 +133,10 @@ export class RemoteSessionClient {
 
   get state(): RemoteClientState {
     return this.stateValue;
+  }
+
+  get connectionTransport(): RemoteConnectionTransport | undefined {
+    return this.stateValue.connection === "connected" ? this.sessionTransport : undefined;
   }
 
   get activeBinding(): RemoteBindingV1 | undefined {
@@ -686,6 +692,7 @@ export class RemoteSessionClient {
     this.streamSnapshots.clear();
     this.controlStreamId = undefined;
     this.socket = socket;
+    this.sessionTransport = "route" in authentication ? "ling_server_webrtc" : "gateway_websocket";
     this.expectedSessionId = "proof" in authentication ? authentication.proof.candidateSessionId : undefined;
     let challengeRoute = "route" in authentication ? authentication.route : undefined;
     const ready = new Promise<void>((resolve, reject) => {
@@ -1107,6 +1114,7 @@ export class RemoteSessionClient {
     this.detachSocket?.();
     this.detachSocket = undefined;
     this.socket = undefined;
+    this.sessionTransport = undefined;
     this.currentSessionId = undefined;
     this.expectedSessionId = undefined;
     this.rejectPendingCommands(closeMessage);
@@ -1173,6 +1181,7 @@ export class RemoteSessionClient {
     this.detachSocket = undefined;
     const socket = this.socket;
     this.socket = undefined;
+    this.sessionTransport = undefined;
     this.currentSessionId = undefined;
     this.expectedSessionId = undefined;
     this.connectPromise = undefined;

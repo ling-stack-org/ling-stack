@@ -241,12 +241,15 @@ test("the mixed transport uses a verified peer without calling Gateway fallback"
   const connected = client.connect();
   await setImmediate();
   const challenge = fixture.challenge(fixture.route);
+  assert.equal(client.connectionTransport, undefined);
   peer.receive(challenge);
   await setImmediate();
   peer.receive(ready(challenge.candidateSessionId));
   await connected;
   assert.equal(client.state.connection, "connected");
+  assert.equal(client.connectionTransport, "ling_server_webrtc");
   client.disconnect();
+  assert.equal(client.connectionTransport, undefined);
 });
 
 test("an unavailable peer falls back to the paired Gateway authentication", async () => {
@@ -292,6 +295,7 @@ test("an unavailable peer falls back to the paired Gateway authentication", asyn
   events.emit("message", { data: JSON.stringify(ready(challenge.candidateSessionId)) });
   await connected;
   assert.equal(client.state.connection, "connected");
+  assert.equal(client.connectionTransport, "gateway_websocket");
   client.disconnect();
 });
 

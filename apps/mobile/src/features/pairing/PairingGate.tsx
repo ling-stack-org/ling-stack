@@ -119,7 +119,7 @@ function PairingProgressScreen() {
           {awaiting ? "请在 PC 上确认" : remote.phase === "initial_sync" ? "正在同步 PC 会话…" : "正在验证安全连接…"}
         </Text>
         <Text style={styles.description}>
-          {awaiting ? "确认“我的 iPhone”后，这里会自动进入会话。" : "正在确认 Gateway 身份和设备密钥。"}
+          {awaiting ? "在 PC 上确认手机名称后，这里会自动进入会话。" : "正在确认 Gateway 身份和设备密钥。"}
         </Text>
         {awaiting && seconds !== undefined ? <Text style={styles.countdown}>配对码将在 {formatCountdown(seconds)} 后过期</Text> : null}
         {remote.pendingPairing ? (

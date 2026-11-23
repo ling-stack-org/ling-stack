@@ -11,6 +11,7 @@ import {
 } from "@ling-stack/remote-client";
 import { fetch as expoFetch } from "expo/fetch";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Platform } from "react-native";
 
 import {
   mobileRemoteBindingStore,
@@ -98,7 +99,7 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
     setRemoteState(createInitialRemoteClientState());
     setError(draftCleanupFailed
       ? "PC 已撤销绑定，但本地草稿清理未完成；请重新绑定前重试。"
-      : "PC 已撤销这台 iPhone，请重新扫描配对码。");
+      : "PC 已撤销这台手机，请重新扫描配对码。");
     setPhase("welcome");
   };
 
@@ -167,7 +168,9 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
         clock: systemRemoteClock,
       });
       try {
-        const started = await pairing.begin(encodedQr, { displayName: "我的 iPhone" });
+        const platform = Platform.OS === "android" ? "android" : "ios";
+        const displayName = platform === "android" ? "我的 Android 手机" : "我的 iPhone";
+        const started = await pairing.begin(encodedQr, { displayName, platform });
         if (generation !== pairingGeneration.current) {
           return;
         }

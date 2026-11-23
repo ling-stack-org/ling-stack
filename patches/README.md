@@ -17,9 +17,16 @@ Reviewed baseline: `fd39ec302cbae759e4d4a866172a804e1bc5abfd`, 2026-10-12.
 | `image-size@2.0.4` | Retain strict ICNS header/entry bounds from the old local patch in both CJS and ESM | PPTX dependency tree | Upstream equivalent boundary validation passing image regressions |
 | `minimatch@9.0.9`, `minimatch@10.2.6` | [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249): bound globstar-parent preprocessing and quadratic deduplication | Pi SDK, Electron builder/universal and Expo CLI | Compatible upstream release containing both limits, passing both module-format and consumer regressions |
 | `glob@11.1.0`, `glob@13.0.6` | [GHSA-3g3m-2fjr-6pw4](https://github.com/advisories/GHSA-3g3m-2fjr-6pw4): stop directory traversal after abort | Expo MCP, Electron/Expo packaging tools | Compatible upstream release containing all walker cancellation/resume fixes, passing abort, stream and ASAR regressions |
+| `react-native-webrtc@155.0.1` | Pin the Android WebRTC AAR and let R8 discard an unused JNI stub whose decoder interface is absent | Ling Mobile Android release | An upstream dependency and consumer-rule combination that builds with R8 and passes the native DataChannel smoke test |
 
 ## Patch Behavior And Provenance
 
+- `react-native-webrtc` resolves `org.jitsi:webrtc:155.0.1` on Android. Its AAR
+  includes `Dav1dDecoderJni` and omits `Dav1dDecoder$Natives`. The broad
+  upstream keep rule forced R8 to retain that stub and report the missing
+  type. The patched rule excludes the stub from the keep set. The R8 usage
+  output lists the discarded class, and the installed APK loads libwebrtc.
+  [Android runtime evidence](../docs/design/ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity)
 - `minimatch`: backport the two preprocessing limits from official commit
   [`77a0f5c4`](https://github.com/isaacs/minimatch/commit/77a0f5c4b80bdc641c3c930a1d9edf5ad2db57f8)
   to both CJS and ESM. Version 10 shares its existing `braceExpandMax` (default

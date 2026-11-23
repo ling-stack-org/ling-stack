@@ -21,6 +21,7 @@ export function LingServerPairingScreen() {
   const [error, setError] = useState<string>();
   const pending = useRef<AbortController>(undefined);
   const saved = binding?.lingServerRoutingProfile;
+  const transport = client?.connectionTransport;
 
   useEffect(() => () => pending.current?.abort(), []);
 
@@ -67,7 +68,9 @@ export function LingServerPairingScreen() {
             <Text accessibilityRole="header" style={styles.heading}>已保存的服务器身份</Text>
             <Text selectable style={styles.value}>{saved.serverOrigin}</Text>
             <Text selectable style={styles.detail}>{saved.applicationKeyFingerprint}</Text>
-            <Text style={styles.detail}>当前连接方式为 PC 网关。</Text>
+            {transport ? <Text style={styles.detail}>
+              {transport === "ling_server_webrtc" ? "已通过 Ling Server 建立 WebRTC 连接" : "已通过 PC 网关连接"}
+            </Text> : null}
           </View>
         ) : null}
         {preview ? (
