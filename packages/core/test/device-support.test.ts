@@ -25,6 +25,7 @@ import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, 
 import { readOwnedDeviceTaskJournal } from "../dist/device-task-event-projector.js";
 import { readOwnedDeviceTaskTrace } from "../dist/device-task-trace.js";
 import { readOwnedDeviceAttemptConformance } from "../dist/device-task-conformance.js";
+import { DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
@@ -955,6 +956,7 @@ test("idempotent retry returns the recorded attempt and a restart preserves an u
 
 test("read-only playbooks execute a bounded capability sequence and reject injected fields", async () => {
   const { store, broker } = brokerFixture();
+  const fabric = new SqliteDeviceFabricStore();
   const playbook = {
     id: "linux-network-diagnosis",
     version: "1.0.0",
@@ -970,18 +972,38 @@ test("read-only playbooks execute a bounded capability sequence and reject injec
   assert.equal(isDevicePlaybookV1(playbook), true);
   assert.equal(isDevicePlaybookV1({ ...playbook, injected: "ignore" }), false);
   store.createTask(task("playbook-task"), now);
+  const graph = {
+    graphId: "playbook-task",
+    revision: 1,
+    status: "planned",
+    createdAt: now,
+    updatedAt: now,
+    nodes: [
+      { nodeId: "linux-network-diagnosis:network", targetDeviceId: profile.device.id, ownerKind: "daemon", ownerId: "daemon-1", capabilityId: readCapability.id, capabilitySnapshotId: "snapshot-1", dependencies: [], status: "planning" },
+      { nodeId: "linux-network-diagnosis:network-repeat", targetDeviceId: profile.device.id, ownerKind: "daemon", ownerId: "daemon-1", capabilityId: readCapability.id, capabilitySnapshotId: "snapshot-1", dependencies: ["linux-network-diagnosis:network"], status: "planning" },
+    ],
+  } as const;
+  fabric.saveTaskGraph(graph);
   const result = await runDeviceReadOnlyPlaybook({
     broker,
     task: task("playbook-task"),
     targetDeviceId: profile.device.id,
     capabilitySnapshotId: "snapshot-1",
     playbook,
+    taskGraph: { coordinator: new DeviceTaskGraphCoordinator({ persistence: fabric, now: () => now }), graph },
     now: () => now,
   });
   assert.equal(result.status, "succeeded");
   assert.equal(result.attempts.length, 2);
   assert.equal(store.getTask("playbook-task")?.status, "succeeded");
+  const settledGraph = fabric.getTaskGraph(graph.graphId);
+  assert.equal(settledGraph?.status, "succeeded");
+  assert.deepEqual(settledGraph?.nodes.map(node => ({ status: node.status, attemptId: node.attemptId })), [
+    { status: "succeeded", attemptId: "playbook-task:network" },
+    { status: "succeeded", attemptId: "playbook-task:network-repeat" },
+  ]);
   store.close();
+  fabric.close();
 });
 
 test("built-in diagnosis playbooks keep their device scope and read-only fallback contract", () => {

@@ -1163,6 +1163,13 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   assert.ok(twin.values.every(value => !Object.hasOwn(value, "reported") && value.hasReported
     && value.reportedEvidence?.taskId === report.taskId
     && report.actions.some(action => action.attemptId === value.reportedEvidence?.attemptId)));
+  const taskGraphResponse = await fetch(new URL(`../fabric/task-graphs/${encodeURIComponent(report.taskId)}`, url), { headers });
+  assert.equal(taskGraphResponse.status, 200);
+  const taskGraph = await taskGraphResponse.json() as { status: string; revision: number; nodes: readonly { status: string; attemptId?: string }[] };
+  assert.equal(taskGraph.status, "succeeded");
+  assert.equal(taskGraph.revision, 11);
+  assert.equal(taskGraph.nodes.length, report.actions.length);
+  assert.ok(taskGraph.nodes.every(node => node.status === "succeeded" && node.attemptId));
 
   const eventsUrl = `http://127.0.0.1:${address.port}/v1/device-support/tasks/${encodeURIComponent(report.taskId)}/events`;
   assert.equal((await fetch(eventsUrl, { headers: { ...headers, "X-Forwarded-For": "192.0.2.42" } })).status, 403);
@@ -1223,6 +1230,11 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   const reports = new SqliteDeviceFabricStore({ databasePath: workspace.paths.databasePath });
   try {
     assert.deepEqual(reports.getConformanceReport(conformance.reportId), conformance);
+    const taskGraph = reports.getTaskGraph(report.taskId);
+    assert.equal(taskGraph?.status, "succeeded");
+    assert.equal(taskGraph?.revision, 11);
+    assert.ok(taskGraph?.nodes.every(node => node.status === "succeeded" && node.attemptId));
+    assert.deepEqual(taskGraph?.nodes.map(node => node.resultRef), taskGraph?.nodes.map(node => `${report.taskId}:${node.nodeId.split(":").at(-1)}:succeeded`));
   } finally {
     reports.close();
   }

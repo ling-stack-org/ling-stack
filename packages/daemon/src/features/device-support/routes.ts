@@ -39,9 +39,10 @@ export async function handleDeviceSupportRoute(
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
   const capabilityLookup = url.pathname === "/v1/device-support/capabilities";
   const fabricGraph = url.pathname === "/v1/device-support/fabric/graph";
+  const fabricTaskGraph = /^\/v1\/device-support\/fabric\/task-graphs\/([^/]+)$/u.exec(url.pathname);
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !deviceOperation && !accessGrantOperation
     && !configuredTargetRoute && !modbusDiagnosis && !homeAssistant && !homeAssistantProposal && !homeAssistantCatalog && !fleetHealth && !capabilityLookup
-    && !fabricGraph) return false;
+    && !fabricGraph && !fabricTaskGraph) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2]!, request, response, runtime);
@@ -82,6 +83,10 @@ export async function handleDeviceSupportRoute(
   }
   if (fabricGraph) {
     writeFabricGraph(request, response, runtime);
+    return true;
+  }
+  if (fabricTaskGraph) {
+    writeFabricTaskGraph(fabricTaskGraph[1]!, request, response, runtime);
     return true;
   }
   if (fleetHealth) {
@@ -179,6 +184,28 @@ function writeFabricGraph(request: IncomingMessage, response: ServerResponse, ru
       twins,
     });
   } catch (error) {
+    writeDeviceOperationError(response, error);
+  }
+}
+
+function writeFabricTaskGraph(encodedGraphId: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime): void {
+  if (request.method !== "GET") {
+    response.setHeader("Allow", "GET");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const graphId = readDeviceReference(encodedGraphId);
+    const graph = runtime.fabricStore.getTaskGraph(graphId);
+    if (!graph || graph.nodes.some(node => runtime.store.getDevice(node.targetDeviceId)?.device.ownerScope !== DEFAULT_WORKSPACE_ID)) {
+      throw new DeviceBrokerError("missing_target", "device task graph is unavailable in this workspace");
+    }
+    writePrivateJson(response, 200, graph);
+  } catch (error) {
+    if (error instanceof DeviceBrokerError && error.code === "missing_target") {
+      writePrivateJson(response, 404, { error: "missing_target" });
+      return;
+    }
     writeDeviceOperationError(response, error);
   }
 }

@@ -176,6 +176,46 @@ export class DeviceTaskGraphCoordinator {
       .filter(node => node.dependencies.every(dependency => nodes.get(dependency)?.status === "succeeded"));
   }
 
+  /**
+   * Durably reserves a ready node for one owner attempt before the adapter is called.
+   * Repeating the same dispatch after a reconnect returns the existing reservation.
+   */
+  dispatchNode(graph: DeviceTaskGraphV1, nodeId: string, attemptId: string): DeviceTaskGraphV1 {
+    if (!attemptId.trim()) throw new DeviceFabricError("invalid_graph", "task graph attempt id is required");
+    const currentGraph = this.#persistence?.getTaskGraph(graph.graphId) ?? graph;
+    if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
+    this.validateGraph(currentGraph);
+    if (currentGraph.cancellationRequestedAt || currentGraph.status === "cancelled") {
+      throw new DeviceFabricError("safety_denied", "task graph dispatch is stopped");
+    }
+    const node = currentGraph.nodes.find(item => item.nodeId === nodeId);
+    if (!node) throw new DeviceFabricError("target_missing", "task graph node is missing");
+    if (node.status === "executing" && node.attemptId === attemptId) return currentGraph;
+    if (node.status !== "planning" && node.status !== "created") {
+      throw new DeviceFabricError("target_changed", "task graph node is not ready for dispatch");
+    }
+    if (!this.readyNodes(currentGraph).some(item => item.nodeId === nodeId)) {
+      throw new DeviceFabricError("target_changed", "task graph node dependencies are not satisfied");
+    }
+    this.acquireOwnerLease(node.targetDeviceId, node.ownerId);
+    try {
+      const next: DeviceTaskGraphV1 = {
+        ...currentGraph,
+        revision: currentGraph.revision + 1,
+        status: "executing",
+        nodes: currentGraph.nodes.map(item => item.nodeId === nodeId
+          ? { ...item, status: "executing" as const, attemptId }
+          : item),
+        updatedAt: this.#now(),
+      };
+      this.#persistence?.saveTaskGraph(next);
+      return next;
+    } catch (error) {
+      this.releaseOwnerLease(node.targetDeviceId, node.ownerId);
+      throw error;
+    }
+  }
+
   acquireOwnerLease(targetDeviceId: string, ownerId: string): void {
     const now = this.#now();
     if (this.#persistence) {

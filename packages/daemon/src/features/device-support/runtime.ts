@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   DeviceAccessGrantV1, DeviceActionApprovalPayload, DeviceCapabilitySnapshotV1, DeviceFleetHealthProjectionV1, DeviceLifecycleStatusV1,
-  DevicePlannerProviderHandoffV1, DeviceProfileV1, JsonValue,
+  DevicePlannerProviderHandoffV1, DeviceProfileV1, DeviceTaskGraphV1, JsonValue,
 } from "@ling-stack/contracts";
 import {
   type ApprovalRequest,
@@ -15,6 +15,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   DeviceBrokerError,
   DeviceFabricError,
+  DeviceTaskGraphCoordinator,
   devicePlaybookNodeId,
   DeviceAccessManager,
   DeviceCapabilityBroker,
@@ -254,6 +255,7 @@ export function createDeviceSupportRuntime(options: {
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
   const edgeJournal = new EdgeRuntimeJournal({ persistence: fabricStore });
+  const taskGraphCoordinator = new DeviceTaskGraphCoordinator({ persistence: fabricStore, now });
   const fleetProjection = new DeviceFleetProjection();
   let localDiagnosis: { readonly key: string; readonly pending: Promise<DevicePlaybookRunResultV1> } | undefined;
   const activeTargets = new Set<string>();
@@ -298,6 +300,7 @@ export function createDeviceSupportRuntime(options: {
       updatedAt: timestamp,
     });
     let proposalId: string;
+    let acceptedGraph: DeviceTaskGraphV1;
     let selectedPlaybook = playbook;
     try {
       const planningInput = (at: string) => {
@@ -336,7 +339,10 @@ export function createDeviceSupportRuntime(options: {
         selectedPlaybook = { ...playbook, steps };
       }
       store.recordPlanningAcceptance(plan.acceptance, plan.source, plan.fallbackReason, providerHandoff);
+      taskGraphCoordinator.validateGraph(plan.acceptance.graph);
+      fabricStore.saveTaskGraph(plan.acceptance.graph);
       proposalId = plan.acceptance.proposalId;
+      acceptedGraph = plan.acceptance.graph;
     } catch (error) {
       store.withWriteTransaction(() => {
         if (store.getTask(task.id)?.status === "planning") store.transitionTask(task.id, "failed", {}, now());
@@ -346,6 +352,7 @@ export function createDeviceSupportRuntime(options: {
     const result = await runDeviceReadOnlyPlaybook({
       broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
       playbook: selectedPlaybook, proposalId,
+      taskGraph: { coordinator: taskGraphCoordinator, graph: acceptedGraph },
     });
     const deviceId = target.device.id;
     const values = diagnosisReportedValues(result, store.getCurrentCapabilitySnapshot(deviceId), store);

@@ -8,6 +8,8 @@ import {
 } from "@ling-stack/contracts";
 import { buildDeviceDiagnosisReport } from "./device-diagnosis.js";
 import { DeviceBrokerError, type DeviceCapabilityBroker, type DeviceSupportStoreAttemptRecord } from "./device-support.js";
+import { DeviceTaskGraphCoordinator } from "./device-fabric.js";
+import type { DeviceTaskGraphV1, DeviceTaskGraphNodeReceiptV1 } from "@ling-stack/contracts";
 
 export const DEVICE_PLAYBOOK_MAX_STEPS_V1 = 32 as const;
 
@@ -34,6 +36,12 @@ export interface DevicePlaybookRunResultV1 {
   readonly attempts: readonly DeviceSupportStoreAttemptRecord[];
   readonly failedStepId?: string;
   readonly report: DeviceDiagnosisReportV1;
+}
+
+export interface DevicePlaybookTaskGraphExecutionV1 {
+  readonly coordinator: DeviceTaskGraphCoordinator;
+  readonly graph: DeviceTaskGraphV1;
+  readonly routeGeneration?: number;
 }
 
 export function createHomeAssistantOfflinePlaybook(entityId: string, options: { readonly maxReportAgeMs?: number } = {}): DevicePlaybookV1 {
@@ -125,6 +133,7 @@ export async function runDeviceReadOnlyPlaybook(input: {
   readonly capabilitySnapshotId: string;
   readonly playbook: DevicePlaybookV1;
   readonly proposalId?: string;
+  readonly taskGraph?: DevicePlaybookTaskGraphExecutionV1;
   readonly now?: () => string;
 }): Promise<DevicePlaybookRunResultV1> {
   if (!isDevicePlaybookV1(input.playbook)) throw new Error("Invalid device playbook");
@@ -142,6 +151,41 @@ export async function runDeviceReadOnlyPlaybook(input: {
   }
 
   const attempts: DeviceSupportStoreAttemptRecord[] = [];
+  let taskGraph = input.taskGraph?.graph;
+  const graphExecution = input.taskGraph;
+  const graphRouteGeneration = graphExecution?.routeGeneration ?? 1;
+  if (!Number.isSafeInteger(graphRouteGeneration) || graphRouteGeneration < 1) {
+    throw new DeviceBrokerError("invalid_request", "device task graph route generation is invalid");
+  }
+
+  const settleGraphNode = (nodeId: string, attemptId: string, status: DeviceTaskGraphNodeReceiptV1["status"], resultRef: string): void => {
+    if (!graphExecution || !taskGraph) return;
+    const node = taskGraph.nodes.find(candidate => candidate.nodeId === nodeId);
+    if (!node) throw new DeviceBrokerError("missing_target", "device task graph node is missing");
+    const receipt: DeviceTaskGraphNodeReceiptV1 = {
+      graphId: taskGraph.graphId,
+      graphRevision: taskGraph.revision,
+      nodeId,
+      ownerKind: node.ownerKind,
+      ownerId: node.ownerId,
+      targetDeviceId: node.targetDeviceId,
+      capabilitySnapshotId: node.capabilitySnapshotId,
+      attemptId,
+      routeGeneration: graphRouteGeneration,
+      status,
+      resultRef,
+      receivedAt: now(),
+    };
+    taskGraph = graphExecution.coordinator.recordNodeReceipt(taskGraph, receipt, {
+      ownerKind: node.ownerKind, ownerId: node.ownerId, routeGeneration: graphRouteGeneration,
+    });
+    graphExecution.coordinator.releaseOwnerLease(node.targetDeviceId, node.ownerId);
+  };
+
+  const dispatchGraphNode = (nodeId: string, attemptId: string): void => {
+    if (!graphExecution || !taskGraph) return;
+    taskGraph = graphExecution.coordinator.dispatchNode(taskGraph, nodeId, attemptId);
+  };
   const finish = (outcome: DevicePlaybookRunResultV1["status"], failedStepId?: string): DevicePlaybookRunResultV1 => {
     const generatedAt = now();
     const status = store.withWriteTransaction(() => {
@@ -176,6 +220,9 @@ export async function runDeviceReadOnlyPlaybook(input: {
 
   let completedSteps = 0;
   for (const step of input.playbook.steps) {
+    const nodeId = devicePlaybookNodeId(input.playbook.id, step.id);
+    const graphAttemptId = `${input.task.id}:${step.id}`;
+    dispatchGraphNode(nodeId, graphAttemptId);
     const request: DeviceActionRequestV1 = {
       actionId: `${input.task.id}:${step.id}`,
       taskId: input.task.id,
@@ -194,13 +241,20 @@ export async function runDeviceReadOnlyPlaybook(input: {
         ...(input.proposalId ? { planningNode: { proposalId: input.proposalId, nodeId: devicePlaybookNodeId(input.playbook.id, step.id) } } : {}),
       });
     } catch (error) {
-      if (!(error instanceof DeviceBrokerError) || error.code === "target_busy") throw error;
+      if (!(error instanceof DeviceBrokerError)) throw error;
+      const terminalStatus: DeviceTaskGraphNodeReceiptV1["status"] = ["unknown_outcome", "timeout", "connection_failed"].includes(error.code)
+        ? "unknown" : "failed";
+      settleGraphNode(nodeId, graphAttemptId, terminalStatus, `error:${error.code}`);
       return finish(completedSteps ? "partial" : "failed", step.id);
     }
     attempts.push(attempt);
+    const graphStatus: DeviceTaskGraphNodeReceiptV1["status"] = attempt.attempt.status === "unknown"
+      || attempt.attempt.receipt?.status === "uncertain" ? "unknown"
+      : attempt.attempt.receipt?.status === "completed"
+        && (!attempt.attempt.verification || attempt.attempt.verification.status === "verified") ? "succeeded" : "failed";
+    settleGraphNode(nodeId, graphAttemptId, graphStatus, `${task.id}:${step.id}:${graphStatus}`);
     if (attempt.attempt.status === "unknown" || store.getTask(task.id)?.status === "unknown") return finish("unknown", step.id);
-    if (attempt.attempt.receipt?.status !== "completed"
-      || (attempt.attempt.verification && attempt.attempt.verification.status !== "verified")) {
+    if (graphStatus !== "succeeded") {
       return finish(completedSteps ? "partial" : "failed", step.id);
     }
     completedSteps += 1;
