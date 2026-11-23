@@ -150,18 +150,14 @@ jobs:
           key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ci-node-timings-v1-
 
-      - name: Plan complete core and daemon file coverage
+      - name: Plan selected Core and Daemon tests
         id: test-plan
         if: steps.classify.outputs.documentation-only != 'true'
-        env:
-          SELECTED_TEST_PACKAGES: ${{ steps.classify.outputs.test-packages }}
-          DAEMON_PLATFORMS: ${{ steps.classify.outputs.daemon-platforms }}
         shell: bash
         run: |
           set -euo pipefail
           unit_matrix="$(node scripts/ci/test-shard-plan.mjs \
-            --packages="$SELECTED_TEST_PACKAGES" \
-            --daemon-platforms="$DAEMON_PLATFORMS" \
+            --scope=.codex-artifacts/ci/scope.json \
             --timings=.codex-artifacts/ci/timings.json \
             --output=.codex-artifacts/ci/test-plan.json)"
           printf 'unit-matrix=%s\n' "$unit_matrix" >> "$GITHUB_OUTPUT"
@@ -174,17 +170,8 @@ jobs:
           const plan = JSON.parse(readFileSync(".codex-artifacts/ci/test-plan.json", "utf8"));
           console.log(`daemon-matrix=${JSON.stringify(plan.daemonMatrix)}`);
           NODE
-          full_test_packages="$(node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            process.stdout.write(JSON.stringify(JSON.parse(readFileSync(".codex-artifacts/ci/full-scope.json", "utf8")).testPackages));
-          ')"
-          full_daemon_platforms="$(node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            process.stdout.write(JSON.stringify(JSON.parse(readFileSync(".codex-artifacts/ci/full-scope.json", "utf8")).daemonPlatforms));
-          ')"
           node scripts/ci/test-shard-plan.mjs \
-            --packages="$full_test_packages" \
-            --daemon-platforms="$full_daemon_platforms" \
+            --scope=.codex-artifacts/ci/full-scope.json \
             --timings=.codex-artifacts/ci/timings.json \
             --output=.codex-artifacts/ci/full-test-plan.json > /dev/null
 
