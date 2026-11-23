@@ -3,11 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import {
   createLegacySqliteRunStoreForMigrationTest,
   createSqliteRunStore,
   resolveRuntimePaths,
+  type ResolveOrCreateConversationThreadInput,
 } from "../dist/index.js";
 import { applyContinuityV2StorageMigration } from "../dist/storage/sqlite/continuity-v2-migration.js";
 
@@ -35,19 +36,19 @@ test("Conversation topology resolves one root and one topic per committed anchor
     anchorItemId: anchor.item.id,
     title: "Topology",
     objective: "Discuss topology",
-  };
+  } satisfies ResolveOrCreateConversationThreadInput;
   const topic = fixture.store.resolveOrCreateConversationThread(topicInput, "2026-08-09T15:01:00.000Z");
   assert.equal(topic.created, true);
   assert.equal(topic.thread.parentThreadId, fixture.rootThreadId);
   assert.equal(topic.thread.parentTurnId, anchor.turnId);
   assert.equal(topic.thread.anchorItemId, anchor.item.id);
   assert.equal(topic.thread.nextItemSequence, 1);
-  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM conversation_items WHERE thread_id = ?").get(topic.thread.id).count, 0);
+  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM conversation_items WHERE thread_id = ?").get(topic.thread.id)?.count, 0);
 
   const replay = fixture.store.resolveOrCreateConversationThread({ ...topicInput, id: undefined }, "2026-08-09T15:02:00.000Z");
   assert.equal(replay.created, false);
   assert.equal(replay.thread.id, topic.thread.id);
-  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM ling_threads WHERE anchor_item_id = ?").get(anchor.item.id).count, 1);
+  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM ling_threads WHERE anchor_item_id = ?").get(anchor.item.id)?.count, 1);
 });
 
 test("Conversation topology creates branch lineage atomically and rejects cross-channel parents", async (t) => {
@@ -70,7 +71,7 @@ test("Conversation topology creates branch lineage atomically and rejects cross-
       sourceRefs: [{ type: "conversation_item", id: parent.item.id }],
       policyVersion: "continuity-v2-snapshot-v1",
     },
-  };
+  } satisfies ResolveOrCreateConversationThreadInput;
   const branch = fixture.store.resolveOrCreateConversationThread(branchInput, now);
   assert.equal(branch.created, true);
   assert.equal(branch.thread.relationKind, "branch");
@@ -78,7 +79,7 @@ test("Conversation topology creates branch lineage atomically and rejects cross-
   assert.equal(branch.thread.parentTurnId, parent.turnId);
   assert.equal(branch.thread.forkContextSnapshotId, "snapshot-branch-runtime");
   assert.equal(fixture.store.getConversationContextSnapshot("snapshot-branch-runtime")?.threadId, fixture.rootThreadId);
-  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM conversation_items WHERE thread_id = ?").get(branch.thread.id).count, 0);
+  assert.equal(fixture.database.prepare("SELECT COUNT(*) AS count FROM conversation_items WHERE thread_id = ?").get(branch.thread.id)?.count, 0);
 
   const replay = fixture.store.resolveOrCreateConversationThread(branchInput, "2026-08-09T15:01:00.000Z");
   assert.equal(replay.created, false);
@@ -93,7 +94,17 @@ test("Conversation topology creates branch lineage atomically and rejects cross-
   assert.equal(fixture.database.prepare("SELECT 1 FROM ling_threads WHERE id = 'thread-invalid-cross-channel'").get(), undefined);
 });
 
-function appendUserTurn(fixture, suffix, body) {
+type Store = ReturnType<typeof createSqliteRunStore>;
+type Fixture = {
+  cwd: string;
+  database: DatabaseSync;
+  channelId: string;
+  rootThreadId: string;
+  store: Store;
+};
+type TurnResult = ReturnType<Store["appendConversationUserTurn"]>;
+
+function appendUserTurn(fixture: Fixture, suffix: string, body: string): TurnResult {
   return fixture.store.appendConversationUserTurn({
     itemId: `item-${suffix}`,
     turnId: `turn-${suffix}`,
@@ -113,7 +124,7 @@ function appendUserTurn(fixture, suffix, body) {
   }, now);
 }
 
-async function createMigratedFixture(t) {
+async function createMigratedFixture(t: TestContext): Promise<Fixture> {
   const cwd = await mkdtemp(join(tmpdir(), "ling-conversation-topology-"));
   const legacyStore = createLegacySqliteRunStoreForMigrationTest(cwd);
   const channel = legacyStore.createChannel({ name: "Topology", boundPath: cwd }, "2026-08-09T13:00:00.000Z");
@@ -141,7 +152,7 @@ async function createMigratedFixture(t) {
   const store = createSqliteRunStore(cwd);
   const reopened = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   reopened.exec("PRAGMA foreign_keys = ON;");
-  assert.equal(reopened.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+  assert.equal(reopened.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
   assert.deepEqual(reopened.prepare("PRAGMA foreign_key_check").all(), []);
   t.after(async () => {
     store.close();

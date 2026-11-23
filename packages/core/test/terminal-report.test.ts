@@ -6,6 +6,9 @@ import {
   computeTerminalReportEvidenceFingerprint,
   validateTerminalReportContent,
   validateTerminalReportEvidenceSnapshot,
+  type TerminalReportContent,
+  type TerminalReportEvidenceSnapshot,
+  type TerminalReportSourceRef,
 } from "../dist/index.js";
 
 test("terminal report fallback preserves attempted model provenance without changing evidence", () => {
@@ -44,16 +47,28 @@ test("terminal report fallback aggregates workflow evidence", () => {
 });
 
 test("model synthesis cannot omit or weaken a Host unknown-effect warning", () => {
-  const snapshot = buildSnapshot();
-  snapshot.terminalState = "failed";
-  snapshot.risks = [{ id: "execution-unconfirmed:run_qa:unfinished", severity: "critical", status: "unverified",
-    summary: "Process stop and effects are unconfirmed.", sourceRefs: [workflowRef()] }];
+  const snapshot: TerminalReportEvidenceSnapshot = {
+    ...buildSnapshot(),
+    terminalState: "failed",
+    risks: [{
+      id: "execution-unconfirmed:run_qa:unfinished",
+      severity: "critical",
+      status: "unverified",
+      summary: "Process stop and effects are unconfirmed.",
+      sourceRefs: [workflowRef()],
+    }],
+  };
   const content = buildDeterministicTerminalReportContent(snapshot);
   assert.equal(validateTerminalReportContent(content, snapshot).ok, true);
   const hostRisk = content.risks[0];
   const reorderedRisk = { sourceRefs: hostRisk.sourceRefs, summary: hostRisk.summary, status: hostRisk.status, severity: hostRisk.severity, id: hostRisk.id };
   assert.equal(validateTerminalReportContent({ ...content, risks: [reorderedRisk] }, snapshot).ok, true);
-  for (const risks of [[], [{ ...content.risks[0], status: "mitigated" }], [{ ...content.risks[0], summary: "Definitely stopped." }]]) {
+  const riskVariants: TerminalReportContent["risks"][] = [
+    [],
+    [{ ...hostRisk, status: "mitigated" }],
+    [{ ...hostRisk, summary: "Definitely stopped." }],
+  ];
+  for (const risks of riskVariants) {
     assert.equal(validateTerminalReportContent({ ...content, risks }, snapshot).ok, false);
   }
 });
@@ -81,7 +96,7 @@ test("terminal report fallback does not treat artifact storage paths as workspac
 test("terminal report validation rejects unsupported verification and participants", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);
-  const invalid = {
+  const invalid: TerminalReportContent = {
     ...content,
     verification: [{
       id: "invented-check",
@@ -115,7 +130,7 @@ test("terminal report validation rejects a successful checked snapshot without v
 test("terminal report validation rejects a model downgrading a passed Host check to unknown", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);
-  const invalid = {
+  const invalid: TerminalReportContent = {
     ...content,
     verification: content.verification.map((item) => ({ ...item, status: "unknown" })),
   };
@@ -128,13 +143,15 @@ test("terminal report validation rejects a model downgrading a passed Host check
 test("terminal report validation requires each visible Host check, not an unrelated unknown row", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);
-  const invalid = {
+  const runRef = snapshot.references.find((ref) => ref.kind === "run" && ref.id === "run_qa");
+  assert.ok(runRef);
+  const invalid: TerminalReportContent = {
     ...content,
     verification: [{
       id: "unrelated-command",
       title: "Count command",
       status: "unknown",
-      sourceRefs: [snapshot.references.find((ref) => ref.kind === "run" && ref.id === "run_qa")],
+      sourceRefs: [runRef],
     }],
   };
 
@@ -212,7 +229,7 @@ test("terminal report fallback compacts harness-wrapped objectives for the visib
   assert.doesNotMatch(report.outcome.title, /Requested objective|No literal file content|workflow transcript/u);
 });
 
-function buildSnapshot() {
+function buildSnapshot(): TerminalReportEvidenceSnapshot {
   const workflow = workflowRef();
   const runEngineer = ref("run", "run_engineer", "Engineer run");
   const runQa = ref("run", "run_qa", "QA run");
@@ -221,7 +238,7 @@ function buildSnapshot() {
   const artifactDocs = ref("artifact", "artifact_docs", "docs/result.md");
   const fileCode = ref("file", "src/index.ts", "src/index.ts");
   const fileDocs = ref("file", "docs/result.md", "docs/result.md");
-  const base = {
+  const base: Omit<TerminalReportEvidenceSnapshot, "evidenceFingerprint"> = {
     schemaVersion: 1,
     id: "snapshot_demo",
     workspaceId: "workspace_default",
@@ -328,6 +345,6 @@ function workflowRef() {
   return ref("workflow", "workflow_demo", "Terminal report workflow");
 }
 
-function ref(kind, id, label) {
+function ref(kind: TerminalReportSourceRef["kind"], id: string, label: string): TerminalReportSourceRef {
   return { kind, id, label, visibility: "folded_evidence", sensitivity: "normal" };
 }
