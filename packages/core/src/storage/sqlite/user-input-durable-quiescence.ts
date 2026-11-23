@@ -7,6 +7,8 @@ import { readHostOperationBlockers } from "./host-operation-journal-store.js";
 import { readHostOperation, readSourceHostOperations, sameHostOperationSource, verifyHostOperationSafe } from "./host-operation-journal-evidence.js";
 import { readUserInputMediaSettlementsByAttempt } from "./user-input-media-settlements.js";
 import { assertHistoricalAttemptSource, type HostAttemptReadScope } from "./host-attempt-read-scope.js";
+import { WORK_ITEM_STAGE_TOOL } from "../../work-item-stage-coordination.js";
+import { readWorkItemStageToolSettlements } from "./work-item-stage-tool-settlement.js";
 
 const reject = (): never => { throw new UserInputStoreError("not_quiescent"); };
 const text = (value: unknown): value is string => typeof value === "string" && value.length > 0;
@@ -98,6 +100,13 @@ export function readUserInputDurableSettlementsByAttempt(
         if (settledTools.has(id) && settledTools.get(id) !== name) return reject();
         settledTools.set(id, name);
       }
+      byAttempt.set(attemptId, settledTools);
+    }
+    for (const receipt of readWorkItemStageToolSettlements(database, operationSource, at, scope)) {
+      const { attemptId } = receipt.source;
+      const settledTools = byAttempt.get(attemptId) ?? new Map<string, string>();
+      if (settledTools.has(receipt.toolCallId)) return reject();
+      settledTools.set(receipt.toolCallId, WORK_ITEM_STAGE_TOOL);
       byAttempt.set(attemptId, settledTools);
     }
     return byAttempt;

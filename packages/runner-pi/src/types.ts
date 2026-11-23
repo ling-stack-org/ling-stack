@@ -503,6 +503,7 @@ export interface PiRunnerRunOptions {
     readonly userInput?: boolean;
     /** Original Host registry selection; callback presence alone never enables schema preparation. */
     readonly delegation?: boolean;
+    readonly workItemCoordination?: boolean;
     /** Typed workflow writes use path/content and Host exclusive-create, never the patch writer. Schema only, not authority. */
     readonly nativeFileCreate?: boolean;
   };
@@ -558,6 +559,7 @@ export interface PiRunnerRunOptions {
     readonly prompt: string;
     readonly onAdmitted: (preparedInputFingerprint: string) => void;
   } | undefined;
+  readonly onWorkItemCoordinationCall?: (request: { readonly toolCallId: string; readonly input: unknown }) => PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
   readonly agentDir?: string;
   readonly runtimePaths?: PiRunnerRuntimePaths;
   readonly runtimeToolFeatures?: PiRunnerRuntimeToolFeatures;

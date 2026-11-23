@@ -66,7 +66,7 @@ import type {
   PiRunnerTaskContinuationDirective,
 } from "@ling-stack/runner-pi";
 import type { RunCompactionCheckpointBlockerCode } from "@ling-stack/contracts";
-import { DELEGATION_TOOL_NAMES, PiRunnerAdapter, PiRunnerYielded, PiRunnerSuspended, isPiToolFreeCompletion, readPiCompletedTools, readPiCompletedBuiltinReads,
+import { DELEGATION_TOOL_NAMES, WORK_ITEM_COORDINATION_TOOL, PiRunnerAdapter, PiRunnerYielded, PiRunnerSuspended, isPiToolFreeCompletion, readPiCompletedTools, readPiCompletedBuiltinReads,
   type PiToolBoundaryObservation } from "@ling-stack/runner-pi";
 import {
   hostCapabilityToolsV1,
@@ -88,6 +88,7 @@ import { assertWorkflowRepositoryRunAllowed } from "../workspaces/workflow-repos
 import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolation-planning.js";
 import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
 import { createStageMessageReceiver } from "../work-items/stage-message-receiver.js";
+import { createWorkItemCoordinationToolHandler } from "../work-items/stage-coordination-tool.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
   failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
@@ -1075,6 +1076,10 @@ async function executeAdmittedRunRequest(
     const delegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
       && dynamicDelegationRegistry?.isSelectedWorkflow({ store, workflowStepId: runRequest.workflowStepId,
         channelId: runRequest.task.channelId }) === true;
+    const workItemCoordinationSurfaceEnabled = !isolatedFiles && !delegatedExecution
+      && runnerResolution.runner.adapter instanceof PiRunnerAdapter
+      && Boolean(selectedWorkflowStep?.metadata?.planStageId && !selectedWorkflowStep.metadata.planBallotKey
+        && store.getAppServerState("work_item_workflow", selectedWorkflowStep.workflowId));
     const currentAgentCapabilitySurface = () => ({
       codeIntelligence: !runRequest.workflowStepId && !delegatedExecution && runnerResolution?.runner.adapter instanceof PiRunnerAdapter
         && (runtimeTools === undefined || runtimeTools.includes("read")),
@@ -1087,7 +1092,8 @@ async function executeAdmittedRunRequest(
         ...currentAgentCapabilitySurface(),
         userInput: userInputAvailable(),
         nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
-        delegation: delegationToolSurfaceEnabled } };
+        delegation: delegationToolSurfaceEnabled,
+        ...(workItemCoordinationSurfaceEnabled ? { workItemCoordination: true } : {}) } };
     runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
     if (workflowSafetyPlan?.profile === "pi_host_readonly_v1") {
       // SDK preparation may inspect schemas, but it has no execution authority.
@@ -1177,7 +1183,8 @@ async function executeAdmittedRunRequest(
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
           userInput: userInputAvailable(),
           nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
-          delegation: currentDelegationToolSurfaceEnabled },
+          delegation: currentDelegationToolSurfaceEnabled,
+          ...(workItemCoordinationSurfaceEnabled ? { workItemCoordination: true } : {}) },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
           ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] }, workflowSafetyPlan));
       runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
@@ -1989,7 +1996,8 @@ async function executeAdmittedRunRequest(
         originalProvider: resolvedProvider, effectivePolicySnapshot, runtimeTools: runnerRequest.tools,
         request: policyRequest, approvalProfile: runtimeApprovalProfile,
         hasAdditionalToolSurfaces: Boolean(runnerRequest.mcpTools?.length || runnerRequest.hostCapabilityTools?.length
-          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput), now: createdAt });
+          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput
+          || runnerRequest.initialToolSurface?.workItemCoordination), now: createdAt });
       delegationDeadlineAt = admission.reservation.deadlineAt < admission.root.deadlineAt
         ? admission.reservation.deadlineAt : admission.root.deadlineAt;
       if (!executionInput) throw new HttpError(409, "delegation.preparation_unavailable", "Delegated SDK preparation is unavailable.");
@@ -2009,7 +2017,8 @@ async function executeAdmittedRunRequest(
           effectivePolicySnapshot, runtimeTools: runnerRequest.tools, request: policyRequest,
           approvalProfile: runtimeApprovalProfile,
           hasAdditionalToolSurfaces: Boolean(runnerRequest.mcpTools?.length || runnerRequest.hostCapabilityTools?.length
-            || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput), now: createdAt });
+            || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput
+            || runnerRequest.initialToolSurface?.workItemCoordination), now: createdAt });
         delegationDeadlineAt = delegationRoot?.deadlineAt;
       }
     }
@@ -2158,7 +2167,8 @@ async function executeAdmittedRunRequest(
         originalProvider: resolvedProvider, effectivePolicySnapshot, runtimeTools: runnerRequest.tools,
         request: policyRequest, approvalProfile: runtimeApprovalProfile,
         hasAdditionalToolSurfaces: Boolean(runnerRequest.mcpTools?.length || runnerRequest.hostCapabilityTools?.length
-          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput), now: createdAt });
+          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput
+          || runnerRequest.initialToolSurface?.workItemCoordination), now: createdAt });
       delegationDeadlineAt = delegationRoot?.deadlineAt;
       workflowDelegationRootAdmissionPending = false;
     }
@@ -3036,6 +3046,10 @@ async function executeAdmittedRunRequest(
           signal: abortController.signal })(request);
       }
     : undefined;
+  const workItemCoordinationToolHandler = runnerRequest.initialToolSurface?.workItemCoordination === true
+    ? createWorkItemCoordinationToolHandler({ store, run, attemptId: attempt.id, activeRuns, assertCurrent: assertCurrentRunAdmission,
+        extraSecrets: resolvedSecretValues, events: options.controlPlaneEvents })
+    : undefined;
   const delegationProgressBinding = delegatedExecution ? Object.freeze({
     reservationId: delegatedExecution.claimed.reservation.id,
     targetFence: runnerCallbackFence,
@@ -3370,8 +3384,9 @@ async function executeAdmittedRunRequest(
             .map(tool => ({ toolCallId: tool.toolCallId,
               toolName: tool.toolName as (typeof DELEGATION_TOOL_NAMES)[number] }));
           const delegationIds = new Set(settledDelegationCalls.map(call => call.toolCallId));
+          const coordinationIds = new Set(sdkTools.filter(tool => tool.toolName === WORK_ITEM_COORDINATION_TOOL).map(tool => tool.toolCallId));
           if (!hostOperationTracker && toolCallIds.some(id => !delegationIds.has(id)
-            && !notDispatched.has(id) && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
+            && !coordinationIds.has(id) && !notDispatched.has(id) && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
           return { schemaVersion: 1, toolCallIds, settledBuiltinReads,
             ...(settledDelegationCalls.length ? { settledDelegationCalls } : {}),
             ...(undispatchedIsolatedCalls.length ? { undispatchedIsolatedCalls } : {}) };
@@ -3533,6 +3548,7 @@ async function executeAdmittedRunRequest(
       ...(!isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
         && (!run.parentRunId || delegatedExecution) ? { providerBudget: bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) } : {}),
       ...(delegationRunnerToolHandler ? { onDelegationToolCall: delegationRunnerToolHandler } : {}),
+      ...(workItemCoordinationToolHandler ? { onWorkItemCoordinationCall: workItemCoordinationToolHandler } : {}),
       ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
         ? createProviderInvocationObserver({
             store, provider: activeProvider, taskId: runnerRequest.task.id,

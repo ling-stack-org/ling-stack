@@ -34,6 +34,7 @@ export function scopeUserInputLocalWriters(request: PiRunnerRunOptions, writers:
     ...(request.onIsolatedToolCall ? { onIsolatedToolCall: effect(writers.wrapAsync("isolated_tool", request.onIsolatedToolCall)) } : {}),
     ...(request.onToolHydrationRequest ? { onToolHydrationRequest: effect(writers.wrapAsync("hydration", request.onToolHydrationRequest)) } : {}),
     ...(request.onMcpToolCall ? { onMcpToolCall: effect(writers.wrapAsync("mcp", request.onMcpToolCall)) } : {}),
+    ...(request.onWorkItemCoordinationCall ? { onWorkItemCoordinationCall: effect(writers.wrapAsync("work_item_coordination", request.onWorkItemCoordinationCall)) } : {}),
     ...(request.onMediaGenerationToolCall ? {
       // The production Media handler reserves its own exact background chain
       // before its first Store write. This wrapper owns only the outer callback.

@@ -128,6 +128,16 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
     ...(options.onPermissionRequired ? { onPermissionRequired: guard(options.onPermissionRequired) } : {}),
     ...(options.onToolHydrationRequest ? { onToolHydrationRequest: guard(options.onToolHydrationRequest) } : {}),
     ...(options.onMcpToolCall ? { onMcpToolCall: guard(options.onMcpToolCall) } : {}),
+    ...(options.onWorkItemCoordinationCall ? { onWorkItemCoordinationCall: async request => {
+      try {
+        assertOpen();
+        const result = await options.onWorkItemCoordinationCall!(request);
+        assertOpen();
+        return result;
+      } catch (error) {
+        return latchFailure(error);
+      }
+    } } : {}),
     ...(options.onHostCapabilityCall ? { onHostCapabilityCall: guard(options.onHostCapabilityCall) } : {}),
     ...(options.onCodeIntelligenceCall ? { onCodeIntelligenceCall: async request => {
       assertOpen();

@@ -6286,6 +6286,10 @@ export class SqliteRunStore implements RunStore {
     return this.workItemEvidence.getWorkItemEvidence(id);
   }
 
+  findWorkItemEvidenceByKey(workItemId: string, idempotencyKey: string): import("../work-item-evidence-types.js").WorkItemEvidenceEntry | undefined {
+    return this.workItemEvidence.findWorkItemEvidenceByKey(workItemId, idempotencyKey);
+  }
+
   listWorkItemEvidence(options: import("../work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("../work-item-evidence-types.js").WorkItemEvidenceEntry[] {
     return this.workItemEvidence.listWorkItemEvidence(options);
   }

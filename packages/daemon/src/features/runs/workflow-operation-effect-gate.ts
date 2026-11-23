@@ -1,6 +1,7 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { isChannelOperationRelativePathV1, readHostCapabilityCallV1, type ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
+import { WORK_ITEM_COORDINATION_TOOL } from "@ling-stack/runner-pi";
 import { parseApplyPatch, type RunSession, type RunStore } from "@ling-stack/core";
 import { isRecord } from "../../shared/validation.js";
 import { verifyWorkflowStepExecutionOperations } from "../channels/workflow-operation-evidence.js";
@@ -58,10 +59,8 @@ export function workflowOperationAuthorityRejection(input: {
     return blocked("operation_binding_run_inactive", "Terminal or inactive Runs cannot dispatch another typed effect.");
   }
   let { request } = input;
-  // Structured questions are a control-plane pause, not a file or command
-  // effect. The dedicated user-input coordinator owns their validation,
-  // durability and resume authority.
-  if (request.toolName === "request_user_input") return undefined;
+  // The user-input and Work Item owners validate their own control-plane records.
+  if (request.toolName === "request_user_input" || request.toolName === WORK_ITEM_COORDINATION_TOOL) return undefined;
   if (request.toolName !== "bash" && (!isAbsolute(context.run.cwd) || !isAbsolute(request.cwd) || resolve(request.cwd) !== resolve(context.run.cwd)
     || (isRecord(request.input) && request.input.cwd !== undefined
       && (typeof request.input.cwd !== "string" || resolve(request.input.cwd) !== resolve(context.run.cwd))))) {

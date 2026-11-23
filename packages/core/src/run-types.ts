@@ -2730,6 +2730,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
   appendWorkItemEvidence(input: import("./work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string, event?: import("./work-item-evidence-types.js").WorkItemEvidenceEventOptions): import("./work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined;
   getWorkItemEvidence(id: string): import("./work-item-evidence-types.js").WorkItemEvidenceEntry | undefined;
+  findWorkItemEvidenceByKey(workItemId: string, idempotencyKey: string): import("./work-item-evidence-types.js").WorkItemEvidenceEntry | undefined;
   listWorkItemEvidence(options: import("./work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("./work-item-evidence-types.js").WorkItemEvidenceEntry[];
   getAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   findAppServerStateByIdempotencyKey(kind: import("./app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;

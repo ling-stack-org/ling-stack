@@ -22,7 +22,7 @@ export function assertHostIsolatedFilesToolSurface(options: PiRunnerRunOptions):
     || Object.values(options.runtimeToolFeatures ?? {}).some(value => value !== false && value !== undefined)
     || options.onMcpToolCall !== undefined || options.onHostCapabilityCall !== undefined
     || options.onMediaGenerationToolCall !== undefined || options.onToolHydrationRequest !== undefined
-    || options.onDelegationToolCall !== undefined || options.onUserInputRequest !== undefined
+    || options.onDelegationToolCall !== undefined || options.onUserInputRequest !== undefined || options.onWorkItemCoordinationCall !== undefined
     || options.onPermissionRequired !== undefined) {
     throw new Error("workflow_isolated_external_surface_forbidden");
   }

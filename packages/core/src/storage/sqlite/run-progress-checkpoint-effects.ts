@@ -12,6 +12,8 @@ import { toRuntimeAttemptFence, type RuntimeAttemptFenceV1 } from "../../runtime
 import { readHostOperation, verifyHostOperationSafe, verifyHarnessFileExecutionReceipt } from "./host-operation-journal-evidence.js";
 import { mapUserInputRequest, type UserInputRow } from "./user-input-records.js";
 import { verifiedDelegationToolCall } from "./host-attempt-tracked-coverage.js";
+import { WORK_ITEM_STAGE_TOOL } from "../../work-item-stage-coordination.js";
+import { verifyWorkItemStageToolRequest } from "./work-item-stage-tool-settlement.js";
 
 export type RunProgressEffectStore = Pick<RunStore, "listEvents" | "listHarnessToolExecutions" | "getWorkUnitAttempt"
   | "listHostCommandWriteBlockers" | "listApprovalRequests">;
@@ -147,6 +149,8 @@ export function validateRunProgressEffects(store: RunProgressEffectStore, run: R
       // never certifies child success, stop, fan-in or budget settlement.
       if (!verifiedDelegationToolCall(database, { runId: run.id, ...toRuntimeAttemptFence(attempt) },
         id, end.data.toolName, call.arguments as Record<string, unknown>)) throw blocked();
+    } else if (end.data.toolName === WORK_ITEM_STAGE_TOOL) {
+      if (!verifyWorkItemStageToolRequest(database, { runId: run.id, ...toRuntimeAttemptFence(attempt) }, id, call.arguments, end.ts)) throw blocked();
     } else if (!["read", "grep", "find", "ls"].includes(end.data.toolName)) {
       const execution = executions.filter(item => item.toolCallId === id && item.attemptId === attempt.id);
       if (!execution.length && ["write", "edit"].includes(end.data.toolName)

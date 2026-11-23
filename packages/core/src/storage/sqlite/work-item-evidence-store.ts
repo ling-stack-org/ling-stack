@@ -47,11 +47,8 @@ export class SqliteWorkItemEvidenceStore {
     if (!workItem) {
       return undefined;
     }
-    const existingRow = this.context.database
-      .prepare("SELECT * FROM work_item_evidence WHERE workspace_id = ? AND work_item_id = ? AND idempotency_key = ?")
-      .get(DEFAULT_WORKSPACE_ID, input.workItemId, input.idempotencyKey) as Record<string, SQLOutputValue> | undefined;
-    if (existingRow) {
-      const existing = mapWorkItemEvidence(existingRow);
+    const existing = this.findWorkItemEvidenceByKey(input.workItemId, input.idempotencyKey);
+    if (existing) {
       if (!sameEvidenceInput(existing, input)) {
         throw new Error("work_item_evidence_idempotency_conflict");
       }
@@ -131,6 +128,13 @@ export class SqliteWorkItemEvidenceStore {
   getWorkItemEvidence(id: string): WorkItemEvidenceEntry | undefined {
     const row = this.context.database.prepare("SELECT * FROM work_item_evidence WHERE workspace_id = ? AND id = ?")
       .get(DEFAULT_WORKSPACE_ID, id) as Record<string, SQLOutputValue> | undefined;
+    return row ? mapWorkItemEvidence(row) : undefined;
+  }
+
+  findWorkItemEvidenceByKey(workItemId: string, idempotencyKey: string): WorkItemEvidenceEntry | undefined {
+    const row = this.context.database
+      .prepare("SELECT * FROM work_item_evidence WHERE workspace_id = ? AND work_item_id = ? AND idempotency_key = ?")
+      .get(DEFAULT_WORKSPACE_ID, workItemId, idempotencyKey);
     return row ? mapWorkItemEvidence(row) : undefined;
   }
 

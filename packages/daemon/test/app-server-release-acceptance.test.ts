@@ -3591,6 +3591,97 @@ test("App Server reads bounded artifact ranges without exposing private metadata
   assert.deepEqual({ offset: range.offset, endExclusive: range.endExclusive, sizeBytes: range.sizeBytes }, { offset: 0, endExclusive: 4, sizeBytes: 19 });
 });
 
+test("assigned Pi stages exchange coordination through their prepared tools and retain the receipts", { timeout: 30_000 }, async t => {
+  const tool = "work_item_coordination";
+  const questionText = "Which regression fixture covers the omitted header?";
+  const answerText = "Use the optional header compatibility fixture.";
+  const messageText = "The regression includes the empty header case.";
+  let released: () => void = () => undefined;
+  const firstRequests = new Promise<void>(resolve => { released = resolve; });
+  let sendReply: () => void = () => undefined;
+  const replyReady = new Promise<void>(resolve => { sendReply = resolve; });
+  let replyCommitted: () => void = () => undefined;
+  const answered = new Promise<void>(resolve => { replyCommitted = resolve; });
+  let targetStepId = "";
+  let questionId = "";
+  const calls = { qa: 0, engineer: 0 };
+  const provider = await startLoopbackPiProvider(async (body: { messages: readonly { content: unknown }[]; tools?: readonly { function: { name: string } }[] }) => {
+    const qa = body.messages.some(entry => JSON.stringify(entry.content).includes("Task: Review\\n"));
+    const role = qa ? "qa" : "engineer";
+    const index = ++calls[role];
+    const payload = JSON.stringify(body);
+    assert.ok(body.tools?.some(entry => entry.function.name === tool), "Pi advertises the prepared coordination tool.");
+    if (index === 1) {
+      await firstRequests;
+      if (qa) return { tool, input: { action: "read" } };
+      await replyReady;
+      return { tool: "read", input: { path: "contract.txt" } };
+    }
+    if (!qa) {
+      assert.ok(payload.includes(questionText) && payload.includes(messageText));
+      if (index === 2) return { tool, input: { action: "reply", questionId, text: answerText } };
+      return { text: "Prepared the compatibility fixture." };
+    }
+    if (index === 2) {
+      assert.ok(payload.includes(targetStepId));
+      return { tool, input: { action: "ask", targetStepId, text: questionText } };
+    }
+    if (index === 3) return { tool, input: { action: "send", targetStepId, text: messageText } };
+    if (index === 4) {
+      await answered;
+      return { tool: "read", input: { path: "contract.txt" } };
+    }
+    assert.ok(payload.includes(answerText));
+    return { text: "Recorded the regression inputs." };
+  });
+  t.after(async () => { released(); sendReply(); replyCommitted(); await provider.close(); });
+  const { fixture, store, client, item, workflowId, waiting, respondent } = await stageQuestionWorkflow(t, provider.baseUrl, true);
+  await writeFile(join(fixture.cwd, "contract.txt"), "The header is optional.\n");
+  targetStepId = respondent.id;
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const url = new URL(`/workflows/${workflowId}/orchestrate`, daemonUrl);
+  url.searchParams.set("cwd", fixture.cwd);
+  const start = await fetch(url, { method: "POST", body: "{}",
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` } });
+  const started = await start.json() as { status: string; startedSteps?: unknown[] };
+  assert.equal(started.startedSteps?.length, 2, JSON.stringify(started));
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  released();
+  const question = await waitFor(async () => {
+    const { records } = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/question/read", { workItemId: item.id });
+    return records.find(record => record.action === "created");
+  });
+  questionId = question.id;
+  await waitFor(async () => {
+    const { records } = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/message/list", { workItemId: item.id });
+    return records.find(record => (record.payload as { body?: string }).body === messageText);
+  });
+  sendReply();
+  await waitFor(async () => {
+    const { records } = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/question/read", { workItemId: item.id });
+    return records.find(record => record.parentRecordId === question.id && record.action === "replied");
+  });
+  replyCommitted();
+  await waitFor(() => [waiting, respondent].every(step => store.getChannelWorkflowStep(step.id)?.status === "succeeded") ? true : undefined);
+  const runs = [waiting, respondent].map(step => {
+    const [run] = store.listRuns({ workflowStepId: step.id });
+    assert.ok(run?.workUnitId);
+    const [attempt] = store.listWorkUnitAttempts(run.workUnitId);
+    assert.ok(attempt);
+    return { runId: run.id, ...toRuntimeAttemptFence(attempt) };
+  });
+  await waitFor(() => runs.every(source => store.getHostAttemptCompletion(source)?.effectCoverage === "pi_tracked_tools_v1") ? true : undefined);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const { records } = await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/question/read", { workItemId: item.id });
+  assert.deepEqual(records.map(record => [record.action, record.actorId]), [
+    ["created", waiting.toParticipantId], ["replied", respondent.toParticipantId],
+  ]);
+  assert.equal((records[1]?.payload as { answer: string }).answer, answerText);
+  assert.equal(records[1]?.parentRecordId, question.id);
+  assert.ok(runs.every(source => fixture.getStore().getHostAttemptCompletion(source)?.effectCoverage === "pi_tracked_tools_v1"));
+});
+
 test("a scheduled coordination occurrence commits with its round, restores its deadline and skips a paused Work Item", { timeout: 25_000 }, async t => {
   const fixture = await releaseFixture(t, { recoveryJournal: true });
   const client = await fixture.connect();

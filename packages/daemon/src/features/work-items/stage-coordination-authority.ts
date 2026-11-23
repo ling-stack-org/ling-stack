@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
 import type { LingAppServerStageMessageExecution } from "@ling-stack/contracts";
-import { toRuntimeAttemptFence, type RunStore, type RuntimeAttemptFenceV1 } from "@ling-stack/core";
+import { stageCoordinationRequestKey as scopeStageCoordinationRequestKey, toRuntimeAttemptFence, type RunStore, type RuntimeAttemptFenceV1 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { isRecord } from "../../shared/validation.js";
@@ -47,7 +46,7 @@ export function matchesStageCoordinationExecution(value: unknown, binding: Stage
 }
 
 export function stageCoordinationRequestKey(binding: StageCoordinationBinding, key: string): string {
-  return "stage-attempt:" + createHash("sha256").update(JSON.stringify([binding.runId, binding.fence.attemptId, key])).digest("hex");
+  return scopeStageCoordinationRequestKey(binding.runId, binding.fence.attemptId, key);
 }
 
 export function stageCoordinationSourceRefs(binding: StageCoordinationBinding) {
