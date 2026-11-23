@@ -3,7 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { DeviceProfileV1 } from "@ling-stack/contracts";
+import { MODBUS_RTU_BAUD_RATES, type DeviceProfileV1 } from "@ling-stack/contracts";
 import { DEFAULT_WORKSPACE_ID, encodeModbusRtuRegisterRead, type HardwareProtocolLiveTransport } from "@ling-stack/core";
 import type { BindingInterface, BindingPortInterface, PortInfo } from "@serialport/bindings-cpp";
 
@@ -64,7 +64,7 @@ function parseTarget(value: unknown, index: number): ConfiguredModbusSerialTarge
     || !isSerialPath(path)
     || !isUsbId(vendorId) || !isUsbId(productId)
     || typeof serialNumber !== "string" || !/^[ -~]{1,128}$/u.test(serialNumber) || !serialNumber.trim()
-    || typeof baudRate !== "number" || ![1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200].includes(baudRate)
+    || typeof baudRate !== "number" || !MODBUS_RTU_BAUD_RATES.includes(baudRate)
     || (parity !== "none" && parity !== "even" && parity !== "odd") || (stopBits !== 1 && stopBits !== 2)
     || !hasKeys(read, ["unitAddress", "table", "startAddress", "quantity"])) return fail();
   const { unitAddress, table, startAddress, quantity } = read;

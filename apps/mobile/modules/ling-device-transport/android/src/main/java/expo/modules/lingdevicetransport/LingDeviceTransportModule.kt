@@ -1,5 +1,6 @@
 package expo.modules.lingdevicetransport
 
+import expo.modules.kotlin.functions.Coroutine
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -9,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 class LingDeviceTransportModule : Module() {
   private val sessions = ConcurrentHashMap<String, PinnedSshSession>()
+  private val usbModbus = lazy { UsbModbusReader(checkNotNull(appContext.reactContext)) }
 
   override fun definition() = ModuleDefinition {
     Name("LingDeviceTransport")
@@ -38,9 +40,26 @@ class LingDeviceTransportModule : Module() {
 
     Function("close") { id: String -> sessions.remove(id)?.close() }
 
+    AsyncFunction("listUsbModbusPorts") { usbModbus.value.list() }
+
+    AsyncFunction("authorizeUsbModbusPort") Coroutine { id: String, vendorId: Int, productId: Int ->
+      usbModbus.value.authorize(id, vendorId, productId)
+    }
+
+    AsyncFunction("reserveUsbModbusPort") { id: String, vendorId: Int, productId: Int ->
+      usbModbus.value.reserve(id, vendorId, productId)
+    }
+
+    AsyncFunction("readUsbModbusRegisters") { id: String, baudRate: Int, parity: String, stopBits: Int, requestHex: String ->
+      usbModbus.value.read(id, baudRate, parity, stopBits, requestHex)
+    }
+
+    Function("releaseUsbModbusPort") { id: String -> usbModbus.value.release(id) }
+
     OnDestroy {
       for (session in sessions.values) session.close()
       sessions.clear()
+      if (usbModbus.isInitialized()) usbModbus.value.close()
     }
   }
 

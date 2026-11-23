@@ -17,6 +17,10 @@ import { projectMobileDeviceTaskTrace } from "./trace.ts";
 import { projectMobileTaskEvidenceExport } from "./conformance.ts";
 import { createPhoneTaskCollaboration } from "./phone-task-collaboration.ts";
 import { createPhoneTaskArtifactReceiver, type OpenPhoneTaskArtifactFile } from "./phone-task-artifacts.ts";
+import {
+  encodeUsbModbusRequest, prepareUsbModbusDiagnosis, replayUsbModbusObservation, usbModbusPlaybookId,
+  type UsbModbusBridge, type UsbModbusPort, type UsbModbusReplay, type UsbModbusSession, type UsbModbusSettings,
+} from "./usb-modbus.ts";
 
 const ownerKey = "ling:standalone-device-owner:v1";
 const homeAssistantPlaybookId = "home-assistant-offline-diagnosis@1.0.0";
@@ -47,11 +51,20 @@ export interface PhoneLinuxSshRun {
   readonly errorCode?: DeviceErrorCodeV1;
 }
 
+export interface PhoneUsbModbusRun {
+  readonly taskId: string;
+  readonly updatedAt: string;
+  readonly taskStatus: DeviceTaskV1["status"];
+  readonly outcome?: UsbModbusReplay["outcome"];
+  readonly errorCode?: DeviceErrorCodeV1;
+}
+
 export async function createStandaloneDeviceRuntime(options: {
   readonly storage: MobileStorageLike;
   readonly randomId: (prefix: string) => string | Promise<string>;
   readonly fetch: HomeAssistantFetch;
   readonly openLinuxSsh?: OpenLinuxSshConnection;
+  readonly usbModbus?: UsbModbusBridge;
   readonly openArtifactFile?: OpenPhoneTaskArtifactFile;
   readonly now?: () => string;
 }) {
@@ -75,7 +88,7 @@ export async function createStandaloneDeviceRuntime(options: {
   }) : undefined;
   let targetWrites = Promise.resolve();
   const linuxTargetsKey = "ling:standalone-linux-targets:v1:" + ownerId;
-  const activeLinux = new Set<AbortController>();
+  const activeLocalReads = new Set<AbortController>();
 
   async function projectHomeRun(evidence: MobileTaskEvidence): Promise<PhoneHomeAssistantRun | undefined> {
     const run = projectHomeAssistantRun(evidence);
@@ -88,12 +101,13 @@ export async function createStandaloneDeviceRuntime(options: {
     collaborate,
     artifacts,
     linuxSshAvailable: options.openLinuxSsh !== undefined,
+    usbModbusAvailable: options.usbModbus !== undefined,
     setForeground(active: boolean): Promise<void> {
       if (active === foreground) return recovery;
       foreground = active;
       execution.setForeground(active);
       if (active) recovery = recovery.catch(() => undefined).then(async () => { await execution.recoverAfterResume(); });
-      else for (const operation of activeLinux) operation.abort();
+      else for (const operation of activeLocalReads) operation.abort();
       return recovery;
     },
 
@@ -234,7 +248,7 @@ export async function createStandaloneDeviceRuntime(options: {
       await expectedRecovery;
       const controller = new AbortController();
       const cancel = () => controller.abort();
-      activeLinux.add(controller);
+      activeLocalReads.add(controller);
       input.signal?.addEventListener("abort", cancel, { once: true });
       try {
         const taskId = await options.randomId("device_task");
@@ -265,7 +279,7 @@ export async function createStandaloneDeviceRuntime(options: {
         }
         return run;
       } finally {
-        activeLinux.delete(controller);
+        activeLocalReads.delete(controller);
         input.signal?.removeEventListener("abort", cancel);
       }
     },
@@ -278,6 +292,75 @@ export async function createStandaloneDeviceRuntime(options: {
     async listLinuxSshTargets(): Promise<readonly LinuxSshTarget[]> {
       await targetWrites;
       return readLinuxTargets(await options.storage.getItem(linuxTargetsKey));
+    },
+
+    async listUsbModbusPorts(): Promise<readonly UsbModbusPort[]> {
+      return options.usbModbus?.list() ?? [];
+    },
+
+    async authorizeUsbModbusPort(port: UsbModbusPort): Promise<void> {
+      if (!options.usbModbus || !foreground) throw new Error("usb_target_missing");
+      await options.usbModbus.authorize(port);
+    },
+
+    async diagnoseUsbModbus(input: {
+      readonly port: UsbModbusPort;
+      readonly settings: UsbModbusSettings;
+      readonly signal?: AbortSignal;
+    }): Promise<PhoneUsbModbusRun> {
+      const bridge = options.usbModbus;
+      if (!bridge) throw new Error("usb_target_missing");
+      const settings = { ...input.settings };
+      const bytes = encodeUsbModbusRequest(settings);
+      const expectedRecovery = recovery;
+      await expectedRecovery;
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      let session: UsbModbusSession | undefined;
+      const close = () => {
+        session?.close();
+        session = undefined;
+      };
+      activeLocalReads.add(controller);
+      input.signal?.addEventListener("abort", cancel, { once: true });
+      controller.signal.addEventListener("abort", close, { once: true });
+      try {
+        const taskId = await options.randomId("device_task");
+        const connectionRevision = await options.randomId("usb_connection");
+        if (!foreground || expectedRecovery !== recovery || input.signal?.aborted || controller.signal.aborted) {
+          throw new Error("usb_operation_cancelled");
+        }
+        session = await bridge.reserve(input.port);
+        if (!foreground || expectedRecovery !== recovery || controller.signal.aborted) throw new Error("usb_operation_cancelled");
+        const { profile, snapshot, transport, step } = prepareUsbModbusDiagnosis({
+          port: input.port, settings, bytes, session, ownerId, connectionRevision, now,
+        });
+        const task: DeviceTaskV1 = {
+          id: taskId, ownerKind: "mobile", ownerId, targetDeviceIds: [profile.device.id], status: "planning",
+          capabilitySnapshotIds: [snapshot.snapshotId], createdAt: snapshot.observedAt, updatedAt: snapshot.observedAt,
+        };
+        await runMobileReadOnlyPlaybook({
+          playbookId: usbModbusPlaybookId, steps: [step], task, profile, snapshot, transport, execution, signal: controller.signal,
+        });
+        const run = projectUsbModbusRun(await journal.readTaskEvidence(task.id));
+        if (!run) throw new Error("usb_task_evidence_missing");
+        return run;
+      } finally {
+        activeLocalReads.delete(controller);
+        input.signal?.removeEventListener("abort", cancel);
+        controller.signal.removeEventListener("abort", close);
+        close();
+      }
+    },
+
+    async listUsbModbusRuns(): Promise<readonly PhoneUsbModbusRun[]> {
+      await recovery;
+      return listRecentRuns(journal, ownerId, async task => projectUsbModbusRun(await journal.readTaskEvidence(task.id)));
+    },
+
+    async replayUsbModbusCapture(taskId: string): Promise<UsbModbusReplay | undefined> {
+      await recovery;
+      return readUsbModbusAttempt(await journal.readTaskEvidence(taskId))?.replay;
     },
   };
 }
@@ -357,6 +440,27 @@ function readHomeAssistantAttempt(evidence: MobileTaskEvidence) {
   };
 }
 
+function readUsbModbusAttempt(evidence: MobileTaskEvidence) {
+  const record = evidence.attempts.find(item => item.request.actionId.startsWith(usbModbusPlaybookId + ":"));
+  if (!record) return undefined;
+  const deviceId = record.request.targetDeviceId;
+  const receipt = record.attempt.receipt;
+  const capture = evidence.observations.find(item => receipt?.observationIds.includes(item.id)
+    && item.subjectId === deviceId);
+  const replay = capture && replayUsbModbusObservation(capture, deviceId);
+  return { record, replay };
+}
+
+function projectUsbModbusRun(evidence: MobileTaskEvidence): PhoneUsbModbusRun | undefined {
+  const { task } = evidence;
+  const result = readUsbModbusAttempt(evidence);
+  if (!task || !result || !task.targetDeviceIds.includes(result.record.request.targetDeviceId)) return undefined;
+  return {
+    taskId: task.id, updatedAt: task.updatedAt, taskStatus: task.status,
+    outcome: result.replay?.outcome, errorCode: result.record.attempt.receipt?.errorCode,
+  };
+}
+
 function projectHomeAssistantRun(evidence: MobileTaskEvidence): PhoneHomeAssistantRun | undefined {
   const { task } = evidence;
   const result = readHomeAssistantAttempt(evidence);
@@ -380,7 +484,7 @@ function projectPhoneTask(evidence: MobileTaskEvidence, ownerId: string): Remote
   const [targetDeviceId] = task.targetDeviceIds;
   const linux = readLinuxSshAttempt(evidence);
   const home = readHomeAssistantAttempt(evidence);
-  const record = linux?.record ?? home?.record;
+  const record = linux?.record ?? home?.record ?? readUsbModbusAttempt(evidence)?.record;
   if (!record) return undefined;
   const { request, attempt } = record;
   if (!attempt.connectionRevision || attempt.ownerKind !== "mobile" || attempt.ownerId !== ownerId

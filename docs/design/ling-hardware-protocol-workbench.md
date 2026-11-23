@@ -2,7 +2,7 @@
 
 Status: proposed design and research
 Owner: Ling platform maintainers
-Last verified: 2026-11-19
+Last verified: 2026-11-23
 Document type: hardware diagnostics, protocol development, and adapter acceptance
 
 Related designs:
@@ -36,7 +36,7 @@ driver, and firmware versions.
 | Area | Project | Use in Ling | Upstream source |
 | --- | --- | --- | --- |
 | PC serial transport | Node SerialPort | Candidate for a daemon-side serial transport on Windows, macOS, and Linux. | [README and license](https://github.com/serialport/node-serialport) |
-| Android USB serial | usb-serial-for-android | Candidate for the Android native module using USB Host and a supported USB-to-serial or USB-to-RS-485 adapter. The library exposes a serial stream for the protocol layer. | [Driver library](https://github.com/mik3y/usb-serial-for-android) · [Android USB Host](https://developer.android.com/develop/connectivity/usb/host) |
+| Android USB serial | usb-serial-for-android 3.10.0 (MIT) | Android USB Host transport for the standalone Modbus register diagnosis. The native module enumerates serial ports, requests OS permission and captures the selected port's bounded request and response. | [Driver library](https://github.com/mik3y/usb-serial-for-android/tree/v3.10.0) · [Android USB Host](https://developer.android.com/develop/connectivity/usb/host) |
 | Mobile BLE | react-native-ble-plx | Candidate for GATT discovery, reads, writes, and notifications. Verify native build compatibility with Ling's Expo and React Native versions and exercise the supported accessory on physical phones. | [Library and compatibility](https://github.com/dotintent/react-native-ble-plx#compatibility) · [Core Bluetooth](https://developer.apple.com/documentation/corebluetooth) |
 | Modbus | PyModbus and libmodbus | PyModbus provides a PC simulator and a reference implementation for test cases. libmodbus is a C implementation for serial and Ethernet on its supported hosts, under LGPL v2.1 or later. | [PyModbus](https://github.com/pymodbus-dev/pymodbus) · [libmodbus](https://github.com/stephane/libmodbus) |
 | Capture and decode | Wireshark and sigrok | Use Wireshark capture files and the packet/detail view as references for network traces. Use sigrok's acquisition and decoder split as a reference for logic analyzer traces and timing analysis. | [Wireshark capture formats](https://www.wireshark.org/docs/wsug_html_chunked/_files_and_folders.html) · [libsigrokdecode](https://github.com/sigrokproject/libsigrokdecode) |
@@ -170,6 +170,36 @@ configured bus. The operator records the bus wiring and device identity for
 bench acceptance. Use an automatic-direction USB-to-RS-485 adapter for this
 transport. A change to the serial settings or the configured request requires a
 new session after Daemon restart.
+
+#### Android USB Modbus RTU capture
+
+Open **手机设备诊断 → USB Modbus** in Ling Mobile. Connect an automatic-direction
+USB-to-RS-485 adapter to an Android phone with USB Host support. Refresh the
+port list, choose the port by its label, USB vendor and product IDs, and grant
+Android's USB permission. Enter the baud rate, parity, stop bits, unit address,
+register table and zero-based protocol range from the device manual. **读取寄存器**
+runs the documented function 03 or 04 request on the phone.
+
+The native session pins the attachment and rechecks its USB identity before opening
+the port. A USB serial number identifies the adapter port across sessions when
+available. The bus address selects the responding unit. A serial number and bus
+address provide an adapter and station binding, and downstream device identity
+requires independent bench evidence. Each read records a new connection revision.
+
+The Mobile owner records the attempt, host timestamps and bounded request and
+response frames. Android and the Daemon use the same Modbus decoder for checksum,
+exception and response-matching results. A disconnect during acquisition retains
+the received bytes and marks the capture incomplete. **回放串口帧** checks the
+retained frame digests and displays the frames and CRC results from the phone journal.
+**分享原始串口采集** opens the system share sheet for that capture. Paired task sharing
+contains the task, target and attempt references.
+
+The Android 11 ARM64 emulator covers the installed release entry and empty
+port list. The driver framing and phone journal fixtures cover fragmented
+replies, invalid CRC, incomplete captures, restart, cancellation and digest validation.
+Physical USB permission, detach and reconnect, and a register with an independently
+known value require a supported Android phone and RS-485 bench device.
+[D13 evidence](ling-device-support-platform-implementation-plan.md#d13-hardware-protocol-development-and-debugging)
 
 ### 3.2 Standalone Mobile and PC collaboration
 

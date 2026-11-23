@@ -5,6 +5,7 @@ import { AppState } from "react-native";
 
 import { nativeSecureEntropy } from "../platform/secure-device-key/native-adapter";
 import { openNativeLinuxSsh } from "../platform/native-linux-ssh";
+import { nativeUsbModbus } from "../platform/native-usb-modbus";
 import { openPhoneTaskArtifactFile } from "../platform/phone-task-artifact-file";
 import { createStandaloneDeviceRuntime, type StandaloneDeviceRuntime } from "./standalone-runtime";
 
@@ -34,7 +35,7 @@ export function StandaloneDeviceProvider({ children }: { readonly children: Reac
     const subscription = AppState.addEventListener("change", applyAppState);
     void createStandaloneDeviceRuntime({
       storage: AsyncStorage, randomId: nativeSecureEntropy.randomId, fetch, openLinuxSsh: openNativeLinuxSsh,
-      openArtifactFile: openPhoneTaskArtifactFile,
+      usbModbus: nativeUsbModbus, openArtifactFile: openPhoneTaskArtifactFile,
     }).then(created => {
       if (disposed) return;
       runtime = created;

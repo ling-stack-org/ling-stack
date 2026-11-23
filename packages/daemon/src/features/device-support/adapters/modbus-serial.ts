@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AdapterManifestV1, DeviceObservationV1, DeviceProfileV1, JsonValue } from "@ling-stack/contracts";
+import { matchModbusRtuRegisterRead, type AdapterManifestV1, type DeviceObservationV1, type DeviceProfileV1, type JsonValue } from "@ling-stack/contracts";
 import {
   DeviceBrokerError, modbusRtuRegisterCodec, type DeviceAdapter, type DeviceAdapterDiscoveryInput,
   type DevicePlaybookV1, type HardwareProtocolTransportRegistry, type HardwareProtocolWorkbench,
@@ -87,7 +87,7 @@ export class ModbusSerialAdapter implements DeviceAdapter {
       createdAt: startedAt, durationMs: captureBudgetMs, maxFrames: 2, signal,
     }));
     const [requestFrame, reply] = workbench.decode(capture, modbusRtuRegisterCodec.manifest.codecId);
-    const outcome = readResult(requestFrame, reply, capture.loss !== undefined);
+    const outcome = matchModbusRtuRegisterRead(requestFrame, reply, capture.loss !== undefined);
     const { status } = outcome;
     const value: JsonValue = status === "read" ? {
       captureId, status, unitAddress: outcome.unitAddress, table: outcome.table,
@@ -116,21 +116,4 @@ export class ModbusSerialAdapter implements DeviceAdapter {
     }
     return binding;
   }
-}
-
-type DecodedFrame = ReturnType<HardwareProtocolWorkbench["decode"]>[number];
-
-function readResult(request: DecodedFrame | undefined, reply: DecodedFrame | undefined, incomplete: boolean) {
-  if (incomplete || !request || !reply) return { status: "incomplete_capture" } as const;
-  if (reply.checksumValid === false) return { status: "invalid_checksum" } as const;
-  if (request.messageType !== "read_registers_request" || request.fields.unitAddress !== reply.fields.unitAddress
-    || request.fields.functionCode !== reply.fields.functionCode) return { status: "mismatched_response" } as const;
-  if (reply.messageType === "exception_response") return { status: "device_exception" } as const;
-  const { unitAddress, table, startAddress, quantity } = request.fields;
-  if (reply.messageType !== "read_registers_response" || quantity !== reply.fields.quantity
-    || typeof unitAddress !== "number" || (table !== "holding" && table !== "input")
-    || typeof startAddress !== "number" || typeof quantity !== "number") return { status: "mismatched_response" } as const;
-  const registers = Array.from({ length: quantity }, (_value, index) => reply.fields[`register${index}`]);
-  if (!registers.every((value): value is number => typeof value === "number")) return { status: "mismatched_response" } as const;
-  return { status: "read", unitAddress, table, startAddress, registers } as const;
 }

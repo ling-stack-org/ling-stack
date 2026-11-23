@@ -101,6 +101,7 @@ export * from "./device-fabric.js";
 export * from "./device-developer.js";
 export * from "./device-server.js";
 export * from "./device-protocol.js";
+export * from "./device-modbus-rtu.js";
 export { isCommittedRunNarrationV1, type CommittedRunNarrationV1 } from "./committed-run-narration.js";
 export type * from "./harness-diagnostics.js";
 export { FRAMEWORK_ASSURANCE_ASSOCIATION_FROZEN_INPUT_KEYS } from "./framework-assurance.js";

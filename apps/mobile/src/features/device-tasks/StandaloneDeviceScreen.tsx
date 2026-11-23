@@ -9,6 +9,7 @@ import type { PhoneHomeAssistantRun, PhoneLinuxSshRun, StandaloneDeviceRuntime }
 import type { MobileThemeTokens } from "../../theme/mobile-theme";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
 import { PhoneTaskCollaborationPanel } from "./PhoneTaskCollaborationPanel";
+import { UsbModbusPanel } from "./UsbModbusPanel";
 
 type HomeAssistantScreenOperation =
   | { readonly kind: "diagnosis" }
@@ -18,7 +19,7 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
   const state = useStandaloneDeviceRuntime();
   const { theme } = useMobileTheme();
   const styles = createStyles(theme);
-  const [selected, setSelected] = useState<"home" | "linux">("home");
+  const [selected, setSelected] = useState<"home" | "linux" | "modbus">("home");
   const [origin, setOrigin] = useState("");
   const [entityId, setEntityId] = useState("");
   const [token, setToken] = useState("");
@@ -100,6 +101,9 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
     }
   };
 
+  const runtime = state.status === "ready" ? state.runtime : undefined;
+  const tabs = ([["home", "Home Assistant"], ["linux", "Linux SSH"], ["modbus", "USB Modbus"]] as const)
+    .filter(([id]) => id === "home" || (id === "linux" ? runtime?.linuxSshAvailable : runtime?.usbModbusAvailable));
   return (
     <SafeAreaView edges={onClose ? ["top", "bottom"] : ["bottom"]} style={styles.screen}>
       {onClose ? (
@@ -109,9 +113,9 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
         </View>
       ) : null}
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {state.status === "ready" && state.runtime.linuxSshAvailable ? (
+        {tabs.length > 1 ? (
           <View style={styles.selector}>
-            {([["home", "Home Assistant"], ["linux", "Linux SSH"]] as const).map(([id, label]) => (
+            {tabs.map(([id, label]) => (
               <Pressable key={id} accessibilityRole="button" accessibilityState={{ selected: selected === id }}
                 disabled={!!running} onPress={() => setSelected(id)} style={[styles.option, selected === id && styles.selectedOption]}>
                 <Text style={styles.label}>{label}</Text>
@@ -119,8 +123,13 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
             ))}
           </View>
         ) : null}
-        {selected === "linux" && state.status === "ready" && state.runtime.linuxSshAvailable ? (
-          <LinuxSshPanel runtime={state.runtime} styles={styles} />
+        {selected === "modbus" && runtime?.usbModbusAvailable ? (
+          <UsbModbusPanel runtime={runtime} styles={styles} renderTaskActions={run => <>
+            <DeviceTraceShareButton runtime={runtime} taskId={run.taskId} styles={styles} />
+            <PhoneTaskCollaborationPanel runtime={runtime} taskId={run.taskId} updatedAt={run.updatedAt} styles={styles} />
+          </>} />
+        ) : selected === "linux" && runtime?.linuxSshAvailable ? (
+          <LinuxSshPanel runtime={runtime} styles={styles} />
         ) : <>
         <Text accessibilityRole="header" style={styles.heading}>Home Assistant</Text>
         <Text style={styles.note}>手机会连接你填写的 Home Assistant 地址，读取指定实体的状态。</Text>
