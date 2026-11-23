@@ -33,6 +33,18 @@
   min-width: 0;
 }
 
+.workspace-file-tabs { display: grid; min-width: 0; gap: var(--ling-space-3); }
+.workspace-file-tabs-toolbar { display: flex; gap: var(--ling-space-2); }
+.workspace-file-tabs-actions { margin-left: auto; }
+.workspace-file-tabs-toolbar > button {
+  min-height: 32px; padding: var(--ling-space-2) var(--ling-space-3); border: 0;
+  border-radius: var(--ling-radius-sm); background: transparent; color: var(--ling-text-muted); font: inherit; cursor: pointer;
+}
+.workspace-file-tabs-toolbar > button[aria-pressed="true"] { color: var(--ling-text-strong); background: var(--ling-bg-subtle); }
+.workspace-file-tabs-toolbar > button:focus-visible { outline: 2px solid var(--ling-border-focus); outline-offset: 2px; }
+.workspace-file-changes { display: grid; min-width: 0; gap: var(--ling-space-2); }
+.workspace-file-changes-summary { display: flex; flex-wrap: wrap; gap: var(--ling-space-2); color: var(--ling-text-muted); font-size: var(--ling-font-xs); }
+
 .message-local-file-control {
   display: inline;
 }
