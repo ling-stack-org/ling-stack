@@ -339,6 +339,90 @@ test("generated media renders ordered image, video, failure, and cancellation st
   expect(browserErrors).toEqual([]);
 });
 
+test("generated image sequences use each request's theme and play from the first frame", async ({ page }, testInfo) => {
+  await page.clock.install({ time: new Date("2026-08-12T00:00:00Z") });
+  await useEnglish(page, "dark");
+  const state = createBaseState({ approvalStatus: "expired" });
+  const normalTitle = installNormalWorkCellFixture(state);
+  const runId = "run_ui2_normal_work_cell";
+  const city = { id: "city", title: "A quiet city at sunrise", count: 4 };
+  const tide = { id: "tide", title: "Tide pools under changing light on a rocky coastline", count: 12 };
+  state.conversationGeneratedMedia = [city, tide].map(({ id, title, count }) => {
+    const artifacts = Array.from({ length: count }, (_, index) => generatedArtifact({
+      id: `${id}_frame_${index + 1}`,
+      mediaJobId: id,
+      type: "image",
+      path: `${id}-frame-${index + 1}.svg`,
+      title: `${id} image ${index + 1}`,
+      contentType: "image/svg+xml",
+    }));
+    state.artifactsByMediaJob[id] = artifacts;
+    return generatedMedia({
+      mediaJobId: id,
+      runId,
+      status: "succeeded",
+      displayName: "Seedream Studio",
+      prompt: title,
+      artifacts,
+    });
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openNormalConversation(page, normalTitle);
+
+  for (const { id, title, count } of [city, tide]) {
+    const viewer = page.getByRole("region", { name: title, exact: true });
+    await expect(viewer.getByText(title, { exact: true })).toBeVisible();
+    await expect(viewer.getByRole("group", { name: "Frames", exact: true }).getByRole("button")).toHaveCount(count);
+    await expect(viewer.getByText(`1 / ${count}`, { exact: true })).toBeVisible();
+    await expect(viewer.locator("header img")).toHaveAttribute("src", new RegExp(`/${id}_frame_1/content`));
+  }
+
+  const cityViewer = page.getByRole("region", { name: city.title, exact: true });
+  const play = cityViewer.getByRole("button", { name: "Play", exact: true });
+  const stop = cityViewer.getByRole("button", { name: "Stop", exact: true });
+  const frameThree = cityViewer.getByRole("button", { name: "Frame 3", exact: true });
+  await expect(stop).toBeDisabled();
+  await frameThree.click();
+  await expect(frameThree).toHaveAttribute("aria-pressed", "true");
+  await expect(cityViewer.getByText("3 / 4", { exact: true })).toBeVisible();
+  const image = cityViewer.getByRole("img", { name: "city image 3", exact: true });
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBeGreaterThan(0);
+  await image.hover();
+  await expect(cityViewer.getByRole("link", { name: "Download generated result" })).toHaveAttribute("download", "city-frame-3.svg");
+
+  await page.clock.pauseAt(new Date("2026-08-12T00:01:00Z"));
+  await play.click();
+  await expect(cityViewer.getByText("1 / 4", { exact: true })).toBeVisible();
+  await expect(cityViewer.getByText("Playing", { exact: true })).toBeVisible();
+  await expect(play).toBeDisabled();
+  if (process.env.LING_CAPTURE_UI2_EVIDENCE === "1") {
+    await cityViewer.screenshot({ path: testInfo.outputPath("city-sequence-playing.png") });
+  }
+  await page.clock.runFor(180);
+  await expect(cityViewer.getByText("2 / 4", { exact: true })).toBeVisible();
+  await page.clock.runFor(540);
+  await expect(cityViewer.getByText("1 / 4", { exact: true })).toBeVisible();
+  await page.clock.runFor(180);
+  await stop.click();
+  await page.clock.runFor(360);
+  await expect(cityViewer.getByText("1 / 4", { exact: true })).toBeVisible();
+  await expect(stop).toBeDisabled();
+
+  const tideViewer = page.getByRole("region", { name: tide.title, exact: true });
+  const scrubber = tideViewer.getByRole("slider", { name: "Select frame" });
+  await scrubber.press("End");
+  await expect(scrubber).toHaveValue("12");
+  await expect(tideViewer.getByText("12 / 12", { exact: true })).toBeVisible();
+  await expect(tideViewer.getByRole("img", { name: "tide image 12", exact: true })).toBeVisible();
+  const frameTwelve = tideViewer.getByRole("button", { name: "Frame 12", pressed: true });
+  await expect(frameTwelve).toBeInViewport({ ratio: 1 });
+  await expect(cityViewer.getByText("1 / 4", { exact: true })).toBeVisible();
+  if (process.env.LING_CAPTURE_UI2_EVIDENCE === "1") {
+    await tideViewer.screenshot({ path: testInfo.outputPath("tide-sequence-frame-12.png") });
+  }
+});
+
 function generatedMedia(input: {
   readonly mediaJobId: string;
   readonly runId: string;
@@ -378,7 +462,7 @@ function generatedArtifact(input: {
   readonly path: string;
   readonly title: string;
   readonly contentType: string;
-}): MockState["artifactsByMediaJob"][string][number] {
+}): MockState["conversationGeneratedMedia"][number]["artifacts"][number] {
   return {
     ...input,
     sizeBytes: 4_096,

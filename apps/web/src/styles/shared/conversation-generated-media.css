@@ -25,6 +25,179 @@
   background: transparent;
 }
 
+.conversation-generated-media.status-succeeded.frame-sequence {
+  width: min(100%, 680px);
+}
+
+.conversation-generated-media-frame-viewer {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: var(--ling-space-3);
+}
+
+.conversation-generated-media-frame-theme {
+  display: grid;
+  gap: var(--ling-space-3);
+}
+
+.conversation-generated-media-frame-theme-copy {
+  display: flex;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.conversation-generated-media-frame-theme-copy > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.conversation-generated-media-frame-theme-copy strong {
+  overflow: hidden;
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-lg);
+  line-height: var(--ling-line-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-generated-media-frame-theme-copy small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  line-height: var(--ling-line-sm);
+}
+
+.conversation-generated-media-frame-cover {
+  width: 64px;
+  height: 64px;
+  flex: 0 0 64px;
+  border-radius: var(--ling-control-radius);
+  background: var(--ling-bg-subtle);
+  object-fit: contain;
+}
+
+.conversation-generated-media-frame-controls {
+  display: flex;
+  gap: var(--ling-space-3);
+}
+
+.conversation-generated-media-frame-controls button {
+  min-width: 82px;
+  height: 42px;
+  padding: 0 var(--ling-space-4);
+  border-radius: 999px;
+  font-size: var(--ling-font-sm);
+  font-weight: 650;
+  line-height: 1;
+}
+
+.conversation-generated-media-frame-play {
+  border: 1px solid transparent;
+  color: var(--ling-bg-canvas);
+  background: var(--ling-text-strong);
+}
+
+.conversation-generated-media-frame-stop {
+  border: 1px solid var(--ling-border-default);
+  color: var(--ling-text-default);
+  background: transparent;
+}
+
+.conversation-generated-media-frame-controls button:disabled {
+  border-color: var(--ling-border-default);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
+  cursor: default;
+}
+
+.conversation-generated-media-frame-stage {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  min-height: 120px;
+  max-height: 420px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--ling-bg-subtle);
+}
+
+.conversation-generated-media-frame-stage > figure {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+}
+
+.conversation-generated-media-frame-stage .conversation-generated-media-artifact img {
+  width: 100%;
+  height: 100%;
+}
+
+.conversation-generated-media-frame-strip {
+  display: flex;
+  min-width: 0;
+  gap: var(--ling-space-2);
+  overflow-x: auto;
+  padding-block: 2px 5px;
+  scrollbar-width: thin;
+}
+
+.conversation-generated-media-frame-thumb {
+  position: relative;
+  width: 64px;
+  height: 52px;
+  flex: 0 0 64px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 4px;
+  background: var(--ling-bg-subtle);
+  cursor: pointer;
+}
+
+.conversation-generated-media-frame-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.conversation-generated-media-frame-thumb[aria-pressed="true"] {
+  border-color: var(--ling-text-link);
+  box-shadow: 0 3px 0 var(--ling-text-link);
+}
+
+.conversation-generated-media-frame-thumb:focus-visible,
+.conversation-generated-media-frame-controls button:focus-visible,
+.conversation-generated-media-frame-scrubber:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 2px;
+}
+
+.conversation-generated-media-frame-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ling-space-3);
+}
+
+.conversation-generated-media-frame-meta strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-md);
+  line-height: var(--ling-line-md);
+}
+
+.conversation-generated-media-frame-meta span {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.conversation-generated-media-frame-scrubber {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--ling-text-link);
+}
+
 .conversation-generated-media.status-failed {
   border-color: color-mix(in srgb, var(--ling-status-danger) 38%, var(--ling-border-default));
   background: color-mix(in srgb, var(--ling-status-danger) 5%, var(--ling-bg-elevated));
