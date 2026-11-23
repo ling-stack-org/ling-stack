@@ -51,6 +51,21 @@ test("only selected unsharded packages create the packages job", async () => {
     ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))]);
 });
 
+test("terminal report migration plans one Core shard with only the five migrated tests", async () => {
+  const plan = await createTestPlan(["@ling-stack/core"], { testProfile: "terminal-report" });
+  assert.deepEqual(Object.keys(plan.suites), ["core"]);
+  assert.equal(plan.suites.core.shardCount, 1);
+  assert.deepEqual(plan.suites.core.files, [
+    "test/terminal-report-idempotency.test.ts",
+    "test/terminal-report-migration.test.ts",
+    "test/terminal-report-privacy.test.ts",
+    "test/terminal-report-store.test.ts",
+    "test/terminal-report.test.ts",
+  ]);
+  assert.deepEqual(plan.unitMatrix.include, [{ suite: "core", shard: 0, shardCount: 1, concurrency: 2 }]);
+  assert.deepEqual(plan.daemonMatrix.include, []);
+});
+
 test("split channel suites are discovered once with ordinary parallel workers and watchdogs", async () => {
   const plan = await createTestPlan(["@ling-stack/daemon"]);
   const files = [...plan.suites.daemon.files, ...plan.suites["daemon-linux"].files];
