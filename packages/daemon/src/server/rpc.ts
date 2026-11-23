@@ -1488,7 +1488,9 @@ class RpcConnection {
     const { cwd, ...record } = this.workspaceParams(params, true);
     try {
       const store = this.context.storeRegistry.getStore(cwd);
-      const { event, ...result } = await settleAppServerStageHandoff(store, readStageHandoffParams(record, action), action, new Date().toISOString());
+      const { event, ...result } = await settleAppServerStageHandoff(
+        store, readStageHandoffParams(record, action), action, this.context.activeRuns, new Date().toISOString(),
+      );
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         if (action === "accepted") this.context.taskSupervisor.poke(cwd);

@@ -154,8 +154,9 @@ export async function runLingAppServerMcp(
       detail: z.string().max(1200).optional(),
     };
     if (methods.has("workItem/handoff/accept")) server.registerTool("ling_stage_handoff_accept", {
-      description: "Accept the current supplying stage packet for this receiving stage. Retry with the original request key.",
-      inputSchema: z.strictObject({ ...stageHandoff, expectedCandidateDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional() }),
+      description: "Accept the current supplying stage packet. To repair a return, supply the previous handoff ID and any required independent verification for the current candidate.",
+      inputSchema: z.strictObject({ ...stageHandoff, expectedCandidateDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+        previousHandoffId: objectId.optional(), verification: z.strictObject({ operationId: objectId, checkId: objectId }).optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.settleWorkItemStageHandoff("accept", params)));
     if (methods.has("workItem/handoff/return")) server.registerTool("ling_stage_handoff_return", {
