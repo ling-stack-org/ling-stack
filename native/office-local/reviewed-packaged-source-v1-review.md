@@ -1,10 +1,32 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Plugin rollback compatibility](#plugin-rollback-compatibility),
-which carries forward the [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind)
-and the [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
+The current source prerequisite includes the [Conversation media inputs](#conversation-media-inputs),
+[Plugin rollback compatibility](#plugin-rollback-compatibility),
+[Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
+and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Conversation media inputs
+
+Date 2026-11-24. The record binds the development packaging inputs at
+`143d71a48fa7a0fbbb687395ef40989e3c937fbc`, including main PR #805. The
+conversation media projection uses the job's output order, with creation time
+and ID as tie-breakers. Its source SHA-256 is
+`cf163874a1f8d8d6fdcae9c65392d75a8ce9b6fab42eb3a07e26115b7eec66fa`.
+
+A source and digest audit reconstructed the 55 compiled locale modules from the
+committed catalogs at both revisions. Each locale adds the same eight frame
+viewer strings and retains its prior messages. The projection and those locale
+modules account for 56 digest replacements across 2,013 packaging inputs.
+The audit matched all 15 Office native inputs and verified the existing
+toolchain, runtime, signing, and trust metadata byte for byte. The focused
+SQLite test verified that listed artifacts retain job output order and unlisted
+artifacts follow them.
+
+The record is 260,282 bytes. The fixed-order packaging aggregate is
+`889a81337faed7832aadc02f0e1f95e5bae296b424ee0de6f8c36c8002f7986c`.
+Record SHA-256 is `1d7cead218cc2cc490be658dbbc38c9449c1077eea9a933456c6bccc442adff5`.
 
 ## Plugin rollback compatibility
 
