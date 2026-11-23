@@ -71,43 +71,65 @@ jobs:
             $env:LING_BOOTSTRAP_PROBE_HOME = Join-Path $root 'daemon-probe-home'
             @'
           import { spawn } from "node:child_process";
+          import { existsSync } from "node:fs";
           import { dirname, join } from "node:path";
           const executable = process.env.LING_BOOTSTRAP_PROBE_EXE;
+          const probeHome = process.env.LING_BOOTSTRAP_PROBE_HOME;
+          const started = Date.now();
           const entry = join(dirname(executable), "resources", "app.asar", "dist", "daemon", "cli.mjs");
           const daemon = spawn(executable, [entry], {
             cwd: process.env.LING_STACK_DEFAULT_WORKSPACE_CWD,
             env: {
               ...process.env, ELECTRON_RUN_AS_NODE: "1", LING_STACK_PACKAGED_DESKTOP: "1",
               LING_STACK_HOST: "127.0.0.1", LING_STACK_PORT: "0",
-              LING_STACK_HOME: process.env.LING_BOOTSTRAP_PROBE_HOME,
+              LING_STACK_HOME: probeHome,
               LING_STACK_RESOURCE_BOOTSTRAP_FD: "4",
             },
-            stdio: ["ignore", "ignore", "pipe", "ignore", "pipe"], windowsHide: true,
+            stdio: ["ignore", "pipe", "pipe", "ignore", "pipe"], windowsHide: true,
           });
           let diagnostic = "";
+          let daemonOutput = "";
           const receipt = [];
+          let receiptBytes = 0;
+          let receiptClosed = false;
+          const observe = () => ({
+            elapsedMs: Date.now() - started,
+            daemonAnnouncedListening: daemonOutput.includes("Ling Stack daemon listening on http://127.0.0.1:"),
+            packagedSkillCacheExists: existsSync(join(probeHome, "sources", "bundled-gstack")),
+            receiptBytes, receiptClosed,
+          });
+          daemon.stdout.on("data", bytes => { daemonOutput = (daemonOutput + bytes.toString("utf8")).slice(-4096); });
           daemon.stderr.on("data", bytes => { diagnostic = (diagnostic + bytes.toString("utf8")).slice(-8192); });
           daemon.stdio[4].on("error", () => {});
-          daemon.stdio[4].on("data", bytes => { if (receipt.length < 16) receipt.push(bytes); });
+          daemon.stdio[4].on("data", bytes => {
+            receiptBytes += bytes.length;
+            if (receiptBytes <= 1024) receipt.push(bytes);
+          });
           let validReceipt = false;
+          let readyElapsedMs;
           daemon.stdio[4].once("end", () => {
+            receiptClosed = true;
             try {
               const message = JSON.parse(Buffer.concat(receipt).toString("utf8"));
-              validReceipt = message.schemaVersion === 1 && message.phase === "resources_ready" && message.pid === daemon.pid;
+              validReceipt = receiptBytes <= 1024 && message.schemaVersion === 1 && message.phase === "resources_ready" && message.pid === daemon.pid;
             } catch {}
-            if (validReceipt) daemon.kill();
+            if (validReceipt) { readyElapsedMs = Date.now() - started; daemon.kill(); }
           });
           daemon.once("error", error => { console.error("Daemon probe process:", error.code); process.exitCode = 1; });
-          const timer = setTimeout(() => { console.error("Packaged daemon bootstrap probe timed out."); daemon.kill(); }, 75000);
+          const samples = setInterval(() => console.log(JSON.stringify(observe())), 30000);
+          const timer = setTimeout(() => {
+            console.error("Packaged daemon bootstrap probe timed out.", JSON.stringify(observe())); daemon.kill();
+          }, 360000);
           daemon.once("close", (code, signal) => {
             clearTimeout(timer);
+            clearInterval(samples);
             const failure = diagnostic.split(/\r?\n/u).find(line => /^(?:Error|TypeError)(?: #[^:]+| \[[A-Z0-9_]+\])?:/u.test(line));
             const reason = failure?.replace(/https?:\/\/[^\s]+/gu, "<url>").slice(0, 350);
-            console.log(JSON.stringify({ packagedDaemonResourcesReady: validReceipt, code, signal, reason }));
-            if (!validReceipt) process.exitCode = 1;
+            console.log(JSON.stringify({ ...observe(), packagedDaemonResourcesReady: validReceipt, readyElapsedMs, code, signal, reason }));
+            if (!validReceipt || readyElapsedMs > 60000) process.exitCode = 1;
           });
           '@ | node --input-type=module
-            if ($LASTEXITCODE -ne 0) { throw 'Packaged daemon resource bootstrap did not produce a receipt.' }
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged daemon resource bootstrap did not meet the Desktop deadline.' }
             $desktopArgs = @('--ling-desktop-smoke-headless', ('--user-data-dir="' + $profile + '"'))
             $stdout = Join-Path $root 'desktop-stdout.log'
             $stderr = Join-Path $root 'desktop-stderr.log'
