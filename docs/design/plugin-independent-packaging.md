@@ -2,7 +2,7 @@
 
 ## 状态
 
-三个独立仓库负责各自的源码、构建和发布文档。Office 和 Chrome 已生成 macOS arm64、Windows x64 构建候选。Cua Driver 的双平台签名前产物已完成独立复核和锁定构建验证，平台锁已合入生产者主分支。两平台开发包已完成同版本体积对照和冷启动验证。切换默认打包前，需发布正式签名资产与官方目录，并完成两平台的正式安装验收。当前默认沿用兼容包。[Cua Driver 平台锁](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/5)
+三个独立仓库维护各自的源码、构建流程和发布文档。Office 和 Chrome 已生成 macOS arm64、Windows x64 开发候选，Cua Driver 已完成双平台锁定构建。Desktop 的兼容包和瘦包均已通过两平台开发安装启动验证。正式插件发布待接入 macOS Developer ID 和公证、Windows Authenticode 及 Cua Driver 完整性目录签名。Desktop 默认使用兼容打包，正式签名资产、官方目录和安装版验收完成后再切换。[Cua Driver 平台锁](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/5)
 
 | 插件 | 独立仓库职责 | Ling 主仓职责 |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容�
 
 ## 发布
 
-- `GET /plugins/catalog` 获取已验签的目录和本机兼容包。
+- `GET /plugins/catalog` 获取已验签的目录及匹配本机平台、架构和 Ling 版本的官方包。
 - `POST /plugins/:id/install-remote` 安装初始版本或更新到指定版本。
 - `POST /plugins/:id/check-update` 返回当前版本和最新匹配版本。
 - `POST /plugins/:id/rollback` 复验并恢复缓存的上一版本。
@@ -53,13 +53,24 @@ Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容�
 ## 候选构建证据
 
 - 使用隔离用户配置、本地开发目录和临时包签名，Office 候选在真实 daemon 中通过首次安装、更新、重新读取和离线回滚。macOS helper 在三个阶段均响应 `driver_status`。更新测试使用同一 helper 的另一归档版本。macOS 候选 helper 的预检识别到 Excel 16.91 正在运行，并返回 `permission_required`。签名版仍需经过系统 Automation 授权和实际工作簿操作验收。自动化回归覆盖空工作区安装、跨工作区显示和回滚、保留工作区启用状态，以及缓存篡改拒绝。
-- Windows x64 未签名开发包对照使用同一源码 `0621af8a89e513bcc6cfd23820c921a18c71c3da`、Electron 45.3.1 和同版 gstack。两个 runner 独立生成的 gstack 清单摘要不同。瘦包 EXE 从 788,979,385 减到 743,359,437 字节，降幅 5.78%。解包后常规文件从 2,667,154,320 减到 2,531,662,529 字节，降幅 5.08%。两组均通过空白配置安装、资源鉴权、连接自有 daemon、加载主窗口、正常退出、同版本覆盖安装和卸载。兼容包和瘦包的资源准备分别耗时 133.4 秒和 135.1 秒。交互界面、三个插件和已有配置迁移仍需正式安装版验收。[兼容包验证](https://github.com/ling-stack-org/ling-stack/actions/runs/45134711982/job/137558831585) · [瘦包验证](https://github.com/ling-stack-org/ling-stack/actions/runs/45124319679/job/137525817393)
-- macOS arm64 完整资源开发包对照固定在 `3efb4c6fdd945737c400d6a22f8110b5671e6f28` 和 Electron 45.3.1。两个 runner 使用同一 gstack 源码与适配版本，各自生成资源清单。两组通过 ad-hoc 签名、DMG／ZIP 内容校验和包内浏览器的首次下载与缓存检查。DMG 从 794,367,394 减到 793,954,963 字节，降幅 0.052%。ZIP 从 787,616,620 减到 787,220,224 字节，解包后常规文件从 2,213,098,165 减到 2,212,015,547 字节。开发包未包含正式 Cua Driver provider。
-- macOS 两个原始构建在安装启动步骤记录了 daemon 资源准备失败。校验相同 DMG 的 SHA-256 后，在 Apple Silicon 本机使用真实路径的临时目录复制和启动两个应用。两组均通过空白配置、自有 daemon、主窗口和正常退出。兼容包和瘦包的资源准备分别耗时 28.6 秒和 29.1 秒。正式签名、公证及交互验收仍待完成。[兼容包归档证据](https://github.com/ling-stack-org/ling-stack/actions/runs/45153324087/job/137620864591) · [瘦包归档证据](https://github.com/ling-stack-org/ling-stack/actions/runs/45153323784/job/137620983485)
-- macOS arm64 的 daemon-only hosted replay 已在同一源提交 `3efb4c6fdd945737c400d6a22f8110b5671e6f28` 上完成。bundled DMG 的资源准备耗时 `115672 ms`，服务就绪耗时 `117335 ms`；on-demand DMG 分别为 `136420 ms` 和 `138561 ms`。两种模式均正常退出，且作业成功上传了独立探针报告。[测量运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45177615505)
-- 为覆盖上述已测冷启动路径，当前开发包源记录将 macOS 与 Windows 的资源鉴权等待上限统一为 180 秒，同时保留服务就绪 20 秒上限。固定 Office 打包输入只更新 `apps/desktop/main/daemon-lifecycle.ts` 的摘要，其他输入和原生 Office 摘要保持不变。该调整只解除开发包资源鉴权超时，不改变正式签名、发布和插件实机验收门槛。
 - Ling for Chrome 的 macOS 候选包在真实 Chrome 的隔离配置中验证了 Native Messaging 自动连接、全部六项浏览器工具、暂停恢复以及禁用后重新启用。Chrome Web Store 发布的 0.1.2 与候选归档的可执行代码及弹窗文件逐项一致，差异在四个图标、更新地址和商店元数据。商店安装的扩展仍需和正式签名的 Native Host 一起验收。[Chrome 候选构建](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45081594739) · [Chrome Web Store](https://chromewebstore.google.com/detail/ling-for-chrome/mbmlnnfhebclljonhedpjghbhibfapei)
-- Cua Driver 的独立复核根据四个原始归档核对了源码提交、补丁、二进制摘要和两平台锁。新锁在四台独立 runner 上完成原生重建与 MCP 探针，macOS 的 7 个稳定文件和 Windows 的 8 个稳定文件分别逐项一致。Windows 探针覆盖 Medium 完整性、状态目录用户 ACL、链接拒绝和配置持久化。生产者主分支与重建提交 `cb4c332cfab7` 的源码树相同，产物处于签名前阶段。[macOS A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45160025646) · [Windows A/B](https://github.com/ling-stack-org/ling-plugin-cua-driver/actions/runs/45160031136) · [平台锁 PR](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/5)
+- Cua Driver 的独立复核根据四个原始归档核对了源码提交、补丁、二进制摘要和两平台锁。新锁在四台独立 runner 上完成原生重建与 MCP 探针，macOS 的 7 个稳定文件和 Windows 的 8 个稳定文件分别逐项一致。Windows 探针覆盖 Medium 完整性、状态目录用户 ACL、链接拒绝和配置持久化。发布文档记录这批签名前产物的来源和后续平台签名步骤。[Cua Driver 发布文档](https://github.com/ling-stack-org/ling-plugin-cua-driver/blob/main/docs/RELEASE.md)
+
+### Desktop 安装包对照
+
+四个候选均从 `14be1bdebd3d295a4f822981ae8cc18a32b9dd51` 构建，使用 Electron 45.3.1，各平台的两种模式使用同一版 gstack 源码及适配。各 runner 独立生成资源清单。Windows 候选未签名，macOS 候选使用 ad-hoc 签名。四个开发包均未包含正式 Cua Driver provider。[兼容包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187207804) · [瘦包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187216178)
+
+| 平台和产物 | 兼容包（字节） | 瘦包（字节） | 减少 |
+| --- | ---: | ---: | ---: |
+| Windows x64 EXE | 788,970,364 | 743,359,378 | 45,610,986（5.781%） |
+| Windows x64 解包后常规文件 | 2,667,154,374 | 2,531,662,583 | 135,491,791（5.080%） |
+| macOS arm64 DMG | 794,378,186 | 793,969,911 | 408,275（0.051%） |
+| macOS arm64 ZIP | 787,617,589 | 787,220,728 | 396,861（0.050%） |
+| macOS arm64 解包后常规文件 | 2,213,099,697 | 2,212,017,079 | 1,082,618（0.049%） |
+
+四组均在隔离配置下通过资源鉴权、连接 Desktop 自有 daemon、加载主窗口和正常退出。Windows 两组还通过安装、同版本覆盖安装和卸载。macOS 两组从已校验的 DMG 复制应用后冷启动。兼容包与瘦包的资源鉴权用时在 Windows 分别为 78.603 和 114.198 秒，在 macOS 分别为 84.168 和 141.566 秒。交互界面、正式插件调用和已有配置迁移仍待签名版验收。
+
+早期 macOS runner 的完整启动在资源准备阶段超时。同批 DMG 的 daemon-only 探针记录了兼容包与瘦包的资源鉴权用时，分别为 115.672 和 136.420 秒，均超过原先的 60 秒上限。当前 macOS 和 Windows 安装版为资源鉴权预留 180 秒，收到鉴权回执后有独立的 20 秒服务就绪时限。[测量运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45177615505)
 
 ## 瘦包对照和切换
 

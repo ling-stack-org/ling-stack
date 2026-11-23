@@ -7,11 +7,10 @@ and the dated reviews below retain their historical evidence and scope.
 
 ## Cold-start resource authentication rebind
 
-Date 2026-11-23. This development-only rebind updates the fixed packaging record after
-hosted macOS arm64 replay showed that the previous 60-second resource-authentication
-deadline was shorter than the observed cold path. The Desktop keeps the ordinary 20-second
-service-readiness deadline. macOS and Windows now share a 180-second resource bootstrap
-deadline, while Linux and other development paths retain the core 60-second bound.
+Date 2026-11-23. This development packaging record binds source commit
+`77aaa790f724baa6e6f4caa3bb10316765fc6cf2`. Packaged macOS and Windows each have a
+180-second resource authentication deadline. A valid resource receipt starts the
+separate 20-second service-readiness deadline.
 
 The only changed fixed packaging input is
 `apps/desktop/main/daemon-lifecycle.ts`, whose digest is
@@ -22,11 +21,11 @@ record. The updated record is 260,282 bytes, and the fixed-order packaging aggre
 The updated record SHA-256 is
 `cae50b780f148108a0ef65b946c7f5fd7fba1527be2fe938019f58f08da879a6`.
 
-The focused Desktop lifecycle and TypeScript checks pass 56/56. Hosted daemon-only replay
-passed for bundled and on-demand DMGs with resource preparation of 115.672 and 136.420
-seconds, respectively. This record permits the development package to run that measured
-path. It does not approve platform signing, notarization, production publication or GUI
-plugin acceptance.
+Independent Codex context `01a2089e-d773-7a81-8a86-40676888cbf2` recomputed the
+fixed digests, reviewed the startup deadlines and returned `VERDICT: CLEAN` for
+this development packaging record. Desktop type checking and all 56 focused
+lifecycle tests passed. The hosted daemon measurements used to set the resource
+deadline are recorded in [Independent Plugin Packaging](../../docs/design/plugin-independent-packaging.md#候选构建证据).
 
 ## Official Plugin Packaging Source Closure
 
