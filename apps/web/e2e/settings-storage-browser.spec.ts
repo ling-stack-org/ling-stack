@@ -62,6 +62,10 @@ test("Desktop Settings shows measured storage and editable browser defaults", as
   await storage.getByRole("button", { name: "Manage browser data" }).click();
   const browser = page.locator("[data-browser-settings]");
   await expect(browser.getByRole("heading", { name: "Browser", exact: true })).toBeVisible();
+  await page.locator(".settings-content-stack").evaluate(element => { element.scrollTop = 0; });
+  if (process.env.LING_SETTINGS_EVIDENCE_DIR) {
+    await page.screenshot({ path: `${process.env.LING_SETTINGS_EVIDENCE_DIR}/browser-settings.png`, fullPage: true });
+  }
   await browser.getByRole("combobox", { name: "Agent browsing" }).selectOption("deny");
   await browser.getByRole("button", { name: "Save default permissions" }).click();
   await expect.poll(() => policy.defaults?.browse).toBe("deny");
@@ -71,7 +75,7 @@ test("Desktop Settings shows measured storage and editable browser defaults", as
   await browser.locator(".settings-browser-device-form").getByRole("button", { name: "Save" }).click();
   await expect(browser.locator(".settings-browser-device-row")).toContainText("https://example.com");
   if (process.env.LING_SETTINGS_EVIDENCE_DIR) {
-    await page.screenshot({ path: `${process.env.LING_SETTINGS_EVIDENCE_DIR}/browser-settings.png`, fullPage: true });
+    await page.screenshot({ path: `${process.env.LING_SETTINGS_EVIDENCE_DIR}/browser-settings-interaction.png`, fullPage: true });
   }
   expect(errors).toEqual([]);
 });
