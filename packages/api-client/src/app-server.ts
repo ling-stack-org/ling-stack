@@ -331,6 +331,23 @@ export class LingAppServerClient {
     return await this.request("github/subject/read", params);
   }
 
+  async listNativeWorkIntake(params: import("@ling-stack/contracts").ListNativeWorkIntakeRequest):
+    Promise<import("@ling-stack/contracts").ListNativeWorkIntakeResponse> {
+    await this.connect();
+    return await this.request("workItem/intake/list", params);
+  }
+
+  async acceptNativeWorkIntake(params: { readonly receiptId: string }): Promise<import("@ling-stack/contracts").NativeWorkIntakeMutationResponse> {
+    await this.connect();
+    return await this.request("workItem/intake/accept", params);
+  }
+
+  async retryNativeWorkIntake(params: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest):
+    Promise<import("@ling-stack/contracts").NativeWorkIntakeMutationResponse> {
+    await this.connect();
+    return await this.request("workItem/intake/retry", params);
+  }
+
   async reconcileGitHubDelivery(params: LingAppServerReconcileGitHubDeliveryParams): Promise<LingAppServerGitHubDeliveryResult> {
     await this.connect();
     return await this.request("github/delivery/reconcile", params);

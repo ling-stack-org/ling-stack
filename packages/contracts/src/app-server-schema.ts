@@ -88,6 +88,15 @@ const planResult = objectWith({ planId: stringSchema, planRevision: stringSchema
   ["planId", "planRevision", "candidate", "checks"]);
 const operationResult = objectWith({ operationId: stringSchema, candidateDigest: stringSchema, status: stringSchema },
   ["operationId", "candidateDigest", "status"]);
+const nativeIntakeReceiptSchema = objectWith({
+  receiptId: stringSchema, workspaceId: stringSchema, policyId: stringSchema, policyRevision: stringSchema,
+  sourceKind: { enum: ["channel_task", "automation_run"] }, sourceScope: stringSchema, sourceEventId: stringSchema,
+  sourceRevision: stringSchema, executionId: stringSchema, evaluatedAt: stringSchema, reasonCode: stringSchema,
+  previousReceiptId: stringSchema, workItemId: stringSchema,
+  outcome: { enum: ["manual", "suggested", "accepted", "suppressed", "paused", "deduplicated"] },
+  dispatch: objectWith({ status: { enum: ["pending", "admitted", "held"] }, runId: stringSchema, reasonCode: stringSchema }, ["status"]),
+}, ["receiptId", "workspaceId", "policyId", "policyRevision", "sourceKind", "sourceScope", "sourceEventId",
+  "sourceRevision", "executionId", "evaluatedAt", "reasonCode", "outcome"]);
 const subscriptionResult = objectWith({ disposition: { enum: ["complete", "snapshot_required"] },
   subscriptionId: stringSchema, cursor: stringSchema, window: objectSchema }, ["disposition"]);
 const collaborationAppend = { ...workItemTarget, idempotencyKey: stringSchema, actorId: stringSchema,
@@ -307,6 +316,15 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         }, ["cwd", "workItem", "replayed", "receipt"]),
       };
     }
+    case "workItem/intake/list":
+      return { params: objectWith({ sourceKind: { enum: ["channel_task", "automation_run"] }, sourceScope: stringSchema,
+        limit: integerSchema }, ["sourceKind"]), result: objectWith({ cwd: stringSchema,
+        receipts: { type: "array", items: nativeIntakeReceiptSchema } }, ["cwd", "receipts"]) };
+    case "workItem/intake/accept":
+    case "workItem/intake/retry":
+      return { params: objectWith({ receiptId: stringSchema, idempotencyKey: stringSchema },
+        method === "workItem/intake/accept" ? ["receiptId"] : ["receiptId", "idempotencyKey"]),
+      result: objectWith({ cwd: stringSchema, receipt: nativeIntakeReceiptSchema }, ["cwd", "receipt"]) };
     case "workItem/evidence/append":
       return { params: objectWith({ ...workItemTarget, actorId: stringSchema, kind: stringSchema, subjectRevision: stringSchema,
         content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arraySchema },

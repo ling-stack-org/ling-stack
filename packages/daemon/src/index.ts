@@ -763,13 +763,23 @@ export function createDaemonServer(
         target: nativeRunTargetDispatcher,
       })
     : undefined;
-  const startAutomationRun: StartAutomationRunExecution = (request, hooks) =>
-    startDetachedRunAndResolveReady(onReady => executeRunRequest(request, createDetachedRunExecutionSink(),
+  const startAutomationRun: StartAutomationRunExecution = async (request, hooks) => {
+    const sink = createDetachedRunExecutionSink();
+    let refusal: HttpError | undefined;
+    if (hooks.assertNativeIntakeCurrent) sink.writeError = (status, body) => {
+      if (isRecord(body) && typeof body.error === "string") {
+        refusal = new HttpError(status, body.error, "The native intake Run could not start.");
+      }
+    };
+    const runId = await startDetachedRunAndResolveReady(onReady => executeRunRequest(request, sink,
       runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
         onRunReady: (id, info) => { hooks.onRunReady?.(id, info); onReady(id); },
         assertNativeIntakeCurrent: hooks.assertNativeIntakeCurrent,
         afterRunTerminal: hooks.afterRunTerminal, controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher,
       }));
+    if (!runId && refusal) throw refusal;
+    return runId;
+  };
   automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, startAutomationRun, async (store, signal) => {
       await nativeWorkIntake.dispatchTasks(store, signal, imageVisionSummarizer, (request, assertNativeIntakeCurrent) =>
         startAutomationRun(request, { assertNativeIntakeCurrent, afterRunTerminal: afterChannelRunTerminal }));

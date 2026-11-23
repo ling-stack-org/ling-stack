@@ -27,6 +27,7 @@ import {
 import {
   LING_APP_SERVER_IMPLEMENTED_CAPABILITIES,
   LING_APP_SERVER_METHODS,
+  LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT,
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
   LING_PRODUCT_VERSION,
@@ -118,6 +119,8 @@ import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
+import { listNativeWorkIntake, mutateNativeWorkIntake, readNativeWorkIntakeListRequest,
+  readNativeWorkIntakeMutation } from "../features/work-items/native-intake-requests.js";
 import { projectStageMessageDelivery } from "../features/work-items/stage-message-receiver.js";
 import { sendWorkItemStageMessage, WORKFLOW_STAGE_MESSAGE_ID_PREFIX } from "../features/work-items/stage-messages.js";
 import { askWorkItemStageQuestion, replyToWorkItemStageQuestion } from "../features/work-items/stage-questions.js";
@@ -200,6 +203,7 @@ const operatorMethods = new Set([
   "server/recovery/read", "server/recovery/prepare", "server/recovery/reconcile",
   "github/subject/read", "github/delivery/reconcile", "github/delivery/enqueue", "github/delivery/queue/read",
   "workItem/delivery/read", "delivery/read",
+  "workItem/intake/list", "workItem/intake/accept", "workItem/intake/retry",
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
   "workItem/workflow/bind",
@@ -219,7 +223,7 @@ const recoveryGuardedMethods = new Set([
   "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
   "workItem/plan/change/withdraw",
   "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
-  "workItem/feedback/add",
+  "workItem/feedback/add", "workItem/intake/accept", "workItem/intake/retry",
 ]);
 export function attachRpcWebSocketServer(
   server: Pick<Server, "on" | "off" | "once">, context: DaemonContext,
@@ -890,6 +894,19 @@ class RpcConnection {
       }
       case "workItem/accept":
         return this.acceptWorkItem(params);
+      case "workItem/intake/list": {
+        const { cwd, ...record } = this.workspaceParams(params, true);
+        const input = readNativeWorkIntakeListRequest(record, LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT);
+        return listNativeWorkIntake(this.context.storeRegistry.getStore(cwd), input);
+      }
+      case "workItem/intake/accept":
+      case "workItem/intake/retry": {
+        const { cwd, ...record } = this.workspaceParams(params, true);
+        const intake = this.context.nativeWorkIntake;
+        if (!intake) throw new HttpError(404, "native_intake_unavailable", "Native intake is unavailable.");
+        const input = readNativeWorkIntakeMutation(method === "workItem/intake/accept" ? "accept" : "retry", record);
+        return mutateNativeWorkIntake(this.context.storeRegistry.getStore(cwd), intake, input);
+      }
       case "workItem/workflow/bind":
         return this.bindWorkItemWorkflow(params);
       case "workItem/plan/change/request":
@@ -3615,6 +3632,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   }
   if (event.entityType === "work_item") {
     if (event.action === "work_item.stage.updated") return "workItem/stage/updated";
+    if (event.action === "work_item.intake.dispatch.updated") return "workItem/intake/updated";
     if (event.action.startsWith("work_item.plan_change.")) return "workItem/plan/change/updated";
     if (event.action.startsWith("work_item.deliberation.")) return "workItem/deliberation/updated";
     if (event.action === "work_item.created") return "workItem/created";

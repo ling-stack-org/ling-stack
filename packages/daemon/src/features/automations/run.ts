@@ -330,9 +330,10 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
   } catch (error) {
     if (!linkedRunId && !store.getAutomationRun(automationRun.id)?.runId) {
       const failedAt = new Date().toISOString();
-      store.updateAutomationRun(automationRun.id, {
-        status: "failed", completedAt: failedAt, errorMessage: "Automation run could not start.",
-      }, failedAt);
+      const recoveryPending = input.intakeDispatch && error instanceof HttpError && error.code === "resume_blocked";
+      store.updateAutomationRun(automationRun.id, recoveryPending
+        ? { status: "skipped", completedAt: failedAt, skipReason: "intake_recovery_pending" }
+        : { status: "failed", completedAt: failedAt, errorMessage: "Automation run could not start." }, failedAt);
     }
     throw error;
   }

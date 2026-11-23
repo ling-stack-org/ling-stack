@@ -42,7 +42,7 @@
 - `workItem/stage/read` 为可接收消息的活跃 Pi 阶段返回 Run 和 Attempt。操作方按这组身份提交定向消息，Daemon 在下一次模型输入准入保存收据。联合回归核对实际 Provider 请求、过期目标、暂停后的未送达状态、后继 Plan 的输入隔离和重启回放。
 - 协调者可在两项待执行阶段之间记录同级问答。提问只暂停等待答复的阶段。显式启用阶段结果答复时，Daemon 核对接手人、封存输入和成功结果包，以该 Agent 的原 Run 为答复来源。后继计划绑定且工作项仍暂停时，协调者可把有版本的未答问题交给新计划中的接手人。迟到和旧计划答复留在原问题记录。联合回归核对重启后的回执，并验证只有当前问题的适用答复才释放阶段等待。
 - `workItem/create` 可按原生 ID 显式挂接现有频道 Task 或 AutomationRun。Host 从原执行记录确认归属和状态。并发提交及重启仍读取同一条 Work Item；原执行所有者持有开始、取消和恢复权限。验收中先运行一次 Automation，再从两个客户端挂接同一执行，Provider 总调用数为一次。
-- Host 注册频道 Task 和 Automation 定义的接单策略后，同一事务保存原生执行、策略回执和适用的 Work Item。建议由原 Task 或 Automation 入口确认，自动派发前复核策略和来源。HTTP 可读免打扰、并发、启动额度、暂停及派发结果。显式复核保留过去的判定和原生执行 ID。
+- Host 注册频道 Task 和 Automation 定义的接单策略后，同一事务保存原生执行、策略回执和适用的 Work Item。HTTP、App Server 和 MCP 使用同一份回执，建议由原 Task 或 Automation 所有者派发。联合回归通过 HTTP 和 SDK 并发确认一次调度建议，重启后执行原 AutomationRun 一次，并从 Work Item 订阅读取 Task 的实际派发状态。免打扰、并发、启动额度和暂停原因保存在原回执。显式复核复用原生执行 ID。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。
 
 | 工作包 | 已验证场景与证据边界 |

@@ -1,4 +1,5 @@
-import { automationDefinitionDigestInput, automationEventDigest, nativeTaskIntakeRevision, nativeWorkIntakeReceiptId, readOnlyRunTools, type ControlPlaneEvent, type NativeWorkIntakeRecord, type RunStore } from "@ling-stack/core";
+import { automationDefinitionDigestInput, automationEventDigest, nativeTaskIntakeRevision, nativeWorkIntakeReceiptId,
+  nativeWorkIntakeRetryReceiptId, readOnlyRunTools, type ControlPlaneEvent, type NativeWorkIntakeRecord, type RunStore } from "@ling-stack/core";
 import type { NativeWorkIntakeReceipt, NativeWorkIntakeSourceKind, RetryNativeWorkIntakeRequest } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -36,9 +37,34 @@ export class NativeWorkIntake {
     return store.getAppServerState("native_intake_receipt", receiptId)?.payload as NativeWorkIntakeRecord | undefined;
   }
 
+  acceptTaskSuggestion(store: RunStore, receipt: NativeWorkIntakeReceipt): NativeWorkIntakeReceipt {
+    if (receipt.dispatch) return receipt;
+    this.assertCurrent(store, receipt, false);
+    const task = store.getTask(receipt.executionId);
+    const channel = task && store.getChannel(task.channelId);
+    if (!task || channel?.id !== receipt.sourceScope || channel.status !== "active"
+      || nativeTaskIntakeRevision(task) !== receipt.sourceRevision) {
+      throw new HttpError(409, "native_intake_source_changed", "The suggested Task or its channel changed.");
+    }
+    if (task.currentRunId) {
+      if (!isTaskRunForReceipt(store, receipt, task.currentRunId)) {
+        throw new HttpError(409, "native_intake_dispatch_reconciliation_required", "The Task's current Run could not be confirmed.");
+      }
+      this.settle(store, receipt.receiptId, { status: "admitted", runId: task.currentRunId });
+    } else if (task.status === "todo") {
+      this.settle(store, receipt.receiptId, { status: "pending" });
+    } else {
+      throw new HttpError(409, "native_intake_source_changed", "The suggested Task is unavailable to start.");
+    }
+    return this.read(store, receipt.receiptId)!.receipt;
+  }
+
   retry(store: RunStore, request: RetryNativeWorkIntakeRequest): NativeWorkIntakeReceipt {
     const receipt = this.read(store, request.receiptId)?.receipt;
     if (!receipt) throw new HttpError(404, "native_intake_unavailable", "The source occurrence is unavailable.");
+    const retryId = nativeWorkIntakeRetryReceiptId(receipt.sourceKind, receipt.sourceEventId, receipt.receiptId, request.idempotencyKey);
+    const retained = this.read(store, retryId)?.receipt;
+    if (retained?.previousReceiptId === receipt.receiptId) return retained;
     const policy = this.policy(store, receipt.sourceKind, receipt.sourceScope);
     if (!policy || policy.mode === "manual") {
       throw new HttpError(409, "native_intake_authority_changed", "The source must have a current intake policy.");
@@ -90,7 +116,7 @@ export class NativeWorkIntake {
       || dispatch.status === "pending" && record.receipt.dispatch?.status === "held") return;
     const now = new Date().toISOString();
     const workItemId = record.receipt.workItemId;
-    const event = workItemId && dispatch.status !== "pending" ? {
+    const event = workItemId && (dispatch.status !== "pending" || !record.receipt.dispatch) ? {
       workspaceId: record.receipt.workspaceId, cwd: store.paths.cwd, domain: "work_items" as const,
       entityType: "work_item", entityId: workItemId, action: "work_item.intake.dispatch.updated",
       data: { workItemId, receiptId, status: dispatch.status, reasonCode: dispatch.reasonCode },
@@ -108,12 +134,12 @@ export class NativeWorkIntake {
       const task = store.getTask(receipt.executionId);
       const key = `native-intake:${nativeWorkIntakeReceiptId("channel_task", receipt.sourceEventId)}`;
       const workUnit = store.findWorkUnitByIdempotency({ kind: "task_run", ownerType: "task", ownerId: receipt.executionId, idempotencyKey: key });
-      const currentRunId = task?.channelId === receipt.sourceScope ? task.currentRunId : undefined;
-      if (currentRunId || workUnit?.linkedRunId) {
-        this.settle(store, receipt.receiptId, { status: "admitted", runId: currentRunId ?? workUnit?.linkedRunId });
+      const retainedRunId = workUnit?.linkedRunId ?? (task?.channelId === receipt.sourceScope ? task.currentRunId : undefined);
+      if (retainedRunId && isTaskRunForReceipt(store, receipt, retainedRunId)) {
+        this.settle(store, receipt.receiptId, { status: "admitted", runId: retainedRunId });
         continue;
       }
-      if (workUnit) {
+      if (workUnit || retainedRunId) {
         this.settle(store, receipt.receiptId, { status: "held", reasonCode: "native_intake_dispatch_reconciliation_required" });
         continue;
       }
@@ -123,7 +149,7 @@ export class NativeWorkIntake {
         const providerPresetId = channel?.defaultProviderPresetId;
         const assertCurrent = () => {
           signal.throwIfAborted();
-          this.assertCurrent(store, receipt, true);
+          this.assertCurrent(store, receipt, receipt.outcome === "accepted");
           const currentTask = store.getTask(receipt.executionId);
           const currentChannel = currentTask && store.getChannel(currentTask.channelId);
           const ownClaim = currentTask?.status === "claimed"
@@ -161,9 +187,14 @@ export class NativeWorkIntake {
       } catch (error) {
         signal.throwIfAborted();
         const reasonCode = error instanceof HttpError ? error.code : "native_intake_dispatch_failed";
-        const status = reasonCode === "native_intake_quiet_hours" || reasonCode === "native_intake_provider_unavailable" ? "pending" : "held";
+        const status = ["native_intake_quiet_hours", "native_intake_provider_unavailable", "resume_blocked"].includes(reasonCode) ? "pending" : "held";
         this.settle(store, receipt.receiptId, { status, reasonCode });
       }
     }
   }
+}
+
+function isTaskRunForReceipt(store: RunStore, receipt: NativeWorkIntakeReceipt, runId: string): boolean {
+  const run = store.getRun(runId);
+  return run?.taskId === receipt.executionId && run.channelId === receipt.sourceScope;
 }

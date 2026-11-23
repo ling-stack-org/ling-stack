@@ -121,6 +121,11 @@ export interface RetryNativeWorkIntakeRequest {
   readonly idempotencyKey: string;
 }
 
+export interface NativeWorkIntakeMutationResponse {
+  readonly cwd: string;
+  readonly receipt: NativeWorkIntakeReceipt;
+}
+
 export interface ListNativeWorkIntakeResponse {
   readonly cwd: string;
   readonly receipts: readonly NativeWorkIntakeReceipt[];

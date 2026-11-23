@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { DatabaseSync } from "node:sqlite";
 import test, { type TestContext } from "node:test";
-import type { AutomationRunMutationResponse, NativeWorkIntakeReceipt, TaskMutationResponse } from "@ling-stack/contracts";
+import type { AutomationRunMutationResponse, LingAppServerDurableNotice,
+  NativeWorkIntakeReceipt, TaskMutationResponse } from "@ling-stack/contracts";
+import { WebSocket } from "ws";
+import { LingAppServerClient, type LingAppServerNotification, type LingAppServerSocket } from "@ling-stack/api-client";
 import { createSqliteRunStore, resolveStoragePaths, type RunStore } from "@ling-stack/core";
 import { createDaemonServer, type DaemonServer } from "../dist/index.js";
 import type { NativeWorkIntakeConfig } from "../dist/server/app-server-native-intake-config.js";
@@ -108,8 +111,9 @@ test("channel intake recovers one original Task, bounds starts and rejects a rev
   assert.equal(disabled.intakeReceipt?.outcome, "paused");
   assert.equal(fixture.owned().getTask(pendingRevocation.task.id)?.currentRunId, undefined);
 
+  const client = await fixture.connect();
   const reconsider = { receiptId: quietTask.intakeReceipt!.receiptId, idempotencyKey: "quiet-ended" };
-  const retry = await fixture.json<{ receipt: NativeWorkIntakeReceipt }>("/work-items/intake", reconsider);
+  const retry = await client.retryNativeWorkIntake(reconsider);
   assert.equal(retry.receipt.outcome, "accepted");
   assert.equal(retry.receipt.previousReceiptId, quietTask.intakeReceipt?.receiptId);
   assert.equal(retry.receipt.executionId, quietTask.task.id);
@@ -118,10 +122,31 @@ test("channel intake recovers one original Task, bounds starts and rejects a rev
   await until(() => fixture.owned().getTask(quietTask.task.id)?.status === "done" ? true : undefined);
   await until(() => fixture.owned().getTask(pendingConcurrent.task.id)?.status === "done" ? true : undefined);
 
-  const manual = await fixture.request(`/tasks/${suggested.task.id}/run`, { providerPresetId: provider.id, skipProviderPreflight: true });
-  assert.ok(manual.ok, await manual.clone().text());
-  await manual.text();
-  assert.equal(fixture.owned().getTask(suggested.task.id)?.status, "done");
+  const { workItemId } = suggested.intakeReceipt;
+  assert.ok(workItemId);
+  const notices: LingAppServerNotification[] = [];
+  client.onNotification(notice => notices.push(notice));
+  const snapshot = await client.readWorkItemSnapshot(suggested.intakeReceipt.workspaceId, workItemId);
+  await client.subscribe({ workItemId, cursor: snapshot.cursor });
+  const scope = { sourceKind: "channel_task" as const, sourceScope: suggestion.id };
+  assert.deepEqual((await client.listNativeWorkIntake(scope)).receipts, [suggested.intakeReceipt]);
+  fixture.owned().updateTask(suggested.task.id, { currentRunId: completed.linkedExecution.runId }, new Date().toISOString());
+  await assert.rejects(client.acceptNativeWorkIntake({ receiptId: suggested.intakeReceipt.receiptId }),
+    { code: "native_intake_dispatch_reconciliation_required" });
+  assert.equal((await client.listNativeWorkIntake(scope)).receipts[0]?.dispatch, undefined);
+  fixture.owned().updateTask(suggested.task.id, { currentRunId: null }, new Date().toISOString());
+  const acceptedSuggestion = await client.acceptNativeWorkIntake({ receiptId: suggested.intakeReceipt.receiptId });
+  assert.equal(acceptedSuggestion.receipt.dispatch?.status, "pending");
+  assert.equal(acceptedSuggestion.receipt.executionId, suggested.task.id);
+  await until(() => fixture.owned().getTask(suggested.task.id)?.status === "done" ? true : undefined);
+  const admitted = await client.acceptNativeWorkIntake({ receiptId: suggested.intakeReceipt.receiptId });
+  assert.equal(admitted.receipt.dispatch?.runId, fixture.owned().getTask(suggested.task.id)?.currentRunId);
+  const notice = await until(() => notices.find(notice => {
+    if (notice.method !== "workItem/intake/updated") return false;
+    const params = notice.params as LingAppServerDurableNotice<{ receiptId: string; status: string }>;
+    return params.payload.receiptId === admitted.receipt.receiptId && params.payload.status === "admitted";
+  }));
+  assert.equal((notice.params as LingAppServerDurableNotice).subject.workItemId, workItemId);
   assert.equal(fixture.dispatches().length, 4);
   const automaticInput = fixture.dispatches().find((request: unknown) => JSON.stringify(request).includes("Scope the durable task"));
   assert.ok(automaticInput);
@@ -129,6 +154,13 @@ test("channel intake recovers one original Task, bounds starts and rejects a rev
   assert.equal(fixture.owned().getTask(quota.task.id)?.status, "todo");
   assert.equal((await fixture.receipts("channel_task", quiet.id)).find(receipt =>
     receipt.receiptId === quietTask.intakeReceipt?.receiptId)?.reasonCode, "quiet_hours");
+  await fixture.stop();
+  await fixture.start(policies.filter(policy => policy.sourceScope !== quiet.id));
+  const restartedClient = await fixture.connect();
+  const retained = await restartedClient.retryNativeWorkIntake(reconsider);
+  assert.equal(retained.receipt.receiptId, retry.receipt.receiptId);
+  assert.equal(retained.receipt.dispatch?.status, "admitted");
+  assert.equal(fixture.dispatches().length, 4);
 });
 
 test("scheduler suggestions and signed events reuse their original AutomationRun across restart", { timeout: 40_000 }, async t => {
@@ -173,9 +205,10 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   const approval = { intakeReceiptId: suggestion.receiptId };
   assert.equal((await fixture.request(`/automations/${eventDriven.id}/run`, approval)).status, 404);
   const accept = () => fixture.json<AutomationRunMutationResponse>(`/automations/${scheduled.id}/run`, approval);
-  const [first, replay] = await Promise.all([accept(), accept()]);
+  const client = await fixture.connect();
+  const [first, replay] = await Promise.all([accept(), client.acceptNativeWorkIntake({ receiptId: suggestion.receiptId })]);
   assert.equal(first.automationRun.id, suggestion.executionId);
-  assert.equal(replay.automationRun.id, suggestion.executionId);
+  assert.equal(replay.receipt.executionId, suggestion.executionId);
   assert.equal(first.intakeReceipt?.dispatch?.status, "pending");
   await fixture.stop();
 
@@ -262,6 +295,17 @@ async function setup(t: TestContext) {
     cwd, signingKey, openStore, stop, request, json,
     dispatches: () => provider.requests.filter((request: unknown) => /Scope the durable task|Scope the revoked task|Manually triage this specific task|Summarize the scheduled event|Signed event payload|Scope one concurrent task|Quiet hours must suppress this task|Too many starts|Concurrency must suppress this task|Policy is disabled|Uncommitted task|Summarize the monitor observation/u.test(JSON.stringify(request))),
     owned: () => { assert.ok(store); return store; },
+    connect: async () => {
+      const url = new URL("/app-server/rpc", base);
+      url.protocol = "ws:";
+      url.searchParams.set("cwd", cwd);
+      const client = new LingAppServerClient({ url: url.href, autoReconnect: false,
+        clientInfo: { name: "Native intake acceptance", version: "1" },
+        createSocket: address => new WebSocket(address, { headers: { Authorization: `Bearer ${auth}` } }) as unknown as LingAppServerSocket });
+      t.after(() => client.close());
+      await client.connect();
+      return client;
+    },
     receipts: async (kind: NativeWorkIntakeReceipt["sourceKind"], scope: string) => (await json<{ receipts: NativeWorkIntakeReceipt[] }>(
       `/work-items/intake?sourceKind=${kind}&sourceScope=${encodeURIComponent(scope)}`,
     )).receipts,

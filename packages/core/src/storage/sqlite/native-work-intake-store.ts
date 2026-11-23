@@ -1,4 +1,4 @@
-import { nativeTaskIntakeRevision, nativeWorkIntakeReceiptId } from "../../native-work-intake-identity.js";
+import { nativeTaskIntakeRevision, nativeWorkIntakeReceiptId, nativeWorkIntakeRetryReceiptId } from "../../native-work-intake-identity.js";
 import type { NativeWorkIntakeReceipt, NativeWorkIntakeSourceKind } from "@ling-stack/contracts";
 import type { NativeWorkIntakeInput, NativeWorkIntakeRecord, NativeWorkIntakeResult } from "../../native-work-intake-types.js";
 import type { AutomationRun, CreateAutomationRunInput } from "../../automation-types.js";
@@ -87,7 +87,7 @@ export class SqliteNativeWorkIntakeStore {
       const { execution, title, input } = create();
       const { policy, sourceEventId, sourceRevision, monitorSnapshot, eventDispatchId } = input;
       const { workspaceId } = execution;
-      const receiptId = retry ? nativeWorkIntakeReceiptId(policy.sourceKind, JSON.stringify([sourceEventId, retry.receiptId, retry.idempotencyKey]))
+      const receiptId = retry ? nativeWorkIntakeRetryReceiptId(policy.sourceKind, sourceEventId, retry.receiptId, retry.idempotencyKey)
         : nativeWorkIntakeReceiptId(policy.sourceKind, sourceEventId);
       const retained = this.state.get("native_intake_receipt", receiptId, workspaceId)?.payload as NativeWorkIntakeRecord | undefined;
       if (retained) {

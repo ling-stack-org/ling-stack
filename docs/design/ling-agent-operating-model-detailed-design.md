@@ -181,12 +181,15 @@ workspace access and the channel's current provider and allowed read tools.
 An accepted Automation occurrence uses its existing execution policy. A
 suggested Task can start through its regular Task action. An operator can
 accept a suggested Automation by submitting its intake receipt to Run now.
-The original AutomationRun progresses from the parked occurrence to execution.
-The pending dispatch is recovered by the Daemon and rechecks the source
-revision, policy, quiet hours and signed event authority before Run admission.
-The HTTP intake collection reads outcomes and can re-evaluate an eligible
-paused or suppressed occurrence using a new receipt linked to the original.
-Each retry retains the same native execution identity.
+`workItem/intake/accept` can also confirm either suggestion with the original
+receipt. The Daemon recovers pending dispatch through the same execution
+owner, checking the source revision, policy, Work Item admission and any
+applicable quiet hours or signed event authority before Run admission.
+The HTTP intake collection and `workItem/intake/list` read outcomes by source.
+HTTP and `workItem/intake/retry` can re-evaluate eligible suppressed, paused or
+held occurrences. Each retry links the receipts and retains the native
+execution identity. `workItem/intake/updated` lets Work Item subscribers
+observe subsequent dispatch milestones.
 
 ### 3.2 Work Item Target Identity
 

@@ -32,6 +32,10 @@ export function prepareNativeAutomationIntakeDispatch(
     if (current?.status !== "enabled" || automationEventDigest(automationDefinitionDigestInput(current)) !== receipt.sourceRevision) {
       throw new HttpError(409, "native_intake_source_changed", "The automation definition changed after intake.");
     }
+    const thread = store.getLingThread(current.threadId);
+    if (!thread || thread.status === "archived" || store.getAutomationCoordinationSchedule(current.id)) {
+      throw new HttpError(409, "native_intake_source_changed", "The original automation execution route is unavailable.");
+    }
     if (automationRun.triggerType === "event") {
       const currentJob = dispatchId ? store.getAutomationEventDispatch(dispatchId) : undefined;
       const source = currentJob && store.getAutomationEventSource(currentJob.sourceId);
@@ -107,7 +111,7 @@ export async function dispatchNativeAutomationIntake(
       signal.throwIfAborted();
       const reasonCode = error instanceof HttpError ? error.code : "native_intake_dispatch_failed";
       intake.settle(store, receipt.receiptId, {
-        status: ["native_intake_quiet_hours", "native_intake_event_binding_pending"].includes(reasonCode) ? "pending" : "held", reasonCode,
+        status: ["native_intake_quiet_hours", "native_intake_event_binding_pending", "resume_blocked"].includes(reasonCode) ? "pending" : "held", reasonCode,
       });
     }
   }

@@ -128,7 +128,7 @@ export const operationEndpoints = {
   },
 
   async retryNativeWorkIntake(this: LingDaemonEndpointContext, cwd: string,
-    input: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest): Promise<{ cwd: string; receipt: import("@ling-stack/contracts").NativeWorkIntakeReceipt }> {
+    input: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest): Promise<import("@ling-stack/contracts").NativeWorkIntakeMutationResponse> {
     return this._post("/work-items/intake", { cwd }, input);
   },
 

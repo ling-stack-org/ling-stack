@@ -88,6 +88,7 @@ ling-stack --cwd /srv/ling/workspace --daemon-url wss://ling.example.test:7443 a
 | 工作项快照与订阅 | `workItem/list`、`workItem/read`、`workItem/subscribe`、`workItem/unsubscribe` | 按工作区和 Work Item 授权分页发现、读取快照及订阅。订阅接收同一范围的恢复游标，取消使用此连接上的订阅 ID。 [工作项方法](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
 | 工作项控制 | `workItem/pause`、`workItem/resume`、`workItem/cancel` | 协商可选能力 `workItem.control`。暂停、恢复或取消当前 Work Item lineage，使用控制代次和原所有者的收尾回执。独立 effort 不受影响。 [控制合同](ling-agent-operating-model-detailed-design.md#51-work-item-control) |
 | 工作项接入与受理 | `workItem/create`、`workItem/accept`、`workItem/clarify` | 可携带明确 Work Item 或可核验的 GitHub 目标，按授权返回来源回执和可见的默认工作项。接受独立执行时绑定其单独的客体与范围。澄清沿用来源、目标和授权回执。 [目标身份与受理](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity) |
+| 原生接单回执 | `workItem/intake/list`、`workItem/intake/accept`、`workItem/intake/retry` | Daemon operator 按来源读取频道 Task 或 Automation 的最近 50 条策略回执、确认建议，或按幂等键复核被暂缓的事件。原执行所有者处理派发和恢复。 |
 | 工作项投递与反馈 | `workItem/delivery/read`、`workItem/feedback/add`、`delivery/read` | 按当前授权读取投递状态和来源反馈。反馈追加到原 Work Item 事件链，未知投递仍由原所有者对账。 |
 | External Agent Federation | `externalAgent/register`、`externalAgent/capabilities/read`、`externalAgent/task/start`、`externalAgent/task/reconnect`、`externalAgent/task/cancel` | 使用 `externalAgent.federation` 能力。注册、能力握手、任务接入、重连和取消均按请求绑定的工作区读取同一 federation ledger，返回外部任务回执，副作用仍由受理的 WorkUnit/Attempt 所有者控制。 |
 | GitHub 证据与对账 | `github/subject/read`、`github/delivery/reconcile` | 按当前授权读取 PR 修订、检查适用性、交付状态和证据引用。对账读取提供方原记录并更新已有交付意图及其回执。 [CI 证据与合并保护](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard) |
@@ -160,6 +161,7 @@ type DurableNotice = {
 | 工作项状态 | `workItem/created`、`workItem/claimed`、`workItem/status/changed`、`workItem/claim/expired`、`workItem/thread/linked`、`workItem/delivery/updated`、`workItem/feedback/received` | 工作项及原所有者提供的状态标识和修订。关联通知携带可见的绑定修订。 |
 | 工作项控制 | `workItem/control/updated` | 控制代次、暂停/恢复/取消动作、当前阶段、阻塞 owner 和未确认效果的受权限投影。 |
 | 工作项协作 | `workItem/evidence/updated`、`workItem/deliberation/updated`、`workItem/stage/updated`、`workItem/brief/updated`、`workItem/coordination/updated`、`workItem/message/updated`、`workItem/question/updated`、`workItem/handoff/updated` | 已授权的实体 ID 和修订。简报带阶段或轮次引用，审议带决定修订以及已受理的轮次引用。客户端按需读取正文和回执。 |
+| 原生接单派发 | `workItem/intake/updated` | 工作项订阅可读取关联回执的 ID、派发状态和原因。operator 可查询原回执及其运行 ID。 |
 | 外部 Agent 与 GitHub | `externalAgent/registered`、`externalAgent/task/started`、`externalAgent/task/reconnected`、`externalAgent/task/unknown`、`github/subject/updated` | 外部任务注册、重连、未知结果和 GitHub 对象修订的有权限投影。 |
 | 订阅与服务生命周期 | `thread/replay/ready`、`thread/resync/required`、`workItem/replay/ready`、`workItem/resync/required`、`server/warning`、`server/draining`、`server/restarted` | 对应订阅的可用水位、重建原因、停机期限和新服务实例信息。 |
 

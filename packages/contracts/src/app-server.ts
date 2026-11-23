@@ -158,6 +158,9 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/subscribe",
   "workItem/unsubscribe",
   "workItem/delivery/read",
+  "workItem/intake/list",
+  "workItem/intake/accept",
+  "workItem/intake/retry",
   "workItem/feedback/add",
   "delivery/read",
   "github/subject/read",
@@ -291,6 +294,7 @@ export const LING_APP_SERVER_NOTIFICATION_METHODS = [
   "workItem/claim/expired",
   "workItem/thread/linked",
   "workItem/delivery/updated",
+  "workItem/intake/updated",
   "workItem/feedback/received",
   "workItem/control/updated",
   "workItem/evidence/updated",
@@ -322,6 +326,8 @@ export const LING_APP_SERVER_NOTIFICATION_METHODS = [
 ] as const;
 
 export type LingAppServerNotificationMethod = (typeof LING_APP_SERVER_NOTIFICATION_METHODS)[number];
+
+export const LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT = 50;
 
 export const LING_APP_SERVER_ERROR_CODES = [
   "server_overloaded",

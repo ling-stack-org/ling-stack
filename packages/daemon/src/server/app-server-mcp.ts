@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
-import { LING_APP_SERVER_ARTIFACT_RANGE_BYTES, LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
+import { LING_APP_SERVER_ARTIFACT_RANGE_BYTES, LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT,
+  LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -251,6 +252,22 @@ export async function runLingAppServerMcp(
       inputSchema: z.strictObject({ ...transferInput, expectedRevision: z.string().length(64), idempotencyKey: requestKey, confirmed: z.literal(true) }),
       annotations: { idempotentHint: true, destructiveHint: true },
     }, async params => describe(await client.applyChangeTransfer({ ...params, action: "apply" })));
+    if (methods.has("workItem/intake/list")) server.registerTool("ling_native_intake_list", {
+      description: "Read the evaluations and dispatch receipts for a Channel Task or Automation source.",
+      inputSchema: z.strictObject({ sourceKind: z.enum(["channel_task", "automation_run"]),
+        sourceScope: z.string().min(1).max(200).optional(), limit: z.number().int().min(1).max(LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT).optional() }),
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    }, async params => describe(await client.listNativeWorkIntake(params)));
+    if (methods.has("workItem/intake/accept")) server.registerTool("ling_native_intake_accept", {
+      description: "Accept a suggested Channel Task or Automation occurrence by receipt ID. The original execution owner handles dispatch.",
+      inputSchema: z.strictObject({ receiptId: z.string().regex(/^intake_[a-f0-9]{64}$/u) }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.acceptNativeWorkIntake(params)));
+    if (methods.has("workItem/intake/retry")) server.registerTool("ling_native_intake_retry", {
+      description: "Re-evaluate a blocked native occurrence under current policy using the same execution identity.",
+      inputSchema: z.strictObject({ receiptId: z.string().regex(/^intake_[a-f0-9]{64}$/u), idempotencyKey: z.string().min(1).max(200) }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.retryNativeWorkIntake(params)));
     if (methods.has("github/intake/poll")) server.registerTool("ling_github_intake_poll", {
       description: "Evaluate a registered GitHub intake page under its current manual, suggestion, or automatic admission policy.",
       inputSchema: z.strictObject({ repository: z.string().min(3).max(201), page: z.number().int().min(1).max(500).optional(),
