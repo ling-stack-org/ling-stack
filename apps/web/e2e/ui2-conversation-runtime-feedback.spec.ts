@@ -1,7 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, createMockTeammate, isRecord, type MockState } from "./support/mock-state";
-import { openEngineeringChannel } from "./support/test-helpers";
+import { installNormalConversationFixture, normalConversationFixtureTitle } from "./support/normal-conversation-fixture";
+import { expectAboveComposer, openEngineeringChannel } from "./support/test-helpers";
 
 for (const theme of ["light", "dark"] as const) {
   for (const locale of ["en-US", "zh-CN"] as const) {
@@ -14,6 +15,7 @@ for (const theme of ["light", "dark"] as const) {
         .getByRole("button", { name: locale === "zh-CN" ? "新建对话" : "New conversation", exact: true }).click();
 
       const home = page.locator(".conversation-home");
+      const composer = home.locator(".normal-conversation-composer");
       const warning = home.locator(".normal-conversation-model-status");
       const title = warning.locator(".conversation-status-title > strong");
       const description = warning.locator(".conversation-status-main > p");
@@ -25,6 +27,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(home.getByRole("heading", { level: 1 })).toHaveCSS("text-align", "center");
       await expect(meta).toBeVisible();
       await expect(configure).toBeEnabled();
+      await expectAboveComposer(warning, composer);
       const titleBox = await title.boundingBox();
       const descriptionBox = await description.boundingBox();
       const metaBox = await meta.boundingBox();
@@ -45,6 +48,33 @@ for (const theme of ["light", "dark"] as const) {
     });
   }
 }
+
+test("existing normal conversation shows an unchecked model above the input at narrow width", async ({ page }, testInfo) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({ model: "gpt-5.5" })];
+  state.workspaceSettings.defaultProviderPresetId = "provider_local";
+  installNormalConversationFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByRole("button", { name: /Open recent conversation \d+/ }).filter({ hasText: normalConversationFixtureTitle }).click();
+
+  const conversation = page.getByLabel("Conversation page");
+  await expect(conversation).toBeVisible();
+  await page.setViewportSize({ width: 700, height: 800 });
+  const composer = conversation.getByLabel("New conversation composer");
+  const warning = conversation.locator(".normal-conversation-model-status");
+  await expect(warning).toContainText("provider has not been checked");
+  await expectAboveComposer(warning, composer);
+  await composer.getByRole("textbox", { name: "Conversation message" }).fill("Draft while the model is unavailable");
+  await expect(composer.getByRole("button", { name: "Send" })).toBeDisabled();
+  await expectNoDocumentOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath("normal-conversation-model-warning.png") });
+  await warning.getByRole("button", { name: "Configure model" }).click();
+  await expect(page.getByRole("heading", { name: "Model Workbench", exact: true })).toBeVisible();
+  expect(runtimeErrors).toEqual([]);
+});
 
 test("channel runtime status and guidance use shared controls with a keyboard-safe menu", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
@@ -132,7 +162,7 @@ test("normal conversation sends active-run guidance as one ordinary user message
   expect(runtimeErrors).toEqual([]);
 });
 
-test("teammate runtime status and queued guidance stay contained in dark reduced motion", async ({ page }) => {
+test("teammate runtime status and queued guidance stay contained in dark reduced motion", async ({ page }, testInfo) => {
   await prepareSurface(page, "dark", 1280, 800);
   await page.emulateMedia({ reducedMotion: "reduce" });
   const runtimeErrors = collectRuntimeErrors(page);
@@ -171,8 +201,10 @@ test("teammate runtime status and queued guidance stay contained in dark reduced
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expectContained(modelWarning, privateComposer);
+  await expectAboveComposer(modelWarning, privateComposer.getByLabel("Private chat composer"));
   await expectContained(row, guidance);
   await expectNoDocumentOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath("teammate-model-warning.png") });
   await modelWarning.getByRole("button", { name: "Configure model" }).click();
   await expect(page.getByLabel("Model assignment")).toBeVisible();
   expect(runtimeErrors).toEqual([]);
