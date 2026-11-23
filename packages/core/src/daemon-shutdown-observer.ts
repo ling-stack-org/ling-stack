@@ -1,5 +1,6 @@
 import { closeSync, fstatSync, writeSync } from "node:fs";
 import type { Readable } from "node:stream";
+import { isInheritedDaemonPipe } from "./daemon-pipe.js";
 
 export type DaemonShutdownPhase = "draining" | "blocked";
 export const DAEMON_SHUTDOWN_OBSERVER_MAX_BYTES = 512;
@@ -17,7 +18,7 @@ export function createDaemonShutdownReporter(input: { readonly fd: number }): {
 } {
   if (input.fd !== 5) throw new DaemonShutdownObserverError("daemon_shutdown_observer_invalid");
   const info = fstatSync(input.fd);
-  if (!info.isFIFO() && !info.isSocket()) throw new DaemonShutdownObserverError("daemon_shutdown_observer_invalid");
+  if (!isInheritedDaemonPipe(info)) throw new DaemonShutdownObserverError("daemon_shutdown_observer_invalid");
   let previous: DaemonShutdownPhase | undefined;
   let unavailable = false;
   const close = (): void => { try { closeSync(input.fd); } catch { /* Already unavailable. */ } };

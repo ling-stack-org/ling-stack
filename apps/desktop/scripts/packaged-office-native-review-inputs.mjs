@@ -192,6 +192,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   // Explicit shutdown/lease-consumer delta, independently reviewed before binding.
   "apps/desktop/main/desktop-runtime.ts",
   "packages/core/src/daemon-resource-bootstrap.ts",
+  "packages/core/src/daemon-pipe.ts",
   // Explicit graceful-tree/final-settlement/terminal-handoff review delta.
   // Merely listing these inputs grants no approval; current bytes need review.
   "packages/core/src/run-final-settlement-types.ts",
