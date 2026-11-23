@@ -8,8 +8,9 @@ import type {
   DeviceDeveloperExecutorResultV1,
   DeviceDeveloperJobV1,
   DeviceDeveloperSessionV1,
+  DeviceNativeWorkbenchReadbackV1,
 } from "@ling-stack/contracts";
-import type { JsonValue } from "@ling-stack/contracts";
+import { isDeviceNativeWorkbenchReadbackV1, isDeviceNativeWorkbenchRequestV1, type JsonValue } from "@ling-stack/contracts";
 import { DeviceFabricError } from "./device-fabric.js";
 import type { SqliteDeviceDeveloperStore } from "./storage/sqlite/device-developer-store.js";
 
@@ -80,7 +81,7 @@ export class DeviceDeveloperSessionCoordinator {
       if (current) {
         if (current.sessionId !== input.sessionId || current.kind !== input.kind || current.targetDeviceId !== input.targetDeviceId
           || current.artifactDigest !== input.artifactDigest || current.authorizationRevision !== input.authorizationRevision
-          || current.buildId !== input.buildId) {
+          || current.buildId !== input.buildId || !isDeepStrictEqual(current.nativeWorkbench, input.nativeWorkbench)) {
           throw new DeviceFabricError("revision_conflict", "developer job id is bound to another job");
         }
         return { job: current, admitted: false };
@@ -95,7 +96,12 @@ export class DeviceDeveloperSessionCoordinator {
       if (session.protocolReplay && input.kind !== "workbench") {
         throw new DeviceFabricError("safety_denied", "protocol session only authorizes workbench jobs");
       }
-      if ((input.status !== "running" && input.status !== "queued") || input.outputRef !== undefined || input.outputDigest !== undefined) {
+      if (input.nativeWorkbench !== undefined && (input.kind !== "workbench" || !!session.protocolReplay || !session.targetBinding
+        || !isDeviceNativeWorkbenchRequestV1(input.nativeWorkbench))) {
+        throw new DeviceFabricError("invalid_graph", "native workbench requires a bound developer target and operation");
+      }
+      if ((input.status !== "running" && input.status !== "queued") || input.outputRef !== undefined || input.outputDigest !== undefined
+        || input.nativeWorkbenchReadback !== undefined) {
         throw new DeviceFabricError("invalid_graph", "a new developer job requires an admission state");
       }
       if (input.kind === "deploy" && (!input.artifactDigest || input.artifactDigest !== session.artifactDigest)) {
@@ -115,13 +121,14 @@ export class DeviceDeveloperSessionCoordinator {
       const job = this.getJob(jobId);
       if (!job || isTerminalDeveloperJob(job.status)) continue;
       const outcome = readOutcome?.(job);
-      this.settleJob(jobId, outcome?.status ?? "unknown", outcome?.outputRef, now, outcome?.taskStatus ?? "unknown", outcome?.outputDigest);
+      this.settleJob(jobId, outcome?.status ?? "unknown", outcome?.outputRef, now, outcome?.taskStatus ?? "unknown",
+        outcome?.outputDigest, outcome?.nativeWorkbenchReadback);
     }
   }
 
   settleJob(
     jobId: string, status: DeviceDeveloperJobV1["status"], outputRef: string | undefined, updatedAt: string,
-    taskStatus?: DeviceDeveloperJobV1["taskStatus"], outputDigest?: string,
+    taskStatus?: DeviceDeveloperJobV1["taskStatus"], outputDigest?: string, nativeWorkbenchReadback?: DeviceNativeWorkbenchReadbackV1,
   ): DeviceDeveloperJobV1 {
     return this.write(() => {
       const job = this.getJob(jobId);
@@ -131,10 +138,21 @@ export class DeviceDeveloperSessionCoordinator {
       }
       if (job.status === status && (outputRef === undefined || outputRef === job.outputRef)
         && (taskStatus === undefined || taskStatus === job.taskStatus)
-        && (outputDigest === undefined || outputDigest === job.outputDigest)) return job;
+        && (outputDigest === undefined || outputDigest === job.outputDigest)
+        && (nativeWorkbenchReadback === undefined || isDeepStrictEqual(nativeWorkbenchReadback, job.nativeWorkbenchReadback))) return job;
       if (isTerminalDeveloperJob(job.status)) throw new DeviceFabricError("revision_conflict", "developer job has a retained outcome");
       if (status === "queued") throw new DeviceFabricError("revision_conflict", "developer job cannot return to its queue");
-      return this.recordOutcome(job, this.requireSession(job.sessionId), status, updatedAt, outputRef, taskStatus, outputDigest);
+      const session = this.requireSession(job.sessionId);
+      if (nativeWorkbenchReadback !== undefined && (!job.nativeWorkbench || session.authorizationRevision !== job.authorizationRevision
+        || session.status !== "running" || !matchesNativeWorkbenchReadback(job, session, nativeWorkbenchReadback, updatedAt)
+        || (nativeWorkbenchReadback.status === "verified" ? status !== "completed" : status !== "failed"))) {
+        throw new DeviceFabricError("revision_conflict", "native workbench readback does not match this job");
+      }
+      if (job.nativeWorkbench && status === "completed" && (!nativeWorkbenchReadback || taskStatus !== "succeeded")) {
+        throw new DeviceFabricError("revision_conflict", "native workbench completion requires verified readback");
+      }
+      return this.recordOutcome({ ...job, ...(nativeWorkbenchReadback ? { nativeWorkbenchReadback } : {}) },
+        session, status, updatedAt, outputRef, taskStatus, outputDigest);
     });
   }
 
@@ -207,6 +225,15 @@ export class DeviceDeveloperSessionCoordinator {
   private write<T>(work: () => T): T {
     return this.#store ? this.#store.withWriteTransaction(work) : work();
   }
+}
+
+export function matchesNativeWorkbenchReadback(
+  job: DeviceDeveloperJobV1, session: DeviceDeveloperSessionV1, readback: unknown, now: string,
+): readback is DeviceNativeWorkbenchReadbackV1 {
+  return isDeviceNativeWorkbenchReadbackV1(readback) && readback.targetDeviceId === job.targetDeviceId
+    && readback.profileRevision === session.targetBinding?.profileRevision
+    && readback.connectionRevision === session.targetBinding?.connectionRevision
+    && Date.parse(readback.observedAt) >= Date.parse(job.updatedAt) && Date.parse(readback.observedAt) <= Date.parse(now);
 }
 
 function isTerminalDeveloperJob(status: DeviceDeveloperJobV1["status"]): boolean {

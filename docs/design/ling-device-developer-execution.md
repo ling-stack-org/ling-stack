@@ -65,6 +65,37 @@ environment receives project credentials and access specific to the build. The b
 and workbench keep target access within the owning host's device execution boundary.
 An operator selects the device and authorizes installation of the specific artifact.
 
+### Native workbench job contract
+
+The authenticated developer session exposes native maintenance as a typed `workbench`
+job. The request names one host tool and one bounded operation. The host supplies the
+actual SSH, ADB or vendor-maintenance executor, so the model never receives an
+unscoped terminal channel. A request can carry a SHA-256 digest for evidence selected
+by the operator.
+
+```json
+{
+  "jobId": "native-network-readback-1",
+  "kind": "workbench",
+  "authorizationRevision": "auth-7",
+  "expectedSessionRevision": 4,
+  "nativeWorkbench": {
+    "tool": "ssh",
+    "operation": "collect-network-evidence",
+    "evidenceDigest": "<sha256 of the selected evidence>"
+  }
+}
+```
+
+The executor declares whether the operation is read-only or mutating. Mutating
+operations check the target's dispatch-stop revision immediately before execution.
+Every job remains bound to the developer session's target and profile/connection
+revisions. Completion requires a readback containing the same target, revisions,
+observation time and evidence digest. A missing, foreign, stale or failed readback
+leaves the job failed or unknown and retains the original job record. The SQLite
+coordinator persists the request and readback together, so reconnects do not create
+another native dispatch.
+
 ## 2. Execution architecture
 
 ```mermaid

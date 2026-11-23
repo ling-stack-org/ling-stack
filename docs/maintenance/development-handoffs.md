@@ -236,6 +236,22 @@ developer clients and physical hardware or vehicle acceptance remain open.
 
 [Current evidence and open acceptance by slice](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
+## Device Support Platform native workbench continuation 2026-11-23
+
+- D10 now admits `workbench` jobs through the authenticated developer session. The
+  contract names `ssh`, `adb` or `vendor`, a bounded operation and an optional
+  operator-selected evidence digest. The host executor declares the operation's
+  side-effect class. Model turns do not receive an unscoped terminal interface.
+- Mutating native workbench jobs check the target dispatch-stop revision immediately
+  before execution. A completion must carry the session target, profile revision,
+  connection revision, observation time and evidence digest in a verified readback.
+  A foreign or missing readback remains failed or unknown. The request and readback
+  are stored in the same SQLite developer job record.
+- Focused Core and Daemon checks pass 11 developer coordinator and route tests,
+  including malformed requests, changed operations, dispatch-stop fencing, readback
+  identity, idempotent retry and SQLite retention. Actual SSH, ADB and vendor tool
+  executors remain host-specific acceptance work.
+
 ## Device Support Platform Android USB Modbus continuation 2026-11-23
 
 - The implementation branch `codex/device-platform-complete-implementation-20261123`

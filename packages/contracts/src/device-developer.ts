@@ -3,6 +3,47 @@ import type { HardwareProtocolCaptureV1 } from "./device-protocol.js";
 
 export type DeviceSessionModeV1 = "standard" | "developer";
 
+export const DEVICE_NATIVE_WORKBENCH_TOOLS_V1 = ["ssh", "adb", "vendor"] as const;
+export type DeviceNativeWorkbenchToolV1 = (typeof DEVICE_NATIVE_WORKBENCH_TOOLS_V1)[number];
+
+export interface DeviceNativeWorkbenchRequestV1 {
+  readonly tool: DeviceNativeWorkbenchToolV1;
+  readonly operation: string;
+  readonly evidenceDigest?: string;
+}
+
+export interface DeviceNativeWorkbenchReadbackV1 {
+  readonly targetDeviceId: string;
+  readonly profileRevision: string;
+  readonly connectionRevision: string;
+  readonly status: "verified" | "failed";
+  readonly observedAt: string;
+  readonly evidenceDigest: string;
+}
+
+export function isDeviceNativeWorkbenchRequestV1(value: unknown): value is DeviceNativeWorkbenchRequestV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const { tool, operation, evidenceDigest } = value as Record<string, unknown>;
+  return Object.keys(value).every(key => ["tool", "operation", "evidenceDigest"].includes(key))
+    && DEVICE_NATIVE_WORKBENCH_TOOLS_V1.some(candidate => candidate === tool)
+    && typeof operation === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(operation)
+    && (evidenceDigest === undefined || isWorkbenchDigest(evidenceDigest));
+}
+
+export function isDeviceNativeWorkbenchReadbackV1(value: unknown): value is DeviceNativeWorkbenchReadbackV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const { targetDeviceId, profileRevision, connectionRevision, status, observedAt, evidenceDigest } = value as Record<string, unknown>;
+  return Object.keys(value).every(key => ["targetDeviceId", "profileRevision", "connectionRevision", "status", "observedAt", "evidenceDigest"].includes(key))
+    && [targetDeviceId, profileRevision, connectionRevision].every(item => typeof item === "string" && item.length > 0 && item.length <= 512)
+    && (status === "verified" || status === "failed")
+    && typeof observedAt === "string" && Number.isFinite(Date.parse(observedAt))
+    && isWorkbenchDigest(evidenceDigest);
+}
+
+function isWorkbenchDigest(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
 export interface DeviceDeveloperSessionV1 {
   readonly sessionId: string;
   readonly workspaceId: string;
@@ -46,6 +87,8 @@ export interface DeviceDeveloperJobV1 {
   readonly status: "queued" | "running" | "completed" | "failed" | "unknown" | "cancelled";
   readonly artifactDigest?: string;
   readonly buildId?: string;
+  readonly nativeWorkbench?: DeviceNativeWorkbenchRequestV1;
+  readonly nativeWorkbenchReadback?: DeviceNativeWorkbenchReadbackV1;
   readonly targetDeviceId: string;
   readonly authorizationRevision?: string;
   readonly taskStatus: DeviceTaskStatusV1;
@@ -60,6 +103,7 @@ export interface DeviceDeveloperExecutorResultV1 {
   readonly outputRef?: string;
   readonly outputDigest?: string;
   readonly taskStatus?: DeviceTaskStatusV1;
+  readonly nativeWorkbenchReadback?: DeviceNativeWorkbenchReadbackV1;
 }
 
 export type AndroidApkIdentityV1 = {

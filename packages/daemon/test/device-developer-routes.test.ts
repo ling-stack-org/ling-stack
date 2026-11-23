@@ -28,6 +28,7 @@ test("local developer sessions authorize the current target and expose durable w
   const dispatched = new Promise<void>(resolve => { signalDispatch = resolve; });
   const running = new Promise<void>(resolve => { finishExecution = resolve; });
   let dispatchCount = 0;
+  let nativeDispatchCount = 0;
   async function start(seed = false) {
     const workspace = createSqliteRunStore(cwd);
     databasePath = workspace.paths.databasePath;
@@ -41,7 +42,24 @@ test("local developer sessions authorize the current target and expose durable w
     daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
       storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
       developerExecutor: {
-        async execute({ job, signal }) {
+        nativeWorkbenchSideEffect({ session, operation }) {
+          if (session.targetDeviceId !== targetDeviceId || operation.tool !== "vendor") return undefined;
+          if (operation.operation === "read-version") return "read_only";
+          if (operation.operation === "fixture-maintenance") return "mutating";
+        },
+        async execute({ session, job, signal, assertCurrent }) {
+          if (job.nativeWorkbench) {
+            assertCurrent();
+            nativeDispatchCount += 1;
+            return {
+              status: "completed", outputRef: "fixture-native-evidence", taskStatus: "succeeded",
+              nativeWorkbenchReadback: {
+                targetDeviceId: job.targetDeviceId, profileRevision: session.targetBinding!.profileRevision,
+                connectionRevision: job.nativeWorkbench.operation === "read-version" ? session.targetBinding!.connectionRevision : "foreign",
+                status: "verified", observedAt: new Date().toISOString(), evidenceDigest: "b".repeat(64),
+              },
+            };
+          }
           dispatchCount += 1;
           signalDispatch();
           await running;
@@ -113,6 +131,56 @@ test("local developer sessions authorize the current target and expose durable w
   assert.equal(developerJob.outputDigest, "a".repeat(64));
   assert.equal(dispatchCount, 1);
 
+  async function createNativeSession() {
+    const session = await readSession(await post(sessions, input));
+    const url = `${sessions}/${session.sessionId}`;
+    const authorized = await readSession(await post(url + "/authorize", { expectedRevision: session.revision }));
+    return { url, session: authorized };
+  }
+  const native = await createNativeSession();
+  const nativeRequest = {
+    jobId: "native-readback", kind: "workbench", authorizationRevision: native.session.authorizationRevision,
+    expectedSessionRevision: native.session.revision,
+    nativeWorkbench: { tool: "vendor", operation: "read-version", evidenceDigest: "c".repeat(64) },
+  };
+  assert.equal((await post(native.url + "/jobs", { ...nativeRequest, expectedSessionRevision: 1 })).status, 409);
+  assert.equal((await post(native.url + "/jobs", {
+    ...nativeRequest, nativeWorkbench: { ...nativeRequest.nativeWorkbench, evidenceDigest: ["c".repeat(64)] },
+  })).status, 400);
+  assert.equal((await post(native.url + "/jobs", {
+    ...nativeRequest, nativeWorkbench: { ...nativeRequest.nativeWorkbench, operation: "other-operation" },
+  })).status, 422);
+  const stopUrl = `${base}/devices/${targetDeviceId}/dispatch-stop`;
+  const stop = (active: boolean, expectedRevision: number) => fetch(stopUrl, {
+    method: "PUT", headers, body: JSON.stringify({ active, expectedRevision }),
+  });
+  assert.equal((await stop(true, 0)).status, 200);
+  const admittedNative = await post(native.url + "/jobs", nativeRequest);
+  assert.equal(admittedNative.status, 201);
+  const nativeJob = await readJob(admittedNative);
+  assert.equal(nativeJob.status, "completed");
+  assert.deepEqual(nativeJob.nativeWorkbench, nativeRequest.nativeWorkbench);
+  assert.equal(nativeJob.nativeWorkbenchReadback?.connectionRevision, "profile-1");
+  assert.equal(nativeJob.nativeWorkbenchReadback?.evidenceDigest, "b".repeat(64));
+  assert.deepEqual(await readJob(await post(native.url + "/jobs", nativeRequest)), nativeJob);
+  assert.equal((await post(native.url + "/jobs", {
+    ...nativeRequest, nativeWorkbench: { ...nativeRequest.nativeWorkbench, evidenceDigest: "d".repeat(64) },
+  })).status, 409);
+
+  const maintenance = await createNativeSession();
+  const maintenanceRequest = {
+    ...nativeRequest, jobId: "native-changed-readback", authorizationRevision: maintenance.session.authorizationRevision,
+    expectedSessionRevision: maintenance.session.revision,
+    nativeWorkbench: { tool: "vendor", operation: "fixture-maintenance" },
+  };
+  assert.equal((await post(maintenance.url + "/jobs", maintenanceRequest)).status, 403);
+  assert.equal(nativeDispatchCount, 1);
+  assert.equal((await stop(false, 1)).status, 200);
+  const missing = await readJob(await post(maintenance.url + "/jobs", maintenanceRequest));
+  assert.equal(missing.status, "unknown");
+  assert.equal(missing.nativeWorkbenchReadback, undefined);
+  assert.equal(nativeDispatchCount, 2);
+
   const stale = await readSession(await post(sessions, { ...input, mode: "standard" }));
   assert.equal(stale.mode, "standard");
   assert.equal((await post(`${sessions}/${stale.sessionId}/jobs`, {
@@ -149,5 +217,7 @@ test("local developer sessions authorize the current target and expose durable w
   assert.deepEqual(await readJob(await get(reopened + developerJobPath)), developerJob);
   assert.deepEqual(await readJob(await post(`${reopened}/developer/sessions/${created.sessionId}/jobs`, jobInput)), developerJob);
   assert.equal(dispatchCount, 1);
+  assert.deepEqual(await readJob(await get(`${reopened}/developer/sessions/${native.session.sessionId}/jobs/${nativeRequest.jobId}`)), nativeJob);
+  assert.equal(nativeDispatchCount, 2);
   assert.deepEqual(await (await get(reopened + jobPath)).json(), { job });
 });

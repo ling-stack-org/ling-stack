@@ -1,20 +1,31 @@
 import { createHash } from "node:crypto";
-import type { DeviceActionRequestV1, DeviceDeveloperExecutorResultV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceProfileV1 } from "@ling-stack/contracts";
-import { DeviceBrokerError, digestRequest, type DeviceCapabilityBroker, type DeviceDeveloperSessionCoordinator, type SqliteDeviceSupportStore } from "@ling-stack/core";
+import type {
+  CapabilitySideEffectV1, DeviceActionRequestV1, DeviceDeveloperExecutorResultV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1,
+  DeviceNativeWorkbenchRequestV1, DeviceProfileV1,
+} from "@ling-stack/contracts";
+import {
+  DeviceBrokerError, digestRequest, matchesNativeWorkbenchReadback, type DeviceCapabilityBroker,
+  type DeviceDeveloperSessionCoordinator, type SqliteDeviceSupportStore,
+} from "@ling-stack/core";
 
 import { androidAdbAdapterId, androidAdbInstallCapability, androidAdbLogCapability } from "./adapters/android-adb.js";
 import type { AndroidProjectBuilds } from "./android-project-builds.js";
 
 export interface DeviceDeveloperExecutor {
+  nativeWorkbenchSideEffect?(input: {
+    readonly session: DeviceDeveloperSessionV1;
+    readonly operation: DeviceNativeWorkbenchRequestV1;
+  }): CapabilitySideEffectV1 | undefined;
   execute(input: {
     readonly session: DeviceDeveloperSessionV1;
     readonly job: DeviceDeveloperJobV1;
     readonly signal: AbortSignal;
+    readonly assertCurrent: () => void;
   }): Promise<DeviceDeveloperExecutorResultV1>;
 }
 
-type JobRequest = Pick<DeviceDeveloperJobV1, "jobId" | "artifactDigest" | "buildId"> & {
-  readonly kind: Exclude<DeviceDeveloperJobV1["kind"], "workbench">;
+type JobRequest = Pick<DeviceDeveloperJobV1, "jobId" | "artifactDigest" | "buildId" | "nativeWorkbench"> & {
+  readonly kind: DeviceDeveloperJobV1["kind"];
   readonly authorizationRevision: string;
   readonly expectedSessionRevision?: number;
 };
@@ -54,6 +65,21 @@ export function createDeviceDeveloperJobs(options: {
         throw new DeviceBrokerError("target_changed", "The reviewed project build session changed");
       }
       const executor = options.executor;
+      let dispatchStopRevision: number | undefined;
+      if (request.kind === "workbench") {
+        if (expectedSessionRevision !== session.revision) {
+          throw new DeviceBrokerError("target_changed", "The reviewed native workbench session changed");
+        }
+        const sideEffect = request.nativeWorkbench && executor?.nativeWorkbenchSideEffect?.({ session, operation: request.nativeWorkbench });
+        if (!sideEffect) {
+          throw new DeviceBrokerError("unsupported_capability", "native workbench access is unavailable for this target");
+        }
+        if (sideEffect !== "read_only") {
+          const stop = store.getDispatchStop(target.deviceId);
+          if (stop.active) throw new DeviceBrokerError("permission_denied", "device writes are stopped");
+          dispatchStopRevision = stop.revision;
+        }
+      }
       const logCapabilityId = request.kind === "logs" ? resolveDefaultLogCapability(broker, profile) : undefined;
       const nativeDeploy = !executor && request.kind === "deploy" && profile.adapterId === androidAdbAdapterId
         && options.canDeployAndroid?.(target.deviceId) === true;
@@ -74,17 +100,28 @@ export function createDeviceDeveloperJobs(options: {
       if (!admitted) return { job, admitted };
 
       const signal = AbortSignal.timeout(projectBuild ? 30 * 60_000 : 60_000);
+      const assertCurrent = () => {
+        signal.throwIfAborted();
+        requireCurrentDeveloperTarget(store, session);
+        const current = sessions.getSession(session.sessionId);
+        if (current?.status !== "running" || current.authorizationRevision !== session.authorizationRevision
+          || (job.nativeWorkbench && current.revision !== session.revision + 1)) {
+          throw new DeviceBrokerError("permission_denied", "Developer job authorization changed");
+        }
+      };
+      const assertNativeDispatch = () => {
+        assertCurrent();
+        if (dispatchStopRevision !== undefined) {
+          const stop = store.getDispatchStop(target.deviceId);
+          if (stop.active || stop.revision !== dispatchStopRevision) {
+            throw new DeviceBrokerError("permission_denied", "device write stop changed before native dispatch");
+          }
+        }
+      };
       let result: DeviceDeveloperExecutorResultV1 | undefined;
+      let readbackCheckedAt: string | undefined;
       try {
         if (projectBuild) {
-          const assertCurrent = () => {
-            signal.throwIfAborted();
-            requireCurrentDeveloperTarget(store, session);
-            const current = sessions.getSession(session.sessionId);
-            if (current?.status !== "running" || current.authorizationRevision !== session.authorizationRevision) {
-              throw new DeviceBrokerError("permission_denied", "Project build authorization changed");
-            }
-          };
           const artifact = await options.androidProjectBuilds!.run(projectBuild, job.jobId, signal, assertCurrent)
             .catch(error => {
               if (error instanceof DeviceBrokerError && error.code === "invalid_request") return undefined;
@@ -99,19 +136,46 @@ export function createDeviceDeveloperJobs(options: {
             return { job: settled, admitted };
           }
           result = { status: "failed", taskStatus: "failed" };
-        } else if (executor) result = await executor.execute({ session, job, signal });
-        else if (nativeDeploy && apk && packageId && versionCode) {
+        } else if (executor) {
+          if (job.nativeWorkbench) assertNativeDispatch();
+          result = await executor.execute({ session, job, signal, assertCurrent: job.nativeWorkbench ? assertNativeDispatch : assertCurrent });
+          if (job.nativeWorkbench) {
+            assertCurrent();
+            readbackCheckedAt = now();
+            result = readNativeWorkbenchOutcome(job, session, result, readbackCheckedAt);
+          }
+        } else if (nativeDeploy && apk && packageId && versionCode) {
           result = await deployAndroidApk(broker, sessions, session, job, { artifactDigest: apk.digest, packageId, versionCode }, signal);
         } else result = await captureDeviceLogs(broker, session, job, logCapabilityId!, signal);
         signal.throwIfAborted();
         requireCurrentDeveloperTarget(store, session);
       } catch {
-        result = { status: "unknown", taskStatus: "unknown", outputRef: result?.outputRef };
+        result = { status: "unknown", taskStatus: "unknown", outputRef: job.nativeWorkbench ? undefined : result?.outputRef };
       }
-      const settled = sessions.settleJob(job.jobId, result.status, result.outputRef, now(), result.taskStatus, result.outputDigest);
+      const settled = sessions.settleJob(job.jobId, result.status, result.outputRef, readbackCheckedAt ?? now(), result.taskStatus, result.outputDigest,
+        job.nativeWorkbench ? result.nativeWorkbenchReadback : undefined);
       return { job: settled, admitted };
     },
   };
+}
+
+function readNativeWorkbenchOutcome(
+  job: DeviceDeveloperJobV1, session: DeviceDeveloperSessionV1, result: DeviceDeveloperExecutorResultV1, now: string,
+): DeviceDeveloperExecutorResultV1 {
+  const readback = result.nativeWorkbenchReadback;
+  const outputRef = typeof result.outputRef === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(result.outputRef)
+    ? result.outputRef : undefined;
+  if ((result.status === "completed" || result.status === "failed") && matchesNativeWorkbenchReadback(job, session, readback, now)) {
+    if (readback.status === "failed") return { status: "failed", taskStatus: "failed", outputRef, nativeWorkbenchReadback: readback };
+    if (result.status === "completed") return {
+      status: "completed", taskStatus: "succeeded", outputRef, nativeWorkbenchReadback: readback,
+      ...(outputRef && typeof result.outputDigest === "string" && /^[a-f0-9]{64}$/u.test(result.outputDigest)
+        ? { outputDigest: result.outputDigest } : {}),
+    };
+  }
+  if (result.status === "cancelled") return { status: "cancelled", taskStatus: "cancelled", outputRef };
+  if (result.status === "failed" && readback === undefined) return { status: "failed", taskStatus: "failed", outputRef };
+  return { status: "unknown", taskStatus: "unknown", outputRef };
 }
 
 export function retainedAndroidDeployResult(store: SqliteDeviceSupportStore, job: DeviceDeveloperJobV1): DeviceDeveloperExecutorResultV1 | undefined {

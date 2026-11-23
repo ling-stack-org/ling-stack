@@ -88,6 +88,35 @@ test("target-bound sessions fence authorization revisions and developer job admi
   assert.throws(() => coordinator.startJob({ ...authorizedJob, authorizationRevision: "wrong" }), { code: "revision_conflict" });
 });
 
+test("native workbench jobs retain the authorized tool operation and evidence binding", () => {
+  const coordinator = new DeviceDeveloperSessionCoordinator();
+  const session = coordinator.createSession({
+    sessionId: "native-session", workspaceId: "workspace", ownerKind: "daemon", ownerId: "workspace",
+    targetDeviceId: "linux-target", targetKind: "linux", mode: "developer", authorizationRevision: "auth",
+    targetBinding: { profileRevision: "profile-1", connectionRevision: "connection-1" },
+    status: "authorized", revision: 1, createdAt: now, updatedAt: now,
+  });
+  const workbench = { tool: "ssh" as const, operation: "collect-network-evidence", evidenceDigest: "a".repeat(64) };
+  const job = coordinator.startJob({
+    jobId: "native-job", sessionId: session.sessionId, kind: "workbench", status: "running", targetDeviceId: session.targetDeviceId,
+    authorizationRevision: session.authorizationRevision, nativeWorkbench: workbench, taskStatus: "executing", revision: 1, updatedAt: now,
+  });
+  assert.deepEqual(job.nativeWorkbench, workbench);
+  assert.deepEqual(coordinator.startJob({ ...job }), job);
+  assert.throws(() => coordinator.startJob({ ...job, nativeWorkbench: { ...workbench, tool: "adb" } }), { code: "revision_conflict" });
+  assert.throws(() => coordinator.settleJob(job.jobId, "completed", "native-readback", now, "succeeded"),
+    { code: "revision_conflict" });
+  const readback = {
+    targetDeviceId: session.targetDeviceId, profileRevision: "profile-1", connectionRevision: "connection-1",
+    observedAt: now, evidenceDigest: "b".repeat(64), status: "verified",
+  } as const;
+  assert.throws(() => coordinator.settleJob(job.jobId, "completed", "native-readback", now, "succeeded", undefined,
+    { ...readback, connectionRevision: "foreign-connection" }), { code: "revision_conflict" });
+  const settled = coordinator.settleJob(job.jobId, "completed", "native-readback", now, "succeeded", undefined, readback);
+  assert.equal(settled.status, "completed");
+  assert.deepEqual(settled.nativeWorkbenchReadback, readback);
+});
+
 test("phone-owned collaboration proposals are idempotent and chunked transfers are scoped", () => {
   const coordinator = new DeviceCollaborationCoordinator();
   const payload = { capabilityId: "linux.inspect.network", input: { includeDns: true } };

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import type { DeviceDeveloperJobV1, DeviceDeveloperSessionV1 } from "@ling-stack/contracts";
+import { isDeviceNativeWorkbenchRequestV1, type DeviceDeveloperJobV1, type DeviceDeveloperSessionV1 } from "@ling-stack/contracts";
 import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, requireWorkspaceDeviceTask } from "@ling-stack/core";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
@@ -15,8 +15,8 @@ import type { DeviceSupportRuntime } from "./runtime.js";
 const developerPath = "/v1/device-support/developer/sessions";
 const buildsPath = "/v1/device-support/developer/project-builds";
 const sessionPath = /^\/v1\/device-support\/developer\/sessions\/([^/]+)(?:\/(authorize|jobs|artifact)(?:\/([^/]+)(?:\/(logcat|readback|build-log))?)?)?$/u;
-const jobKinds = ["build", "deploy", "launch", "logs", "test", "retest"] as const satisfies readonly DeviceDeveloperJobV1["kind"][];
-const jobFields = new Set(["jobId", "kind", "artifactDigest", "buildId", "authorizationRevision", "expectedSessionRevision"]);
+const jobKinds = ["build", "deploy", "launch", "logs", "test", "retest", "workbench"] as const satisfies readonly DeviceDeveloperJobV1["kind"][];
+const jobFields = new Set(["jobId", "kind", "artifactDigest", "buildId", "nativeWorkbench", "authorizationRevision", "expectedSessionRevision"]);
 
 export async function handleDeviceDeveloperRoute(
   url: URL,
@@ -187,11 +187,14 @@ function readDeveloperLogcat(runtime: DeviceSupportRuntime, session: DeviceDevel
 async function createJob(request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime, sessionId: string): Promise<void> {
   const body = await readJsonBody(request, 4096).catch(() => undefined);
   const kind = isRecord(body) && jobKinds.find(value => value === body.kind);
+  const nativeWorkbench = isRecord(body) && isDeviceNativeWorkbenchRequestV1(body.nativeWorkbench) ? body.nativeWorkbench : undefined;
   if (!isRecord(body) || !kind || typeof body.jobId !== "string" || !/^[a-z0-9_-]{1,128}$/iu.test(body.jobId)
     || Object.keys(body).some(key => !jobFields.has(key))
     || (body.artifactDigest !== undefined && !boundedReference(body.artifactDigest))
     || (body.buildId !== undefined && (kind !== "build" || typeof body.buildId !== "string"
       || !/^[a-z0-9_-]{1,128}$/iu.test(body.buildId) || body.artifactDigest !== undefined))
+    || (kind === "workbench" ? (!nativeWorkbench || body.artifactDigest !== undefined || body.buildId !== undefined
+      || body.expectedSessionRevision === undefined) : body.nativeWorkbench !== undefined)
     || (body.expectedSessionRevision !== undefined && (typeof body.expectedSessionRevision !== "number"
       || !Number.isSafeInteger(body.expectedSessionRevision) || body.expectedSessionRevision < 1))
     || !boundedReference(body.authorizationRevision)) {
@@ -202,6 +205,7 @@ async function createJob(request: IncomingMessage, response: ServerResponse, run
     jobId: body.jobId, kind, authorizationRevision: body.authorizationRevision,
     ...(body.artifactDigest ? { artifactDigest: body.artifactDigest } : {}),
     ...(typeof body.buildId === "string" ? { buildId: body.buildId } : {}),
+    ...(nativeWorkbench ? { nativeWorkbench } : {}),
     ...(typeof body.expectedSessionRevision === "number" ? { expectedSessionRevision: body.expectedSessionRevision } : {}),
   });
   const build = job.buildId ? readProjectBuildArtifact(runtime.developerStore, session.workspaceId, job.jobId) : undefined;
