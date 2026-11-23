@@ -2238,6 +2238,8 @@ export class SqliteRunStore implements RunStore {
       const writer = new SqliteDelegationWriteStore({ database: this.database }, {
       ...delegationHost.readers,
       getRun: (id) => this.getRun(id),
+      getWorkItemProviderAdmissionBlocker: (runId, tokens, now) =>
+        this.workItems.getWorkflowProviderAdmissionBlocker(runId, tokens, now, this.appServerState),
       getWorkUnit: (id) => this.getWorkUnit(id),
       createRunWithinTransaction: (input) => this.runSessions.createRunWithinTransaction(input),
       createWorkUnitWithinTransaction: (input) => this.runtimeWorkUnits.createWorkUnit(input),

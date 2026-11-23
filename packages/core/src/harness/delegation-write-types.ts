@@ -90,6 +90,7 @@ export interface DelegationWriteAuthorityPorts {
 
 export interface DelegationWriteStorePorts extends DelegationWriteAuthorityPorts {
   readonly getRun: (id: string) => RunSession | undefined;
+  readonly getWorkItemProviderAdmissionBlocker?: (rootRunId: string, reservedTokens: number | undefined, now: string) => string | undefined;
   readonly getWorkUnit: (id: string) => WorkUnit | undefined;
   readonly createRunWithinTransaction: (input: CreateRunInput) => RunSession;
   readonly createWorkUnitWithinTransaction: (input: CreateWorkUnitInput) => WorkUnit;

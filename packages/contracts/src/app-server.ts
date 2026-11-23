@@ -831,6 +831,7 @@ export interface LingAppServerWorkflowGoalBudget {
   readonly goalId: string;
   readonly tokenBudget?: number;
   readonly accountedTokens: number;
+  readonly reservedTokens?: number;
   readonly tokensRemaining?: number;
   readonly maxTimeSeconds?: number;
   readonly timeUsedSeconds: number;

@@ -865,6 +865,32 @@ export class SqliteWorkItemStore {
     return readWorkItemWorkflowUsage(this.context, item, this.readWorkflowGoal(item, link.binding, state), now);
   }
 
+  getWorkflowProviderAdmissionBlocker(rootRunId: string, requestedTokens: number | undefined, now: string,
+    state: SqliteAppServerStateStore): string | undefined {
+    const run = this.ports.getRun(rootRunId);
+    const step = run?.workflowStepId ? this.ports.getChannelWorkflowStep(run.workflowStepId) : undefined;
+    const link = step && state.get("work_item_workflow", step.workflowId)?.payload as WorkItemWorkflowLink | undefined;
+    if (!step || !link) return undefined;
+    const blocker = this.getWorkflowAdmissionBlocker(step.workflowId, state, step, rootRunId);
+    if (blocker) return blocker;
+    const item = this.getWorkItem(link.binding.workItemId);
+    if (!item?.workflowId) return "work_item_workflow_stale";
+    const current = item.workflowId === step.workflowId
+      ? link : state.get("work_item_workflow", item.workflowId)?.payload as WorkItemWorkflowLink | undefined;
+    if (!current) return "work_item_workflow_stale";
+    const goal = this.readWorkflowGoal(item, current.binding, state);
+    if (!goal || goal.tokenBudget === undefined && goal.supervisionPolicy?.maxTimeSeconds === undefined) return undefined;
+    const budget = readWorkItemWorkflowUsage(this.context, item, goal, now).goalBudget;
+    if (!budget) return undefined;
+    if (budget.blocker) return budget.blocker;
+    if (budget.tokenBudget === undefined) return undefined;
+    if (requestedTokens === undefined) return "work_item_goal_usage_unconfirmed";
+    if (requestedTokens > budget.tokenBudget - budget.accountedTokens - (budget.reservedTokens ?? 0)) {
+      return "work_item_goal_token_budget_exhausted";
+    }
+    return undefined;
+  }
+
   getStageProgress(item: WorkItem, step: ChannelWorkflowStep, state: SqliteAppServerStateStore) {
     const stageId = step.metadata?.planStageId;
     const link = state.get("work_item_workflow", step.workflowId)?.payload as WorkItemWorkflowLink | undefined;

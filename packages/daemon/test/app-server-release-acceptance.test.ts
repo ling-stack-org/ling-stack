@@ -3348,15 +3348,24 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.deepEqual(replayedMessage.record.payload, delivered?.payload);
 });
 
-async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false, retryBudget?: number) {
-  const fixture = await releaseFixture(t, { channels: { terminalReports: false, teamObserverBus: false } });
+async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false, retryBudget?: number,
+  options?: { readonly harness: DaemonConfig["harness"]; readonly secretResolver: SecretResolver; readonly apiKeyRef: string }) {
+  const fixture = await releaseFixture(t, { channels: { terminalReports: false, teamObserverBus: false },
+    harness: options?.harness, secretResolver: options?.secretResolver });
   const store = fixture.getStore();
   const now = new Date().toISOString();
-  const preset = providerBaseUrl ? addLoopbackPreset(store, providerBaseUrl) : undefined;
+  const preset = providerBaseUrl ? addLoopbackPreset(store, providerBaseUrl, options && {
+    apiKeyRef: options.apiKeyRef, contextWindow: 16_000, maxTokens: 1_000,
+  }) : undefined;
   const channel = store.createChannel({ name: "Review", boundPath: fixture.cwd,
     allowedTools: parallelReadOnly ? ["read"] : [], defaultProviderPresetId: preset?.id,
     ...(parallelReadOnly ? { runtimePolicy: { maxConcurrentRuns: 2, allowReadOnlyParallel: true } } : {}),
   }, now);
+  if (options) {
+    for (const teammateId of ["teammate_builtin_engineer", "teammate_builtin_qa"]) {
+      store.replaceTeammateChannelMemberships(teammateId, [{ channelId: channel.id }], now);
+    }
+  }
   const thread = store.createLingThread({ channelId: channel.id, kind: "channel_discussion",
     title: "Review plan", objective: "Review the compatibility contract." }, now);
   const plan = store.upsertProposedPlanArtifact({
@@ -3652,6 +3661,65 @@ test("a bound Workflow carries measured Goal spend across Runs, Plans, agents, a
   assert.equal(provider.requests.length, 3);
 });
 
+const workflowProviderBudgetFixture = {
+  harness: { toolBroker: { mode: "enforce" }, delegations: { mode: "enforce", rootBudget: { tokenBudget: 100_000, wallTimeBudgetMs: 60_000 } } },
+  secretResolver: createEnvSecretResolver({ WORK_ITEM_PROVIDER_BUDGET_FIXTURE: "loopback-fixture-key" }),
+  apiKeyRef: "env:WORK_ITEM_PROVIDER_BUDGET_FIXTURE",
+} as const;
+
+test("parallel Work Item stages reserve their shared Goal budget before sending Pi requests", { timeout: 30_000 }, async t => {
+  let finishFirst: () => void = () => undefined;
+  const firstHeld = new Promise<void>(resolve => { finishFirst = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, invocation: number) => {
+    assert.equal(invocation, 1);
+    await firstHeld;
+    return { text: "Verified the contract.", usage: { prompt_tokens: 26, completion_tokens: 4, total_tokens: 30 } };
+  });
+  t.after(async () => { finishFirst(); await provider.close(); });
+  const { fixture, store, client, item, waiting, respondent, thread } =
+    await stageQuestionWorkflow(t, provider.baseUrl, true, 2, workflowProviderBudgetFixture);
+  await client.call("thread/goal/set", { threadId: thread.id, objective: "Check both workflow stages within the Goal budget", tokenBudget: 25_000 });
+  const start = (stepId: string) => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const url = new URL(`/workflow-steps/${encodeURIComponent(stepId)}/start`, daemonUrl);
+    url.searchParams.set("cwd", fixture.cwd);
+    return fetch(url, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
+  };
+  const read = async (connection = client) => {
+    const { workflow } = await connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
+    assert.ok(workflow?.goalBudget);
+    return workflow.goalBudget;
+  };
+  const first = await start(respondent.id);
+  if (!first.ok) assert.fail(await first.text());
+  await waitFor(() => {
+    const failed = store.listRuns({ workflowStepId: respondent.id }).find(run => run.status === "failed");
+    if (failed) assert.fail(JSON.stringify(store.listEvents(failed.id).find(event => event.type === "run_error")?.data));
+    return provider.requests.length === 1 ? true : undefined;
+  });
+  assert.equal((await read()).reservedTokens, 17_000);
+  const second = await start(waiting.id);
+  assert.ok(second.ok, await second.clone().text());
+  await second.text();
+  const denied = await waitFor(() => store.listRuns({ workflowStepId: waiting.id }).find(run => run.status === "failed"));
+  const charge = store.getDelegationCompletionEvidence({ rootRunIds: [denied.id] }).roots[0]?.charges[0];
+  assert.equal(charge?.state, "cancelled_before_dispatch");
+  assert.equal(provider.requests.length, 1);
+  assert.equal((await read()).reservedTokens, 17_000);
+  finishFirst();
+  await first.text();
+  await waitFor(() => store.getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
+  const settled = await read();
+  assert.equal(settled.accountedTokens, 30);
+  assert.equal(settled.tokensRemaining, 24_970);
+  assert.equal(settled.reservedTokens, undefined);
+  assert.equal(settled.blocker, undefined);
+  await fixture.restart();
+  assert.deepEqual(await read(await fixture.connect()), settled);
+  assert.equal(provider.requests.length, 1);
+});
+
 test("the same stage blocker survives reassignment and restart until a scoped Plan change is accepted", { timeout: 35_000 }, async t => {
   const provider = await startLoopbackPiProvider((_body: unknown, invocation: number) => invocation <= 2
     ? { errorStatus: 400, errorCode: "invalid_request_error" }
@@ -3767,36 +3835,50 @@ test("the same stage blocker survives reassignment and restart until a scoped Pl
   assert.equal(provider.requests.length, 4);
 });
 
-test("a budgeted Workflow stops new stages when an earlier Run has unconfirmed usage", { timeout: 20_000 }, async t => {
-  const provider = await startLoopbackPiProvider(() => ({ text: "Contract checked without metering." }));
-  t.after(() => provider.close());
-  const { fixture, client, item, waiting, respondent, thread } = await stageQuestionWorkflow(t, provider.baseUrl, true);
-  const goalInput = { threadId: thread.id, objective: "Review the compatibility contract", tokenBudget: 10_000 };
-  const { goal } = await client.call<{ goal: LingThreadGoal }>("thread/goal/set", goalInput);
-  const start = (stepId: string) => {
-    const { daemonUrl, authToken } = fixture.transportOptions();
-    const address = new URL(`/workflow-steps/${stepId}/start`, daemonUrl);
-    address.searchParams.set("cwd", fixture.cwd);
-    return fetch(address, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
-      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
-  };
-  const first = await start(respondent.id);
-  assert.ok(first.ok, await first.clone().text());
-  await first.text();
-  await waitFor(() => fixture.getStore().getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
-  const read = () => client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
-  const unknown = (await read()).workflow;
-  assert.equal(unknown?.usage?.tokenCoverage, "partial");
-  assert.equal(unknown?.goalBudget?.tokensRemaining, undefined);
-  assert.equal(unknown?.goalBudget?.blocker, "work_item_goal_usage_unconfirmed");
-  const blocked = await start(waiting.id);
-  assert.equal(blocked.status, 409);
-  assert.equal((await blocked.json()).error, "work_item_goal_usage_unconfirmed");
-  await client.call("thread/goal/set", { ...goalInput, expectedGoalRevision: goal.updatedAt, replaceExisting: true,
-    supervisionPolicy: { maxTimeSeconds: 1 } });
-  assert.equal((await read()).workflow?.goalBudget?.blocker, "work_item_goal_time_budget_exhausted");
-  assert.equal(provider.requests.length, 1);
-});
+for (const guard of ["event usage", "Host reservation"] as const) {
+  test(`a budgeted Workflow stops new stages when an earlier Run has unconfirmed ${guard}`, { timeout: 20_000 }, async t => {
+    const withReservation = guard === "Host reservation";
+    const provider = await startLoopbackPiProvider(() => ({ text: "Contract checked without metering." }));
+    t.after(() => provider.close());
+    const { fixture, client, item, waiting, respondent, thread } =
+      await stageQuestionWorkflow(t, provider.baseUrl, true, undefined, withReservation ? workflowProviderBudgetFixture : undefined);
+    const goalInput = { threadId: thread.id, objective: "Review the compatibility contract", tokenBudget: 25_000 };
+    const { goal } = await client.call<{ goal: LingThreadGoal }>("thread/goal/set", goalInput);
+    const start = (stepId: string) => {
+      const { daemonUrl, authToken } = fixture.transportOptions();
+      const address = new URL(`/workflow-steps/${stepId}/start`, daemonUrl);
+      address.searchParams.set("cwd", fixture.cwd);
+      return fetch(address, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+        headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
+    };
+    const first = await start(respondent.id);
+    assert.ok(first.ok, await first.clone().text());
+    await first.text();
+    const read = (connection = client) => connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
+    const unknown = await waitFor(async () => {
+      const { workflow } = await read();
+      return workflow?.goalBudget?.blocker === "work_item_goal_usage_unconfirmed" ? workflow : undefined;
+    });
+    assert.equal(unknown?.usage?.tokenCoverage, "partial");
+    assert.equal(unknown?.goalBudget?.tokensRemaining, undefined);
+    assert.equal(unknown?.goalBudget?.blocker, "work_item_goal_usage_unconfirmed");
+    assert.equal(unknown?.goalBudget?.reservedTokens, withReservation ? 17_000 : undefined);
+    const blocked = await start(waiting.id);
+    assert.equal(blocked.status, 409);
+    assert.equal((await blocked.json()).error, "work_item_goal_usage_unconfirmed");
+    if (withReservation) await fixture.restart();
+    const controller = withReservation ? await fixture.connect() : client;
+    if (withReservation) {
+      const budget = (await read(controller)).workflow?.goalBudget;
+      assert.equal(budget?.reservedTokens, 17_000);
+      assert.equal(budget?.blocker, "work_item_goal_usage_unconfirmed");
+    }
+    await controller.call("thread/goal/set", { ...goalInput, expectedGoalRevision: goal.updatedAt, replaceExisting: true,
+      supervisionPolicy: { maxTimeSeconds: 1 } });
+    assert.equal((await read(controller)).workflow?.goalBudget?.blocker, "work_item_goal_time_budget_exhausted");
+    assert.equal(provider.requests.length, 1);
+  });
+}
 
 test("a reply at a stage question deadline is durable history and does not release the waiting step", { timeout: 15_000 }, async t => {
   const { fixture, store, client, item, workItem, workflowId, waiting, respondent } = await stageQuestionWorkflow(t);
@@ -4786,11 +4868,12 @@ function readOnlyExternalConformance(adapterRevision: string) {
   } as const;
 }
 
-function addLoopbackPreset(store: SqliteRunStore, baseUrl: string) {
+function addLoopbackPreset(store: SqliteRunStore, baseUrl: string,
+  bounds?: { readonly apiKeyRef: string; readonly contextWindow: number; readonly maxTokens: number }) {
   const now = new Date().toISOString();
   const preset = store.createProviderPreset({
     kind: "openai-compatible", displayName: "Release Pi fixture", providerId: "release-pi-fixture", model: "static-tools",
-    api: "openai-completions", baseUrl, authHeader: false, reasoning: false, capabilities: ["chat"], enabled: true,
+    api: "openai-completions", baseUrl, authHeader: false, reasoning: false, capabilities: ["chat"], enabled: true, ...bounds,
   }, now);
   store.recordProviderCheckResult(preset.id, { ok: true, code: "ready", message: "Loopback fixture", checkedAt: now });
   return preset;
@@ -5250,6 +5333,7 @@ async function releaseFixture(t: TestContext, {
   const priorLingHome = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(root, "fixture-home");
   const stores = new Map<string, SqliteRunStore>();
+  const usesOriginalStore = harness?.delegations?.mode === "enforce" || harness?.delegations?.mode === "shadow";
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
     host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness, channels,
@@ -5261,13 +5345,14 @@ async function releaseFixture(t: TestContext, {
     externalWorkFetch,
     secretResolver,
     remoteReplyDispatcher: null,
-    storeFactory(workspace) {
+    ...(usesOriginalStore ? { onStoreInitialized: (workspace: string, store: import("@ling-stack/core").RunStore) =>
+      stores.set(workspace, store as SqliteRunStore) } : { storeFactory(workspace: string) {
       const store = runtime.createSqliteRunStore(workspace, runtime.resolveStoragePaths(workspace, {
         homeDir: join(root, "fixture-home"), env: {}, workspaceStateLocation: "repo-local",
       }).workspace);
       stores.set(workspace, store);
       return store;
-    },
+    } }),
   });
   let daemon = makeDaemon(initialRuntime);
   async function stop() {

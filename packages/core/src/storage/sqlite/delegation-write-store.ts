@@ -321,12 +321,12 @@ export class SqliteDelegationWriteStore {
     const now = delegationTimestamp(request.now);
     const capture = this.capture(request.capture, runId, fence);
     const requestDigest = delegationDigest({ runId, fence, invocationId, reservedTokens, reservedCostMicros, capture });
-    return this.transaction(() => {
+    const result = this.transaction(() => {
       const existing = this.row("delegation_budget_charges", "run_id=? AND attempt_id=? AND invocation_id=?", [runId, fence.attemptId, invocationId]);
       if (existing) {
         const charge = mapDelegationBudgetCharge(existing);
         if (charge.requestDigest !== requestDigest) fail("delegation.idempotency_conflict");
-        return charge;
+        return { charge, blocker: charge.state === "cancelled_before_dispatch" ? "work_item_provider_dispatch_cancelled" : undefined };
       }
       this.assertOwner(runId, fence, "running");
       assertNoRunSuspensionAdmission(this.context, runId);
@@ -340,18 +340,22 @@ export class SqliteDelegationWriteStore {
         || parentBudget.costBudgetMicros !== undefined && reservedCostMicros! > parentBudget.costBudgetMicros) fail("delegation.budget_exhausted");
       const price = this.selectPrice(allocation.root, capture, reservedCostMicros ?? parentBudget.costBudgetMicros);
       this.assertCapacity(allocation, reservedTokens, reservedCostMicros);
+      const blocker = this.ports.getWorkItemProviderAdmissionBlocker?.(allocation.root.rootRunId, reservedTokens, now);
       const id = `delegation_charge_${randomUUID()}`;
       this.insert("delegation_budget_charges", { id, schema_version: 1, root_run_id: allocation.root.rootRunId,
         reservation_id: allocation.reservation?.id ?? null, run_id: runId, attempt_id: fence.attemptId, invocation_id: invocationId,
         request_digest: requestDigest, price_artifact_id: price ? allocation.root.priceArtifactId! : null,
         price_digest: price ? allocation.root.priceDigest! : null, reserved_tokens: reservedTokens ?? null,
         reserved_cost_micros: reservedCostMicros ?? null, input_tokens: null, cached_input_tokens: null,
-        output_tokens: null, actual_cost_micros: null, state: "reserved", idempotency_key: `delegation-charge:${fence.attemptId}:${invocationId}`,
-        revision: 0, created_at: now, updated_at: now, settled_at: null });
+        output_tokens: null, actual_cost_micros: null, state: blocker ? "cancelled_before_dispatch" : "reserved",
+        idempotency_key: `delegation-charge:${fence.attemptId}:${invocationId}`,
+        revision: 0, created_at: now, updated_at: now, settled_at: blocker ? now : null });
       const charge = this.getDelegationBudgetCharge(id);
       if (!charge) fail("delegation.persisted_fact_invalid");
-      return charge;
+      return { charge, blocker };
     });
+    if (result.blocker) throw Object.assign(new Error(result.blocker), { code: result.blocker });
+    return result.charge;
   }
 
   settleModelInvocation(input: { readonly chargeId: string; readonly receipt: unknown; readonly now: string }): DelegationBudgetCharge {
