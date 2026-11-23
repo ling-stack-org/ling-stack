@@ -4,7 +4,7 @@ import { LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS, type LingAppServerStageHa
 import { useEffect, useRef, useState } from "react";
 import { daemonClient } from "../../api/client.js";
 import { useI18n } from "../../i18n.js";
-import { Button, InlineFeedback, InspectorSection, Skeleton, StatusIndicator } from "../../shared/ui/index.js";
+import { Button, InlineFeedback, InspectorSection, Select, Skeleton, StatusIndicator } from "../../shared/ui/index.js";
 import { channelWorkflowStatusPresentation, channelWorkflowStepStatusPresentation } from "../workspace/channel-workflow-status-presentation.js";
 import { workSummaryInvalidatedEvent } from "../workspace/work-summary/useWorkSummary.js";
 
@@ -149,12 +149,12 @@ function StageHandoff({ cwd, workItemId, workflow, step, handoff, onRefresh }: {
     {handoff.reason ? <p>{t(handoffReasons[handoff.reason])}</p> : null}
     {canDecide ? <div>
       <Button size="sm" variant="ghost" disabled={busy || recipientUnavailable} onClick={() => void settle("accepted")}>{t("Accept handoff")}</Button>
-      <select aria-label={t("Return reason")} disabled={busy} value={reason}
+      <Select aria-label={t("Return reason")} size="sm" disabled={busy} value={reason}
         onChange={event => setReason(event.target.value as typeof reason)}>
         <option value="">{t("Return reason")}</option>
         {LING_APP_SERVER_STAGE_HANDOFF_RETURN_REASONS.map(choice =>
           <option key={choice} value={choice}>{t(handoffReasons[choice])}</option>)}
-      </select>
+      </Select>
       <Button size="sm" variant="ghost" disabled={busy || !reason} onClick={() => void settle("returned")}>{t("Return handoff")}</Button>
     </div> : null}
     {error ? <InlineFeedback title={t("Could not update handoff")} tone="warning" /> : null}
