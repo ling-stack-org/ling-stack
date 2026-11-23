@@ -72,13 +72,37 @@ jobs:
               throw "Installer failed ($($installer.ExitCode))."
             }
             $desktopArgs = @('--ling-desktop-smoke-headless', ('--user-data-dir="' + $profile + '"'))
-            $desktop = Start-Process -FilePath $exe -ArgumentList $desktopArgs -WorkingDirectory $workspace -PassThru
-            if (!$desktop.WaitForExit(180000)) {
+            $stdout = Join-Path $root 'desktop-stdout.log'
+            $stderr = Join-Path $root 'desktop-stderr.log'
+            $launch = @{
+              FilePath = $exe
+              ArgumentList = $desktopArgs
+              WorkingDirectory = $workspace
+              RedirectStandardOutput = $stdout
+              RedirectStandardError = $stderr
+              PassThru = $true
+            }
+            $desktop = Start-Process @launch
+            $timedOut = !$desktop.WaitForExit(180000)
+            if ($timedOut -and !$desktop.HasExited) {
+              $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $($desktop.Id)")
+              Write-Host ('Desktop child process names: ' + ($children.Name -join ', '))
               $desktop.Kill($true)
               $desktop.WaitForExit()
-              throw 'The installed Desktop launch timed out.'
             }
             $startupLog = Join-Path $profile 'desktop-startup.log'
+            $fallbackLog = Join-Path $env:APPDATA 'Ling Stack/desktop-startup.log'
+            foreach ($file in @($startupLog, $fallbackLog)) {
+              if (Test-Path -LiteralPath $file -PathType Leaf) {
+                $diagnosticEvents = @(Get-Content -LiteralPath $file | ForEach-Object {
+                  ConvertFrom-Json -InputObject $_ -ErrorAction SilentlyContinue
+                })
+                Write-Host ('Startup events in ' + (Split-Path -Leaf (Split-Path -Parent $file)) + ': ' + ($diagnosticEvents.event -join ', '))
+              }
+            }
+            $smokeMarker = Select-String -LiteralPath $stdout -SimpleMatch 'Ling Stack Desktop smoke ready' -Quiet
+            Write-Host "Desktop readiness marker: $smokeMarker. Standard error bytes: $((Get-Item -LiteralPath $stderr).Length)."
+            if ($timedOut) { throw 'The installed Desktop launch timed out.' }
             if (!(Test-Path -LiteralPath $startupLog -PathType Leaf)) {
               throw "Missing isolated Desktop startup log (exit $($desktop.ExitCode))."
             }
