@@ -29,6 +29,7 @@ test("channel intake recovers one original Task, bounds starts and rejects a rev
   const suggestion = channel("Suggestions");
   const concurrent = channel("Concurrency limited");
   const quiet = channel("Quiet hours");
+  seed.updateProviderPreset(provider.id, { enabled: false }, now);
   seed.close();
 
   const policies: NativeWorkIntakeConfig[] = [
@@ -83,13 +84,18 @@ test("channel intake recovers one original Task, bounds starts and rejects a rev
   assert.equal(fixture.dispatches().length, 0);
 
   await fixture.stop();
+  const recovered = fixture.openStore();
+  recovered.updateProviderPreset(provider.id, { enabled: true }, new Date().toISOString());
+  recovered.close();
   await fixture.start(policies.map(policy => {
     if (policy.sourceScope === revoked.id) return { ...policy, enabled: false };
     if (policy.sourceScope === quiet.id) return { ...policy, quietHours: undefined };
     return policy;
   }));
-  const completed = await until(() => {
+  const completed = await until(async () => {
     const item = fixture.owned().getWorkItem(first.intakeReceipt!.workItemId!);
+    const current = (await fixture.receipts("channel_task", automatic.id)).find(receipt => receipt.receiptId === first.intakeReceipt?.receiptId);
+    assert.notEqual(current?.dispatch?.status, "held", JSON.stringify({ dispatch: current?.dispatch, execution: item?.linkedExecution }));
     return item?.linkedExecution?.status === "done" ? item : undefined;
   });
   assert.equal(completed.linkedExecution?.id, first.task.id);
@@ -130,12 +136,15 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   const seed = fixture.openStore();
   const preset = fixture.preset(seed);
   const now = new Date().toISOString();
-  const makeAutomation = (title: string, due?: string) => {
+  const makeAutomation = (title: string, kind: "schedule" | "monitor" | "event", due?: string) => {
     const thread = seed.createLingThread({ kind: "automation", title, objective: title }, now);
     return seed.createAutomationDefinition({
       threadId: thread.id, title, kind: "custom_prompt",
-      trigger: due ? { type: "schedule", timezone: "UTC", missedRunPolicy: "run_one",
-        schedule: { cadence: "daily", timeOfDay: "00:00" } } : { type: "manual" },
+      trigger: kind === "schedule" ? { type: "schedule", timezone: "UTC", missedRunPolicy: "run_one",
+        schedule: { cadence: "daily", timeOfDay: "00:00" } } : kind === "monitor"
+        ? { type: "monitor", pollIntervalMs: 1000, source: { kind: "runtime_stuck_work" },
+          condition: { kind: "any_change" }, unchangedPolicy: "skip" }
+        : { type: "manual" },
       target: { scope: "workspace", workspaceId: thread.workspaceId }, executionPolicy: { providerPresetId: preset.id, allowedTools: ["read"] },
       promptTemplate: { templateVersion: 1, promptMarkdown: title, contextSelectors: [] },
       outputPolicy: { artifactFormat: "markdown", destinations: [{ type: "automation_thread" }] },
@@ -143,8 +152,9 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
     }, now);
   };
   const due = new Date(Date.now() - 100).toISOString();
-  const scheduled = makeAutomation("Summarize the scheduled event", due);
-  const eventDriven = makeAutomation("Summarize the signed event");
+  const scheduled = makeAutomation("Summarize the scheduled event", "schedule", due);
+  const eventDriven = makeAutomation("Summarize the signed event", "event");
+  const monitor = makeAutomation("Summarize the monitor observation", "monitor");
   seed.putAutomationEventSource({ id: "intake-events", label: "Native test events", adapter: "business", enabled: true,
     secretRefs: ["env:INTAKE_TEST_KEY"], rules: [{ automationId: eventDriven.id, types: ["issue.opened"] }] }, undefined, now);
   seed.close();
@@ -169,7 +179,10 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   assert.equal(first.intakeReceipt?.dispatch?.status, "pending");
   await fixture.stop();
 
-  await fixture.start(policies);
+  await fixture.start([...policies, {
+    workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: monitor.id, mode: "auto_start", budget,
+  }]);
+  await fixture.json("/automations/scheduler/start", {});
   const finished = await until(() => {
     const run = fixture.owned().getAutomationRun(suggestion.executionId);
     return run?.status === "succeeded" ? run : undefined;
@@ -197,7 +210,15 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   assert.equal(event.dispatch?.runId, linked.runId);
   assert.equal(fixture.owned().listAutomationRuns({ automationId: eventDriven.id }).length, 1);
   assert.equal(fixture.dispatches().filter((request: unknown) => JSON.stringify(request).includes("Signed event payload")).length, 1);
-  assert.equal(fixture.dispatches().length, 2);
+  const monitored = await until(async () =>
+    (await fixture.receipts("automation_run", monitor.id)).find(receipt => receipt.dispatch?.status === "admitted"));
+  assert.equal(fixture.owned().getAutomationRun(monitored.executionId)?.triggerType, "monitor");
+  await until(() => fixture.owned().getAutomationRun(monitored.executionId)?.status === "succeeded" ? true : undefined);
+  assert.equal(fixture.owned().listAutomationRuns({ automationId: monitor.id }).length, 1);
+  const monitoredInputs = fixture.dispatches().filter((request: unknown) => JSON.stringify(request).includes("Summarize the monitor observation"));
+  assert.equal(monitoredInputs.length, 1);
+  assert.match(JSON.stringify(monitoredInputs[0]), /Monitor snapshot/u);
+  assert.equal(fixture.dispatches().length, 3);
 });
 
 async function setup(t: TestContext) {
@@ -239,7 +260,7 @@ async function setup(t: TestContext) {
   };
   return {
     cwd, signingKey, openStore, stop, request, json,
-    dispatches: () => provider.requests.filter((request: unknown) => /Scope the durable task|Scope the revoked task|Manually triage this specific task|Summarize the scheduled event|Signed event payload|Scope one concurrent task|Quiet hours must suppress this task|Too many starts|Concurrency must suppress this task|Policy is disabled|Uncommitted task/u.test(JSON.stringify(request))),
+    dispatches: () => provider.requests.filter((request: unknown) => /Scope the durable task|Scope the revoked task|Manually triage this specific task|Summarize the scheduled event|Signed event payload|Scope one concurrent task|Quiet hours must suppress this task|Too many starts|Concurrency must suppress this task|Policy is disabled|Uncommitted task|Summarize the monitor observation/u.test(JSON.stringify(request))),
     owned: () => { assert.ok(store); return store; },
     receipts: async (kind: NativeWorkIntakeReceipt["sourceKind"], scope: string) => (await json<{ receipts: NativeWorkIntakeReceipt[] }>(
       `/work-items/intake?sourceKind=${kind}&sourceScope=${encodeURIComponent(scope)}`,

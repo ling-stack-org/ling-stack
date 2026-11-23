@@ -166,6 +166,28 @@ An evaluation freezes the policy revision, source scope and occurrence identity.
 
 Qualification and dispatch recheck the source policy and revision. Paused sources keep their history and pending suggestions. Direct user requests and existing automation dispatch keep their existing entry paths. Where an enabled source already started a Task or AutomationRun, link that dispatch to the inbox item.
 
+The Daemon Host can register a versioned policy for a concrete channel Task
+source or Automation definition with `LING_STACK_APP_SERVER_NATIVE_INTAKE_FILE`.
+The source scope is the channel ID for `channel_task` and the definition ID
+for `automation_run`. Channel Task creation, scheduled occurrences, changed
+monitor observations and signed event dispatches use their native owners.
+An opted-in source commits its evaluation and any Work Item binding with the
+original Task or AutomationRun. Channel Task creation accepts a request key
+for delivery retries. Automation uses the scheduler or event owner's original
+occurrence key.
+
+An automatic channel Task uses the ordinary Pi Task entry with read-only
+workspace access and the channel's current provider and allowed read tools.
+An accepted Automation occurrence uses its existing execution policy. A
+suggested Task can start through its regular Task action. An operator can
+accept a suggested Automation by submitting its intake receipt to Run now.
+The original AutomationRun progresses from the parked occurrence to execution.
+The pending dispatch is recovered by the Daemon and rechecks the source
+revision, policy, quiet hours and signed event authority before Run admission.
+The HTTP intake collection reads outcomes and can re-evaluate an eligible
+paused or suppressed occurrence using a new receipt linked to the original.
+Each retry retains the same native execution identity.
+
 ### 3.2 Work Item Target Identity
 
 A registered App Server GitHub repository can set an `intake` policy with `mode`, `enabled`, optional `requiredLabel` and `priority`, and a signed Automation `webhookSourceId`. The local operator can poll a page of open subjects using `github/intake/poll`. Without an explicit mode the poll records a manual evaluation. A suggested subject uses the existing intake Work Item and waits for acceptance.

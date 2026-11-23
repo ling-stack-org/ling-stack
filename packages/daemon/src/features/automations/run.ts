@@ -276,6 +276,9 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
         readyAt,
       ) ?? automationRun;
       input.storeRegistry.rememberRun(runId, store);
+      if (input.intakeDispatch && input.request.monitorSnapshot && !alreadyLinked) {
+        void emitAutomationMonitorFinding(input.notificationHub, input.cwd, automation, runId);
+      }
     };
 
     input.event?.assertCurrent();
@@ -340,6 +343,25 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
  * run reaches a terminal state. Failures inside the notification hub never
  * affect run bookkeeping.
  */
+export async function emitAutomationMonitorFinding(
+  notifications: NotificationHub | undefined, cwd: string, automation: AutomationDefinition, runId: string,
+): Promise<void> {
+  if (!notifications || automation.trigger.type !== "monitor") return;
+  try {
+    await notifications.emit({
+      kind: "automation_monitor_finding",
+      title: "Automation monitor finding",
+      body: `${automation.title} detected a matching ${automation.trigger.source.kind} condition.`,
+      automationId: automation.id,
+      automationLabel: automation.title,
+      runId,
+      cwd,
+    });
+  } catch {
+    // Notification delivery is auxiliary to the durable monitor/run result.
+  }
+}
+
 async function emitAutomationRunNotification(
   input: RunAutomationInput,
   automation: AutomationDefinition,

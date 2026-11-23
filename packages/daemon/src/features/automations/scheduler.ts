@@ -22,7 +22,7 @@ import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js"
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
-import { runAutomation } from "./run.js";
+import { emitAutomationMonitorFinding, runAutomation } from "./run.js";
 import { readAutomationMonitorSnapshot } from "./monitor.js";
 import { AutomationRecurrenceCompleteError, AutomationRecurrenceError, computeNextAutomationRunAt } from "./recurrence.js";
 export { computeNextAutomationRunAt, computeNextRunAt, computeNextRunAtFromRRule } from "./recurrence.js";
@@ -600,7 +600,7 @@ export class AutomationSchedulerRegistry {
           lastAutomationRunId = automationRun.id;
           outcome = "changed";
           if (recorded.changed && automationRun.runId) {
-            await this.emitMonitorFindingNotification(entry.state.cwd, automation, automationRun.runId);
+            await emitAutomationMonitorFinding(this.notificationHub, entry.state.cwd, automation, automationRun.runId);
           }
         }
       } else {
@@ -654,27 +654,6 @@ export class AutomationSchedulerRegistry {
       if (this.isCurrentEntry(entry, entry.generation)) {
         this.refreshStateSummary(entry);
       }
-    }
-  }
-
-  private async emitMonitorFindingNotification(
-    cwd: string,
-    automation: AutomationDefinition,
-    runId?: string,
-  ): Promise<void> {
-    if (!this.notificationHub) return;
-    try {
-      await this.notificationHub.emit({
-        kind: "automation_monitor_finding",
-        title: "Automation monitor finding",
-        body: `${automation.title} detected a matching ${automation.trigger.type === "monitor" ? automation.trigger.source.kind : "monitor"} condition.`,
-        automationId: automation.id,
-        automationLabel: automation.title,
-        runId,
-        cwd,
-      });
-    } catch {
-      // Notification delivery is auxiliary to the durable monitor/run result.
     }
   }
 
