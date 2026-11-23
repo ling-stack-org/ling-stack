@@ -49,7 +49,7 @@ test("packaged resource bootstrap does not consume service readiness or FD3 auth
   assert.equal(input.lifecycle.status.state, "starting", "HTTP health cannot bypass resource authentication");
   assert.equal(input.healthChecks(), 1, "no service probe before the resource receipt");
   assert.equal(spawned.env.LING_STACK_RESOURCE_BOOTSTRAP_FD, "4");
-  t.mock.timers.tick(30_000);
+  t.mock.timers.tick(140_000);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(input.lifecycle.status.state, "starting");
   assert.deepEqual(input.child.killSignals, []);
@@ -82,7 +82,7 @@ test("packaged resource bootstrap has a fixed deadline, not an activity-renewed 
   const pending = assert.rejects(input.lifecycle.ensureStarted(), { code: "start_timeout" });
   await input.spawned.promise;
   input.resources.write('{"schemaVersion":1,');
-  t.mock.timers.tick(59_000);
+  t.mock.timers.tick(179_000);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(input.child.killSignals, []);
   input.resources.write('"phase":"resources_ready",');

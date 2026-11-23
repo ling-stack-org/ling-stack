@@ -28,8 +28,8 @@ import {
 import { deriveMobileAccessManagementCapability } from "./mobile-access/authority.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
-// Windows cold starts authenticate several GB of packaged resources before listening.
-const WINDOWS_DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS = 180_000;
+// macOS and Windows cold starts authenticate several GB of packaged resources before listening.
+const DESKTOP_RESOURCE_BOOTSTRAP_TIMEOUT_MS = 180_000;
 
 export type DesktopDaemonLifecycleErrorCode =
   | "bridge_incompatible"
@@ -275,7 +275,8 @@ export class DesktopDaemonLifecycle {
     this.update({ state: "starting", baseUrl: this.options.baseUrl, ownedByDesktop: true });
     const url = new URL(this.options.baseUrl);
     const spawnDaemon = this.options.spawnDaemon ?? defaultSpawnDaemon;
-    const windows = (this.options.platform ?? process.platform) === "win32";
+    const platform = this.options.platform ?? process.platform;
+    const windows = platform === "win32";
     let child: ChildProcess;
     try {
       child = spawnDaemon({
@@ -350,8 +351,8 @@ export class DesktopDaemonLifecycle {
     const channel = child.stdio?.[3];
     const startupAbort = new AbortController();
     const serviceStartupTimeoutMs = this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS;
-    const resourceBootstrapTimeoutMs = windows
-      ? WINDOWS_DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS
+    const resourceBootstrapTimeoutMs = windows || platform === "darwin"
+      ? DESKTOP_RESOURCE_BOOTSTRAP_TIMEOUT_MS
       : DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS;
     this.engineAuthority = {
       child,

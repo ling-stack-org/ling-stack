@@ -73,7 +73,7 @@ try {
   try {
     await runOwnedProcess(join(installed, "Contents/MacOS/Ling Stack"),
       ["--ling-desktop-smoke-headless", `--user-data-dir=${userData}`],
-      { cwd: workspace, env, timeout: 180_000 });
+      { cwd: workspace, env, timeout: 240_000 });
   } catch (error) {
     failure = error;
   }
