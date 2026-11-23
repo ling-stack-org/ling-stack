@@ -177,10 +177,32 @@ test("documentation mixed with source changes uses affected packages", () => {
   assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
 });
 
-test("dependency, workflow, and CI script changes force full scope", () => {
-  for (const file of ["package.json", "pnpm-lock.yaml", ".github/workflows/ci.yml", "scripts/ci/new-check.mjs"]) {
+test("CI workflow and tooling changes use Common validation without product lanes", () => {
+  for (const file of [".github/workflows/ci.yml", "scripts/ci/new-check.mjs"]) {
+    const scope = classify([file]);
+    assert.equal(scope.mode, "affected", file);
+    assert.deepEqual(scope.packages, [], file);
+    assert.deepEqual(scope.testPackages, [], file);
+    assert.deepEqual(scope.typecheckPackages, [], file);
+    assert.equal(scope.dependencyPolicy, false, file);
+    assert.equal(scope.assurance, false, file);
+    assert.equal(scope.daemon, false, file);
+    assert.equal(scope.macosNative, false, file);
+    assert.match(scope.reason, /CI workflow and tooling validation/u, file);
+  }
+});
+
+test("root dependency and build configuration changes retain full scope", () => {
+  for (const file of ["package.json", "pnpm-lock.yaml", "patches/dependency.patch", "tsconfig.json"]) {
     assert.equal(classify([file]).mode, "full", file);
   }
+});
+
+test("CI tooling mixed with product changes keeps the product scope", () => {
+  const scope = classify(["scripts/ci/new-check.mjs", "packages/core/src/index.ts"]);
+  assert.equal(scope.mode, "affected");
+  assert.ok(scope.packages.includes("@ling-stack/core"));
+  assert.equal(scope.daemon, true);
 });
 
 test("Web source changes select its non-Web validation consumers", () => {

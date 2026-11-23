@@ -43,6 +43,16 @@ const FORCE_FULL_PATTERNS = [
   /^(?:tsconfig(?:\.[^/]+)?\.json|vite\.config\.[^/]+|webpack\.config\.[^/]+|eslint\.config\.[^/]+|\.eslintrc(?:\.[^/]+)?|\.prettierrc(?:\.[^/]+)?)$/u,
   /(?:^|\/)(?:Dockerfile|docker-compose[^/]*|Makefile)$/u,
 ];
+const CI_CONTROL_PATH_PATTERNS = [
+  /^\.github\/workflows\/[^/]+\.ya?ml$/u,
+  /^scripts\/ci\/[^/]+\.(?:c|m)?js$/u,
+  /^scripts\/ci\/[^/]+\.(?:c|m)?ts$/u,
+  /^scripts\/ci\/[^/]+\.json$/u,
+];
+const CATALOG_WORKFLOW_PATHS = new Set([
+  ".github/workflows/sync-translation-catalogs.yml",
+  ".github/workflows/translate-pr-catalogs.yml",
+]);
 
 const TEST_PATH_PATTERN = /(?:^|\/)(?:test|tests|__tests__|e2e)(?:\/|$)|(?:^|\/)[^/]+\.test\.(?:[cm]?[jt]s|[jt]sx)$/u;
 const TEST_SUPPORT_PATTERN = /(?:fixture|fixtures|helper|helpers|support|setup|util|utils)/iu;
@@ -80,6 +90,12 @@ function isAssurancePath(file) {
   return file.startsWith("scripts/framework-assurance/") || file.startsWith("fixtures/framework-assurance/");
 }
 
+/** @param {string} file */
+function isCiControlPath(file) {
+  return CI_CONTROL_PATH_PATTERNS.some(pattern => pattern.test(file))
+    && !CATALOG_WORKFLOW_PATHS.has(file);
+}
+
 /**
  * Classify a pull request by the narrowest safe CI scope.
  *
@@ -108,9 +124,19 @@ export function classifyChangedFiles(input) {
   const deletedLocalArtifacts = new Set(input.deletedLocalArtifacts?.filter(isLocalArtifactPath));
   const scopeFiles = files.filter(file => !deletedLocalArtifacts.has(file));
 
+  if (scopeFiles.length > 0 && scopeFiles.every(isCiControlPath)) {
+    return buildScope("affected", files, packages, "CI workflow and tooling validation only");
+  }
+
+  if (scopeFiles.some(isCiControlPath)
+    && scopeFiles.every(file => isDocumentationPath(file) || isMaintenancePath(file) || isCiControlPath(file))) {
+    return buildScope("full", files, packages, "CI control changes mixed with documentation or maintenance inputs");
+  }
+
   if (scopeFiles.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
     && !versionPaths.has(file)
     && !(scopedLockfile && file === LOCKFILE)
+    && !isCiControlPath(file)
     && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
@@ -169,7 +195,7 @@ export function classifyChangedFiles(input) {
   const unresolvedFiles = [];
 
   for (const file of scopeFiles) {
-    if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
+    if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file) || isCiControlPath(file)) continue;
     if (versionPaths.has(file) || (scopedLockfile && file === LOCKFILE)) continue;
     if (NATIVE_RELEASE_REVIEW_FILES.has(file)) continue;
     if (isMacosNativePath(file)) continue;
