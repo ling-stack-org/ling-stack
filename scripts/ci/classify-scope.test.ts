@@ -178,7 +178,7 @@ test("documentation mixed with source changes uses affected packages", () => {
 });
 
 test("CI workflow and tooling changes use Common validation without product lanes", () => {
-  for (const file of [".github/workflows/ci.yml", "scripts/ci/new-check.mjs"]) {
+  for (const file of ["scripts/ci/new-check.mjs"]) {
     const scope = classify([file]);
     assert.equal(scope.mode, "affected", file);
     assert.deepEqual(scope.packages, [], file);
@@ -190,6 +190,7 @@ test("CI workflow and tooling changes use Common validation without product lane
     assert.equal(scope.macosNative, false, file);
     assert.match(scope.reason, /CI workflow and tooling validation/u, file);
   }
+  assert.equal(classify([".github/workflows/ci.yml"]).mode, "full");
 });
 
 test("root dependency and build configuration changes retain full scope", () => {

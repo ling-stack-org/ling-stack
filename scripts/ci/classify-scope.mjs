@@ -44,7 +44,6 @@ const FORCE_FULL_PATTERNS = [
   /(?:^|\/)(?:Dockerfile|docker-compose[^/]*|Makefile)$/u,
 ];
 const CI_CONTROL_PATH_PATTERNS = [
-  /^\.github\/workflows\/[^/]+\.ya?ml$/u,
   /^scripts\/ci\/[^/]+\.(?:c|m)?js$/u,
   /^scripts\/ci\/[^/]+\.(?:c|m)?ts$/u,
   /^scripts\/ci\/[^/]+\.json$/u,
