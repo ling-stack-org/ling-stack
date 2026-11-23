@@ -112,6 +112,14 @@ test("workflow transformations preserve docs empty arrays and deselected lanes",
   });
 });
 
+test("catalog App pin changes still require Common checks and produce no product matrix", async () => {
+  const scope = classifyChangedFiles({
+    files: [".github/workflows/translate-pr-catalogs.yml"],
+    catalogWorkflowPinUpdate: true,
+  });
+  await assertScopeOutputs(scope, { mode: "affected", packages: [], daemon: false, matrix: [] });
+});
+
 // protects: daemon-only selection with an empty unit matrix; fails_when: daemon is hidden or unit is selected;
 // why_new: joins real discovery, inline selectors and quality; seam=none;
 // no_claim=hosted GitHub scheduler not executed.

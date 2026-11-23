@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { catalogAppPin } from "./workflow-scope.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const prWorkflow = readFileSync(resolve(repositoryRoot, ".github/workflows/translate-pr-catalogs.yml"), "utf8");
@@ -74,7 +75,7 @@ test("both workflows keep built-in permissions read-only and scope the App token
   for (const [name, workflow] of [["pr", prWorkflow], ["sync", syncWorkflow]]) {
     assert.match(workflow, /permissions:\n  contents: read\n/u, name);
     assert.match(workflow, /persist-credentials: false/u, name);
-    assert.match(workflow, /uses: actions\/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510/u, name);
+    assert.ok(catalogAppPin(workflow), name + ": catalog App action must use a full commit SHA");
     for (const binding of [
       "client-id: ${{ vars.MODEL_CATALOG_APP_CLIENT_ID }}",
       "private-key: ${{ secrets.MODEL_CATALOG_APP_PRIVATE_KEY }}",
