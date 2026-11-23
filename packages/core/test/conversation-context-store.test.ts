@@ -428,7 +428,9 @@ test("a late correction of an older source cannot change the latest source's def
 });
 
 function assertUserMessageBody(item: ConversationItemV1 | undefined, body: string) {
-  assert.equal(item?.kind, "user_message");
+  if (!item || item.kind !== "user_message") {
+    assert.fail("Expected a user conversation item");
+  }
   assert.equal(item.payload.body, body);
 }
 
