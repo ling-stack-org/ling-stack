@@ -28,8 +28,8 @@
  * Provider-only data (including Cua entitlements/provider locks) is not used by
  * that lane; imported shared modules remain conservatively included below.
  * The Office daemon lane bypasses workspace dist through retained reviewed
- * authored bytes and checks its actual esbuild metafile. The nine pinned
- * package/tsconfig files admit only the explicit NodeNext/ES2022 compiler
+ * authored bytes and checks its actual esbuild metafile. The pinned package
+ * manifests and tsconfig files admit only the explicit NodeNext/ES2022 compiler
  * policy. Build scripts import the self-contained authored review constant
  * using Node's native TypeScript stripping (fixed build runtime Node 22.22.1).
  * This does not attest the ordinary developer lane's existing dist or vendor
@@ -2066,4 +2066,70 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "apps/desktop/main/worktrees/client.ts",
   "apps/desktop/main/worktrees/ipc.ts",
   "apps/desktop/shared/worktree-capabilities.ts",
+  // Official plugin distribution and its Desktop runtime trust inputs.
+  "apps/desktop/main/official-plugin-resources.ts",
+  "apps/desktop/main/cua-driver/packaged-authority.ts",
+  "apps/desktop/main/cua-driver/packaged-startup.ts",
+  "packages/contracts/src/plugins.ts",
+  "packages/core/src/official-plugin-runtime.ts",
+  "packages/daemon/src/features/plugins/plugin-download.ts",
+  "packages/daemon/src/features/plugins/remote-catalog.ts",
+  "packages/daemon/src/features/plugins/remote-package.ts",
+  "packages/plugin-sdk/src/distribution.ts",
+  // App Server dependencies consumed by the packaged daemon.
+  "packages/api-client/package.json",
+  "packages/api-client/tsconfig.json",
+  "packages/api-client/src/app-server.ts",
+  "packages/api-client/src/client.ts",
+  "packages/api-client/src/endpoints/admin.ts",
+  "packages/api-client/src/endpoints/ai-councils.ts",
+  "packages/api-client/src/endpoints/automation.ts",
+  "packages/api-client/src/endpoints/channels.ts",
+  "packages/api-client/src/endpoints/companions.ts",
+  "packages/api-client/src/endpoints/computer-use.ts",
+  "packages/api-client/src/endpoints/conversations.ts",
+  "packages/api-client/src/endpoints/external-work.ts",
+  "packages/api-client/src/endpoints/governance-notifications.ts",
+  "packages/api-client/src/endpoints/memory.ts",
+  "packages/api-client/src/endpoints/operations.ts",
+  "packages/api-client/src/endpoints/runs.ts",
+  "packages/api-client/src/endpoints/runtime.ts",
+  "packages/api-client/src/endpoints/skills.ts",
+  "packages/api-client/src/endpoints/system.ts",
+  "packages/api-client/src/endpoints/tasks.ts",
+  "packages/api-client/src/endpoints/teammates.ts",
+  "packages/api-client/src/endpoints/terminal-reports.ts",
+  "packages/api-client/src/endpoints/transcriptions.ts",
+  "packages/api-client/src/endpoints/workflow-templates.ts",
+  "packages/api-client/src/errors.ts",
+  "packages/api-client/src/execution-engines.ts",
+  "packages/api-client/src/index.ts",
+  "packages/api-client/src/transport.ts",
+  "packages/contracts/src/app-server.ts",
+  "packages/core/src/app-server-state-types.ts",
+  "packages/core/src/storage/sqlite/app-server-migration.ts",
+  "packages/core/src/storage/sqlite/app-server-state-store.ts",
+  "packages/core/src/storage/sqlite/work-item-evidence-store.ts",
+  "packages/core/src/work-item-collaboration.ts",
+  "packages/core/src/work-item-deliberation-policy.ts",
+  "packages/core/src/work-item-evidence-types.ts",
+  "packages/daemon/src/features/code-assessments/review-rules.ts",
+  "packages/daemon/src/server/app-server-collaboration.ts",
+  "packages/daemon/src/server/app-server-development.ts",
+  "packages/daemon/src/server/app-server-local-transport.ts",
+  "packages/daemon/src/server/app-server-mcp.ts",
+  "packages/daemon/src/server/app-server-replay.ts",
+  "packages/daemon/src/server/app-server-verification-recipes.ts",
+  // Additional daemon runtime inputs reached by the fixed authored roots.
+  "packages/contracts/src/companion-attention.ts",
+  "packages/daemon/src/features/companions/attention-routes.ts",
+  "packages/daemon/src/features/companions/attention.ts",
+  "packages/daemon/src/features/conversations/conversation-submission.ts",
+  "packages/daemon/src/features/conversations/project-instructions-draft.ts",
+  "packages/daemon/src/features/conversations/project-instructions.ts",
+  "packages/daemon/src/features/previews/workspace-review-preview.ts",
+  "packages/daemon/src/features/runs/user-input-answer.ts",
+  "packages/daemon/src/features/runs/user-input-events.ts",
+  "packages/daemon/src/runtime/external-agent/federation.ts",
+  "packages/daemon/src/runtime/external-agent/task-dispatcher.ts",
 ]);
