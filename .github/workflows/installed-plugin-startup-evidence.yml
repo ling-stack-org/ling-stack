@@ -123,9 +123,14 @@ jobs:
           daemon.once("close", (code, signal) => {
             clearTimeout(timer);
             clearInterval(samples);
-            const failure = diagnostic.split(/\r?\n/u).find(line => /^(?:Error|TypeError)(?: #[^:]+| \[[A-Z0-9_]+\])?:/u.test(line));
-            const reason = failure?.replace(/https?:\/\/[^\s]+/gu, "<url>").slice(0, 350);
-            console.log(JSON.stringify({ ...observe(), packagedDaemonResourcesReady: validReceipt, readyElapsedMs, code, signal, reason }));
+            let safeDiagnostic = diagnostic.replace(/https?:\/\/[^\s]+/gu, "<url>");
+            for (const [name, value] of Object.entries(process.env)) {
+              if (/token|secret|credential|password|private_key/iu.test(name) && value?.length >= 5) {
+                safeDiagnostic = safeDiagnostic.replaceAll(value, "<redacted>");
+              }
+            }
+            const diagnosticLines = safeDiagnostic.split(/\r?\n/u).filter(Boolean).slice(-20);
+            console.log(JSON.stringify({ ...observe(), packagedDaemonResourcesReady: validReceipt, readyElapsedMs, code, signal, diagnosticLines }));
             if (!validReceipt || readyElapsedMs > 60000) process.exitCode = 1;
           });
           '@ | node --input-type=module
