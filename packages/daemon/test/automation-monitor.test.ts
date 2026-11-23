@@ -159,6 +159,46 @@ test("startup and refresh retain older timers when newer manual definitions fill
   }
 });
 
+test("restarting one workspace after stopAll restores its persisted coordination deadline", async t => {
+  const f = await fixture(t);
+  const { workItem } = f.store.createWorkItem({
+    sourceType: "manual", sourceId: "coordination-restart", title: "Restore coordination deadline",
+  }, f.now());
+  const automation = f.store.createAutomationDefinition({
+    ...f.definition,
+    kind: "daily_brief",
+    title: "Coordination restart",
+    status: "enabled",
+    automationMode: "cron",
+    trigger: { type: "schedule", timezone: "UTC", schedule: { cadence: "interval", everyMs: 60_000 }, missedRunPolicy: "skip" },
+  }, f.now());
+  const due = new Date(Date.now() - 1).toISOString();
+  f.store.updateAutomationDefinition(automation.id, { nextRunAt: due }, f.now());
+  const configured = f.store.configureAutomationCoordination({
+    automationId: automation.id, workItemId: workItem.id, kind: "checkpoint", durationMs: interval,
+    expectedRevision: 0, enabled: true,
+  }, f.now());
+  const current = f.store.getAutomationDefinition(automation.id);
+  assert.ok(current);
+  const admitted = f.store.admitScheduledCoordination({
+    automationId: automation.id, expectedDefinitionRevision: current.updatedAt,
+    expectedPolicyRevision: configured.revision, triggerType: "schedule", scheduledFor: due,
+    idempotencyKey: "coordination-restart-occurrence",
+  }, f.now(), f.cwd);
+  assert.ok(admitted.round);
+  const nextRunAt = new Date(Date.now() + 60_000).toISOString();
+  f.store.updateAutomationDefinition(automation.id, { nextRunAt }, f.now());
+
+  f.scheduler.stopAll();
+  f.scheduler.start(f.cwd);
+  const round = f.store.readScheduledCoordinationRound(admitted.round.recordId);
+  assert.ok(round);
+  assert.equal(round.closedRecordId, undefined);
+  t.mock.timers.tick(interval);
+  await f.scheduler.waitForIdle();
+  assert.ok(f.store.readScheduledCoordinationRound(admitted.round.recordId)?.closedRecordId);
+});
+
 test("confirming a monitor draft again repairs a failed scheduler registration without replacing the timer", { timeout: 15_000 }, async t => {
   const f = await fixture(t);
   const { threadId: _threadId, ...definition } = f.definition;
