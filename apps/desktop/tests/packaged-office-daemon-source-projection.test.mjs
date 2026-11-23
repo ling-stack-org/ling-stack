@@ -11,8 +11,8 @@ import { build } from "esbuild";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const helperPath = join(repositoryRoot, "apps/desktop/scripts/packaged-office-daemon-source-inputs.mjs");
-const packageNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk",
-  "providers", "remote-protocol", "runner-pi"];
+const packageNames = ["api-client", "browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk",
+  "providers", "remote-client", "remote-protocol", "runner-pi"];
 const sourceError = /packaged_office_daemon_source_(input|export)_invalid/u;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 
@@ -28,7 +28,7 @@ test("local source projection snapshots changed authored inputs without modifyin
   assert.notEqual(projection.sourceReviewSha256, hash(f.originalReviewBytes));
 });
 
-test("source projection uses real esbuild on nine reviewed source packages and never stale workspace dist", async t => {
+test("source projection uses reviewed source for each workspace package", async t => {
   const f = await fixture(t);
   const projection = f.api.createReviewedOfficeDaemonSourceInputs();
   assert.equal(Object.isFrozen(projection), true);
@@ -446,7 +446,7 @@ async function fixture(t, options = {}) {
     files.set(`packages/${name}/tsconfig.json`, JSON.stringify({ compilerOptions: {
       declaration: true, module: "NodeNext", moduleResolution: "NodeNext", outDir: "dist", rootDir: "src",
       strict: true, target: "ES2022", types: name === "daemon" || name === "core" ? ["node"] : [],
-    }, include: ["src/**/*.ts"] }));
+    }, include: name === "daemon" ? ["src/**/*.ts", "src/**/*.d.ts"] : ["src/**/*.ts"] }));
     files.set(`packages/${name}/src/index.ts`, `export const value = ${JSON.stringify(`EXPLICIT_REVIEWED_SOURCE_${name}`)};\n`);
     files.set(`packages/${name}/dist/index.js`, `globalThis.__EXPLICIT_STALE_WORKSPACE_DIST__=true; export const value=${JSON.stringify(`EXPLICIT_STALE_WORKSPACE_DIST_${name}`)};\n`);
   }

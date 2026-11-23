@@ -1,0 +1,24 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index 5e6c0f2bfcf6d4ec670082181dd14259ffda8506..c3ebc7b651aad3cc782e21e115aee736c09c57c4 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -31,6 +31,6 @@ android {
+ 
+ dependencies {
+     implementation "com.facebook.react:react-android:+"
+-    api 'org.jitsi:webrtc:155.+'
++    api 'org.jitsi:webrtc:155.0.1'
+     implementation "androidx.core:core:1.7.0"
+ }
+diff --git a/android/consumer-rules.pro b/android/consumer-rules.pro
+index 2c912057570762573473241dc6bd9aab89aa4f66..b92752565769ea86cc75a6a13664e62e36961fb6 100644
+--- a/android/consumer-rules.pro
++++ b/android/consumer-rules.pro
+@@ -1,5 +1,6 @@
+ # WebRTC
+--keep class org.webrtc.** { *; }
++# The pinned WebRTC AAR ships this generated JNI stub without its Java decoder.
++-keep class !org.webrtc.Dav1dDecoderJni,org.webrtc.** { *; }
+ -keep class org.jni_zero.** { *; }
+ -keep class J.N { *; }
+ -dontwarn org.jni_zero.**

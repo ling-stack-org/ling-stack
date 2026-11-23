@@ -32,7 +32,7 @@ import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { HttpError } from "../../errors.js";
 import { readJsonBody, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
-import { setCorsHeaders, writeJson } from "../../shared/response.js";
+import { setCorsHeaders, writeJson, writePrivateJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray } from "../../shared/validation.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { expireStaleApproval, expireStalePendingApprovals } from "./approvals.js";
@@ -679,6 +679,7 @@ export function handleApprovalsCollection(
   url: URL,
   storeRegistry: RunStoreRegistry,
   controlPlaneEvents?: ControlPlaneEventHub,
+  listDeviceApprovals?: (status: ApprovalStatus | undefined, limit: number) => ApprovalRequest[],
 ): void {
   if (request.method !== "GET") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /approvals` });
@@ -693,27 +694,25 @@ export function handleApprovalsCollection(
 
   try {
     const store = storeRegistry.getStore(cwd);
-    expireStalePendingApprovals(store, {
+    const filters = {
       runId: url.searchParams.get("runId") ?? undefined,
       nodeRerunIntentId: url.searchParams.get("nodeRerunIntentId") ?? undefined,
       mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
       externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
       workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
-      cwd,
-      controlPlaneEvents,
-    });
-    writeJson(response, 200, {
-      cwd,
-      approvals: store.listApprovalRequests({
-        status: readOptionalApprovalStatusQuery(url),
-        runId: url.searchParams.get("runId") ?? undefined,
-        nodeRerunIntentId: url.searchParams.get("nodeRerunIntentId") ?? undefined,
-        mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
-        externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
-        workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
-        limit: readOptionalIntegerQuery(url, "limit", 1),
-      }),
-    });
+    };
+    expireStalePendingApprovals(store, { ...filters, cwd, controlPlaneEvents });
+    const status = readOptionalApprovalStatusQuery(url);
+    const limit = readOptionalIntegerQuery(url, "limit", 1);
+    const approvals = store.listApprovalRequests({ status, ...filters, limit });
+    if (!listDeviceApprovals || Object.values(filters).some(Boolean)) {
+      writeJson(response, 200, { cwd, approvals });
+      return;
+    }
+    const deviceLimit = Math.min(limit ?? 100, 500);
+    approvals.push(...listDeviceApprovals(status, deviceLimit));
+    approvals.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    writePrivateJson(response, 200, { cwd, approvals: approvals.slice(0, deviceLimit) });
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",

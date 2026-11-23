@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { fileRecord, readCandidate, targetAssets } from "./desktop-release.mjs";
@@ -60,9 +60,26 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
   if (distribution.length === 0 || !isDeepStrictEqual(distribution, expectedDistribution)) throw new Error("Packaged distribution materials differ from this build");
   execFileSync(process.execPath, [join(desktopRoot, "scripts/distribution/materials.mjs"), "verify", "--platform", mac ? "darwin-arm64" : "win32-x64",
     "--resources", resources], { cwd: root, encoding: "utf8", timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
+  const peerDirectory = join(resources, "ling-peer-worker");
+  const peerWorker = join(peerDirectory, mac ? "ling-peer-worker" : "ling-peer-worker.exe");
+  const [workerRecord, collectedRecord, workerNotices, packagedWorker] = await Promise.all([
+    readFile(join(peerDirectory, "build-metadata.json")),
+    readFile(join(resources, "distribution/inputs/ling-peer-worker/build-metadata.json")),
+    fileRecord(join(peerDirectory, "THIRD_PARTY_LICENSES.txt")),
+    fileRecord(peerWorker),
+  ]);
+  const workerBuild = JSON.parse(workerRecord);
+  const builtWorkerPath = join(root, "packages/daemon/dist/native/ling-peer-worker", basename(peerWorker));
+  const builtWorker = await fileRecord(builtWorkerPath);
+  // macOS signs the executable after collecting its build metadata.
+  if (!workerRecord.equals(collectedRecord) || workerNotices.sha256 !== workerBuild.noticesSha256
+    || builtWorker.sha256 !== workerBuild.sha256 || (!mac && packagedWorker.sha256 !== builtWorker.sha256)) {
+    throw new Error("Packaged Ling Server peer worker differs from the collected build");
+  }
   const required = [exe, archive, join(resources, "web/index.html"), join(resources, "browser-extension/ling-for-chrome.zip"),
     join(resources, "browser-host", mac ? "ling-browser-host" : "ling-browser-host.exe"),
     join(resources, "image-sanitizer", mac ? "ling-image-sanitizer" : "ling-image-sanitizer.exe"),
+    peerWorker,
     mac ? join(resources, "office-driver/darwin-arm64/OfficeDriver.app/Contents/MacOS/ling-office-driver")
       : join(resources, "office-driver/win32-x64/ling-office-driver.exe"),
     ...(mac ? [join(resources, "office-local/office-local.node"), join(resources, "restricted-command/ling-sandbox-runner")]

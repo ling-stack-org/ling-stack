@@ -71,6 +71,7 @@ export function approvalRiskTone(risk: ApprovalRisk): BadgeTone {
 }
 
 export function approvalActionDisplayKey(actionType: ApprovalActionType): string {
+  if (actionType === "device_action") return "Device action";
   if (actionType === "runtime_permission_request") return "Runtime permission scope";
   if (actionType === "external_send") return "External action";
   if (actionType === "provider_change") return "Provider";
@@ -123,6 +124,8 @@ function buildApprovalQueueRow(
       readDataString(approval.payload, "path"),
       readDataString(approval.payload, "command"),
       formatUnknownPreview(readDataField(approval.payload, "target"), 180),
+      readDataString(approval.payload, "targetDeviceId"),
+      readDataString(approval.payload, "entityId"),
     ].filter(Boolean).join(" ").toLocaleLowerCase(),
     status,
   };
@@ -134,6 +137,7 @@ function classifyApprovalQueueCategory(
   externalAction: ExternalWorkActionView | undefined,
   run: RunSession | undefined,
 ): ReviewQueueItemCategory {
+  if (approval.actionType === "device_action") return "offline_local_approval";
   if (approval.externalWorkActionId) {
     if (externalAction?.action.status === "approved") return "execute_approved_action";
     if (externalAction?.action.status === "failed" || externalAction?.action.status === "stale_target") return "repair";

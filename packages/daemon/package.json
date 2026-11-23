@@ -5,7 +5,9 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "ling-stack-daemon": "./dist/cli.js"
+    "ling-stack-daemon": "./dist/cli.js",
+    "ling-server": "./dist/ling-server-cli.js",
+    "ling-edge": "./dist/ling-edge-cli.js"
   },
   "scripts": {
     "build:ci": "tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",
@@ -13,16 +15,17 @@
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "test:ci": "node --test --test-concurrency=1 test/*.test.mjs test/*.test.ts",
     "eval:code-assessments": "LING_CODE_ASSESSMENT_QUALITY_RUN=1 node --experimental-strip-types --test test/code-assessment-quality.ts",
-    "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/api-client build:ci && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",
-    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/api-client build:ci && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm typecheck:ci",
+    "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/api-client build:ci && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm --filter @ling-stack/remote-client build:ci && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",
+    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/api-client build:ci && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm --filter @ling-stack/remote-client build:ci && corepack pnpm typecheck:ci",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/api-client build:ci && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs && corepack pnpm test:ci",
+    "test": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/api-client build:ci && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm --filter @ling-stack/remote-client build:ci && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs && corepack pnpm test:ci",
+    "build:peer-worker": "node scripts/build-ling-peer-worker.mjs",
+    "build:ling-server": "corepack pnpm --filter @ling-stack/core... --filter @ling-stack/remote-protocol... build:ci && node scripts/build-ling-server.mjs",
     "build:engine-supervisor": "node scripts/build-engine-supervisor.mjs",
     "build:image-sanitizer": "node scripts/build-image-sanitizer.mjs",
     "test:image-sanitizer": "cargo test --locked --manifest-path native/image-sanitizer/Cargo.toml -- --test-threads=1"
   },
   "dependencies": {
-    "acorn": "8.19.0",
     "@agentclientprotocol/sdk": "2.7.0",
     "@anthropic-ai/sdk": "0.135.0",
     "@ling-stack/api-client": "workspace:*",
@@ -32,11 +35,14 @@
     "@ling-stack/localization": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",
+    "@ling-stack/remote-client": "workspace:^",
     "@ling-stack/remote-protocol": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@napi-rs/keyring": "2.1.2",
+    "@serialport/bindings-cpp": "13.0.0",
     "@xmldom/xmldom": "0.9.12",
+    "acorn": "8.19.0",
     "diff": "9.0.0",
     "docx": "9.15.4",
     "exceljs": "^4.4.0",
@@ -50,18 +56,19 @@
     "smol-toml": "1.9.1",
     "typescript-language-service": "npm:typescript@5.9.3",
     "undici": "7.30.1",
-    "yaml": "^2.9.0",
     "ws": "^8.21.0",
     "xlsx-populate": "1.21.0",
+    "yaml": "^2.9.0",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "typescript": "7.0.2",
     "@babel/parser": "8.1.2",
     "@ling-stack/conversation-ui-core": "workspace:*",
     "@types/pdf-parse": "1.1.5",
     "@types/proper-lockfile": "4.1.4",
     "@types/ws": "^8.5.13",
-    "pngjs": "7.0.0"
+    "esbuild": "0.28.2",
+    "pngjs": "7.0.0",
+    "typescript": "7.0.2"
   }
 }

@@ -55,7 +55,7 @@ let relay, desktop, desktopExited = false, snapshot = 0;
 const lifecycle = new DesktopDaemonLifecycle({ baseUrl: "http://127.0.0.1:17930", daemonEntryPath: resources.daemonEntryPath,
   defaultWorkspaceCwd: profile.workspaceCwd, desktopBridgeToken: bridgeToken, browserHostPath: resources.browserHostPath,
   packaged: true, executablePath: executable, engineSupervisorPath: resources.engineSupervisorPath,
-  imageSanitizerPath: resources.imageSanitizerPath, cuaDriverFeatureFlags: authority.featureFlags,
+  imageSanitizerPath: resources.imageSanitizerPath, peerWorkerPath: resources.peerWorkerPath, cuaDriverFeatureFlags: authority.featureFlags,
   onDiagnostic(event, details = {}) {
     const entry = { at: new Date().toISOString(), event };
     for (const name of ["pid", "baseUrl", "code", "signal"]) if (details[name] !== undefined) entry[name] = details[name];

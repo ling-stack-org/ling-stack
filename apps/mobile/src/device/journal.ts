@@ -1,0 +1,192 @@
+import type {
+  DeviceDispatchStopV1,
+  DeviceObservationV1,
+  DeviceTaskV1,
+} from "@ling-stack/contracts";
+import {
+  isDeviceActionRequestV1,
+  isDeviceCapabilitySnapshotV1,
+  isDeviceObservationV1,
+  isDeviceTaskAttemptV1,
+  isDeviceTaskReconciliationV1,
+  isDeviceTaskV1,
+} from "@ling-stack/contracts";
+import { MobileDeviceExecutionError, type MobileAttemptRecord, type MobileDeviceDispatchStopJournal, type MobileDeviceJournal, type MobileRecordedSnapshot } from "./execution.ts";
+
+export interface MobileStorageLike {
+  getItem(key: string): Promise<string | null>;
+  setItem(key: string, value: string): Promise<void>;
+  removeItem?(key: string): Promise<void>;
+}
+
+export interface MobileTaskEvidence {
+  readonly task: DeviceTaskV1 | undefined;
+  readonly attempts: readonly MobileAttemptRecord[];
+  readonly observations: readonly DeviceObservationV1[];
+}
+
+export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike, ownerId: string): MobileDeviceJournal & MobileDeviceDispatchStopJournal & {
+  readTaskEvidence(taskId: string): Promise<MobileTaskEvidence>;
+} {
+  const prefix = `ling-device-execution:v1:${ownerId}`;
+  const tasksKey = `${prefix}:tasks`;
+  const taskKey = (taskId: string) => `${prefix}:task:${taskId}`;
+  const attemptKey = (taskId: string, idempotencyKey: string) => `${prefix}:attempt:${taskId}:${encodeURIComponent(idempotencyKey)}`;
+  const attemptsKey = (taskId: string) => `${prefix}:attempts:${taskId}`;
+  const observationKey = (taskId: string) => `${prefix}:observations:${taskId}`;
+  const stopKey = (deviceId: string) => `${prefix}:write-stops:${encodeURIComponent(deviceId)}`;
+  let queue = Promise.resolve();
+  const enqueue = <Result>(operation: () => Promise<Result>): Promise<Result> => {
+    const next = queue.then(operation);
+    queue = next.then(() => undefined, () => undefined);
+    return next;
+  };
+  const readDispatchStops = async (deviceId: string): Promise<readonly DeviceDispatchStopV1[]> => {
+    const raw = await storage.getItem(stopKey(deviceId));
+    if (raw === null) return [];
+    const records: unknown = JSON.parse(raw);
+    if (!Array.isArray(records) || records.some((record, index) => !record || record.deviceId !== deviceId
+      || record.revision !== index + 1 || typeof record.active !== "boolean"
+      || typeof record.changedAt !== "string" || !Number.isFinite(Date.parse(record.changedAt)))) {
+      throw new Error("Invalid mobile device write stop history");
+    }
+    return records as readonly DeviceDispatchStopV1[];
+  };
+  const initialStop = (deviceId: string): DeviceDispatchStopV1 => ({ deviceId, active: false, revision: 0 });
+
+  return {
+    getDispatchStop(deviceId) {
+      return enqueue(async () => (await readDispatchStops(deviceId)).at(-1) ?? initialStop(deviceId));
+    },
+    setDispatchStop({ deviceId, active, expectedRevision, now }) {
+      return enqueue(async () => {
+        const history = await readDispatchStops(deviceId);
+        const current = history.at(-1) ?? initialStop(deviceId);
+        if (current.revision !== expectedRevision) {
+          throw new MobileDeviceExecutionError("target_changed", "device write stop revision changed");
+        }
+        if (current.active === active) return current;
+        const next = { deviceId, active, revision: current.revision + 1, changedAt: now };
+        await storage.setItem(stopKey(deviceId), JSON.stringify([...history, next]));
+        return next;
+      });
+    },
+    async getTask(taskId) {
+      return parseTaskValue(await storage.getItem(taskKey(taskId)));
+    },
+    async listTasks() {
+      const ids = parseStringArray(await storage.getItem(tasksKey));
+      const tasks = await Promise.all(ids.map(id => parseTask(storage.getItem(taskKey(id)))));
+      return tasks.filter((task): task is DeviceTaskV1 => task !== undefined);
+    },
+    readTaskEvidence(taskId) {
+      return enqueue(async () => {
+        const task = await parseTask(storage.getItem(taskKey(taskId)));
+        if (!task || task.id !== taskId || task.ownerKind !== "mobile" || task.ownerId !== ownerId) {
+          return { task: undefined, attempts: [], observations: [] };
+        }
+        const [attempts, observations] = await Promise.all([storage.getItem(attemptsKey(taskId)), storage.getItem(observationKey(taskId))]);
+        return { task, attempts: parseAttemptArray(attempts), observations: parseObservationArray(observations) };
+      });
+    },
+    saveTask(task) {
+      return enqueue(async () => {
+        if (!isDeviceTaskV1(task)) throw new Error("Invalid mobile device task");
+        const ids = parseStringArray(await storage.getItem(tasksKey));
+        if (!ids.includes(task.id)) await storage.setItem(tasksKey, JSON.stringify([...ids, task.id]));
+        await storage.setItem(taskKey(task.id), JSON.stringify(task));
+      });
+    },
+    async getAttemptByIdempotency(taskId, idempotencyKey) {
+      const attempts = parseAttemptArray(await storage.getItem(attemptsKey(taskId)));
+      return attempts.find(item => item.request.idempotencyKey === idempotencyKey)
+        ?? await parseAttempt(storage.getItem(attemptKey(taskId, idempotencyKey)));
+    },
+    async listAttempts(taskId) {
+      return parseAttemptArray(await storage.getItem(attemptsKey(taskId)));
+    },
+    async listObservations(taskId) {
+      return parseObservationArray(await storage.getItem(observationKey(taskId)));
+    },
+    saveAttempt(record) {
+      return enqueue(async () => {
+        if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)
+          || record.reconciliations?.some(item => !isDeviceTaskReconciliationV1(item))
+          || record.capabilitySnapshots?.some(item => !isRecordedSnapshot(item))) {
+          throw new Error("Invalid mobile device attempt");
+        }
+        const key = attemptsKey(record.request.taskId);
+        const attempts = parseAttemptArray(await storage.getItem(key));
+        const next = attempts.filter(item => item.request.idempotencyKey !== record.request.idempotencyKey);
+        next.push(record);
+        await storage.setItem(key, JSON.stringify(next));
+      });
+    },
+    saveObservation(taskId, observation: DeviceObservationV1) {
+      return enqueue(async () => {
+        if (!isDeviceObservationV1(observation)) throw new Error("Invalid mobile device observation");
+        const key = observationKey(taskId);
+        const current = parseObservationArray(await storage.getItem(key));
+        if (!current.some(item => item.id === observation.id)) await storage.setItem(key, JSON.stringify([...current, observation]));
+      });
+    },
+  };
+}
+
+async function parseTask(value: Promise<string | null>): Promise<DeviceTaskV1 | undefined> {
+  return parseTaskValue(await value);
+}
+
+function parseTaskValue(value: string | null): DeviceTaskV1 | undefined {
+  if (value === null) return undefined;
+  const parsed: unknown = JSON.parse(value);
+  return isDeviceTaskV1(parsed) ? parsed : undefined;
+}
+
+function parseStringArray(value: string | null): readonly string[] {
+  if (value === null) return [];
+  const parsed: unknown = JSON.parse(value);
+  return Array.isArray(parsed) && parsed.every(item => typeof item === "string") ? parsed : [];
+}
+
+function parseAttempt(value: Promise<string | null>): Promise<MobileAttemptRecord | undefined> {
+  return value.then(raw => {
+    if (raw === null) return undefined;
+    return parseAttemptRecord(JSON.parse(raw));
+  });
+}
+
+function parseAttemptArray(value: string | null): readonly MobileAttemptRecord[] {
+  if (value === null) return [];
+  const parsed: unknown = JSON.parse(value);
+  return Array.isArray(parsed) ? parsed.flatMap(value => {
+    const record = parseAttemptRecord(value);
+    return record ? [record] : [];
+  }) : [];
+}
+
+function parseObservationArray(value: string | null): readonly DeviceObservationV1[] {
+  if (value === null) return [];
+  const parsed: unknown = JSON.parse(value);
+  return Array.isArray(parsed) ? parsed.filter(isDeviceObservationV1) : [];
+}
+
+function parseAttemptRecord(value: unknown): MobileAttemptRecord | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const { attempt, request, requestDigest, reconciliations, capabilitySnapshots } = value as Record<string, unknown>;
+  if (!isDeviceTaskAttemptV1(attempt) || !isDeviceActionRequestV1(request) || typeof requestDigest !== "string") return undefined;
+  const records = Array.isArray(reconciliations) ? reconciliations.filter(isDeviceTaskReconciliationV1) : [];
+  const snapshots = Array.isArray(capabilitySnapshots) ? capabilitySnapshots.filter(isRecordedSnapshot) : [];
+  return {
+    attempt, request, requestDigest,
+    ...(records.length ? { reconciliations: records } : {}),
+    ...(snapshots.length ? { capabilitySnapshots: snapshots } : {}),
+  };
+}
+
+function isRecordedSnapshot(value: unknown): value is MobileRecordedSnapshot {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const { snapshot, profileRevision } = value as Record<string, unknown>;
+  return typeof profileRevision === "string" && profileRevision.length > 0 && profileRevision.length <= 512
+    && isDeviceCapabilitySnapshotV1(snapshot);
+}

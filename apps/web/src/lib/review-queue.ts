@@ -79,6 +79,7 @@ function reviewQueueCategoryForApproval(
   run: RunSession | undefined,
 ): ReviewQueueItemCategory | undefined {
   const status = effectiveApprovalStatus(approval);
+  if (approval.actionType === "device_action") return status === "pending" ? "offline_local_approval" : undefined;
   if (approval.externalWorkActionId) {
     if (externalAction?.action.status === "approved" || status === "approved") {
       return "execute_approved_action";

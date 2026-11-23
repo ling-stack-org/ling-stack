@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path";
 import { handleWorkspaceReviewPreview } from "../features/previews/workspace-review-preview.js";
 import { handleAutomationEventRoute, isAutomationEventIngress } from "../features/automations/event-routes.js";
 import { handleNodeRerunSubmission } from "../features/runs/node-rerun-submission.js";
@@ -400,7 +401,7 @@ import {
   parseWorkUnitRoute,
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
-import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
+import { allowLocalServiceRequest, allowLocalWorkspaceRequest, isLocalServiceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { readOptionalJsonBody } from "../shared/request.js";
 import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION, parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
@@ -413,6 +414,9 @@ import { handleImDestinations } from "../features/im-destinations/routes.js";
 import { handleSkillsMarketplaceInspect } from "../features/skills/marketplace-route.js";
 import { handleDeliverablesBuild, handleSpreadsheetPreview } from "../features/deliverables/routes.js";
 import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
+import { handleDeviceApprovalItem, handleDeviceSupportRoute } from "../features/device-support/routes.js";
+import { handleSignedEdgeEvidenceRoute } from "../features/device-support/edge-routes.js";
+import { appendApprovalCreatedControlPlaneEvent, appendApprovalResolvedControlPlaneEvent } from "../features/runs/approval-decision-projection.js";
 
 export async function routeRequest(
   request: IncomingMessage,
@@ -463,6 +467,7 @@ export async function routeRequest(
 
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const chromePairing = url.pathname === "/browser-extension/v1/pair";
+  if (await handleSignedEdgeEvidenceRoute(url, request, response, context.deviceSupport)) return;
 
   // A loopback daemon without a bearer token is only callable by the local
   // Ling page; pairing and automation ingress enforce their own origin boundary.
@@ -491,6 +496,16 @@ export async function routeRequest(
     await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
     return;
   }
+  const inDeviceWorkspace = () => {
+    const cwd = url.searchParams.get("cwd");
+    return cwd !== null && cwd !== "" && resolvePath(cwd) === config.defaultWorkspaceCwd;
+  };
+  if (await handleDeviceSupportRoute(url, request, response, context.deviceSupport, approval => {
+    try {
+      const cwd = config.defaultWorkspaceCwd;
+      appendApprovalCreatedControlPlaneEvent(storeRegistry.getStore(cwd), controlPlaneEvents, cwd, approval, approval.createdAt);
+    } catch { /* The owning device journal remains the source of the queue entry. */ }
+  })) return;
 
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
@@ -1279,7 +1294,9 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/approvals") {
-    handleApprovalsCollection(request, response, url, storeRegistry, controlPlaneEvents);
+    const deviceApprovals = inDeviceWorkspace() && isLocalServiceRequest(request)
+      ? context.deviceSupport.approvalQueue.list : undefined;
+    handleApprovalsCollection(request, response, url, storeRegistry, controlPlaneEvents, deviceApprovals);
     return;
   }
 
@@ -3170,6 +3187,17 @@ export async function routeRequest(
 
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
+    if (approvalRoute.approvalId.startsWith("device_approval_")) {
+      await handleDeviceApprovalItem(request, response, context.deviceSupport, approvalRoute, inDeviceWorkspace(), approval => {
+        if (!approval.resolvedAt || (approval.status !== "approved" && approval.status !== "denied")) return;
+        try {
+          const cwd = config.defaultWorkspaceCwd;
+          appendApprovalResolvedControlPlaneEvent(storeRegistry.getStore(cwd), controlPlaneEvents, cwd,
+            approval, "pending", approval.status, approval.resolvedAt);
+        } catch { /* The owning device journal retains the decision. */ }
+      });
+      return;
+    }
     await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
       return runApprovalPostCommitEffects({
         resumeRun: () => {

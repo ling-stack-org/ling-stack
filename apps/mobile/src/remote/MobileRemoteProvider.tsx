@@ -9,7 +9,9 @@ import {
   type RemotePendingPairing,
   type RemoteWebSocketLike,
 } from "@ling-stack/remote-client";
+import { fetch as expoFetch } from "expo/fetch";
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Platform } from "react-native";
 
 import {
   mobileRemoteBindingStore,
@@ -20,6 +22,8 @@ import {
   nativeSecureDeviceKeyAdapter,
   nativeSecureEntropy,
 } from "../platform/secure-device-key/native-adapter";
+import { connectMobileLingServerPeer } from "./mobile-ling-server-peer";
+import { createMobilePeerConnectionFactory } from "./mobile-webrtc";
 import { pollForPairingAcceptance } from "./pairing-polling";
 
 export type MobilePairingPhase =
@@ -42,12 +46,13 @@ export interface MobileRemoteContextValue {
   readonly openScanner: () => void;
   readonly cancelPairing: () => void;
   readonly pairFromQr: (encodedQr: string) => Promise<void>;
+  readonly confirmLingServerPairingPin: (confirmation: unknown, signal: AbortSignal) => Promise<void>;
   readonly retryConnection: () => Promise<void>;
   readonly unpair: () => Promise<void>;
 }
 
 const MobileRemoteContext = createContext<MobileRemoteContextValue | undefined>(undefined);
-const http = createFetchRemoteHttpClient();
+const http = createFetchRemoteHttpClient(expoFetch);
 
 export function MobileRemoteProvider({ children }: { readonly children: ReactNode }) {
   const [phase, setPhase] = useState<MobilePairingPhase>("loading");
@@ -94,7 +99,7 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
     setRemoteState(createInitialRemoteClientState());
     setError(draftCleanupFailed
       ? "PC 已撤销绑定，但本地草稿清理未完成；请重新绑定前重试。"
-      : "PC 已撤销这台 iPhone，请重新扫描配对码。");
+      : "PC 已撤销这台手机，请重新扫描配对码。");
     setPhase("welcome");
   };
 
@@ -109,11 +114,18 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
       keys: nativeSecureDeviceKeyAdapter,
       entropy: nativeSecureEntropy,
       clock: systemRemoteClock,
-      webSocketFactory: (url) => new WebSocket(url) as unknown as RemoteWebSocketLike,
+      webSocketFactory: (url, subprotocol) => new WebSocket(url, subprotocol) as unknown as RemoteWebSocketLike,
+      peerFallback: true,
+      connectPeer: (signal, activeBinding) => connectMobileLingServerPeer(activeBinding, signal, {
+        clock: systemRemoteClock, entropy: nativeSecureEntropy, http, keys: nativeSecureDeviceKeyAdapter,
+        createPeerConnection: createMobilePeerConnectionFactory,
+      }),
     });
     let observedWorkspaceBindingId = nextBinding.workspaceBindingId;
     unsubscribeClient.current = nextClient.subscribe((nextState) => {
       observedWorkspaceBindingId = nextState.workspaceBindingId ?? observedWorkspaceBindingId;
+      const activeBinding = nextClient.activeBinding;
+      if (activeBinding) setBinding(activeBinding);
       setRemoteState(nextState);
       if (nextState.connection === "revoked" && !userUnpairing.current) {
         void finishRemoteRevocation(observedWorkspaceBindingId);
@@ -156,7 +168,9 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
         clock: systemRemoteClock,
       });
       try {
-        const started = await pairing.begin(encodedQr, { displayName: "我的 iPhone" });
+        const platform = Platform.OS === "android" ? "android" : "ios";
+        const displayName = platform === "android" ? "我的 Android 手机" : "我的 iPhone";
+        const started = await pairing.begin(encodedQr, { displayName, platform });
         if (generation !== pairingGeneration.current) {
           return;
         }
@@ -187,6 +201,17 @@ export function MobileRemoteProvider({ children }: { readonly children: ReactNod
         setError(userFacingError(pairingError));
         setPhase("error");
       }
+    },
+    confirmLingServerPairingPin: async (confirmation, signal) => {
+      const generation = pairingGeneration.current;
+      if (!client || userUnpairing.current) throw new Error("remote_pairing_unavailable");
+      const nextBinding = await client.confirmLingServerPairingPin(confirmation, { signal });
+      if (generation !== pairingGeneration.current || userUnpairing.current) throw new Error("remote_pairing_changed");
+      setBinding(nextBinding);
+      client.disconnect();
+      void client.connect().catch((connectError) => {
+        if (generation === pairingGeneration.current && !userUnpairing.current) setError(userFacingError(connectError));
+      });
     },
     retryConnection: async () => {
       setError(undefined);

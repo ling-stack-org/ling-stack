@@ -8,8 +8,8 @@ import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "./packaged-offic
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const desktopRoot = resolve(repositoryRoot, "apps/desktop");
-const packageNames = Object.freeze(["browser-host", "contracts", "core", "daemon", "localization",
-  "plugin-sdk", "providers", "remote-protocol", "runner-pi"]);
+const packageNames = Object.freeze(["api-client", "browser-host", "contracts", "core", "daemon", "localization",
+  "plugin-sdk", "providers", "remote-client", "remote-protocol", "runner-pi"]);
 const identityKeys = Object.freeze(["dev", "ino", "mode", "uid", "gid", "nlink", "size", "mtimeNs", "ctimeNs"]);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const maximumFileBytes = 8 * 1024 * 1024;
@@ -64,11 +64,12 @@ function capture(path, expectedHash, original) {
  */
 export function createReviewedOfficeDaemonSourceInputs() {
   const releaseReview = process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED === "1";
+  const maximumSnapshotFiles = releaseReview ? 2048 : 4096;
   const reviewed = releaseReview ? readReviewedPackagedOfficeSource() : readLocalPackagedOfficeSource();
   const packagingAllowlist = releaseReview ? reviewed.review.packagingSha256 : Object.fromEntries(
     [...PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS, ...packageNames.flatMap(name => {
       const root = resolve(repositoryRoot, "packages", name, "src");
-      const entries = [];
+      const entries = [`packages/${name}/package.json`, `packages/${name}/tsconfig.json`];
       function collect(directory) {
         for (const item of readdirSync(directory, { withFileTypes: true })) {
           const path = resolve(directory, item.name);
@@ -91,7 +92,7 @@ export function createReviewedOfficeDaemonSourceInputs() {
     if (!snapshots.has(path)) {
       const expected = releaseReview ? reviewed.review.packagingSha256[name] : hash(readFileSync(path));
       const value = capture(path, expected);
-      totalBytes += value.bytes.length; requireSource(totalBytes <= maximumTotalBytes && snapshots.size < 2048);
+      totalBytes += value.bytes.length; requireSource(totalBytes <= maximumTotalBytes && snapshots.size < maximumSnapshotFiles);
       snapshots.set(path, value);
     }
     return snapshots.get(path);
@@ -107,11 +108,12 @@ export function createReviewedOfficeDaemonSourceInputs() {
     // Reject future changes instead of silently dropping decorators/aliases/etc.
     const allowedOptions = ["declaration", "lib", "module", "moduleResolution", "outDir", "rootDir",
       "skipLibCheck", "strict", "target", "types"];
+    const expectedIncludes = name === "daemon" ? ["src/**/*.ts", "src/**/*.d.ts"] : ["src/**/*.ts"];
     requireSource(Object.keys(config).every(key => ["compilerOptions", "include"].includes(key))
       && options && Object.keys(options).every(key => allowedOptions.includes(key))
       && options.module === "NodeNext" && options.moduleResolution === "NodeNext" && options.target === "ES2022"
       && options.outDir === "dist" && options.rootDir === "src" && options.strict === true
-      && JSON.stringify(config.include) === '["src/**/*.ts"]');
+      && JSON.stringify(config.include) === JSON.stringify(expectedIncludes));
   }
   // Bind the complete reviewer-owned workspace snapshot before any native
   // builder or asynchronous resolver runs. Never adopt a same-bytes replacement
@@ -212,7 +214,9 @@ export function createReviewedOfficeDaemonSourceInputs() {
           if (result.errors.length) return;
           requireSource(!result.suffix && (!result.namespace || result.namespace === "file"));
           if (result.external) {
-            requireSource(isBuiltin(result.path));
+            const serialBinding = result.path === "@serialport/bindings-cpp"
+              && args.importer === resolve(repositoryRoot, "packages/daemon/src/features/device-support/modbus-serial-targets.ts");
+            requireSource(isBuiltin(result.path) || serialBinding);
             return { path: result.path, external: true };
           }
           const physical = realpathSync(result.path);

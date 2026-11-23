@@ -1,5 +1,16 @@
 import { createRequire } from "node:module";
-import type { BrowserWindow, IpcMain } from "electron";
+import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
+import {
+  LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1,
+  REMOTE_PROTOCOL_LIMITS,
+  REMOTE_PROTOCOL_VERSION,
+  isRemoteDeviceAnalysisDraftInputV1,
+  isRemoteDeviceAnalysisInputV1,
+  isRemoteDeviceArtifactOfferInputV1,
+  isRemoteDeviceArtifactBuildOfferInputV1,
+  type LingServerPairingMigrationConfirmationV1,
+  type LingServerPairingMigrationRequestV1,
+} from "@ling-stack/contracts";
 import {
   COMPUTER_USE_HOST_OBSTACLE_KINDS,
   COMPUTER_USE_PIP_SURFACE_KINDS,
@@ -173,6 +184,85 @@ export function registerDesktopIpc(input: {
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessRevoke, async (event) => {
     assertMobileAccessSender(isMainWindowSender(event), input.mobileAccess);
     return await input.mobileAccess!.revoke();
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationList, async event => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    const shares = await input.mobileAccess.listDeviceCollaboration();
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return shares;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationPropose, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceAnalysisInputV1(request)) throw new Error("invalid_device_analysis_proposal");
+    const share = await input.mobileAccess.proposeDeviceAnalysis(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return share;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceCollaborationDraft, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceAnalysisDraftInputV1(request)) throw new Error("invalid_device_analysis_draft");
+    const draft = await input.mobileAccess.draftDeviceAnalysis(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return draft;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceArtifactsList, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!request || typeof request !== "object" || Array.isArray(request) || Object.keys(request).length !== 2
+      || !("shareId" in request) || !("expectedRevision" in request)) throw new Error("invalid_device_artifact_list");
+    const query = { shareId: request.shareId, expectedRevision: request.expectedRevision, proposalId: "list" };
+    if (!isRemoteDeviceArtifactOfferInputV1(query)) throw new Error("invalid_device_artifact_list");
+    const { shareId, expectedRevision } = query;
+    const offers = await input.mobileAccess.listDeviceArtifacts({ shareId, expectedRevision });
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return offers;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceArtifactOffer, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceArtifactOfferInputV1(request)) throw new Error("invalid_device_artifact_offer");
+    const offer = await input.mobileAccess.offerDeviceArtifact(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return offer;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceBuildArtifactsList, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!request || typeof request !== "object" || Array.isArray(request) || Object.keys(request).length !== 2
+      || !("shareId" in request) || !("expectedRevision" in request)) throw new Error("invalid_device_build_artifact_list");
+    const query = { shareId: request.shareId, expectedRevision: request.expectedRevision, proposalId: "list" };
+    if (!isRemoteDeviceArtifactOfferInputV1(query)) throw new Error("invalid_device_build_artifact_list");
+    if (!input.mobileAccess.listDeviceBuildArtifacts) throw new Error("device_build_artifacts_unavailable");
+    const { shareId, expectedRevision } = query;
+    const builds = await input.mobileAccess.listDeviceBuildArtifacts({ shareId, expectedRevision });
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return builds;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessDeviceBuildArtifactOffer, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    if (!isRemoteDeviceArtifactBuildOfferInputV1(request)) throw new Error("invalid_device_build_artifact_offer");
+    if (!input.mobileAccess.offerDeviceBuildArtifact) throw new Error("device_build_artifact_unavailable");
+    const offer = await input.mobileAccess.offerDeviceBuildArtifact(request);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return offer;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationPrepare, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    const preview = await input.mobileAccess.preparePairingMigration(readPairingMigrationRequest(request));
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return preview;
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.mobileAccessPairingMigrationConfirm, async (event, request: unknown) => {
+    const isTrustedSender = () => isTrustedMainDocumentSender(event, input.getMainWindow(), input.trustedDocumentUrl);
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    const publication = await input.mobileAccess.confirmPairingMigration(readPairingMigrationConfirmation(request));
+    assertMobileAccessSender(isTrustedSender(), input.mobileAccess);
+    return publication;
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentGet, async (event) =>
     isMainWindowSender(event) ? navigationIntents.getPendingIntent() : undefined);
@@ -702,6 +792,58 @@ function assertMobileAccessSender(
   if (!authorized || !mobileAccess) {
     throw new Error("mobile_access_unauthorized_or_unavailable");
   }
+}
+
+function isTrustedMainDocumentSender(event: IpcMainInvokeEvent, window: BrowserWindow | undefined, trustedDocumentUrl: string | undefined): boolean {
+  const owner = window?.webContents;
+  if (!window || window.isDestroyed() || !owner || owner.isDestroyed() || event.sender !== owner || !trustedDocumentUrl
+    || !event.senderFrame || event.senderFrame !== owner.mainFrame || event.senderFrame.detached) return false;
+  const actualUrl = owner.getURL();
+  if (event.senderFrame.url !== actualUrl) return false;
+  try {
+    const actual = new URL(actualUrl);
+    const expected = new URL(trustedDocumentUrl);
+    actual.hash = expected.hash = actual.search = expected.search = "";
+    return actual.protocol === "file:" && actual.href === expected.href;
+  } catch {
+    return false;
+  }
+}
+
+function readPairingMigrationRequest(value: unknown): LingServerPairingMigrationRequestV1 {
+  if (!isRecord(value) || Object.keys(value).length !== 2 || !isRecord(value.routingProfile)) {
+    throw new Error("invalid_pairing_migration_request");
+  }
+  const profile = value.routingProfile;
+  const { applicationKeyFingerprint, bindingId, installationId, installationRevision, serverOrigin } = profile;
+  const { retainedCommandIds } = value;
+  if (Object.keys(profile).length !== 8 || profile.schemaVersion !== 1 || profile.signalingProtocolMajor !== 1
+    || profile.gatewayProtocolMajor !== REMOTE_PROTOCOL_VERSION || !isHttpsOrigin(serverOrigin)
+    || !isPairingIdentifier(bindingId) || !isPairingIdentifier(installationId) || !isPositiveSafeInteger(installationRevision)
+    || typeof applicationKeyFingerprint !== "string" || !/^[A-Za-z0-9_-]{43}$/u.test(applicationKeyFingerprint)
+    || !Array.isArray(retainedCommandIds) || retainedCommandIds.length > LING_SERVER_PAIRING_MIGRATION_MAX_RECEIPTS_V1
+    || !retainedCommandIds.every(isPairingIdentifier) || new Set(retainedCommandIds).size !== retainedCommandIds.length) {
+    throw new Error("invalid_pairing_migration_request");
+  }
+  return {
+    routingProfile: {
+      schemaVersion: 1, bindingId, installationId, installationRevision, serverOrigin, applicationKeyFingerprint,
+      signalingProtocolMajor: 1, gatewayProtocolMajor: REMOTE_PROTOCOL_VERSION,
+    },
+    retainedCommandIds,
+  };
+}
+
+function readPairingMigrationConfirmation(value: unknown): LingServerPairingMigrationConfirmationV1 {
+  if (!isRecord(value) || Object.keys(value).length !== 2 || !isPairingIdentifier(value.migrationId)
+    || typeof value.confirmationDigest !== "string" || !/^[a-f0-9]{64}$/u.test(value.confirmationDigest)) {
+    throw new Error("invalid_pairing_migration_confirmation");
+  }
+  return { migrationId: value.migrationId, confirmationDigest: value.confirmationDigest };
+}
+
+function isPairingIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length <= REMOTE_PROTOCOL_LIMITS.maxIdentifierBytes && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value);
 }
 
 function isHttpsOrigin(value: unknown): value is string {

@@ -1,5 +1,11 @@
 import type { ComputerUseRuntimeStatus, EngineDiscoveryReport, ManagedInstallStatus, ExecutionEngineConnectionProbe, ExecutionEngineInstallationProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation, ExecutionEngineProfileListResponse, ExecutionEngineProfileResponse,
   ExternalExecutionEngineId, SaveExecutionEngineProfileRequest, SaveExecutionEngineSecretRequest } from "@ling-stack/contracts";
+import type { LingServerPairingMigrationConfirmationV1, LingServerPairingMigrationPublicationRequestV1, LingServerPairingMigrationRequestV1, LingServerPairingMigrationV1 } from "@ling-stack/contracts";
+import type {
+  RemoteDeviceAnalysisDraftInputV1, RemoteDeviceAnalysisDraftV1, RemoteDeviceAnalysisInputV1,
+  RemoteDeviceArtifactBuildOfferInputV1, RemoteDeviceArtifactOfferInputV1, RemoteDeviceArtifactOfferV1,
+  RemoteDeviceBuildArtifactSummaryV1, RemoteDeviceCollaborationViewV1,
+} from "@ling-stack/contracts";
 
 export interface DesktopExecutionEngineCapabilities {
   saveProfileWithSecret(engineId: ExternalExecutionEngineId, request: SaveExecutionEngineSecretRequest): Promise<ExecutionEngineProfileResponse>;
@@ -95,6 +101,10 @@ export interface DesktopMobileAccessStatus {
   readonly policyVersion: number;
   readonly workspaceBindingId: string;
   readonly sendEnabled: boolean;
+  readonly deviceCollaborationEnabled?: boolean;
+  readonly deviceCollaborationAnalysisEnabled?: boolean;
+  readonly deviceArtifactSharingEnabled?: boolean;
+  readonly deviceBuildArtifactSharingEnabled?: boolean;
 }
 
 export interface DesktopMobileAccessPairingStartResult {
@@ -115,6 +125,15 @@ export interface DesktopMobileAccessCapabilities {
   confirmPairing(): Promise<DesktopMobileAccessStatus>;
   rejectPairing(): Promise<DesktopMobileAccessStatus>;
   revoke(): Promise<DesktopMobileAccessStatus>;
+  listDeviceCollaboration(): Promise<readonly RemoteDeviceCollaborationViewV1[]>;
+  draftDeviceAnalysis(request: RemoteDeviceAnalysisDraftInputV1): Promise<RemoteDeviceAnalysisDraftV1>;
+  proposeDeviceAnalysis(request: RemoteDeviceAnalysisInputV1): Promise<RemoteDeviceCollaborationViewV1>;
+  listDeviceArtifacts(request: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">): Promise<readonly RemoteDeviceArtifactOfferV1[]>;
+  offerDeviceArtifact(request: RemoteDeviceArtifactOfferInputV1): Promise<RemoteDeviceArtifactOfferV1 | undefined>;
+  listDeviceBuildArtifacts?(request: Pick<RemoteDeviceArtifactOfferInputV1, "shareId" | "expectedRevision">): Promise<readonly RemoteDeviceBuildArtifactSummaryV1[]>;
+  offerDeviceBuildArtifact?(request: RemoteDeviceArtifactBuildOfferInputV1): Promise<RemoteDeviceArtifactOfferV1>;
+  preparePairingMigration(request: LingServerPairingMigrationRequestV1): Promise<LingServerPairingMigrationV1>;
+  confirmPairingMigration(request: LingServerPairingMigrationConfirmationV1): Promise<LingServerPairingMigrationPublicationRequestV1>;
 }
 
 export interface DesktopRect {

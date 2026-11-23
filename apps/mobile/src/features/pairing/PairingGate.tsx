@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Linking,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -14,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useMobileRemote } from "../../remote/MobileRemoteProvider";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
 
-export function PairingGate() {
+export function PairingGate({ onOpenStandalone }: { readonly onOpenStandalone: () => void }) {
   const remote = useMobileRemote();
   if (remote.phase === "scanner") {
     return <PairingScannerScreen />;
@@ -22,16 +23,16 @@ export function PairingGate() {
   if (remote.phase === "submitting" || remote.phase === "awaiting_pc" || remote.phase === "initial_sync" || remote.phase === "loading") {
     return <PairingProgressScreen />;
   }
-  return <PairingWelcomeScreen />;
+  return <PairingWelcomeScreen onOpenStandalone={onOpenStandalone} />;
 }
 
-function PairingWelcomeScreen() {
+function PairingWelcomeScreen({ onOpenStandalone }: { readonly onOpenStandalone: () => void }) {
   const { theme } = useMobileTheme();
   const remote = useMobileRemote();
   const styles = useMemo(() => createStyles(theme), [theme]);
   return (
     <SafeAreaView style={styles.screen}>
-      <View style={styles.welcomeContent}>
+      <ScrollView contentContainerStyle={styles.welcomeContent}>
         <View accessible accessibilityLabel="Ling" style={styles.logo}>
           <Text style={styles.logoText}>L</Text>
         </View>
@@ -39,12 +40,13 @@ function PairingWelcomeScreen() {
         <Text style={styles.welcomeDescription}>扫描 PC 上的配对码，安全同步已有频道、会话和队友私聊。</Text>
         {remote.error ? <Text accessibilityRole="alert" style={styles.error}>{remote.error}</Text> : null}
         <PrimaryButton label="扫描 PC 配对码" onPress={remote.openScanner} scanIcon />
+        <TextButton label="用手机诊断设备" onPress={onOpenStandalone} />
         <View style={styles.pairingPath}>
           <Text style={styles.pairingPathTitle}>在 PC 上开始：</Text>
           <Text style={styles.pairingPathBody}>设置 → 移动端访问 → 开始配对</Text>
         </View>
         <Text style={styles.securityBody}>一台 PC 仅绑定一部手机。设备私钥不会离开手机，绑定还需要在 PC 上确认。</Text>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -117,7 +119,7 @@ function PairingProgressScreen() {
           {awaiting ? "请在 PC 上确认" : remote.phase === "initial_sync" ? "正在同步 PC 会话…" : "正在验证安全连接…"}
         </Text>
         <Text style={styles.description}>
-          {awaiting ? "确认“我的 iPhone”后，这里会自动进入会话。" : "正在确认 Gateway 身份和设备密钥。"}
+          {awaiting ? "在 PC 上确认手机名称后，这里会自动进入会话。" : "正在确认 Gateway 身份和设备密钥。"}
         </Text>
         {awaiting && seconds !== undefined ? <Text style={styles.countdown}>配对码将在 {formatCountdown(seconds)} 后过期</Text> : null}
         {remote.pendingPairing ? (
@@ -173,7 +175,7 @@ function shortFingerprint(value: string): string {
 function createStyles(theme: ReturnType<typeof useMobileTheme>["theme"]) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.background.panel, paddingHorizontal: 28 },
-    welcomeContent: { flex: 1, alignItems: "center", paddingTop: 118, paddingBottom: 28 },
+    welcomeContent: { flexGrow: 1, alignItems: "center", paddingTop: 118, paddingBottom: 28 },
     logo: { width: 68, height: 68, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: theme.action.accent },
     logoText: { color: theme.action.foreground, fontSize: 28, fontWeight: "700" },
     welcomeTitle: { marginTop: 30, color: theme.text.strong, fontSize: 28, lineHeight: 34, fontWeight: "700", letterSpacing: -0.4, textAlign: "center" },

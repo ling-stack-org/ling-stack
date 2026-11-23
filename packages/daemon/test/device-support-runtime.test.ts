@@ -1,0 +1,2016 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { once } from "node:events";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import { WebSocketServer } from "ws";
+
+import type {
+  ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
+  DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskGraphNodeReceiptV1, DeviceTaskGraphV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
+  DeviceTwinValueV1, EdgeDeviceAttemptConformanceReportV1, EdgeDeviceJournalPageV1, EdgeRuntimeEnrollmentGrantV1,
+  EdgeRuntimeHealthAdmissionV1, EdgeRuntimeHealthPageV1, EdgeRuntimeHealthSampleV1, EdgeRuntimeJournalEntryV1, EdgeRuntimePlacementDecisionV1,
+  HardwareProtocolProfileResourceV1, HardwareProtocolProfileV1,
+} from "@ling-stack/contracts";
+import { HARDWARE_PROTOCOL_PROFILE_ENTRYPOINT_V1 } from "@ling-stack/contracts";
+import {
+  buildOwnedDevicePlanningInput, createEnvSecretResolver, createPcSoftwareDiagnosisPlaybook, createSqliteRunStore, DEFAULT_WORKSPACE_ID,
+  devicePlaybookNodeId, DeviceBrokerError, DeviceTaskGraphCoordinator, digestRequest,
+  HardwareProtocolWorkbench, modbusRtuRegisterCodec, readOwnedDeviceAttemptConformance, readOwnedDeviceTaskTrace,
+  SqliteDeviceFabricStore, SqliteDeviceSupportStore,
+} from "@ling-stack/core";
+import {
+  canonicalJsonBytes, edgeRuntimeEnrollmentProofBytes, edgeRuntimeHealthSampleBytes, edgeRuntimeJournalEntryBytes, edgeRuntimeTaskGraphReceiptBytes,
+} from "@ling-stack/remote-protocol";
+import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
+import { createDaemonServer } from "../dist/index.js";
+import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
+
+interface ProjectedTwin {
+  readonly deviceId: string;
+  readonly revision: number;
+  readonly values: readonly (Pick<DeviceTwinValueV1, "key" | "quality" | "reportedEvidence"> & { readonly hasReported: boolean })[];
+}
+
+test("the Daemon enrolls an Edge runtime with the approved key and fences proofs across restart and revocation", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-edge-enrollment-"));
+  const workspace = createSqliteRunStore(cwd);
+  const { databasePath } = workspace.paths;
+  workspace.close();
+  const authToken = "edge-enrollment-test-fixture";
+  const key = generateKeyPairSync("ed25519");
+  const otherKey = generateKeyPairSync("ed25519");
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const input = {
+    displayName: "Bench Edge", contractMajor: 1, supportedTransports: ["usb", "serial"], expectedRevision: 0,
+    publicKeySpki: key.publicKey.export({ type: "spki", format: "der" }).toString("base64url"),
+  };
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  let origin: string;
+  t.after(async () => {
+    await daemon?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const start = async () => {
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return `http://127.0.0.1:${address.port}/v1/device-support/fabric/edge-runtimes`;
+  };
+  const send = (path: string, payload: object, method = "POST", requestHeaders: HeadersInit = headers) =>
+    fetch(origin + path, { method, headers: requestHeaders, body: JSON.stringify(payload) });
+  const issue = "/bench-edge/enrollment";
+  const proof = issue + "/proof";
+  const revoke = "/bench-edge/revocation";
+  origin = await start();
+  assert.equal((await send(issue, input, "POST", { "Content-Type": "application/json" })).status, 401);
+  assert.equal((await send(issue, input, "POST", { ...headers, Origin: "https://example.invalid" })).status, 403);
+  assert.equal((await send(issue, { ...input, supportedTransports: ["serial", "serial"] })).status, 400);
+  assert.equal((await send(issue, { ...input, expectedRevision: 1 })).status, 409);
+  const challenge = await send(issue, input);
+  assert.equal(challenge.status, 201);
+  const { grant } = await challenge.json() as { grant: EdgeRuntimeEnrollmentGrantV1 };
+  assert.equal(grant.runtimeId, "bench-edge");
+  assert.equal(grant.publicKeyFingerprint, `sha256:${createHash("sha256").update(Buffer.from(input.publicKeySpki, "base64url")).digest("hex")}`);
+  const before = await fetch(origin, { headers });
+  assert.deepEqual((await before.json() as { runtimes: unknown[] }).runtimes, []);
+  const signed = (value: EdgeRuntimeEnrollmentGrantV1, signingKey = key) => ({
+    grantId: value.grantId, signature: sign(null, edgeRuntimeEnrollmentProofBytes(value), signingKey.privateKey).toString("base64url"),
+  });
+  const valid = signed(grant);
+  assert.equal((await send(proof, signed(grant, otherKey))).status, 403);
+  assert.equal((await send(proof, signed({ ...grant, expectedRevision: 1 }))).status, 403);
+  assert.equal((await send("/other-edge/enrollment/proof", valid)).status, 404);
+  assert.equal((await send(revoke, { grantId: grant.grantId }, "PUT")).status, 204);
+  const replacement = await send(issue, input);
+  assert.equal(replacement.status, 201);
+  const replacementGrant = (await replacement.json() as { grant: EdgeRuntimeEnrollmentGrantV1 }).grant;
+  assert.equal((await send(revoke, { grantId: grant.grantId }, "PUT")).status, 204);
+
+  await daemon!.stop();
+  daemon = undefined;
+  origin = await start();
+  const enrolled = await send(proof, signed(replacementGrant));
+  assert.equal(enrolled.status, 201);
+  const enrollment = await enrolled.json() as { runtime: { status: string; revision: number }; replayed: boolean };
+  assert.equal(enrollment.runtime.status, "enrolled");
+  assert.equal(enrollment.runtime.revision, 1);
+  assert.equal(enrollment.replayed, false);
+  const graphId = "edge-task-1";
+  const runtimeId = "bench-edge";
+  const attemptId = "edge-operation-1";
+  const at = new Date().toISOString();
+  const node = {
+    nodeId: "inspect-registers", targetDeviceId: "bench-controller", capabilityId: "modbus.read_registers",
+    capabilitySnapshotId: "edge-snapshot-1", ownerKind: "edge", ownerId: runtimeId, dependencies: [], status: "planning",
+  } as const;
+  const fabric = new SqliteDeviceFabricStore({ databasePath });
+  t.after(() => fabric.close());
+  const placement = fabric.recordEdgeRuntimePlacement({
+    runtimeId, ownerTaskId: graphId, targetDeviceId: node.targetDeviceId, capabilityId: node.capabilityId, sideEffect: "read_only",
+    hasLocalExecutor: true, offlineRecoverySupported: false, evaluatedAt: at,
+  }).decision;
+  const plan = fabric.saveTaskGraph({ graphId, revision: 1, status: "planned", nodes: [node], createdAt: at, updatedAt: at });
+  const executing = new DeviceTaskGraphCoordinator({ persistence: fabric, now: () => at }).bindNodeAttempt(plan, node.nodeId, attemptId, 1);
+  const binding = { grantId: replacementGrant.grantId, runtimeRevision: 1, placementId: placement.decisionId };
+  const journalEntry: EdgeRuntimeJournalEntryV1 = {
+    entryId: "edge-journal-1", runtimeId, ownerTaskId: graphId, sequence: 1,
+    operationId: attemptId, kind: "task_started", outcome: "pending", recordedAt: at,
+  };
+  const peerHeaders = { "Content-Type": "application/json" };
+  const signedEntry = (payload: EdgeRuntimeJournalEntryV1, signingKey = key) => ({
+    binding, payload, signature: sign(null, edgeRuntimeJournalEntryBytes(binding, payload), signingKey.privateKey).toString("base64url"),
+  });
+  const append = (entry: ReturnType<typeof signedEntry>) => send("/bench-edge/journal", entry, "POST", peerHeaders);
+  assert.equal((await append(signedEntry(journalEntry, otherKey))).status, 403);
+  assert.equal((await append(signedEntry({ ...journalEntry, operationId: "other-attempt" }))).status, 403);
+  assert.equal((await append(signedEntry(journalEntry))).status, 201);
+  assert.deepEqual(await (await append(signedEntry(journalEntry))).json(), { entry: journalEntry, replayed: true });
+  assert.equal((await send(revoke, { grantId: replacementGrant.grantId }, "PUT")).status, 409);
+  assert.doesNotMatch(JSON.stringify(enrollment), /publicKey|signature/i);
+  await daemon!.stop();
+  daemon = undefined;
+  origin = await start();
+  const replay = await send(proof, signed(replacementGrant));
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), { ...enrollment, replayed: true });
+  const completed: EdgeRuntimeJournalEntryV1 = {
+    ...journalEntry, entryId: "edge-journal-2", sequence: 2, kind: "task_completed", outcome: "completed", payloadDigest: "a".repeat(64),
+  };
+  const receipt: DeviceTaskGraphNodeReceiptV1 = {
+    graphId, graphRevision: executing.revision, nodeId: node.nodeId, ownerKind: node.ownerKind, ownerId: runtimeId,
+    targetDeviceId: node.targetDeviceId, capabilitySnapshotId: node.capabilitySnapshotId, attemptId, routeGeneration: 1,
+    status: "succeeded", resultRef: completed.entryId, receivedAt: at,
+  };
+  const signedReceipt = (payload: DeviceTaskGraphNodeReceiptV1) => ({
+    binding, payload, signature: sign(null, edgeRuntimeTaskGraphReceiptBytes(binding, payload), key.privateKey).toString("base64url"),
+  });
+  const settle = (evidence: ReturnType<typeof signedReceipt>) => send("/bench-edge/task-graph-receipt", evidence, "POST", peerHeaders);
+  assert.equal((await settle(signedReceipt(receipt))).status, 403);
+  assert.equal((await append(signedEntry(completed))).status, 201);
+  assert.equal((await settle(signedReceipt({ ...receipt, capabilitySnapshotId: "wrong-snapshot" }))).status, 403);
+  const view = { graphId, revision: 3, nodeId: node.nodeId, status: "succeeded" };
+  assert.deepEqual(await (await settle(signedReceipt(receipt))).json(), view);
+  assert.deepEqual(await (await settle(signedReceipt(receipt))).json(), view);
+  assert.equal(fabric.getTaskGraph(graphId)?.nodes[0]?.resultRef, completed.entryId);
+  assert.equal((await send(revoke, { expectedRevision: 2 }, "PUT")).status, 409);
+  const revoked = await send(revoke, { expectedRevision: 1 }, "PUT");
+  assert.equal(revoked.status, 200);
+  const revokedRecord = { runtime: { ...enrollment.runtime, status: "revoked", revision: 2 } };
+  assert.deepEqual(await revoked.json(), revokedRecord);
+  assert.deepEqual(await (await send(revoke, { expectedRevision: 1 }, "PUT")).json(), revokedRecord);
+  assert.equal((await send(proof, signed(replacementGrant))).status, 404);
+  assert.equal((await append(signedEntry(completed))).status, 403);
+  assert.equal((await settle(signedReceipt(receipt))).status, 403);
+  assert.deepEqual(fabric.listEdgeRuntimeJournalEntries(runtimeId, graphId), [journalEntry, completed]);
+});
+
+test("an Edge process retains its diagnosis and resumes signed delivery across Daemon restart and revocation", { timeout: 20_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-edge-diagnosis-"));
+  const key = generateKeyPairSync("ed25519");
+  const runtimeId = "network-probe";
+  const authToken = "fixture-edge-operator";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const stateDirectory = join(cwd, "owner");
+  const privateKeyFile = join(cwd, "edge-key.pem");
+  const configFile = join(cwd, "edge.json");
+  writeFileSync(privateKeyFile, key.privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+  const cli = fileURLToPath(new URL("../dist/ling-edge-cli.js", import.meta.url));
+  const start = async () => {
+    const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return { daemon, origin: `http://127.0.0.1:${address.port}` };
+  };
+  let host = await start();
+  const prefix = `/v1/device-support/fabric/edge-runtimes/${runtimeId}`;
+  const send = (path: string, payload: object, method = "POST") => fetch(`${host.origin}${prefix}/${path}`, {
+    method, headers, body: JSON.stringify(payload),
+  });
+  let interrupt: { route: "diagnosis-claim" | "journal" | "task-graph-receipt"; remaining: number } | undefined;
+  const link = createServer(async (request, response) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const delivered = await fetch(`${host.origin}${request.url}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: Buffer.concat(chunks),
+      });
+      const body = await delivered.text();
+      if (delivered.ok && interrupt && request.url === `${prefix}/${interrupt.route}` && --interrupt.remaining === 0) {
+        interrupt = undefined;
+        response.destroy();
+        return;
+      }
+      response.writeHead(delivered.status, { "Content-Type": "application/json" }).end(body);
+    } catch {
+      response.writeHead(502).end();
+    }
+  });
+  t.after(async () => {
+    link.closeAllConnections();
+    await new Promise<void>(resolve => link.close(() => resolve()));
+    await host.daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  link.listen(0, "127.0.0.1");
+  await once(link, "listening");
+  const address = link.address();
+  assert.ok(address && typeof address === "object");
+  const linkedOrigin = `http://127.0.0.1:${address.port}`;
+
+  const response = await send("enrollment", { displayName: "Edge network probe", contractMajor: 1, expectedRevision: 0,
+    supportedTransports: ["local_process"], publicKeySpki: key.publicKey.export({ type: "spki", format: "der" }).toString("base64url") });
+  assert.equal(response.status, 201);
+  const { grant } = await response.json() as { grant: EdgeRuntimeEnrollmentGrantV1 };
+  assert.equal((await send("enrollment/proof", {
+    grantId: grant.grantId, signature: sign(null, edgeRuntimeEnrollmentProofBytes(grant), key.privateKey).toString("base64url"),
+  })).status, 201);
+  const healthConfig = join(cwd, "edge-health.json");
+  const healthBinding = { grantId: grant.grantId, runtimeRevision: 1 };
+  writeFileSync(healthConfig, JSON.stringify({ origin: linkedOrigin, runtimeId, privateKeyFile, binding: healthBinding }), { mode: 0o600 });
+  const healthCommand = () => promisify(execFile)(process.execPath, [cli, "health", healthConfig], { timeout: 6_000, maxBuffer: 8_192 });
+  const healthUrl = () => `${host.origin}${prefix}/health`;
+  const readHealth = async (query = "") => {
+    const read = await fetch(healthUrl() + "/events" + query, { headers });
+    assert.equal(read.status, 200);
+    return await read.json() as EdgeRuntimeHealthPageV1;
+  };
+  const publishHealth = (payload: EdgeRuntimeHealthSampleV1, signed = payload) => fetch(healthUrl(), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ binding: healthBinding, payload,
+      signature: sign(null, edgeRuntimeHealthSampleBytes(runtimeId, healthBinding, signed), key.privateKey).toString("base64url") }),
+  });
+  assert.equal((await fetch(healthUrl() + "/events")).status, 401);
+  assert.equal((await readHealth()).sampleState, "unavailable");
+  const health = JSON.parse((await healthCommand()).stdout) as EdgeRuntimeHealthAdmissionV1;
+  assert.ok(health.status === "accepted" && !health.replayed);
+  const healthPage = await readHealth();
+  assert.equal(healthPage.sampleState, "fresh");
+  assert.deepEqual(healthPage.events, [health.event]);
+  assert.equal(typeof health.event.observedAt, "string");
+  const healthData = health.event.payload as { readonly connected: boolean };
+  assert.equal(typeof healthData.connected, "boolean");
+  const originalSample = {
+    sampleId: health.event.eventId.split(":").at(-1)!, observedAt: health.event.observedAt!, connected: healthData.connected,
+  };
+  const changedSample = { ...originalSample, connected: !originalSample.connected };
+  assert.equal((await publishHealth(changedSample, originalSample)).status, 403);
+  assert.equal((await publishHealth(changedSample)).status, 409);
+  assert.equal((await fetch(healthUrl() + "/events?generation=0", { headers })).status, 400);
+  assert.equal((await fetch(`${host.origin}${prefix}/diagnoses`, { method: "POST" })).status, 401);
+  const queue = async (requestId: string) => {
+    const queued = await send("diagnoses", { expectedRevision: 1, requestId });
+    assert.equal(queued.status, 201);
+    return await queued.json() as { graph: DeviceTaskGraphV1; placement: EdgeRuntimePlacementDecisionV1 };
+  };
+  const inspect = async (graphId: string) => {
+    const read = await fetch(`${host.origin}${prefix}/diagnoses/${graphId}`, { headers });
+    assert.equal(read.status, 200);
+    return await read.json() as { graph: DeviceTaskGraphV1; observation?: { connected: boolean } };
+  };
+  const evidencePath = (graphId: string) => `${host.origin}${prefix}/diagnoses/${graphId}`;
+  const conformance = async (graphId: string) => {
+    const response = await fetch(`${evidencePath(graphId)}/conformance`, { headers });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/u);
+    return await response.json() as EdgeDeviceAttemptConformanceReportV1;
+  };
+  const events = async (graphId: string, query = "") => {
+    const response = await fetch(`${evidencePath(graphId)}/events${query}`, { headers });
+    assert.equal(response.status, 200);
+    return await response.json() as EdgeDeviceJournalPageV1;
+  };
+  const run = (work: Awaited<ReturnType<typeof queue>>) => {
+    writeFileSync(configFile, JSON.stringify({ origin: linkedOrigin, runtimeId, graphId: work.graph.graphId, privateKeyFile, stateDirectory,
+      binding: { grantId: grant.grantId, runtimeRevision: 1, placementId: work.placement.decisionId } }), { mode: 0o600 });
+    return promisify(execFile)(process.execPath, [cli, "diagnose", configFile], { timeout: 6_000, maxBuffer: 8_192 });
+  };
+  const work = await queue("read-network");
+  assert.equal(work.graph.status, "planned");
+  const graphId = work.graph.graphId;
+  assert.equal((await fetch(`${evidencePath(graphId)}/conformance`, { headers })).status, 404);
+  interrupt = { route: "task-graph-receipt", remaining: 1 };
+  await assert.rejects(run(work), { code: 1 });
+  const result = await inspect(work.graph.graphId);
+  assert.equal(result.graph.status, "succeeded");
+  assert.equal(typeof result.observation?.connected, "boolean");
+  for (const projection of ["events", "conformance"]) {
+    assert.equal((await fetch(`${evidencePath(graphId)}/${projection}`)).status, 401);
+    assert.equal((await fetch(`${evidencePath(graphId)}/${projection}`, { headers: { ...headers, Origin: "https://elsewhere.invalid" } })).status, 403);
+    assert.equal((await fetch(`${evidencePath(graphId).replace(runtimeId, "other-runtime")}/${projection}`, { headers })).status, 404);
+  }
+  assert.equal((await fetch(`${evidencePath(graphId)}/events?limit=101`, { headers })).status, 400);
+  const page = await events(graphId, "?limit=1");
+  assert.equal(page.latestSequence, 2);
+  assert.equal(page.events[0]?.kind, "task_started");
+  assert.equal(page.hasMore, true);
+  const report = await conformance(graphId);
+  assert.equal(report.source.streamId, page.streamId);
+  assert.equal(report.source.attemptId, result.graph.nodes[0]?.attemptId);
+  assert.equal(report.source.placementId, work.placement.decisionId);
+  assert.equal(report.source.outcome, "succeeded");
+  assert.equal(report.checks.length, 4);
+  assert.ok(report.checks.every(check => check.status === "pass" && check.evidenceRef));
+  assert.doesNotMatch(JSON.stringify(report), /privateKey|publicKey|grantId|signature/u);
+  const owner = new SqliteDeviceFabricStore({ databasePath: join(stateDirectory, "edge.sqlite") });
+  try {
+    const entries = owner.listEdgeRuntimeJournalEntries(runtimeId, work.graph.graphId);
+    assert.deepEqual(entries.map(entry => entry.outcome), ["pending", "completed"]);
+    assert.ok(entries.every(entry => entry.operationId === result.graph.nodes[0]?.attemptId));
+    assert.deepEqual(entries[1]?.networkObservation, result.observation);
+    await host.daemon.stop();
+    host = await start();
+    const retainedHealth = await readHealth("?generation=1&afterSequence=1");
+    assert.equal(retainedHealth.requiresSnapshot, false);
+    assert.deepEqual(retainedHealth.events, []);
+    assert.deepEqual(retainedHealth.latestSample, health.event);
+    assert.deepEqual(await (await publishHealth(originalSample)).json(), { ...health, replayed: true });
+    const resumed = JSON.parse((await run(work)).stdout);
+    assert.equal(resumed.attemptId, result.graph.nodes[0]?.attemptId);
+    assert.deepEqual(resumed.observation, result.observation);
+    assert.deepEqual(await inspect(work.graph.graphId), result);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, work.graph.graphId), entries);
+    const remainder = await events(graphId, "?afterSequence=1");
+    assert.equal(remainder.hasMore, false);
+    assert.equal(remainder.events[0]?.sequence, 2);
+    assert.deepEqual(remainder.events[0]?.payload, { attemptId: resumed.attemptId, outcome: "completed", ...result.observation });
+    assert.deepEqual(remainder.events[0]?.evidenceRefs, [result.graph.nodes[0]?.resultRef]);
+    const stale = await events(graphId, "?generation=2");
+    assert.ok(stale.requiresSnapshot);
+    assert.equal(stale.graph.revision, result.graph.revision);
+    assert.deepEqual(stale.events, []);
+    assert.deepEqual(await conformance(graphId), report);
+    const replay = await send("diagnoses", { expectedRevision: 1, requestId: "read-network" });
+    assert.equal(replay.status, 200);
+    assert.deepEqual((await replay.json()).graph, result.graph);
+
+    const interrupted = await queue("interrupted-network");
+    interrupt = { route: "journal", remaining: 2 };
+    await assert.rejects(run(interrupted), { code: 1 });
+    const pending = await inspect(interrupted.graph.graphId);
+    assert.equal(pending.graph.status, "executing");
+    assert.equal(JSON.parse((await run(interrupted)).stdout).status, "succeeded");
+    const recovered = await inspect(interrupted.graph.graphId);
+    assert.equal(recovered.graph.status, "succeeded");
+    assert.equal(recovered.graph.nodes[0]?.attemptId, pending.graph.nodes[0]?.attemptId);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, interrupted.graph.graphId).map(entry => entry.outcome), ["pending", "completed"]);
+
+    const uncertain = await queue("uncertain-network");
+    interrupt = { route: "journal", remaining: 1 };
+    await assert.rejects(run(uncertain), { code: 1 });
+    const inFlight = await inspect(uncertain.graph.graphId);
+    const stop = (graph: DeviceTaskGraphV1, expectedRevision = graph.revision) =>
+      send("diagnoses/" + graph.graphId + "/stop", { expectedRevision }, "PUT");
+    assert.equal((await stop(inFlight.graph)).status, 200);
+    assert.equal(JSON.parse((await run(uncertain)).stdout).status, "unknown");
+    const unresolved = await inspect(uncertain.graph.graphId);
+    assert.equal(unresolved.graph.status, "unknown");
+    assert.equal(unresolved.graph.nodes[0]?.attemptId, inFlight.graph.nodes[0]?.attemptId);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, uncertain.graph.graphId).map(entry => entry.outcome), ["pending", "unknown"]);
+    const unknownReport = await conformance(uncertain.graph.graphId);
+    assert.equal(unknownReport.source.outcome, "unknown");
+    assert.equal(unknownReport.checks.find(check => check.id === "owner_receipt")?.status, "pass");
+    assert.equal(unknownReport.checks.find(check => check.id === "network_observation")?.status, "skip");
+
+    const queuedStop = await queue("stop-before-claim");
+    assert.equal((await stop(queuedStop.graph, 2)).status, 409);
+    assert.equal((await stop(queuedStop.graph)).status, 200);
+    assert.equal((await inspect(queuedStop.graph.graphId)).graph.status, "cancelled");
+    await assert.rejects(run(queuedStop), /HTTP 403/u);
+
+    const claimedStop = await queue("stop-before-start");
+    interrupt = { route: "diagnosis-claim", remaining: 1 };
+    await assert.rejects(run(claimedStop), { code: 1 });
+    const claimed = await inspect(claimedStop.graph.graphId);
+    assert.equal(claimed.graph.status, "executing");
+    assert.equal((await stop(claimed.graph)).status, 200);
+    const cancelled = await inspect(claimed.graph.graphId);
+    assert.equal(cancelled.graph.status, "cancelled");
+    assert.equal(cancelled.graph.nodes[0]?.attemptId, claimed.graph.nodes[0]?.attemptId);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, claimed.graph.graphId), []);
+    await assert.rejects(run(claimedStop), /HTTP 403/u);
+
+    const startedStop = await queue("stop-with-start");
+    interrupt = { route: "journal", remaining: 2 };
+    await assert.rejects(run(startedStop), { code: 1 });
+    const started = (await inspect(startedStop.graph.graphId)).graph;
+    assert.equal((await stop(started)).status, 200);
+    const stopped = (await inspect(started.graphId)).graph;
+    assert.equal(stopped.status, "unknown");
+    assert.equal(stopped.nodes[0]?.attemptId, started.nodes[0]?.attemptId);
+    interrupt = { route: "task-graph-receipt", remaining: 1 };
+    await assert.rejects(run(startedStop), { code: 1 });
+    const late = (await inspect(started.graphId)).graph;
+    assert.equal(late.status, "cancelled");
+    assert.equal(late.nodes[0]?.status, "succeeded");
+    assert.equal(late.nodes[0]?.attemptId, stopped.nodes[0]?.attemptId);
+    assert.equal(JSON.parse((await run(startedStop)).stdout).status, "succeeded");
+    assert.deepEqual(await (await stop(started)).json(), { graph: late });
+    assert.ok((await conformance(started.graphId)).checks.every(check => check.status === "pass"));
+
+    const revokedWork = await queue("before-revocation");
+    assert.equal((await send("revocation", { expectedRevision: 1 }, "PUT")).status, 200);
+    await assert.rejects(run(revokedWork), /HTTP 403/u);
+    await assert.rejects(healthCommand(), /HTTP 403/u);
+    const revokedHealth = await readHealth();
+    assert.equal(revokedHealth.sampleState, "stale");
+    assert.equal(revokedHealth.runtimeStatus, "revoked");
+    assert.deepEqual(revokedHealth.events, [health.event]);
+    assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, revokedWork.graph.graphId), []);
+    assert.equal((await inspect(revokedWork.graph.graphId)).graph.nodes[0]?.attemptId, undefined);
+    assert.equal((await send("diagnoses", { expectedRevision: 2, requestId: "after-revocation" })).status, 403);
+    assert.deepEqual(await conformance(graphId), report);
+  } finally {
+    owner.close();
+  }
+});
+
+test("the Daemon registers configured Android ADB and OBD bridges as device targets", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-bridges-"));
+  const runtime = createDeviceSupportRuntime({
+    databasePath: join(root, "workspace.sqlite"),
+    androidAdbExecutor: {
+      async inventory() { return { serial: "head-unit-1", model: "Linaro P", androidVersion: "7.1.2" }; },
+      async readPackages() { return []; },
+      async readLogs() { return ""; },
+      async installArtifact() { return { accepted: true }; },
+      async reboot() { return { accepted: true }; },
+    },
+    obdExecutor: {
+      async readVehicleInfo() { return { vin: "VIN-1", make: "Test", model: "Car", protocol: "iso15765" }; },
+      async readPid(pid) { return { pid, value: 90, unit: "%" }; },
+      async readDtc() { return []; },
+    },
+  });
+  t.after(() => { runtime.close(); rmSync(root, { recursive: true, force: true }); });
+  const headUnit = await runtime.discoverAndroidAdb("adb:head-unit-1");
+  const vehicle = await runtime.discoverObd("obd:bridge-1");
+  assert.equal(headUnit.adapterId, "android-adb");
+  assert.equal(headUnit.device.kind, "head_unit");
+  assert.equal(vehicle.adapterId, "obd-diagnostics");
+  assert.equal(vehicle.device.kind, "vehicle");
+  assert.equal(runtime.store.getDevice(headUnit.device.id)?.device.ownerScope, DEFAULT_WORKSPACE_ID);
+  assert.equal(runtime.store.getDevice(vehicle.device.id)?.device.ownerScope, DEFAULT_WORKSPACE_ID);
+});
+
+test("the configured PC ADB target journals diagnosis and developer log capture under the same owner", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-adb-diagnosis-"));
+  const targetsFile = join(cwd, "android-targets.json");
+  const workspace = createSqliteRunStore(cwd);
+  const authToken = "fixture-daemon-authority";
+  const serial = "fixture-hardware-id";
+  const adbSerial = "fixture-head-unit";
+  writeFileSync(targetsFile, JSON.stringify({ version: 1, targets: [
+    { connectionId: "bench", adbSerial, hardwareSerial: serial, kind: "head_unit", logTag: "DiPlay" },
+  ] }));
+  let adbState = "unauthorized";
+  let transportId = "17";
+  let reportedSerial = "different-fixture-target";
+  let packageReads = 0;
+  let logReads = 0;
+  let substitutePackageTarget = false;
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd,
+    deviceSupport: { androidAdbTargetsFile: targetsFile } }, {
+    storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    androidAdbProcessRunner: { async run(file, args) {
+      assert.equal(file, process.platform === "win32" ? "adb.exe" : "adb");
+      assert.deepEqual(args.slice(0, 4), ["-H", "localhost", "-P", "5037"]);
+      const operation = args.slice(4);
+      if (operation[0] === "devices") {
+        assert.deepEqual(operation, ["devices", "-l"]);
+        return { stdout: `List of devices attached\nother-device device transport_id:1\n${adbSerial} ${adbState} transport_id:${transportId}\n`, stderr: "", exitCode: 0 };
+      }
+      assert.deepEqual(operation.slice(0, 4), ["-t", transportId, "shell", "-T"]);
+      const command = operation[4] ?? "";
+      if (command.includes("logcat")) {
+        logReads += 1;
+        return { stdout: `${reportedSerial}\nfixture/board/build\nI/DiPlay: ready\n`, stderr: "", exitCode: 0 };
+      }
+      if (command.includes("pm list packages")) {
+        packageReads += 1;
+        assert.ok(command.includes(`if [ "$serial" = '${serial}' ]`));
+        return { stdout: substitutePackageTarget ? "other-device\n"
+          : `${reportedSerial}\nfixture/board/build\npackage:com.example.carplay\npackage:android\n`, stderr: "", exitCode: 0 };
+      }
+      assert.ok(command.includes("getprop ro.build.fingerprint"));
+      return { stdout: `${reportedSerial}\nFixture head unit\n7.1.2\nfixture/board/build\n`, stderr: "", exitCode: 0 };
+    } },
+  });
+  t.after(async () => { await daemon.stop(); rmSync(cwd, { recursive: true, force: true }); });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}/v1/device-support`;
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const post = (route: string, body: object) => fetch(base + route, { method: "POST", headers, body: JSON.stringify(body) });
+  assert.equal((await fetch(base + "/android/targets")).status, 401);
+  const candidates = await (await fetch(base + "/android/targets", { headers })).json();
+  assert.equal(candidates.targets[0].status, "candidate");
+  assert.doesNotMatch(JSON.stringify(candidates), /fixture-hardware-id|fixture-head-unit/u);
+  assert.equal((await post("/android/enroll", { connectionId: "bench", adbSerial: "other" })).status, 400);
+  const unauthorized = await post("/android/enroll", { connectionId: "bench" });
+  assert.deepEqual(await unauthorized.json(), { error: "authentication_required" });
+  adbState = "device";
+  assert.equal((await post("/android/enroll", { connectionId: "bench" })).status, 409);
+  assert.equal(packageReads, 0);
+  reportedSerial = serial;
+  const enrollment = await post("/android/enroll", { connectionId: "bench" });
+  assert.equal(enrollment.status, 200);
+  const { profile } = await enrollment.json() as { profile: DeviceProfileV1 };
+  assert.equal(profile.device.id, candidates.targets[0].deviceId);
+  assert.equal(profile.device.kind, "head_unit");
+  const readGraph = async () => {
+    const response = await fetch(base + "/fabric/graph", { headers });
+    assert.equal(response.status, 200);
+    const graph = await response.json() as {
+      nodes: { nodeId: string; deviceId: string; source?: string; connectionRevision?: string; lifecycleStatus?: string }[];
+      twins: readonly ProjectedTwin[];
+    };
+    assert.doesNotMatch(JSON.stringify(graph), /fixture-hardware-id|fixture-head-unit/u);
+    const matches = graph.nodes.filter(node => node.deviceId === profile.device.id);
+    assert.equal(matches.length, 1);
+    return { node: matches[0]!, twin: graph.twins.find(twin => twin.deviceId === profile.device.id) };
+  };
+  const { node: enrolledNode } = await readGraph();
+  assert.equal(enrolledNode.source, "registry");
+  assert.equal(enrolledNode.lifecycleStatus, "healthy");
+  assert.equal(enrolledNode.connectionRevision, profile.device.profileRevision);
+  const sessions = "/developer/sessions";
+  const developerSession = await post(sessions, { targetDeviceId: profile.device.id, mode: "developer" });
+  assert.equal(developerSession.status, 201);
+  const { session: created } = await developerSession.json() as { session: DeviceDeveloperSessionV1 };
+  const sessionPath = `${sessions}/${created.sessionId}`;
+  const developerAuthorization = await post(sessionPath + "/authorize", { expectedRevision: created.revision });
+  assert.equal(developerAuthorization.status, 200);
+  const { session: authorized } = await developerAuthorization.json() as { session: DeviceDeveloperSessionV1 };
+  const logJob = { jobId: "adb-log-capture", kind: "logs", authorizationRevision: authorized.authorizationRevision };
+  const developerLogs = await post(sessionPath + "/jobs", logJob);
+  assert.equal(developerLogs.status, 201);
+  const { job } = await developerLogs.json() as { job: DeviceDeveloperJobV1 };
+  assert.equal(job.status, "completed");
+  assert.equal(job.taskStatus, "succeeded");
+  assert.equal(job.outputRef, "developer-logs:adb-log-capture");
+  assert.deepEqual(await (await post(sessionPath + "/jobs", logJob)).json(), { job });
+  const logPath = base + sessionPath + "/jobs/adb-log-capture/logcat";
+  assert.equal((await fetch(logPath)).status, 401);
+  const rawLogResponse = await fetch(logPath, { headers });
+  assert.equal(rawLogResponse.status, 200);
+  assert.equal((await rawLogResponse.json()).text, "I/DiPlay: ready\n");
+  const traceResponse = await fetch(base + "/tasks/" + encodeURIComponent(job.outputRef) + "/trace", { headers });
+  assert.equal(traceResponse.status, 200);
+  assert.doesNotMatch(await traceResponse.text(), /DiPlay: ready/u);
+  assert.equal(logReads, 1);
+  const diagnosis = async () => {
+    const response = await post("/android/diagnose", { deviceId: profile.device.id });
+    assert.equal(response.status, 200);
+    return await response.json() as { status: DeviceTaskStatusV1; report: DeviceDiagnosisReportV1 };
+  };
+  const first = await diagnosis();
+  assert.equal(first.status, "succeeded");
+  assert.deepEqual(first.report.facts.map(fact => fact.value), [{ androidVersion: "7.1.2" }, { packageCount: 2 }]);
+  assert.doesNotMatch(JSON.stringify(first), /com\.example\.carplay|fixture-hardware-id/u);
+  transportId = "18";
+  const reconnected = await diagnosis();
+  assert.equal(reconnected.status, "succeeded");
+  const { node: reconnectedNode, twin } = await readGraph();
+  assert.equal(reconnectedNode.nodeId, enrolledNode.nodeId);
+  assert.notEqual(reconnectedNode.connectionRevision, enrolledNode.connectionRevision);
+  assert.deepEqual(twin?.values.map(value => value.key), ["android.device", "android.packages"]);
+  assert.ok(twin?.values.every(value => value.hasReported && value.quality === "good"
+    && value.reportedEvidence?.taskId === reconnected.report.taskId
+    && value.reportedEvidence.connectionRevision === reconnectedNode.connectionRevision));
+  const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const original = store.listAttempts(first.report.taskId)[0]?.attempt;
+    const next = store.listAttempts(reconnected.report.taskId)[0]?.attempt;
+    assert.equal(original?.targetDeviceId, next?.targetDeviceId);
+    assert.notEqual(original?.connectionRevision, next?.connectionRevision);
+    assert.deepEqual(store.getCurrentCapabilitySnapshot(profile.device.id)?.capabilities.map(capability => capability.id),
+      ["android.inspect.device", "android.inspect.packages", "android.capture.logs"]);
+  } finally {
+    store.close();
+  }
+  substitutePackageTarget = true;
+  const changed = await diagnosis();
+  assert.equal(changed.status, "partial");
+  assert.ok(changed.report.actions.some(action => action.errorCode === "target_changed"));
+  assert.deepEqual(changed.report.facts.map(fact => fact.value), [{ androidVersion: "7.1.2" }]);
+  const { twin: disconnected } = await readGraph();
+  assert.ok(disconnected?.values.every(value => value.quality === "stale"));
+  assert.equal(disconnected?.values.find(value => value.key === "android.packages")?.reportedEvidence?.taskId,
+    reconnected.report.taskId);
+  assert.equal(packageReads, 3);
+});
+
+test("the configured Home Assistant instance supplies PC-owned diagnosis evidence", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-home-assistant-"));
+  const workspace = createSqliteRunStore(cwd);
+  const accessToken = "fixture-ha-access-token";
+  const paths: string[] = [];
+  const home = createServer((req, res) => {
+    if (req.headers.authorization !== `Bearer ${accessToken}`) {
+      res.writeHead(401).end();
+      return;
+    }
+    paths.push(req.url ?? "");
+    if (req.url === "/api/config") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ version: "2026.11.4" }));
+    } else if (req.url === "/api/states/sensor.garage") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+        entity_id: "sensor.garage", state: "unavailable", attributes: { description: "private device output" },
+      }));
+    } else if (req.url === "/api/states/sensor.reporting") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({
+        entity_id: "sensor.reporting", state: "on", last_reported: "2026-01-01T01:00:00.123456+01:00",
+      }));
+    } else if (req.url === "/api/states") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify([
+        { entity_id: "sensor.garage", state: "unavailable", attributes: { description: "private device output" } },
+        { entity_id: "light.kitchen", state: "on", attributes: { description: "private device output" } },
+      ]));
+    } else if (req.url === "/api/services") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify([
+        { domain: "light", services: { turn_on: { target: {}, description: "private device output" } } },
+      ]));
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  const registry = new WebSocketServer({ server: home, path: "/api/websocket" });
+  registry.on("connection", socket => {
+    paths.push("/api/websocket");
+    let authenticated = false;
+    socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.4" }));
+    socket.on("message", raw => {
+      const frame = JSON.parse(raw.toString()) as { type: string; access_token?: string; id?: number };
+      if (!authenticated && frame.type === "auth" && frame.access_token === accessToken) {
+        authenticated = true;
+        socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.4" }));
+      } else if (authenticated && frame.type === "config/device_registry/list") {
+        socket.send(JSON.stringify({
+          id: frame.id, type: "result", success: true, result: [{
+            id: "0123456789abcdef0123456789abcdef", disabled_by: "user", name: "private device output",
+          }],
+        }));
+      } else {
+        socket.close();
+      }
+    });
+  });
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  t.after(async () => {
+    await daemon?.stop();
+    await new Promise<void>(resolve => registry.close(() => resolve()));
+    await new Promise<void>(resolve => home.close(() => resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  home.listen(0, "127.0.0.1");
+  await once(home, "listening");
+  const homeAddress = home.address();
+  assert.ok(homeAddress && typeof homeAddress === "object");
+  const authToken = "fixture-daemon-authority";
+  daemon = createDaemonServer({
+    host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd,
+    deviceSupport: { homeAssistant: { origin: `http://127.0.0.1:${homeAddress.port}`, tokenRef: "env:HA_FIXTURE" } },
+  }, {
+    storeFactory: () => workspace, secretResolver: createEnvSecretResolver({ HA_FIXTURE: accessToken }),
+    chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}/v1/device-support`;
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const post = (body: object, extraHeaders: Record<string, string> = {}) => fetch(base + "/home-assistant/diagnose", {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
+  });
+  assert.equal((await post({ entityId: "sensor.garage" }, { Origin: "https://foreign.example" })).status, 403);
+  assert.equal((await post({ entityId: "sensor.garage", origin: "https://other.example" })).status, 400);
+  assert.equal((await post({ entityId: "sensor.reporting", maxReportAgeMs: 0 })).status, 400);
+  assert.equal((await fetch(base + "/pc/diagnose", {
+    method: "POST", headers, body: JSON.stringify({ maxReportAgeMs: 1000 }),
+  })).status, 400);
+  assert.deepEqual(paths, []);
+  const response = await post({ entityId: "sensor.garage" });
+  assert.equal(response.status, 200);
+  const { status, report } = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
+  assert.equal(status, "succeeded");
+  assert.deepEqual(report.facts.map(fact => fact.value), [{ availability: "unavailable" }]);
+  assert.equal(report.hypotheses[0]?.code, "integration_or_device_issue");
+  assert.deepEqual(paths, ["/api/config", "/api/config", "/api/states/sensor.garage"]);
+  const getCatalog = (query: string, extras: Record<string, string> = {}) =>
+    fetch(base + "/home-assistant/catalog?" + query, { headers: { ...headers, ...extras } });
+  assert.equal((await getCatalog("kind=entities", { Origin: "https://foreign.example" })).status, 403);
+  assert.equal((await getCatalog("kind=entities&origin=https://foreign.example")).status, 400);
+  assert.equal((await getCatalog("kind=entities&limit=101")).status, 400);
+  assert.deepEqual(paths, ["/api/config", "/api/config", "/api/states/sensor.garage"]);
+  const pages = [];
+  for (const [query, items, nextAfter] of [
+    ["kind=entities&limit=1", [{ id: "light.kitchen", availability: "available" }], "light.kitchen"],
+    ["kind=entities&after=light.kitchen", [{ id: "sensor.garage", availability: "unavailable" }]],
+    ["kind=services", [{ id: "light.turn_on", acceptsTarget: true }]],
+    ["kind=devices", [{ id: "0123456789abcdef0123456789abcdef", disabled: true }]],
+  ] as const) {
+    const response = await getCatalog(query);
+    assert.equal(response.status, 200);
+    const page = await response.json() as { taskId: string; deviceId: string; catalog: { items: unknown; nextAfter?: string } };
+    assert.deepEqual(page.catalog.items, items);
+    assert.equal(page.catalog.nextAfter, nextAfter);
+    pages.push(page);
+  }
+  const freshnessResponse = await post({ entityId: "sensor.reporting", maxReportAgeMs: 1000 });
+  assert.equal(freshnessResponse.status, 200);
+  const freshness = (await freshnessResponse.json() as { report: DeviceDiagnosisReportV1 }).report;
+  assert.deepEqual(freshness.facts[0]?.value, {
+    availability: "available", lastReportedAt: "2026-01-01T00:00:00.123Z", reportTimestampStatus: "valid", reportFreshness: "stale",
+  });
+  assert.equal(freshness.hypotheses[0]?.code, "stale_entity_report");
+  const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const registered = store.listDevices().find(profile => profile.device.kind === "home_assistant");
+    assert.ok(registered);
+    const deviceId = registered.device.id;
+    const foreignId = "home-assistant:foreign";
+    assert.equal(store.registerDevice({ ...registered, device: { ...registered.device, id: foreignId, ownerScope: "foreign" } },
+      new Date().toISOString()), true);
+    const fabric = new SqliteDeviceFabricStore({ databasePath: workspace.paths.databasePath });
+    try {
+      const node = { nodeId: "integration", deviceId, kind: "device" as const, label: "Integration", revision: 1,
+        identityRefs: ["private-identity-detail"], properties: { detail: "private-node-detail" } };
+      fabric.upsertGraphNode(node);
+      fabric.upsertGraphNode({ ...node, nodeId: "component", kind: "component", parentNodeId: "integration" });
+      fabric.upsertGraphNode({ ...node, nodeId: "foreign", deviceId: foreignId, label: "foreign-node" });
+      fabric.addGraphRelationship({ relationshipId: "contains-component", fromNodeId: "integration", toNodeId: "component",
+        type: "contains", provenance: ["private-graph-provenance"], revision: 1 });
+      fabric.addGraphRelationship({ relationshipId: "foreign-link", fromNodeId: "integration", toNodeId: "foreign",
+        type: "connects", provenance: [], revision: 1 });
+      const past = "2025-01-01T00:00:00.000Z";
+      const live = fabric.getTwin(deviceId);
+      assert.ok(live);
+      const reported = live.values.find(value => value.key === "sensor.garage");
+      assert.deepEqual(reported?.reported, { availability: "unavailable" });
+      assert.equal(reported?.reportedEvidence?.observationId, report.facts[0]?.observationId);
+      assert.equal(reported?.reportedEvidence?.taskId, report.taskId);
+      fabric.saveTwin({
+        ...live, revision: live.revision + 1,
+        values: [...live.values, { key: "fixture.property", reported: "private-twin-value", quality: "good",
+          source: "fixture", observedAt: past, freshnessUntil: past }],
+      });
+      fabric.saveEdgeRuntime({ runtimeId: "bench-edge", displayName: "Bench Edge", publicKeyFingerprint: "fixture-edge-fingerprint",
+        contractMajor: 1, supportedTransports: ["rs485"], status: "offline", revision: 1 });
+    } finally {
+      fabric.close();
+    }
+    const graphResponse = await fetch(base + "/fabric/graph", { headers });
+    assert.equal(graphResponse.status, 200);
+    const graph = await graphResponse.json() as {
+      generatedAt: string;
+      nodes: { nodeId: string; deviceId: string; connectionRevision?: string }[];
+      relationships: { relationshipId: string }[];
+      twins: { deviceId: string; values: { key: string; quality: string; hasReported: boolean; reportedEvidence?: { taskId: string } }[] }[];
+    };
+    assert.ok(Number.isFinite(Date.parse(graph.generatedAt)));
+    assert.deepEqual(graph.nodes.map(node => [node.nodeId, node.deviceId]), [["component", deviceId], ["integration", deviceId]]);
+    assert.equal(graph.nodes.find(node => node.nodeId === "integration")?.connectionRevision,
+      store.getDeviceRetirementState(deviceId, DEFAULT_WORKSPACE_ID).connectionRevision);
+    assert.deepEqual(graph.relationships.map(link => link.relationshipId), ["contains-component"]);
+    assert.equal(graph.twins.length, 1);
+    assert.equal(graph.twins[0]?.deviceId, deviceId);
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "fixture.property")?.quality, "stale");
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "sensor.garage")?.hasReported, true);
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "sensor.garage")?.reportedEvidence?.taskId, report.taskId);
+    assert.equal(graph.twins[0]?.values.find(value => value.key === "sensor.reporting")?.quality, "stale");
+    assert.doesNotMatch(JSON.stringify(graph), /foreign-node|foreign-link|private-/u);
+    const edgeResponse = await fetch(base + "/fabric/edge-runtimes", { headers });
+    assert.equal(edgeResponse.status, 200);
+    const edge = await edgeResponse.json() as { runtimes: { runtimeId: string; status: string; revision: number }[] };
+    assert.deepEqual(edge.runtimes.map(item => [item.runtimeId, item.status, item.revision]), [["bench-edge", "offline", 1]]);
+    assert.doesNotMatch(JSON.stringify(edge), /fixture-edge-fingerprint/u);
+    assert.equal((await fetch(base + "/fabric/graph", { headers: { ...headers, Origin: "https://foreign.example" } })).status, 403);
+    assert.equal(store.getTask(report.taskId)?.ownerKind, "daemon");
+    const reportingEvidence = store.getObservation(freshness.taskId, freshness.facts[0]!.observationId);
+    assert.equal(reportingEvidence?.subjectId, deviceId);
+    assert.ok(reportingEvidence?.provenance.includes("sensor.reporting"));
+    assert.equal(store.listDevices().find(profile => profile.device.kind === "home_assistant")?.device.firmwareVersion, "2026.11.4");
+    assert.doesNotMatch(JSON.stringify([report, store.listEvents(report.taskId), store.listObservations(report.taskId)]),
+      /private device output|fixture-ha-access-token/u);
+    for (const page of pages) {
+      assert.equal(store.getTask(page.taskId)?.status, "succeeded");
+      assert.deepEqual(store.getTask(page.taskId)?.targetDeviceIds, [page.deviceId]);
+      const attempts = store.listAttempts(page.taskId);
+      assert.equal(attempts.length, 1);
+      assert.match(attempts[0]!.request.capabilityId, /^home_assistant\.list_/u);
+      assert.deepEqual(store.listObservations(page.taskId)[0]?.value, page.catalog);
+      assert.doesNotMatch(JSON.stringify([page, store.listEvents(page.taskId)]), /private device output|fixture-ha-access-token/u);
+    }
+    store.markDeviceOffline(deviceId, new Date().toISOString());
+    const afterDisconnect = await (await fetch(base + "/fabric/graph", { headers })).json() as typeof graph;
+    const retained = afterDisconnect.twins[0]?.values.find(value => value.key === "sensor.garage");
+    assert.equal(retained?.quality, "stale");
+    assert.equal(retained?.reportedEvidence?.taskId, report.taskId);
+  } finally {
+    store.close();
+  }
+});
+
+test("Home Assistant automation recovery verifies the exact registry entity and writes once", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-automation-approval-"));
+  const entityId = "automation.fixture";
+  const originalRegistryId = "a".repeat(32);
+  const lastTriggered = new Date(Date.now() - 60_000).toISOString();
+  let registryId = originalRegistryId;
+  let state = "off";
+  let applyService = true;
+  const writes: unknown[] = [];
+  const home = createServer(async (request, response) => {
+    if (request.url === "/api/config") {
+      response.end(JSON.stringify({ version: "2026.11.2" }));
+    } else if (request.url === `/api/states/${entityId}`) {
+      response.end(JSON.stringify({ entity_id: entityId, state, attributes: { last_triggered: lastTriggered, private_marker: "private-fixture-value" } }));
+    } else if (request.url === "/api/services/automation/turn_on" && request.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      writes.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      if (applyService) state = "on";
+      response.end("[]");
+    } else response.writeHead(404).end();
+  });
+  const registry = new WebSocketServer({ server: home, path: "/api/websocket" });
+  registry.on("connection", socket => {
+    socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.2" }));
+    socket.on("message", raw => {
+      const message = JSON.parse(raw.toString("utf8"));
+      if (message.type === "auth" && message.access_token === "automation-fixture-secret") {
+        socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.2" }));
+      } else if (message.type === "config/entity_registry/get") {
+        socket.send(JSON.stringify({ id: message.id, type: "result", success: true,
+          result: { entity_id: entityId, platform: "automation", id: registryId, disabled_by: null } }));
+      } else socket.close();
+    });
+  });
+  home.listen(0, "127.0.0.1");
+  await once(home, "listening");
+  const homeAddress = home.address();
+  assert.ok(homeAddress && typeof homeAddress === "object");
+  const daemon = createDaemonServer({
+    host: "127.0.0.1", port: 0, authToken: "fixture-operator", defaultWorkspaceCwd: cwd,
+    deviceSupport: { homeAssistant: { origin: `http://127.0.0.1:${homeAddress.port}`, tokenRef: "env:HA_FIXTURE" } },
+  }, { secretResolver: createEnvSecretResolver({ HA_FIXTURE: "automation-fixture-secret" }),
+    chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null });
+  t.after(async () => {
+    await daemon.stop();
+    await new Promise<void>(resolve => registry.close(() => resolve()));
+    await new Promise<void>(resolve => home.close(() => resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const post = (path: string, body: object) => fetch(`http://127.0.0.1:${address.port}${path}`, {
+    method: "POST", headers: { Authorization: "Bearer fixture-operator", "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const proposalPath = "/v1/device-support/home-assistant/automation-enable-proposals";
+  async function propose(): Promise<ApprovalRequest> {
+    const response = await post(proposalPath, { entityId });
+    assert.equal(response.status, 201);
+    return (await response.json()).approval as ApprovalRequest;
+  }
+  const approve = (approval: ApprovalRequest) => post(`/approvals/${approval.id}/approve?cwd=${encodeURIComponent(cwd)}`, {});
+  const diagnosis = await post("/v1/device-support/home-assistant/diagnose", { entityId });
+  assert.equal(diagnosis.status, 200);
+  const { report } = await diagnosis.json() as { report: DeviceDiagnosisReportV1 };
+  assert.deepEqual(report.facts[0]?.value, { availability: "available", automationEnabled: false, lastTriggeredAt: lastTriggered });
+  assert.equal((await post(proposalPath, { entityId: "switch.fixture" })).status, 400);
+  const stale = await propose();
+  registryId = "b".repeat(32);
+  assert.equal((await approve(stale)).status, 200);
+  assert.deepEqual(writes, []);
+  registryId = originalRegistryId;
+  const live = await propose();
+  assert.match(live.title, /Enable Home Assistant automation/u);
+  assert.equal((live.payload as { automationRegistryId: string }).automationRegistryId, originalRegistryId);
+  for (const response of await Promise.all([approve(live), approve(live)])) assert.equal(response.status, 200);
+  assert.deepEqual(writes, [{ entity_id: entityId }]);
+  assert.equal((await post(proposalPath, { entityId })).status, 409);
+  state = "off";
+  applyService = false;
+  const unchanged = await propose();
+  assert.equal((await approve(unchanged)).status, 200);
+  assert.equal(writes.length, 2);
+  const workspace = createSqliteRunStore(cwd);
+  const store = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    assert.equal(store.listAttempts(stale.deviceTaskId!)[0]?.attempt.receipt?.errorCode, "target_changed");
+    assert.equal(store.getTask(live.deviceTaskId!)?.status, "succeeded");
+    assert.deepEqual(store.listAttempts(live.deviceTaskId!).map(record => record.attempt.verification?.status), ["verified"]);
+    assert.deepEqual(store.listAttempts(unchanged.deviceTaskId!).map(record => record.attempt.verification?.status), ["failed"]);
+    assert.doesNotMatch(JSON.stringify(store.listObservations(live.deviceTaskId!)), /automation-fixture-secret|private-fixture-value/u);
+  } finally {
+    store.close();
+    workspace.close();
+  }
+});
+
+test("the local Home Assistant approval queue persists exact decisions and never repeats a reload", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-home-assistant-approval-"));
+  const accessToken = "fixture-ha-queue-token";
+  const entryId = "0123456789abcdef0123456789abcdef";
+  const otherEntryId = "0123456789abcdef0123456789abcdee";
+  const entityId = "sensor.garage";
+  let registryEntry = entryId;
+  let loseReloadResponse = false;
+  let reads = 0;
+  const writes: unknown[] = [];
+  const home = createServer(async (req, res) => {
+    if (req.headers.authorization !== `Bearer ${accessToken}`) {
+      res.writeHead(401).end();
+      return;
+    }
+    if (req.url === "/api/config" && req.method === "GET") {
+      res.writeHead(200).end(JSON.stringify({ version: "2026.11.4" }));
+    } else if (req.url === "/api/services/homeassistant/reload_config_entry" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      writes.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      if (loseReloadResponse) res.destroy();
+      else res.writeHead(200).end("[]");
+    } else if (req.url === `/api/states/${entityId}` && req.method === "GET") {
+      reads++;
+      res.writeHead(200).end(JSON.stringify({ entity_id: entityId, state: "on" }));
+    } else res.writeHead(404).end();
+  });
+  const registry = new WebSocketServer({ server: home, path: "/api/websocket" });
+  registry.on("connection", socket => {
+    let authenticated = false;
+    socket.send(JSON.stringify({ type: "auth_required", ha_version: "2026.11.4" }));
+    socket.on("message", raw => {
+      const message = JSON.parse(raw.toString()) as { type: string; entity_id?: string; entry_id?: string; access_token?: string; id?: number };
+      if (!authenticated && message.type === "auth" && message.access_token === accessToken) {
+        authenticated = true;
+        socket.send(JSON.stringify({ type: "auth_ok", ha_version: "2026.11.4" }));
+      } else if (authenticated && message.type === "config/entity_registry/get" && message.entity_id === entityId) {
+        socket.send(JSON.stringify({ id: message.id, type: "result", success: true,
+          result: { entity_id: entityId, config_entry_id: registryEntry, private_field: "fixture-hidden-registry-field" } }));
+      } else if (authenticated && message.type === "config_entries/get_single" && message.entry_id === entryId) {
+        socket.send(JSON.stringify({ id: message.id, type: "result", success: true,
+          result: { config_entry: { entry_id: entryId, domain: "garage", state: "setup_retry",
+            disabled_by: null, reason: "fixture-hidden-integration-reason" } } }));
+      } else socket.close();
+    });
+  });
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  t.after(async () => {
+    await daemon?.stop();
+    await new Promise<void>(resolve => registry.close(() => resolve()));
+    await new Promise<void>(resolve => home.close(() => resolve()));
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  home.listen(0, "127.0.0.1");
+  await once(home, "listening");
+  const homeAddress = home.address();
+  assert.ok(homeAddress && typeof homeAddress === "object");
+  const authToken = "fixture-daemon-queue-authority";
+  const options = {
+    host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd,
+    deviceSupport: { homeAssistant: { origin: `http://127.0.0.1:${homeAddress.port}`, tokenRef: "env:HA_FIXTURE" } },
+  };
+  let base = "";
+  async function restart(): Promise<void> {
+    await daemon?.stop();
+    daemon = createDaemonServer(options, {
+      secretResolver: createEnvSecretResolver({ HA_FIXTURE: accessToken }), chromeBrowserNativeMessagingEnabled: false,
+      remoteReplyDispatcher: null,
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    base = `http://127.0.0.1:${address.port}`;
+  }
+  await restart();
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const workspaceQuery = `cwd=${encodeURIComponent(cwd)}`;
+  const approvals = (query = workspaceQuery, extraHeaders: Record<string, string> = {}) =>
+    fetch(base + "/approvals?" + query, { headers: { ...headers, ...extraHeaders } });
+  const propose = (id = entryId, extraHeaders: Record<string, string> = {}) =>
+    fetch(base + "/v1/device-support/home-assistant/reload-proposals", {
+      method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify({ entryId: id, entityId }),
+    });
+  const decision = (approvalId: string, action: "approve" | "deny", body: object = {},
+    extraHeaders: Record<string, string> = {}, query = workspaceQuery) => fetch(base + `/approvals/${approvalId}/${action}?${query}`, {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
+  });
+  async function createProposal(): Promise<ApprovalRequest> {
+    const response = await propose();
+    assert.equal(response.status, 201);
+    return (await response.json() as { approval: ApprovalRequest }).approval;
+  }
+  const workspace = createSqliteRunStore(cwd);
+  const databasePath = workspace.paths.databasePath;
+  workspace.close();
+
+  const integrationDiagnosis = await fetch(base + "/v1/device-support/home-assistant/diagnose", {
+    method: "POST", headers, body: JSON.stringify({ entityId, entryId }),
+  });
+  assert.equal(integrationDiagnosis.status, 200);
+  const integration = await integrationDiagnosis.json() as { report: DeviceDiagnosisReportV1 };
+  assert.deepEqual(integration.report.facts[0]?.value, {
+    entryId, entityId, domain: "garage", state: "setup_retry", integrationDisabled: false, entityDisabled: false,
+  });
+  assert.equal(integration.report.hypotheses[0]?.code, "integration_or_device_issue");
+  assert.doesNotMatch(JSON.stringify(integration), /fixture-hidden-integration-reason|fixture-hidden-registry-field/u);
+
+  assert.equal((await propose(otherEntryId)).status, 409);
+  assert.equal((await propose(entryId, { Origin: "https://foreign.example" })).status, 403);
+  const pending = await createProposal();
+  assert.equal(pending.status, "pending");
+  assert.deepEqual(pending.availableDecisions, ["approve_once", "deny"]);
+  assert.deepEqual(pending.payload, {
+    type: "device_action", targetDeviceId: (pending.payload as { targetDeviceId: string }).targetDeviceId,
+    capabilityId: "home_assistant.reload_config_entry", entryId, entityId, expectedAvailability: "available",
+  });
+  assert.match((pending.payload as { targetDeviceId: string }).targetDeviceId, /^home-assistant:[a-f0-9]{24}$/u);
+  assert.deepEqual(writes, []);
+  await restart();
+  assert.deepEqual((await (await approvals(workspaceQuery + "&status=pending")).json() as { approvals: ApprovalRequest[] }).approvals,
+    [pending]);
+  const foreign = await approvals(workspaceQuery, { Origin: "https://foreign.example" });
+  assert.deepEqual((await foreign.json() as { approvals: ApprovalRequest[] }).approvals, []);
+  assert.equal((await decision(pending.id, "approve", { decisionKind: "approve_command_rule" })).status, 400);
+  assert.equal((await decision(pending.id, "approve", {}, { Origin: "https://foreign.example" })).status, 403);
+  assert.equal((await decision(pending.id, "approve", {}, {}, `cwd=${encodeURIComponent(join(cwd, "other"))}`)).status, 404);
+  assert.deepEqual(writes, []);
+
+  const approvalsTogether = await Promise.all([decision(pending.id, "approve", { decisionKind: "approve_once" }),
+    decision(pending.id, "approve", { decisionKind: "approve_once" })]);
+  for (const response of approvalsTogether) {
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as { approval: ApprovalRequest }).approval.status, "approved");
+  }
+  assert.deepEqual(writes, [{ entry_id: entryId }]);
+  assert.equal(reads, 1);
+  await restart();
+  assert.equal((await decision(pending.id, "approve")).status, 200);
+  assert.equal((await decision(pending.id, "deny")).status, 409);
+  assert.equal(writes.length, 1);
+
+  const denied = await createProposal();
+  assert.equal((await decision(denied.id, "deny")).status, 200);
+  assert.equal((await decision(denied.id, "approve")).status, 409);
+
+  const superseded = await createProposal();
+  const proposalStore = new SqliteDeviceSupportStore({ databasePath });
+  try {
+    const proposal = proposalStore.getActionProposal(superseded.deviceTaskId!);
+    assert.ok(proposal);
+    proposalStore.saveActionProposal({ ...proposal.request, idempotencyKey: "replacement-key" }, proposal.requestDigest, new Date().toISOString());
+  } finally {
+    proposalStore.close();
+  }
+  const staleReceipt = await fetch(base + `/approvals/${superseded.id}?${workspaceQuery}`, { headers });
+  assert.equal(staleReceipt.status, 200);
+  assert.equal((await staleReceipt.json() as { approval: ApprovalRequest }).approval.status, "cancelled");
+  assert.equal((await decision(superseded.id, "approve")).status, 409);
+  assert.equal(writes.length, 1);
+
+  const changed = await createProposal();
+  registryEntry = otherEntryId;
+  assert.equal((await decision(changed.id, "approve")).status, 200);
+  assert.equal(writes.length, 1);
+  registryEntry = entryId;
+  const interrupted = await createProposal();
+  loseReloadResponse = true;
+  assert.equal((await decision(interrupted.id, "approve")).status, 200);
+  assert.equal(writes.length, 2);
+  await restart();
+  assert.equal((await decision(interrupted.id, "approve")).status, 200);
+  assert.equal(writes.length, 2);
+  assert.equal(reads, 1);
+  const store = new SqliteDeviceSupportStore({ databasePath });
+  try {
+    assert.equal(store.getTask(pending.deviceTaskId!)?.status, "succeeded");
+    assert.equal(store.getTask(denied.deviceTaskId!)?.status, "cancelled");
+    assert.equal(store.getTask(changed.deviceTaskId!)?.status, "failed");
+    assert.equal(store.getTask(interrupted.deviceTaskId!)?.status, "unknown");
+    assert.deepEqual(store.listAttempts(denied.deviceTaskId!), []);
+    assert.deepEqual(store.listAttempts(superseded.deviceTaskId!), []);
+    assert.equal(store.listAttempts(changed.deviceTaskId!)[0]?.attempt.receipt?.errorCode, "target_changed");
+    assert.equal(store.listAttempts(pending.deviceTaskId!)[0]?.attempt.verification?.status, "verified");
+    assert.equal(store.listAttempts(interrupted.deviceTaskId!).length, 1);
+    const events = store.listEvents(pending.deviceTaskId!);
+    assert.equal(events.filter(event => event.type === "queued_approval_resolved").length, 1);
+    assert.doesNotMatch(JSON.stringify([pending, events]), /fixture-ha-queue-token|fixture-hidden-registry-field/u);
+  } finally {
+    store.close();
+  }
+});
+
+test("daemon device-support runtime composes the durable store, broker and remote facade", () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-runtime-"));
+  const runtime = createDeviceSupportRuntime({ databasePath: join(root, "workspace.sqlite") });
+  assert.ok(runtime.store.database);
+  assert.ok(runtime.fabricStore.database);
+  assert.ok(runtime.developerStore.database);
+  assert.ok(runtime.protocolStore.database);
+  assert.equal(runtime.broker.store, runtime.store);
+  assert.ok(runtime.collaboration);
+  assert.ok(runtime.edgeRuntimes);
+  assert.equal(runtime.edgeJournal.read("edge-fixture", "task-fixture").length, 0);
+  assert.ok(runtime.access);
+  assert.equal(runtime.remoteFacade.listDevices("workspace-1").devices.length, 0);
+  const now = new Date().toISOString();
+  const session = runtime.developerSessions.createSession({
+    sessionId: "local-developer-session", workspaceId: DEFAULT_WORKSPACE_ID, ownerKind: "daemon", ownerId: "local-runtime",
+    targetDeviceId: "fixture-target", targetKind: "android", mode: "developer", authorizationRevision: "local-confirmation",
+    status: "created", revision: 1, createdAt: now, updatedAt: now,
+  });
+  assert.deepEqual(runtime.developerStore.getSession(session.sessionId), session);
+  runtime.close();
+});
+
+test("daemon startup recovers interrupted dispatch and readback from the owner journal", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-runtime-recovery-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const databasePath = join(root, "workspace.sqlite");
+  const startedAt = "2026-11-21T00:00:00.000Z";
+  const restartedAt = "2026-11-21T00:01:00.000Z";
+  const first = createDeviceSupportRuntime({ databasePath, now: () => startedAt });
+  function record(taskId: string, taskStatus: DeviceTaskStatusV1, attemptStatus: DeviceTaskAttemptV1["status"], ownerKind: DeviceTaskAttemptV1["ownerKind"] = "daemon") {
+    const request: DeviceActionRequestV1 = {
+      taskId, actionId: "inspect-network", targetDeviceId: "device-1", capabilityId: "pc.inspect.network",
+      capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", idempotencyKey: "original-request",
+      normalizedInput: {},
+    };
+    first.store.createTask({
+      id: taskId, ownerKind, ownerId: "runtime-1", targetDeviceIds: [request.targetDeviceId],
+      capabilitySnapshotIds: [request.capabilitySnapshotId], status: taskStatus,
+      currentActionId: request.actionId, createdAt: startedAt, updatedAt: startedAt,
+    }, startedAt);
+    first.store.createAttempt({
+      request, requestDigest: digestRequest(request),
+      attempt: {
+        attemptId: `${taskId}:attempt-1`, taskId, ownerKind, actionId: request.actionId, ownerId: "runtime-1",
+        targetDeviceId: request.targetDeviceId, status: attemptStatus, dispatchIntentAt: startedAt,
+        ...(attemptStatus === "completed" ? {
+          receipt: { actionId: request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [] },
+        } : {}),
+      },
+    }, startedAt);
+    return request;
+  }
+  const dispatch = record("interrupted-dispatch", "executing", "dispatched");
+  const readback = record("interrupted-verification", "verifying", "completed");
+  const peer = record("peer-task", "executing", "dispatched", "mobile");
+  first.close();
+
+  const restarted = createDeviceSupportRuntime({ databasePath, now: () => restartedAt });
+  try {
+    assert.equal(restarted.store.getTask(dispatch.taskId)?.status, "unknown");
+    assert.equal(restarted.store.getTask(readback.taskId)?.status, "unknown");
+    assert.equal(restarted.store.getTask(peer.taskId)?.status, "executing");
+    assert.equal((await restarted.broker.execute(dispatch)).attempt.status, "unknown");
+    const priorReadback = (await restarted.broker.execute(readback)).attempt;
+    assert.equal(priorReadback.receipt?.status, "completed");
+    assert.equal(priorReadback.verification, undefined);
+    await assert.rejects(() => restarted.broker.execute({ ...readback, idempotencyKey: "changed-request" }), (error: unknown) =>
+      error instanceof DeviceBrokerError && error.code === "unknown_outcome");
+    assert.deepEqual(restarted.store.recoverAfterRestart(restartedAt), []);
+  } finally {
+    restarted.close();
+  }
+});
+
+test("daemon runtime registers the Modbus codec and restores offline captures with loss evidence", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-protocol-replay-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const databasePath = join(root, "workspace.sqlite");
+  const captureTime = "2026-11-21T00:00:00.000Z";
+  const owner = createDeviceSupportRuntime({ databasePath });
+  try {
+    assert.deepEqual(owner.protocolProfiles.list().map(profile => profile.profileId), ["modbus-rtu-registers"]);
+    assert.equal(owner.protocolStore.getProfile("modbus-rtu-registers")?.codecId, modbusRtuRegisterCodec.manifest.codecId);
+    const capture = owner.protocolWorkbench.capture({
+      captureId: "modbus-temperature-register", targetDeviceId: "fixture-rs485", transport: "rs485", source: "imported",
+      createdAt: captureTime, loss: { reason: "connection_interrupted" },
+      frames: [{ direction: "rx", bytes: Buffer.from("010302000a3843", "hex"), capturedAt: captureTime }],
+    });
+    owner.protocolStore.saveCapture(capture);
+  } finally {
+    owner.close();
+  }
+  const reopened = createDeviceSupportRuntime({ databasePath });
+  try {
+    const codec = reopened.protocolStore.getCodec(modbusRtuRegisterCodec.manifest.codecId);
+    assert.equal(reopened.protocolStore.getProfile("modbus-rtu-registers")?.transport, "rs485");
+    assert.deepEqual(codec, modbusRtuRegisterCodec.manifest);
+    const capture = reopened.protocolStore.getCapture("modbus-temperature-register");
+    assert.ok(capture && codec);
+    assert.deepEqual(capture.loss, { reason: "connection_interrupted" });
+    assert.equal(reopened.protocolWorkbench.decode(capture, codec.codecId)[0]?.fields.register0, 10);
+  } finally {
+    reopened.close();
+  }
+});
+
+test("the Daemon captures and reopens loss-aware frames from an authorized live transport", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-live-protocol-route-"));
+  const timestamp = new Date().toISOString();
+  const profile: DeviceProfileV1 = {
+    device: {
+      id: "fixture-register-bank", kind: "hardware", displayName: "Fixture register bank",
+      ownerScope: DEFAULT_WORKSPACE_ID, lifecycleStatus: "healthy", profileRevision: "board-r1",
+    },
+    adapterId: "fixture-registers", adapterVersion: "1.0.0", profileRevision: "board-r1", source: "operator",
+    transports: ["rs485"], connectionRefs: ["fixture-rs485-r1"],
+    transportDeployments: [{ transport: "rs485", mode: "hardware_bridge", pairing: "os_permission", removal: "disconnect_only" }],
+  };
+  const authToken = "fixture-live-capture-authority";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  let captures = 0;
+  async function start(enroll: boolean) {
+    const workspace = createSqliteRunStore(cwd);
+    if (enroll) {
+      const devices = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+      try { devices.registerDevice(profile, timestamp); } finally { devices.close(); }
+    }
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+      deviceProtocolTransports: [{
+        transportId: "fixture-rs485", targetDeviceId: profile.device.id, connectionRevision: "fixture-rs485-r1", transport: "rs485",
+        async *capture() {
+          captures += 1;
+          yield { direction: "rx", bytes: Buffer.from("010302000a3843", "hex") };
+          throw new Error("fixture cable disconnected");
+        },
+      }],
+    });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return `http://127.0.0.1:${address.port}/v1/device-support/protocol`;
+  }
+  t.after(async () => {
+    await daemon?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const initial = await start(true);
+  const post = (url: string, body: object) => fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  const selection = { profileId: "modbus-rtu-registers", targetDeviceId: profile.device.id, transportId: "fixture-rs485" };
+  assert.equal((await post(initial + "/sessions", { ...selection, targetDeviceId: "another-device" })).status, 404);
+  const sessionResponse = await post(initial + "/sessions", selection);
+  assert.equal(sessionResponse.status, 201);
+  const { session } = await sessionResponse.json() as { session: DeviceDeveloperSessionV1 };
+  const path = `/sessions/${session.sessionId}/capture`;
+  const identity = { authorizationRevision: session.authorizationRevision };
+  assert.equal((await post(initial + path, { authorizationRevision: "wrong" })).status, 403);
+  assert.equal(captures, 0);
+  const response = await post(initial + path, identity);
+  assert.equal(response.status, 201);
+  const receipt = await response.json();
+  assert.equal(receipt.job.taskStatus, "partial");
+  assert.match(receipt.job.outputDigest, /^[0-9a-f]{64}$/u);
+  assert.equal(receipt.replay.source, "live");
+  assert.equal(receipt.replay.frames[0].fields.register0, 10);
+  assert.deepEqual(receipt.replay.loss, { reason: "connection_interrupted" });
+  assert.equal(captures, 1);
+  await daemon?.stop();
+  daemon = undefined;
+  const reopened = await start(false);
+  assert.deepEqual(await (await fetch(reopened + path, { headers })).json(), receipt);
+  const repeated = await post(reopened + path, identity);
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(await repeated.json(), receipt);
+  assert.equal(captures, 1);
+});
+
+test("the local protocol workbench imports target-bound capture evidence and resumes the same job after restart", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-workbench-route-"));
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  let server: ReturnType<typeof createDaemonServer> | undefined;
+  let databasePath: string;
+  async function start() {
+    const workspace = createSqliteRunStore(cwd);
+    databasePath = workspace.paths.databasePath;
+    server = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+      storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+    });
+    await server.start();
+    const address = server.server.address();
+    assert.ok(address && typeof address === "object");
+    return `http://127.0.0.1:${address.port}/v1/device-support/protocol`;
+  }
+  t.after(async () => {
+    await server?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const origin = await start();
+  const targetDeviceId = "offline-rs485";
+  const post = (url: string, body: unknown, extraHeaders: Record<string, string> = {}) => fetch(url, {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(body),
+  });
+  const input = { profileId: "modbus-rtu-registers", targetDeviceId };
+  assert.equal((await fetch(origin + "/profiles")).status, 401);
+  assert.equal((await post(origin + "/sessions", input, { Origin: "https://example.invalid" })).status, 403);
+  const created = await post(origin + "/sessions", input);
+  assert.equal(created.status, 201);
+  const { session } = await created.json() as { session: DeviceDeveloperSessionV1 };
+  assert.equal(session.targetDeviceId, targetDeviceId);
+  assert.equal(session.protocolReplay?.codecVersion, "1.0.0");
+  const replayPath = `/sessions/${session.sessionId}/replay`;
+  const url = origin + replayPath;
+  const at = "2026-11-21T00:00:00.000Z";
+  const capture = new HardwareProtocolWorkbench().capture({
+    captureId: "temperature", targetDeviceId, transport: "rs485", source: "imported", createdAt: at,
+    loss: { reason: "adapter_overrun", droppedFrames: 1 },
+    frames: [{ direction: "rx", bytes: Buffer.from("010302000a3843", "hex"), capturedAt: at }],
+  });
+  const replayInput = { authorizationRevision: session.authorizationRevision, capture };
+  assert.equal((await post(url, { ...replayInput, authorizationRevision: "expired-revision" })).status, 403);
+  assert.equal((await post(url, { ...replayInput, capture: { ...capture, targetDeviceId: "other-target" } })).status, 409);
+  assert.equal((await post(url, { ...replayInput, capture: { ...capture, frames: [{ ...capture.frames[0], digest: "0".repeat(64) }] } })).status, 409);
+  const database = new DatabaseSync(databasePath!);
+  try {
+    database.exec("CREATE TRIGGER fixture_unavailable_capture BEFORE INSERT ON device_protocol_captures BEGIN SELECT RAISE(ABORT, 'capture storage unavailable'); END;");
+    assert.equal((await post(url, replayInput)).status, 503);
+    assert.equal((await fetch(url, { headers })).status, 404);
+    database.exec("DROP TRIGGER fixture_unavailable_capture;");
+  } finally {
+    database.close();
+  }
+  await server?.stop();
+  server = undefined;
+  const reopenedUrl = await start() + replayPath;
+  assert.equal((await post(reopenedUrl, { ...replayInput, capture: { ...capture, captureId: "changed" } })).status, 409);
+  const completed = await post(reopenedUrl, replayInput);
+  assert.equal(completed.status, 201);
+  const result = await completed.json();
+  assert.equal(result.job.taskStatus, "succeeded");
+  assert.equal(result.replay.frames[0].fields.register0, 10);
+  assert.deepEqual(result.replay.loss, capture.loss);
+  assert.equal(result.replay.frames[0].digest, capture.frames[0]?.digest);
+  assert.deepEqual(await (await fetch(reopenedUrl, { headers })).json(), result);
+  const repeated = await post(reopenedUrl, replayInput);
+  assert.equal(repeated.status, 200);
+  assert.deepEqual(await repeated.json(), result);
+});
+
+test("the local daemon activates signed resources and pins protocol profiles in workbench evidence", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-resource-policy-"));
+  const trustPath = join(root, "device-resource-trust.json");
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const keyId = "fixture-release";
+  writeFileSync(trustPath, JSON.stringify({
+    version: 1, allowedLicenses: ["MIT"],
+    signingKeys: [{ keyId, publicKeyPem: publicKey.export({ type: "spki", format: "pem" }) }],
+  }));
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: "Bearer " + authToken, "Content-Type": "application/json" };
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  async function start() {
+    const workspace = createSqliteRunStore(root);
+    daemon = createDaemonServer({
+      host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: root, deviceSupport: { resourceTrustFile: trustPath },
+    }, { storeFactory: () => workspace });
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    return "http://127.0.0.1:" + address.port + "/v1/device-support";
+  }
+  t.after(async () => {
+    await daemon?.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
+  let base = await start();
+  const url = base + "/resources";
+  const resourceUrl = url + "/profile-fixture";
+  const postTo = (path: string, value: unknown, extraHeaders: Record<string, string> = {}) => fetch(base + path, {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(value),
+  });
+  const post = (value: unknown, extraHeaders?: Record<string, string>) => postTo("/resources", value, extraHeaders);
+  const manifestBase = {
+    resourceId: "profile-fixture", version: "1.0.0", kind: "schema", license: "MIT",
+    dependencies: [], supportedDeviceKinds: ["linux"], entrypoint: "profile.json", contractMajor: 1,
+  } as const;
+  function signedFile(text: string, changes: Partial<Omit<DeviceResourceManifestV1, "signature" | "digest">> = {}) {
+    const payload = Buffer.from(text);
+    const unsigned = { ...manifestBase, ...changes, digest: createHash("sha256").update(payload).digest("hex") };
+    const bytes = canonicalJsonBytes({ purpose: "ling.device-resource-manifest.v1", keyId, manifest: unsigned });
+    return {
+      manifest: { ...unsigned, signature: "ed25519:" + keyId + ":" + sign(null, bytes, privateKey).toString("base64url") },
+      payloadBase64Url: payload.toString("base64url"),
+    };
+  }
+  const original = signedFile('{"profile":"original"}');
+  assert.equal((await post(original, { Origin: "https://elsewhere.example" })).status, 403);
+  assert.equal((await fetch(resourceUrl)).status, 401);
+  assert.equal((await fetch(resourceUrl, { headers })).status, 404);
+  assert.equal((await post({ ...original, manifest: { ...original.manifest, version: "2.0.0" } })).status, 409);
+  assert.equal((await post({ ...original, payloadBase64Url: Buffer.from("altered").toString("base64url") })).status, 409);
+  const fakeKey = { ...original.manifest, signature: original.manifest.signature.replace(keyId, "unknown-key") };
+  assert.equal((await post({ ...original, manifest: fakeKey })).status, 409);
+  assert.equal((await post(signedFile("unsupported", { license: "Unapproved" }))).status, 409);
+  assert.equal((await post(signedFile("unsupported", { supportedPlatforms: ["ios"] }))).status, 409);
+  assert.equal((await post(signedFile("unsupported", { dependencies: ["missing-profile"] }))).status, 409);
+  assert.equal((await post({ ...original, manifest: { ...original.manifest, extra: "unknown" } })).status, 400);
+  const activated = await post(original);
+  assert.equal(activated.status, 201);
+  assert.match(activated.headers.get("cache-control") ?? "", /no-store/u);
+  assert.equal((await post(original)).status, 200);
+  assert.equal((await post(signedFile('{"profile":"conflicting content"}'))).status, 409);
+  const update = signedFile('{"profile":"replacement"}', { version: "2.0.0" });
+  assert.equal((await post(update)).status, 201);
+  const rollback = await fetch(resourceUrl + "/rollback", { method: "POST", headers });
+  assert.equal(rollback.status, 200);
+  const { record } = await rollback.json() as { record: { manifest: DeviceResourceManifestV1; payloadDigest: string; status: string } };
+  assert.deepEqual(record.manifest, original.manifest);
+  assert.equal(record.payloadDigest, original.manifest.digest);
+  const disabled = await fetch(resourceUrl + "/disable", { method: "POST", headers });
+  assert.equal(disabled.status, 200);
+  const status = await (await fetch(resourceUrl, { headers })).json() as { record: { status: string } };
+  assert.equal(status.record.status, "disabled");
+
+  const protocolResource = { resourceId: "temperature-registers", supportedDeviceKinds: ["hardware"], kind: "profile",
+    entrypoint: HARDWARE_PROTOCOL_PROFILE_ENTRYPOINT_V1 } as const;
+  const definition = {
+    schemaVersion: 1, codecId: modbusRtuRegisterCodec.manifest.codecId, capabilityIds: ["protocol.read_registers"],
+  } satisfies HardwareProtocolProfileResourceV1;
+  const signedProfile = (value: object, fields?: Partial<Omit<DeviceResourceManifestV1, "signature" | "digest">>) =>
+    signedFile(JSON.stringify(value), { ...protocolResource, ...fields });
+  const v1 = signedProfile(definition);
+  assert.equal((await post(signedProfile({ ...definition, executable: "untrusted" }))).status, 409);
+  assert.equal((await post(signedProfile(definition, { resourceId: "modbus-rtu-registers" }))).status, 409);
+  assert.equal((await post(v1)).status, 201);
+  const listProfiles = async () => {
+    const response = await fetch(base + "/protocol/profiles", { headers });
+    assert.equal(response.status, 200);
+    return (await response.json() as { profiles: HardwareProtocolProfileV1[] }).profiles;
+  };
+  assert.equal((await listProfiles()).find(profile => profile.profileId === protocolResource.resourceId)?.version, "1.0.0");
+  const targetDeviceId = "offline-temperature-sensor";
+  const openSession = async () => {
+    const response = await postTo("/protocol/sessions", { profileId: protocolResource.resourceId, targetDeviceId });
+    assert.equal(response.status, 201);
+    return (await response.json() as { session: DeviceDeveloperSessionV1 }).session;
+  };
+  const v1Complete = await openSession();
+  const v1Waiting = await openSession();
+  assert.deepEqual(v1Complete.protocolReplay?.profileResource, { digest: v1.manifest.digest, transport: "rs485" });
+  const at = "2026-11-21T00:00:00.000Z";
+  const capture = new HardwareProtocolWorkbench().capture({
+    captureId: "sample", targetDeviceId, transport: "rs485", source: "imported", createdAt: at,
+    frames: [{ direction: "rx", bytes: Buffer.from("010302000a3843", "hex"), capturedAt: at }],
+  });
+  const replayPath = (session: DeviceDeveloperSessionV1) => "/protocol/sessions/" + session.sessionId + "/replay";
+  const replay = (session: DeviceDeveloperSessionV1) => postTo(replayPath(session), { authorizationRevision: session.authorizationRevision, capture });
+  const initial = await replay(v1Complete);
+  assert.equal(initial.status, 201);
+  const evidence = await initial.json();
+  assert.equal(evidence.replay.frames[0].fields.register0, 10);
+  assert.equal(evidence.replay.profileResource.digest, v1.manifest.digest);
+  assert.equal((await post(signedProfile({ ...definition, codecId: "unavailable" }, { version: "2.0.0" }))).status, 409);
+  assert.equal((await post(signedFile("other profile kind", { resourceId: protocolResource.resourceId, version: "2.0.0" }))).status, 409);
+  assert.equal((await listProfiles()).find(profile => profile.profileId === protocolResource.resourceId)?.version, "1.0.0");
+  const v2 = signedProfile(definition, { version: "2.0.0" });
+  assert.equal((await post(v2)).status, 201);
+  const v2Waiting = await openSession();
+  assert.equal(v2Waiting.protocolReplay?.profileVersion, "2.0.0");
+  assert.equal((await replay(v1Waiting)).status, 409);
+
+  const profilePath = "/resources/" + protocolResource.resourceId;
+  assert.equal((await fetch(base + profilePath + "/rollback", { method: "POST", headers })).status, 200);
+  assert.equal((await replay(v1Waiting)).status, 201);
+  assert.equal((await replay(v2Waiting)).status, 409);
+  assert.equal((await fetch(base + profilePath + "/disable", { method: "POST", headers })).status, 200);
+  assert.equal((await listProfiles()).some(profile => profile.profileId === protocolResource.resourceId), false);
+  assert.equal((await postTo("/protocol/sessions", { profileId: protocolResource.resourceId, targetDeviceId })).status, 404);
+  await daemon?.stop();
+  daemon = undefined;
+  base = await start();
+  assert.deepEqual(await (await fetch(base + replayPath(v1Complete), { headers })).json(), evidence);
+  const exactReplay = await replay(v1Complete);
+  assert.equal(exactReplay.status, 200);
+  assert.deepEqual(await exactReplay.json(), evidence);
+});
+
+test("the local daemon exposes its PC report and sequenced task journal only on direct loopback", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-pc-diagnosis-"));
+  const workspace = createSqliteRunStore(cwd);
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: `Bearer ${authToken}` };
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, { storeFactory: () => workspace });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const url = `http://127.0.0.1:${address.port}/v1/device-support/pc/diagnose`;
+  const fleetUrl = `http://127.0.0.1:${address.port}/v1/device-support/fleet/health`;
+  assert.equal((await fetch(fleetUrl, { headers: { Origin: "https://example.invalid", ...headers } })).status, 403);
+  assert.equal((await fetch(fleetUrl, { headers })).status, 200);
+  const fleet = await (await fetch(fleetUrl, { headers })).json() as DeviceFleetHealthProjectionV1;
+  assert.equal(fleet.projectionId, "fleet:workspace_default");
+  assert.deepEqual(fleet.items, []);
+  assert.equal(fleet.counts.unknown, 0);
+  assert.equal((await fetch(fleetUrl, { method: "POST", headers })).status, 405);
+  assert.equal((await fetch(url, { method: "POST", headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  assert.equal((await fetch(url, { method: "POST" })).status, 401);
+  assert.equal((await fetch(url, { headers })).status, 405);
+  const response = await fetch(url, { method: "POST", headers });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("cache-control") ?? "", /no-store/u);
+  const { status, report } = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
+  assert.equal(status, "succeeded");
+  assert.equal(report.playbookId, "pc-software-diagnosis");
+  assert.deepEqual(report.actions.map(action => action.capabilityId), ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.inspect.logs", "pc.inspect.software"]);
+  const network = report.facts.find(fact => fact.source === "pc.network");
+  assert.ok(network);
+  assert.equal(typeof (network.value as { connected?: unknown }).connected, "boolean");
+  assert.doesNotMatch(JSON.stringify(network.value), /gatewayReachable|dnsReachable/u);
+  const liveFleet = await (await fetch(fleetUrl, { headers })).json() as DeviceFleetHealthProjectionV1;
+  assert.equal(liveFleet.counts.healthy, 1);
+  assert.equal(liveFleet.items[0]?.kind, "pc");
+  assert.ok(liveFleet.items[0]?.capabilitySnapshotId);
+  assert.ok(liveFleet.items[0]?.lastSeenAt);
+  assert.equal(liveFleet.items[0]?.runtimeStatus, undefined);
+  const graphResponse = await fetch(new URL("../fabric/graph", url), { headers });
+  assert.equal(graphResponse.status, 200);
+  const { twins } = await graphResponse.json() as { readonly twins: readonly ProjectedTwin[] };
+  const twin = twins.find(item => item.deviceId === liveFleet.items[0]?.deviceId);
+  assert.ok(twin);
+  assert.equal(twin.revision, 1);
+  assert.deepEqual(twin.values.map(value => value.reportedEvidence?.observationId), report.facts.map(fact => fact.observationId));
+  assert.ok(twin.values.every(value => !Object.hasOwn(value, "reported") && value.hasReported
+    && value.reportedEvidence?.taskId === report.taskId
+    && report.actions.some(action => action.attemptId === value.reportedEvidence?.attemptId)));
+  const taskGraphResponse = await fetch(new URL(`../fabric/task-graphs/${encodeURIComponent(report.taskId)}`, url), { headers });
+  assert.equal(taskGraphResponse.status, 200);
+  const taskGraph = await taskGraphResponse.json() as { status: string; revision: number; nodes: readonly { status: string; attemptId?: string }[] };
+  assert.equal(taskGraph.status, "succeeded");
+  assert.equal(taskGraph.revision, 11);
+  assert.equal(taskGraph.nodes.length, report.actions.length);
+  assert.ok(taskGraph.nodes.every(node => node.status === "succeeded" && node.attemptId));
+
+  const eventsUrl = `http://127.0.0.1:${address.port}/v1/device-support/tasks/${encodeURIComponent(report.taskId)}/events`;
+  assert.equal((await fetch(eventsUrl, { headers: { ...headers, "X-Forwarded-For": "192.0.2.42" } })).status, 403);
+  assert.equal((await fetch(`${eventsUrl}?limit=101`, { headers })).status, 400);
+  const pageResponse = await fetch(`${eventsUrl}?limit=1`, { headers });
+  assert.equal(pageResponse.status, 200);
+  assert.match(pageResponse.headers.get("cache-control") ?? "", /no-store/u);
+  const firstPage = await pageResponse.json() as DeviceTaskJournalPageV1;
+  assert.equal(firstPage.events[0]?.kind, "task_created");
+  assert.equal(firstPage.events[0]?.sequence, 1);
+  assert.equal(firstPage.hasMore, true);
+  const remainder = await (await fetch(`${eventsUrl}?afterSequence=1`, { headers })).json() as DeviceTaskJournalPageV1;
+  assert.equal(remainder.events[0]?.sequence, 2);
+  assert.equal(remainder.task.status, "succeeded");
+  assert.ok(remainder.events.some(event => event.kind === "device_plan_accepted"));
+
+  const traceUrl = new URL("trace", eventsUrl).href;
+  assert.equal((await fetch(traceUrl)).status, 401);
+  assert.equal((await fetch(traceUrl, { headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  const traceResponse = await fetch(traceUrl, { headers });
+  assert.equal(traceResponse.status, 200);
+  assert.match(traceResponse.headers.get("cache-control") ?? "", /no-store/u);
+  const trace = await traceResponse.json() as DeviceTaskTraceV1;
+  assert.equal(trace.traceId, remainder.events[0]?.traceId);
+  assert.equal(trace.taskStatus, "succeeded");
+  const graph = trace.spans.find(span => span.kind === "graph");
+  assert.ok(graph);
+  const adapterSpans = trace.spans.filter(span => span.kind === "adapter");
+  assert.deepEqual(adapterSpans.map(span => span.lineage?.attemptId).sort(), report.actions.map(action => action.attemptId).sort());
+  assert.ok(adapterSpans.every(span => span.status === "ok" && span.parentSpanId === graph.spanId
+    && span.lineage?.graphId === report.taskId && span.lineage.nodeId && span.lineage.connectionRevision));
+  const [snapshotEvidence] = trace.capabilitySnapshots ?? [];
+  assert.ok(snapshotEvidence?.state === "recorded");
+  assert.equal(snapshotEvidence.snapshotId, liveFleet.items[0]?.capabilitySnapshotId);
+  assert.ok(snapshotEvidence.capabilities.some(capability => capability.id === "pc.inspect.network" && capability.sideEffect === "read_only"));
+  assert.ok(adapterSpans.every(span => (span.metadata as { authority?: { state?: string } }).authority?.state === "recorded"));
+
+  const conformanceUrl = new URL("conformance", eventsUrl).href;
+  const attemptId = report.actions[0]!.attemptId;
+  const captureUrl = `${conformanceUrl}?attemptId=${encodeURIComponent(attemptId)}`;
+  assert.equal((await fetch(captureUrl)).status, 401);
+  assert.equal((await fetch(captureUrl, { headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  assert.equal((await fetch(`${captureUrl}&reportId=other`, { headers })).status, 400);
+  assert.equal((await fetch(`${conformanceUrl}?attemptId=foreign`, { headers })).status, 404);
+  const conformanceResponse = await fetch(captureUrl, { headers });
+  assert.equal(conformanceResponse.status, 200);
+  const conformance = await conformanceResponse.json() as DeviceAttemptConformanceReportV1;
+  assert.equal(conformance.source.attemptId, attemptId);
+  assert.equal(conformance.source.taskId, report.taskId);
+  assert.equal(conformance.source.traceId, trace.traceId);
+  assert.equal(conformance.source.journalSequence, remainder.latestSequence);
+  assert.equal(conformance.transport, "local_process");
+  assert.equal(conformance.source.capabilitySnapshotId, snapshotEvidence.snapshotId);
+  assert.equal(conformance.checks.find(check => check.id === "capability_binding")?.status, "pass");
+  assert.equal(conformance.checks.find(check => check.id === "adapter_receipt")?.status, "pass");
+  assert.deepEqual(await (await fetch(captureUrl, { headers })).json(), conformance);
+  assert.deepEqual(await (await fetch(`${conformanceUrl}?reportId=${conformance.reportId}`, { headers })).json(), conformance);
+  const reports = new SqliteDeviceFabricStore({ databasePath: workspace.paths.databasePath });
+  try {
+    assert.deepEqual(reports.getConformanceReport(conformance.reportId), conformance);
+    const taskGraph = reports.getTaskGraph(report.taskId);
+    assert.equal(taskGraph?.status, "succeeded");
+    assert.equal(taskGraph?.revision, 11);
+    assert.ok(taskGraph?.nodes.every(node => node.status === "succeeded" && node.attemptId));
+    assert.deepEqual(taskGraph?.nodes.map(node => node.resultRef), report.actions.map(action => action.attemptId));
+  } finally {
+    reports.close();
+  }
+
+  const deviceId = adapterSpans[0]?.lineage?.deviceId;
+  assert.ok(deviceId);
+  const sessionRoot = new URL("../developer/sessions", url).href;
+  const postDeveloper = (endpoint: string, body: object) => fetch(endpoint, {
+    method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const createdSession = await postDeveloper(sessionRoot, { mode: "developer", targetDeviceId: deviceId });
+  assert.equal(createdSession.status, 201);
+  const { session: pending } = await createdSession.json() as { session: DeviceDeveloperSessionV1 };
+  const sessionUrl = `${sessionRoot}/${pending.sessionId}`;
+  const approval = await postDeveloper(`${sessionUrl}/authorize`, { expectedRevision: pending.revision });
+  assert.equal(approval.status, 200);
+  const { session: authorized } = await approval.json() as { session: DeviceDeveloperSessionV1 };
+  const logInput = { jobId: "pc-dev-log-test", kind: "logs", authorizationRevision: authorized.authorizationRevision };
+  const submitted = await postDeveloper(`${sessionUrl}/jobs`, logInput);
+  assert.equal(submitted.status, 201);
+  const { job: logJob } = await submitted.json() as { job: DeviceDeveloperJobV1 };
+  assert.equal(logJob.status, "completed");
+  assert.ok(logJob.outputRef);
+  const replay = await postDeveloper(`${sessionUrl}/jobs`, logInput);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), { job: logJob });
+  const logStore = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const attempts = logStore.listAttempts(logJob.outputRef);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0]?.request.capabilityId, "pc.inspect.logs");
+    assert.equal(attempts[0]?.attempt.targetDeviceId, deviceId);
+  } finally {
+    logStore.close();
+  }
+  const stopUrl = `http://127.0.0.1:${address.port}/v1/device-support/devices/${encodeURIComponent(deviceId)}/dispatch-stop`;
+  const setStop = (active: boolean, expectedRevision: number, extraHeaders: Record<string, string> = {}) => fetch(stopUrl, {
+    method: "PUT", headers: { ...headers, ...extraHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ active, expectedRevision }),
+  });
+  assert.equal((await fetch(stopUrl)).status, 401);
+  assert.equal((await setStop(true, 0, { Origin: "https://example.invalid" })).status, 403);
+  assert.equal((await setStop(true, 0)).status, 200);
+  assert.equal((await (await fetch(stopUrl, { headers })).json()).active, true);
+  assert.equal((await setStop(false, 0)).status, 409);
+  assert.equal((await setStop(false, 1)).status, 200);
+
+  const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const tasks = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10);
+    const diagnosisTask = tasks.find(task => task.id === report.taskId);
+    assert.ok(diagnosisTask);
+    assert.equal(diagnosisTask.status, "succeeded");
+    assert.equal(diagnosisTask.ownerId, diagnosisTask.targetDeviceIds[0]);
+    const observations = journal.listObservations(report.taskId);
+    assert.equal(observations.length, 5);
+    const processes = observations.find(observation => observation.source === "pc.processes");
+    assert.ok(processes);
+    const processFact = report.facts.find(fact => fact.observationId === processes.id);
+    if (processes.quality === "good") {
+      const inventory = processes.value as { processes: { pid: number; name: string }[] };
+      assert.ok(inventory.processes.length > 0);
+      assert.ok(inventory.processes.every(entry => Object.keys(entry).length === 2
+        && Number.isSafeInteger(entry.pid) && typeof entry.name === "string"));
+      assert.deepEqual(processFact?.value, { count: inventory.processes.length });
+    } else {
+      assert.deepEqual(processes.value, { status: "unavailable" });
+      assert.equal(processFact, undefined);
+      assert.ok(report.remainingUncertainty.some(entry => entry.ref === processes.id && entry.code === "unusable_observation"));
+    }
+    const logs = observations.find(observation => observation.source === "pc.logs");
+    assert.ok(logs);
+    const logFact = report.facts.find(fact => fact.observationId === logs.id);
+    if (logs.quality === "good") {
+      const { entries } = logs.value as { entries: { timestamp?: string; level: "error" | "warning" | "unknown"; source: string }[] };
+      assert.ok(entries.length <= 200);
+      assert.ok(entries.every(entry => Object.keys(entry).every(key => ["timestamp", "level", "source"].includes(key))
+        && typeof entry.source === "string" && (entry.timestamp === undefined || Number.isFinite(Date.parse(entry.timestamp)))));
+      assert.deepEqual(logFact?.value, {
+        count: entries.length,
+        error: entries.filter(entry => entry.level === "error").length,
+        warning: entries.filter(entry => entry.level === "warning").length,
+        unknown: entries.filter(entry => entry.level === "unknown").length,
+      });
+    } else {
+      assert.deepEqual(logs.value, { status: "unavailable" });
+      assert.equal(logFact, undefined);
+      assert.ok(report.remainingUncertainty.some(entry => entry.ref === logs.id && entry.code === "unusable_observation"));
+    }
+    const events = journal.listEvents(report.taskId);
+    const planIndex = events.findIndex(event => event.type === "device_plan_accepted");
+    const firstDispatch = events.findIndex(event => event.type === "attempt_prepared");
+    assert.ok(planIndex >= 0 && firstDispatch > planIndex);
+    assert.equal(events[planIndex]?.body.source, "local_playbook");
+    assert.equal(events[planIndex]?.body.taskId, report.taskId);
+    const traceScope = { store: journal, taskId: report.taskId, workspaceId: DEFAULT_WORKSPACE_ID };
+    assert.deepEqual(readOwnedDeviceTaskTrace(traceScope), trace);
+    assert.deepEqual(readOwnedDeviceAttemptConformance({ ...traceScope, attemptId }), conformance);
+    assert.throws(() => readOwnedDeviceTaskTrace({ ...traceScope, workspaceId: "elsewhere" }), /unavailable in this workspace/);
+    const input = {
+      store: journal, taskId: report.taskId, ownerId: diagnosisTask.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
+      contextId: "fixture-context", maxBytes: 4096, now: new Date().toISOString(),
+    };
+    const planned = buildOwnedDevicePlanningInput(input);
+    assert.deepEqual(planned.context.facts, report.facts.map(fact => fact.value));
+    assert.deepEqual(planned.targets.map(target => target.snapshot.deviceId), diagnosisTask.targetDeviceIds);
+    assert.throws(() => buildOwnedDevicePlanningInput({ ...input, workspaceId: "elsewhere" }), /outside the workspace/);
+  } finally {
+    journal.close();
+  }
+
+  const retirementUrl = stopUrl.replace(/dispatch-stop$/u, "retirement");
+  assert.equal((await fetch(retirementUrl)).status, 401);
+  const preview = await fetch(retirementUrl, { headers });
+  assert.equal(preview.status, 200);
+  const { lifecycleStatus, profileRevision, connectionRevision } = await preview.json() as DeviceRetirementStateV1;
+  assert.equal(lifecycleStatus, "healthy");
+  const confirm = (revision: string, extraHeaders: Record<string, string> = {}) => fetch(retirementUrl, {
+    method: "PUT", headers: { ...headers, ...extraHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedProfileRevision: profileRevision, expectedConnectionRevision: revision }),
+  });
+  assert.equal((await confirm(connectionRevision, { Origin: "https://example.invalid" })).status, 403);
+  assert.equal((await confirm("stale")).status, 409);
+  const retired = await confirm(connectionRevision);
+  assert.equal(retired.status, 200);
+  const retirement = await retired.json() as DeviceRetirementV1;
+  assert.equal(retirement.previousStatus, "healthy");
+  assert.deepEqual(await (await confirm(connectionRevision)).json(), retirement);
+  const retiredFleet = await (await fetch(fleetUrl, { headers })).json() as DeviceFleetHealthProjectionV1;
+  assert.equal(retiredFleet.items[0]?.health, "retired");
+  assert.equal(retiredFleet.items[0]?.capabilitySnapshotId, undefined);
+  const freshDiagnosis = await fetch(url, { method: "POST", headers });
+  assert.equal(freshDiagnosis.status, 403);
+  assert.deepEqual(await freshDiagnosis.json(), { error: "permission_denied" });
+  assert.deepEqual(await (await fetch(traceUrl, { headers })).json(), trace);
+  assert.deepEqual(await (await fetch(captureUrl, { headers })).json(), conformance);
+  const reopened = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    assert.deepEqual(reopened.getDeviceRetirementState(deviceId, DEFAULT_WORKSPACE_ID), {
+      deviceId, profileRevision, connectionRevision, lifecycleStatus: "retired", retirement,
+    });
+    assert.ok(reopened.getRecordedCapabilitySnapshot(deviceId, snapshotEvidence.snapshotId));
+  } finally {
+    reopened.close();
+  }
+});
+
+test("a PC adapter upgrade refreshes the enrolled target while retaining its historical capability snapshot", async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-pc-upgrade-"));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  const databasePath = join(cwd, "device.sqlite");
+  const initial = createDeviceSupportRuntime({ databasePath });
+  const adapterId = "pc-target-executor";
+  let deviceId: string;
+  const snapshotId = "pc-before-log-inventory";
+  try {
+    const pc = await initial.broker.discover(adapterId, { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
+    deviceId = pc.device.id;
+    const snapshot = initial.store.getCurrentCapabilitySnapshot(deviceId);
+    assert.ok(snapshot);
+    const legacyVersion = "1.2.0";
+    const at = new Date().toISOString();
+    assert.equal(initial.store.registerDevice({ ...pc, adapterVersion: legacyVersion }, at), true);
+    initial.store.saveCapabilitySnapshot({
+      ...snapshot, snapshotId, adapterVersion: legacyVersion,
+      capabilities: snapshot.capabilities.filter(capability => capability.id !== "pc.inspect.logs" && capability.id !== "pc.inspect.software"),
+    }, at);
+  } finally {
+    initial.close();
+  }
+
+  const upgraded = createDeviceSupportRuntime({ databasePath });
+  try {
+    assert.equal(upgraded.store.getCurrentCapabilitySnapshot(deviceId), undefined);
+    const result = await upgraded.diagnoseLocalPc();
+    assert.equal(result.status, "succeeded");
+    assert.equal(upgraded.store.listDevices().length, 1);
+    assert.deepEqual(result.attempts.map(attempt => attempt.request.targetDeviceId), [deviceId, deviceId, deviceId, deviceId, deviceId]);
+    assert.equal(result.report.playbookVersion, "1.3.0");
+    const current = upgraded.store.getCurrentCapabilitySnapshot(deviceId);
+    assert.equal(current?.adapterVersion, "1.3.0");
+    assert.ok(current?.capabilities.some(capability => capability.id === "pc.inspect.logs"));
+    const historical = upgraded.store.getRecordedCapabilitySnapshot(deviceId, snapshotId);
+    assert.equal(historical?.snapshot.adapterVersion, "1.2.0");
+    assert.deepEqual(historical?.snapshot.capabilities.map(capability => capability.id), [
+      "pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.repair.network",
+    ]);
+  } finally {
+    upgraded.close();
+  }
+});
+
+test("the authenticated Daemon resumes a diagnosis between owner attempts after restart", { timeout: 15_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-graph-resume-"));
+  const workspace = createSqliteRunStore(cwd);
+  const { databasePath } = workspace.paths;
+  const authToken = "fixture-resume-operator";
+  const headers = { Authorization: `Bearer ${authToken}` };
+  const first = createDeviceSupportRuntime({ databasePath });
+  const taskId = "device_task_resumable_diagnosis";
+  const proposalId = "resumable-diagnosis";
+  let retainedAttemptId: string;
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  t.after(async () => {
+    await daemon?.stop();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  try {
+    const target = await first.broker.discover("pc-target-executor", { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
+    const deviceId = target.device.id;
+    const snapshot = first.store.getCurrentCapabilitySnapshot(deviceId)!;
+    const at = new Date().toISOString();
+    const basePlaybook = createPcSoftwareDiagnosisPlaybook();
+    const playbook = { ...basePlaybook, steps: basePlaybook.steps.slice(0, 2) };
+    const nodeIds = playbook.steps.map(step => devicePlaybookNodeId(playbook.id, step.id));
+    const task = first.broker.createTask({
+      id: taskId, ownerKind: "daemon", ownerId: deviceId, targetDeviceIds: [deviceId], status: "planning",
+      capabilitySnapshotIds: [snapshot.snapshotId], createdAt: at, updatedAt: at,
+    });
+    const graph: DeviceTaskGraphV1 = {
+      graphId: taskId, revision: 1, status: "planned", createdAt: at, updatedAt: at,
+      nodes: playbook.steps.map((step, index) => ({
+        nodeId: nodeIds[index]!, targetDeviceId: deviceId, ownerKind: task.ownerKind, ownerId: task.ownerId,
+        capabilityId: step.capabilityId, capabilitySnapshotId: snapshot.snapshotId,
+        dependencies: index === 0 ? [] : [nodeIds[index - 1]!], status: "planning",
+      })),
+    };
+    first.store.recordPlanningAcceptance({
+      proposalId, taskId, contextId: "context-resume", contextDigest: "fixture", graph, requiredApprovalNodeIds: [], acceptedAt: at,
+    }, "local_playbook", undefined, undefined, playbook);
+    const [step] = playbook.steps;
+    const actionId = `${taskId}:${step!.id}`;
+    const { attempt } = await first.broker.execute({
+      actionId, taskId, targetDeviceId: deviceId, capabilityId: step!.capabilityId, capabilitySchemaVersion: "1.0",
+      capabilitySnapshotId: snapshot.snapshotId, normalizedInput: step!.input, idempotencyKey: actionId,
+    }, undefined, { finalizeTask: false, onlyUnattendedReads: true, planningNode: { proposalId, nodeId: nodeIds[0]! } });
+    assert.equal(attempt.status, "completed");
+    retainedAttemptId = attempt.attemptId;
+  } finally {
+    first.close();
+  }
+
+  daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, { storeFactory: () => workspace });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const root = `http://127.0.0.1:${address.port}/v1/device-support`;
+  const resumeUrl = `${root}/tasks/${taskId}/resume`;
+  const graphUrl = `${root}/fabric/task-graphs/${taskId}`;
+  assert.equal((await fetch(graphUrl)).status, 401);
+  assert.equal((await fetch(resumeUrl, { method: "POST", headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  const partial = await (await fetch(graphUrl, { headers })).json() as DeviceTaskGraphV1;
+  assert.equal(partial.status, "partial");
+  assert.deepEqual(partial.nodes.map(node => node.attemptId), [retainedAttemptId, undefined]);
+  const resume = await fetch(resumeUrl, { method: "POST", headers });
+  const { status, report } = await resume.json() as { status: string; report: DeviceDiagnosisReportV1 };
+  assert.equal(resume.status, 200);
+  assert.equal(status, "succeeded");
+  assert.equal(report.taskId, taskId);
+  assert.equal(report.actions[0]?.attemptId, retainedAttemptId);
+  const settled = await (await fetch(graphUrl, { headers })).json() as DeviceTaskGraphV1;
+  assert.equal(settled.status, "succeeded");
+  assert.deepEqual(settled.nodes.map(node => node.resultRef), report.actions.map(action => action.attemptId));
+  assert.equal((await fetch(resumeUrl, { method: "POST", headers })).status, 200);
+  const store = new SqliteDeviceSupportStore({ databasePath });
+  try {
+    assert.equal(store.getTask(taskId)?.status, "succeeded");
+    assert.equal(store.listAttempts(taskId).length, 2);
+  } finally {
+    store.close();
+  }
+  assert.deepEqual(await (await fetch(graphUrl, { headers })).json(), settled);
+});
+
+test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback and invalid-plan evidence", { timeout: 30_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-pi-diagnosis-"));
+  let secondPlan = '{"stepIds":["inspect-network"]}';
+  const firstProvider = await startLoopbackPiProvider(() => ({ text: '{"stepIds":["inspect-services"]}' }));
+  const secondProvider = await startLoopbackPiProvider(() => ({ text: secondPlan }));
+  let secondOnline = true;
+  const workspace = createSqliteRunStore(cwd);
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+    storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+  });
+  t.after(async () => {
+    await daemon.stop();
+    await firstProvider.close();
+    if (secondOnline) await secondProvider.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const preset = (providerId: string, baseUrl: string) => {
+    const at = new Date().toISOString();
+    const row = workspace.createProviderPreset({
+      kind: "openai-compatible", displayName: providerId, providerId, baseUrl, model: "static-tools",
+      api: "openai-completions", capabilities: ["chat"], authHeader: false, reasoning: false,
+    }, at);
+    workspace.recordProviderCheckResult(row.id, { ok: true, code: "ready", message: "Loopback ready", checkedAt: at });
+    return row.id;
+  };
+  const firstPreset = preset("first-loopback", firstProvider.baseUrl);
+  const secondPreset = preset("second-loopback", secondProvider.baseUrl);
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}/v1/device-support`;
+  const diagnose = (providerPresetId: string, fallbackProviderPresetId?: string) => fetch(origin + "/pc/diagnose", {
+    method: "POST", headers, body: JSON.stringify({ providerPresetId, fallbackProviderPresetId, symptom: "Check a local PC service" }),
+  });
+  async function checkDiagnosis(
+    providerPresetId: string, expectedCapabilities: readonly string[], source: "model" | "graph", fallbackProviderPresetId?: string,
+  ) {
+    const response = await diagnose(providerPresetId, fallbackProviderPresetId);
+    const body = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.status, "succeeded");
+    assert.deepEqual(body.report.actions.map(action => action.capabilityId), expectedCapabilities);
+    const traceResponse = await fetch(`${origin}/tasks/${body.report.taskId}/trace`, { headers });
+    assert.equal(traceResponse.status, 200);
+    const trace = await traceResponse.json() as DeviceTaskTraceV1;
+    const planning = trace.spans.find(span => span.kind === source);
+    assert.ok(planning);
+    return { taskId: body.report.taskId, planning, adapters: trace.spans.filter(span => span.kind === "adapter") };
+  }
+  const first = await checkDiagnosis(firstPreset, ["pc.inspect.services"], "model");
+  assert.match(first.planning.lineage?.modelTurnId ?? "", /^device_plan_turn_/u);
+  assert.equal(first.adapters[0]?.lineage?.modelTurnId, first.planning.lineage?.modelTurnId);
+  assert.match(JSON.stringify(first.planning.metadata), new RegExp(firstPreset, "u"));
+  const second = await checkDiagnosis(secondPreset, ["pc.inspect.network"], "model");
+  assert.notEqual(second.planning.lineage?.modelTurnId, first.planning.lineage?.modelTurnId);
+  assert.match(JSON.stringify(second.planning.metadata), new RegExp(secondPreset, "u"));
+  for (const provider of [firstProvider, secondProvider]) {
+    const streamed = provider.requests.filter((request: { readonly stream?: boolean }) => request.stream);
+    assert.equal(streamed.length, 1);
+    assert.equal(streamed[0]?.tools?.length ?? 0, 0);
+    assert.match(JSON.stringify(streamed[0]?.messages), /Check a local PC service/u);
+    assert.doesNotMatch(JSON.stringify(streamed[0]?.messages), /android\.install|ssh\.write|expectedVerification/u);
+  }
+
+  secondPlan = '{"stepIds":["unknown-step"]}';
+  assert.equal((await diagnose(firstPreset, firstPreset)).status, 400);
+  const invalid = await diagnose(secondPreset, firstPreset);
+  assert.equal(invalid.status, 422);
+  assert.deepEqual(await invalid.json(), { error: "invalid_device_plan" });
+  assert.equal(firstProvider.requests.filter(request => request.stream).length, 1);
+  const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const rejected = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10).find(task => task.status === "failed");
+    assert.ok(rejected);
+    assert.deepEqual(journal.listAttempts(rejected.id), []);
+    assert.deepEqual(journal.listPlanningAcceptances(rejected.id), []);
+  } finally {
+    journal.close();
+  }
+  await secondProvider.close();
+  secondOnline = false;
+  const fallback = await checkDiagnosis(secondPreset, ["pc.inspect.network", "pc.inspect.services", "pc.inspect.processes", "pc.inspect.logs", "pc.inspect.software"], "graph");
+  assert.match(JSON.stringify(fallback.planning.metadata), /runner_unavailable/u);
+  const switched = await checkDiagnosis(secondPreset, ["pc.inspect.services"], "model", firstPreset);
+  assert.equal(switched.adapters.length, 1);
+  assert.equal(switched.adapters[0]?.lineage?.graphId, switched.taskId);
+  assert.equal(switched.adapters[0]?.lineage?.modelTurnId, switched.planning.lineage?.modelTurnId);
+  const reopened = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const plans = reopened.listPlanningAcceptances(switched.taskId);
+    assert.equal(plans.length, 1);
+    const plan = plans[0]!;
+    assert.equal(plan.graph.graphId, switched.taskId);
+    assert.equal(plan.providerId, firstPreset);
+    const handoff = plan.providerHandoff;
+    assert.ok(handoff);
+    assert.equal(handoff.fromProviderPresetId, secondPreset);
+    assert.equal(handoff.toProviderPresetId, firstPreset);
+    assert.equal(handoff.reason, "runner_unavailable");
+    assert.notEqual(handoff.fromContextId, plan.contextId);
+    assert.deepEqual(switched.planning.metadata, readOwnedDeviceTaskTrace({
+      store: reopened, workspaceId: DEFAULT_WORKSPACE_ID, taskId: switched.taskId,
+    }).spans.find(span => span.spanId === switched.planning.spanId)?.metadata);
+  } finally {
+    reopened.close();
+  }
+  assert.equal((await diagnose("missing-provider")).status, 404);
+});

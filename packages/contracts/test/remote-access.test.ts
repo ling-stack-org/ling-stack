@@ -28,6 +28,14 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "profile.read",
     "profile.update",
     "security.unpair",
+    "device.read",
+    "device.journal",
+    "device.journal.watch",
+    "device.approve",
+    "device.revoke",
+    "device.reconcile",
+    "device.collaboration",
+    "device.artifact",
   ]);
   assert.deepEqual(REMOTE_CONVERSATION_KINDS_V1, ["channel", "conversation", "teammate_direct"]);
   assert.deepEqual(REMOTE_CLIENT_COMMAND_TYPES_V1, [
@@ -43,15 +51,31 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "profile.read",
     "profile.update",
     "security.unpair",
+    "device.list",
+    "device.task.status",
+    "device.task.journal",
+    "device.task.journal.watch",
+    "device.task.journal.unwatch",
+    "device.task.approve",
+    "device.task.revoke",
+    "device.task.reconcile",
+    "device.collaboration",
+    "device.artifact",
   ]);
-  assert.equal(REMOTE_CLIENT_COMMAND_TYPES_V1.includes("approval.resolve"), false);
-  assert.equal(REMOTE_CLIENT_COMMAND_TYPES_V1.includes("run.cancel"), false);
-  assert.equal(REMOTE_CLIENT_COMMAND_TYPES_V1.includes("file.read"), false);
-  assert.equal((REMOTE_LIFECYCLE_COMMAND_TYPES_V1 as readonly string[]).includes("stream.ack"), false);
+  const clientCommands = new Set<string>(REMOTE_CLIENT_COMMAND_TYPES_V1);
+  assert.equal(clientCommands.has("approval.resolve"), false);
+  assert.equal(clientCommands.has("run.cancel"), false);
+  assert.equal(clientCommands.has("file.read"), false);
+  assert.equal(new Set<string>(REMOTE_LIFECYCLE_COMMAND_TYPES_V1).has("stream.ack"), false);
   assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("security.unpair"), true);
-  assert.equal((REMOTE_SERVER_EVENT_TYPES_V1 as readonly string[]).includes("approval.summary"), false);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.task.journal.watch"), true);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.task.journal.unwatch"), true);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.collaboration"), true);
+  assert.equal(REMOTE_LIFECYCLE_COMMAND_TYPES_V1.includes("device.artifact"), true);
+  assert.equal(new Set<string>(REMOTE_SERVER_EVENT_TYPES_V1).has("approval.summary"), false);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("conversation.delta"), true);
   assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("profile.snapshot"), true);
+  assert.equal(REMOTE_SERVER_EVENT_TYPES_V1.includes("device.task.journal_page"), true);
 });
 
 test("remote V1 message execution policy cannot start tools or workflows", () => {

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import type { RemotePairingQrV1 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1, type RemotePairingQrV1 } from "@ling-stack/contracts";
 import test from "node:test";
 import {
   decodeRemotePairingQrV1,
+  deviceArtifactManifestBytes,
+  deviceArtifactReceiptBytes,
   encodePairingQrV1,
   evaluateClientSequenceV1,
   evaluateCumulativeAckV1,
@@ -14,6 +16,7 @@ import {
   validateRemotePairingChallengeV1,
   validateRemotePairingProofV1,
   validateRemotePairingQrV1,
+  validateDeviceArtifactOffer,
 } from "../dist/index.js";
 import { fixture } from "./canonical-signing-fixture.ts";
 
@@ -53,6 +56,164 @@ const validClientFrame = {
     retryUntil: "2026-07-19T11:00:00.000Z",
   },
 };
+
+test("phone device collaboration admits typed evidence with explicit commands", () => {
+  const projection = {
+    taskId: "phone-task", ownerId: "phone-owner", targetDeviceId: "external-pc", status: "unknown", updatedAt: now,
+    attempt: { attemptId: "task:linux-wifi-diagnosis@1.0.0:inspect", capabilityId: "linux.wifi.read", connectionRevision: "conn-3", status: "unknown" },
+    facts: { kind: "linux_network", network: { connected: true, wifiAssociated: false, linkError: "wifi_observation_failed" } },
+  };
+  const action = { kind: "publish", expiresAt: "2026-07-19T10:20:00.000Z", expectedRevision: 0, projection };
+  const command = { ...validClientFrame, type: "device.collaboration",
+    payload: { commandId: "phone-publish", workspaceId: "workspace-1", shareId: "phone-share", action } };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(command), { nowMs }), command);
+  for (const malformed of [
+    { ...action, expectedRevision: -1 },
+    { ...action, projection: { ...projection, normalizedInput: {} } },
+    { ...action, projection: { ...projection, facts: { kind: "linux_network", network: { connected: true, host: "local-host" } } } },
+    { ...action, kind: "read" },
+    { kind: "execute", expectedRevision: 1 },
+  ]) {
+    assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({ ...command, payload: { ...command.payload, action: malformed } }), { nowMs }));
+  }
+});
+
+test("artifact requests bind the revision and one bounded index or receipt", () => {
+  const payload = { commandId: "artifact-cmd", workspaceId: "workspace-1", shareId: "share-artifact", expectedRevision: 1,
+    action: { kind: "chunk", proposalId: "artifact", index: 3 } };
+  const frame = { ...validClientFrame, type: "device.artifact", payload };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(frame), { nowMs }), frame);
+  for (const action of [
+    { ...payload.action, index: -1 },
+    { ...payload.action, index: 999_999 },
+    { ...payload.action, path: "file.zip" },
+    { kind: "receipt", proposalId: "artifact", receipt: { digest: "bad", signature, verifiedAt: now } },
+  ]) {
+    assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({ ...frame, payload: { ...payload, action } }), { nowMs }));
+  }
+});
+
+test("an APK offer and receipt sign the exact package identity and verification method", () => {
+  const digest = "sha256:" + "0".repeat(64);
+  const plain = {
+    version: 1, gatewayId: "gateway", mobileDeviceId: "phone", deviceEpoch: 1, workspaceId: "workspace",
+    workspaceBindingId: "binding", policyVersion: 1, shareId: "share", revision: 1, proposalId: "proposal", taskId: "task",
+    projectionDigest: digest, ownerId: "owner", targetDeviceId: "target", attemptId: "attempt", connectionRevision: "conn",
+    name: "fixture.APK", sizeBytes: 42, digest, chunkBytes: REMOTE_DEVICE_ARTIFACT_CHUNK_BYTES, expiresAt: "2026-07-19T10:20:00.000Z",
+  };
+  const androidApk = { packageId: "org.lingstack.fixture", versionCode: "4294967338", legacyVersionCode: "42",
+    signerCertificateSha256: ["1".repeat(64), "2".repeat(64)] };
+  const legacy = validateDeviceArtifactOffer({ manifest: plain, status: "accepted", signature }, "$");
+  const receipt = { digest, signature, verifiedAt: now, apkVerification: "android_package_manager" as const };
+  const offer = { manifest: { ...plain, androidApk }, status: "accepted", signature, receipt };
+  const validated = validateDeviceArtifactOffer(offer, "$");
+  assert.deepEqual(validated, offer);
+  assert.notDeepEqual(deviceArtifactManifestBytes(validated.manifest), deviceArtifactManifestBytes(legacy.manifest));
+  assert.notDeepEqual(deviceArtifactReceiptBytes(validated.manifest, receipt), deviceArtifactReceiptBytes(validated.manifest, {
+    ...receipt, apkVerification: "paired_gateway",
+  }));
+  for (const invalid of [
+    { ...androidApk, packageId: "invalid" }, { ...androidApk, versionCode: "092" },
+    { ...androidApk, legacyVersionCode: "43" }, { ...androidApk, legacyVersionCode: undefined },
+    { ...androidApk, signerCertificateSha256: [] }, { ...androidApk, signerCertificateSha256: ["1".repeat(64), "1".repeat(64)] },
+    { ...androidApk, signerCertificateSha256: [...androidApk.signerCertificateSha256].reverse() },
+  ]) {
+    assert.throws(() => validateDeviceArtifactOffer({ ...offer, manifest: { ...offer.manifest, androidApk: invalid } }, "$"));
+  }
+  assert.throws(() => validateDeviceArtifactOffer({ ...offer, manifest: { ...offer.manifest, name: "archive.zip" } }, "$"));
+  assert.throws(() => validateDeviceArtifactOffer({ ...offer, receipt: { digest, signature, verifiedAt: now } }, "$"));
+  assert.throws(() => validateDeviceArtifactOffer({ ...offer, manifest: plain }, "$"));
+});
+
+test("device journal frames bind cursor ranges to public events from the task owner", () => {
+  const command = {
+    ...validClientFrame,
+    type: "device.task.journal",
+    payload: { commandId: "read-journal", workspaceId: "workspace-1", taskId: "task-1", generation: 1, afterSequence: 2, limit: 1 },
+  };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(command), { nowMs }), command);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...command, payload: { ...command.payload, limit: REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 + 1 },
+  }), { nowMs }), /allowed range/u);
+
+  const streamId = "device-task:task-1";
+  const event = {
+    eventId: streamId + ":40", traceId: streamId, streamId, generation: 1, sequence: 3, sourceId: "runtime-1",
+    kind: "observation_recorded", sourceKind: "adapter", payload: { observationId: "observation-1" },
+    occurredAt: now, evidenceRefs: ["observation-1"], redactionClass: "public", retentionClass: "durable",
+  };
+  const page = {
+    streamId, generation: 1, afterSequence: 2, latestSequence: 3, events: [event], hasMore: false, requiresSnapshot: false,
+    workspaceId: "workspace-1", task: { taskId: "task-1", ownerId: "runtime-1", status: "succeeded", updatedAt: now },
+  };
+  function completed(journal: unknown) {
+    return {
+      version: 1, type: "command.completed", messageId: "result-1", gatewayId: "gateway-1", sessionId: "session-1",
+      sentAt: now, streamId: "control-stream", eventId: "control-event-1", serverSeq: 2, occurredAt: now,
+      payload: {
+        commandId: command.payload.commandId, commandType: command.type, completedAt: now,
+        result: { kind: "device_task_journal_read", journal },
+      },
+    };
+  }
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(completed(page))), completed(page));
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify(completed({ ...page, hasMore: true }))), /projection is invalid/u);
+  for (const altered of [
+    { ...event, sequence: 2 },
+    { ...event, sourceId: "runtime-2" },
+    { ...event, redactionClass: "sensitive" },
+    { ...event, evidenceRefs: ["observation-2"] },
+    { ...event, payload: { ...event.payload, rawText: "private device log" } },
+  ]) {
+    assert.throws(() => parseRemoteServerFrameV1(JSON.stringify(completed({ ...page, events: [altered] }))));
+  }
+
+  const watch = { ...command, type: "device.task.journal.watch", payload: { ...command.payload, commandId: "watch-journal" } };
+  const stop = {
+    ...command, type: "device.task.journal.unwatch",
+    payload: { commandId: "stop-watch", workspaceId: "workspace-1", taskId: "task-1", watchId: watch.payload.commandId },
+  };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(watch), { nowMs }), watch);
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(stop), { nowMs }), stop);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...watch, payload: { ...watch.payload, watchId: "extra-watch-id" },
+  }), { nowMs }), /unknown field/u);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...stop, payload: { ...stop.payload, watchId: "" },
+  }), { nowMs }), /allowed range/u);
+
+  const watchResult = {
+    ...completed(page),
+    payload: {
+      commandId: watch.payload.commandId, commandType: watch.type, completedAt: now,
+      result: { kind: "device_task_journal_watching", journal: page },
+    },
+  };
+  const unwatchResult = {
+    ...completed(page),
+    payload: {
+      commandId: stop.payload.commandId, commandType: stop.type, completedAt: now,
+      result: { kind: "device_task_journal_unwatched" },
+    },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(watchResult)), watchResult);
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(unwatchResult)), unwatchResult);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...watchResult, payload: { ...watchResult.payload, result: completed(page).payload.result },
+  })), /does not match command type/u);
+
+  const update = {
+    ...completed(page), type: "device.task.journal_page",
+    payload: { watchId: watch.payload.commandId, journal: page },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(update)), update);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...update, payload: { ...update.payload, journal: { ...page, streamId: "device-task:foreign-task" } },
+  })), /protocol literal/u);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...update, payload: { ...update.payload, journal: { ...page, requiresSnapshot: true } },
+  })), /projection is invalid/u);
+});
 
 test("pairing QR round-trips canonical wire encoding and rejects extra fields", () => {
   assert.deepEqual(validateRemotePairingQrV1(pairingQr, { nowMs }), pairingQr);
@@ -358,6 +519,113 @@ test("stream acknowledgements are transport control and never create lifecycle e
     ...ack,
     payload: { commandId: "command-loop", ...ack.payload },
   }), { nowMs }), /unknown field/);
+});
+
+test("device task commands and projections stay workspace-scoped and strictly typed", () => {
+  const command = {
+    version: 1,
+    type: "device.task.approve",
+    messageId: "device-frame-1",
+    gatewayId: "gateway-1",
+    sessionId: "session-1",
+    sentAt: now,
+    clientSeq: 4,
+    expiresAt: "2026-07-19T10:00:30.000Z",
+    payload: {
+      commandId: "device-command-1",
+      workspaceId: "workspace-1",
+      taskId: "task-1",
+      approval: {
+        approvalId: "approval-1",
+        taskId: "task-1",
+        actionId: "action-1",
+        targetDeviceId: "device-1",
+        capabilitySnapshotId: "snapshot-1",
+        connectionRevision: "connection-1",
+        policyRevision: "policy-1",
+        normalizedInputDigest: "digest-1",
+        expiresAt: "2026-07-19T10:05:00.000Z",
+        recoveryScope: { baseline: "network" },
+      },
+    },
+  } as const;
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(command), { nowMs }), command);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...command,
+    payload: { ...command.payload, approval: { ...command.payload.approval, unexpected: true } },
+  }), { nowMs }), /unknown field/);
+  const reconcile = {
+    ...command,
+    type: "device.task.reconcile",
+    payload: { commandId: "reconcile-command", workspaceId: "workspace-1", taskId: "task-1", attemptId: "attempt-1", capabilitySnapshotId: "snapshot-2" },
+  } as const;
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(reconcile), { nowMs }), reconcile);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...reconcile,
+    payload: { ...reconcile.payload, normalizedInput: { repair: true } },
+  }), { nowMs }), /unknown field/);
+
+  const event = {
+    version: 1,
+    type: "device.task.snapshot",
+    messageId: "device-event-1",
+    gatewayId: "gateway-1",
+    sessionId: "session-1",
+    sentAt: now,
+    streamId: "control-session-1",
+    eventId: "event-device-1",
+    serverSeq: 3,
+    occurredAt: now,
+    payload: {
+      workspaceId: "workspace-1",
+      generatedAt: now,
+      task: {
+        taskId: "task-1",
+        ownerKind: "daemon",
+        ownerId: "daemon-1",
+        targetDeviceIds: ["device-1"],
+        status: "awaiting_approval",
+        updatedAt: now,
+        attemptIds: [],
+      },
+    },
+  } as const;
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(event)), event);
+  const unresolved = {
+    ...event,
+    payload: {
+      ...event.payload,
+      task: {
+        ...event.payload.task,
+        status: "unknown",
+        attemptIds: ["attempt-1"],
+        pendingReconciliation: { attemptId: "attempt-1", targetDeviceId: "device-1", capabilitySnapshotId: "snapshot-2" },
+      },
+    },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(unresolved)), unresolved);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...unresolved,
+    payload: { ...unresolved.payload, task: { ...unresolved.payload.task, attemptIds: [] } },
+  })), /Device projection is invalid/u);
+
+  const overview = {
+    ...event,
+    type: "device.list_snapshot",
+    payload: {
+      workspaceId: "workspace-1",
+      generatedAt: now,
+      devices: [],
+      recentTasks: [{ taskId: "task-1", primaryTargetDeviceId: "device-1", status: "awaiting_approval", updatedAt: now }],
+    },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(overview)), overview);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...overview, payload: { ...overview.payload, recentTasks: [{ ...overview.payload.recentTasks[0], credentials: "forbidden" }] },
+  })), /unknown field/u);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...overview, payload: { ...overview.payload, recentTasks: Array.from({ length: 21 }, () => overview.payload.recentTasks[0]) },
+  })), /Device projection is invalid/u);
 });
 
 test("conversation snapshots reject cross-workspace and duplicate projected entities", () => {

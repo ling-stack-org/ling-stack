@@ -21,6 +21,10 @@
       "types": "./dist/runtime-host-capacity-store-bridge.d.ts",
       "default": "./dist/runtime-host-capacity-store-bridge.js"
     },
+    "./ling-server-control": {
+      "types": "./dist/ling-server-control.d.ts",
+      "default": "./dist/ling-server-control.js"
+    },
     "./execution-engine-host-authority": {
       "types": "./dist/execution-engine-host-authority.d.ts",
       "default": "./dist/execution-engine-host-authority.js"

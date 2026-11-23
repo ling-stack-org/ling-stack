@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { createFetchRemoteHttpClient, type LingServerRendezvousOptions } from "@ling-stack/remote-client";
 import {
   createPublicKey,
   generateKeyPairSync,
@@ -7,10 +9,16 @@ import {
   timingSafeEqual,
   verify,
 } from "node:crypto";
+import { DEFAULT_WORKSPACE_ID, type LingServerPairingMigrationJournal } from "@ling-stack/core";
 import {
+  LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_SIGNING_ALGORITHM,
   REMOTE_SUPPORTED_PROTOCOL_VERSIONS,
+  type LingServerConfirmedPairingMigrationV1,
+  type LingServerGatewayRouteV1,
+  type LingServerPairingIdentityV1,
+  type LingServerPairingMigrationV1,
   type RemoteAuthChallengeV1,
   type RemoteAuthProofV1,
   type RemotePairingAcceptedV1,
@@ -29,6 +37,7 @@ import {
   encodePairingQrV1,
   fingerprintPublicJwkSync,
   hmacSha256,
+  lingServerPairingMigrationSigningBytes,
   pairingAcceptedSigningBytes,
   pairingAcceptedSigningInput,
   pairingChallengeSigningBytes,
@@ -74,6 +83,8 @@ interface PendingPairing {
 interface AuthChallengeRecord {
   readonly challenge: RemoteAuthChallengeV1;
   readonly deviceId: string;
+  readonly gatewayOrigin: string;
+  readonly route?: LingServerGatewayRouteV1;
 }
 
 export interface AuthenticatedRemoteSession {
@@ -150,6 +161,7 @@ export class RemotePairingAuthService {
       deviceEpoch: current.deviceEpoch + 1,
       policyVersion: current.policyVersion + 1,
       pairedDevice: undefined,
+      lingServerMigrationId: undefined,
       updatedAt: this.now(),
     }));
     this.options.onSecurityStateChanged?.("revoked");
@@ -316,13 +328,107 @@ export class RemotePairingAuthService {
     this.pairing = undefined;
   }
 
+  prepareLingServerPairingMigration(journal: LingServerPairingMigrationJournal, value: unknown): LingServerPairingMigrationV1 {
+    return journal.prepare(value, this.requirePairedIdentity(), DEFAULT_WORKSPACE_ID);
+  }
+
+  confirmLingServerPairingMigration(journal: LingServerPairingMigrationJournal, value: unknown): LingServerPairingMigrationV1 {
+    const migration = journal.confirm(value, this.requirePairedIdentity(), DEFAULT_WORKSPACE_ID, confirmation =>
+      this.sign(lingServerPairingMigrationSigningBytes(confirmation)));
+    this.options.stateStore.updateState(current => ({
+      ...current, lingServerMigrationId: migration.migrationId, updatedAt: this.now(),
+    }));
+    return migration;
+  }
+
+  lingServerRendezvousOptions(migration: LingServerConfirmedPairingMigrationV1): LingServerRendezvousOptions | undefined {
+    if (!isDeepStrictEqual(migration.oldPairing, this.requirePairedIdentity())
+      || this.state().lingServerMigrationId !== migration.migrationId) return undefined;
+    const { routingProfile, oldPairing } = migration;
+    return {
+      installation: {
+        installationId: routingProfile.installationId, serverOrigin: routingProfile.serverOrigin,
+        applicationKeyFingerprint: routingProfile.applicationKeyFingerprint, revision: routingProfile.installationRevision, status: "active",
+      },
+      binding: {
+        bindingId: routingProfile.bindingId, installationId: routingProfile.installationId,
+        gatewayId: oldPairing.gatewayId, mobileDeviceId: oldPairing.mobileDeviceId,
+        gatewayKeyFingerprint: oldPairing.gatewayKeyFingerprint, mobileKeyFingerprint: oldPairing.mobileKeyFingerprint,
+        epoch: oldPairing.deviceEpoch, revision: 1, status: "active",
+      },
+      key: { keyId: this.identity.gatewayId, publicJwk: this.identity.publicKeyJwk },
+      keys: {
+        sign: async (id, message) => {
+          if (id !== this.identity.gatewayId || this.state().lingServerMigrationId !== migration.migrationId
+            || !isDeepStrictEqual(migration.oldPairing, this.requirePairedIdentity())) {
+            throw new RemoteAccessError("device_epoch_mismatch", "The peer route no longer matches the active pairing.");
+          }
+          return this.sign(message);
+        },
+        verify: async (jwk, bytes, signature) => this.verifyDevice(jwk, bytes, signature),
+      },
+      http: createFetchRemoteHttpClient(),
+      entropy: { randomBytes },
+      clock: { now: this.now },
+    };
+  }
+
+  private requirePairedIdentity(): LingServerPairingIdentityV1 {
+    const state = this.requireEnabledState();
+    const device = state.pairedDevice;
+    if (!device) throw new RemoteAccessError("device_revoked", "This device is not paired.");
+    return {
+      gatewayId: this.identity.gatewayId,
+      gatewayOrigin: state.gatewayOrigin!,
+      gatewayKeyFingerprint: this.identity.publicKeyFingerprint,
+      mobileDeviceId: device.deviceId,
+      mobileKeyFingerprint: device.publicKeyFingerprint,
+      deviceEpoch: device.deviceEpoch,
+      workspaceBindingId: state.workspaceBindingId,
+    };
+  }
+
   createAuthChallenge(deviceId: string): RemoteAuthChallengeV1 {
+    const record = this.issueAuthChallenge(deviceId);
+    this.authChallenges.set(record.challenge.challengeId, record);
+    return record.challenge;
+  }
+
+  createRoutedAuthentication(route: LingServerGatewayRouteV1): {
+    readonly challenge: RemoteAuthChallengeV1;
+    verify(value: unknown): Promise<AuthenticatedRemoteSession>;
+  } {
+    const record = this.issueAuthChallenge(route.mobileDeviceId, route);
+    let used = false;
+    return {
+      challenge: record.challenge,
+      verify: async value => {
+        if (used) throw new RemoteAccessError("challenge_replayed", "The peer challenge was already used.");
+        used = true;
+        return await this.verifyChallenge(validateRemoteAuthProofV1(value), record);
+      },
+    };
+  }
+
+  private issueAuthChallenge(deviceId: string, route?: LingServerGatewayRouteV1): AuthChallengeRecord {
     const state = this.requireEnabledState();
     const device = state.pairedDevice;
     if (!device || device.deviceId !== deviceId) {
       throw new RemoteAccessError("device_revoked", "This device is not paired.");
     }
     const issuedAt = this.now();
+    const issuedAtMs = Date.parse(issuedAt);
+    const routeExpiryMs = route ? Date.parse(route.expiresAt) : Infinity;
+    if (route && (route.mobileDeviceId !== device.deviceId || route.peerEpoch !== device.deviceEpoch
+      || route.gatewayId !== this.identity.gatewayId || route.gatewayKeyFingerprint !== this.identity.publicKeyFingerprint
+      || route.mobileKeyFingerprint !== device.publicKeyFingerprint)) {
+      throw new RemoteAccessError("device_epoch_mismatch", "The peer route does not match the active pairing.");
+    }
+    if (route && (!Number.isFinite(routeExpiryMs) || routeExpiryMs <= issuedAtMs
+      || routeExpiryMs - issuedAtMs > LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1)) {
+      throw new RemoteAccessError("challenge_expired", "The peer route is unavailable.");
+    }
+    const gatewayOrigin = state.gatewayOrigin!;
     const unsigned: Omit<RemoteAuthChallengeV1, "gatewaySignature"> = {
       version: REMOTE_PROTOCOL_VERSION,
       gatewayId: this.identity.gatewayId,
@@ -331,27 +437,31 @@ export class RemotePairingAuthService {
       candidateSessionId: `session_${randomUUID()}`,
       deviceEpoch: device.deviceEpoch,
       issuedAt,
-      expiresAt: new Date(Date.parse(issuedAt) + AUTH_CHALLENGE_LIFETIME_MS).toISOString(),
+      expiresAt: new Date(Math.min(issuedAtMs + AUTH_CHALLENGE_LIFETIME_MS, routeExpiryMs)).toISOString(),
       supportedProtocolVersions: REMOTE_SUPPORTED_PROTOCOL_VERSIONS,
     };
     const challenge: RemoteAuthChallengeV1 = {
       ...unsigned,
-      gatewaySignature: this.sign(authChallengeSigningBytes(authChallengeSigningInput(this.requireGatewayOrigin(), unsigned))),
+      gatewaySignature: this.sign(authChallengeSigningBytes(authChallengeSigningInput(gatewayOrigin, unsigned), route)),
     };
-    this.authChallenges.set(challenge.challengeId, { challenge, deviceId });
-    return challenge;
+    return { challenge, deviceId, gatewayOrigin, route };
   }
 
   async verifyAuthProof(value: unknown): Promise<AuthenticatedRemoteSession> {
     const proof = validateRemoteAuthProofV1(value);
     const record = this.authChallenges.get(proof.challengeId);
     this.authChallenges.delete(proof.challengeId);
-    if (!record || Date.parse(record.challenge.expiresAt) < Date.parse(this.now())) {
+    return await this.verifyChallenge(proof, record);
+  }
+
+  private async verifyChallenge(proof: RemoteAuthProofV1, record: AuthChallengeRecord | undefined): Promise<AuthenticatedRemoteSession> {
+    if (!record || proof.challengeId !== record.challenge.challengeId || Date.parse(record.challenge.expiresAt) <= Date.parse(this.now())) {
       throw new RemoteAccessError("challenge_expired", "Authentication challenge is missing, used, or expired.");
     }
     const state = this.requireEnabledState();
     const device = state.pairedDevice;
-    if (!device || device.deviceId !== proof.deviceId || record.deviceId !== proof.deviceId) {
+    if (!device || device.deviceId !== proof.deviceId || record.deviceId !== proof.deviceId
+      || (record.route && record.route.mobileKeyFingerprint !== device.publicKeyFingerprint)) {
       throw new RemoteAccessError("device_revoked", "This device is no longer paired.");
     }
     if (proof.deviceEpoch !== device.deviceEpoch || proof.deviceEpoch !== record.challenge.deviceEpoch) {
@@ -361,16 +471,17 @@ export class RemotePairingAuthService {
       proof.gatewayId !== this.identity.gatewayId
       || proof.candidateSessionId !== record.challenge.candidateSessionId
       || proof.protocolVersion !== REMOTE_PROTOCOL_VERSION
+      || state.gatewayOrigin !== record.gatewayOrigin
     ) {
       throw new RemoteAccessError("protocol_incompatible", "Authentication proof does not match the challenge.");
     }
     const signingInput = await authProofSigningInput(
-      this.requireGatewayOrigin(),
+      record.gatewayOrigin,
       omitGatewaySignature(record.challenge),
       omitAuthProofSignature(proof),
       sha256,
     );
-    if (!this.verifyDevice(device.publicKeyJwk, authProofSigningBytes(signingInput), proof.signature)) {
+    if (!this.verifyDevice(device.publicKeyJwk, authProofSigningBytes(signingInput, record.route), proof.signature)) {
       throw new RemoteAccessError("signature_invalid", "Device authentication signature is invalid.");
     }
     return {

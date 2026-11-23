@@ -1,5 +1,6 @@
 import {
   REMOTE_PROTOCOL_VERSION,
+  type RemoteMobilePlatformV1,
   type RemotePairingAcceptedV1,
   type RemotePairingProofV1,
   type RemotePairingQrV1,
@@ -48,6 +49,7 @@ export class RemotePairingClient {
   async begin(encodedQr: string, input: {
     readonly displayName: string;
     readonly deviceId?: string;
+    readonly platform?: RemoteMobilePlatformV1;
   }): Promise<{ readonly pending: RemotePendingPairing; readonly binding?: RemoteBindingV1 }> {
     const nowMs = Date.parse(this.options.clock.now());
     const qr = decodeRemotePairingQrV1(encodedQr, { nowMs });
@@ -68,7 +70,8 @@ export class RemotePairingClient {
       throw new Error("pairing_gateway_signature_invalid");
     }
 
-    const deviceId = input.deviceId ?? await this.options.entropy.randomId("iphone");
+    const platform = input.platform ?? "ios";
+    const deviceId = input.deviceId ?? await this.options.entropy.randomId(platform === "android" ? "android" : "iphone");
     const deviceKeyId = `ling.remote.device.${qr.gatewayId}`;
     const key = await this.options.keys.generateOrLoad(deviceKeyId);
     if (key.privateKeyExportable !== false) {
@@ -81,7 +84,7 @@ export class RemotePairingClient {
       pairingId: qr.pairingId,
       deviceId,
       displayName: input.displayName.trim(),
-      platform: "ios" as const,
+      platform,
       devicePublicKeyJwk: key.publicJwk,
       devicePublicKeyFingerprint: fingerprintPublicJwkSync(key.publicJwk),
       serverNonce: challenge.serverNonce,

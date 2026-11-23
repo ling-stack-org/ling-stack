@@ -96,6 +96,15 @@ a merge so historical receipts still identify their original target. Refresh aff
 bindings before executing new writes. Keep scopes and credential references attached
 to the authorities that issued them.
 
+The local Daemon serves enrolled devices through
+`GET /v1/device-support/fabric/graph`. For a registered device awaiting its
+semantic graph record, the response derives a device node from its stable ID.
+The node carries the current profile revision, connection revision, and
+lifecycle status. A reconnect updates these bindings while retaining the node
+ID. A stored graph node supplies its own labels, relationships, and revisions
+alongside the current registry binding. The graph view is scoped to the
+Daemon's default workspace.
+
 Relationships answer questions such as which room contains a device, which controller
 reports it, what network it uses, and which host reaches it. A relationship can help
 choose an observation. Authority comes from the current identity, connection and
@@ -156,6 +165,13 @@ attached to its approval and expiry. Reconnect rebuilds observations, pending st
 and receipts. A repair with a declared recovery step uses the runtime's own recovery
 contract and authority checks.
 
+The Daemon publishes reported Twin values from the public facts of a diagnosis.
+Every value links to its owner task, completed adapter attempt, observation and
+current device profile and connection revisions. It commits a diagnosis in one
+Twin revision. The local graph projects evidence references and freshness for
+each enrolled device, including the last observations after a disconnect.
+[D14 acceptance](ling-device-support-platform-implementation-plan.md#d14-semantic-device-graph-and-twin)
+
 ## 5. Cross-device task graph
 
 ### 5.1 Graph and dispatch contracts
@@ -206,6 +222,15 @@ The parent result distinguishes verified success, partial progress, failure,
 cancellation and unresolved outcome. A downstream step receives the named
 predecessor result. A missing or stale observation surfaces as a condition for
 the user or the planner to resolve.
+
+The Daemon records its accepted diagnosis playbook with the plan in the owner
+journal. The broker matches each requested step to that playbook and checks the
+attempt and verification records of its prerequisites before dispatch.
+`GET /v1/device-support/fabric/task-graphs/:taskId` projects the graph from that
+journal. Each attempted node references the original attempt ID or the later
+reconciliation ID. `POST /v1/device-support/tasks/:taskId/resume` replays retained
+results and runs eligible pending steps with the original capability snapshot.
+If a step has an unknown outcome, its dependents wait for readback evidence.
 
 ### 5.3 PC-assisted head-unit application task
 
@@ -275,6 +300,72 @@ reopens its local journal, restores its installation identity and reconciles liv
 devices. Treat an old blocked or disconnected write as unresolved until there is
 evidence. [Ling Server enrollment](ling-server-connectivity.md#3-server-enrollment-and-peer-trust)
 
+### Local Edge enrollment
+
+The authenticated Daemon operator endpoint uses the prefix
+`/v1/device-support/fabric/edge-runtimes`.
+Send `POST /:runtimeId/enrollment` with the display name, contract major,
+supported transports, expected enrollment revision, and the runtime's Ed25519
+SPKI public key as base64url. The JSON fields are `displayName`, `contractMajor`,
+`supportedTransports`, `expectedRevision`, and `publicKeySpki`. A new runtime
+uses revision zero. The response contains a five-minute grant bound to the
+hostname-independent runtime ID, expected revision, and SHA-256 public-key
+fingerprint. Issuing another grant for that runtime replaces its pending grant.
+
+The runtime signs the canonical JSON bytes of
+`{ purpose: "ling.edge-runtime-enrollment.v1", grant }` with its private key.
+Submit `grantId` and the base64url `signature` to
+`POST /:runtimeId/enrollment/proof` through the local operator endpoint.
+Confirmation commits the new runtime revision and consumes the grant together.
+A proof replay returns the same enrollment while its revision is current.
+`PUT /:runtimeId/revocation` accepts a `grantId` to cancel that pending grant,
+or `expectedRevision` to revoke the current runtime. The list projection omits
+the key fingerprint and grant. [Daemon routes](../../packages/daemon/src/features/device-support/edge-routes.ts)
+
+### Signed Edge task evidence
+
+The local operator creates a diagnosis on an enrolled Edge host with
+`POST /:runtimeId/diagnoses` using `requestId` and `expectedRevision`. The Daemon
+records the graph and placement. It accepts a signed `POST /:runtimeId/diagnosis-claim`
+for that graph and returns the original node and attempt on replay.
+`GET /:runtimeId/diagnoses/:graphId` gives the operator the retained graph and
+the accepted local network observation.
+
+The loopback Edge routes accept `{ binding, payload, signature }`. The signed
+`binding` contains `grantId`, `runtimeRevision`, and `placementId`. For a claim,
+the canonical JSON object uses purpose `ling.edge-runtime-diagnosis-claim.v1`
+and contains `binding` and `graphId`. The `POST /:runtimeId/journal` signature
+uses purpose `ling.edge-runtime-journal.v1` and contains `binding` and `entry`,
+where `entry` is the `EdgeRuntimeJournalEntryV1` payload. The Daemon checks the
+enrolled key, dispatch binding and journal sequence in the append transaction.
+An identical entry ID and payload returns the original entry.
+
+An Edge owner can submit a graph result through
+`POST /:runtimeId/task-graph-receipt`. Its payload is a
+`DeviceTaskGraphNodeReceiptV1` with `ownerKind: "edge"`, `ownerId` equal to the
+runtime ID, and `routeGeneration` equal to the enrollment revision. The signed
+bytes use `{ purpose: "ling.edge-runtime-task-graph-receipt.v1", binding,
+receipt: payload }`. The Daemon validates the graph revision, target, capability
+snapshot, attempt, owner, route, and original journal result in the receipt
+transaction. [Operation signing helpers](../../packages/remote-protocol/src/edge-runtime-operations.ts)
+
+The Daemon package exposes `ling-edge diagnose <configuration.json>`. The
+configuration fields are `origin`, `runtimeId`, `graphId`, `binding`,
+`privateKeyFile`, and `stateDirectory`. Use the loopback coordinator origin or
+a loopback endpoint of an authenticated link. The executor records its start and
+local network observation under a directory lock, signs and sends the evidence,
+and reopens its journal for the same graph on a subsequent invocation. A journal
+that contains the dispatch intent without a terminal entry resumes as unknown.
+Revocation denies new claims and evidence submissions under the revoked key.
+[Edge executor](../../packages/daemon/src/ling-edge-cli.ts)
+
+The local operator stops a diagnosis with `PUT /:runtimeId/diagnoses/:graphId/stop`
+and the graph's `expectedRevision`. A queued or claimed diagnosis with no
+accepted journal start becomes cancelled. Once the coordinator accepts the
+journal start, a stop records an unknown outcome until the owner reports
+evidence. The owner can recover the same attempt to submit that evidence.
+The receipt keeps the graph revision from the original dispatch.
+
 ## 7. Event and telemetry plane
 
 Every event identifies its owner stream, generation, sequence, subject and schema
@@ -295,6 +386,28 @@ or workspace scope, redaction class and the related attempt when applicable.
   Use the existing owner journals and peer sync for the durability contract. Evaluate a
   broker such as NATS where measured edge workloads need one.
 
+An enrolled Edge runtime can publish a signed network health sample through its
+authenticated coordinator link. Each sample carries its observation time and
+whether a non-loopback interface has a usable address. The coordinator admits at most one sample
+per runtime enrollment in a five-second interval and discards observations
+older than two minutes. The admission result distinguishes a stored sample
+from a sample omitted by spacing or age. Accepted samples receive contiguous
+coordinator cursors. The persisted stream supplies the sampling interval and
+last accepted result after a process restart. Enrollment revisions separate
+the health streams when the operator replaces a key.
+
+`ling-edge health <configuration.json>` reads the host interfaces and sends
+one sample. The configuration contains `origin`, `runtimeId`, `privateKeyFile`,
+and `binding` with `grantId` and `runtimeRevision`. The CLI sends
+`POST /:runtimeId/health` with the signed binding and a payload containing
+`sampleId`, `observedAt`, and `connected`. The signature covers the
+`ling.edge-runtime-health.v1` purpose, runtime identity, binding and sample.
+The local operator reads `GET /:runtimeId/health/events` under the Edge
+enrollment prefix. The page supplies the latest sample and its freshness
+when its cursor needs a snapshot. After revocation the prior enrollment's
+latest sample is available as historical, stale evidence.
+[Edge health routes](../../packages/daemon/src/features/device-support/edge-routes.ts)
+
 ## 8. Model context and AI orchestration
 
 Build a bounded context pack per task from resolved targets, allowed relationships,
@@ -314,6 +427,17 @@ A change of planner or provider uses a refreshed context pack for the same graph
 Node journals and attempts belong to their owners. If the model service is unavailable,
 run a supported deterministic local playbook using available evidence and current
 authorization. Mark what remains pending for a later model turn or operator.
+
+The local PC diagnosis route and the enrolled Linux diagnosis route accept an
+optional `providerPresetId` and `symptom`. The Daemon uses Pi to select an ordered
+set of available diagnosis steps. It validates the output, binds it to the owner
+and current capability snapshot, and records it before dispatch. The same routes
+run the local playbook when the operator leaves the preset unselected. A request
+can specify `fallbackProviderPresetId` alongside the primary preset. If the
+primary runner is unavailable, the Daemon rebuilds the context for the fallback
+preset on the same task. The local playbook covers a model outage when no runner
+is available. The task trace records the accepted source and provider handoff.
+[Diagnosis routes](../../packages/daemon/src/features/device-support/routes.ts)
 
 ## 9. Resource and adapter registry
 
@@ -336,6 +460,34 @@ the target and policy. When supported, restore the previous compatible resource 
 activation fails. The lifecycle records both the activation outcome and any verification
 still required. [Protocol profiles and captures](ling-hardware-protocol-workbench.md)
 
+### Daemon resource imports
+
+The daemon reads the resource publisher trust file at startup from
+`deviceSupport.resourceTrustFile` or `LING_STACK_DEVICE_RESOURCE_TRUST_FILE`.
+The version 1 JSON document contains an `allowedLicenses` array of license
+identifiers and a `signingKeys` array. Each key has a `keyId` and
+`publicKeyPem` containing an Ed25519 public key in SPKI PEM format.
+
+Publishers sign the canonical JSON bytes of
+`{ purpose: "ling.device-resource-manifest.v1", keyId, manifest }`. The signed
+`manifest` object contains every manifest field except `signature`, including
+the SHA-256 digest of the file. Its signature field uses
+`ed25519:<keyId>:<base64url-signature>`.
+
+The local operator imports a manifest and its base64url-encoded bytes through
+`POST /v1/device-support/resources` with the JSON keys `manifest` and
+`payloadBase64Url`. The JSON import accepts up to 4 MiB of resource bytes. The
+registry exposes the active record through `GET /v1/device-support/resources/:resourceId`.
+Append `/disable` or `/rollback` and use POST to change its active state.
+The daemon checks publisher trust, license, digest, dependencies and host
+compatibility before activation. Install, active payload reads and rollbacks
+also validate the complete dependency graph against the current trust policy and
+available compatibility facts. Each dependency needs valid stored bytes and an
+active record. Cycles and unavailable dependencies leave the current revision intact.
+Adapter installation and applying a profile to a particular device remain
+separate operations owned by the relevant runtime.
+[Resource routes](../../packages/daemon/src/features/device-support/resource-routes.ts)
+
 ## 10. Safety, security, and secrets
 
 The device broker evaluates actual target permissions, current capability and physical
@@ -346,12 +498,28 @@ A changed or unavailable condition prevents additional writes for that step. A S
 request follows the owning adapter's cancel semantics and verifies the effect where
 the target exposes one.
 
+The local Daemon exposes `GET /v1/device-support/devices/:deviceId/dispatch-stop`
+for the current stop state. The operator activates or clears it with `PUT` and
+the fields `active` and `expectedRevision`. Activation journals a stop for the
+currently leased task and requests cancellation from its adapter. New writes are
+blocked while diagnostics can run once the active lease drains. A device-side
+result remains unknown until readback establishes what happened.
+[Daemon device routes](../../packages/daemon/src/features/device-support/routes.ts)
+
+Standalone Mobile keeps a revisioned write stop for each target under the phone's
+owner identity. The Home Assistant recovery screen can activate the stop during
+an approved write. The phone saves the decision before asking its transport to
+cancel. Once the phone has dispatched, the attempt may need independent readback.
+The device history offers a revision-checked action to clear the stop. Read-only
+diagnosis and readback continue under the target's existing permissions.
+
 Support normal device controls and documented configuration actions through their
 typed capabilities. Ling uses authorized vehicle observations and head-unit app
 maintenance for the vehicle cases. Safety-critical vehicle, lock, alarm, power and
 firmware operations use the certified controller or the operator's authorized vendor
 workflow. Ling can collect permitted diagnostics and verification evidence. Device
 policies and safety interlocks remain effective on the controller.
+A critical action admission can include a certified-controller or vendor-workflow readiness record. The record binds target, capability, policy revision, controller identity, readiness digest, operator handoff digest and expiry. The fabric stores the evidence references and digests, then requires fresh readback after the controller reports completion.
 
 The execution host resolves a secret reference only for the authorized local action.
 Journal the reason, target and policy decision. The model and peer projections receive
@@ -366,6 +534,21 @@ Keep ownership, operational health and current task outcome as separate records.
 Discovery produces a candidate. Enrollment binds target and connector identities and
 their authorization. A validated profile establishes available capabilities.
 Health and maintenance follow the latest verified device and adapter observations.
+
+The default workspace's authenticated loopback endpoint
+`GET /v1/device-support/fleet/health` reports the registered devices, their profile
+and adapter revisions, known firmware and the matching capability snapshot.
+An enrolled Edge Runtime contributes its revision and last-seen time separately
+from the device observation. [Fleet projection](../../packages/core/src/device-fabric.ts)
+
+The local Daemon exposes `GET /v1/device-support/devices/:deviceId/retirement` for
+the retirement preview. The corresponding `PUT` takes
+`expectedProfileRevision` and `expectedConnectionRevision` from that preview.
+Retirement invalidates the live capability snapshot and stops the leased task
+in the same journal transaction. Repeating the confirmed request returns the
+recorded retirement. A dispatched write keeps its attempt and any late receipt
+with an unknown outcome. Historical journal, trace and conformance reads retain
+their workspace scope. [Daemon routes](../../packages/daemon/src/features/device-support/routes.ts)
 
 An ownership transfer revokes the previous authorization and validates the new holder
 and credentials before offering more actions. Ongoing or unknown attempts remain
@@ -387,6 +570,36 @@ evidence IDs. Link project WorkUnit or model turn when available. Device capture
 retains provenance at the host. A shared trace carries authorized references and
 redacted status across hosts. Use OpenTelemetry conventions where they fit existing
 observability.
+
+The local operator reads a Daemon-owned trace through
+`GET /v1/device-support/tasks/:taskId/trace` on the authenticated loopback API.
+The projection uses the same workspace and trace identity as the owner journal.
+It links the accepted plan, the exact adapter/profile and connection used for each
+attempt, and the public evidence references from verification or reconciliation.
+An interrupted dispatch keeps its status when a later readback verifies the
+target. Each readback records its own connection revision.
+[Trace projection](../../packages/core/src/device-task-trace.ts)
+
+Use `GET /v1/device-support/tasks/:taskId/conformance?attemptId=...` on the same
+authenticated loopback API to capture a report from the owner journal. The report
+retains the journal sequence, target, adapter and profile revisions, declared
+transport when it is unambiguous, and the model turn when the attempt has one.
+Each check cites its snapshot, trace span or public observation. A readback needs
+same-target evidence. Checks with missing evidence have status `skip`. A later
+readback creates a report for the new journal sequence. Supply
+`?reportId=...` to retrieve a previously captured report from the same task.
+[Report projection](../../packages/core/src/device-task-conformance.ts)
+
+For an Edge network diagnosis, the same authenticated local API exposes
+`GET /v1/device-support/fabric/edge-runtimes/:runtimeId/diagnoses/:graphId/events`.
+The page contains the graph and a bounded projection of the signed owner journal.
+Clients resume with `generation`, `afterSequence` and `limit`. An expired
+generation or an ahead-of-stream cursor returns the current graph and no deltas.
+The `conformance` endpoint under the same diagnosis captures a report bound to
+the attempt's placement, runtime revision, graph node and journal sequence. It
+records an unknown outcome when the Edge journal lacks a network observation.
+The evidence remains available to the local operator after enrollment revocation.
+[Edge journal and report](../../packages/daemon/src/features/device-support/edge-work.ts)
 
 | Test layer | Evidence |
 | --- | --- |

@@ -6,6 +6,16 @@ import {
 } from "@ling-stack/contracts";
 
 import { RemoteProtocolError } from "../errors.js";
+import { validateDeviceCollaborationCommand } from "./device-collaboration.js";
+import { validateDeviceArtifactCommand } from "./device-artifact.js";
+import {
+  validateDeviceListCommand,
+  validateDeviceTaskApproveCommand,
+  validateDeviceTaskJournalCommand,
+  validateDeviceTaskReconcileCommand,
+  validateDeviceTaskRevokeCommand,
+  validateDeviceTaskStatusCommand,
+} from "./device.js";
 import {
   assertStrictKeys,
   expectAvatarDataUrl,
@@ -168,6 +178,40 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
       };
       break;
     }
+    case "device.list":
+      payload = validateDeviceListCommand(value, path);
+      break;
+    case "device.task.status":
+      payload = validateDeviceTaskStatusCommand(value, path);
+      break;
+    case "device.task.journal":
+    case "device.task.journal.watch":
+      payload = validateDeviceTaskJournalCommand(value, path);
+      break;
+    case "device.task.journal.unwatch":
+      assertStrictKeys(record, ["commandId", "workspaceId", "taskId", "watchId"], [], path);
+      payload = {
+        commandId: expectIdentifier(record.commandId, `${path}.commandId`),
+        workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+        taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+        watchId: expectIdentifier(record.watchId, `${path}.watchId`),
+      };
+      break;
+    case "device.task.approve":
+      payload = validateDeviceTaskApproveCommand(value, path);
+      break;
+    case "device.task.revoke":
+      payload = validateDeviceTaskRevokeCommand(value, path);
+      break;
+    case "device.task.reconcile":
+      payload = validateDeviceTaskReconcileCommand(value, path);
+      break;
+    case "device.collaboration":
+      payload = validateDeviceCollaborationCommand(value, path);
+      break;
+    case "device.artifact":
+      payload = validateDeviceArtifactCommand(value, path);
+      break;
   }
   return payload as RemoteClientCommandPayloadMapV1[TType];
 }

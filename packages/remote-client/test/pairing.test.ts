@@ -5,7 +5,7 @@ import {
   RemotePairingClient,
 } from "../dist/index.js";
 import type { RemoteBindingV1, RemoteHttpClient } from "../dist/index.js";
-import type { RemotePairingQrV1 } from "@ling-stack/contracts";
+import type { RemoteMobilePlatformV1, RemotePairingProofV1, RemotePairingQrV1 } from "@ling-stack/contracts";
 import {
   encodeBase64Url,
   encodePairingQrV1,
@@ -15,7 +15,10 @@ import { fixture } from "./canonical-signing-fixture.ts";
 const now = "2026-07-31T10:00:00.000Z";
 const expiresAt = "2026-07-31T10:05:00.000Z";
 
-test("pairing pins the Gateway identity and persists only the accepted device binding", async () => {
+test("pairing pins the Gateway identity and persists only the accepted device binding", () => verifyAcceptedPairing());
+test("Android pairing submits its actual platform and receives an Android device ID", () => verifyAcceptedPairing("android"));
+
+async function verifyAcceptedPairing(platform?: RemoteMobilePlatformV1): Promise<void> {
   const qr: RemotePairingQrV1 = {
     kind: "ling_remote_pairing",
     version: 1,
@@ -40,7 +43,7 @@ test("pairing pins the Gateway identity and persists only the accepted device bi
     version: 1,
     gatewayId: qr.gatewayId,
     pairingId: qr.pairingId,
-    deviceId: "iphone-fixture-1",
+    deviceId: platform === "android" ? "android-fixture-1" : "iphone-fixture-1",
     deviceEpoch: 7,
     protocolVersion: 1,
     pairedAt: "2026-07-31T10:00:10.000Z",
@@ -52,7 +55,7 @@ test("pairing pins the Gateway identity and persists only the accepted device bi
     clock: { now: () => now },
     entropy: {
       randomBytes: (length) => new Uint8Array(length).fill(1),
-      randomId: () => "iphone-fixture-1",
+      randomId: (prefix) => `${prefix}-fixture-1`,
     },
     keys: {
       generateOrLoad: async (keyId) => ({
@@ -80,8 +83,9 @@ test("pairing pins the Gateway identity and persists only the accepted device bi
           return { status: 200, body: challenge as T };
         }
         assert.equal(path, "/v1/pairing/proof");
-        const proof = body as { deviceId?: string; pairingSecret?: string; clientNonce?: string };
+        const proof = body as RemotePairingProofV1 & { pairingSecret?: string };
         assert.equal(proof.deviceId, accepted.deviceId);
+        assert.equal(proof.platform, platform ?? "ios");
         assert.equal(proof.pairingSecret, undefined);
         assert.equal(proof.clientNonce, encodeBase64Url(new Uint8Array(32).fill(1)));
         proofSubmissions += 1;
@@ -92,7 +96,8 @@ test("pairing pins the Gateway identity and persists only the accepted device bi
     } satisfies RemoteHttpClient,
   });
 
-  const started = await client.begin(encodePairingQrV1(qr), { displayName: "My iPhone" });
+  const displayName = platform === "android" ? "My Android phone" : "My iPhone";
+  const started = await client.begin(encodePairingQrV1(qr), { displayName, ...(platform ? { platform } : {}) });
   assert.equal(started.binding, undefined);
   assert.equal(storedBinding, undefined);
   const binding = await client.submit(started.pending);
@@ -101,7 +106,7 @@ test("pairing pins the Gateway identity and persists only the accepted device bi
   assert.equal(binding.deviceEpoch, 7);
   assert.equal(binding.gatewayIdentityFingerprint, fixture.gatewayIdentity.fingerprint);
   assert.equal((storedBinding as unknown as RemoteBindingV1).deviceKeyId, `ling.remote.device.${qr.gatewayId}`);
-});
+}
 
 test("pairing rejects a health endpoint that does not match the QR pin", async () => {
   const qr: RemotePairingQrV1 = {
