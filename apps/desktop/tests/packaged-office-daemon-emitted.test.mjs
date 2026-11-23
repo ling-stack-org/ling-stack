@@ -59,7 +59,7 @@ async function fixture(t, options = {}) {
   const sourceEntry = join(root, "packages/daemon/src/cli.ts");
   newFile(sourceEntry, readFileSync(entry));
   const sourceFiles = [sourceEntry, codesignModule, officeModule, acpModule];
-  for (const name of ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"]) {
+  for (const name of ["api-client", "browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"]) {
     const packagePath = join(root, "packages", name, "package.json"), configPath = join(root, "packages", name, "tsconfig.json");
     newFile(packagePath, JSON.stringify({ name: "@ling-stack/" + name, type: "module", main: "./dist/index.js" }));
     newFile(configPath, JSON.stringify({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022",

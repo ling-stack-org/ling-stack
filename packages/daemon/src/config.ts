@@ -82,6 +82,7 @@ export interface RemoteAccessFeatureConfig {
  * have passed; the default keeps the existing external-local path active.
  */
 export interface CuaDriverFeatureConfig {
+  readonly catalogManaged?: boolean;
   readonly bundledEmbedded?: {
     readonly darwin?: boolean;
     readonly win32?: boolean;
@@ -204,6 +205,7 @@ export interface ResolvedDaemonConfig {
   readonly appServerWss?: AppServerWssConfig;
   readonly channels: ChannelFeatureConfig;
   readonly cuaDriver: {
+    readonly catalogManaged: boolean;
     readonly bundledEmbedded: {
       readonly darwin: boolean;
       readonly win32: boolean;
@@ -287,6 +289,8 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
         ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_WORKFLOW_ISOLATED_FILES, false),
     },
     cuaDriver: {
+      catalogManaged: config.cuaDriver?.catalogManaged
+        ?? readBooleanEnv(process.env.LING_DESKTOP_CUA_DRIVER_CATALOG_MANAGED, false),
       bundledEmbedded: {
         darwin: config.cuaDriver?.bundledEmbedded?.darwin
           ?? readBooleanEnv(process.env.LING_STACK_CUA_DRIVER_BUNDLED_EMBEDDED_DARWIN, false),

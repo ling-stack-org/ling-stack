@@ -15,6 +15,7 @@ Related documents:
 - [Core Tools, Runners, MCP Tools, and Plugin Boundary](core-tools-runtime-boundary.md)
 - [Approval Policy](approval-policy.md)
 - [Desktop Release](../release/desktop.md)
+- [Office helper development and releases](https://github.com/ling-stack-org/ling-plugin-office-documents)
 
 ## Product Contract
 
@@ -22,9 +23,9 @@ Ling ships one managed plugin named **Office Documents**. The user installs and 
 inside Ling. Live Excel control must not require an Excel add-in, an Office task pane, a
 Marketplace install, or a second Ling sign-in inside Excel.
 
-The plugin id is `built-in:office-documents`. Its logical MCP server id is
-`mcp_office_documents`. Installation is local control-plane state: the signed native driver
-already ships with Ling Desktop and is activated only after the user installs the plugin.
+The plugin ID is `official:office-documents` and its logical MCP server ID is
+`mcp_office_documents`. Ling Desktop loads the verified platform helper after a restart.
+Compatibility builds can also load the helper from their application resources. [Official plugin distribution](plugin-independent-packaging.md)
 
 Ling does not install or license Microsoft Office. If Excel is absent, the product says
 `Microsoft Excel was not detected` and keeps file-level OOXML tools available.
@@ -41,7 +42,7 @@ The plugin has two independent execution surfaces:
    and `.pptx` files without opening an Office application. This surface is available in
    Desktop and local Web/daemon mode.
 2. **Live Excel sessions** inspect and edit workbooks opened in Microsoft Excel. This surface
-   is Desktop-only and is provided by the bundled native driver.
+   is Desktop-only and uses the platform native helper.
 
 Word and PowerPoint live application control are not part of v1. WPS application control and
 the private `.et`, `.wps`, and `.dps` formats are not supported. Generated OOXML files must be
@@ -204,9 +205,10 @@ information.
 
 ## Release Gates
 
-The Desktop package must include the correct helper for its platform, signed under the same
-release authority, with deterministic identity and hash evidence. A package without a valid
-helper projects file-level capability only and cannot claim live Excel support.
+Live Excel control requires the correct helper for the platform, signed under the release
+authority with deterministic identity and hash evidence. Desktop selects a verified official
+cache entry or the packaged compatibility helper. The file-level capability remains available
+when the live helper is absent. See the [Office helper release guide](https://github.com/ling-stack-org/ling-plugin-office-documents/blob/main/docs/RELEASE.md).
 
 Release acceptance requires real Microsoft Excel on supported Windows and macOS hosts. Mocked
 adapter tests are necessary but cannot close the platform gate. WPS acceptance verifies only

@@ -11,7 +11,7 @@ import { build } from "esbuild";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const helperPath = join(repositoryRoot, "apps/desktop/scripts/packaged-office-daemon-source-inputs.mjs");
-const packageNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk",
+const packageNames = ["api-client", "browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk",
   "providers", "remote-protocol", "runner-pi"];
 const sourceError = /packaged_office_daemon_source_(input|export)_invalid/u;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -28,7 +28,7 @@ test("local source projection snapshots changed authored inputs without modifyin
   assert.notEqual(projection.sourceReviewSha256, hash(f.originalReviewBytes));
 });
 
-test("source projection uses real esbuild on nine reviewed source packages and never stale workspace dist", async t => {
+test("source projection uses real esbuild on reviewed source packages and never stale workspace dist", async t => {
   const f = await fixture(t);
   const projection = f.api.createReviewedOfficeDaemonSourceInputs();
   assert.equal(Object.isFrozen(projection), true);
@@ -250,7 +250,7 @@ test("vendor optional dependency handling remains esbuild default behavior", asy
   projection.assertOriginalInputs(result);
 });
 
-test("all nine package manifests/configs must be reviewed and match the fixed admitted compiler policy", async t => {
+test("workspace package manifests/configs must be reviewed and match the fixed admitted compiler policy", async t => {
   for (const name of packageNames) for (const leaf of ["package.json", "tsconfig.json"]) await t.test(`${name}/${leaf}`, async t => {
     const f = await fixture(t, { omitReview: [`packages/${name}/${leaf}`] });
     assert.throws(() => f.api.createReviewedOfficeDaemonSourceInputs(), sourceError);

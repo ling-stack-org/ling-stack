@@ -1,5 +1,6 @@
 import { closeSync, fstatSync, writeSync } from "node:fs";
 import type { Readable } from "node:stream";
+import { isInheritedDaemonPipe } from "./daemon-pipe.js";
 
 /** Separate from the ordinary 20s service-readiness budget; never extended by activity. */
 export const DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS = 60_000;
@@ -13,7 +14,7 @@ export function writeDaemonResourceBootstrap(input: { readonly fd: number }): vo
   if (input.fd !== 4) throw new DaemonResourceBootstrapError("daemon_resource_bootstrap_invalid");
   try {
     const info = fstatSync(input.fd);
-    if (!info.isFIFO() && !info.isSocket()) throw new DaemonResourceBootstrapError("daemon_resource_bootstrap_insecure");
+    if (!isInheritedDaemonPipe(info)) throw new DaemonResourceBootstrapError("daemon_resource_bootstrap_insecure");
     const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, phase: "resources_ready", pid: process.pid }));
     let offset = 0;
     while (offset < bytes.length) {
@@ -28,6 +29,7 @@ export function writeDaemonResourceBootstrap(input: { readonly fd: number }): vo
 export function readDaemonResourceBootstrap(input: {
   readonly channel: Readable;
   readonly pid: number;
+  readonly timeoutMs?: number;
   readonly signal?: AbortSignal;
 }): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -55,7 +57,7 @@ export function readDaemonResourceBootstrap(input: {
       else resolve();
     };
     const unavailable = (): void => finish("daemon_resource_bootstrap_unavailable");
-    const timer = setTimeout(() => finish("daemon_resource_bootstrap_timeout"), DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS);
+    const timer = setTimeout(() => finish("daemon_resource_bootstrap_timeout"), input.timeoutMs ?? DAEMON_RESOURCE_BOOTSTRAP_TIMEOUT_MS);
     const data = (chunk: Buffer): void => {
       size += chunk.length;
       if (size > 1024) { finish("daemon_resource_bootstrap_invalid"); return; }

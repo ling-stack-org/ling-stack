@@ -164,6 +164,7 @@ export async function writeCuaDriverPackageAuthorityFiles(input) {
     componentId: "cua-driver",
     distributionRevision: CUA_DRIVER_PACKAGE_REVISION,
     providerExpected: true,
+    ...(input.providerSource === "official-cache" ? { providerSource: "official-cache" } : {}),
     platform: input.platform === "darwin" ? "darwin" : "win32",
     signingTier: documents.signingProfile.signingTier,
     distributionChannel: documents.signingProfile.distributionChannel,

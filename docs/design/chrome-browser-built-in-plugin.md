@@ -3,7 +3,7 @@
 Status: active product, security, and transport contract
 Owner: Browser integration, Desktop, daemon, and release maintainers
 Last verified: 2026-08-24
-Code and test anchors: `apps/chrome-extension`, `packages/browser-host`,
+Code and test anchors: [Ling for Chrome producer repository](https://github.com/ling-stack-org/ling-plugin-chrome-browser), `packages/browser-host`,
 `packages/daemon/src/features/browser-extension`, `apps/web/src/features/plugins`, and
 `apps/desktop/tests/chrome-extension-*.mjs`
 
@@ -23,7 +23,7 @@ reconnection:
 ```text
 Ling conversation / teammate / channel
   -> existing MCP binding, approval, cancellation, and audit
-  -> built-in:chrome + mcp_chrome_browser
+  -> official:chrome-browser + mcp_chrome_browser
   -> daemon browser session controller
   -> private loopback native broker
   -> com.lingstack.browser Native Messaging Host
@@ -60,7 +60,7 @@ for already-installed `0.1.0` credentials during the `0.1.1`/`0.1.2` migration w
 ## Stable Identities
 
 ```text
-plugin id:                  built-in:chrome
+plugin id:                  official:chrome-browser
 logical MCP id:             mcp_chrome_browser
 business protocol:          ling.chrome.v1
 native transport protocol:  ling.chrome.native.v1
@@ -96,8 +96,9 @@ refresh loop that causes status flicker.
 
 1. The user installs Ling for Chrome from the Web Store and enables Chrome in Ling. These two
    explicit actions form the one-time connection authorization.
-2. Desktop startup idempotently registers `com.lingstack.browser` for Chrome and Chromium. Source
-   users run `ling-stack browser-host install` once.
+2. The Ling package supplies the platform Native Host. Restart Desktop after installing,
+   updating or rolling back that package to register `com.lingstack.browser` for Chrome and
+   Chromium. Source users run `ling-stack browser-host install` once.
 3. The daemon starts a private random-port broker and publishes a short-lived user-only runtime
    descriptor.
 4. The extension connects with `chrome.runtime.connectNative("com.lingstack.browser")`.
@@ -255,9 +256,13 @@ closes pending commands and invalidates the descriptor generation.
 
 ## Packaging And Release
 
-The deterministic extension build records extension version, extension ID, manifest SHA-256, ZIP
-SHA-256, and source commit SHA. Desktop carries the matching platform Host and manifest templates.
-The Host is part of macOS signing verification and Windows NSIS/hash verification.
+The [Ling for Chrome release guide](https://github.com/ling-stack-org/ling-plugin-chrome-browser/blob/main/docs/RELEASE.md)
+owns the extension and Native Host build and release steps. The deterministic extension build records
+extension version, extension ID, manifest SHA-256, ZIP SHA-256 and source commit SHA.
+Desktop registers the verified platform Host through the Native Messaging templates.
+During the migration, the bundled Host participates in the Desktop macOS signing and
+Windows NSIS verification. The cache-based path uses the official plugin package and preserves
+the extension ID, manifest host name and browser credentials.
 
 Normal releases rebuild the final Web Store ZIP from the exact merged `main` commit after CI passes.
 The user-authorized `0.1.2` recovery release is a narrow exception: it may be built from a clean,

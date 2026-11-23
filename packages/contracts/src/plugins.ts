@@ -647,3 +647,38 @@ export interface PluginPackageValidationResponse {
   readonly plugin?: ManagedPluginView;
   readonly validation: PluginPackageValidationResult;
 }
+
+export function comparePluginVersions(left: string, right: string): number {
+  const leftVersion = parsePluginVersion(left);
+  const rightVersion = parsePluginVersion(right);
+  if (leftVersion[0] !== rightVersion[0]) return leftVersion[0] - rightVersion[0];
+  if (leftVersion[1] !== rightVersion[1]) return leftVersion[1] - rightVersion[1];
+  if (leftVersion[2] !== rightVersion[2]) return leftVersion[2] - rightVersion[2];
+  const leftPre = leftVersion[3];
+  const rightPre = rightVersion[3];
+  if (leftPre === rightPre) return 0;
+  if (!leftPre) return 1;
+  if (!rightPre) return -1;
+  const leftIdentifiers = leftPre.split(".");
+  const rightIdentifiers = rightPre.split(".");
+  for (let index = 0; index < Math.max(leftIdentifiers.length, rightIdentifiers.length); index += 1) {
+    const a = leftIdentifiers[index];
+    const b = rightIdentifiers[index];
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    if (a === b) continue;
+    const aNumeric = /^\d+$/u.test(a);
+    const bNumeric = /^\d+$/u.test(b);
+    if (aNumeric && bNumeric) return Number(a) - Number(b);
+    if (aNumeric) return -1;
+    if (bNumeric) return 1;
+    return a < b ? -1 : 1;
+  }
+  return 0;
+}
+
+function parsePluginVersion(version: string): [number, number, number, string | undefined] {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/u.exec(version.trim());
+  if (!match) return [0, 0, 0, version.trim() || undefined];
+  return [Number(match[1]), Number(match[2]), Number(match[3]), match[4]];
+}

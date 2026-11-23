@@ -2,17 +2,15 @@
 
 ## Status
 
-Design proposal. Stage 1 slices 1-3 are implemented in the current codebase:
-catalog/read-only UI, MCP preset apply, and plugin state/health.
+The plugin manager supports product-managed capabilities, trusted local presets,
+and an official catalog for platform packages. Catalog installation and rollback
+use verified cache entries. Desktop selects the installed native runtime at
+startup. The independent producers, signing, and migration gates are documented
+in [Independent Plugin Packaging](plugin-independent-packaging.md).
 
-This document records the next plugin-management slice after the implemented internal
-registry work. It deliberately targets Codex-like internal and bundled plugin governance
-first. Third-party plugin APIs, marketplace installation, and untrusted sandboxing remain
-later work.
-
-The Codex source model should be treated as a layer model to borrow gradually, not as a
-drop-in runtime replacement. Ling should keep its existing daemon, runner registry, MCP
-broker, teammate bindings, and approval policy as the execution authority.
+The daemon, runner registry, MCP broker, teammate bindings and approval policy own
+execution. The official catalog distributes reviewed Ling packages. Third-party
+plugin APIs and untrusted sandboxing remain later work.
 
 Related docs:
 
@@ -53,20 +51,18 @@ for engineers, but it hides the trust model from normal operators.
 
 Build a plugin manager in three stages:
 
-1. Internal and bundled plugin manager.
+1. Product-managed plugins and the official catalog.
 2. Isolated local plugin contract.
 3. Third-party plugin API and marketplace.
 
-Only stage 1 is in scope for the next slice.
-
-Stage 1 should support built-in, bundled, and trusted local preset capabilities. It should
-not support arbitrary third-party code loading, marketplace install, npm package install,
-or external plugin SDK APIs.
+Stage 1 supports built-in, bundled, official remote, and trusted local preset
+capabilities. The official marketplace resolves only cataloged packages from the
+Ling producers, using the signed distribution contract.
 
 Codex's plugin system splits this problem into manifest/schema, marketplace/source,
-install cache, runtime capability injection, and policy overlays for MCP servers, apps,
-and hooks. Stage 1-3 only needs the internal parts of those layers. Public source
-resolution, third-party install APIs, and remote marketplaces stay deferred.
+install cache, runtime capability injection, and policy overlays for MCP servers,
+apps, and hooks. Public source resolution, third-party installation APIs and
+third-party marketplaces remain deferred.
 
 ## Goals
 
@@ -78,11 +74,9 @@ resolution, third-party install APIs, and remote marketplaces stay deferred.
 - Preserve the existing internal registry and MCP server APIs.
 - Add `cua-driver` as the first high-risk trusted local preset.
 - Add Chrome as the first user-facing product-managed built-in plugin. Chrome uses an explicitly
-  installed Ling extension and contributes a logical MCP server; it does not load arbitrary plugin
-  code inside the daemon.
-- Add Office Documents as a Ling-installed built-in plugin. Its live Excel adapter ships with
-  Desktop and never requires an Excel add-in, Office task pane, Marketplace install, or Office-side
-  Ling sign-in.
+  installed Ling extension, a platform Native Host and a daemon-owned logical MCP server.
+- Use the native Excel adapter for Office Documents live control. The Desktop host owns
+  driver requests, and the file-level tools remain available as a built-in capability.
 
 The implemented trusted-local preset remains the external fallback. Packaged macOS and
 Windows Desktop may project the same stable product id through `bundled_embedded`
@@ -92,7 +86,7 @@ distribution-specific contract lives in the Bundled Embedded Cua Driver document
 ## Non-Goals
 
 - No third-party plugin API.
-- No marketplace or plugin store.
+- No public third-party marketplace.
 - No arbitrary npm/GitHub/plugin install.
 - No untrusted plugin sandbox.
 - No plugin direct database access.
@@ -101,12 +95,13 @@ distribution-specific contract lives in the Bundled Embedded Cua Driver document
 
 ## Trust Tiers
 
-Stage 1 uses three product-facing tiers:
+Stage 1 uses four product-facing tiers:
 
 | Tier | Source | Code loading | Example | Default posture |
 | --- | --- | --- | --- | --- |
 | Built-in | Compiled into Ling packages | None | Product-managed built-in capability bundles | Enabled by product defaults |
 | Bundled | Shipped with Ling distribution | Static manifest and optional local assets | Browser MCP preset, GitHub MCP preset | Installable/enabled by user |
+| Official remote | Signed Ling catalog and platform package | Desktop verifies cached native runtimes at startup | Excel helper, Chrome Native Host, Cua Driver provider | Installed on demand and enabled per workspace |
 | Trusted local preset | User confirms an installed local binary or endpoint | No plugin code loaded by Ling | `cua-driver mcp` | Disabled until explicitly added |
 
 External trusted and external untrusted tiers are intentionally excluded from stage 1.
@@ -125,6 +120,9 @@ flowchart TD
   API --> Catalog[Plugin Catalog]
   Catalog --> BuiltIn[Built-in registry metadata]
   Catalog --> Bundled[Bundled manifests]
+  Catalog --> Official[Signed Ling catalog]
+  Official --> Cache[Verified user-level runtime cache]
+  Cache --> Desktop[Desktop native runtime]
   Catalog --> Presets[Trusted local presets]
   API --> Registry[LingExtensionRegistry]
   API --> MCP[MCP server config and tool catalog]
@@ -188,9 +186,9 @@ Ling should borrow the same separation of concerns:
 
 | Layer | Ling meaning | Stage posture |
 | --- | --- | --- |
-| Manifest/schema | A package-level declaration of id, version, interface metadata, skills, MCP servers, apps, hooks, and assets. | Stage 1 descriptors cover managed metadata; a strict package manifest belongs to Stage 2. |
-| Marketplace/source | An index of plugins and their built-in, bundled, trusted local, Git, or remote source. | Stage 1 uses built-in descriptors and trusted local presets only. Bundled/local indexes come next; Git and remote sources are later. |
-| Install cache | A Ling-owned materialized plugin directory with versioned state. | Stage 1 persists managed state and linked resources; Stage 2 adds a package cache for trusted local and bundled bundles. |
+| Manifest/schema | A package-level declaration of id, version, interface metadata, skills, MCP servers, apps, hooks, and assets. | Stage 1 uses managed descriptors and validates the manifest, inventory, and compatibility of official packages. |
+| Marketplace/source | An index of available plugin packages and presets. | Stage 1 supports built-in descriptors, bundled manifests, trusted local presets, and a signed official catalog. |
+| Install cache | A Ling-owned materialized plugin directory with versioned state. | Official native packages share a user-level cache with current and previous selections. Workspace stores retain enablement and linked resources. |
 | Runtime capability injection | Merge enabled plugin skills, MCP servers, apps, hooks, and summaries into session/runtime capabilities. | Stage 1 surfaces contributions and applies MCP presets; later stages inject package capabilities into run snapshots. |
 | MCP/app/hook policy overlay | User/workspace/admin policy over plugin-provided MCP servers, app connectors, hooks, and tools. | Stage 1 preserves existing MCP and approval gates; later stages add per-plugin overlays. |
 
@@ -207,21 +205,16 @@ Important boundaries:
 
 ## Plugin Descriptor
 
-Stage 1 should use a descriptor that is narrower than a future package manifest. It can
-be generated for built-ins, loaded from controlled bundled assets, or defined as a trusted
-local preset. It is intentionally not a third-party SDK contract.
-
-Future package manifests should be stricter about filesystem shape and path resolution:
-all contribution paths must be relative to the plugin root, must not escape the bundle,
-and must declare their intended contribution type before any runtime loader reads them.
-A likely package entry point is:
+Managed descriptors come from built-in registrations, controlled bundled assets, trusted
+local presets, or verified official package manifests. Package contributions declare
+their type and use paths confined to the bundle. The package manifest is stored at
 
 ```text
 .ling-plugin/plugin.json
 ```
 
 ```ts
-export type PluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
+export type PluginSourceKind = "built-in" | "bundled" | "official-remote" | "trusted-local-preset";
 
 export type PluginContributionKind =
   | "mcp-server"
@@ -259,9 +252,9 @@ export interface PluginContribution {
 
 Descriptors are metadata. They do not grant tools to a teammate by themselves.
 
-When Stage 2 introduces package manifests, the manifest should compile into the same
-managed descriptor and linked resource records. Runtime code should depend on the
-compiled descriptor, not parse package files during every run.
+Official installation compiles the manifest into a managed descriptor and linked
+resource records. Desktop resolves native paths from the verified user-level cache
+at startup. [Independent Plugin Packaging](plugin-independent-packaging.md#原生运行时)
 
 ## Persistent Model
 
@@ -466,14 +459,14 @@ Rules:
 - Load manifests from a controlled bundled directory.
 - Validate descriptors and Ling version compatibility.
 - Support bundled MCP server, skill-pack, runner, and provider contributions.
-- Still no arbitrary third-party install.
+- Verify the signed official catalog and select platform packages by Ling version and architecture.
 
 Detailed implementation notes are tracked in
 Plugin Manager.
 
 ### Slice 5: Install Cache, Runtime Injection, And Isolated Local Contract
 
-- Add a Ling-owned package cache for trusted local and bundled bundles.
+- Manage official native versions in a user-level package cache with offline rollback.
 - Compile manifests into managed descriptors and linked resources.
 - Add worker/child-process host context for internal-isolated plugins.
 - Expose only scoped context methods.
@@ -522,10 +515,6 @@ git diff --check
 
 ## Open Questions
 
-- Should plugin state be workspace-local only, or should desktop builds also keep a global
-  installed-plugin catalog?
-- Should `cua-driver` be visible only on macOS, or visible everywhere with a platform
-  blocker?
 - Should screenshot/page extraction be classified as read, external, or sensitive-read in
   the approval model?
 - Should plugin descriptors be generated at daemon startup only, or hot-reloaded for

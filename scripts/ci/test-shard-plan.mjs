@@ -23,14 +23,15 @@ const daemonSuite = { packageName: "@ling-stack/daemon", cwd: join(root, "packag
       "test/workflow-worktree-cleanup.test.mjs": 600_000,
       "test/workflow-worktree-cleanup-store.test.mjs": 600_000,
     },
-    // These fixtures create many native/process and Git-backed resources. Run
-    // them before the ordinary queue on their assigned shard so they cannot
-    // starve one another under hosted macOS runner pressure.
-    exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
+    // Run resource-intensive and timing-sensitive process fixtures in isolation
+    // before the ordinary queue on their assigned shard.
+    exclusive: ["test/acp-journaled-lifecycle.test.mjs", "test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
       "test/delegation-production-tool-surface.test.mjs", "test/engine-lifecycle.test.mjs",
-      "test/kimi-owned-execution.test.mjs", "test/workflow-conflict-recovery.test.mjs",
-      "test/workflow-isolated-delivery-integration.test.mjs", "test/workflow-repository-fence.test.mjs",
-      "test/signal-shutdown.regression-3.test.mjs"] };
+      "test/keychain-bounded-read.test.mjs", "test/kimi-owned-execution.test.mjs", "test/mcp-host-operation.test.mjs",
+      "test/signal-shutdown.regression-3.test.mjs",
+      "test/workflow-conflict-recovery.test.mjs", "test/workflow-isolated-delivery-integration.test.mjs",
+      "test/workflow-isolated-parallel-integration.test.mjs", "test/workflow-isolation-terminal-report.test.mjs",
+      "test/workflow-repository-fence.test.mjs"] };
 export const testSuites = {
   core: {
     packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 8, concurrency: 2, excluded: [],

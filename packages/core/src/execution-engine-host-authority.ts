@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, fstatSync, writeSync } from "node:fs";
 import type { Readable } from "node:stream";
+import { isInheritedDaemonPipe } from "./daemon-pipe.js";
 
 export class ExecutionEngineHostAuthorityError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -23,7 +24,7 @@ export function writeExecutionEngineHostAuthority(input: {
   if (input.fd !== 3) fail("engine_host_authority_invalid");
   try {
     const info = fstatSync(input.fd);
-    if (!info.isFIFO() && !info.isSocket()) fail("engine_host_authority_insecure");
+    if (!isInheritedDaemonPipe(info)) fail("engine_host_authority_insecure");
     const value: ExecutionEngineHostAuthority = {
       schemaVersion: 1, instanceId: randomUUID(), baseUrl: localBaseUrl(input.baseUrl), pid: process.pid,
       credentials: input.credentials,

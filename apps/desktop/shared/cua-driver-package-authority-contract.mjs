@@ -11,6 +11,7 @@
  *   componentId: "cua-driver",
  *   distributionRevision: "0.8.3-ling.1",
  *   providerExpected: true,
+ *   providerSource?: "official-cache",
  *   platform: "darwin" | "win32",
  *   signingTier: CuaDriverSigningTier,
  *   distributionChannel: CuaDriverDistributionChannel,
@@ -77,12 +78,16 @@ export function validateCuaDriverPackageAuthority(value) {
     "distributionChannel",
     "capabilitiesSha256",
     "runtimeTrustPolicySha256",
+    ...(value.providerSource === "official-cache" ? ["providerSource"] : []),
   ]);
   if (value.platform !== "darwin" && value.platform !== "win32") {
     fail("cua_driver_package_authority_platform_invalid");
   }
   if (!validSigningPair(value.signingTier, value.distributionChannel)) {
     fail("cua_driver_package_authority_signing_pair_invalid");
+  }
+  if (value.providerSource === "official-cache" && value.signingTier !== "production_signed") {
+    fail("cua_driver_package_authority_cache_signing_invalid");
   }
   if (!isSha256(value.capabilitiesSha256) || !isSha256(value.runtimeTrustPolicySha256)) {
     fail("cua_driver_package_authority_digest_invalid");
@@ -92,6 +97,7 @@ export function validateCuaDriverPackageAuthority(value) {
     componentId: "cua-driver",
     distributionRevision: "0.8.3-ling.1",
     providerExpected: true,
+    ...(value.providerSource === "official-cache" ? { providerSource: "official-cache" } : {}),
     platform: value.platform,
     signingTier: value.signingTier,
     distributionChannel: value.distributionChannel,

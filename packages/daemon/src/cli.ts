@@ -8,7 +8,7 @@ import { readPackagedQaHarnessSelection } from "./runtime/packaged-qa-harness-bo
 import { createDaemonSignalShutdown } from "./runtime/signal-shutdown.js";
 import { writeExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
 import { writeDaemonResourceBootstrap } from "@ling-stack/core/daemon-resource-bootstrap";
-import { createDaemonShutdownReporter } from "@ling-stack/core/daemon-shutdown-observer";
+import { DAEMON_SHUTDOWN_REQUEST_FD, createDaemonShutdownReporter, readDaemonShutdownRequest } from "@ling-stack/core/daemon-shutdown-observer";
 
 const host = process.env.LING_STACK_HOST ?? "127.0.0.1";
 const port = Number.parseInt(process.env.LING_STACK_PORT ?? "17891", 10);
@@ -24,14 +24,21 @@ const resourceBootstrapChannel = process.env.LING_STACK_RESOURCE_BOOTSTRAP_FD;
 delete process.env.LING_STACK_RESOURCE_BOOTSTRAP_FD;
 const shutdownObserverChannel = process.env.LING_STACK_SHUTDOWN_OBSERVER_FD;
 delete process.env.LING_STACK_SHUTDOWN_OBSERVER_FD;
+const shutdownRequestChannel = process.env.LING_STACK_SHUTDOWN_REQUEST_FD;
+delete process.env.LING_STACK_SHUTDOWN_REQUEST_FD;
 if (shutdownObserverChannel !== undefined && shutdownObserverChannel !== "5") {
   throw new Error("daemon_shutdown_observer_invalid");
 }
-const shutdownReporter = shutdownObserverChannel === "5" ? createDaemonShutdownReporter({ fd: 5 }) : undefined;
+if (shutdownRequestChannel !== undefined
+  && (shutdownRequestChannel !== String(DAEMON_SHUTDOWN_REQUEST_FD) || shutdownObserverChannel !== "5")) {
+  throw new Error("daemon_shutdown_request_invalid");
+}
 if (resourceBootstrapChannel !== undefined
   && (resourceBootstrapChannel !== "4" || process.env.LING_STACK_PACKAGED_DESKTOP !== "1")) {
   throw new Error("daemon_resource_bootstrap_invalid");
 }
+const shutdownReporter = shutdownObserverChannel === "5" ? createDaemonShutdownReporter({ fd: 5 }) : undefined;
+const shutdownRequest = shutdownRequestChannel === undefined ? undefined : readDaemonShutdownRequest();
 // Validate selection before native/bootstrap side effects. Normal installs have no selection.
 const qaHarness = readPackagedQaHarnessSelection(process.env);
 const restrictedCommands = process.platform === "darwin"
@@ -82,3 +89,4 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   void stop();
 });
+void shutdownRequest?.then(requested => { if (requested) return stop(); });

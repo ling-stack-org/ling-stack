@@ -34,41 +34,52 @@ await preparePackagedGstackBuild();
 const gstackBuild = packagedGstackBuilderConfig();
 const packageProvider = process.env.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1";
 const externalPluginsOnly = process.env.LING_PLUGIN_EXTERNAL_ONLY === "1";
+const catalogManaged = process.env.LING_CUA_DRIVER_CATALOG_MANAGED === "1";
+if (catalogManaged && (!externalPluginsOnly || packageProvider)) {
+  throw new Error("cua_driver_catalog_managed_resource_mode_invalid");
+}
+if (externalPluginsOnly && packageProvider) {
+  throw new Error("The embedded Cua Driver signing lane requires the provider payload in Desktop resources.");
+}
 const packageResourcesRoot = process.env.LING_CUA_PACKAGE_RESOURCES_ROOT;
 const packageHostAuthorityJson = process.env.LING_CUA_PACKAGE_HOST_AUTHORITY_JSON;
-if (packageProvider && (!packageResourcesRoot || !isAbsolute(packageResourcesRoot))) {
+const packageAuthority = packageProvider || catalogManaged;
+if (packageAuthority && (!packageResourcesRoot || !isAbsolute(packageResourcesRoot))) {
   throw new Error("cua_driver_package_resources_root_invalid");
 }
-if (!packageProvider && packageResourcesRoot) {
+if (!packageAuthority && packageResourcesRoot) {
   throw new Error("cua_driver_package_resources_without_authority");
 }
-if (!packageProvider && packageHostAuthorityJson) {
+if (!packageAuthority && packageHostAuthorityJson) {
   throw new Error("cua_driver_package_host_authority_without_package_authority");
 }
-const packageHostAuthority = packageProvider
+const packageHostAuthority = packageAuthority
   ? parsePackageHostAuthority(packageHostAuthorityJson)
   : createExternalOnlyCuaDriverPackageAuthority();
+if (catalogManaged !== (packageHostAuthority.providerSource === "official-cache")) {
+  throw new Error("cua_driver_package_authority_source_mismatch");
+}
 const signingProfile = resolveSigningProfile();
 const lockedUseBuild = await lockedUseReleaseBuilderConfig({
   releaseRoot: process.env.LING_LOCKED_USE_RELEASE_ROOT,
   signingTier: signingProfile.signingTier,
-  providerExpected: packageHostAuthority.providerExpected && packageHostAuthority.platform === "darwin",
+  providerExpected: packageProvider && packageHostAuthority.platform === "darwin",
 });
 const lockedUseValidationBuild = await lockedUseValidationBuilderConfig({
   candidateRoot: process.env.LING_LOCKED_USE_VALIDATION_ROOT,
   releaseRoot: process.env.LING_LOCKED_USE_RELEASE_ROOT,
   signingTier: signingProfile.signingTier,
-  providerExpected: packageHostAuthority.providerExpected && packageHostAuthority.platform === "darwin",
+  providerExpected: packageProvider && packageHostAuthority.platform === "darwin",
 });
 const lockedUseLocalBuild = await lockedUseLocalBuilderConfig({
   localRoot: process.env.LING_LOCKED_USE_LOCAL_ROOT,
   releaseRoot: process.env.LING_LOCKED_USE_RELEASE_ROOT,
   validationRoot: process.env.LING_LOCKED_USE_VALIDATION_ROOT,
   signingTier: signingProfile.signingTier,
-  providerExpected: packageHostAuthority.providerExpected && packageHostAuthority.platform === "darwin",
+  providerExpected: packageProvider && packageHostAuthority.platform === "darwin",
 });
 if (
-  packageHostAuthority.providerExpected
+  packageProvider
   && (
     packageHostAuthority.signingTier !== signingProfile.signingTier
     || packageHostAuthority.distributionChannel !== signingProfile.distributionChannel
@@ -79,6 +90,10 @@ if (
 
 export default {
   ...baseBuild,
+  files: [
+    ...baseBuild.files,
+    ...(externalPluginsOnly ? ["!dist/office-driver{,/**/*}"] : []),
+  ],
   ...(localElectronDist ? { electronDist: localElectronDist } : {}),
   asar: true,
   extraMetadata: {
@@ -87,6 +102,7 @@ export default {
     ...(lockedUseBuild.extraMetadata ?? {}),
     ...(lockedUseValidationBuild.extraMetadata ?? {}),
     ...(lockedUseLocalBuild.extraMetadata ?? {}),
+    lingPluginResourceMode: externalPluginsOnly ? "on-demand" : "bundled",
     [CUA_DRIVER_PACKAGE_AUTHORITY_METADATA_KEY]: packageHostAuthority,
   },
   electronFuses: {
@@ -101,14 +117,21 @@ export default {
       : {}),
   },
   extraResources: [
-    ...filterPluginResources(baseBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(gstackBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(lockedUseBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(lockedUseValidationBuild.extraResources ?? [], externalPluginsOnly),
-    ...filterPluginResources(lockedUseLocalBuild.extraResources ?? [], externalPluginsOnly),
+    ...(baseBuild.extraResources ?? []),
+    // Builder merges package.json arrays with the in-process macOS config.
+    ...(!externalPluginsOnly ? packageJson.lingBundledPluginResources : []),
+    ...(gstackBuild.extraResources ?? []),
+    ...(lockedUseBuild.extraResources ?? []),
+    ...(lockedUseValidationBuild.extraResources ?? []),
+    ...(lockedUseLocalBuild.extraResources ?? []),
     ...(!externalPluginsOnly && packageProvider
       ? [{ from: resolve(packageResourcesRoot), to: "providers/cua-driver" }]
       : []),
+    ...(catalogManaged ? [{
+      from: resolve(packageResourcesRoot),
+      to: "providers/cua-driver",
+      filter: ["packaged-provider-capabilities.json", "runtime-trust-policy.json"],
+    }] : []),
   ],
   mac: {
     ...baseBuild.mac,
@@ -155,11 +178,6 @@ export default {
     preCompressedFileExtensions: [],
   },
 };
-
-function filterPluginResources(resources, externalOnly) {
-  if (!externalOnly) return resources;
-  return resources.filter((entry) => !["bundled", "browser-extension", "office-driver", "browser-host"].includes(entry.to));
-}
 
 function parsePackageHostAuthority(value) {
   if (typeof value !== "string" || value.length === 0 || value.length > 16 * 1024) {

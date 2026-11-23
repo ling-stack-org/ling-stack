@@ -8,12 +8,13 @@ import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "./packaged-offic
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const desktopRoot = resolve(repositoryRoot, "apps/desktop");
-const packageNames = Object.freeze(["browser-host", "contracts", "core", "daemon", "localization",
+const packageNames = Object.freeze(["api-client", "browser-host", "contracts", "core", "daemon", "localization",
   "plugin-sdk", "providers", "remote-protocol", "runner-pi"]);
 const identityKeys = Object.freeze(["dev", "ino", "mode", "uid", "gid", "nlink", "size", "mtimeNs", "ctimeNs"]);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const maximumFileBytes = 8 * 1024 * 1024;
 const maximumTotalBytes = 128 * 1024 * 1024;
+const maximumWorkspaceFiles = 4096;
 const namespace = "ling-reviewed-workspace-source";
 const resolutionOrigin = Symbol("original-workspace-source-resolution");
 function requireSource(value) { if (!value) throw new Error("packaged_office_daemon_source_input_invalid"); }
@@ -68,7 +69,7 @@ export function createReviewedOfficeDaemonSourceInputs() {
   const packagingAllowlist = releaseReview ? reviewed.review.packagingSha256 : Object.fromEntries(
     [...PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS, ...packageNames.flatMap(name => {
       const root = resolve(repositoryRoot, "packages", name, "src");
-      const entries = [];
+      const entries = [`packages/${name}/package.json`, `packages/${name}/tsconfig.json`];
       function collect(directory) {
         for (const item of readdirSync(directory, { withFileTypes: true })) {
           const path = resolve(directory, item.name);
@@ -91,7 +92,8 @@ export function createReviewedOfficeDaemonSourceInputs() {
     if (!snapshots.has(path)) {
       const expected = releaseReview ? reviewed.review.packagingSha256[name] : hash(readFileSync(path));
       const value = capture(path, expected);
-      totalBytes += value.bytes.length; requireSource(totalBytes <= maximumTotalBytes && snapshots.size < 2048);
+      totalBytes += value.bytes.length;
+      requireSource(totalBytes <= maximumTotalBytes && snapshots.size < maximumWorkspaceFiles);
       snapshots.set(path, value);
     }
     return snapshots.get(path);

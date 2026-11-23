@@ -28,3 +28,24 @@ test("candidate workflow accepts reusable calls and tag-triggered publication wh
   assert.match(reusableWorkflow, /contents: write/u);
   assert.match(releasePolicy, /Release remains an explicit maintainer action/u);
 });
+
+test("the hosted candidate assembles prepared inputs through the same native packagers as local builds", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../../apps/desktop/package.json", import.meta.url), "utf8"));
+  const steps = [...reusableWorkflow.matchAll(/^      - name: (.+)\n([\s\S]*?)(?=^      - |^  draft:)/gmu)];
+  const preparationIndex = steps.findIndex(([, name]) => name === "Build workspace dependencies for the Desktop candidate");
+  const nativeIndex = steps.findIndex(([, name]) => name === "Build native inputs before collecting their locked source and notices");
+  const materialsIndex = steps.findIndex(([, name]) => name === "Generate version-matched notices, original licenses and SBOM");
+  const assemblyIndex = steps.findIndex(([, name]) => name === "Assemble the native unsigned development candidate from prepared inputs");
+  const verificationIndex = steps.findIndex(([, name]) => name === "Verify actual final archives, bundled resources and runtime structure");
+  assert.ok(preparationIndex >= 0 && preparationIndex < nativeIndex && nativeIndex < materialsIndex
+    && materialsIndex < assemblyIndex && assemblyIndex < verificationIndex);
+
+  const assembly = steps[assemblyIndex][2];
+  const commands = assembly.split("\n").map(line => line.trim()).filter(line => line.startsWith("corepack pnpm "));
+  for (const script of ["package:mac", "package:win"]) {
+    const packager = manifest.scripts[script].split(" && ").at(-1);
+    assert.ok(commands.includes(`corepack pnpm --filter @ling-stack/desktop exec ${packager}`), script);
+  }
+  assert.equal(commands.length, 2);
+  assert.match(assembly, /LING_PACKAGED_RELEASE_REVIEW_REQUIRED=1/u);
+});

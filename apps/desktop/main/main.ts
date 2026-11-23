@@ -76,6 +76,7 @@ import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-i
 import { createHumanEvaluationDesktopComposition } from "./human-evaluation/composition.js";
 import { DesktopMobileAccessClient } from "./mobile-access/client.js";
 import { OfficeDriverRuntime, resolveOfficeDriverExecutablePath } from "./office-driver/runtime.js";
+import { resolveOptionalPluginExecutable } from "./official-plugin-resources.js";
 import { HostCapabilityRuntime } from "./host-capabilities/runtime.js";
 import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
 import { DesktopBackgroundRepository } from "./backgrounds/background-repository.js";
@@ -343,20 +344,28 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     previewIndexPath: resources.previewIndexPath,
     browserHostPath: resources.browserHostPath,
   });
-  try {
-    const registration = await installDesktopBrowserHostForLaunch({
-      hostPath: resources.browserHostPath,
-      installBrowserHost,
-    });
-    logStartup(registration === "registered" ? "browser_host.registered" : "browser_host.registration_skipped", {
-      packaged: app.isPackaged,
-      ...(registration === "skipped_owned_qa" ? { reason: "owned_synthetic_qa_profile" } : {}),
-    });
-  } catch (error) {
-    logStartup("browser_host.registration_unavailable", {
-      packaged: app.isPackaged,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  const browserHostPath = await resolveOptionalPluginExecutable({
+    packaged: app.isPackaged,
+    pluginId: "official:chrome-browser",
+    lingVersion: app.getVersion(),
+    executable: process.platform === "win32" ? "runtime/ling-browser-host.exe" : "runtime/ling-browser-host",
+    bundledPath: resources.browserHostPath,
+    onInvalidCache: () => logStartup("browser_host.plugin_cache_unavailable", { platform: process.platform }),
+  });
+  if (!attempt.isCurrent()) return false;
+  if (browserHostPath) {
+    try {
+      const registration = await installDesktopBrowserHostForLaunch({ hostPath: browserHostPath, installBrowserHost });
+      logStartup(registration === "registered" ? "browser_host.registered" : "browser_host.registration_skipped", {
+        packaged: app.isPackaged,
+        ...(registration === "skipped_owned_qa" ? { reason: "owned_synthetic_qa_profile" } : {}),
+      });
+    } catch (error) {
+      logStartup("browser_host.registration_unavailable", {
+        packaged: app.isPackaged,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   if (realCaptureSmokeMode && realCaptureSmokeDescriptor) {
     await verifyRealCaptureRequestProvenance(resources.previewIndexPath, realCaptureSmokeDescriptor);
@@ -417,6 +426,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         appPath: app.getAppPath(),
         resourcesPath: resources.resourcesRoot,
         platform: process.platform,
+        lingVersion: app.getVersion(),
       });
       if (cuaDriverPackagedStartupAuthority.failure) {
         logStartup("cua_driver.packaged_capabilities_unavailable", {
@@ -474,11 +484,13 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           defaultWorkspaceCwd,
           expectedProductVersion: app.getVersion(),
           desktopBridgeToken: bridgeToken,
-          browserHostPath: resources.browserHostPath,
+          browserHostPath,
           packaged: app.isPackaged,
           engineSupervisorPath: resources.engineSupervisorPath,
           imageSanitizerPath: resources.imageSanitizerPath,
           cuaDriverFeatureFlags: featureFlags,
+          cuaDriverCatalogManaged: cuaDriverPackagedStartupAuthority?.authority?.providerExpected === true
+            && cuaDriverPackagedStartupAuthority.authority.providerSource === "official-cache",
           ...(!app.isPackaged && smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onUnexpectedExit: (details) => {
             requestDesktopDaemonRecovery(details);
@@ -489,6 +501,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         bridgeToken,
         workspaceCwd: defaultWorkspaceCwd,
         resourcesRoot: resources.resourcesRoot,
+        cuaDriverProviderResourcesPath: cuaDriverPackagedStartupAuthority?.providerResourcesPath,
         userDataPath: app.getPath("userData"),
         lockedTaskContinuationPreferenceStore: new FileLockedTaskContinuationPreferenceStore(
           resolve(app.getPath("userData"), "locked-task-continuation-preference.json"),
@@ -564,11 +577,22 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     return false;
   }
   if (!officeDriverRuntime) {
-    const officeDriverExecutablePath = resolveOfficeDriverExecutablePath({
+    const bundledOfficeExecutable = resolveOfficeDriverExecutablePath({
       appPath: app.getAppPath(),
       resourcesRoot: resources.resourcesRoot,
       packaged: app.isPackaged,
     });
+    const officeDriverExecutablePath = bundledOfficeExecutable ? await resolveOptionalPluginExecutable({
+      packaged: app.isPackaged,
+      pluginId: "official:office-documents",
+      lingVersion: app.getVersion(),
+      executable: process.platform === "win32"
+        ? "runtime/office-driver/win32-x64/ling-office-driver.exe"
+        : "runtime/office-driver/darwin-arm64/OfficeDriver.app/Contents/MacOS/ling-office-driver",
+      bundledPath: bundledOfficeExecutable,
+      onInvalidCache: () => logStartup("office_driver.plugin_cache_unavailable", { platform: process.platform }),
+    }) : undefined;
+    if (!attempt.isCurrent()) return false;
     if (officeDriverExecutablePath) {
       officeDriverRuntime = new OfficeDriverRuntime({
         daemonBaseUrl,

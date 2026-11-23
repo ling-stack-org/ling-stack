@@ -30,14 +30,23 @@ Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 h
 | Windows ARM64 | 不支持 | 不生成安装包或 provider payload |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
+两平台的兼容包和瘦包开发候选记录归档体积、安装启动及资源鉴权证据。正式切换需验证签名
+插件的首次下载、实际调用、更新、离线回滚及已有配置迁移。
+[独立插件打包与分发](../design/plugin-independent-packaging.md)
+
 ## Chrome Native Messaging Host 发布边界
 
-Desktop 从 Chrome 扩展 `0.1.1` 起同时分发当前平台的 `Ling Browser Host`。扩展 `0.1.2`
-通过持久 MV3 Alarm 在 Desktop 重启或短暂断线后自动恢复。Host 名称固定为
+扩展 `0.1.2` 通过持久 MV3 Alarm 在 Desktop 重启或短暂断线后自动恢复。Host 名称固定为
 `com.lingstack.browser`，只负责 Chrome Native Messaging 长度帧与 daemon 私有 loopback
 broker 之间的转发，不包含工作区选择、浏览器业务命令、模型调用或审批逻辑。
 
-每个 Desktop 候选必须把 Host 纳入与主应用相同的源提交和发布证据：
+按需包使用独立发布的 Native Host。Desktop 在重启时验证选中的用户级缓存，
+再注册该 Host 的路径。正式验收使用 Chrome Web Store 安装的扩展，核对 Native Messaging
+自动连接、现有工作区配置、更新和离线回滚。插件发布和缓存信任见
+[独立插件打包与分发](../design/plugin-independent-packaging.md)。
+开发、构建与发布说明见 [Ling for Chrome](https://github.com/ling-stack-org/ling-plugin-chrome-browser/blob/main/docs/RELEASE.md)。
+
+兼容包的包内 Host 继续使用以下布局和验证：
 
 - macOS arm64：Host 位于 `.app/Contents/Resources/browser-host/`，具有可执行权限，包含在
   Developer ID/hardened runtime 的逐 Mach-O 校验中；启动后幂等写入用户级 Chrome 与
@@ -49,8 +58,8 @@ broker 之间的转发，不包含工作区选择、浏览器业务命令、模�
 - 源码模式：`ling-stack browser-host install|status|uninstall` 是唯一受支持的开发 Host
   生命周期入口；不得要求用户在扩展中填写工作区、daemon URL 或配对码。
 
-打包测试必须验证 Host 版本、Native 协议、扩展版本、extension ID、Host SHA、扩展
-manifest SHA、扩展 ZIP SHA 与 source commit 一致。macOS 本机结构检查或 Windows
+发布证据记录 Host 版本、Native 协议、扩展版本、extension ID、Host SHA、扩展
+manifest SHA、扩展 ZIP SHA 和对应的源码提交。macOS 本机结构检查或 Windows
 私有原生构建不能替代 Developer ID/notarization、Authenticode/SmartScreen 和 clean-host
 安装/升级/卸载验收。
 

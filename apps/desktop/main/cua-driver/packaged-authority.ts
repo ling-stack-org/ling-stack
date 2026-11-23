@@ -21,6 +21,7 @@ export type DesktopCuaDriverPackageAuthorityV1 =
       componentId: "cua-driver";
       distributionRevision: "0.8.3-ling.1";
       providerExpected: true;
+      providerSource?: "official-cache";
       platform: "darwin" | "win32";
       signingTier: "unsigned_dev" | "test_signed_internal" | "production_signed";
       distributionChannel: "development" | "internal" | "production";

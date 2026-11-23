@@ -6,6 +6,7 @@ import type {
   PublicMcpServer,
   SecretResolver,
 } from "@ling-stack/core";
+import { OFFICIAL_NATIVE_PLUGIN_IDS, usesHostPluginCache } from "@ling-stack/core/official-plugin-runtime";
 import { LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -61,8 +62,8 @@ import {
   listPluginSourceViews,
   toPluginPackageView,
 } from "./source-index.js";
-import { comparePluginVersions, fetchOfficialPluginCatalog, selectOfficialPluginArtifact } from "./remote-catalog.js";
-import { installRemotePluginArtifact, rollbackRemotePluginArtifact } from "./remote-package.js";
+import { comparePluginVersions, fetchOfficialPluginCatalog, pluginArtifactSupportsLing, selectOfficialPluginArtifact } from "./remote-catalog.js";
+import { installRemotePluginArtifact, rollbackRemotePluginArtifact, syncOfficialNativePluginPackage } from "./remote-package.js";
 import {
   checkInstalledPluginRuntimeDependencies,
   assertExclusiveBundledCuaMcpServerOwnership,
@@ -91,6 +92,8 @@ const bundledCanonicalCuaDriverActions = new Set<NonNullable<ManagedPluginRoute[
   "check",
 ]);
 
+const catalogManagedCuaDriverActions = new Set(["install-remote", "check-update", "rollback"]);
+
 export async function handlePluginsCollection(
   request: IncomingMessage,
   response: ServerResponse,
@@ -110,13 +113,17 @@ export async function handlePluginsCollection(
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
+      const now = new Date().toISOString();
+      await Promise.all(OFFICIAL_NATIVE_PLUGIN_IDS
+        .filter((pluginId) => pluginId !== CUA_DRIVER_PLUGIN_ID || config.cuaDriver.catalogManaged)
+        .map((pluginId) => syncOfficialNativePluginPackage(store, pluginId, LING_PRODUCT_VERSION, now)));
       writeJson(response, 200, {
         cwd,
         plugins: listManagedPluginViews({
           cwd,
           extensionRegistry,
           store,
-          now: new Date().toISOString(),
+          now,
           cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority,
           cuaDriverFeatureFlags: config.cuaDriver,
           lockedControlProjection: lockedComputerControl?.snapshot().projection,
@@ -196,8 +203,11 @@ export async function handleOfficialPluginCatalog(
       ...plugin,
       artifacts: plugin.artifacts.filter((artifact) => {
         try {
-          return artifact.platform === toPluginArtifactPlatform(process.platform)
-            && artifact.arch === toPluginArtifactArchitecture(process.arch);
+          return (plugin.pluginId !== CUA_DRIVER_PLUGIN_ID
+              || !artifact.runtimeChecksumSignature || config.cuaDriver.catalogManaged)
+            && artifact.platform === toPluginArtifactPlatform(process.platform)
+            && artifact.arch === toPluginArtifactArchitecture(process.arch)
+            && pluginArtifactSupportsLing(artifact, LING_PRODUCT_VERSION);
         } catch {
           return false;
         }
@@ -318,7 +328,8 @@ export async function handlePluginItem(
       && route.action
     ) {
       assertBundledCuaDriverWorkspace(config, cwd);
-      if (!bundledCanonicalCuaDriverActions.has(route.action)) {
+      if (!bundledCanonicalCuaDriverActions.has(route.action)
+        && !(config.cuaDriver.catalogManaged && catalogManagedCuaDriverActions.has(route.action))) {
         throw new HttpError(
           409,
           "cua_driver_bundled_action_forbidden",
@@ -327,6 +338,9 @@ export async function handlePluginItem(
       }
     }
     const store = storeRegistry.getStore(cwd);
+    if (route.pluginId !== CUA_DRIVER_PLUGIN_ID || config.cuaDriver.catalogManaged) {
+      await syncOfficialNativePluginPackage(store, route.pluginId, LING_PRODUCT_VERSION, new Date().toISOString());
+    }
     if (route.pluginId === DESKTOP_BROWSER_PLUGIN_ID && request.method === "POST" && route.action) {
       if (!desktopBrowserPlugin) throw new HttpError(503, "browser_desktop_required", "Ling Desktop browser is unavailable.");
       if (route.action !== "enable" && route.action !== "disable" && route.action !== "check") {
@@ -466,12 +480,20 @@ export async function handlePluginItem(
         arch: toPluginArtifactArchitecture(process.arch),
         channel: input.channel,
         version: input.version,
+        lingVersion: LING_PRODUCT_VERSION,
       });
+      if (route.pluginId === CUA_DRIVER_PLUGIN_ID
+        && (artifact.runtimeChecksumSignature || config.cuaDriver.catalogManaged)
+        && (!config.cuaDriver.catalogManaged || !catalogResult.signatureVerified || !artifact.runtimeChecksumSignature)) {
+        throw new HttpError(409, "cua_driver_catalog_authority_required",
+          "A catalog-managed Desktop package and signed Cua Driver runtime are required.");
+      }
       const installed = await installRemotePluginArtifact({
         paths: store.paths,
         artifact,
         catalogVersion: catalogResult.catalog.generatedAt,
         lingVersion: LING_PRODUCT_VERSION,
+        requireArtifactSignature: catalogResult.signatureVerified,
         now,
       });
       const descriptor = installed.plugin.validation.compiledDescriptor;
@@ -491,13 +513,17 @@ export async function handlePluginItem(
         catalogVersion: catalogResult.catalog.generatedAt,
         previousVersion: installed.previousVersion,
       }, now);
-      ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
-      await linkVerifiedPluginContributions({
-        store,
-        pluginPackage: installed.plugin,
-        enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
-        now,
-      });
+      if (usesHostPluginCache(installed.cacheRef)) {
+        ensureNativePluginEventOwner(store, extensionRegistry, descriptor.id, now);
+      } else {
+        ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
+        await linkVerifiedPluginContributions({
+          store,
+          pluginPackage: installed.plugin,
+          enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
+          now,
+        });
+      }
       store.appendManagedPluginEvent({
         pluginId: descriptor.id,
         type: "installed",
@@ -522,6 +548,7 @@ export async function handlePluginItem(
         platform: toPluginArtifactPlatform(process.platform),
         arch: toPluginArtifactArchitecture(process.arch),
         channel: "stable",
+        lingVersion: LING_PRODUCT_VERSION,
       });
       writeJson(response, 200, {
         cwd,
@@ -538,7 +565,13 @@ export async function handlePluginItem(
 
     if (request.method === "POST" && route.action === "rollback") {
       const now = new Date().toISOString();
-      const rolledBack = await rollbackRemotePluginArtifact({ paths: store.paths, pluginId: route.pluginId, now });
+      const rolledBack = await rollbackRemotePluginArtifact({
+        paths: store.paths,
+        pluginId: route.pluginId,
+        now,
+        cacheRef: store.getManagedPluginPackage(route.pluginId)?.cacheRef,
+        lingVersion: LING_PRODUCT_VERSION,
+      });
       const descriptor = rolledBack.plugin.validation.compiledDescriptor;
       if (!descriptor) throw new HttpError(400, "plugin_package_invalid", "Previous plugin package did not produce a valid descriptor.");
       const packageRecord = store.upsertManagedPluginPackage({
@@ -556,13 +589,17 @@ export async function handlePluginItem(
         catalogVersion: rolledBack.pointer.catalogVersion,
         previousVersion: store.getManagedPluginPackage(descriptor.id)?.version,
       }, now);
-      ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
-      await linkVerifiedPluginContributions({
-        store,
-        pluginPackage: rolledBack.plugin,
-        enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
-        now,
-      });
+      if (usesHostPluginCache(rolledBack.pointer.cacheRef)) {
+        ensureNativePluginEventOwner(store, extensionRegistry, descriptor.id, now);
+      } else {
+        ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
+        await linkVerifiedPluginContributions({
+          store,
+          pluginPackage: rolledBack.plugin,
+          enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
+          now,
+        });
+      }
       store.appendManagedPluginEvent({
         pluginId: descriptor.id,
         type: "package_refreshed",
@@ -962,6 +999,7 @@ async function handlePluginCheck(input: {
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
@@ -982,13 +1020,21 @@ async function handlePluginCheck(input: {
   });
   let storedHealth = input.store.upsertManagedPluginHealthSnapshot(health, now);
   let automaticRollback: { readonly version: string } | undefined;
-  if (storedHealth.status === "failed" && input.descriptor.sourceKind === "official-remote") {
+  const remoteHealthFailed = storedHealth.status === "failed" && input.descriptor.sourceKind === "official-remote";
+  const previousPackage = remoteHealthFailed ? input.store.getManagedPluginPackage(input.pluginId) : undefined;
+  // Host-cache selection changes through explicit rollback and takes effect on Desktop restart.
+  if (remoteHealthFailed && !usesHostPluginCache(previousPackage?.cacheRef)) {
     try {
-      const rolledBack = await rollbackRemotePluginArtifact({ paths: input.store.paths, pluginId: input.pluginId, now });
+      const rolledBack = await rollbackRemotePluginArtifact({
+        paths: input.store.paths,
+        pluginId: input.pluginId,
+        now,
+        cacheRef: previousPackage?.cacheRef,
+        lingVersion: LING_PRODUCT_VERSION,
+      });
       const rolledBackDescriptor = rolledBack.plugin.validation.compiledDescriptor;
       if (rolledBackDescriptor) {
         const enabled = input.store.getManagedPlugin(input.pluginId)?.enabled === true;
-        const previousPackage = input.store.getManagedPluginPackage(input.pluginId);
         input.store.upsertManagedPluginPackage({
           pluginId: rolledBackDescriptor.id,
           sourceKind: "official-remote",
@@ -1073,6 +1119,7 @@ async function handlePluginApplyPreset(input: {
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };
@@ -1242,6 +1289,18 @@ function setLinkedContributionsEnabled(
   }
 }
 
+function ensureNativePluginEventOwner(
+  store: ReturnType<RunStoreRegistry["getStore"]>,
+  extensionRegistry: LingExtensionRegistry,
+  pluginId: string,
+  now: string,
+): void {
+  if (store.getManagedPlugin(pluginId)) return;
+  const descriptor = getManagedPluginDescriptor(extensionRegistry, store, pluginId);
+  if (!descriptor) throw new HttpError(404, "plugin_not_found", `Plugin not found: ${pluginId}`);
+  ensureManagedPluginRecord({ store, descriptor, enabled: false, now });
+}
+
 function getRequiredPluginView(input: {
   readonly cwd: string;
   readonly extensionRegistry: LingExtensionRegistry;
@@ -1250,6 +1309,7 @@ function getRequiredPluginView(input: {
   readonly includeEvents: boolean;
   readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
+    readonly catalogManaged?: boolean;
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
   };

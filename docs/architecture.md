@@ -74,6 +74,14 @@ Owns typed extension metadata, manifest validation, and internal registries. The
 assembles built-in registrations and exposes safe diagnostics. This is not an open
 third-party plugin API or a general sandboxed extension host.
 
+Office Documents, Ling for Chrome, and Cua Driver build their native payloads in
+independent repositories. The daemon selects and verifies compatible packages
+from the signed Ling catalog, and Desktop verifies the selected native cache
+and owns process startup. Installation and offline rollback are user-level
+operations. Enablement, approvals, and audit records belong to each workspace.
+The distribution contract also tracks release and installed-client acceptance.
+[Independent Plugin Packaging](design/plugin-independent-packaging.md)
+
 ### Shared UI Packages
 
 `packages/ui-react`, `packages/conversation-ui-core`, and

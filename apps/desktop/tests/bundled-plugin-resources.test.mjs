@@ -19,7 +19,7 @@ const execFile = promisify(execFileCallback);
 
 test("Desktop package copies only the Cua Driver plugin shell metadata", async () => {
   const desktopPackage = JSON.parse(await readFile(resolve(desktopRoot, "package.json"), "utf8"));
-  const resource = desktopPackage.build.extraResources.find(
+  const resource = desktopPackage.lingBundledPluginResources.find(
     (candidate) => candidate.to === DESKTOP_BUNDLED_PLUGINS_RESOURCE_DIRECTORY,
   );
 
@@ -139,7 +139,7 @@ test("development bundled-plugin staging restores the previous tree when atomic 
   await writeFile(resolve(sourceRoot, "manifest.json"), "NEW REVIEWED METADATA\n");
   await writeFile(resolve(destinationRoot, "previous.txt"), "PREVIOUS EXACT TREE\n");
   await writeFile(resolve(fixtureRoot, "package.json"), JSON.stringify({
-    build: { extraResources: [{ from: "source", to: "bundled", filter: ["cua-driver/manifest.json"] }] },
+    lingBundledPluginResources: [{ from: "source", to: "bundled", filter: ["cua-driver/manifest.json"] }],
   }));
 
   const injectedError = Object.assign(new Error("injected_cutover_failure"), { code: "EIO" });
@@ -169,7 +169,7 @@ test("development bundled-plugin staging retains recovery bytes if publication a
   await writeFile(resolve(sourceRoot, "manifest.json"), "NEW REVIEWED METADATA\n");
   await writeFile(resolve(destinationRoot, "previous.txt"), "PREVIOUS EXACT TREE\n");
   await writeFile(resolve(fixtureRoot, "package.json"), JSON.stringify({
-    build: { extraResources: [{ from: "source", to: "bundled", filter: ["cua-driver/manifest.json"] }] },
+    lingBundledPluginResources: [{ from: "source", to: "bundled", filter: ["cua-driver/manifest.json"] }],
   }));
 
   const publicationError = Object.assign(new Error("injected_cutover_failure"), { code: "EIO" });
