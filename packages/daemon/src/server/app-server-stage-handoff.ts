@@ -133,6 +133,12 @@ export async function settleAppServerStageHandoff(
     throw new HttpError(409, "resume_blocked", "The Work Item is not ready to settle this handoff.");
   }
   if (source.status !== "succeeded") throw new HttpError(409, "resume_blocked", "The supplying stage needs an accepted result.");
+  if (previousHandoffId && returned) {
+    const returnedDecision = returned.decision;
+    if (returnedDecision.candidateDigest && returnedDecision.candidateDigest === input.expectedCandidateDigest) {
+      throw new HttpError(409, "work_item_handoff_source_revision_required", "Repair must use a new candidate revision.");
+    }
+  }
   const artifactId = source.metadata?.outputArtifactId;
   const sourceRun = source.runId ? store.getRun(source.runId) : undefined;
   const packet = artifactId ? readWorkflowStepOutputPacketArtifact({ store, artifactId }) : undefined;
