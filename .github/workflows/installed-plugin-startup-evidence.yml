@@ -1,0 +1,120 @@
+name: Windows installed plugin startup evidence
+
+on:
+  push:
+    branches: [codex/verify-installed-windows-plugin-modes]
+    paths: [.github/workflows/installed-plugin-startup-evidence.yml]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  startup:
+    name: Installed Desktop startup (${{ matrix.mode }})
+    runs-on: windows-2025
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: bundled
+            run_id: '45061861558'
+            artifact_id: '14773587119'
+            installer_sha256: 72016cf5675f9ffa8e6afcc09ddda7bbaa0795cdbaffff5f863268badf1807c6
+          - mode: on-demand
+            run_id: '45060119665'
+            artifact_id: '14770958078'
+            installer_sha256: 2a372e1042d2ef36d137f17fd2cabf4cf915c3278156765eb96b6805213ab673
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          run-id: ${{ matrix.run_id }}
+          artifact-ids: ${{ matrix.artifact_id }}
+          path: ${{ runner.temp }}/candidate
+          github-token: ${{ github.token }}
+      - name: Start the installed Desktop and its own daemon
+        shell: pwsh
+        env:
+          PLUGIN_MODE: ${{ matrix.mode }}
+          SOURCE_RUN_ID: ${{ matrix.run_id }}
+          CANDIDATE_ARTIFACT_ID: ${{ matrix.artifact_id }}
+          EXPECTED_INSTALLER_SHA256: ${{ matrix.installer_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw 'A fresh hosted Windows x64 runner is required.'
+          }
+          $setups = @(Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP 'candidate') -Filter '*-windows-x64-setup.exe' -File -Recurse)
+          if ($setups.Count -ne 1) { throw 'Exactly one Windows installer is required.' }
+          $setup = $setups[0]
+          $installerSha = (Get-FileHash -LiteralPath $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($installerSha -ne $env:EXPECTED_INSTALLER_SHA256) { throw 'Candidate installer digest changed.' }
+
+          $root = Join-Path $env:RUNNER_TEMP ('ling-installed-' + (New-Guid).Guid)
+          $install = Join-Path $root 'install'
+          $profile = Join-Path $root 'profile'
+          $workspace = Join-Path $root 'workspace'
+          $null = New-Item -ItemType Directory -Path $root
+          $null = New-Item -ItemType Directory -Path $profile, $workspace
+          $env:LING_STACK_HOME = Join-Path $root 'ling-home'
+          $env:LING_STACK_DEFAULT_WORKSPACE_CWD = $workspace
+          $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+          $listener.Start()
+          $env:LING_STACK_DAEMON_URL = 'http://127.0.0.1:' + $listener.LocalEndpoint.Port
+          $listener.Stop()
+
+          $exe = Join-Path $install 'Ling Stack.exe'
+          $uninstaller = Join-Path $install 'Uninstall Ling Stack.exe'
+          try {
+            $installer = Start-Process -FilePath $setup.FullName -ArgumentList @('/S', ('/D=' + $install)) -PassThru -Wait
+            if ($installer.ExitCode -ne 0 -or !(Test-Path -LiteralPath $exe -PathType Leaf)) {
+              throw "Installer failed ($($installer.ExitCode))."
+            }
+            $desktopArgs = @('--ling-desktop-smoke-headless', ('--user-data-dir="' + $profile + '"'))
+            $desktop = Start-Process -FilePath $exe -ArgumentList $desktopArgs -WorkingDirectory $workspace -PassThru
+            if (!$desktop.WaitForExit(180000)) {
+              $desktop.Kill($true)
+              $desktop.WaitForExit()
+              throw 'The installed Desktop launch timed out.'
+            }
+            $startupLog = Join-Path $profile 'desktop-startup.log'
+            if (!(Test-Path -LiteralPath $startupLog -PathType Leaf)) {
+              throw "Missing isolated Desktop startup log (exit $($desktop.ExitCode))."
+            }
+            $events = @(Get-Content -LiteralPath $startupLog | ForEach-Object { ConvertFrom-Json -InputObject $_ })
+            Write-Host ('Desktop startup events: ' + ($events.event -join ', '))
+            $appReady = $events | Where-Object { $_.event -eq 'app.ready' -and $_.packaged -and $_.smokeHeadless }
+            $ownedDaemon = $events | Where-Object { $_.event -eq 'daemon.connected' -and $_.ownedByDesktop }
+            $rendererLoaded = $events.event -contains 'main_window.loaded'
+            if ($desktop.ExitCode -ne 0 -or !$appReady -or !$ownedDaemon -or !$rendererLoaded) {
+              throw "The installed Desktop did not complete an owned startup (exit $($desktop.ExitCode))."
+            }
+            $desktopSha = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          } finally {
+            if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+              $cleanup = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait
+              if ($cleanup.ExitCode -ne 0) { throw "Uninstaller failed ($($cleanup.ExitCode))." }
+            }
+          }
+          if (Test-Path -LiteralPath $exe) { throw 'Uninstall left the installed Desktop executable.' }
+
+          [ordered]@{
+            platform = 'win32-x64'
+            pluginMode = $env:PLUGIN_MODE
+            sourceSha = '6e5ab9b99cf87288341ea8362adad95278220c01'
+            sourceRunId = $env:SOURCE_RUN_ID
+            candidateArtifactId = $env:CANDIDATE_ARTIFACT_ID
+            installerSha256 = $installerSha
+            executableSha256 = $desktopSha
+            installedDesktopLoadedRenderer = $true
+            desktopOwnedDaemonConnected = $true
+            normalExit = $true
+            uninstall = 'passed'
+          } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'installed-plugin-startup.json')
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: installed-plugin-startup-${{ matrix.mode }}
+          path: ${{ runner.temp }}/installed-plugin-startup.json
+          if-no-files-found: error
+          retention-days: 5
