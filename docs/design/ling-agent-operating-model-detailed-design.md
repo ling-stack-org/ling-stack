@@ -643,8 +643,12 @@ disclosure and again in the SQLite write transaction. The stage binding supplies
 the grant's methods. The legacy `scopes` list is empty, which makes older Daemons
 reject issuance.
 The supervising client provides the short-lived bearer to the Agent's client.
-Automatic tool registration and live question input admission are tracked in the
-implementation plan. [Stage authority](../../packages/daemon/src/features/work-items/stage-coordination-authority.ts) · [SDK](../../packages/api-client/src/app-server.ts)
+When both stages are running, a question binds the respondent's current
+Run/Attempt and an applicable answer binds the asking Attempt. Pi admits
+each input to the targeted stage's next model request under the same delivery
+journal as directed messages. The question read returns the delivery receipt.
+Automatic tool registration is tracked in the implementation plan.
+[Stage authority](../../packages/daemon/src/features/work-items/stage-coordination-authority.ts) · [SDK](../../packages/api-client/src/app-server.ts)
 
 ### 5.11 Scheduled Coordination Admission
 

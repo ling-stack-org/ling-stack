@@ -266,6 +266,7 @@ export interface LingAppServerGrantCreateParams {
   readonly expiresAt: string;
   readonly credentialSha256: string;
   readonly idempotencyKey: string;
+  readonly stageExecution?: LingAppServerStageMessageExecution;
 }
 
 export const LING_APP_SERVER_NOTIFICATION_METHODS = [

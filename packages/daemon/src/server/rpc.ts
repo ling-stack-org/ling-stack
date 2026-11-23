@@ -3251,6 +3251,7 @@ function stageCoordinationRecordVisible(store: RunStore, stage: StageCoordinatio
   const question = result?.question;
   return !!question && (record.id === result.record.id || record.id === result.reply?.record.id || record.id === result.historicalReply?.record.id)
     && question.planRevision === stage.planRevision && (question.respondentStepId === stage.stepId
+      && (question.receivingExecution === undefined || matchesStageCoordinationExecution(question.receivingExecution, stage))
       || question.waitingStepId === stage.stepId && (question.askingExecution === undefined
         || matchesStageCoordinationExecution(question.askingExecution, stage)));
 }

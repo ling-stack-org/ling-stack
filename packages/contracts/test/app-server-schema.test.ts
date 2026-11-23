@@ -47,6 +47,12 @@ test("App Server parameter validation checks high-risk required fields while ret
   assert.deepEqual(invalid, { ok: false, path: "params.threadId", message: "is required" });
   assert.equal(validateLingAppServerParams("approval/respond", { approvalId: "approval-1", decision: "later" }).ok, false);
   assert.equal(validateLingAppServerParams("turn/start", "invalid").ok, false);
+  const grant = { label: "Stage", subject: { kind: "workItem", id: "item" }, scopes: [], expiresAt: "2026-11-24T06:00:00Z",
+    credentialSha256: "f".repeat(64), idempotencyKey: "stage-grant", stageExecution: { runId: "run", attemptId: "attempt" } };
+  assert.ok(validateLingAppServerParams("server/grants/create", grant).ok);
+  assert.equal(validateLingAppServerParams("server/grants/create", {
+    ...grant, stageExecution: { runId: "run" },
+  }).path, "params.stageExecution.attemptId");
 });
 
 test("App Server recovery requires a pinned revision and validates the evidence projection", () => {

@@ -3501,7 +3501,14 @@ test("active Workflow stage grants bind questions, replies and messages to their
   assert.deepEqual((await receiver.client.listWorkItemStageMessages({ workItemId: item.id })).records.map(record => record.id), [sent.record.id]);
   releaseFirstInput();
   await waitFor(() => provider.requests.length === 4 ? true : undefined);
-  assert.equal(provider.requests.slice(2).filter((body: unknown) => JSON.stringify(body).includes(message.body)).length, 1);
+  const nextInputs = provider.requests.slice(2).map((body: unknown) => JSON.stringify(body));
+  const respondentInput = nextInputs.find(body => body.includes(message.body));
+  const senderInput = nextInputs.find(body => body.includes(reply.answer));
+  assert.ok(respondentInput?.includes(ask.question));
+  assert.ok(senderInput && !senderInput.includes(ask.question));
+  assert.notEqual(senderInput, respondentInput);
+  assert.equal(nextInputs.filter(body => body.includes(ask.question)).length, 1);
+  assert.equal(nextInputs.filter(body => body.includes(reply.answer)).length, 1);
   const delivered = (await receiver.client.listWorkItemStageMessages({ workItemId: item.id })).records[0];
   assert.equal((delivered?.payload as { delivery?: { status: string } })?.delivery?.status, "input_admitted");
   await operator.revokeGrant(receiver.grant.grantId, receiver.grant.revision);
@@ -3513,8 +3520,13 @@ test("active Workflow stage grants bind questions, replies and messages to their
   await assert.rejects(sender.client.askWorkItemStageQuestion(ask), { code: "authorization_required" });
   await fixture.restart();
   const restored = await fixture.connect();
-  assert.deepEqual((await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/question/read", { workItemId: item.id }))
-    .records.map(record => record.id), [question.record.id, answer.record.id]);
+  const recoveredQuestions = (await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/question/read", { workItemId: item.id })).records;
+  assert.deepEqual(recoveredQuestions.map(record => record.id), [question.record.id, answer.record.id]);
+  assert.deepEqual(recoveredQuestions.map(record => (record.payload as { delivery?: { status: string; attemptId: string } }).delivery)
+    .map(delivery => [delivery?.status, delivery?.attemptId]), [
+    ["input_admitted", respondentStage.messageReceiver.attemptId],
+    ["input_admitted", waitingStage.messageReceiver.attemptId],
+  ]);
   await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, sender.token), /401/u);
 });
 

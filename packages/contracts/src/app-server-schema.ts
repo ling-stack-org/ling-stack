@@ -207,7 +207,9 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectSchema, result: objectWith({ grants: arraySchema }, ["grants"]) };
     case "server/grants/create":
       return { params: objectWith({ label: stringSchema, subject: objectSchema, scopes: stringArraySchema, expiresAt: stringSchema,
-        credentialSha256: stringSchema, idempotencyKey: stringSchema }, ["label", "subject", "scopes", "expiresAt", "credentialSha256", "idempotencyKey"]),
+        credentialSha256: stringSchema, idempotencyKey: stringSchema,
+        stageExecution: objectWith({ runId: stringSchema, attemptId: stringSchema }, ["runId", "attemptId"]),
+      }, ["label", "subject", "scopes", "expiresAt", "credentialSha256", "idempotencyKey"]),
       result: objectWith({ grant: objectSchema }, ["grant"]) };
     case "server/grants/revoke":
       return { params: objectWith({ grantId: stringSchema, expectedRevision: integerSchema, revision: integerSchema }, ["grantId"]),

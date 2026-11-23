@@ -31,6 +31,7 @@ export interface WorkItemStageQuestionPayload {
   readonly deadlineAt: string;
   readonly answerFromStageResult?: true;
   readonly askingExecution?: LingAppServerStageMessageExecution;
+  readonly receivingExecution?: LingAppServerStageMessageExecution;
 }
 
 export function workItemStageQuestionExpired(question: WorkItemStageQuestionPayload, now: number): boolean {

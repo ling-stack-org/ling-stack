@@ -3,6 +3,7 @@ import {
   appendWorkItemCollaboration, listWorkItemStageQuestions, readWorkItemStageQuestion, WORKFLOW_STAGE_QUESTION_LIMIT,
   workItemStageQuestionAnswerId, workItemStageQuestionExpired, workItemStageQuestionId, type RunSession, type RunStore,
   type AppendWorkItemCollaborationInput, type AppendWorkItemCollaborationResult, type ChannelWorkflowStep, type WorkItemCollaborationRecord,
+  type WorkItemStageQuestionPayload,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
@@ -37,7 +38,10 @@ export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerSt
     if (source && (!isRecord(prior.record.payload) || !matchesStageCoordinationExecution(prior.record.payload.askingExecution, source))) {
       throw stageCoordinationDenied();
     }
-    return replay(prior.record, storedKey, payload, item.revision);
+    const { receivingExecution: _receiver, ...request } = prior.record.payload as typeof payload & {
+      readonly receivingExecution?: WorkItemStageQuestionPayload["receivingExecution"];
+    };
+    return replay(prior.record, storedKey, payload, item.revision, request);
   }
 
   const deadline = Date.parse(deadlineAt);
@@ -57,12 +61,13 @@ export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerSt
     || !source && (!queued(waiting) || !queued(respondent))) {
     throw new HttpError(409, "resume_blocked", "Both stages must be waiting for their initial Workflow admission.");
   }
+  const receivingExecution = source && !answerFromStageResult ? readStageMessageReceiver(store, respondent, activeRuns) : undefined;
   const assertRespondentAvailable = () => {
     const current = store.getChannelWorkflowStep(respondent.id);
     if (!current || current.workflowId !== respondent.workflowId || current.toParticipantId !== respondent.toParticipantId
       || current.metadata?.planBallotKey || !workflowStepParticipantAvailable(store, current)
       || item.holds.some(hold => hold.blocksNewAdmission && (!hold.workflowStepIds || hold.workflowStepIds.includes(current.id)))
-      || !(queued(current) || !answerFromStageResult && readStageMessageReceiver(store, current, activeRuns))) {
+      || !(receivingExecution ? sameExecution(receivingExecution, readStageMessageReceiver(store, current, activeRuns)) : queued(current))) {
       throw new HttpError(409, "resume_blocked", "The assigned stage cannot receive this question.");
     }
   };
@@ -101,7 +106,8 @@ export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerSt
     for (const dependency of graph.get(stepId) ?? []) reachable.add(dependency);
   }
   return appendQuestion(store, { id, workItemId, expectedWorkItemRevision, idempotencyKey: storedKey, kind: "question", action: "created",
-    actorId: source?.participantId ?? "local-user", payload, visibility: "participants",
+    actorId: source?.participantId ?? "local-user",
+    payload: { ...payload, ...(receivingExecution ? { receivingExecution } : {}) }, visibility: "participants",
     ...(predecessorQuestion ? { parentRecordId: predecessorQuestion.id } : {}),
     sourceRefs: [{ type: "workflow_step", id: waitingStepId }, { type: "workflow_step", id: respondentStepId }, ...(source ? stageCoordinationSourceRefs(source) : [])],
     ...(actor ? { assertCurrent: () => { actor.assertCurrent(); assertRespondentAvailable(); } } : {}),
@@ -117,7 +123,8 @@ export function replyToWorkItemStageQuestion(store: RunStore, input: LingAppServ
   actor?.assertCurrent();
   const item = store.getWorkItem(workItemId);
   const question = readWorkItemStageQuestion(store, workItemId, questionId);
-  if (source && (!question || question.question.respondentStepId !== source.stepId || question.question.planRevision !== source.planRevision)) {
+  if (source && (!question || question.question.respondentStepId !== source.stepId || question.question.planRevision !== source.planRevision
+    || question.question.receivingExecution && !matchesStageCoordinationExecution(question.question.receivingExecution, source))) {
     throw stageCoordinationDenied();
   }
   if (!item || !question) throw new HttpError(404, "workspace_binding_invalid", "The stage question is unavailable.");
@@ -126,7 +133,8 @@ export function replyToWorkItemStageQuestion(store: RunStore, input: LingAppServ
     ...(source ? { answeringExecution: stageCoordinationExecution(source) } : {}) };
   const previous = question.reply ?? question.historicalReply;
   if (previous) {
-    const { historicalReason, ...inputBasis } = previous.record.payload as typeof payload & { historicalReason?: string };
+    const { historicalReason, receivingExecution: _receiver, waitingStepId: _stepId, planRevision: _plan, ...inputBasis } =
+      previous.record.payload as typeof payload & Partial<WorkItemStageQuestionPayload> & { historicalReason?: string };
     if (source && (!isRecord(previous.record.payload) || !matchesStageCoordinationExecution(previous.record.payload.answeringExecution, source))) {
       throw stageCoordinationDenied();
     }
@@ -141,7 +149,11 @@ export function replyToWorkItemStageQuestion(store: RunStore, input: LingAppServ
   return appendQuestion(store, {
     id: workItemStageQuestionAnswerId(questionId), workItemId, expectedWorkItemRevision, idempotencyKey: storedKey, kind: "question",
     action: "replied", actorId: source?.participantId ?? stageResult?.participantId ?? "local-user", parentRecordId: questionId,
-    payload: { ...payload, ...(historicalReason ? { historicalReason } : {}) }, visibility: "participants",
+    payload: { ...payload, ...(historicalReason ? { historicalReason } : {}),
+      ...(!historicalReason && question.question.askingExecution ? {
+        receivingExecution: question.question.askingExecution, waitingStepId: question.question.waitingStepId,
+        planRevision: question.question.planRevision,
+      } : {}) }, visibility: "participants",
     sourceRefs: stageResult ? [{ type: "run", id: stageResult.runId }] : source ? stageCoordinationSourceRefs(source) : [],
     ...(actor ? { assertCurrent: actor.assertCurrent } : {}),
   }, now);
@@ -184,12 +196,17 @@ export function readWorkItemStageQuestionInputs(store: RunStore, step: ChannelWo
     if (question.waitingStepId === step.id && !question.askingExecution && reply) {
       return [{ questionId: record.id, question: question.question, answer: reply.text, answerReceiptId: reply.record.id }];
     }
-    if (question.respondentStepId === step.id && !reply && !workItemStageQuestionExpired(question, now)) {
+    if (question.respondentStepId === step.id && !question.receivingExecution && !reply && !workItemStageQuestionExpired(question, now)) {
       return [{ questionId: record.id, question: question.question,
         ...(question.answerFromStageResult ? { answerFromStageResult: true } : {}) }];
     }
     return [];
   });
+}
+
+function sameExecution(expected: NonNullable<WorkItemStageQuestionPayload["receivingExecution"]>,
+  actual: WorkItemStageQuestionPayload["receivingExecution"]): boolean {
+  return actual?.runId === expected.runId && actual.attemptId === expected.attemptId;
 }
 
 function readQuestionText(value: string, key: string, revision: number): string {
