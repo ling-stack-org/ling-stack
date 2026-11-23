@@ -1,5 +1,5 @@
 import { automationDefinitionDigestInput, automationEventDigest, nativeTaskIntakeRevision, nativeWorkIntakeReceiptId,
-  nativeWorkIntakeRetryReceiptId, readOnlyRunTools, type ControlPlaneEvent, type NativeWorkIntakeRecord, type RunStore } from "@ling-stack/core";
+  nativeWorkIntakeRetryReceiptId, readOnlyRunTools, type AutomationDefinition, type ControlPlaneEvent, type NativeWorkIntakeRecord, type RunStore } from "@ling-stack/core";
 import type { NativeWorkIntakeReceipt, NativeWorkIntakeSourceKind, RetryNativeWorkIntakeRequest } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -89,6 +89,23 @@ export class NativeWorkIntake {
       }
       throw error;
     }
+  }
+
+  reconsiderMonitor(store: RunStore, automation: AutomationDefinition, prior: NativeWorkIntakeReceipt, now: string): NativeWorkIntakeReceipt {
+    let record = this.read(store, prior.receiptId);
+    while (record?.retryReceiptId) record = this.read(store, record.retryReceiptId);
+    const receipt = record?.receipt ?? prior;
+    const policy = this.policy(store, "automation_run", automation.id);
+    if (receipt.outcome !== "suppressed" || !policy?.enabled || policy.mode !== "auto_start"
+      || receipt.sourceRevision !== automationEventDigest(automationDefinitionDigestInput(automation))) return receipt;
+    const basis = this.basis(policy, now);
+    if (basis.quiet || store.listAutomationRuns({ automationId: automation.id, limit: 100 }).some(run =>
+      run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval")) return receipt;
+    const result = store.retryNativeWorkIntake({ receiptId: receipt.receiptId, idempotencyKey: "monitor-automatic-admission" }, {
+      policy: basis, sourceEventId: receipt.sourceEventId, sourceRevision: receipt.sourceRevision,
+    }, now, store.paths.cwd, true);
+    this.publish(result.event);
+    return result.receipt;
   }
 
   assertCurrent(store: RunStore, receipt: NativeWorkIntakeReceipt, automatic: boolean): void {

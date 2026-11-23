@@ -56,7 +56,7 @@ export class SqliteNativeWorkIntakeStore {
   }
 
   retry(request: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest,
-    intake: NativeWorkIntakeInput, now: string, cwd: string): NativeWorkIntakeResult<Task | AutomationRun> {
+    intake: NativeWorkIntakeInput, now: string, cwd: string, onlyIfAccepted = false): NativeWorkIntakeResult<Task | AutomationRun> {
     return this.commit(now, cwd, () => {
       const record = this.state.get("native_intake_receipt", request.receiptId)?.payload as NativeWorkIntakeRecord | undefined;
       if (!record) throw new Error("native_intake_retry_conflict");
@@ -71,7 +71,7 @@ export class SqliteNativeWorkIntakeStore {
       return { execution, title: task?.title ?? automation?.title ?? "Automation occurrence", input: {
         ...intake, monitorSnapshot: record.monitorSnapshot, eventDispatchId: record.eventDispatchId,
       } };
-    }, undefined, request);
+    }, undefined, { ...request, onlyIfAccepted });
   }
 
   private commit<T extends Task | AutomationRun>(
@@ -79,7 +79,7 @@ export class SqliteNativeWorkIntakeStore {
     cwd: string,
     create: () => { readonly execution: T; readonly title: string; readonly input: NativeWorkIntakeInput },
     settle?: (execution: T, receipt: NativeWorkIntakeReceipt) => T,
-    retry?: { readonly receiptId: string; readonly idempotencyKey: string },
+    retry?: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest & { readonly onlyIfAccepted: boolean },
   ): NativeWorkIntakeResult<T> {
     const { database } = this.context;
     database.exec("BEGIN IMMEDIATE");
@@ -97,6 +97,8 @@ export class SqliteNativeWorkIntakeStore {
         database.exec("COMMIT");
         return { execution, receipt: retained.receipt };
       }
+      const runId = "currentRunId" in execution ? execution.currentRunId : "runId" in execution ? execution.runId : undefined;
+      const decision = this.evaluate(input, now, workspaceId, Boolean(runId));
       const prior = retry ? this.state.get("native_intake_receipt", retry.receiptId, workspaceId) : undefined;
       if (retry) {
         const previous = prior?.payload as NativeWorkIntakeRecord | undefined;
@@ -106,11 +108,13 @@ export class SqliteNativeWorkIntakeStore {
           || !(receipt.outcome === "paused" || receipt.outcome === "suppressed" || receipt.dispatch?.status === "held")) {
           throw new Error("native_intake_retry_conflict");
         }
+        if (retry.onlyIfAccepted && decision.outcome !== "accepted") {
+          database.exec("COMMIT");
+          return { execution, receipt };
+        }
         this.state.putWithinTransaction({ kind: "native_intake_receipt", recordId: prior.recordId, workspaceId,
           expectedRevision: prior.revision, payload: { ...previous, retryReceiptId: receiptId } satisfies NativeWorkIntakeRecord }, now);
       }
-      const runId = "currentRunId" in execution ? execution.currentRunId : "runId" in execution ? execution.runId : undefined;
-      const decision = this.evaluate(input, now, workspaceId, Boolean(runId));
       const attached = decision.outcome === "accepted" || decision.outcome === "suggested" || decision.outcome === "deduplicated"
         ? this.items.createWithinTransaction({
           sourceType: policy.sourceKind, sourceId: execution.id, title: title.slice(0, 500), priority: policy.priority,

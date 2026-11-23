@@ -2698,7 +2698,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   createAutomationRunWithIntake(input: CreateAutomationRunInput, intake: import("./native-work-intake-types.js").NativeWorkIntakeInput,
     title: string, now: string, cwd: string): import("./native-work-intake-types.js").NativeWorkIntakeResult<AutomationRun>;
   retryNativeWorkIntake(request: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest,
-    intake: import("./native-work-intake-types.js").NativeWorkIntakeInput, now: string, cwd: string):
+    intake: import("./native-work-intake-types.js").NativeWorkIntakeInput, now: string, cwd: string, onlyIfAccepted?: boolean):
     import("./native-work-intake-types.js").NativeWorkIntakeResult<Task | AutomationRun>;
   listNativeWorkIntakeReceipts(kind: import("@ling-stack/contracts").NativeWorkIntakeSourceKind, sourceScope: string | undefined,
     limit: number, pendingBefore?: string): import("@ling-stack/contracts").NativeWorkIntakeReceipt[];

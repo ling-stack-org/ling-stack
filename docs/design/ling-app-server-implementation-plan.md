@@ -2,7 +2,7 @@
 
 - **状态** App Server 本机传输、Turn 控制与恢复、Verify 和 Federation 已通过定向验收。Agent Operating Model 已接入工作项接单、控制和协作记录。下文列出完整实施与发行仍需完成的工作包。
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** `origin/main@1c20cc079`
+- **核对基线** `origin/main@928be9d38`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
@@ -50,6 +50,7 @@
 - 阶段读取按 Work Item 和稳定阶段 ID 汇总已绑定 Workflow 的模型用量、工具调用、Run 数和耗时。Goal 按可核对的已发生用量限制下一阶段准入。已结束的 Run 缺少用量时返回 `work_item_goal_usage_unconfirmed`。真实 Daemon 回归覆盖用量未知、耗时上限，以及换 Plan、换 Agent、重启后继续使用同一预算。
 - 相同阶段的结构化 Provider 故障和执行循环按原 Task 去重。阶段读取返回阻塞标识、原 Run、事件和当前恢复负责人。重复故障达到 Goal 阈值时只暂停受影响的阶段。回归覆盖改派后出现相同故障、重启恢复、独立阶段运行，以及相关计划变更获准后继续。每次 Provider 调用的在途预留与可信 Verify、Review 证据触发的恢复继续验收。
 - Host 注册频道 Task 和 Automation 定义的接单策略后，同一事务保存原生执行、策略回执和适用的 Work Item。HTTP、App Server 和 MCP 使用同一份回执，建议由原 Task 或 Automation 所有者派发。联合回归通过 HTTP 和 SDK 并发确认一次调度建议，重启后执行原 AutomationRun 一次，并从 Work Item 订阅读取 Task 的实际派发状态。免打扰、并发、启动额度和暂停原因保存在原回执。显式复核复用原生执行 ID。
+- 自动监控在免打扰、并发或启动额度限制期间保留原观察及 AutomationRun。持续匹配的观察在重新准入时关联原回执。真实 Daemon 回归覆盖多次轮询、重启和解除免打扰后只执行一次。
 - 完成的工作项可用 `workItem/feedback/add` 提交经验审查。Daemon 核对当前 Work Item 和成功 Run 的归属，从 Run 采集有限证据，复用 Learning Review 的 Provider 预算和审查入口。受控验收从 P02 的实际读取证据生成 Memory 候选，重启后按原键找回同一任务。
 
 | 工作包 | 已验证场景与证据边界 |

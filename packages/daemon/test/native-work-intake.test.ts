@@ -188,6 +188,7 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   const retargeted = makeAutomation("Prepare the shift report", "schedule", due);
   const eventDriven = makeAutomation("Summarize the signed event", "event");
   const monitor = makeAutomation("Summarize the monitor observation", "monitor");
+  const quietMonitor = makeAutomation("Quiet monitor observation", "monitor");
   seed.putAutomationEventSource({ id: "intake-events", label: "Native test events", adapter: "business", enabled: true,
     secretRefs: ["env:INTAKE_TEST_KEY"], rules: [{ automationId: eventDriven.id, types: ["issue.opened"] }] }, undefined, now);
   seed.close();
@@ -195,6 +196,9 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
     { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: scheduled.id, mode: "suggest" },
     { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: retargeted.id, mode: "suggest" },
     { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: eventDriven.id, mode: "auto_start", budget },
+    { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: monitor.id, mode: "auto_start", budget },
+    { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: quietMonitor.id, mode: "auto_start", budget,
+      quietHours: quietHourWindow() },
   ];
   await fixture.start(policies);
   await fixture.json("/automations/scheduler/start", {});
@@ -227,9 +231,7 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   assert.equal(first.intakeReceipt?.dispatch?.status, "pending");
   await fixture.stop();
 
-  await fixture.start([...policies, {
-    workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: monitor.id, mode: "auto_start", budget,
-  }]);
+  await fixture.start(policies);
   await fixture.json("/automations/scheduler/start", {});
   const finished = await until(() => {
     const run = fixture.owned().getAutomationRun(suggestion.executionId);
@@ -266,7 +268,28 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   const monitoredInputs = fixture.dispatches().filter((request: unknown) => JSON.stringify(request).includes("Summarize the monitor observation"));
   assert.equal(monitoredInputs.length, 1);
   assert.match(JSON.stringify(monitoredInputs[0]), /Monitor snapshot/u);
+  const suppressed = await until(async () => (await fixture.receipts("automation_run", quietMonitor.id))[0]);
+  assert.equal(suppressed.outcome, "suppressed");
+  assert.equal(suppressed.reasonCode, "quiet_hours");
+  const schedulerState = () => fixture.json<{ schedulers: { items: { automationId: string; lastRunAt?: string }[] }[] }>("/automations/scheduler");
+  await until(async () => (await schedulerState()).schedulers[0]?.items.find(item =>
+    item.automationId === quietMonitor.id && item.lastRunAt && item.lastRunAt > suppressed.evaluatedAt));
+  assert.deepEqual(await fixture.receipts("automation_run", quietMonitor.id), [suppressed]);
+  assert.equal(fixture.owned().getAutomationMonitorSnapshot(quietMonitor.id), undefined);
   assert.equal(fixture.dispatches().length, 3);
+
+  await fixture.stop();
+  await fixture.start(policies.map(policy => policy.sourceScope === quietMonitor.id ? { ...policy, quietHours: undefined } : policy));
+  await fixture.json("/automations/scheduler/start", {});
+  const retriedQuiet = await until(async () => (await fixture.receipts("automation_run", quietMonitor.id))
+    .find(receipt => receipt.dispatch?.status === "admitted"));
+  assert.equal(retriedQuiet.previousReceiptId, suppressed.receiptId);
+  assert.equal(retriedQuiet.sourceEventId, suppressed.sourceEventId);
+  assert.equal(retriedQuiet.executionId, suppressed.executionId);
+  assert.ok(fixture.owned().getAutomationRun(retriedQuiet.executionId)?.runId);
+  await until(() => fixture.owned().getAutomationRun(retriedQuiet.executionId)?.status === "succeeded" ? true : undefined);
+  assert.deepEqual(fixture.owned().listAutomationRuns({ automationId: quietMonitor.id }).map(run => run.id), [suppressed.executionId]);
+  assert.ok(fixture.owned().getAutomationMonitorSnapshot(quietMonitor.id));
 });
 
 async function setup(t: TestContext) {

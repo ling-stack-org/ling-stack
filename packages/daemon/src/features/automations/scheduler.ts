@@ -6,6 +6,8 @@ import type {
   SecretResolver,
 } from "@ling-stack/core";
 import {
+  automationDefinitionDigestInput,
+  automationEventDigest,
   automationMonitorFingerprint,
   LING_AGENT_ID,
   matchesAutomationMonitorCondition,
@@ -578,28 +580,36 @@ export class AutomationSchedulerRegistry {
       const snapshotBody = readAutomationMonitorSnapshot({ store, automation, now: firedAt });
       const fingerprint = automationMonitorFingerprint(automation.trigger.source, snapshotBody);
       const observation = { automationId: automation.id, fingerprint, snapshot: snapshotBody };
-      const changed = store.getAutomationMonitorSnapshot(automation.id)?.fingerprint !== fingerprint;
+      const previous = store.getAutomationMonitorSnapshot(automation.id);
+      const changed = previous?.fingerprint !== fingerprint;
       let lastAutomationRunId: string | undefined;
       let outcome: AutomationSchedulerItem["lastMonitorOutcome"];
       if (changed && matchesAutomationMonitorCondition(automation.trigger.condition, snapshotBody)) {
-        const idempotencyKey = monitorObservationId(automation.id, scheduledFor, fingerprint);
+        const policy = this.nativeIntake?.policy(store, "automation_run", automation.id);
+        const occurrence = policy && policy.mode !== "manual"
+          ? automationEventDigest([previous?.fingerprint ?? null, previous?.updatedAt ?? null, automationDefinitionDigestInput(automation)])
+          : scheduledFor;
+        const idempotencyKey = monitorObservationId(automation.id, occurrence, fingerprint);
         const { automationRun, intakeReceipt } = await this.executeAutomationRun(entry.state.cwd, automation.id, {
           triggerType: "monitor",
           scheduledFor,
           idempotencyKey,
           monitorSnapshot: snapshotBody,
         });
-        // Another active execution can occupy this definition's only Run slot.
-        // Leave the observation pending until its own Run is durably linked.
         if (automationRun.idempotencyKey === idempotencyKey) {
           if (!automationRun.runId && !intakeReceipt) {
             throw new Error(automationRun.errorMessage ?? "Automation monitor run could not start.");
           }
-          const recorded = store.recordAutomationMonitorSnapshot(observation, firedAt);
-          lastAutomationRunId = automationRun.id;
-          outcome = "changed";
-          if (recorded.changed && automationRun.runId) {
-            await emitAutomationMonitorFinding(this.notificationHub, entry.state.cwd, automation, automationRun.runId);
+          const deferred = policy?.mode === "auto_start" && intakeReceipt?.outcome === "suppressed" && !automationRun.runId;
+          const currentIntake = deferred && this.nativeIntake
+            ? this.nativeIntake.reconsiderMonitor(store, automation, intakeReceipt, firedAt) : intakeReceipt;
+          if (!deferred || currentIntake?.outcome !== "suppressed") {
+            const recorded = store.recordAutomationMonitorSnapshot(observation, firedAt);
+            lastAutomationRunId = automationRun.id;
+            outcome = "changed";
+            if (recorded.changed && automationRun.runId) {
+              await emitAutomationMonitorFinding(this.notificationHub, entry.state.cwd, automation, automationRun.runId);
+            }
           }
         }
       } else {
@@ -853,6 +863,6 @@ function automationScheduleIdentity(automation: AutomationDefinition): string {
  * from an earlier transition, while a retry of the same slot must remain
  * idempotent.
  */
-function monitorObservationId(automationId: string, scheduledFor: string, fingerprint: string): string {
-  return `automation:${automationId}:monitor:${scheduledFor}:${fingerprint}`;
+function monitorObservationId(automationId: string, occurrence: string, fingerprint: string): string {
+  return `automation:${automationId}:monitor:${occurrence}:${fingerprint}`;
 }

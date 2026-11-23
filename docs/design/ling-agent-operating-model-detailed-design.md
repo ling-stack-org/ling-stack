@@ -191,6 +191,13 @@ held occurrences. Each retry links the receipts and retains the native
 execution identity. `workItem/intake/updated` lets Work Item subscribers
 observe subsequent dispatch milestones.
 
+A matching monitor observation held by automatic intake keeps its original
+AutomationRun and frozen snapshot. Subsequent polls can re-evaluate the same
+occurrence when quiet hours, concurrency or the start allowance permit it.
+The next accepted evaluation links to the suppressed receipt and uses the
+original Run dispatch owner. A new policy and source revision are checked
+before admission.
+
 ### 3.2 Work Item Target Identity
 
 A registered App Server GitHub repository can set an `intake` policy with `mode`, `enabled`, optional `requiredLabel` and `priority`, and a signed Automation `webhookSourceId`. The local operator can poll a page of open subjects using `github/intake/poll`. Without an explicit mode the poll records a manual evaluation. A suggested subject uses the existing intake Work Item and waits for acceptance.
