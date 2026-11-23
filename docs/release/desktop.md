@@ -30,6 +30,11 @@ Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 h
 | Windows ARM64 | 不支持 | 不生成安装包或 provider payload |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
+macOS arm64 的 hosted daemon-only replay 已补充验证资源准备和服务就绪时延。bundled
+模式分别为 115.672 秒和 117.335 秒，on-demand 模式分别为 136.420 秒和 138.561 秒，
+两种模式均正常退出。该证据覆盖资源准备路径，不替代 Developer ID、公证、TCC、干净机器
+安装生命周期和实际插件调用验收。[测量运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45177615505)
+
 ## Chrome Native Messaging Host 发布边界
 
 扩展 `0.1.2` 通过持久 MV3 Alarm 在 Desktop 重启或短暂断线后自动恢复。Host 名称固定为
