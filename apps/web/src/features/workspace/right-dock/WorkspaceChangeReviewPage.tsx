@@ -19,6 +19,9 @@ import {
 } from "../../../shared/conversation/blocks/TerminalReportBlock.js";
 import { WorkspaceFileOpenMenu } from "../../../shared/conversation/blocks/WorkspaceFileOpenMenu.js";
 import { WorkspaceSnapshotRestorePanel } from "./WorkspaceSnapshotRestorePanel.js";
+import { previewWorkspaceReviewFile } from "../../../api.js";
+import { ArtifactPreview } from "../../../shared/conversation/preview/ArtifactPreview.js";
+import { DockWorkspaceResourcePreview } from "./DockFileItemDetail.js";
 import {
   Button,
   EmptyState,
@@ -131,10 +134,11 @@ export function WorkspaceChangeReviewPage({
           <div className="workspace-change-review-diffs">
             {files.map((file) => (
               <WorkspaceChangeFileSection
-                key={file.path}
-                cwd={cwd ?? changes?.repoRoot ?? changes?.cwd ?? ""}
+                key={JSON.stringify([scoped ? review?.scope : "workspace", review?.revision, file.path])}
+                cwd={scoped ? cwd ?? "" : changes?.repoRoot ?? cwd ?? changes?.cwd ?? ""}
                 file={file}
                 revision={review?.revision}
+                scope={review?.scope}
                 scoped={scoped}
                 selected={selectedPath === file.path}
                 setRef={(element) => {
@@ -201,6 +205,7 @@ function WorkspaceChangeFileSection({
   file,
   scoped,
   revision,
+  scope,
   selected,
   setRef,
 }: {
@@ -208,11 +213,13 @@ function WorkspaceChangeFileSection({
   readonly file: ReviewDisplayFile;
   readonly scoped: boolean;
   readonly revision?: string;
+  readonly scope?: WorkspaceChangeReview["scope"];
   readonly selected: boolean;
   readonly setRef: (element: HTMLElement | null) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
+  const [view, setView] = useState<"file" | "changes">("changes");
   const fileIcon = terminalReportFileIcon(file.path);
   const fileName = terminalReportFileName(file.path);
   const change = workspaceChangeToConversationChange(file);
@@ -250,6 +257,7 @@ function WorkspaceChangeFileSection({
           </span>
           <span className="workspace-change-file-badges">
             {file.staged ? <small>{t("Staged")}</small> : null}
+            {file.unstaged ? <small>{t("Unstaged")}</small> : null}
             {file.untracked ? <small>{t("Untracked")}</small> : null}
             <ChangeStats additions={file.additions} deletions={file.deletions} />
           </span>
@@ -258,9 +266,16 @@ function WorkspaceChangeFileSection({
         {!scoped && file.kind !== "deleted" ? <WorkspaceFileOpenMenu cwd={cwd} path={file.path} compact placement="auto" /> : null}
       </header>
       {!collapsed ? (
-        change ? <DiffViewer change={change} revision={revision} maxCollapsedLines={220} showFoldMarkers={false} /> : (
-          <div className="workspace-change-file-empty">{file.unavailableReason ?? (file.truncated ? t("Preview truncated") : t("Preview unavailable"))}</div>
-        )
+        <>
+          <div className="workspace-file-tabs-toolbar workspace-change-file-view" role="group" aria-label={file.path}>
+            <button type="button" aria-pressed={view === "changes"} onClick={() => setView("changes")}>{t("Changes")}</button>
+            <button type="button" aria-pressed={view === "file"} onClick={() => setView("file")}>{t("Files")}</button>
+          </div>
+          {view === "file" ? <><div className="workspace-file-changes-summary">{t("Current file")}</div>{scoped ? scope && revision && file.id ? <ScopedCurrentFile key={JSON.stringify([cwd, scope.kind, scope.id, revision, file.id])} cwd={cwd} scope={scope} revision={revision} fileId={file.id} /> : <div>{t("Preview unavailable")}</div> : <DockWorkspaceResourcePreview cwd={cwd} target={{ path: file.path }} hideOpenMenu />}</>
+            : file.layers && change ? file.layers.map(layer => <div key={layer.kind}><div className="workspace-file-changes-summary">{t(layer.kind === "staged" ? "Staged" : "Unstaged")}</div>{layer.diff ? <DiffViewer change={{ ...change, id: `${change.id}:${layer.kind}`, diff: layer.diff }} revision={revision} maxCollapsedLines={220} showFoldMarkers={false} /> : <div>{t("Diff unavailable")}</div>}{layer.truncated ? <div>{t("Preview truncated")}</div> : null}</div>) : change ? <DiffViewer change={change} revision={revision} maxCollapsedLines={220} showFoldMarkers={false} /> : (
+              <div className="workspace-change-file-empty">{file.unavailableReason ?? (file.truncated ? t("Preview truncated") : t("Preview unavailable"))}</div>
+            )}
+        </>
       ) : null}
     </article>
   );
@@ -269,8 +284,23 @@ function WorkspaceChangeFileSection({
 type ReviewDisplayFile = Omit<WorkspaceChangeFile, "additions" | "deletions"> & {
   readonly additions?: number;
   readonly deletions?: number;
+  readonly id?: string;
   readonly unavailableReason?: string;
 };
+
+function ScopedCurrentFile({ cwd, scope, revision, fileId }: { readonly cwd: string; readonly scope: WorkspaceChangeReview["scope"]; readonly revision: string; readonly fileId: string }): React.JSX.Element {
+  const { t } = useI18n();
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewWorkspaceReviewFile>>>();
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setPreview(undefined); setError(false);
+    void previewWorkspaceReviewFile({ cwd, scope, revision, fileId }).then(value => { if (!cancelled) setPreview(value); }, () => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [cwd, scope.kind, scope.id, revision, fileId]);
+  if (error) return <div className="artifact-preview-error">{t("Preview unavailable")}</div>;
+  return preview ? <ArtifactPreview preview={preview} cwd={cwd} /> : <div className="artifact-preview-loading">{t("Loading preview...")}</div>;
+}
 
 function workspaceChangeToConversationChange(file: ReviewDisplayFile): ConversationFileChange | undefined {
   if (!file.diff?.trim()) {
