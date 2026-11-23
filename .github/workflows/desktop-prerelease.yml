@@ -307,16 +307,16 @@ jobs:
           node apps/desktop/scripts/distribution/materials.mjs prepare \
             --platform "$DESKTOP_MATERIAL_PLATFORM" \
             --gstack-workspace "$RUNNER_TEMP/gstack-candidate"
-      - name: Package the native unsigned development candidate
+      - name: Assemble the native unsigned development candidate from prepared inputs
         if: env.DESKTOP_OPERATION == 'build'
         run: |
           set -euo pipefail
           if [[ "$DESKTOP_TARGET" == "macos-arm64" ]]; then
             LING_PACKAGED_RELEASE_REVIEW_REQUIRED=1 \
               NODE_OPTIONS="--import=$GITHUB_WORKSPACE/scripts/release/desktop-package-diagnostics.mjs" \
-              corepack pnpm --filter @ling-stack/desktop package:mac
+              corepack pnpm --filter @ling-stack/desktop exec node scripts/package-macos-with-office.mjs
           else
-            corepack pnpm --filter @ling-stack/desktop package:win
+            corepack pnpm --filter @ling-stack/desktop exec node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64
           fi
       - name: Verify actual final archives, bundled resources and runtime structure
         if: env.DESKTOP_OPERATION == 'build'
