@@ -48,7 +48,11 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
    | `operation` | 先 `inspect`，解决阻断后再 `build` |
    | `source_sha` | 已合入 main 的完整源码 SHA |
    | `release_tag` | 与上述三个版本文件一致的 `v<版本>` tag |
+   | `plugin_mode` | `bundled` 构建兼容包，`on-demand` 构建瘦包验收候选 |
    | `create_draft` | `false` 仅保留候选 artifact；`true` 在两平台成功后创建 Draft |
+
+   瘦包验收选择 `on-demand` 和 `create_draft=false`，用同一个源码 SHA 另建兼容包，
+   按 [独立插件打包与分发](../design/plugin-independent-packaging.md#瘦包对照和切换) 记录对照数据。
 
 4. 下载并检查本次生成的安装包、每平台验证 JSON、分发材料压缩包和 `checksums.txt`。
    Mac 输出 arm64 DMG/ZIP；Windows 输出 x64 Setup EXE。没有 Intel Mac、Windows ARM64 或自动升级产物。
