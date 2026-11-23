@@ -32,6 +32,9 @@ export function sendWorkItemStageMessage(store: RunStore, input: LingAppServerSt
     || item.revision !== expectedWorkItemRevision || target.updatedAt !== expectedTargetRevision) {
     throw new HttpError(409, "stale_revision", "The Work Item, Plan or receiving stage changed.");
   }
+  if (item.control.state !== "active") {
+    throw new HttpError(409, "resume_blocked", "New stage messages require an active Work Item.");
+  }
   if (target.status !== "queued" || store.getBlockingResourceLease("workflow_step", target.id)
     || ["done", "archived", "cancelled", "superseded"].includes(item.status)) {
     throw new HttpError(409, "resume_blocked", "The receiving stage has already left the input queue.");

@@ -2679,6 +2679,14 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
   assert.equal(legacyClaim.status, 200);
   assert.equal((await legacyClaim.json()).blocker?.code, "control_blocked");
   assert.equal(paused.workItem.control.state, "paused");
+  await assert.rejects(peer.call("workItem/message/send", {
+    workItemId, planRevision: paused.workItem.planRevision, expectedWorkItemRevision: Number(paused.workItem.revision),
+    targetStepId: p02.id, expectedTargetRevision: store.getChannelWorkflowStep(p02.id)?.updatedAt,
+    idempotencyKey: "message-while-paused", body: "Input sent while the Work Item is paused.",
+  }), { code: "resume_blocked" });
+  assert.equal((await peer.call<LingAppServerWorkItemCollaborationReadResult>(
+    "workItem/message/list", { workItemId },
+  )).records.length, 0);
   completeContract();
   await waitFor(() => store.getChannelWorkflowStep(p01.id)?.status === "succeeded" ? true : undefined);
   const stageEvent = await waitFor(() => peer.notices.find(event => event.method === "workItem/stage/updated"
