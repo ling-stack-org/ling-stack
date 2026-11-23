@@ -19,6 +19,10 @@ export const VALIDATION_BUILD_DEPENDENCIES = new Map([
   // The suspension activation suite uses the Daemon replay package and the Pi prompt formatter.
   ["@ling-stack/core", ["@ling-stack/daemon", "@ling-stack/runner-pi"]],
 ]);
+export const VALIDATION_INPUT_BUILD_DEPENDENCIES = new Map([
+  ["packages/core/test/terminal-report-fixture.mjs", ["@ling-stack/conversation-ui-react"]],
+  ["packages/daemon/test/terminal-interruption-localization.test.mjs", ["@ling-stack/conversation-ui-react"]],
+]);
 const localizationTestDeclarations = [
   "scripts/catalog-locales.d.mts",
   "scripts/catalog-utils.d.mts",
