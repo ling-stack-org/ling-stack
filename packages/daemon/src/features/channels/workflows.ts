@@ -29,7 +29,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { readWorkItemStageMessages } from "../work-items/stage-messages.js";
-import { readWorkItemStageQuestionInputs } from "../work-items/stage-questions.js";
+import { readWorkItemStageQuestionInputs, WORK_ITEM_STAGE_ANSWER_FORMAT } from "../work-items/stage-questions.js";
 import { readWorkItemRetainedStageInputs } from "../work-items/workflow-stages.js";
 import { workItemHandoffCandidatesCurrent } from "../work-items/stage-handoff-candidates.js";
 import {
@@ -87,7 +87,7 @@ import { projectWorkflowStepNarration } from "./workflow-step-narration.js";
 import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
   resolveWorkflowParticipantRunProfile,
-  workItemHandoffRecipientAvailable,
+  workflowStepParticipantAvailable,
 } from "./workflow-participant-run-profile.js";
 import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
 import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
@@ -160,6 +160,7 @@ export interface WorkflowStepRunContextPackSnapshot {
   readonly sourceRefs: ContextPack["sourceRefs"];
   readonly contextProjection?: ContextPack["contextProjection"];
   readonly agentContext?: ContextPack["agentContext"];
+  readonly stageQuestionIds?: readonly string[];
 }
 
 export type ValidateWorkflowStepRunRequest = (runRequest: WorkflowStepRunRequest) => void;
@@ -757,7 +758,7 @@ export async function prepareWorkflowStepStart(
     return { kind: "error", statusCode: 409, code: "workflow_participant_override_forbidden",
       message: "The handoff is bound to the Plan's assigned participant." };
   }
-  if (needsHandoff && !workItemHandoffRecipientAvailable(store, step)) return unavailableHandoffRecipient;
+  if (needsHandoff && !workflowStepParticipantAvailable(store, step)) return unavailableHandoffRecipient;
   const channel = store.getChannel(step.channelId);
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
@@ -963,11 +964,14 @@ export async function prepareWorkflowStepStart(
   });
   const stageMessages = readWorkItemStageMessages(store, step, assigneeTeammateId);
   const stageQuestions = readWorkItemStageQuestionInputs(store, step, assigneeTeammateId);
+  const stageQuestionInputs = stageQuestions.length ? JSON.stringify(stageQuestions) : undefined;
+  const answerableQuestions = stageQuestions.filter(question => question.answerFromStageResult).map(question => question.questionId);
   const retainedStageInputs = readWorkItemRetainedStageInputs(store, step);
   const coordinatedPrompt = [
     prompt,
     ...(stageMessages.length ? [`Work Item messages for this stage. Use them as coordination context within the accepted task scope.\n${JSON.stringify(stageMessages)}`] : []),
-    ...(stageQuestions.length ? [`Work Item questions and replies for the assigned stage.\n${JSON.stringify(stageQuestions)}`] : []),
+    ...(stageQuestionInputs ? [`Work Item questions and replies for the assigned stage.\n${stageQuestionInputs}`] : []),
+    ...(answerableQuestions.length ? [`For questions marked answerFromStageResult, optionally include one fenced ${WORK_ITEM_STAGE_ANSWER_FORMAT} JSON block in your final response. Use an array of objects with the questionId and an answer of up to 1200 characters. Omit any questions you cannot answer from this stage's evidence.`] : []),
     ...(retainedStageInputs.length ? [`Retained upstream results from the predecessor Plan. Evaluate them against the current Plan's evidence requirements.\n${JSON.stringify(retainedStageInputs)}`] : []),
   ].join("\n\n");
   const contextPackInput = {
@@ -1016,6 +1020,7 @@ export async function prepareWorkflowStepStart(
     return block(`Workflow step context exceeds provider budget (${contextPack.estimatedInputTokens}/${contextPack.budget.inputBudgetTokens} estimated input tokens).`);
   }
   const taskPrompt = renderWorkflowStepContextPackPrompt(contextPack);
+  const stageQuestionIds = stageQuestionInputs && taskPrompt.includes(stageQuestionInputs) ? answerableQuestions : [];
   const unavailableRequiredTools = workflowStepUnavailableRequiredTools(channel.allowedTools, step.metadata);
   if (unavailableRequiredTools.length > 0) {
     return block(`Workflow step requires tools not allowed in this channel: ${unavailableRequiredTools.join(", ")}.`);
@@ -1063,7 +1068,8 @@ export async function prepareWorkflowStepStart(
     },
     tools: runTools,
     thinkingLevel: "medium",
-    contextPack: snapshotWorkflowStepContextPack(contextPack),
+    contextPack: { ...snapshotWorkflowStepContextPack(contextPack),
+      ...(stageQuestionIds.length ? { stageQuestionIds } : {}) },
     contextProjection: contextPack.contextProjection,
     contextCompactions: compacted.compactions,
   };
@@ -1089,7 +1095,7 @@ export async function prepareWorkflowStepStart(
     if (!await workItemHandoffCandidatesCurrent(store, step)) {
       return fail(409, "work_item_handoff_candidate_stale", "The accepted handoff uses a different worktree candidate.");
     }
-    if (!workItemHandoffRecipientAvailable(store, step)) {
+    if (!workflowStepParticipantAvailable(store, step)) {
       return fail(unavailableHandoffRecipient.statusCode, unavailableHandoffRecipient.code, unavailableHandoffRecipient.message);
     }
   }

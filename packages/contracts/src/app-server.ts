@@ -975,6 +975,7 @@ export interface LingAppServerStageQuestionAskParams {
   readonly respondentStepId: string;
   readonly question: string;
   readonly deadlineAt: string;
+  readonly answerFromStageResult?: boolean;
   readonly idempotencyKey: string;
 }
 

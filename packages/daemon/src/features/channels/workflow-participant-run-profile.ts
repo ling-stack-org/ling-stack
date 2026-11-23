@@ -33,7 +33,7 @@ export type WorkflowParticipantRunProfileResolution =
       readonly missingRequirements: readonly string[];
     };
 
-export function workItemHandoffRecipientAvailable(store: RunStore, step: ChannelWorkflowStep): boolean {
+export function workflowStepParticipantAvailable(store: RunStore, step: ChannelWorkflowStep): boolean {
   const channel = store.getChannel(step.channelId);
   return channel !== undefined && resolveWorkflowParticipantRunProfile({
     store,

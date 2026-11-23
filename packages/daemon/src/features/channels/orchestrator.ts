@@ -19,6 +19,7 @@ import {
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
+import { readAdmittedStageQuestionIds, stripStageAnswerBlocks } from "../work-items/stage-questions.js";
 import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 import {
@@ -1035,18 +1036,18 @@ function blockWorkflowStepForContextReason(
 
 function workflowStepRunResultSummary(store: RunStore, run: RunSession): string {
   if (run.workflowStepId && store.getChannelWorkflowStep(run.workflowStepId)?.metadata?.planBallotKey) return "Ballot received.";
-  return readRunAssistantTextSummary(store, run.id) ??
+  return readRunAssistantTextSummary(store, run) ??
     readRunArtifactResultSummary(store, run.id) ??
     "Run succeeded.";
 }
 
-function readRunAssistantTextSummary(store: RunStore, runId: string): string | undefined {
+function readRunAssistantTextSummary(store: RunStore, run: RunSession): string | undefined {
   const text = store
-    .listEvents(runId, { limit: 1000 })
+    .listEvents(run.id, { limit: 1000 })
     .filter((event) => event.type === "assistant_text_delta")
     .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
     .join("");
-  const normalizedText = preserveMarkdownLayout(text);
+  const normalizedText = preserveMarkdownLayout(readAdmittedStageQuestionIds(run)?.length ? stripStageAnswerBlocks(text) : text);
   return normalizedText || undefined;
 }
 

@@ -167,7 +167,7 @@ export async function runLingAppServerMcp(
     if (methods.has("workItem/question/ask")) server.registerTool("ling_stage_question_ask", {
       description: "Ask an assigned stage a question and hold the waiting stage's admission until the answer is recorded.",
       inputSchema: z.strictObject({ ...planChange, waitingStepId: objectId, respondentStepId: objectId,
-        deadlineAt: objectId, question: z.string().min(1).max(1200) }),
+        deadlineAt: objectId, question: z.string().min(1).max(1200), answerFromStageResult: z.boolean().optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.askWorkItemStageQuestion(params)));
     if (methods.has("workItem/question/reply")) server.registerTool("ling_stage_question_reply", {

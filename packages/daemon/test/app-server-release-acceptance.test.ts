@@ -3184,11 +3184,12 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.doesNotMatch(JSON.stringify(provider.requests[2]), /predecessor allow the old contract|answer applies to the old contract/u);
 });
 
-test("a reply at a stage question deadline is durable history and does not release the waiting step", { timeout: 15_000 }, async t => {
+async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string) {
   const fixture = await releaseFixture(t);
   const store = fixture.getStore();
   const now = new Date().toISOString();
-  const channel = store.createChannel({ name: "Review", boundPath: fixture.cwd, allowedTools: [] }, now);
+  const preset = providerBaseUrl ? addLoopbackPreset(store, providerBaseUrl) : undefined;
+  const channel = store.createChannel({ name: "Review", boundPath: fixture.cwd, allowedTools: [], defaultProviderPresetId: preset?.id }, now);
   const thread = store.createLingThread({ channelId: channel.id, kind: "channel_discussion",
     title: "Review plan", objective: "Review the compatibility contract." }, now);
   const plan = store.upsertProposedPlanArtifact({
@@ -3216,20 +3217,25 @@ test("a reply at a stage question deadline is durable history and does not relea
     expectedWorkItemRevision: Number(claim.workItem.revision), idempotencyKey: "bind-question-deadline",
   });
   assert.ok(workItem.planRevision);
+  return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent };
+}
+
+test("a reply at a stage question deadline is durable history and does not release the waiting step", { timeout: 15_000 }, async t => {
+  const { fixture, store, client, item, workItem, workflowId, waiting, respondent } = await stageQuestionWorkflow(t);
   const deadline = new Date(Date.now() + 120_000);
   const question = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/ask", {
     workItemId: item.id, planRevision: workItem.planRevision, expectedWorkItemRevision: Number(workItem.revision),
     waitingStepId: waiting.id, respondentStepId: respondent.id, deadlineAt: deadline.toISOString(),
     question: "Which inputs does QA need?", idempotencyKey: "ask-with-deadline",
   });
-  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(accepted.workflowId, waiting), "work_item_stage_question_pending");
+  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(workflowId, waiting), "work_item_stage_question_pending");
   t.mock.timers.enable({ apis: ["Date"], now: deadline });
   const reply = { workItemId: item.id, questionId: question.record.id, expectedQuestionRevision: question.record.collaborationRevision,
     expectedWorkItemRevision: question.workItemRevision, answer: "The previous revision.", idempotencyKey: "reply-at-deadline" };
   const history = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/reply", reply);
   assert.equal((history.record.payload as { historicalReason?: string }).historicalReason, "deadline_expired");
-  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(accepted.workflowId, waiting), "work_item_stage_question_overdue");
-  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(accepted.workflowId, respondent), undefined);
+  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(workflowId, waiting), "work_item_stage_question_overdue");
+  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(workflowId, respondent), undefined);
   await fixture.restart();
   const restored = await fixture.connect();
   const replayed = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/reply", reply);
@@ -3237,8 +3243,80 @@ test("a reply at a stage question deadline is durable history and does not relea
   assert.equal(replayed.record.id, history.record.id);
   assert.deepEqual(replayed.record.payload, history.record.payload);
   await assert.rejects(restored.call("workItem/question/reply", { ...reply, answer: "Change the reply." }), { code: "idempotency_conflict" });
-  assert.equal(fixture.getStore().getWorkItemWorkflowAdmissionBlocker(accepted.workflowId, waiting), "work_item_stage_question_overdue");
+  assert.equal(fixture.getStore().getWorkItemWorkflowAdmissionBlocker(workflowId, waiting), "work_item_stage_question_overdue");
   assert.equal(fixture.getStore().listRuns({ workflowStepId: waiting.id }).length, 0);
+});
+
+test("the assigned Agent can answer a stage question using its owned Workflow result", { timeout: 25_000 }, async t => {
+  let automaticId = "", coordinatorId = "";
+  const provider = await startLoopbackPiProvider((body: unknown, count: number) => {
+    const observed = JSON.stringify(body);
+    if (count === 1) {
+      assert.ok(automaticId && coordinatorId);
+      assert.ok(observed.includes(automaticId));
+      return { text: "Contract reviewed.\n\n```ling-stage-answers\n" + JSON.stringify([
+        { questionId: automaticId, answer: "Confirm that omitted headers stay optional." },
+        { questionId: coordinatorId, answer: "The coordinator can be bypassed." },
+      ]) + "\n```" };
+    }
+    assert.match(observed, /Confirm that omitted headers stay optional/u);
+    assert.match(observed, /Run the accepted regression suite/u);
+    assert.doesNotMatch(observed, /The coordinator can be bypassed/u);
+    return { text: "QA complete." };
+  });
+  t.after(() => provider.close());
+  const { fixture, store, client, item, workItem, workflowId, waiting, respondent } = await stageQuestionWorkflow(t, provider.baseUrl);
+  const ask = { workItemId: item.id, planRevision: workItem.planRevision,
+    expectedWorkItemRevision: Number(workItem.revision), waitingStepId: waiting.id, respondentStepId: respondent.id,
+    deadlineAt: new Date(Date.now() + 120_000).toISOString() };
+  const automatic = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/ask", {
+    ...ask, answerFromStageResult: true, question: "What changed in the header contract?", idempotencyKey: "automatic-stage-question",
+  });
+  automaticId = automatic.record.id;
+  const coordinator = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/question/ask", {
+    ...ask, expectedWorkItemRevision: automatic.workItemRevision, question: "Which test suite is approved?",
+    idempotencyKey: "coordinator-stage-question",
+  });
+  coordinatorId = coordinator.record.id;
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const url = new URL(`/workflows/${workflowId}/orchestrate`, daemonUrl);
+  url.searchParams.set("cwd", fixture.cwd);
+  const response = await fetch(url, { method: "POST", body: "{}",
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` } });
+  const started = await response.json() as { status: string; blocker?: string };
+  assert.equal(started.status, "started", JSON.stringify(started));
+  await waitFor(() => store.getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
+  const [source] = store.listRuns({ workflowStepId: respondent.id });
+  assert.ok(source);
+  const prepared = source.requestSnapshot as { contextPack?: { stageQuestionIds?: readonly string[] } };
+  assert.deepEqual(prepared.contextPack?.stageQuestionIds, [automaticId]);
+  const completedStep = store.getChannelWorkflowStep(respondent.id);
+  assert.equal(completedStep?.resultSummary, "Contract reviewed.");
+  assert.ok(completedStep.metadata?.outputArtifactId);
+  assert.doesNotMatch(JSON.stringify(store.getArtifact(completedStep.metadata.outputArtifactId)?.sealedPayload),
+    /Confirm that omitted headers|coordinator can be bypassed/u);
+  const readReplies = async (connection: typeof client) => (await connection.call<LingAppServerWorkItemCollaborationReadResult>(
+    "workItem/question/read", { workItemId: item.id })).records.filter(record => record.action === "replied");
+  const received = await waitFor(async () => (await readReplies(client)).find(record => record.parentRecordId === automaticId));
+  assert.equal(received.actorId, respondent.toParticipantId);
+  assert.deepEqual(received.sourceRefs, [{ type: "run", id: source.id }]);
+  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(workflowId, waiting), "work_item_stage_question_pending");
+  assert.equal(store.listRuns({ workflowStepId: waiting.id }).length, 0);
+  assert.equal(provider.requests.length, 1);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const replies = await readReplies(restored);
+  assert.deepEqual(replies.map(record => record.id), [received.id]);
+  const latest = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
+  await restored.call("workItem/question/reply", {
+    workItemId: item.id, questionId: coordinatorId, expectedQuestionRevision: coordinator.record.collaborationRevision,
+    expectedWorkItemRevision: Number(latest.workItem.revision), answer: "Run the accepted regression suite.", idempotencyKey: "coordinator-reply",
+  });
+  const recovered = fixture.getStore();
+  await waitFor(() => recovered.getChannelWorkflowStep(waiting.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(recovered.listRuns({ workflowStepId: waiting.id }).length, 1);
+  assert.equal(recovered.listRuns({ workflowStepId: respondent.id }).length, 1);
+  assert.equal(provider.requests.length, 2);
 });
 
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {

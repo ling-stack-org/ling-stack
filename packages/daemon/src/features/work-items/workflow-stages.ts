@@ -3,7 +3,7 @@ import type { LingAppServerStageBallotTally, LingAppServerStageHandoffProgress, 
   LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
 import { readWorkItemCollaborationRecord, readWorkflowStageHandoff, stageHandoffAdmitsTarget, workItemWorkflowDecisionId } from "@ling-stack/core";
 import type { ChannelWorkflowStep, RunStore, WorkItem } from "@ling-stack/core";
-import { workItemHandoffRecipientAvailable } from "../channels/workflow-participant-run-profile.js";
+import { workflowStepParticipantAvailable } from "../channels/workflow-participant-run-profile.js";
 import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
@@ -78,7 +78,7 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
 function readStageAdmissionBlocker(store: RunStore, step: ChannelWorkflowStep): string | undefined {
   const blocker = store.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step);
   if ((!blocker || blocker === "work_item_handoff_pending") && step.metadata?.requiredPlanHandoffStepIds?.length
-    && !workItemHandoffRecipientAvailable(store, step)) return "work_item_handoff_recipient_unavailable";
+    && !workflowStepParticipantAvailable(store, step)) return "work_item_handoff_recipient_unavailable";
   return blocker;
 }
 

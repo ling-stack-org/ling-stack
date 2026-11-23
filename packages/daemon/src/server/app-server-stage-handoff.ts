@@ -7,7 +7,7 @@ import {
 } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
-import { workItemHandoffRecipientAvailable } from "../features/channels/workflow-participant-run-profile.js";
+import { workflowStepParticipantAvailable } from "../features/channels/workflow-participant-run-profile.js";
 import { readWorkflowStepOutputPacketArtifact } from "../features/channels/workflow-step-packets.js";
 import { readCompleteHandoffCandidate } from "../features/work-items/stage-handoff-candidates.js";
 import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
@@ -139,7 +139,7 @@ export async function settleAppServerStageHandoff(
       throw new AppServerCollaborationError("stale_revision", "The handoff changed while capturing the candidate.");
     }
   }
-  if (action === "accepted" && !workItemHandoffRecipientAvailable(store, target)) {
+  if (action === "accepted" && !workflowStepParticipantAvailable(store, target)) {
     throw new HttpError(409, "work_item_handoff_recipient_unavailable", "The assigned participant cannot currently receive the handoff.");
   }
   const payload: WorkflowStageHandoffDecision = {

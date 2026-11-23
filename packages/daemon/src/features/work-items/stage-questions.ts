@@ -1,19 +1,22 @@
 import type { LingAppServerStageQuestionAskParams, LingAppServerStageQuestionReplyParams } from "@ling-stack/contracts";
 import {
   appendWorkItemCollaboration, listWorkItemStageQuestions, readWorkItemStageQuestion, WORKFLOW_STAGE_QUESTION_LIMIT,
-  workItemStageQuestionAnswerId, workItemStageQuestionExpired, workItemStageQuestionId, type RunStore,
+  workItemStageQuestionAnswerId, workItemStageQuestionExpired, workItemStageQuestionId, type RunSession, type RunStore,
   type AppendWorkItemCollaborationInput, type AppendWorkItemCollaborationResult, type ChannelWorkflowStep, type WorkItemCollaborationRecord,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import { isRecord } from "../../shared/validation.js";
 import { readWorkItemWorkflowBinding } from "./workflow-stages.js";
 
 export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerStageQuestionAskParams, now: string) {
-  const { workItemId, planRevision, waitingStepId, respondentStepId, deadlineAt, expectedWorkItemRevision, idempotencyKey } = input;
+  const { workItemId, planRevision, waitingStepId, respondentStepId, deadlineAt, expectedWorkItemRevision,
+    idempotencyKey, answerFromStageResult } = input;
   const question = readQuestionText(input.question, idempotencyKey, expectedWorkItemRevision);
   const item = store.getWorkItem(workItemId);
   if (!item) throw new HttpError(404, "workspace_binding_invalid", "The Work Item is unavailable.");
   const id = workItemStageQuestionId(planRevision, waitingStepId, idempotencyKey);
-  const payload = { planRevision, waitingStepId, respondentStepId, question, deadlineAt, requestRevision: expectedWorkItemRevision };
+  const payload = { planRevision, waitingStepId, respondentStepId, question, deadlineAt, requestRevision: expectedWorkItemRevision,
+    ...(answerFromStageResult ? { answerFromStageResult: true } : {}) };
   const prior = readWorkItemStageQuestion(store, workItemId, id);
   if (prior) return replay(prior.record, idempotencyKey, payload, item.revision);
 
@@ -31,6 +34,9 @@ export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerSt
   if (item.control.state !== "active" || ["done", "archived", "cancelled", "superseded"].includes(item.status)
     || [waiting, respondent].some(step => step.status !== "queued" || store.getBlockingResourceLease("workflow_step", step.id))) {
     throw new HttpError(409, "resume_blocked", "Both stages must be waiting for their initial Workflow admission.");
+  }
+  if (answerFromStageResult && respondent.metadata?.planBallotKey) {
+    throw new HttpError(409, "resume_blocked", "A ballot stage can only return its ballot.");
   }
   const existing = listWorkItemStageQuestions(store, workItemId, planRevision);
   if (existing.length >= WORKFLOW_STAGE_QUESTION_LIMIT) throw new HttpError(409, "resume_blocked", "The Plan's question limit has been reached.");
@@ -50,7 +56,8 @@ export function askWorkItemStageQuestion(store: RunStore, input: LingAppServerSt
   }, now);
 }
 
-export function replyToWorkItemStageQuestion(store: RunStore, input: LingAppServerStageQuestionReplyParams, now: string) {
+export function replyToWorkItemStageQuestion(store: RunStore, input: LingAppServerStageQuestionReplyParams, now: string,
+  stageResult?: { readonly participantId: string; readonly runId: string }) {
   const { workItemId, questionId, expectedQuestionRevision, expectedWorkItemRevision, idempotencyKey } = input;
   const answer = readQuestionText(input.answer, idempotencyKey, expectedWorkItemRevision);
   const item = store.getWorkItem(workItemId);
@@ -70,8 +77,9 @@ export function replyToWorkItemStageQuestion(store: RunStore, input: LingAppServ
     : workItemStageQuestionExpired(question.question, Date.parse(now)) ? "deadline_expired" : undefined;
   return appendQuestion(store, {
     id: workItemStageQuestionAnswerId(questionId), workItemId, expectedWorkItemRevision, idempotencyKey, kind: "question",
-    action: "replied", actorId: "local-user", parentRecordId: questionId,
+    action: "replied", actorId: stageResult?.participantId ?? "local-user", parentRecordId: questionId,
     payload: { ...payload, ...(historicalReason ? { historicalReason } : {}) }, visibility: "participants",
+    ...(stageResult ? { sourceRefs: [{ type: "run", id: stageResult.runId }] } : {}),
   }, now);
 }
 
@@ -80,6 +88,26 @@ interface StageQuestionInput {
   readonly question: string;
   readonly answer?: string;
   readonly answerReceiptId?: string;
+  readonly answerFromStageResult?: true;
+}
+
+export const WORK_ITEM_STAGE_ANSWER_FORMAT = "ling-stage-answers";
+const answerFenceStart = "^```" + WORK_ITEM_STAGE_ANSWER_FORMAT + "\\r?\\n";
+const answerFenceEnd = "^```[ \\t]*(?:\\r?$)";
+const answerFence = new RegExp(answerFenceStart + "([\\s\\S]*?)" + answerFenceEnd, "gmu");
+const answerFenceIncludingUnclosed = new RegExp(answerFenceStart + "[\\s\\S]*?(?:" + answerFenceEnd + "|(?![\\s\\S]))", "gmu");
+
+export function readAdmittedStageQuestionIds(run: RunSession): readonly unknown[] | undefined {
+  const snapshot = isRecord(run.requestSnapshot) ? run.requestSnapshot.contextPack : undefined;
+  return isRecord(snapshot) && Array.isArray(snapshot.stageQuestionIds) ? snapshot.stageQuestionIds : undefined;
+}
+
+export function readStageAnswerBlocks(text: string): readonly RegExpMatchArray[] {
+  return [...text.matchAll(answerFence)];
+}
+
+export function stripStageAnswerBlocks(text: string): string {
+  return text.replace(answerFenceIncludingUnclosed, "");
 }
 
 export function readWorkItemStageQuestionInputs(store: RunStore, step: ChannelWorkflowStep, participantId: string): readonly StageQuestionInput[] {
@@ -93,7 +121,8 @@ export function readWorkItemStageQuestionInputs(store: RunStore, step: ChannelWo
       return [{ questionId: record.id, question: question.question, answer: reply.text, answerReceiptId: reply.record.id }];
     }
     if (question.respondentStepId === step.id && !reply && !workItemStageQuestionExpired(question, now)) {
-      return [{ questionId: record.id, question: question.question }];
+      return [{ questionId: record.id, question: question.question,
+        ...(question.answerFromStageResult ? { answerFromStageResult: true } : {}) }];
     }
     return [];
   });

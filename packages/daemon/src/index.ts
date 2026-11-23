@@ -1,6 +1,7 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
 import { dispatchGitHubIntake, processGitHubWebhookIntake } from "./server/app-server-github-intake.js";
 import { openReadyWorkItemStageDeliberations } from "./server/app-server-collaboration.js";
+import { reconcileWorkItemStageQuestionResults } from "./features/work-items/stage-question-results.js";
 import { HttpError } from "./errors.js";
 import { isRecord } from "./shared/validation.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
@@ -913,6 +914,7 @@ export function createDaemonServer(
   };
   taskSupervisor = new TaskSupervisor(storeRegistry, async (store, workflowId) => {
     if (storeRegistry.recoveryBlocksDispatch(store.paths.cwd)) return;
+    reconcileWorkItemStageQuestionResults(store, workflowId, controlPlaneEvents);
     for (const event of openReadyWorkItemStageDeliberations(store, workflowId, new Date().toISOString())) controlPlaneEvents.publish(event);
     return orchestrateChannelWorkflow({
       store, cwd: store.paths.cwd, workflowId, secretResolver, runnerRegistry,

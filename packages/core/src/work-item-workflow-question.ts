@@ -28,6 +28,7 @@ export interface WorkItemStageQuestionPayload {
   readonly respondentStepId: string;
   readonly question: string;
   readonly deadlineAt: string;
+  readonly answerFromStageResult?: true;
 }
 
 export function workItemStageQuestionExpired(question: WorkItemStageQuestionPayload, now: number): boolean {

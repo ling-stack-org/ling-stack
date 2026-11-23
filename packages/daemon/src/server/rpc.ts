@@ -1508,7 +1508,7 @@ class RpcConnection {
     const { event, ...receipt } = action === "ask" ? askWorkItemStageQuestion(store, {
       ...basis, planRevision: readStringField(record, "planRevision"), waitingStepId: readStringField(record, "waitingStepId"),
       respondentStepId: readStringField(record, "respondentStepId"), question: readStringField(record, "question"),
-      deadlineAt: readStringField(record, "deadlineAt"),
+      deadlineAt: readStringField(record, "deadlineAt"), answerFromStageResult: record.answerFromStageResult === true,
     }, now) : replyToWorkItemStageQuestion(store, {
       ...basis, questionId: readStringField(record, "questionId"), answer: readStringField(record, "answer"),
       expectedQuestionRevision: readIntegerField(record, "expectedQuestionRevision", "expectedQuestionRevision"),

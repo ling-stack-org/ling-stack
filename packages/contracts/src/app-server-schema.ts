@@ -289,7 +289,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith(collaborationAppend, ["workItemId"]), result };
     case "workItem/question/ask":
       return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, waitingStepId: stringSchema,
-        respondentStepId: stringSchema, question: stringSchema, deadlineAt: stringSchema }, ["workItemId"]), result };
+        respondentStepId: stringSchema, question: stringSchema, deadlineAt: stringSchema, answerFromStageResult: booleanSchema }, ["workItemId"]), result };
     case "workItem/question/reply":
       return { params: objectWith({ ...collaborationAppend, questionId: stringSchema, expectedQuestionRevision: integerSchema,
         answer: stringSchema }, ["workItemId"]), result };
