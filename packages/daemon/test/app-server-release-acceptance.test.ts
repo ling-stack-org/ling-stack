@@ -3282,7 +3282,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
 });
 
 async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false, retryBudget?: number) {
-  const fixture = await releaseFixture(t);
+  const fixture = await releaseFixture(t, { channels: { terminalReports: false, teamObserverBus: false } });
   const store = fixture.getStore();
   const now = new Date().toISOString();
   const preset = providerBaseUrl ? addLoopbackPreset(store, providerBaseUrl) : undefined;
@@ -3324,7 +3324,7 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
     expectedWorkItemRevision: Number(claim.workItem.revision), idempotencyKey: "bind-question-deadline",
   });
   assert.ok(workItem.planRevision);
-  return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent };
+  return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent, channel, thread, plan };
 }
 
 test("the Work Item retry budget uses owned Run history after restart and admits a sibling's first start", { timeout: 20_000 }, async t => {
@@ -3366,6 +3366,257 @@ test("the Work Item retry budget uses owned Run history after restart and admits
   await waitFor(() => current.getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
   assert.equal(provider.requests.length, 1);
   assert.equal(current.listRuns({ workflowStepId: waiting.id }).length, 2);
+});
+
+test("a bound Workflow carries measured Goal spend across Runs, Plans, agents, and restart", { timeout: 30_000 }, async t => {
+  const provider = await startLoopbackPiProvider((_body: unknown, invocation: number) => {
+    const total = [70, 50, 30][invocation - 1];
+    assert.ok(total);
+    const usage = { prompt_tokens: total - 4, completion_tokens: 4, total_tokens: total };
+    return invocation === 1 ? { tool: "read", input: { path: "contract.txt" }, usage }
+      : { text: "Verified the contract.", usage };
+  });
+  t.after(() => provider.close());
+  const { fixture, store, client, item, workItem, workflowId, waiting, respondent, thread, plan } =
+    await stageQuestionWorkflow(t, provider.baseUrl, true, 3);
+  await writeFile(join(fixture.cwd, "contract.txt"), "An omitted header is valid.\n");
+  const target = { workItemId: item.id };
+  const goalRequest = { threadId: thread.id, objective: "Verify the contract on both implementations" };
+  const { goal } = await client.call<{ goal: LingThreadGoal }>("thread/goal/set", { ...goalRequest, tokenBudget: 110 });
+  const start = (stepId: string) => {
+    const transport = fixture.transportOptions();
+    const address = new URL(`/workflow-steps/${encodeURIComponent(stepId)}/start`, transport.daemonUrl);
+    address.searchParams.set("cwd", fixture.cwd);
+    return fetch(address, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+      headers: { authorization: `Bearer ${transport.authToken}`, "content-type": "application/json" } });
+  };
+  const initialRun = await start(respondent.id);
+  assert.ok(initialRun.ok, await initialRun.clone().text());
+  await initialRun.text();
+  await waitFor(() => store.getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
+  const read = async (connection = client) => {
+    const { workflow } = await connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", target);
+    assert.ok(workflow);
+    return workflow;
+  };
+  const before = await read();
+  assert.equal(before.usage?.observedTokens, 120);
+  assert.equal(before.usage?.toolCalls, 1);
+  assert.equal(before.usage?.runCount, 1);
+  assert.equal(before.usage?.tokenCoverage, "complete");
+  assert.ok(before.usage.elapsedSeconds > 0);
+  assert.deepEqual(before.goalBudget, { goalId: goal.id, tokenBudget: 110, accountedTokens: 120,
+    timeUsedSeconds: before.usage.elapsedSeconds, tokensRemaining: 0, blocker: "work_item_goal_token_budget_exhausted" });
+  const verifyBlocked = async (stepId: string) => {
+    const blocked = await start(stepId);
+    assert.equal(blocked.status, 409);
+    assert.equal((await blocked.json() as { error: string }).error, "work_item_goal_token_budget_exhausted");
+  };
+  await verifyBlocked(waiting.id);
+  const runId = store.getChannelWorkflowStep(respondent.id)?.runId;
+  assert.ok(runId);
+  await waitFor(() => {
+    const run = store.getRun(runId);
+    if (!run?.workUnitId) return undefined;
+    const attempt = store.listWorkUnitAttempts(run.workUnitId).at(-1);
+    return attempt && store.getHostAttemptCompletion({ runId, ...toRuntimeAttemptFence(attempt) });
+  });
+  const current = await client.call<LingAppServerWorkItemReadResult>("workItem/read", target);
+  const pause = await client.call<LingAppServerWorkItemControlResult>("workItem/pause", {
+    ...target, expectedWorkItemRevision: Number(current.workItem.revision), expectedControlGeneration: 0,
+    actorId: "local-user", idempotencyKey: "budget-switch-pause", reason: "Hand off contract verification",
+  });
+  const previousPlan = store.getProposedPlanArtifact(plan.id)!;
+  const refined = await client.call<ProposedPlanActionResponse>("plan/refine", {
+    threadId: thread.id, planId: plan.id, expectedRevision: previousPlan.revision,
+    draft: { title: "Reassigned contract", bodyMarkdown: "Verify the same contract as the assigned QA." },
+  });
+  const accepted = await client.call<ProposedPlanActionResponse>("plan/accept", {
+    mode: "workflow", threadId: thread.id, planId: refined.plan.id, expectedRevision: refined.plan.revision,
+    workflowStepPreviews: [{ title: "Run the independent contract check", stageId: "P01", ownerId: "teammate_builtin_qa", ownerLabel: "QA" }],
+  });
+  assert.ok(accepted.workflowId);
+  const successor = await client.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", {
+    ...target, previousWorkflowId: workflowId, planId: accepted.plan.id, expectedPlanRevision: accepted.plan.revision,
+    expectedWorkItemRevision: Number(pause.workItem.revision), idempotencyKey: "budget-switch-bind",
+  });
+  assert.notEqual(successor.workItem.planRevision, workItem.planRevision);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const restoredState = await read(restored);
+  assert.equal(restoredState.workflowId, accepted.workflowId);
+  assert.deepEqual(restoredState.usage, before.usage);
+  assert.deepEqual(restoredState.steps[0]?.usage, before.usage);
+  assert.deepEqual(restoredState.goalBudget, before.goalBudget);
+  await restored.call("workItem/resume", {
+    ...target, expectedWorkItemRevision: Number(successor.workItem.revision), expectedControlGeneration: 1,
+    actorId: "local-user", idempotencyKey: "budget-switch-resume",
+  });
+  const assigned = (await read(restored)).steps[0]!;
+  await verifyBlocked(assigned.stepId);
+  assert.equal(provider.requests.length, 2);
+  const updated = await restored.call<{ goal: LingThreadGoal }>("thread/goal/set", {
+    ...goalRequest, expectedGoalRevision: goal.updatedAt, replaceExisting: true, tokenBudget: 200,
+  });
+  assert.equal((await read(restored)).goalBudget?.tokensRemaining, 80);
+  const nextRun = await start(assigned.stepId);
+  assert.ok(nextRun.ok, await nextRun.clone().text());
+  await nextRun.text();
+  await waitFor(() => fixture.getStore().getChannelWorkflowStep(assigned.stepId)?.status === "succeeded" ? true : undefined);
+  const completed = await read(restored);
+  assert.equal(completed.usage?.observedTokens, 150);
+  assert.equal(completed.usage?.runCount, 2);
+  assert.equal(completed.usage?.toolCalls, 1);
+  assert.deepEqual(completed.steps[0]?.usage, completed.usage);
+  assert.equal(completed.goalBudget?.goalId, updated.goal.id);
+  assert.equal(completed.goalBudget?.tokensRemaining, 50);
+  assert.equal(provider.requests.length, 3);
+});
+
+test("the same stage blocker survives reassignment and restart until a scoped Plan change is accepted", { timeout: 35_000 }, async t => {
+  const provider = await startLoopbackPiProvider((_body: unknown, invocation: number) => invocation <= 2
+    ? { errorStatus: 400, errorCode: "invalid_request_error" }
+    : { text: "Independent contract verified." });
+  t.after(() => provider.close());
+  const { fixture, client, item, workflowId, respondent, thread, plan } =
+    await stageQuestionWorkflow(t, provider.baseUrl, true, 4);
+  const target = { workItemId: item.id };
+  await client.call("thread/goal/set", { threadId: thread.id, objective: "Verify the compatibility contract",
+    supervisionPolicy: { maxNoEvidenceContinuations: 1 } });
+  const read = async (connection = client) => {
+    const { workflow } = await connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", target);
+    assert.ok(workflow);
+    const stage = workflow.steps.find(step => step.stageId === "P01");
+    assert.ok(stage);
+    return { workflow, stage };
+  };
+  const start = async (stepId: string) => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const address = new URL(`/workflow-steps/${encodeURIComponent(stepId)}/start`, daemonUrl);
+    address.searchParams.set("cwd", fixture.cwd);
+    return fetch(address, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
+  };
+  const startAndSettle = async (stepId: string, expected: "failed" | "succeeded") => {
+    const started = await start(stepId);
+    assert.ok(started.ok, await started.clone().text());
+    await started.text();
+    const store = fixture.getStore();
+    await waitFor(() => {
+      const step = store.getChannelWorkflowStep(stepId);
+      const run = step?.runId ? store.getRun(step.runId) : undefined;
+      if (run?.status !== expected || !run.workUnitId || step?.status !== (expected === "failed" ? "blocked" : "succeeded")) return undefined;
+      const attempt = store.listWorkUnitAttempts(run.workUnitId).at(-1);
+      return attempt && store.getHostAttemptCompletion({ runId: run.id, ...toRuntimeAttemptFence(attempt) }) ? run : undefined;
+    });
+  };
+  const replace = async (connection: typeof client, parentPlanId: string, previousWorkflowId: string,
+    generation: number, title: string, resolvedPlanChangeIds: string[] = []) => {
+    const current = await connection.call<LingAppServerWorkItemReadResult>("workItem/read", target);
+    const pause = await connection.call<LingAppServerWorkItemControlResult>("workItem/pause", {
+      ...target, expectedWorkItemRevision: Number(current.workItem.revision), expectedControlGeneration: generation,
+      actorId: "local-user", idempotencyKey: `stall-pause-${generation}`, reason: title,
+    });
+    const parent = fixture.getStore().getProposedPlanArtifact(parentPlanId);
+    assert.ok(parent);
+    const { plan: draft } = await connection.call<ProposedPlanActionResponse>("plan/refine", {
+      threadId: thread.id, planId: parent.id, expectedRevision: parent.revision,
+      draft: { title, bodyMarkdown: title },
+    });
+    const accepted = await connection.call<ProposedPlanActionResponse>("plan/accept", {
+      mode: "workflow", threadId: thread.id, planId: draft.id, expectedRevision: draft.revision,
+      workflowStepPreviews: [
+        { title, stageId: "P01", ownerId: "teammate_builtin_qa", ownerLabel: "QA" },
+        { title: "Prepare independent docs", stageId: "QA", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" },
+      ],
+    });
+    assert.ok(accepted.workflowId);
+    const { workItem } = await connection.call<LingAppServerWorkItemWorkflowBindResult>("workItem/workflow/bind", {
+      ...target, planId: accepted.plan.id, expectedPlanRevision: accepted.plan.revision, previousWorkflowId,
+      expectedWorkItemRevision: Number(pause.workItem.revision), idempotencyKey: `stall-bind-${generation}`, resolvedPlanChangeIds,
+    });
+    await connection.call("workItem/resume", {
+      ...target, expectedWorkItemRevision: Number(workItem.revision), expectedControlGeneration: generation + 1,
+      actorId: "local-user", idempotencyKey: `stall-resume-${generation}`,
+    });
+    return { planId: accepted.plan.id, workflowId: accepted.workflowId };
+  };
+  await startAndSettle(respondent.id, "failed");
+  const original = (await read()).stage.progress?.blocker;
+  assert.ok(original);
+  assert.equal(original.status, "observed");
+  assert.equal(original.failedStarts, 1);
+  assert.equal(original.code, "invalid_request");
+  assert.equal(original.recoveryOwnerId, "teammate_builtin_engineer");
+
+  const reassigned = await replace(client, plan.id, workflowId, 0, "Reassign the same contract check");
+  const { stage: retryStage } = await read();
+  await startAndSettle(retryStage.stepId, "failed");
+  const stalled = (await read()).stage;
+  assert.equal(stalled.admissionBlocker, "work_item_stage_same_blocker_threshold");
+  assert.equal(stalled.progress?.blocker?.status, "stalled");
+  assert.equal(stalled.progress?.blocker?.id, original.id);
+  assert.equal(stalled.progress?.blocker?.failedStarts, 2);
+  assert.notEqual(stalled.progress?.blocker?.sourceEventId, original.sourceEventId);
+  assert.equal(stalled.progress?.blocker?.recoveryOwnerId, "teammate_builtin_qa");
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const afterRestart = await read(restored);
+  assert.deepEqual(afterRestart.stage.progress, stalled.progress);
+  const blocked = await start(afterRestart.stage.stepId);
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json()).error, "work_item_stage_same_blocker_threshold");
+  assert.equal(provider.requests.length, 2);
+  const sibling = afterRestart.workflow.steps.find(step => step.stageId === "QA");
+  assert.ok(sibling);
+  await startAndSettle(sibling.stepId, "succeeded");
+  assert.deepEqual((await read(restored)).stage.progress, stalled.progress);
+
+  const current = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", target);
+  const change = await restored.call<LingAppServerWorkItemPlanChangeResult>("workItem/plan/change/request", {
+    ...target, planRevision: current.workItem.planRevision, expectedWorkItemRevision: Number(current.workItem.revision),
+    affectedStageIds: ["P01"], reason: "Change the rejected provider input contract", idempotencyKey: "stall-recovery-change",
+  });
+  const corrected = await replace(restored, reassigned.planId, reassigned.workflowId, 2, "Use the accepted input contract", [change.receipt.changeId]);
+  const recovered = (await read(restored)).stage;
+  assert.equal(recovered.admissionBlocker, undefined);
+  assert.equal(recovered.progress?.blocker, undefined);
+  assert.equal(recovered.progress?.lastVerified?.kind, "plan_change_accepted");
+  assert.equal(recovered.progress.lastVerified.id, corrected.planId);
+  await startAndSettle(recovered.stepId, "succeeded");
+  assert.equal((await read(restored)).stage.progress?.lastVerified?.kind, "stage_completed");
+  assert.equal(provider.requests.length, 4);
+});
+
+test("a budgeted Workflow stops new stages when an earlier Run has unconfirmed usage", { timeout: 20_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Contract checked without metering." }));
+  t.after(() => provider.close());
+  const { fixture, client, item, waiting, respondent, thread } = await stageQuestionWorkflow(t, provider.baseUrl, true);
+  const goalInput = { threadId: thread.id, objective: "Review the compatibility contract", tokenBudget: 10_000 };
+  const { goal } = await client.call<{ goal: LingThreadGoal }>("thread/goal/set", goalInput);
+  const start = (stepId: string) => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const address = new URL(`/workflow-steps/${stepId}/start`, daemonUrl);
+    address.searchParams.set("cwd", fixture.cwd);
+    return fetch(address, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
+  };
+  const first = await start(respondent.id);
+  assert.ok(first.ok, await first.clone().text());
+  await first.text();
+  await waitFor(() => fixture.getStore().getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
+  const read = () => client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
+  const unknown = (await read()).workflow;
+  assert.equal(unknown?.usage?.tokenCoverage, "partial");
+  assert.equal(unknown?.goalBudget?.tokensRemaining, undefined);
+  assert.equal(unknown?.goalBudget?.blocker, "work_item_goal_usage_unconfirmed");
+  const blocked = await start(waiting.id);
+  assert.equal(blocked.status, 409);
+  assert.equal((await blocked.json()).error, "work_item_goal_usage_unconfirmed");
+  await client.call("thread/goal/set", { ...goalInput, expectedGoalRevision: goal.updatedAt, replaceExisting: true,
+    supervisionPolicy: { maxTimeSeconds: 1 } });
+  assert.equal((await read()).workflow?.goalBudget?.blocker, "work_item_goal_time_budget_exhausted");
+  assert.equal(provider.requests.length, 1);
 });
 
 test("a reply at a stage question deadline is durable history and does not release the waiting step", { timeout: 15_000 }, async t => {
@@ -4797,7 +5048,7 @@ const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunSt
 
 async function releaseFixture(t: TestContext, {
   runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, secretResolver, wssConfig,
-  recoveryJournal = false,
+  recoveryJournal = false, channels,
 }: {
   runner?: RunnerRegistrationInput;
   initialRuntime?: ReleaseRuntime;
@@ -4809,6 +5060,7 @@ async function releaseFixture(t: TestContext, {
   secretResolver?: SecretResolver;
   wssConfig?: (root: string) => Promise<DaemonConfig["appServerWss"]>;
   recoveryJournal?: boolean;
+  channels?: DaemonConfig["channels"];
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
@@ -4821,7 +5073,7 @@ async function releaseFixture(t: TestContext, {
   const stores = new Map<string, SqliteRunStore>();
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
-    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness,
+    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness, channels,
     appServerVerificationRecipes, appServerGitHubSources: githubSources?.(cwd), appServerWss,
     ...(recoveryJournal ? { appServerRecoveryDirectory: join(root, "recovery-journal") } : {}),
   }, {

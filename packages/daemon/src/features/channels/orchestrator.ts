@@ -297,7 +297,9 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
         continue;
       }
       if (started.code === "work_item_handoff_candidate_stale" || started.code === "work_item_handoff_recipient_unavailable"
-        || started.code === "work_item_stage_retry_budget_exhausted") {
+        || started.code === "work_item_stage_retry_budget_exhausted" || started.code === "work_item_stage_same_blocker_threshold"
+        || started.code === "work_item_goal_token_budget_exhausted" || started.code === "work_item_goal_time_budget_exhausted"
+        || started.code === "work_item_goal_usage_unconfirmed") {
         blockedResults.push({ status: "blocked", workflow: currentWorkflow, workflowStep: latestCandidate, blocker: started.code });
         continue;
       }

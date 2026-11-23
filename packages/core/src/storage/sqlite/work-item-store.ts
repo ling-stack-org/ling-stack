@@ -50,6 +50,9 @@ import { listWorkItemStageQuestions, workItemStageQuestionExpired } from "../../
 import { planStageBallotKey } from "../../proposed-plan-mutation.js";
 import { normalConversationSubmissionKey } from "../../conversation-item-store-types.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
+import { readWorkItemWorkflowUsage } from "./work-item-workflow-usage.js";
+import { readWorkItemStageProgress } from "./work-item-workflow-progress.js";
+import { defaultGoalSupervisionPolicy } from "../../goal-supervision.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -58,6 +61,7 @@ export interface SqliteWorkItemStorePorts {
   readonly getChannelWorkflow: RunStore["getChannelWorkflow"];
   readonly getChannelWorkflowStep: RunStore["getChannelWorkflowStep"];
   readonly listChannelWorkflowSteps: RunStore["listChannelWorkflowSteps"];
+  readonly getLingThreadGoal: RunStore["getLingThreadGoal"];
   readonly getWorkItemEvidence: RunStore["getWorkItemEvidence"];
   readonly listWorkItemEvidence: RunStore["listWorkItemEvidence"];
   readonly getTask: RunStore["getTask"];
@@ -79,6 +83,7 @@ interface WorkItemControlSubmission {
 interface WorkItemWorkflowLink {
   readonly binding: LingAppServerWorkItemWorkflowBinding;
   readonly fingerprint: string;
+  readonly progressStageIds?: readonly string[];
 }
 
 export class SqliteWorkItemStore {
@@ -688,10 +693,10 @@ export class SqliteWorkItemStore {
       if (previousWorkflowId && !readSqliteWithinTransaction(database, () => previousWorkflowSettled?.(previousWorkflowId))) {
         throw new Error("work_item_workflow_predecessor_unsettled");
       }
+      const affected = new Set(item.holds.filter(hold => resolvedChanges.has(hold.id)).flatMap(hold => hold.workflowStepIds ?? []));
       const stageResults: LingAppServerRetainedWorkflowStageResult[] = [];
       if (retainStageResults?.length) {
         if (!previousWorkflowId || !resolvedChanges.size) throw new Error("work_item_workflow_retained_result_stale");
-        const affected = new Set(item.holds.filter(hold => resolvedChanges.has(hold.id)).flatMap(hold => hold.workflowStepIds ?? []));
         for (const input of retainStageResults) {
           const target = this.ports.getChannelWorkflowStep(input.targetStepId);
           const result = this.readRetainedStageResult(previousWorkflowId, input);
@@ -704,8 +709,11 @@ export class SqliteWorkItemStore {
       const binding: LingAppServerWorkItemWorkflowBinding = { workItemId, workflowId: workflow.id, threadId: plan.threadId,
         planId, planRevision: plan.revision, linkedAt: now, ...(previousWorkflowId ? { previousWorkflowId } : {}),
         ...(stageResults.length ? { retainedStageResults: stageResults } : {}) };
+      const progressStageIds = previousWorkflowId && affected.size
+        ? this.ports.listChannelWorkflowSteps({ workflowId: previousWorkflowId, complete: true }).flatMap(step =>
+            affected.has(step.id) && step.metadata?.planStageId ? [step.metadata.planStageId] : []) : [];
       state.putWithinTransaction({ kind: "work_item_workflow", recordId: workflow.id, idempotencyKey, expectedRevision: 0,
-        payload: { binding, fingerprint } satisfies WorkItemWorkflowLink }, now);
+        payload: { binding, fingerprint, progressStageIds } satisfies WorkItemWorkflowLink }, now);
       database.prepare(`UPDATE work_items SET workflow_id=?, plan_revision=?, channel_id=?, holds_json=?, revision=revision+1, updated_at=?,
         claim_owner_id=NULL, claim_token=NULL, claimed_at=NULL, heartbeat_at=NULL, claim_expires_at=NULL
         WHERE workspace_id=? AND id=?`).run(workflow.id, `${planId}:${plan.revision}`, workflow.channelId, stringifyJson(retainedHolds), now, item.workspaceId, item.id);
@@ -805,7 +813,45 @@ export class SqliteWorkItemStore {
         workItemId: item.id, planRevision: item.planRevision, sourceStepId, sourceRevision: source.updatedAt, targetStepId: step.id,
       }, source, step)) return "work_item_handoff_pending";
     }
+    // Recheck before the Task reservation and again before Run ownership links.
+    if (step && (["queued", "blocked", "claimed"].includes(step.status) || step.metadata?.startOwner?.phase === "preparing")) {
+      const goal = this.readWorkflowGoal(item, binding, state);
+      if (goal && (goal.tokenBudget !== undefined || goal.supervisionPolicy?.maxTimeSeconds !== undefined)) {
+        const blocker = readWorkItemWorkflowUsage(this.context, item, goal, new Date().toISOString()).goalBudget?.blocker;
+        if (blocker) return blocker;
+      }
+      const stageId = step.metadata?.planStageId;
+      const policy = goal && (goal.supervisionPolicy ?? defaultGoalSupervisionPolicy);
+      if (policy?.autoContinue && stageId && readWorkItemStageProgress(this.context, item, step, stageId,
+        policy.maxNoEvidenceContinuations).blocker?.status === "stalled") {
+        return "work_item_stage_same_blocker_threshold";
+      }
+    }
     return undefined;
+  }
+
+  getWorkflowUsage(item: WorkItem, state: SqliteAppServerStateStore, now: string) {
+    const link = item.workflowId ? state.get("work_item_workflow", item.workflowId)?.payload as WorkItemWorkflowLink | undefined : undefined;
+    if (link?.binding.workItemId !== item.id) return undefined;
+    return readWorkItemWorkflowUsage(this.context, item, this.readWorkflowGoal(item, link.binding, state), now);
+  }
+
+  getStageProgress(item: WorkItem, step: ChannelWorkflowStep, state: SqliteAppServerStateStore) {
+    const stageId = step.metadata?.planStageId;
+    const link = state.get("work_item_workflow", step.workflowId)?.payload as WorkItemWorkflowLink | undefined;
+    if (!stageId || link?.binding.workItemId !== item.id || item.workflowId !== step.workflowId) return undefined;
+    const goal = this.readWorkflowGoal(item, link.binding, state);
+    const policy = goal && (goal.supervisionPolicy ?? defaultGoalSupervisionPolicy);
+    const progress = readWorkItemStageProgress(this.context, item, step, stageId, policy?.autoContinue ? policy.maxNoEvidenceContinuations : undefined);
+    return progress.blocker || progress.lastVerified ? progress : undefined;
+  }
+
+  private readWorkflowGoal(item: WorkItem, binding: LingAppServerWorkItemWorkflowBinding, state: SqliteAppServerStateStore) {
+    const planGoal = this.ports.getLingThreadGoal(binding.threadId);
+    if (planGoal) return planGoal;
+    const acceptance = state.get("work_item_acceptance", item.id)?.payload as WorkItemAcceptanceReceipt | undefined;
+    const dispatchThread = acceptance?.dispatch?.threadId;
+    return dispatchThread ? this.ports.getLingThreadGoal(dispatchThread) : undefined;
   }
 
   getWorkflowStepDecision(step: ChannelWorkflowStep, state: SqliteAppServerStateStore) {
@@ -845,7 +891,11 @@ export class SqliteWorkItemStore {
       FROM stage_totals
     `).get(item.workspaceId, item.id, stageId)!;
     const starts = readNumber(counts, "starts");
-    const workItemRetriesRemaining = Math.max(0, item.retryBudget - readNumber(counts, "retries"));
+    const goal = this.readWorkflowGoal(item, link.binding, state);
+    const supervision = goal?.supervisionPolicy ?? defaultGoalSupervisionPolicy;
+    const workItemLimit = goal && supervision.autoContinue
+      ? Math.min(item.retryBudget, supervision.maxContinuations) : item.retryBudget;
+    const workItemRetriesRemaining = Math.max(0, workItemLimit - readNumber(counts, "retries"));
     const policy = step.metadata?.policy;
     const stageLimit = policy?.retryable === false ? 0 : policy?.maxRetries ?? item.retryBudget;
     const stageRetriesRemaining = Math.max(0, stageLimit - Math.max(0, starts - 1));

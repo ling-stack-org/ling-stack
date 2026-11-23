@@ -2718,6 +2718,8 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   };
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep): string | undefined;
   getWorkItemStageRetryBudget(step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkItemStageRetryBudget | undefined;
+  getWorkItemWorkflowUsage(item: WorkItem, now: string): import("./work-item-types.js").WorkItemWorkflowUsage | undefined;
+  getWorkItemStageProgress(item: WorkItem, step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkflowStageProgress | undefined;
   getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep): { readonly id: string; readonly option: string } | undefined;
   listActiveWorkItemWorkflowIds(limit: number): readonly string[];
   applyWorkItemPlanChange(input: import("./work-item-types.js").WorkItemPlanChangeInput, now: string,

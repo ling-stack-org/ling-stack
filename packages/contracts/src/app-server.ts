@@ -769,6 +769,8 @@ export interface LingAppServerWorkItemWorkflowStages {
   readonly workItemRevision?: number;
   readonly status: import("./workflows.js").ChannelWorkflowStatus;
   readonly admissionBlocker?: string;
+  readonly usage?: LingAppServerWorkflowUsage;
+  readonly goalBudget?: LingAppServerWorkflowGoalBudget;
   readonly nextOffset?: number;
   readonly steps: readonly {
     readonly stepId: string;
@@ -779,6 +781,8 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly dependencyIds: readonly string[];
     readonly admissionBlocker?: string;
     readonly retryBudget?: LingAppServerWorkItemStageRetryBudget;
+    readonly usage?: LingAppServerWorkflowUsage;
+    readonly progress?: LingAppServerWorkflowStageProgress;
     readonly updatedAt: string;
     readonly runId?: string;
     readonly outputArtifactId?: string;
@@ -799,6 +803,38 @@ export interface LingAppServerWorkItemStageRetryBudget {
   readonly stageRetriesRemaining: number;
   readonly workItemRetriesRemaining: number;
   readonly exhausted: boolean;
+}
+
+export interface LingAppServerWorkflowUsage {
+  readonly runCount: number;
+  readonly observedTokens: number;
+  readonly tokenCoverage: "complete" | "partial";
+  readonly toolCalls: number;
+  readonly elapsedSeconds: number;
+}
+
+export interface LingAppServerWorkflowGoalBudget {
+  readonly goalId: string;
+  readonly tokenBudget?: number;
+  readonly accountedTokens: number;
+  readonly tokensRemaining?: number;
+  readonly maxTimeSeconds?: number;
+  readonly timeUsedSeconds: number;
+  readonly blocker?: "work_item_goal_token_budget_exhausted" | "work_item_goal_time_budget_exhausted" | "work_item_goal_usage_unconfirmed";
+}
+
+export interface LingAppServerWorkflowStageProgress {
+  readonly lastVerified?: { readonly kind: "stage_completed" | "plan_change_accepted"; readonly id: string; readonly committedAt: string };
+  readonly blocker?: {
+    readonly id: string;
+    readonly kind: "provider" | "execution_loop";
+    readonly code: string;
+    readonly status: "observed" | "stalled";
+    readonly failedStarts: number;
+    readonly lastRunId: string;
+    readonly sourceEventId: string;
+    readonly recoveryOwnerId: string;
+  };
 }
 
 export interface LingAppServerWorkItemControlResult extends LingAppServerWorkItemResult {

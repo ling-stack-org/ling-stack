@@ -3,6 +3,7 @@ import type {
   LingAppServerGitHubDelivery, LingAppServerGitHubIntakeBudget, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemAcceptance,
   LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
   LingAppServerWorkItemPlanChangeReceipt, LingAppServerWorkItemPlanChangeRequestParams, LingAppServerWorkItemPlanChangeWithdrawParams,
+  LingAppServerWorkflowGoalBudget, LingAppServerWorkflowUsage,
   WorkItemLinkedExecution, WorkItemSourceType,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
@@ -116,6 +117,13 @@ export interface WorkItem {
 }
 
 export type WorkItemView = WorkItem;
+
+export interface WorkItemWorkflowUsage {
+  readonly total: LingAppServerWorkflowUsage;
+  readonly byStage: ReadonlyMap<string, LingAppServerWorkflowUsage>;
+  readonly byStep: ReadonlyMap<string, LingAppServerWorkflowUsage>;
+  readonly goalBudget?: LingAppServerWorkflowGoalBudget;
+}
 
 export interface UpsertWorkItemInput {
   readonly id?: string;

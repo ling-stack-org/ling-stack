@@ -1768,6 +1768,7 @@ export class SqliteRunStore implements RunStore {
         getChannelWorkflow: (id) => this.getChannelWorkflow(id),
         getChannelWorkflowStep: (id) => this.getChannelWorkflowStep(id),
         listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
+        getLingThreadGoal: (id) => this.getLingThreadGoal(id),
         getWorkItemEvidence: (id) => this.getWorkItemEvidence(id),
         listWorkItemEvidence: (options) => this.listWorkItemEvidence(options),
         getTask: (id) => this.getTask(id),
@@ -6236,6 +6237,14 @@ export class SqliteRunStore implements RunStore {
   getWorkItemStageRetryBudget(step: ChannelWorkflowStep) {
     if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
     return this.workItems.getStageRetryBudget(step, this.appServerState);
+  }
+
+  getWorkItemWorkflowUsage(item: WorkItem, now: string) {
+    return this.workItems.getWorkflowUsage(item, this.appServerState, now);
+  }
+
+  getWorkItemStageProgress(item: WorkItem, step: ChannelWorkflowStep) {
+    return this.workItems.getStageProgress(item, step, this.appServerState);
   }
 
   getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep) {

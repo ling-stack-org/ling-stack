@@ -51,12 +51,14 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
   const limit = 20;
   const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, offset, limit: limit + 1 });
   const admissionBlocker = store.getWorkItemWorkflowAdmissionBlocker(workflow.id);
+  const usage = includeEvidence ? store.getWorkItemWorkflowUsage(item, new Date().toISOString()) : undefined;
   return {
     workflowId: workflow.id,
     planRevision: item.planRevision,
     workItemRevision: item.revision,
     status: workflow.status,
     admissionBlocker,
+    ...(usage ? { usage: usage.total, goalBudget: usage.goalBudget } : {}),
     ...(steps.length > limit ? { nextOffset: offset + limit } : {}),
     steps: steps.slice(0, limit).map(step => {
       const canStart = !admissionBlocker && (step.status === "queued" || step.status === "blocked");
@@ -69,6 +71,8 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
         ...(includeEvidence || liveReceivers ? { messageReceiver: readStageMessageReceiver(store, step, liveReceivers) } : {}),
         ...(includeEvidence ? {
           runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
+          usage: step.metadata?.planStageId ? usage?.byStage.get(step.metadata.planStageId) : usage?.byStep.get(step.id),
+          progress: store.getWorkItemStageProgress(item, step),
           briefBasis: readStageBriefBasis(store, step),
           ...(retryBudget ? { retryBudget } : {}),
           decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),
