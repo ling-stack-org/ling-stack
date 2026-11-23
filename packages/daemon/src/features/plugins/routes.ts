@@ -1020,19 +1020,21 @@ async function handlePluginCheck(input: {
   });
   let storedHealth = input.store.upsertManagedPluginHealthSnapshot(health, now);
   let automaticRollback: { readonly version: string } | undefined;
-  if (storedHealth.status === "failed" && input.descriptor.sourceKind === "official-remote") {
+  const remoteHealthFailed = storedHealth.status === "failed" && input.descriptor.sourceKind === "official-remote";
+  const previousPackage = remoteHealthFailed ? input.store.getManagedPluginPackage(input.pluginId) : undefined;
+  // Host-cache selection changes through explicit rollback and takes effect on Desktop restart.
+  if (remoteHealthFailed && !usesHostPluginCache(previousPackage?.cacheRef)) {
     try {
       const rolledBack = await rollbackRemotePluginArtifact({
         paths: input.store.paths,
         pluginId: input.pluginId,
         now,
-        cacheRef: input.store.getManagedPluginPackage(input.pluginId)?.cacheRef,
+        cacheRef: previousPackage?.cacheRef,
         lingVersion: LING_PRODUCT_VERSION,
       });
       const rolledBackDescriptor = rolledBack.plugin.validation.compiledDescriptor;
       if (rolledBackDescriptor) {
         const enabled = input.store.getManagedPlugin(input.pluginId)?.enabled === true;
-        const previousPackage = input.store.getManagedPluginPackage(input.pluginId);
         input.store.upsertManagedPluginPackage({
           pluginId: rolledBackDescriptor.id,
           sourceKind: "official-remote",
