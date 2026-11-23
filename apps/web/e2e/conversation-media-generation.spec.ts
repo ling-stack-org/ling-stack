@@ -367,6 +367,10 @@ test("generated image sequences use each request's theme and play from the first
     });
   });
   await mockDaemon(page, state);
+  await page.route(
+    (url) => url.origin === "http://127.0.0.1:17891" && ["/notifications", "/notifications/stream"].includes(url.pathname),
+    (route) => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }),
+  );
   await page.goto("/");
   await openNormalConversation(page, normalTitle);
 
@@ -383,6 +387,9 @@ test("generated image sequences use each request's theme and play from the first
   const stop = cityViewer.getByRole("button", { name: "Stop", exact: true });
   const frameThree = cityViewer.getByRole("button", { name: "Frame 3", exact: true });
   await expect(stop).toBeDisabled();
+  await play.hover();
+  await expect(play).toHaveCSS("color", "rgb(21, 23, 25)");
+  await expect(play).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await frameThree.click();
   await expect(frameThree).toHaveAttribute("aria-pressed", "true");
   await expect(cityViewer.getByText("3 / 4", { exact: true })).toBeVisible();
@@ -397,7 +404,7 @@ test("generated image sequences use each request's theme and play from the first
   await expect(cityViewer.getByText("Playing", { exact: true })).toBeVisible();
   await expect(play).toBeDisabled();
   if (process.env.LING_CAPTURE_UI2_EVIDENCE === "1") {
-    await cityViewer.screenshot({ path: testInfo.outputPath("city-sequence-playing.png") });
+    await cityViewer.screenshot({ animations: "disabled", path: testInfo.outputPath("city-sequence-playing.png") });
   }
   await page.clock.runFor(180);
   await expect(cityViewer.getByText("2 / 4", { exact: true })).toBeVisible();
@@ -419,7 +426,7 @@ test("generated image sequences use each request's theme and play from the first
   await expect(frameTwelve).toBeInViewport({ ratio: 1 });
   await expect(cityViewer.getByText("1 / 4", { exact: true })).toBeVisible();
   if (process.env.LING_CAPTURE_UI2_EVIDENCE === "1") {
-    await tideViewer.screenshot({ path: testInfo.outputPath("tide-sequence-frame-12.png") });
+    await tideViewer.screenshot({ animations: "disabled", path: testInfo.outputPath("tide-sequence-frame-12.png") });
   }
 });
 

@@ -94,14 +94,22 @@
 
 .conversation-generated-media-frame-play {
   border: 1px solid transparent;
-  color: var(--ling-bg-canvas);
-  background: var(--ling-text-strong);
+  color: var(--ling-action-accent-fg);
+  background: var(--ling-action-accent);
+}
+
+.conversation-generated-media-frame-play:hover:enabled {
+  background: var(--ling-action-accent-hover);
 }
 
 .conversation-generated-media-frame-stop {
   border: 1px solid var(--ling-border-default);
   color: var(--ling-text-default);
   background: transparent;
+}
+
+.conversation-generated-media-frame-stop:hover:enabled {
+  background: var(--ling-bg-subtle);
 }
 
 .conversation-generated-media-frame-controls button:disabled {
