@@ -506,6 +506,13 @@ blocked while diagnostics can run once the active lease drains. A device-side
 result remains unknown until readback establishes what happened.
 [Daemon device routes](../../packages/daemon/src/features/device-support/routes.ts)
 
+Standalone Mobile keeps a revisioned write stop for each target under the phone's
+owner identity. The Home Assistant recovery screen can activate the stop during
+an approved write. The phone saves the decision before asking its transport to
+cancel. Once the phone has dispatched, the attempt may need independent readback.
+The device history offers a revision-checked action to clear the stop. Read-only
+diagnosis and readback continue under the target's existing permissions.
+
 Support normal device controls and documented configuration actions through their
 typed capabilities. Ling uses authorized vehicle observations and head-unit app
 maintenance for the vehicle cases. Safety-critical vehicle, lock, alarm, power and

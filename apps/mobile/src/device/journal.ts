@@ -1,4 +1,5 @@
 import type {
+  DeviceDispatchStopV1,
   DeviceObservationV1,
   DeviceTaskV1,
 } from "@ling-stack/contracts";
@@ -10,7 +11,7 @@ import {
   isDeviceTaskReconciliationV1,
   isDeviceTaskV1,
 } from "@ling-stack/contracts";
-import type { MobileAttemptRecord, MobileDeviceJournal, MobileRecordedSnapshot } from "./execution.js";
+import { MobileDeviceExecutionError, type MobileAttemptRecord, type MobileDeviceDispatchStopJournal, type MobileDeviceJournal, type MobileRecordedSnapshot } from "./execution.ts";
 
 export interface MobileStorageLike {
   getItem(key: string): Promise<string | null>;
@@ -24,7 +25,7 @@ export interface MobileTaskEvidence {
   readonly observations: readonly DeviceObservationV1[];
 }
 
-export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike, ownerId: string): MobileDeviceJournal & {
+export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike, ownerId: string): MobileDeviceJournal & MobileDeviceDispatchStopJournal & {
   readTaskEvidence(taskId: string): Promise<MobileTaskEvidence>;
 } {
   const prefix = `ling-device-execution:v1:${ownerId}`;
@@ -33,14 +34,43 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
   const attemptKey = (taskId: string, idempotencyKey: string) => `${prefix}:attempt:${taskId}:${encodeURIComponent(idempotencyKey)}`;
   const attemptsKey = (taskId: string) => `${prefix}:attempts:${taskId}`;
   const observationKey = (taskId: string) => `${prefix}:observations:${taskId}`;
+  const stopKey = (deviceId: string) => `${prefix}:write-stops:${encodeURIComponent(deviceId)}`;
   let queue = Promise.resolve();
   const enqueue = <Result>(operation: () => Promise<Result>): Promise<Result> => {
     const next = queue.then(operation);
     queue = next.then(() => undefined, () => undefined);
     return next;
   };
+  const readDispatchStops = async (deviceId: string): Promise<readonly DeviceDispatchStopV1[]> => {
+    const raw = await storage.getItem(stopKey(deviceId));
+    if (raw === null) return [];
+    const records: unknown = JSON.parse(raw);
+    if (!Array.isArray(records) || records.some((record, index) => !record || record.deviceId !== deviceId
+      || record.revision !== index + 1 || typeof record.active !== "boolean"
+      || typeof record.changedAt !== "string" || !Number.isFinite(Date.parse(record.changedAt)))) {
+      throw new Error("Invalid mobile device write stop history");
+    }
+    return records as readonly DeviceDispatchStopV1[];
+  };
+  const initialStop = (deviceId: string): DeviceDispatchStopV1 => ({ deviceId, active: false, revision: 0 });
 
   return {
+    getDispatchStop(deviceId) {
+      return enqueue(async () => (await readDispatchStops(deviceId)).at(-1) ?? initialStop(deviceId));
+    },
+    setDispatchStop({ deviceId, active, expectedRevision, now }) {
+      return enqueue(async () => {
+        const history = await readDispatchStops(deviceId);
+        const current = history.at(-1) ?? initialStop(deviceId);
+        if (current.revision !== expectedRevision) {
+          throw new MobileDeviceExecutionError("target_changed", "device write stop revision changed");
+        }
+        if (current.active === active) return current;
+        const next = { deviceId, active, revision: current.revision + 1, changedAt: now };
+        await storage.setItem(stopKey(deviceId), JSON.stringify([...history, next]));
+        return next;
+      });
+    },
     async getTask(taskId) {
       return parseTaskValue(await storage.getItem(taskKey(taskId)));
     },

@@ -24,6 +24,7 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
   const [token, setToken] = useState("");
   const [running, setRunning] = useState<HomeAssistantScreenOperation>();
   const [automationTaskId, setAutomationTaskId] = useState<string>();
+  const [changingStop, setChangingStop] = useState(false);
   const [error, setError] = useState<string>();
   const [runs, setRuns] = useState<readonly PhoneHomeAssistantRun[]>([]);
   const activeRun = useRef<AbortController | undefined>(undefined);
@@ -58,7 +59,11 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
       if (!controller.signal.aborted) {
         if (operation.kind === "diagnosis" && result.taskStatus === "succeeded" && result.canEnableAutomation) setAutomationTaskId(result.taskId);
         else setToken("");
-        setRuns(previous => [result, ...previous.filter(run => run.taskId !== result.taskId)].slice(0, 8));
+        setRuns(previous => {
+          const stop = previous.find(run => run.deviceId === result.deviceId && run.dispatchStop)?.dispatchStop;
+          const current = stop && stop.revision > (result.dispatchStop?.revision ?? 0) ? { ...result, dispatchStop: stop } : result;
+          return [current, ...previous.filter(run => run.taskId !== result.taskId)].slice(0, 8);
+        });
       }
     } catch (cause) {
       if (!controller.signal.aborted) {
@@ -71,12 +76,28 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
     }
   };
   const canDiagnose = state.status === "ready" && !running && !!(origin.trim() && entityId.trim() && token.trim());
+  const recoveryTaskId = running?.kind === "enable_automation" ? running.taskId : automationTaskId;
+  const recoveryTarget = runs.find(run => run.taskId === recoveryTaskId);
+  const canEnable = canDiagnose && !changingStop && recoveryTarget?.dispatchStop?.active !== true;
   const confirmAutomation = () => {
-    if (!canDiagnose || !automationTaskId) return;
+    if (!canEnable || !automationTaskId) return;
     Alert.alert("重新启用自动化", `${origin.trim()}\n${entityId.trim()}\n\n启用后，现有触发条件会恢复运行。`, [
       { text: "取消", style: "cancel" },
       { text: "重新启用", onPress: () => void runHomeAssistant({ kind: "enable_automation", taskId: automationTaskId }) },
     ]);
+  };
+  const changeDispatchStop = async (run: PhoneHomeAssistantRun, active: boolean) => {
+    if (state.status !== "ready" || changingStop) return;
+    setChangingStop(true);
+    setError(undefined);
+    try {
+      const stop = await state.runtime.setHomeAssistantDispatchStop({ taskId: run.taskId, active, expectedRevision: run.dispatchStop?.revision ?? 0 });
+      setRuns(previous => previous.map(run => run.deviceId === stop.deviceId ? { ...run, dispatchStop: stop } : run));
+    } catch {
+      setError("设备写入状态更新失败。");
+    } finally {
+      setChangingStop(false);
+    }
   };
 
   return (
@@ -125,9 +146,15 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
           <Text style={styles.actionText}>{running?.kind === "diagnosis" ? "正在读取…" : "读取设备状态"}</Text>
         </Pressable>
         {(automationTaskId && canDiagnose) || running?.kind === "enable_automation" ? (
-          <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canDiagnose, busy: !!running }}
-            disabled={!canDiagnose} onPress={confirmAutomation} style={[styles.action, !canDiagnose && styles.disabled]}>
+          <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canEnable, busy: !!running }}
+            disabled={!canEnable} onPress={confirmAutomation} style={[styles.action, !canEnable && styles.disabled]}>
             <Text style={styles.actionText}>{running ? "正在启用并验证…" : "重新启用自动化"}</Text>
+          </Pressable>
+        ) : null}
+        {recoveryTarget && !recoveryTarget.dispatchStop?.active ? (
+          <Pressable accessibilityRole="button" accessibilityState={{ disabled: changingStop }} disabled={changingStop}
+            onPress={() => void changeDispatchStop(recoveryTarget, true)} style={styles.shareButton}>
+            <Text style={styles.backText}>暂停写入</Text>
           </Pressable>
         ) : null}
         {state.status === "unavailable" || error ? (
@@ -136,11 +163,20 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
         {runs.length > 0 ? (
           <View style={styles.history}>
             <Text accessibilityRole="header" style={styles.heading}>手机上的设备记录</Text>
-            {runs.map(run => (
+            {runs.map((run, index) => (
               <View key={run.taskId} style={styles.row}>
                 <Text style={styles.label}>{run.entityId}</Text>
                 <Text style={styles.note}>{resultText(run)}</Text>
                 <Text style={styles.note}>{new Date(run.updatedAt).toLocaleString()}</Text>
+                {run.dispatchStop?.active && runs.findIndex(item => item.deviceId === run.deviceId) === index ? (
+                  <>
+                    <Text style={styles.note}>设备写入已暂停。可以继续读取状态。</Text>
+                    <Pressable accessibilityRole="button" accessibilityState={{ disabled: changingStop }} disabled={changingStop}
+                      onPress={() => void changeDispatchStop(run, false)} style={styles.shareButton}>
+                      <Text style={styles.backText}>恢复写入</Text>
+                    </Pressable>
+                  </>
+                ) : null}
                 {run.operation === "enable_automation" && run.taskStatus === "unknown" ? (
                   <Pressable accessibilityRole="button" disabled={!canDiagnose || entityId.trim() !== run.entityId}
                     accessibilityState={{ disabled: !canDiagnose || entityId.trim() !== run.entityId,

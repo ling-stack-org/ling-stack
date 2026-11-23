@@ -277,6 +277,65 @@ test("a phone-owned Home Assistant recovery requires the fresh diagnosis and ver
   assert.equal(calls.length, 4);
 });
 
+test("the phone stops Home Assistant writes durably and verifies the interrupted attempt with readback", { timeout: 5_000 }, async () => {
+  const storage = new MemoryStorage();
+  const first = { ...target, entityId: "automation.night" };
+  const second = { ...target, entityId: "automation.backup" };
+  let writes = 0;
+  let observedAbort = false;
+  let enteredWrite!: () => void;
+  const dispatched = new Promise<void>(resolve => { enteredWrite = resolve; });
+  const fetch: HomeAssistantFetch = async (url, init) => {
+    if (init.method === "POST") {
+      writes += 1;
+      if (writes === 1) {
+        enteredWrite();
+        await new Promise<void>(resolve => init.signal?.addEventListener("abort", () => { observedAbort = true; resolve(); }, { once: true }));
+      }
+      return new Response(null, { status: 200 });
+    }
+    const entity = url.endsWith(second.entityId) ? second.entityId : first.entityId;
+    const active = entity === first.entityId ? writes >= 1 : writes >= 2;
+    return Response.json({ entity_id: entity, state: active ? "on" : "off", attributes: { id: entity } });
+  };
+  const phone = await createStandaloneDeviceRuntime({ ...options, storage, fetch });
+  await phone.setForeground(true);
+  const diagnosis = await phone.diagnoseHomeAssistant(first);
+  const recovery = phone.enableHomeAssistantAutomation({ ...first, diagnosisTaskId: diagnosis.taskId });
+  await dispatched;
+  const stopped = await phone.setHomeAssistantDispatchStop({ taskId: diagnosis.taskId, active: true, expectedRevision: 0 });
+  assert.equal(stopped.active, true);
+  assert.equal(stopped.revision, 1);
+  const interrupted = await recovery;
+  assert.equal(interrupted.taskStatus, "unknown");
+  assert.equal(observedAbort, true);
+  assert.equal(writes, 1);
+  assert.deepEqual(interrupted.dispatchStop, stopped);
+
+  const restored = await createStandaloneDeviceRuntime({ ...options, storage, fetch });
+  await restored.setForeground(true);
+  assert.deepEqual((await restored.listHomeAssistantRuns()).find(run => run.taskId === interrupted.taskId)?.dispatchStop, stopped);
+  const secondDiagnosis = await restored.diagnoseHomeAssistant(second);
+  assert.equal(secondDiagnosis.taskStatus, "succeeded");
+  assert.deepEqual(secondDiagnosis.dispatchStop, stopped);
+  const secondSetup = { ...second, diagnosisTaskId: secondDiagnosis.taskId };
+  await assert.rejects(restored.enableHomeAssistantAutomation(secondSetup), /设备写入已暂停/u);
+  const verified = await restored.verifyHomeAssistantRecovery({ ...first, recoveryTaskId: interrupted.taskId });
+  assert.equal(verified.taskStatus, "succeeded");
+  assert.equal(verified.taskId, interrupted.taskId);
+  assert.equal(writes, 1);
+
+  await assert.rejects(restored.setHomeAssistantDispatchStop({ taskId: verified.taskId, active: false, expectedRevision: 0 }),
+    { code: "target_changed" });
+  const cleared = await restored.setHomeAssistantDispatchStop({ taskId: verified.taskId, active: false, expectedRevision: 1 });
+  assert.equal(cleared.active, false);
+  assert.equal(cleared.revision, 2);
+  assert.equal((await restored.enableHomeAssistantAutomation(secondSetup)).taskStatus, "succeeded");
+  assert.equal(writes, 2);
+  const serialized = [...storage.values.values()].join("\n");
+  assert.ok(!serialized.includes(target.token) && !serialized.includes(target.origin));
+});
+
 test("a phone recovery rejects stale or replaced automation targets before the write", async () => {
   const storage = new MemoryStorage();
   const automationTarget = { ...target, entityId: "automation.night" };

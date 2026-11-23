@@ -13,6 +13,7 @@ import {
   type DeviceActionResultV1,
   type DeviceApprovalBindingV1,
   type DeviceCapabilitySnapshotV1,
+  type DeviceDispatchStopV1,
   type DeviceObservationV1,
   type DeviceProfileV1,
   type DeviceRecoveryPlanV1,
@@ -61,6 +62,16 @@ export interface MobileDeviceJournal {
   saveObservation(taskId: string, observation: DeviceObservationV1): Promise<void>;
 }
 
+export interface MobileDeviceDispatchStopJournal {
+  getDispatchStop(deviceId: string): Promise<DeviceDispatchStopV1>;
+  setDispatchStop(input: {
+    readonly deviceId: string;
+    readonly active: boolean;
+    readonly expectedRevision: number;
+    readonly now: string;
+  }): Promise<DeviceDispatchStopV1>;
+}
+
 export interface MobileAttemptRecord {
   readonly attempt: DeviceTaskAttemptV1;
   readonly request: DeviceActionRequestV1;
@@ -77,6 +88,7 @@ export interface MobileRecordedSnapshot {
 export interface MobileDeviceExecutionOptions {
   readonly ownerId: string;
   readonly journal: MobileDeviceJournal;
+  readonly dispatchStops?: MobileDeviceDispatchStopJournal;
   readonly now?: () => string;
   readonly policyRevision?: string;
 }
@@ -117,14 +129,18 @@ export class MobileDeviceExecutionError extends Error {
 export class MobileDeviceExecution {
   readonly #ownerId: string;
   readonly #journal: MobileDeviceJournal;
+  readonly #dispatchStops?: MobileDeviceDispatchStopJournal;
   readonly #now: () => string;
   readonly #policyRevision: string;
-  readonly #active = new Map<string, { readonly targetDeviceId: string; readonly stopOnSuspend: boolean; readonly controller: AbortController }>();
+  readonly #active = new Map<string, {
+    readonly targetDeviceId: string; readonly stopOnSuspend: boolean; readonly writesDevice: boolean; readonly controller: AbortController;
+  }>();
   #foreground = true;
 
   constructor(options: MobileDeviceExecutionOptions) {
     this.#ownerId = options.ownerId;
     this.#journal = options.journal;
+    this.#dispatchStops = options.dispatchStops;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#policyRevision = options.policyRevision ?? "device-policy-v1";
   }
@@ -136,6 +152,19 @@ export class MobileDeviceExecution {
         if (operation.stopOnSuspend) operation.controller.abort();
       }
     }
+  }
+
+  async setDispatchStop(input: Omit<Parameters<MobileDeviceDispatchStopJournal["setDispatchStop"]>[0], "now">): Promise<DeviceDispatchStopV1> {
+    if (!this.#foreground || !this.#dispatchStops) {
+      throw new MobileDeviceExecutionError("permission_denied", "device write stop requires its foreground owner");
+    }
+    const stop = await this.#dispatchStops.setDispatchStop({ ...input, now: this.#now() });
+    if (stop.active) {
+      for (const operation of this.#active.values()) {
+        if (operation.writesDevice && operation.targetDeviceId === stop.deviceId) operation.controller.abort();
+      }
+    }
+    return stop;
   }
 
   async execute(input: MobileDeviceActionInput): Promise<MobileAttemptRecord> {
@@ -164,7 +193,8 @@ export class MobileDeviceExecution {
       throw new MobileDeviceExecutionError("target_busy", "phone already has an active operation on this target");
     }
     const controller = new AbortController();
-    this.#active.set(task.id, { targetDeviceId: request.targetDeviceId, stopOnSuspend: needsApproval, controller });
+    const writesDevice = capability.sideEffect !== "read_only";
+    this.#active.set(task.id, { targetDeviceId: request.targetDeviceId, stopOnSuspend: needsApproval, writesDevice, controller });
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
@@ -206,6 +236,9 @@ export class MobileDeviceExecution {
     const approval = input.request.approval ?? input.approval;
     const request = approval ? { ...input.request, approval } : input.request;
     const plan = request.recoveryPlan;
+    const dispatchStops = capability.sideEffect !== "read_only" ? this.#dispatchStops : undefined;
+    const initialStop = dispatchStops && await dispatchStops.getDispatchStop(request.targetDeviceId);
+    if (initialStop?.active) throw new MobileDeviceExecutionError("permission_denied", "device writes are paused");
     const recoveryExpired = () => plan !== undefined && Date.parse(plan.verifyBy) <= Date.parse(this.#now());
     const assertDispatchAllowed = () => {
       const at = this.#now();
@@ -299,6 +332,12 @@ export class MobileDeviceExecution {
     await saveStatus("executing");
     await this.#journal.saveAttempt(record);
     try {
+      if (dispatchStops && initialStop) {
+        const latestStop = await dispatchStops.getDispatchStop(request.targetDeviceId);
+        if (latestStop.active || latestStop.revision !== initialStop.revision) {
+          throw new MobileDeviceExecutionError("permission_denied", "device write stop changed before dispatch");
+        }
+      }
       assertDispatchAllowed();
     } catch (error) {
       await this.#journal.saveAttempt({ ...record, attempt: { ...attempt, status: "cancelled" } });
@@ -354,7 +393,7 @@ export class MobileDeviceExecution {
       throw new MobileDeviceExecutionError("target_busy", "phone already has an active operation on this target");
     }
     const controller = new AbortController();
-    this.#active.set(taskId, { targetDeviceId: transport.deviceId, stopOnSuspend: true, controller });
+    this.#active.set(taskId, { targetDeviceId: transport.deviceId, stopOnSuspend: true, writesDevice: false, controller });
     const abort = () => controller.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
     try {
