@@ -554,6 +554,17 @@ readback creates a report for the new journal sequence. Supply
 `?reportId=...` to retrieve a previously captured report from the same task.
 [Report projection](../../packages/core/src/device-task-conformance.ts)
 
+For an Edge network diagnosis, the same authenticated local API exposes
+`GET /v1/device-support/fabric/edge-runtimes/:runtimeId/diagnoses/:graphId/events`.
+The page contains the graph and a bounded projection of the signed owner journal.
+Clients resume with `generation`, `afterSequence` and `limit`. An expired
+generation or an ahead-of-stream cursor returns the current graph and no deltas.
+The `conformance` endpoint under the same diagnosis captures a report bound to
+the attempt's placement, runtime revision, graph node and journal sequence. It
+records an unknown outcome when the Edge journal lacks a network observation.
+The evidence remains available to the local operator after enrollment revocation.
+[Edge journal and report](../../packages/daemon/src/features/device-support/edge-work.ts)
+
 | Test layer | Evidence |
 | --- | --- |
 | Contract and state | Identity aliases, allowed exposure, profile/schema compatibility, revision changes, ordered journal replay and stale evidence. |

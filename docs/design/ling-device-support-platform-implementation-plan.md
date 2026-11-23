@@ -1088,6 +1088,10 @@ only on a successful install or a model response.
   its subscription when the screen unsubscribes. Mobile uses bounded page refresh
   against V3/V4 Gateways and receives acknowledged pushes on V5.
   The Mobile task log uses this watcher alongside its explicit page controls.
+- [x] Page the signed Edge diagnosis journal through the authenticated local API.
+  Each page binds its cursor and evidence to the same graph snapshot. Runtime
+  revocation closes dispatch while the operator can still inspect its earlier
+  evidence.
 - [~] Add backpressure, sampling and telemetry policy for high-rate producers.
 
 ### Exit evidence
@@ -1110,6 +1114,9 @@ only on a successful install or a model response.
   fixtures pass, and the iOS and Android production JavaScript bundles export.
 - The SQLite retention fixture preserves durable events, reports missing telemetry
   ranges and leaves the original page intact when pruning fails.
+- A separate Edge process submits durable entries and the Daemon operator resumes
+  the same stream after a lost response and restart. An invalid cursor or a
+  foreign runtime cannot project another stream.
 - High-rate sensor data is sampled or expired according to policy while task and
   revocation events remain durable.
 - Model context receives the source, time, freshness, and provenance of each fact.
@@ -1307,11 +1314,13 @@ only on a successful install or a model response.
   still expose their snapshot IDs with unavailable details.
 - [~] Add simulator, protocol replay, hardware-in-loop, network interruption, process
   restart, resource rollback, and physical acceptance reports.
-- [~] Capture reproducible conformance reports from Daemon and Mobile attempts. The Daemon report
+- [~] Capture reproducible conformance reports from Daemon, Mobile and Edge attempts. The Daemon report
   binds the owner journal sequence, target, adapter, profile and available
   firmware, transport and model-turn evidence. The Mobile share export adds
   per-attempt checks bound to the digest of the redacted trace. Both reports use
-  the same check rules. Edge and field network reporters remain open.
+  the same check rules. The Edge diagnosis report cross-checks signed journal
+  entries with the coordinator's placement and committed graph receipt.
+  Field network reporters remain open.
 
 ### Exit evidence
 
@@ -1324,6 +1333,9 @@ only on a successful install or a model response.
   binding, adapter receipt, and device readback checks passed. The preview
   omitted the fixture token, origin and raw registry ID. Dismissing the share
   sheet returned to the original verified journal entry.
+- The Edge diagnosis fixture recreates the same conformance report after
+  Daemon restart and runtime revocation. An interrupted attempt with no
+  observation records an unknown outcome and skips the observation check.
 - Verify the parked-head-unit and home sensor case set across PC, Mobile and edge
   hosts, with each physical target result tied to its own attempt and evidence.
 

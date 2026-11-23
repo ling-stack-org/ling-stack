@@ -249,6 +249,10 @@ export interface DeviceTaskJournalPageV1 {
   readonly requiresSnapshot: boolean;
 }
 
+export interface EdgeDeviceJournalPageV1 extends Omit<DeviceTaskJournalPageV1, "task"> {
+  readonly graph: DeviceTaskGraphV1;
+}
+
 export const DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1 = {
   task_created: { sourceKind: "runtime", fields: ["status"] },
   task_transition: { sourceKind: "runtime", fields: ["from", "to"] },
@@ -585,6 +589,18 @@ export interface MobileDeviceAttemptConformanceReportV1 extends DeviceConformanc
   readonly source: Omit<DeviceAttemptConformanceReportV1["source"], "journalSequence"> & {
     readonly ownerKind: "mobile";
     readonly traceDigest: string;
+  };
+}
+
+export interface EdgeDeviceAttemptConformanceReportV1 extends DeviceConformanceReportV1 {
+  readonly source: Omit<DeviceAttemptConformanceReportV1["source"], "traceId" | "connectionRevision"> & {
+    readonly ownerKind: "edge";
+    readonly runtimeRevision: number;
+    readonly graphRevision: number;
+    readonly nodeId: string;
+    readonly streamId: string;
+    readonly placementId: string;
+    readonly outcome: DeviceTaskStatusV1;
   };
 }
 

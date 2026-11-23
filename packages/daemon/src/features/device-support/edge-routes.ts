@@ -14,7 +14,7 @@ import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
-import { claimEdgeDiagnosis, isEdgeDiagnosisId, queueEdgeDiagnosis, readEdgeDiagnosis } from "./edge-work.js";
+import { claimEdgeDiagnosis, isEdgeDiagnosisId, queueEdgeDiagnosis, readEdgeDiagnosis, readEdgeDiagnosisConformance, readEdgeDiagnosisEvents } from "./edge-work.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 const enrollmentGrantLifetimeMs = 5 * 60_000;
@@ -22,9 +22,9 @@ const enrollmentGrantLifetimeMs = 5 * 60_000;
 export async function handleEdgeRuntimeRoute(
   url: URL, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
-  const path = /^\/v1\/device-support\/fabric\/edge-runtimes(?:\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(enrollment|enrollment\/proof|revocation|diagnoses)(?:\/(edge_diagnosis_[0-9a-f]{64}))?)?$/u.exec(url.pathname);
+  const path = /^\/v1\/device-support\/fabric\/edge-runtimes(?:\/([a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})\/(enrollment|enrollment\/proof|revocation|diagnoses)(?:\/(edge_diagnosis_[0-9a-f]{64})(?:\/(events|conformance))?)?)?$/u.exec(url.pathname);
   if (!path) return false;
-  const [, runtimeId, operation, diagnosisId] = path;
+  const [, runtimeId, operation, diagnosisId, projection] = path;
   if (diagnosisId !== undefined && operation !== "diagnoses") return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   const method = operation === "revocation" ? "PUT" : operation && !diagnosisId ? "POST" : "GET";
@@ -42,7 +42,15 @@ export async function handleEdgeRuntimeRoute(
       return true;
     }
     if (diagnosisId !== undefined) {
-      writePrivateJson(response, 200, readEdgeDiagnosis(runtime, runtimeId, diagnosisId));
+      if (projection === "events") {
+        const cursor = readEdgeJournalCursor(url.searchParams);
+        if (!cursor) writePrivateJson(response, 400, { error: "invalid_request" });
+        else writePrivateJson(response, 200, readEdgeDiagnosisEvents(runtime, runtimeId, diagnosisId, cursor));
+      } else if (projection === "conformance") {
+        writePrivateJson(response, 200, readEdgeDiagnosisConformance(runtime, runtimeId, diagnosisId));
+      } else {
+        writePrivateJson(response, 200, readEdgeDiagnosis(runtime, runtimeId, diagnosisId));
+      }
       return true;
     }
     const body = await readJsonBody(request, 4096).catch(() => undefined);
@@ -97,6 +105,17 @@ export async function handleEdgeRuntimeRoute(
     writeEdgeRuntimeError(response, error);
   }
   return true;
+}
+
+function readEdgeJournalCursor(params: URLSearchParams) {
+  const defaults = { generation: 1, afterSequence: 0, limit: 50 };
+  for (const [key, value] of params) {
+    if (!Object.hasOwn(defaults, key) || params.getAll(key).length !== 1 || !/^\d+$/u.test(value)) return undefined;
+    const number = Number(value);
+    if (!Number.isSafeInteger(number)) return undefined;
+    defaults[key as keyof typeof defaults] = number;
+  }
+  return defaults.generation >= 1 && defaults.limit >= 1 && defaults.limit <= 100 ? defaults : undefined;
 }
 
 export async function handleSignedEdgeEvidenceRoute(

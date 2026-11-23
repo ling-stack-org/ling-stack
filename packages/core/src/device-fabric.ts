@@ -423,7 +423,7 @@ export class EdgeRuntimePlacementPolicy {
       capabilityId: input.capabilityId,
     };
     const decision = {
-      decisionId: edgePlacementId(binding),
+      decisionId: edgeRuntimePlacementDecisionId(binding),
       ...binding,
       sideEffect: input.sideEffect,
       mode,
@@ -871,7 +871,7 @@ function assertEdgeRuntimePlacementDecision(decision: EdgeRuntimePlacementDecisi
   }
 }
 
-function edgePlacementId(binding: Pick<EdgeRuntimePlacementDecisionV1,
+export function edgeRuntimePlacementDecisionId(binding: Pick<EdgeRuntimePlacementDecisionV1,
   "runtimeId" | "runtimeRevision" | "ownerTaskId" | "targetDeviceId" | "capabilityId">): string {
   const identity = [binding.runtimeId, binding.runtimeRevision, binding.ownerTaskId, binding.targetDeviceId, binding.capabilityId];
   return `edge_placement_${createHash("sha256").update(JSON.stringify(identity)).digest("hex")}`;

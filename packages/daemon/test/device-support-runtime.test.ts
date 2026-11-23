@@ -15,7 +15,8 @@ import { WebSocketServer } from "ws";
 import type {
   ApprovalRequest, DeviceActionRequestV1, DeviceAttemptConformanceReportV1, DeviceDeveloperJobV1, DeviceDeveloperSessionV1, DeviceDiagnosisReportV1, DeviceFleetHealthProjectionV1, DeviceResourceManifestV1,
   DeviceProfileV1, DeviceRetirementStateV1, DeviceRetirementV1, DeviceTaskAttemptV1, DeviceTaskGraphNodeReceiptV1, DeviceTaskGraphV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
-  DeviceTwinValueV1, EdgeRuntimeEnrollmentGrantV1, EdgeRuntimeJournalEntryV1, EdgeRuntimePlacementDecisionV1,
+  DeviceTwinValueV1, EdgeDeviceAttemptConformanceReportV1, EdgeDeviceJournalPageV1, EdgeRuntimeEnrollmentGrantV1, EdgeRuntimeJournalEntryV1,
+  EdgeRuntimePlacementDecisionV1,
 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createEnvSecretResolver, createPcSoftwareDiagnosisPlaybook, createSqliteRunStore, DEFAULT_WORKSPACE_ID,
@@ -244,6 +245,18 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     assert.equal(read.status, 200);
     return await read.json() as { graph: DeviceTaskGraphV1; observation?: { connected: boolean } };
   };
+  const evidencePath = (graphId: string) => `${host.origin}${prefix}/diagnoses/${graphId}`;
+  const conformance = async (graphId: string) => {
+    const response = await fetch(`${evidencePath(graphId)}/conformance`, { headers });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control") ?? "", /no-store/u);
+    return await response.json() as EdgeDeviceAttemptConformanceReportV1;
+  };
+  const events = async (graphId: string, query = "") => {
+    const response = await fetch(`${evidencePath(graphId)}/events${query}`, { headers });
+    assert.equal(response.status, 200);
+    return await response.json() as EdgeDeviceJournalPageV1;
+  };
   const run = (work: Awaited<ReturnType<typeof queue>>) => {
     writeFileSync(configFile, JSON.stringify({ origin: linkedOrigin, runtimeId, graphId: work.graph.graphId, privateKeyFile, stateDirectory,
       binding: { grantId: grant.grantId, runtimeRevision: 1, placementId: work.placement.decisionId } }), { mode: 0o600 });
@@ -251,11 +264,31 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
   };
   const work = await queue("read-network");
   assert.equal(work.graph.status, "planned");
+  const graphId = work.graph.graphId;
+  assert.equal((await fetch(`${evidencePath(graphId)}/conformance`, { headers })).status, 404);
   interrupt = { route: "task-graph-receipt", remaining: 1 };
   await assert.rejects(run(work), { code: 1 });
   const result = await inspect(work.graph.graphId);
   assert.equal(result.graph.status, "succeeded");
   assert.equal(typeof result.observation?.connected, "boolean");
+  for (const projection of ["events", "conformance"]) {
+    assert.equal((await fetch(`${evidencePath(graphId)}/${projection}`)).status, 401);
+    assert.equal((await fetch(`${evidencePath(graphId)}/${projection}`, { headers: { ...headers, Origin: "https://elsewhere.invalid" } })).status, 403);
+    assert.equal((await fetch(`${evidencePath(graphId).replace(runtimeId, "other-runtime")}/${projection}`, { headers })).status, 404);
+  }
+  assert.equal((await fetch(`${evidencePath(graphId)}/events?limit=101`, { headers })).status, 400);
+  const page = await events(graphId, "?limit=1");
+  assert.equal(page.latestSequence, 2);
+  assert.equal(page.events[0]?.kind, "task_started");
+  assert.equal(page.hasMore, true);
+  const report = await conformance(graphId);
+  assert.equal(report.source.streamId, page.streamId);
+  assert.equal(report.source.attemptId, result.graph.nodes[0]?.attemptId);
+  assert.equal(report.source.placementId, work.placement.decisionId);
+  assert.equal(report.source.outcome, "succeeded");
+  assert.equal(report.checks.length, 4);
+  assert.ok(report.checks.every(check => check.status === "pass" && check.evidenceRef));
+  assert.doesNotMatch(JSON.stringify(report), /privateKey|publicKey|grantId|signature/u);
   const owner = new SqliteDeviceFabricStore({ databasePath: join(stateDirectory, "edge.sqlite") });
   try {
     const entries = owner.listEdgeRuntimeJournalEntries(runtimeId, work.graph.graphId);
@@ -269,6 +302,16 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     assert.deepEqual(resumed.observation, result.observation);
     assert.deepEqual(await inspect(work.graph.graphId), result);
     assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, work.graph.graphId), entries);
+    const remainder = await events(graphId, "?afterSequence=1");
+    assert.equal(remainder.hasMore, false);
+    assert.equal(remainder.events[0]?.sequence, 2);
+    assert.deepEqual(remainder.events[0]?.payload, { attemptId: resumed.attemptId, outcome: "completed", ...result.observation });
+    assert.deepEqual(remainder.events[0]?.evidenceRefs, [result.graph.nodes[0]?.resultRef]);
+    const stale = await events(graphId, "?generation=2");
+    assert.ok(stale.requiresSnapshot);
+    assert.equal(stale.graph.revision, result.graph.revision);
+    assert.deepEqual(stale.events, []);
+    assert.deepEqual(await conformance(graphId), report);
     const replay = await send("diagnoses", { expectedRevision: 1, requestId: "read-network" });
     assert.equal(replay.status, 200);
     assert.deepEqual((await replay.json()).graph, result.graph);
@@ -293,6 +336,9 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     assert.equal(unresolved.graph.status, "unknown");
     assert.equal(unresolved.graph.nodes[0]?.attemptId, inFlight.graph.nodes[0]?.attemptId);
     assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, uncertain.graph.graphId).map(entry => entry.outcome), ["pending", "unknown"]);
+    const unknownReport = await conformance(uncertain.graph.graphId);
+    assert.equal(unknownReport.source.outcome, "unknown");
+    assert.equal(unknownReport.checks.find(check => check.id === "network_observation")?.status, "skip");
 
     const revokedWork = await queue("before-revocation");
     assert.equal((await send("revocation", { expectedRevision: 1 }, "PUT")).status, 200);
@@ -300,6 +346,7 @@ test("an Edge process retains its diagnosis and resumes signed delivery across D
     assert.deepEqual(owner.listEdgeRuntimeJournalEntries(runtimeId, revokedWork.graph.graphId), []);
     assert.equal((await inspect(revokedWork.graph.graphId)).graph.nodes[0]?.attemptId, undefined);
     assert.equal((await send("diagnoses", { expectedRevision: 2, requestId: "after-revocation" })).status, 403);
+    assert.deepEqual(await conformance(graphId), report);
   } finally {
     owner.close();
   }

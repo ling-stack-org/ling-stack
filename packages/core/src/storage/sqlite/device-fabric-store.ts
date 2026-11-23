@@ -553,6 +553,12 @@ export class SqliteDeviceFabricStore {
     });
   }
 
+  getTaskGraphReceipt(graphId: string, graphRevision: number): DeviceTaskGraphNodeReceiptV1 | undefined {
+    const row = this.database.prepare("SELECT receipt_json FROM device_task_graph_receipts WHERE graph_id=? AND graph_revision=?")
+      .get(graphId, graphRevision) as Row | undefined;
+    return row ? parseJson<DeviceTaskGraphNodeReceiptV1>(row.receipt_json, "task graph receipt") : undefined;
+  }
+
   recordTaskGraphReceipt(
     receipt: DeviceTaskGraphNodeReceiptV1, advance: (current: DeviceTaskGraphV1) => DeviceTaskGraphV1,
     authorize?: () => void,
@@ -562,11 +568,9 @@ export class SqliteDeviceFabricStore {
       const current = this.getTaskGraph(receipt.graphId);
       if (!current) throw new DeviceFabricError("target_missing", "task graph is missing");
       const serialized = JSON.stringify(receipt);
-      const saved = this.database.prepare(`
-        SELECT receipt_json FROM device_task_graph_receipts WHERE graph_id=? AND graph_revision=?
-      `).get(receipt.graphId, receipt.graphRevision) as Row | undefined;
+      const saved = this.getTaskGraphReceipt(receipt.graphId, receipt.graphRevision);
       if (saved) {
-        if (!isDeepStrictEqual(parseJson(saved.receipt_json, "task graph receipt"), JSON.parse(serialized))) {
+        if (!isDeepStrictEqual(saved, JSON.parse(serialized))) {
           throw new DeviceFabricError("revision_conflict", "graph revision is already bound to a different receipt");
         }
         return current;
@@ -931,6 +935,10 @@ export class SqliteDeviceFabricStore {
   }
 
   close(): void { this.database.close(); }
+
+  withReadSnapshot<T>(read: () => T): T {
+    return readSqliteSnapshot(this.database, read);
+  }
 
   private withWriteTransaction<T>(write: () => T): T {
     this.database.exec("BEGIN IMMEDIATE");
