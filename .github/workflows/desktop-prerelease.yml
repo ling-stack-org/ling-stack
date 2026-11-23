@@ -1,5 +1,5 @@
-name: Replay verified macOS installers
-run-name: "Replay verified macOS DMGs"
+name: Measure packaged macOS daemon startup
+run-name: "Measure retained macOS daemon resource preparation"
 
 on:
   workflow_dispatch:
@@ -72,11 +72,11 @@ jobs:
               with archives.open(member) as source, (directory / name).open("xb") as dest:
                   shutil.copyfileobj(source, dest)
           PY
-      - name: Check cold startup of the copied app in a canonical directory
-        run: node scripts/release/macos-installed-startup.mjs "$RUNNER_TEMP/mac-replay" "$RUNNER_TEMP/mac-replay"
+      - name: Measure owned daemon resource preparation from the verified DMG
+        run: node scripts/release/macos-installed-daemon-probe.mjs "$RUNNER_TEMP/mac-replay" "$RUNNER_TEMP/mac-replay"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: macos-installed-replay-${{ matrix.mode }}
-          path: ${{ runner.temp }}/mac-replay/macos-installed-startup.json
+          name: macos-daemon-preparation-${{ matrix.mode }}
+          path: ${{ runner.temp }}/mac-replay/macos-installed-daemon-probe.json
           if-no-files-found: warn
