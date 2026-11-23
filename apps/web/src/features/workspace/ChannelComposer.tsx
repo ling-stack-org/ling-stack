@@ -332,19 +332,23 @@ export function ChannelComposer({
       surface="channel"
       density="docked"
       className="channel-composer"
-      aboveComposerNode={threadId && onOpenReview ? (
-        <ConversationChangeSummary
-          cwd={workspaceCwd}
-          threadId={threadId}
-          active={composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun}
-          submitting={sendState === "sending"}
-          onOpenReview={onOpenReview}
-        />
-      ) : null}
+      aboveComposerNode={(
+        <>
+          {threadId && onOpenReview ? (
+            <ConversationChangeSummary
+              cwd={workspaceCwd}
+              threadId={threadId}
+              active={composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun}
+              submitting={sendState === "sending"}
+              onOpenReview={onOpenReview}
+            />
+          ) : null}
+          {statusNode}
+        </>
+      )}
       rootRef={composerRootRef}
       ariaLabel={t("Channel composer")}
       leftToolsAriaLabel={t("Message tools")}
-      statusNode={statusNode}
       bottomStatusNode={<ConversationBottomStatusStrip
         ariaLabel={t("Conversation status")}
         translate={t}
