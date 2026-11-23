@@ -3,12 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { createSqliteRunStore } from "../dist/index.js";
+import { testDatabase } from "./support/sqlite-test-database.ts";
 
 const firstAt = "2026-11-17T01:00:00.000Z";
 const secondAt = "2026-11-17T01:01:00.000Z";
 
-function projection(overrides = {}) {
+function projection(overrides: Partial<ConversationContextProjectionMetadata> = {}): ConversationContextProjectionMetadata {
   return {
     projectionVersion: "projection-v1",
     sourceStateFingerprint: "source-v1",
@@ -96,7 +98,7 @@ test("context view lineage composes with a caller-owned transaction", async (t) 
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const store = createSqliteRunStore(cwd);
   t.after(() => store.close());
-  const database = store.database;
+  const database = testDatabase(store);
 
   database.exec("BEGIN IMMEDIATE");
   const result = store.upsertConversationContextViewLineage({
