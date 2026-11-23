@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { realpathSync } from "node:fs";
 import type {
   WorkspaceFileCapabilityPreviewRequest,
   WorkspaceFileCapabilityRequest,
@@ -12,6 +13,7 @@ import {
   WorkspaceFileCapabilityRegistry,
 } from "./workspace-file-capabilities.js";
 import { buildArtifactPreview, buildWorkspaceFilePreview } from "./content-preview.js";
+import { buildWorkspaceChangeReview } from "../runs/workspace-change-review.js";
 
 export async function handlePostWorkspaceFileCapabilityIssue(
   request: IncomingMessage,
@@ -61,6 +63,35 @@ export async function handlePostWorkspaceFileCapabilityPreview(
     writeJson(response, 200, preview);
   } catch (error) {
     writeCapabilityError(response, error, "workspace_file_capability_preview_failed");
+  }
+}
+
+/** Redeem the existing grant and return only its file, never the enclosing run's other paths. */
+export async function handlePostWorkspaceFileCapabilityChanges(
+  request: IncomingMessage,
+  response: ServerResponse,
+  maxBodyBytes: number,
+  stores: RunStoreRegistry,
+  capabilities: WorkspaceFileCapabilityRegistry,
+): Promise<void> {
+  try {
+    const input = await readJsonBody(request, maxBodyBytes) as Partial<WorkspaceFileCapabilityPreviewRequest>;
+    const cwd = typeof input.cwd === "string" ? input.cwd.trim() : "";
+    if (!allowCapabilityRequest(request, response, stores, cwd)) return;
+    if (typeof input.capabilityId !== "string" || !input.scope) throw new WorkspaceFileCapabilityError(400, "bad_request", "capabilityId and scope are required.");
+    const grant = capabilities.redeem(input.capabilityId, input.scope, stores, { capabilityTarget: "open_file" });
+    if (grant.cwd !== realpathSync(cwd) || grant.resource.kind !== "file") throw new WorkspaceFileCapabilityError(403, "scope_mismatch", "Capability workspace does not match the request.");
+    const store = stores.getStore(grant.cwd);
+    const run = store.getRun(grant.scope.runId);
+    if (!run || realpathSync(run.cwd) !== grant.cwd) throw new WorkspaceFileCapabilityError(403, "missing_lineage", "Run was not found in the capability workspace.");
+    const review = buildWorkspaceChangeReview(store, { scope: { kind: "run", id: run.id }, runs: [run], threadId: grant.scope.threadId, workspaceId: grant.scope.workspaceId });
+    const path = grant.resource.displayPath.replace(/\\/gu, "/");
+    const file = review.files.find(item => item.path === path);
+    if (file?.state === "exact") { writeJson(response, 200, { state: "exact", revision: review.revision, file }); return; }
+    if (!file && review.state === "exact" && review.coveredPaths.includes(path)) { writeJson(response, 200, { state: "exact", revision: review.revision }); return; }
+    writeJson(response, 200, { state: "unavailable", revision: review.revision, unavailableReason: file?.unavailableReason ?? review.unavailableReason });
+  } catch (error) {
+    writeCapabilityError(response, error, "workspace_file_capability_changes_failed");
   }
 }
 

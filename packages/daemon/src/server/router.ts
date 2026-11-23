@@ -1,4 +1,5 @@
 import { resolve as resolvePath } from "node:path";
+import { handleWorkspaceReviewPreview } from "../features/previews/workspace-review-preview.js";
 import { handleAutomationEventRoute, isAutomationEventIngress } from "../features/automations/event-routes.js";
 import { handleNodeRerunSubmission } from "../features/runs/node-rerun-submission.js";
 import { handleChannelSessions, handleChannelSessionDirectoryRepair } from "../features/channels/session-routes.js";
@@ -288,6 +289,7 @@ import {
 import {
   handlePostWorkspaceFileCapabilityIssue,
   handlePostWorkspaceFileCapabilityPreview,
+  handlePostWorkspaceFileCapabilityChanges,
 } from "../features/previews/workspace-file-capability-routes.js";
 import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
 import {
@@ -1967,6 +1969,14 @@ export async function routeRequest(
   }
   if (request.method === "POST" && url.pathname === "/workspace-files/preview") {
     await handlePostWorkspaceFileCapabilityPreview(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/review-preview") {
+    await handleWorkspaceReviewPreview(request, response, config.maxBodyBytes, storeRegistry);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/changes") {
+    await handlePostWorkspaceFileCapabilityChanges(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
     return;
   }
   if (url.pathname === "/workspace/work-summary" || url.pathname === "/workspace/work-summary/pull-requests") {
