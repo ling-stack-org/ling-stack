@@ -11,6 +11,7 @@ import { isCatalogWorkflowPinUpdate } from "./workflow-scope.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
+const CODEX_ENVIRONMENT_FILE = ".codex/environments/environment.toml";
 const LOCKFILE = "pnpm-lock.yaml";
 const WEB_PACKAGE = "@ling-stack/web";
 const WORKSPACE_TEST_CONFIG = /^(?:packages|apps)\/[^/]+\/tsconfig\.tests?\.json$/u;
@@ -82,7 +83,7 @@ function isAssurancePath(file) {
  * Classify a pull request by the narrowest safe CI scope.
  *
  * Unrecognized paths and unverified shared inputs select the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
+ * @param {{files: string[], deletedLocalArtifacts?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -102,9 +103,9 @@ export function classifyChangedFiles(input) {
     return buildScope("affected", files, packages, "verified catalog App action pin update, with workflow contracts checked in Common");
   }
 
-  // Keep deleted local artifacts in the audit while narrowing product selection.
-  const deletedOutputs = new Set(input.deletedOutputFiles?.filter(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY)));
-  const scopeFiles = deletedOutputs.size === 0 ? files : normalizeFiles(input.files.filter(file => !deletedOutputs.has(file)));
+  // Keep deleted local artifacts in the audit while excluding them from product selection.
+  const deletedLocalArtifacts = new Set(input.deletedLocalArtifacts?.filter(isLocalArtifactPath));
+  const scopeFiles = files.filter(file => !deletedLocalArtifacts.has(file));
 
   if (scopeFiles.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
     && !versionPaths.has(file)
@@ -114,7 +115,7 @@ export function classifyChangedFiles(input) {
   }
 
   if (scopeFiles.every((file) => isDocumentationPath(file) || isMaintenancePath(file))) {
-    const reason = deletedOutputs.size > 0 ? "verified local output cleanup and common checks only"
+    const reason = scopeFiles.length < files.length ? "verified local artifact cleanup and common checks only"
       : scopeFiles.some(isMaintenancePath) ? "documentation and allowlisted maintenance checks only"
         : "documentation and documentation assets only";
     return buildScope("docs", files, packages, reason);
@@ -338,13 +339,19 @@ function isMaintenancePath(file) {
 }
 
 /** @param {string} file */
+function isLocalArtifactPath(file) {
+  return file.startsWith(LOCAL_OUTPUT_DIRECTORY) || file === CODEX_ENVIRONMENT_FILE;
+}
+
+/** @param {string} file */
 function isTestPath(file) {
   return TEST_PATH_PATTERN.test(file);
 }
 
 /** @param {string} file */
 function isMacosNativePath(file) {
-  return !NATIVE_RELEASE_REVIEW_FILES.has(file) && MACOS_NATIVE_PATH_PATTERNS.some((pattern) => pattern.test(file));
+  return !NATIVE_RELEASE_REVIEW_FILES.has(file) && MACOS_NATIVE_PATH_PATTERNS.some(pattern => pattern.test(file))
+    && !isDocumentationPath(file);
 }
 
 /** @param {string} file */
@@ -647,7 +654,7 @@ const args = parseArgs(process.argv.slice(2));
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const eventName = args.event ?? process.env.GITHUB_EVENT_NAME ?? "pull_request";
   let files;
-  let deletedOutputFiles;
+  let deletedLocalArtifacts;
   let basePackageEntries;
   const baseTestConfigs = new Map();
   let versionChange;
@@ -662,9 +669,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (args["force-full"] !== "true") {
       catalogWorkflowPinUpdate = isCatalogWorkflowPinUpdate({ files, base, head: args.head, git });
     }
-    if (files.some(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY))) {
-      deletedOutputFiles = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
-        base, args.head, "--", LOCAL_OUTPUT_DIRECTORY]).split("\0").filter(Boolean);
+    if (files.some(isLocalArtifactPath)) {
+      deletedLocalArtifacts = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
+        base, args.head, "--", LOCAL_OUTPUT_DIRECTORY, CODEX_ENVIRONMENT_FILE]).split("\0").filter(Boolean);
     }
     const changedTestConfigs = files.filter(file => WORKSPACE_TEST_CONFIG.test(file));
     if (changedTestConfigs.length > 0 || files.some(file => file.endsWith("/package.json"))) {
@@ -689,7 +696,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } else {
     files = [];
   }
-  const scope = classifyChangedFiles({ files, deletedOutputFiles, eventName, catalogWorkflowPinUpdate,
+  const scope = classifyChangedFiles({ files, deletedLocalArtifacts, eventName, catalogWorkflowPinUpdate,
     forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, addedLockImporters });
   if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
     scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });
