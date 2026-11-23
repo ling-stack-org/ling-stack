@@ -1,8 +1,33 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Managed worktree integration source closure](#managed-worktree-integration-source-closure).
+Current source prerequisite: [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Official Plugin Packaging Source Closure
+
+Date 2026-11-23. The source prerequisite binds `4596ab2614ba2a4217c8a8f24b05128229a1c5a4`
+for Darwin arm64 with `unsigned_dev`, ad-hoc signing and the no-bundled-provider
+build lane. The inventory covers the App Server client, plugin download and
+verification code, Desktop plugin trust inputs, and dependencies identified
+from the fixed authored roots.
+
+The record covers 2,013 packaging inputs, including 66 new paths and 158 changed
+digests. All 15 Office native source digests and the toolchain, headers, runtime,
+signing and trust fields match the preceding record. The digest map uses one
+entry per line within the existing 262,144-byte reader limit.
+
+Independent Codex context `01a207d4-0b52-7631-911c-e0819e5f1455` verified the fixed
+inventory, every candidate digest and metadata preservation, and returned
+`VERDICT: CLEAN` for this scoped development source binding. A strict packaging
+fixture used real esbuild and observed the authored download, verification and
+cache modules in the emitted daemon. System signing and installed-app behavior
+require separate runtime evidence.
+
+Record SHA-256 `31aefdc05b9b9c6e1d19685ff1b3eae1786d42422f6b03efdce5b76cfb25a864`.
+Packaging aggregate `6a2718044d0dad1b75e8438ba23b3b7d41e5211ae7b681f012dcf676ba55c435`.
+The preceding record SHA-256 was
+`fc450f98173497ea0a6c73d37d32430bc551df30ac385749284e9411496993ca`.
 
 ## Managed Worktree Integration Source Closure
 
