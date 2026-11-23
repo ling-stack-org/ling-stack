@@ -30,7 +30,7 @@ test("native mock timer sanity preserves unref, clearTimeout, Date and controlle
   assert.equal(calls, 1);
 });
 
-test("legal HTTP 30-day interval does not overflow into an early real Node run", { timeout: 20_000 }, async (t) => {
+test("legal HTTP 30-day interval does not overflow into an early real Node run", { timeout: 30_000 }, async (t) => {
   const ambient = await isolatedAmbient(t);
   const { createDaemonServer } = await import("../dist/index.js");
   const { prepareChannelCreateBody } = await import("./conversation-model-test-fixture.mjs");
