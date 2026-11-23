@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { classifyChangedFiles } from "./classify-scope.mjs";
+import { deviceSuiteFiles } from "./device-test-profile.mjs";
 
 type ScopeInput = Parameters<typeof classifyChangedFiles>[0];
 type PackageEntry = NonNullable<ScopeInput["packageEntries"]>[number];
@@ -388,6 +389,7 @@ function repositoryFixture(t: TestContext) {
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
   copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
+  copyFileSync(new URL("./device-test-profile.mjs", import.meta.url), join(root, "scripts/ci/device-test-profile.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
   copyFileSync(new URL("./secret-scan.mjs", import.meta.url), join(root, "scripts/ci/secret-scan.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
@@ -404,6 +406,80 @@ function repositoryFixture(t: TestContext) {
     "--event=pull_request", `--base=${base}`, "--head=HEAD", ...options], { encoding: "utf8" }));
   return { root, git, write, commit, classify };
 }
+
+test("shared Device recovery changes keep consumer builds and typechecks and run focused Core and Linux tests", t => {
+  const repo = repositoryFixture(t);
+  for (const file of ["test-shard-plan.mjs", "daemon-test-platforms.mjs"]) {
+    copyFileSync(new URL(`./${file}`, import.meta.url), join(repo.root, "scripts/ci", file));
+  }
+  const unrelatedCore = "test/runtime-host-capacity-migration.test.ts";
+  const unrelatedDaemon = "test/engine-lifecycle.test.mjs";
+  for (const file of [...deviceSuiteFiles.core, unrelatedCore]) repo.write(`packages/core/${file}`, "export {};\n");
+  for (const file of [...deviceSuiteFiles["daemon-linux"], unrelatedDaemon]) repo.write(`packages/daemon/${file}`, "export {};\n");
+  repo.write("scripts/ci/daemon-test-platforms.json", JSON.stringify({
+    version: 1, linux: deviceSuiteFiles["daemon-linux"], darwin: [unrelatedDaemon],
+  }));
+  repo.write("packages/contracts/test/device.test.ts", "export {};\n");
+  repo.write("apps/mobile/test/standalone-device-runtime.test.ts", "export {};\n");
+  for (const [name, dependency] of [["remote-protocol", "contracts"], ["remote-client", "remote-protocol"]]) {
+    repo.write(`packages/${name}/package.json`, JSON.stringify({
+      name: `@ling-stack/${name}`, dependencies: { [`@ling-stack/${dependency}`]: "workspace:*" },
+      scripts: { test: "node --test", typecheck: "tsc" },
+    }));
+  }
+  const base = repo.commit();
+  for (const file of ["packages/contracts/src/device.ts", "packages/contracts/src/device-fabric.ts",
+    "packages/core/src/device-task-trace.ts", "apps/mobile/src/device/execution.ts"]) {
+    repo.write(file, "export const device = true;\n");
+  }
+  repo.write("docs/device.md", "# Device\n");
+  repo.commit();
+
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.testProfile, "device");
+  assert.deepEqual(scope.testPackages, ["@ling-stack/contracts", "@ling-stack/core", "@ling-stack/daemon", "@ling-stack/mobile",
+    "@ling-stack/remote-client", "@ling-stack/remote-protocol"]);
+  assert.deepEqual(scope.daemonPlatforms, ["linux"]);
+  assert.equal(scope.linuxContract, true);
+  assert.equal(scope.assurance, true);
+  assert.equal(scope.macosNative, false);
+  assert.ok(scope.packages.includes("@ling-stack/cli"));
+  assert.ok(scope.typecheckPackages.includes("@ling-stack/cli"));
+  assert.ok(scope.typecheckPackages.includes("@ling-stack/runner-pi"));
+
+  repo.write(".git/scope.json", JSON.stringify(scope));
+  execFileSync(process.execPath, ["scripts/ci/test-shard-plan.mjs", "--scope=.git/scope.json", "--output=.git/plan.json"], { cwd: repo.root });
+  const plan = JSON.parse(readFileSync(join(repo.root, ".git/plan.json"), "utf8"));
+  assert.equal(plan.testProfile, "device");
+  assert.deepEqual(Object.keys(plan.suites), ["core", "daemon-linux"]);
+  assert.deepEqual(plan.suites.core.files, [...deviceSuiteFiles.core].sort());
+  assert.deepEqual(plan.suites["daemon-linux"].files, [...deviceSuiteFiles["daemon-linux"]].sort());
+  assert.equal(plan.suites.core.shards.length, 1);
+  assert.equal(plan.daemonMatrix.include.length, 1);
+  assert.equal(plan.daemonMatrix.include[0].runner, "ubuntu-latest");
+
+  const missing = "packages/daemon/test/device-support-runtime.test.ts";
+  rmSync(join(repo.root, missing));
+  const fallback = repo.classify(base);
+  assert.equal(fallback.testProfile, undefined);
+  assert.deepEqual(fallback.daemonPlatforms, ["linux", "darwin"]);
+  repo.git("restore", "--", missing);
+
+  const full = repo.classify(base, "--force-full=true");
+  assert.equal(full.mode, "full");
+  assert.equal(full.testProfile, undefined);
+  assert.deepEqual(full.daemonPlatforms, ["linux", "darwin"]);
+
+  repo.write("packages/core/src/index.ts", "export {};\n");
+  repo.commit();
+  const mixed = repo.classify(base);
+  assert.equal(mixed.testProfile, undefined);
+  assert.ok(mixed.testPackages.includes("@ling-stack/cli"));
+  assert.deepEqual(mixed.daemonPlatforms, ["linux", "darwin"]);
+  assert.deepEqual(mixed.packages, scope.packages);
+  assert.deepEqual(mixed.typecheckPackages, scope.typecheckPackages);
+});
 
 test("the Git boundary retains the entire PR and both sides of source-to-doc renames", (t) => {
   const repo = repositoryFixture(t);

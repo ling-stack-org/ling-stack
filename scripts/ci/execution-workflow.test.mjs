@@ -255,7 +255,7 @@ test("workflow gate requires every selected lane and refuses incomplete Draft va
 
 test("scope checks PR whitespace before planning and reports failures before reading missing outputs", () => {
   const scope = jobSource("scope");
-  assert.match(scope, /name: Classify changed files[\s\S]*name: Check pull request whitespace[\s\S]*name: Plan complete core and daemon file coverage/u);
+  assert.match(scope, /name: Classify changed files[\s\S]*name: Check pull request whitespace[\s\S]*name: Plan selected Core and Daemon tests/u);
   assert.match(scope, /name: Check pull request whitespace\n        if: github\.event_name == 'pull_request' && steps\.classify\.outputs\.documentation-only != 'true'/u);
   assert.doesNotMatch(jobSource("common-fast"), /name: Check pull request whitespace/u);
   for (const SCOPE_RESULT of ["failure", "cancelled"]) {

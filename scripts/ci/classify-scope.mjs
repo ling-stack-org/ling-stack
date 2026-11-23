@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
+import { deviceSuiteFiles, deviceTestPackages, matchesDeviceTestProfile } from "./device-test-profile.mjs";
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
@@ -231,22 +232,28 @@ export function classifyChangedFiles(input) {
     return buildScope("full", files, packages, `platform package requires the full supported CI lane: ${unsupportedAffected.map((entry) => entry.name).join(", ")}`);
   }
 
-  const testPackages = affectedEntries
+  const affectedTestPackages = affectedEntries
     .filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
+  const deviceProfile = affectedTestPackages.includes("@ling-stack/core") && affectedTestPackages.includes("@ling-stack/daemon")
+    && [...testSupportImporters].every(name => deviceTestPackages.includes(name))
+    && matchesDeviceTestProfile(scopeFiles.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file)))
+    && hasDeviceTestCoverage();
+  const testPackages = deviceProfile
+    ? affectedTestPackages.filter(name => deviceTestPackages.includes(name))
+    : affectedTestPackages;
   const typecheckPackages = affectedEntries
     .filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
-  const validationBuildDependencies = [...new Set([...testPackages, ...typecheckPackages]
+  const validationBuildDependencies = [...new Set([...affectedTestPackages, ...typecheckPackages]
     .flatMap(name => VALIDATION_BUILD_DEPENDENCIES.get(name) ?? []))];
   if (validationBuildDependencies.some(name => !packages.some(entry => entry.name === name))) {
     return buildScope("full", files, packages, "a workspace validation build dependency could not be verified");
   }
-  const daemonPlatforms = affectedNames.has("@ling-stack/daemon")
-    ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters })
-    : [];
+  const daemonPlatforms = deviceProfile ? ["linux"] : affectedNames.has("@ling-stack/daemon")
+    ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters }) : [];
   const linuxContract = affectedNames.has("@ling-stack/daemon") && daemonPlatforms.includes("linux");
 
   return {
@@ -265,8 +272,10 @@ export function classifyChangedFiles(input) {
     macosNative: nativeSurfaceChanged || nativeRelease,
     macosHelper: nativeSurfaceChanged,
     nativeRelease,
+    ...(deviceProfile ? { testProfile: /** @type {const} */ ("device") } : {}),
     productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
-    reason: versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
+    reason: deviceProfile ? "device recovery and task trace tests with transitive consumer typechecks"
+      : versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
       : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
       : changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
       ? "test or test-support changes in affected workspace packages"
@@ -275,7 +284,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, documentationOnly?: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device", documentationOnly?: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -389,6 +398,17 @@ function loadDaemonPlatformManifest() {
     daemonPlatformManifest = undefined;
     return undefined;
   }
+}
+
+function hasDeviceTestCoverage() {
+  const platforms = loadDaemonPlatformManifest();
+  if (!deviceSuiteFiles["daemon-linux"].every(file => platforms?.get(file) === "linux")) return false;
+  return [
+    ...deviceSuiteFiles.core.map(file => `packages/core/${file}`),
+    ...deviceSuiteFiles["daemon-linux"].map(file => `packages/daemon/${file}`),
+    "apps/mobile/test/standalone-device-runtime.test.ts",
+    "packages/contracts/test/device.test.ts",
+  ].every(file => lstatSync(resolve(repositoryRoot, file), { throwIfNoEntry: false })?.isFile());
 }
 
 /** @param {PackageEntry} entry */
