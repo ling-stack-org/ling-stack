@@ -185,6 +185,7 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   };
   const due = new Date(Date.now() - 100).toISOString();
   const scheduled = makeAutomation("Summarize the scheduled event", "schedule", due);
+  const retargeted = makeAutomation("Prepare the shift report", "schedule", due);
   const eventDriven = makeAutomation("Summarize the signed event", "event");
   const monitor = makeAutomation("Summarize the monitor observation", "monitor");
   seed.putAutomationEventSource({ id: "intake-events", label: "Native test events", adapter: "business", enabled: true,
@@ -192,6 +193,7 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   seed.close();
   const policies: NativeWorkIntakeConfig[] = [
     { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: scheduled.id, mode: "suggest" },
+    { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: retargeted.id, mode: "suggest" },
     { workspaceRoot: fixture.cwd, sourceKind: "automation_run", sourceScope: eventDriven.id, mode: "auto_start", budget },
   ];
   await fixture.start(policies);
@@ -206,6 +208,19 @@ test("scheduler suggestions and signed events reuse their original AutomationRun
   assert.equal((await fixture.request(`/automations/${eventDriven.id}/run`, approval)).status, 404);
   const accept = () => fixture.json<AutomationRunMutationResponse>(`/automations/${scheduled.id}/run`, approval);
   const client = await fixture.connect();
+  const previousIntake = await until(async () => (await fixture.receipts("automation_run", retargeted.id))[0]);
+  assert.equal(previousIntake.outcome, "suggested");
+  const { workItem } = await client.createWorkItem({ sourceId: "shift-review", title: "Review the shift handoff" });
+  await client.setCoordinationSchedule({ automationId: retargeted.id, workItemId: workItem.workItemId,
+    kind: "checkpoint", enabled: true, expectedRevision: 0, durationMs: 10_000 });
+  const retargetedApproval = { intakeReceiptId: previousIntake.receiptId };
+  const staleRoute = await fixture.request(`/automations/${retargeted.id}/run`, retargetedApproval);
+  assert.equal(staleRoute.status, 409);
+  assert.equal((await staleRoute.json() as { error: string }).error, "native_intake_source_changed");
+  await assert.rejects(client.acceptNativeWorkIntake({ receiptId: previousIntake.receiptId }), { code: "native_intake_source_changed" });
+  assert.deepEqual(fixture.owned().listAutomationRuns({ automationId: retargeted.id }).map(run => run.id), [previousIntake.executionId]);
+  assert.equal(fixture.owned().listOpenScheduledCoordinationRounds().length, 0);
+  assert.deepEqual((await fixture.receipts("automation_run", retargeted.id))[0], previousIntake);
   const [first, replay] = await Promise.all([accept(), client.acceptNativeWorkIntake({ receiptId: suggestion.receiptId })]);
   assert.equal(first.automationRun.id, suggestion.executionId);
   assert.equal(replay.receipt.executionId, suggestion.executionId);

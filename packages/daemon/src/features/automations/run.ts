@@ -75,7 +75,7 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
   const triggerType = input.request.triggerType ?? "manual";
   const idempotencyKey = input.request.idempotencyKey ?? createAutomationIdempotencyKey(automation.id, triggerType, input.request.scheduledFor);
   const thread = store.getLingThread(automation.threadId);
-  if (coordination && thread) {
+  if (coordination && thread && !input.request.intakeReceiptId && !input.intakeDispatch) {
     if (triggerType !== "manual" && triggerType !== "schedule"
       || triggerType === "schedule" && idempotencyKey !== `automation:${automation.id}:schedule:${input.request.scheduledFor}`) {
       throw new HttpError(409, "coordination_trigger_unavailable", "Coordination uses the configured schedule or Run now.");
