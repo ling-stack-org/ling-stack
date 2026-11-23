@@ -665,8 +665,8 @@ only on a successful install or a model response.
   that a changed projection cannot resume a transfer.
   [Native fixture](../../packages/daemon/test/ling-server-native-peer.test.ts)
   [Mobile fixture](../../apps/mobile/test/phone-task-artifacts.test.ts)
-- The signed APK handoff passed with Android SDK Build Tools 36.0.0 and the
-  native Pion/TLS peer fixture. The Gateway rejected an unsigned upload and the
+- The native Pion/TLS peer fixture completed the signed APK handoff with Android
+  SDK Build Tools 36.0.0 and 37.0.0. The Gateway rejected an unsigned upload and the
   Mobile client rejected modified signed metadata. The original APK with
   version code `4294967338` and legacy code `42` reached the Mobile runtime.
   SQLite retained the signed receipt with the paired-Gateway verification method.
@@ -678,8 +678,10 @@ only on a successful install or a model response.
   APKs with version codes `42` and `4294967338` and reported the same signer
   fingerprints as the SDK tools. The platform verifier rejected an unsigned
   APK and a signed APK with modified ZIP bytes. The iOS and Android Hermes
-  bundles exported successfully. Packaged Mobile UI and physical target
-  acceptance remain open.
+  bundles exported successfully. The autolinked Android transport module
+  passed `:ling-device-transport:compileDebugKotlin` with SDK 37,
+  Build Tools 37.0.0, NDK 27.1.12297006, and Expo 58. Packaged Mobile UI and
+  physical target acceptance remain open.
   [Android archive verifier](../../apps/mobile/modules/ling-device-transport/android/src/main/java/expo/modules/lingdevicetransport/AndroidApkArchive.java)
 - In the same peer fixture, the PC built a project from its committed source,
   linked and signed the APK with Android SDK Build Tools, and retained the

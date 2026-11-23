@@ -23,6 +23,7 @@ export type VerifiedAndroidApk = Pick<DeviceDeveloperArtifactV1, "digest" | "siz
 };
 
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
+const signerCertificateLine = /^(?:Signer #\d+|V(?:1|2|3\.0) Signer(?: #\d+)?:) certificate SHA-256 digest: ([0-9a-f]{64})\r?$/gimu;
 
 export class AndroidApkLibrary {
   constructor(
@@ -91,7 +92,7 @@ export class AndroidApkLibrary {
     signal.throwIfAborted();
     const signature = await this.runner.run(javaPath, ["-jar", apkSignerJar, "verify", "--verbose", "--print-certs", path], signal);
     signal.throwIfAborted();
-    const signers = Array.from(signature.stdout.matchAll(/^Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})\r?$/gimu),
+    const signers = Array.from(signature.stdout.matchAll(signerCertificateLine),
       match => match[1]!.toLowerCase());
     if (signature.exitCode !== 0 || !/^Verifies\r?$/mu.test(signature.stdout)
       || signers.length === 0 || new Set(signers).size !== signers.length) {

@@ -16,7 +16,7 @@ test("the PC installs a verified APK through the developer session and replays t
   const authToken = "local-fixture-apk-authority";
   const headers = { Authorization: "Bearer " + authToken, "Content-Type": "application/json" };
   const targetsPath = join(cwd, "targets.json");
-  const native = process.env.LING_TEST_ANDROID_FIXTURE_DIR;
+  const native = process.env.LING_TEST_ANDROID_FIXTURE_DIR || undefined;
   const apk = native ? readFileSync(join(native, "fixture.apk")) : Buffer.from("signed test APK");
   const apkSha256 = createHash("sha256").update(apk).digest("hex");
   const unsigned = native ? readFileSync(join(native, "fixture-unsigned.apk")) : Buffer.from("unsigned test APK");

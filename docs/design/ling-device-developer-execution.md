@@ -651,6 +651,8 @@ with `apksigner.jar` and reads the standalone package manifest with AAPT2.
 It retains the SHA-256, package ID, version code and certificate fingerprints
 against the developer session. An import reports the long version code and
 its legacy component where the app declares a version code major.
+The APK fixtures verify the signer digest emitted by Android SDK Build Tools
+36.0.0 and 37.0.0.
 
 Create and authorize the developer session for the enrolled target. The
 following paths are relative to `/v1/device-support/developer/sessions/{sessionId}`

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, randomBytes, randomUUID, sign, verify, X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -543,11 +543,11 @@ async function createApkFixture(root: string) {
   const unsigned = native ? await readFile(join(native, "fixture-major-unsigned.apk")) : Buffer.from("unsigned apk fixture");
   let signer = "b".repeat(64);
   if (native) {
-    const output = execFileSync(tools.javaPath, ["-jar", tools.apkSignerJar, "verify", "--print-certs", join(native, "fixture-major.apk")],
+    const output = execFileSync(tools.javaPath, ["-jar", tools.apkSignerJar, "verify", "--print-certs-pem", join(native, "fixture-major.apk")],
       { encoding: "utf8" });
-    const match = /^Signer #1 certificate SHA-256 digest: ([0-9a-f]{64})$/mu.exec(output);
-    assert.ok(match?.[1]);
-    signer = match[1];
+    const certificate = /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/u.exec(output)?.[0];
+    assert.ok(certificate);
+    signer = createHash("sha256").update(new X509Certificate(certificate).raw).digest("hex");
   }
   const identity: AndroidApkIdentityV1 = {
     packageId: "org.lingstack.majorfixture", versionCode: "4294967338", legacyVersionCode: "42", signerCertificateSha256: [signer],
@@ -558,7 +558,12 @@ async function createApkFixture(root: string) {
         const bytes = await readFile(args.at(-1)!);
         if (bytes.equals(unsigned)) return { stdout: "", stderr: "", exitCode: 1 };
         assert.deepEqual(bytes, signed);
-        return { stdout: `Verifies\nSigner #1 certificate SHA-256 digest: ${signer}\n`, stderr: "", exitCode: 0 };
+        const stdout = [
+          "Verifies",
+          `V3.0 Signer: certificate SHA-256 digest: ${signer}`,
+          "Source Stamp Signer: certificate SHA-256 digest: " + "f".repeat(64),
+        ].join("\n");
+        return { stdout, stderr: "", exitCode: 0 };
       }
       assert.deepEqual(await readFile(args[2]!), signed);
       return { stdout: [
