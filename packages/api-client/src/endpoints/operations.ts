@@ -212,6 +212,14 @@ export const operationEndpoints = {
       return this._post("/workspace-files/preview", {}, input);
   },
 
+  async previewWorkspaceReviewFile(this: LingDaemonEndpointContext, input: import("@ling-stack/contracts").WorkspaceChangeReviewPreviewRequest): Promise<PreviewContentResponse> {
+      return this._post("/workspace-files/review-preview", {}, input);
+  },
+
+  async getWorkspaceFileCapabilityChanges(this: LingDaemonEndpointContext, input: WorkspaceFileCapabilityPreviewRequest): Promise<import("@ling-stack/contracts").WorkspaceFileCapabilityChangeResponse> {
+      return this._post("/workspace-files/changes", {}, input);
+  },
+
   async getWorkspaceChanges(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceChangesResponse> {
       return this._get("/workspace/changes", { cwd });
   },

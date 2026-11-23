@@ -11,6 +11,8 @@ import {
 } from "./DockReviewCodePreview.js";
 import type { WorkspaceRightDockFileTarget } from "./WorkspaceRightDock.js";
 import { DockLocalFilePreview } from "./DockLocalFilePreview.js";
+import { WorkspaceFileChanges } from "./WorkspaceFileChanges.js";
+import { WorkspaceFileScopedChanges } from "./WorkspaceFileScopedChanges.js";
 
 export function DockFileItemDetail({
   item,
@@ -55,10 +57,27 @@ export function DockWorkspaceFilePreview({
   readonly onNavigateLocalFile?: (file: NonNullable<WorkspaceRightDockFileTarget["localFile"]>) => void;
 }): React.JSX.Element {
   if (target.localFile) return <DockLocalFilePreview initial={target.localFile} onNavigate={onNavigateLocalFile} />;
-  return <DockWorkspaceResourcePreview cwd={cwd} target={target} />;
+  return <DockWorkspaceFileTabs key={JSON.stringify([cwd, target.path, target.capabilityId, target.capabilityTarget])} cwd={cwd} target={target} />;
 }
 
-function DockWorkspaceResourcePreview({ cwd, target }: { readonly cwd: string; readonly target: WorkspaceRightDockFileTarget }): React.JSX.Element {
+function DockWorkspaceFileTabs({ cwd, target }: { readonly cwd: string; readonly target: WorkspaceRightDockFileTarget }): React.JSX.Element {
+  const { t } = useI18n();
+  const [view, setView] = useState<"file" | "changes">("file");
+  if (target.capabilityTarget && target.capabilityTarget !== "open_file") return <DockWorkspaceResourcePreview cwd={cwd} target={target} />;
+  return <div className="workspace-file-tabs">
+    <div className="workspace-file-tabs-toolbar" role="group" aria-label={t("File preview")}>
+      <button type="button" aria-pressed={view === "file"} onClick={() => setView("file")}>{t("Files")}</button>
+      <button type="button" aria-pressed={view === "changes"} onClick={() => setView("changes")}>{t("Changes")}</button>
+      {(!target.capabilityId || target.capabilityScope) ? <span className="workspace-file-tabs-actions"><WorkspaceFileOpenMenu cwd={cwd} path={target.path} line={target.line} compact capabilityId={target.capabilityId} scope={target.capabilityScope} /></span> : null}
+    </div>
+    {view === "file" ? <DockWorkspaceResourcePreview cwd={cwd} target={target} hideOpenMenu />
+      : target.capabilityId && target.capabilityScope ? <WorkspaceFileScopedChanges cwd={cwd} capabilityId={target.capabilityId} scope={target.capabilityScope} />
+        : target.capabilityId ? <div className="artifact-preview-empty">{t("Diff unavailable")}</div>
+        : <WorkspaceFileChanges cwd={cwd} path={target.path} />}
+  </div>;
+}
+
+export function DockWorkspaceResourcePreview({ cwd, target, hideOpenMenu = false }: { readonly cwd: string; readonly target: WorkspaceRightDockFileTarget; readonly hideOpenMenu?: boolean }): React.JSX.Element {
   const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -69,7 +88,9 @@ function DockWorkspaceResourcePreview({ cwd, target }: { readonly cwd: string; r
     setLoading(true);
     setError("");
     setPreview(undefined);
-    const previewRequest = target.capabilityId && target.capabilityScope
+    const previewRequest = target.capabilityId && !target.capabilityScope
+      ? Promise.reject(new Error("Capability scope is required."))
+      : target.capabilityId && target.capabilityScope
       ? previewWorkspaceFileCapability({
         cwd,
         capabilityId: target.capabilityId,
@@ -150,7 +171,7 @@ function DockWorkspaceResourcePreview({ cwd, target }: { readonly cwd: string; r
       data-workspace-capability-target={capabilityTarget}
       data-workspace-viewer-kind={capabilityTarget === "open_diff" ? "diff" : "file"}
     >
-      {capabilityTarget === "open_file" ? (
+      {capabilityTarget === "open_file" && !hideOpenMenu ? (
         <div className="right-dock-workspace-file-preview-actions">
           <WorkspaceFileOpenMenu cwd={cwd} path={target.path} line={target.line} compact capabilityId={target.capabilityId} scope={target.capabilityScope} />
         </div>

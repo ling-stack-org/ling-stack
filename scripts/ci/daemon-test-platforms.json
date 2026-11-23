@@ -539,6 +539,7 @@
     "test/workflow-worktree-cleanup.test.mjs",
     "test/workspace-change-recovery.test.mjs",
     "test/workspace-change-review.test.mjs",
+    "test/workspace-file-capability-changes.test.ts",
     "test/workspace-file-capability.test.mjs",
     "test/workspace-snapshot-active-writers.test.mjs",
     "test/workspace-snapshot-fence-failure-edges.test.mjs",
