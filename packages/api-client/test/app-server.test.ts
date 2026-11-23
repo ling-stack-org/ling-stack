@@ -199,6 +199,8 @@ test("Ling App Server client routes the development, delivery, grant, worktree a
   await client.connect();
   await client.createGrant({ label: "fixture", subject: { kind: "workspace" }, scopes: ["observe"],
     expiresAt: "2099-01-01T00:00:00.000Z", credentialSha256: "0".repeat(64), idempotencyKey: "grant-1" });
+  await client.createStageCoordinationGrant({ workItemId: "item", stageExecution: { runId: "run", attemptId: "attempt" },
+    label: "stage", expiresAt: "2099-01-01T00:00:00.000Z", credentialSha256: "1".repeat(64), idempotencyKey: "stage-grant" });
   await client.listGrants();
   await client.revokeGrant("grant-1", 1);
   await client.createHandoff({ threadId: "thread", turnId: "turn", idempotencyKey: "handoff-1", nextInstruction: "continue" });
@@ -214,6 +216,8 @@ test("Ling App Server client routes the development, delivery, grant, worktree a
     enabled: true, kind: "checkpoint", durationMs: 1000 });
   await client.createWorkItem({ sourceId: "source", title: "Fixture" });
   await client.acceptWorkItem({ workItemId: "item", expectedWorkItemRevision: 1, idempotencyKey: "accept" });
+  await client.readWorkItemStageQuestions({ workItemId: "item" });
+  await client.listWorkItemStageMessages({ workItemId: "item" });
   await client.captureChanges();
   await client.listWorktrees();
   await client.createWorktree({ ownerKind: "teammate", ownerId: "thread" });
@@ -221,10 +225,10 @@ test("Ling App Server client routes the development, delivery, grant, worktree a
   await client.previewWorktreeCleanup({ ownerKind: "teammate", ownerId: "thread" });
   await client.cleanupWorktree({ ownerKind: "teammate", ownerId: "thread", expectedRevision: "revision", confirmed: true });
   assert.deepEqual(socket.sent.filter(request => request.id !== undefined).slice(1).map(request => request.method), [
-    "server/grants/create", "server/grants/list", "server/grants/revoke", "handoff/create", "handoff/read", "handoff/resume",
+    "server/grants/create", "server/grants/create", "server/grants/list", "server/grants/revoke", "handoff/create", "handoff/read", "handoff/resume",
     "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
     "workItem/coordination/schedule/read", "workItem/coordination/schedule/set", "workItem/create", "workItem/accept",
-    "changes/capture", "worktree/list", "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
+    "workItem/question/read", "workItem/message/list", "changes/capture", "worktree/list", "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
   ]);
   client.close();
 });

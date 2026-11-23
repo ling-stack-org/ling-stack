@@ -39,6 +39,7 @@ import type {
   LingAppServerGrantScope,
   LingAppServerHandoffResult,
   LingAppServerHandoffResumeResult,
+  LingAppServerStageMessageExecution,
   LingAppServerInputRespondParams,
   LingAppServerInputRespondResult,
   LingAppServerVerifyOperation,
@@ -3258,12 +3259,15 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   assert.deepEqual(replayedMessage.record.payload, delivered?.payload);
 });
 
-async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string) {
+async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false) {
   const fixture = await releaseFixture(t);
   const store = fixture.getStore();
   const now = new Date().toISOString();
   const preset = providerBaseUrl ? addLoopbackPreset(store, providerBaseUrl) : undefined;
-  const channel = store.createChannel({ name: "Review", boundPath: fixture.cwd, allowedTools: [], defaultProviderPresetId: preset?.id }, now);
+  const channel = store.createChannel({ name: "Review", boundPath: fixture.cwd,
+    allowedTools: parallelReadOnly ? ["read"] : [], defaultProviderPresetId: preset?.id,
+    ...(parallelReadOnly ? { runtimePolicy: { maxConcurrentRuns: 2, allowReadOnlyParallel: true } } : {}),
+  }, now);
   const thread = store.createLingThread({ channelId: channel.id, kind: "channel_discussion",
     title: "Review plan", objective: "Review the compatibility contract." }, now);
   const plan = store.upsertProposedPlanArtifact({
@@ -3274,13 +3278,20 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string) {
   const accepted = await client.call<ProposedPlanActionResponse>("plan/accept", {
     mode: "workflow", threadId: thread.id, planId: plan.id, expectedRevision: plan.revision,
     workflowStepPreviews: [
-      { title: "Review", stageId: "QA", ownerId: "teammate_builtin_qa", ownerLabel: "QA" },
-      { title: "Explain the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" },
+      { title: "Review", stageId: "QA", ownerId: "teammate_builtin_qa", ownerLabel: "QA", ...(parallelReadOnly ? { requiredTools: ["read"] } : {}) },
+      { title: "Explain the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer",
+        ...(parallelReadOnly ? { requiredTools: ["read"] } : {}) },
     ],
   });
   assert.ok(accepted.workflowId);
   const [waiting, respondent] = store.listChannelWorkflowSteps({ workflowId: accepted.workflowId, complete: true });
   assert.ok(waiting && respondent);
+  if (parallelReadOnly) for (const step of [waiting, respondent]) {
+    assert.ok(store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
+      sideEffectClass: "analysis_readonly", maxParallelSiblings: 2,
+      parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: [] },
+    } }, now));
+  }
   const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "question-deadline", title: "Review",
     channelId: channel.id, initialStatus: "ready" }, now);
   const claim = await client.call<LingAppServerWorkItemAcceptResult>("workItem/accept", {
@@ -3391,6 +3402,120 @@ test("the assigned Agent can answer a stage question using its owned Workflow re
   assert.equal(recovered.listRuns({ workflowStepId: waiting.id }).length, 1);
   assert.equal(recovered.listRuns({ workflowStepId: respondent.id }).length, 1);
   assert.equal(provider.requests.length, 2);
+});
+
+test("active Workflow stage grants bind questions, replies and messages to their owning Attempts", { timeout: 30_000 }, async t => {
+  let releaseFirstInput: () => void = () => undefined;
+  let finishStages: () => void = () => undefined;
+  const firstInput = new Promise<void>(resolve => { releaseFirstInput = resolve; });
+  const finish = new Promise<void>(resolve => { finishStages = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, count: number) => {
+    if (count <= 2) {
+      await firstInput;
+      return { tool: "read", input: { path: "contract.txt" } };
+    }
+    await finish;
+    return { text: "Contract checked." };
+  });
+  t.after(async () => { releaseFirstInput(); finishStages(); await provider.close(); });
+  const { fixture, store, item, workItem, workflowId, waiting, respondent } =
+    await stageQuestionWorkflow(t, provider.baseUrl, true);
+  await writeFile(join(fixture.cwd, "contract.txt"), "Query field is optional.\n");
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const url = new URL(`/workflows/${workflowId}/orchestrate`, daemonUrl);
+  url.searchParams.set("cwd", fixture.cwd);
+  const start = await fetch(url, { method: "POST", body: "{}",
+    headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` } });
+  const started = await start.json() as { status: string; startedSteps?: readonly unknown[] };
+  assert.equal(started.status, "started", JSON.stringify(started));
+  assert.equal(started.startedSteps?.length, 2, JSON.stringify(started));
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+
+  const appServer = new URL("/app-server/rpc", daemonUrl);
+  appServer.protocol = "ws:";
+  appServer.searchParams.set("cwd", fixture.cwd);
+  const connectSdk = (token: string) => {
+    const client = new LingAppServerClient({ url: appServer.href, clientInfo: { name: "Stage coordination fixture", version: "1" },
+      createSocket: address => new WebSocket(address, { headers: { Authorization: `Bearer ${token}` } }) as unknown as LingAppServerSocket,
+      autoReconnect: false,
+    });
+    t.after(() => client.close());
+    return client;
+  };
+  const operator = connectSdk(authToken);
+  const { workflow } = await operator.readWorkItemStages(item.id);
+  const waitingStage = workflow?.steps.find(stage => stage.stepId === waiting.id);
+  const respondentStage = workflow?.steps.find(stage => stage.stepId === respondent.id);
+  assert.ok(waitingStage?.messageReceiver && respondentStage?.messageReceiver && workflow?.workItemRevision && workItem.planRevision);
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  const stageGrant = async (label: string, stageExecution: LingAppServerStageMessageExecution) => {
+    const secret = randomBytes(32).toString("hex");
+    const { grant } = await operator.createStageCoordinationGrant({ workItemId: item.id, stageExecution, label, expiresAt,
+      credentialSha256: createHash("sha256").update(secret).digest("hex"), idempotencyKey: label });
+    const token = `las1.${grant.grantId}.${secret}`;
+    return { client: connectSdk(token), grant, token };
+  };
+  await assert.rejects(stageGrant("stale-stage-grant", { ...waitingStage.messageReceiver, attemptId: "old-attempt" }), { code: "stale_revision" });
+  const sender = await stageGrant("asking-stage-grant", waitingStage.messageReceiver);
+  const receiver = await stageGrant("responding-stage-grant", respondentStage.messageReceiver);
+  const capabilities = await sender.client.getCapabilities();
+  assert.ok(capabilities.capabilities.includes("workItem.coordination"));
+  assert.ok(capabilities.methods.includes("workItem/question/ask") && capabilities.methods.includes("workItem/message/send"));
+  assert.ok(!capabilities.methods.includes("input/respond") && !capabilities.methods.includes("workItem/collaboration/append"));
+  const readStages = await sender.client.readWorkItemStages(item.id);
+  assert.deepEqual(readStages.workflow?.steps.find(stage => stage.stepId === respondent.id)?.messageReceiver, respondentStage.messageReceiver);
+  assert.ok(readStages.workflow?.steps.every(stage => !stage.runId && !stage.brief));
+  await assert.rejects(sender.client.readWorkItemStageQuestions({ workItemId: "different-work-item" }), { code: "capability_denied" });
+
+  const ask = { workItemId: item.id, planRevision: workItem.planRevision, expectedWorkItemRevision: workflow.workItemRevision,
+    waitingStepId: waiting.id, respondentStepId: respondent.id, deadlineAt: expiresAt,
+    question: "Can QA omit the query field?", idempotencyKey: "coordination-ask" };
+  await assert.rejects(receiver.client.askWorkItemStageQuestion(ask), { code: "capability_denied" });
+  const question = await sender.client.askWorkItemStageQuestion(ask);
+  assert.equal(question.record.actorId, waiting.toParticipantId);
+  assert.deepEqual(question.record.sourceRefs.slice(-2), [
+    { type: "run", id: waitingStage.messageReceiver.runId }, { type: "attempt", id: waitingStage.messageReceiver.attemptId },
+  ]);
+  assert.equal((await sender.client.askWorkItemStageQuestion(ask)).record.id, question.record.id);
+  assert.equal(store.getWorkItemWorkflowAdmissionBlocker(workflowId, store.getChannelWorkflowStep(waiting.id)), undefined);
+  assert.deepEqual((await receiver.client.readWorkItemStageQuestions({ workItemId: item.id })).records.map(record => record.id), [question.record.id]);
+  const reply = { workItemId: item.id, questionId: question.record.id, expectedQuestionRevision: question.record.collaborationRevision,
+    expectedWorkItemRevision: question.workItemRevision, answer: "Yes, it remains optional.", idempotencyKey: "coordination-reply" };
+  await assert.rejects(sender.client.replyToWorkItemStageQuestion(reply), { code: "capability_denied" });
+  const answer = await receiver.client.replyToWorkItemStageQuestion(reply);
+  assert.equal(answer.record.actorId, respondent.toParticipantId);
+  assert.deepEqual(answer.record.sourceRefs, [
+    { type: "run", id: respondentStage.messageReceiver.runId }, { type: "attempt", id: respondentStage.messageReceiver.attemptId },
+  ]);
+  assert.equal((await receiver.client.replyToWorkItemStageQuestion(reply)).status, "replayed");
+  assert.deepEqual((await sender.client.readWorkItemStageQuestions({ workItemId: item.id })).records.map(record => record.id),
+    [question.record.id, answer.record.id]);
+
+  const message = { workItemId: item.id, planRevision: workItem.planRevision, expectedWorkItemRevision: answer.workItemRevision,
+    targetStepId: respondent.id, expectedTargetRevision: respondentStage.updatedAt, expectedExecution: respondentStage.messageReceiver,
+    body: "Preserve omission in the compatibility check.", idempotencyKey: "coordination-message" };
+  await assert.rejects(sender.client.sendWorkItemStageMessage({ ...message, expectedExecution: waitingStage.messageReceiver }), { code: "stale_revision" });
+  const sent = await sender.client.sendWorkItemStageMessage(message);
+  assert.equal(sent.record.actorId, waiting.toParticipantId);
+  assert.equal((await sender.client.sendWorkItemStageMessage(message)).status, "replayed");
+  assert.deepEqual((await receiver.client.listWorkItemStageMessages({ workItemId: item.id })).records.map(record => record.id), [sent.record.id]);
+  releaseFirstInput();
+  await waitFor(() => provider.requests.length === 4 ? true : undefined);
+  assert.equal(provider.requests.slice(2).filter((body: unknown) => JSON.stringify(body).includes(message.body)).length, 1);
+  const delivered = (await receiver.client.listWorkItemStageMessages({ workItemId: item.id })).records[0];
+  assert.equal((delivered?.payload as { delivery?: { status: string } })?.delivery?.status, "input_admitted");
+  await operator.revokeGrant(receiver.grant.grantId, receiver.grant.revision);
+  await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, receiver.token), /401/u);
+  assert.equal(store.getChannelWorkflowStep(respondent.id)?.status, "running");
+
+  finishStages();
+  await waitFor(() => [waiting, respondent].every(step => store.getChannelWorkflowStep(step.id)?.status === "succeeded") ? true : undefined);
+  await assert.rejects(sender.client.askWorkItemStageQuestion(ask), { code: "authorization_required" });
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.deepEqual((await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/question/read", { workItemId: item.id }))
+    .records.map(record => record.id), [question.record.id, answer.record.id]);
+  await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, sender.token), /401/u);
 });
 
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {

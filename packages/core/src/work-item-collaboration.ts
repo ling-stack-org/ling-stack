@@ -36,6 +36,7 @@ export interface AppendWorkItemCollaborationInput {
   readonly sourceRefs?: readonly WorkItemCollaborationSourceRef[];
   readonly visibility?: WorkItemEvidenceVisibility;
   readonly idempotencyKey: string;
+  readonly assertCurrent?: () => void;
 }
 
 export interface AppendWorkItemCollaborationResult {
@@ -72,6 +73,7 @@ export function appendWorkItemCollaboration(
     content,
     sourceRefs: input.sourceRefs ?? [],
     visibility: input.visibility,
+    assertCurrent: input.assertCurrent,
   }, now, eventCwd ? {
     cwd: eventCwd,
     project: (entry, workItemRevision) => ({

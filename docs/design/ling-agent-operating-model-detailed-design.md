@@ -626,6 +626,26 @@ data. `workItem/message/read` projects `queued`, `input_admitted` or
 fingerprint and scoped message digest. Its meaning is local model-input
 admission. The message remains tied to that Attempt and the original Plan.
 
+A supervising App Server client can issue a stage coordination grant through
+`createStageCoordinationGrant()` for an active Pi stage of a bound Work Item.
+The Daemon resolves the stage and participant from its accepted Plan and live
+Run/Attempt. The grant exposes the stage receivers and lets its holder send
+targeted messages, ask questions from its own stage, and reply as the assigned
+respondent. `workItem/question/read` and `workItem/message/list` return the
+question, answer, and message receipts visible to that stage. A running stage
+uses its own question receipt to track a reply while it continues executing.
+The existing pre-admission questions continue to govern queued stages.
+
+Stage writes record the assigned participant and source Run/Attempt references.
+The same Attempt can retry a request with its original key. The Daemon checks
+the grant, accepted Plan, assignment, and live execution fence before receipt
+disclosure and again in the SQLite write transaction. The stage binding supplies
+the grant's methods. The legacy `scopes` list is empty, which makes older Daemons
+reject issuance.
+The supervising client provides the short-lived bearer to the Agent's client.
+Automatic tool registration and live question input admission are tracked in the
+implementation plan. [Stage authority](../../packages/daemon/src/features/work-items/stage-coordination-authority.ts) · [SDK](../../packages/api-client/src/app-server.ts)
+
 ### 5.11 Scheduled Coordination Admission
 
 An Automation with the `coordination_round` action configures a checkpoint or retrospective for one explicit Work Item in the same workspace store. A Workflow or Goal selection resolves to that Work Item when configuring the schedule. Keep the Automation's real, authorized Thread as the home for managing its definition and occurrence log. The target Work Item uses its own scope and can be observed before it has a linked Thread. The home Thread grants neither Work Item access nor execution authority. Check both bindings at admission and expose each projection under its own grants.

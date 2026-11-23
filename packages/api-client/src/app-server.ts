@@ -107,6 +107,7 @@ import type {
   LingAppServerDeliberationSettlementParams,
   LingAppServerStageDeliberationStartParams,
   LingAppServerStageHandoffParams,
+  LingAppServerStageMessageExecution,
   LingAppServerStageMessageSendParams,
   LingAppServerStageQuestionAskParams,
   LingAppServerStageQuestionReplyParams,
@@ -133,6 +134,11 @@ export interface LingAppServerSocket {
 }
 
 export type LingAppServerSocketFactory = (url: string) => LingAppServerSocket;
+
+export interface LingAppServerStageCoordinationGrantParams extends Omit<LingAppServerGrantCreateParams, "subject" | "scopes"> {
+  readonly workItemId: string;
+  readonly stageExecution: LingAppServerStageMessageExecution;
+}
 
 export interface LingAppServerClientOptions {
   readonly url: string;
@@ -274,6 +280,11 @@ export class LingAppServerClient {
   async createGrant(params: LingAppServerGrantCreateParams): Promise<{ cwd: string; grant: LingAppServerGrant }> {
     await this.connect();
     return await this.request("server/grants/create", params);
+  }
+
+  async createStageCoordinationGrant(params: LingAppServerStageCoordinationGrantParams): Promise<{ cwd: string; grant: LingAppServerGrant }> {
+    const { workItemId, ...credential } = params;
+    return await this.createGrant({ ...credential, subject: { kind: "workItem", id: workItemId }, scopes: [] });
   }
 
   async listGrants(): Promise<{ cwd: string; grants: readonly LingAppServerGrant[] }> {
@@ -653,6 +664,11 @@ export class LingAppServerClient {
     return await this.request("workItem/message/send", params);
   }
 
+  async listWorkItemStageMessages(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/message/list", params);
+  }
+
   async askWorkItemStageQuestion(params: LingAppServerStageQuestionAskParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
     await this.connect();
     return await this.request("workItem/question/ask", params);
@@ -661,6 +677,11 @@ export class LingAppServerClient {
   async replyToWorkItemStageQuestion(params: LingAppServerStageQuestionReplyParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
     await this.connect();
     return await this.request("workItem/question/reply", params);
+  }
+
+  async readWorkItemStageQuestions(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/question/read", params);
   }
 
   async requestWorkItemPlanChange(params: LingAppServerWorkItemPlanChangeRequestParams): Promise<LingAppServerWorkItemPlanChangeResult> {

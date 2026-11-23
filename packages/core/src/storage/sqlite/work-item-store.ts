@@ -769,7 +769,8 @@ export class SqliteWorkItemStore {
     const scopedHolds = item.holds.filter(hold => hold.blocksNewAdmission && hold.workflowStepIds);
     if (step && scopedHolds.some(hold => hold.workflowStepIds!.includes(step.id))) return "work_item_plan_change_pending";
     if (step?.metadata?.planStageId && item.planRevision) {
-      const unanswered = listWorkItemStageQuestions(this.ports, item.id, item.planRevision, step.id).filter(result => !result.reply);
+      const unanswered = listWorkItemStageQuestions(this.ports, item.id, item.planRevision, step.id)
+        .filter(result => !result.reply && !result.question.askingExecution);
       if (unanswered.some(result => workItemStageQuestionExpired(result.question, Date.now()))) return "work_item_stage_question_overdue";
       if (unanswered.length) return "work_item_stage_question_pending";
     }

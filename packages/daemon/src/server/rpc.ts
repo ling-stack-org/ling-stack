@@ -10,6 +10,7 @@ import {
   WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX,
   UserInputStoreError,
   evaluateDeliberationTrigger,
+  readWorkItemStageQuestion,
   type ControlPlaneDomain,
   type ControlPlaneEvent,
   type LingThreadGoal,
@@ -19,6 +20,7 @@ import {
   type RunSession,
   type RunStore,
   type WorkItem,
+  type WorkItemCollaborationRecord,
   type WorkItemControlReceipt,
   type WorkItemPlanChangeInput,
   type WorkItemSourceType,
@@ -39,7 +41,6 @@ import {
   type LingAppServerContextInspectResult,
   type LingAppServerDeliberationDecideParams,
   type LingAppServerInputRespondResult,
-  type LingAppServerGrant,
   type LingAppServerGitHubDeliveryResult,
   type LingAppServerJsonRpcId,
   type LingAppServerThreadEventsResult,
@@ -113,6 +114,7 @@ import { normalConversationForkId } from "../features/conversations/normal-conve
 import {
   appServerGrantBearerPrefix, appServerGrantStillActive, authenticateAppServerGrant, createAppServerGrant,
   grantAllowsMethod, grantAllowsRequest, listAppServerGrants, revokeAppServerGrant,
+  type AuthorizedAppServerGrant,
 } from "./app-server-authorization.js";
 import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
 import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
@@ -122,6 +124,8 @@ import { assertWorkItemConversationAdmission } from "../features/work-items/conv
 import { listNativeWorkIntake, mutateNativeWorkIntake, readNativeWorkIntakeListRequest,
   readNativeWorkIntakeMutation } from "../features/work-items/native-intake-requests.js";
 import { projectStageMessageDelivery } from "../features/work-items/stage-message-receiver.js";
+import { matchesStageCoordinationExecution, stageCoordinationDenied,
+  type StageCoordinationActor, type StageCoordinationBinding } from "../features/work-items/stage-coordination-authority.js";
 import { sendWorkItemStageMessage, WORKFLOW_STAGE_MESSAGE_ID_PREFIX } from "../features/work-items/stage-messages.js";
 import { askWorkItemStageQuestion, replyToWorkItemStageQuestion } from "../features/work-items/stage-questions.js";
 import { readWorkItemWorkflowBinding, readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
@@ -292,11 +296,11 @@ export function attachRpcWebSocketServer(
         return;
       }
     }
-    let grant: LingAppServerGrant | undefined;
+    let grant: AuthorizedAppServerGrant | undefined;
     if (scopedBearer) {
       try {
         const store = context.storeRegistry.getStore(workspaceCwd);
-        grant = authenticateAppServerGrant(store, authorization, appServerRecoveryFor(context.config, store));
+        grant = authenticateAppServerGrant(store, authorization, appServerRecoveryFor(context.config, store), context.activeRuns);
       }
       catch { /* A grant cannot authenticate while its workspace store is unavailable. */ }
       if (!grant) {
@@ -371,7 +375,7 @@ class RpcConnection {
     private readonly appServer: boolean,
     private readonly authenticated: boolean,
     private readonly draining: () => boolean,
-    private readonly grant: LingAppServerGrant | undefined,
+    private readonly grant: AuthorizedAppServerGrant | undefined,
     private readonly invalidatePeerAuthorization: (cwd: string, grantId?: string) => void,
   ) {
     this.outbound = new RpcOutboundWriter(ws, {
@@ -542,7 +546,7 @@ class RpcConnection {
           serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
           serverInstanceId: appServerInstanceIds.get(this.context),
           connectionId: this.connectionId,
-          effectiveScopes: this.grant?.scopes ?? ["controlPlane.read",
+          effectiveScopes: this.grant?.stageCoordination ? ["workItem.coordination"] : this.grant?.scopes ?? ["controlPlane.read",
             ...(this.authenticated ? ["runs.control", "approval.decide", "input.respond", "verification.execute"] : [])],
           capabilities: this.availableCapabilities(),
           ...(identity ? { storeIncarnation: identity.storeIncarnation, authorizationEpoch: identity.authorizationEpoch } : {}),
@@ -578,7 +582,7 @@ class RpcConnection {
         const record = this.workspaceParams(params, true);
         const store = this.context.storeRegistry.getStore(record.cwd);
         const recovery = appServerRecoveryFor(this.context.config, store);
-        if (method === "server/grants/create") return { cwd: record.cwd, grant: createAppServerGrant(store, record, recovery) };
+        if (method === "server/grants/create") return { cwd: record.cwd, grant: createAppServerGrant(store, record, recovery, this.context.activeRuns) };
         if (method === "server/grants/list") return { cwd: record.cwd, grants: listAppServerGrants(store) };
         const grant = revokeAppServerGrant(store, readStringField(record, "grantId"), readIntegerField(record, "expectedRevision", "revision"), recovery);
         this.invalidatePeerAuthorization(record.cwd, grant.grantId);
@@ -993,6 +997,7 @@ class RpcConnection {
 
   private availableCapabilities(): readonly string[] {
     if (this.grant) {
+      if (this.grant.stageCoordination) return ["server/ping", "workItem.coordination"];
       const capabilities = ["server/ping"];
       if (grantAllowsMethod(this.grant, "thread/subscribe")) capabilities.push("thread.events");
       if (grantAllowsMethod(this.grant, "turn/start")) capabilities.push("turn.control");
@@ -1019,10 +1024,17 @@ class RpcConnection {
     if (!this.grant) return true;
     try {
       const store = this.context.storeRegistry.getStore(this.defaultCwd);
-      return appServerGrantStillActive(store, this.grant, appServerRecoveryFor(this.context.config, store));
+      return appServerGrantStillActive(store, this.grant, appServerRecoveryFor(this.context.config, store), this.context.activeRuns);
     } catch {
       return false;
     }
+  }
+
+  private stageCoordinationActor(): StageCoordinationActor | undefined {
+    const binding = this.grant?.stageCoordination;
+    return binding && { binding, assertCurrent: () => {
+      if (!this.grantIsCurrent()) throw stageCoordinationDenied();
+    } };
   }
 
   private canRespondToInput(): boolean {
@@ -1381,10 +1393,14 @@ class RpcConnection {
           afterRevision: readOptionalIntegerField(record, "afterRevision"),
           limit: readOptionalIntegerField(record, "limit"),
         });
+        const stage = this.grant?.stageCoordination;
+        if (stage) return { ...collaboration, records: collaboration.records
+          .filter(entry => stageCoordinationRecordVisible(store, stage, entry))
+          .map(entry => projectStageMessageDelivery(store, entry)) };
         return this.grant ? collaboration : { ...collaboration,
           records: collaboration.records.map(entry => projectStageMessageDelivery(store, entry)) };
       });
-      if (!this.grant) return { cwd, ...result };
+      if (!this.grant || this.grant.stageCoordination) return { cwd, ...result };
       const privatePrefixes = [WORKFLOW_STAGE_MESSAGE_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX];
       const records = result.records.filter(entry => !privatePrefixes.some(prefix => entry.id.startsWith(prefix))).map(entry => {
         if (this.grant?.subject.kind !== "workItem") return entry;
@@ -1411,8 +1427,9 @@ class RpcConnection {
       const collaboration = readAppServerWorkItemCollaboration(store, { workItemId, kind,
         afterRevision: readOptionalIntegerField(record, "afterRevision"), limit: readOptionalIntegerField(record, "limit") });
       const includeEvidence = this.grant?.subject.kind !== "workItem";
-      const workflow = readWorkItemWorkflowStages(store, workItem, includeEvidence, offset);
-      return { cwd, ...collaboration, workflow };
+      const stage = this.grant?.stageCoordination;
+      const workflow = readWorkItemWorkflowStages(store, workItem, includeEvidence, offset, stage ? this.context.activeRuns : undefined);
+      return { cwd, ...collaboration, ...(stage ? { records: [] } : {}), workflow };
     });
   }
 
@@ -1518,7 +1535,7 @@ class RpcConnection {
       expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
       body: readStringField(record, "body"), idempotencyKey: readStringField(record, "idempotencyKey"),
       ...(execution ? { expectedExecution: { runId: readStringField(execution, "runId"), attemptId: readStringField(execution, "attemptId") } } : {}),
-    }, new Date().toISOString(), this.context.activeRuns);
+    }, new Date().toISOString(), this.context.activeRuns, this.stageCoordinationActor());
     if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
     return { cwd, ...receipt, record: projectStageMessageDelivery(store, receipt.record) };
   }
@@ -1531,6 +1548,7 @@ class RpcConnection {
       expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
     };
     const now = new Date().toISOString();
+    const actor = this.stageCoordinationActor();
     const predecessor = record.predecessorQuestion === undefined ? undefined : readParamsRecord(record.predecessorQuestion);
     if (action === "reply") appServerRecoveryFor(this.context.config, store)?.assertReady();
     const { event, ...receipt } = action === "ask" ? askWorkItemStageQuestion(store, {
@@ -1539,10 +1557,10 @@ class RpcConnection {
       deadlineAt: readStringField(record, "deadlineAt"), answerFromStageResult: record.answerFromStageResult === true,
       ...(predecessor ? { predecessorQuestion: { id: readStringField(predecessor, "id"),
         revision: readIntegerField(predecessor, "revision", "revision") } } : {}),
-    }, now) : replyToWorkItemStageQuestion(store, {
+    }, now, this.context.activeRuns, actor) : replyToWorkItemStageQuestion(store, {
       ...basis, questionId: readStringField(record, "questionId"), answer: readStringField(record, "answer"),
       expectedQuestionRevision: readIntegerField(record, "expectedQuestionRevision", "expectedQuestionRevision"),
-    }, now);
+    }, now, undefined, actor);
     if (event) {
       this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
       if (action === "reply") this.context.taskSupervisor.poke(cwd);
@@ -3218,6 +3236,25 @@ function projectWorkItemSnapshot(workItem: WorkItem, includeExecutionRefs = true
   };
 }
 
+function stageCoordinationRecordVisible(store: RunStore, stage: StageCoordinationBinding, record: WorkItemCollaborationRecord): boolean {
+  if (record.kind === "message" && record.id.startsWith(WORKFLOW_STAGE_MESSAGE_ID_PREFIX)) {
+    const payload = record.payload;
+    return isRecord(payload) && payload.planRevision === stage.planRevision && (
+      payload.targetStepId === stage.stepId && payload.participantId === stage.participantId
+        && (payload.receivingExecution === undefined || matchesStageCoordinationExecution(payload.receivingExecution, stage))
+      || payload.sendingStepId === stage.stepId && matchesStageCoordinationExecution(payload.sendingExecution, stage)
+    );
+  }
+  if (record.kind !== "question") return false;
+  const questionId = record.action === "created" ? record.id : record.parentRecordId;
+  const result = questionId ? readWorkItemStageQuestion(store, stage.workItemId, questionId) : undefined;
+  const question = result?.question;
+  return !!question && (record.id === result.record.id || record.id === result.reply?.record.id || record.id === result.historicalReply?.record.id)
+    && question.planRevision === stage.planRevision && (question.respondentStepId === stage.stepId
+      || question.waitingStepId === stage.stepId && (question.askingExecution === undefined
+        || matchesStageCoordinationExecution(question.askingExecution, stage)));
+}
+
 function projectWorkItemControlReceipt(receipt: WorkItemControlReceipt): LingAppServerWorkItemControlResult["controlReceipt"] {
   const { id, action, generation, requestedAt, actorId, reason, outcome } = receipt;
   return { id, action, generation: String(generation), requestedAt, actorId, ...(reason ? { reason } : {}), outcome };
@@ -3449,6 +3486,7 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   if (error instanceof HttpError) {
     const code = error.code;
     const jsonRpcCode = code === "stale_revision" ? -32030 : code === "idempotency_conflict" ? -32031
+      : code === "capability_denied" ? -32021
       : error.statusCode === 400 ? -32602 : -32061;
     return { jsonRpcCode, code, message: error.message };
   }

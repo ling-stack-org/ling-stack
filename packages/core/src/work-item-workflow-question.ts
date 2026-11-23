@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { LingAppServerStageMessageExecution } from "@ling-stack/contracts";
 import type { RunStore } from "./run-types.js";
 import { readWorkItemCollaborationRecord } from "./work-item-collaboration.js";
 
@@ -29,6 +30,7 @@ export interface WorkItemStageQuestionPayload {
   readonly question: string;
   readonly deadlineAt: string;
   readonly answerFromStageResult?: true;
+  readonly askingExecution?: LingAppServerStageMessageExecution;
 }
 
 export function workItemStageQuestionExpired(question: WorkItemStageQuestionPayload, now: number): boolean {

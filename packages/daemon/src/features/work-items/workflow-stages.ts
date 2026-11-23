@@ -41,7 +41,8 @@ export function workItemWorkflowSettled(store: RunStore, activeRuns: ActiveRunRe
 }
 
 /** Work Board and App Server project the actual Workflow owner and its retained evidence. */
-export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, includeEvidence: boolean, offset = 0): LingAppServerWorkItemWorkflowStages | undefined {
+export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, includeEvidence: boolean, offset = 0,
+  liveReceivers?: ActiveRunRegistry): LingAppServerWorkItemWorkflowStages | undefined {
   if (!item.workflowId || !item.planRevision) return undefined;
   const binding = readWorkItemWorkflowBinding(store, item.workflowId);
   if (!binding) return undefined;
@@ -63,10 +64,10 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       dependencyIds: step.metadata?.dependsOnStepIds?.slice(0, 20) ?? [], updatedAt: step.updatedAt,
       ...(!admissionBlocker && step.status === "queued"
         ? { admissionBlocker: readStageAdmissionBlocker(store, step) } : {}),
+      ...(includeEvidence || liveReceivers ? { messageReceiver: readStageMessageReceiver(store, step, liveReceivers) } : {}),
       ...(includeEvidence ? {
         runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
         briefBasis: readStageBriefBasis(store, step),
-        messageReceiver: readStageMessageReceiver(store, step),
         decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),
         handoffs: readStageHandoffs(store, item.id, item.planRevision!, step),
         ...(binding.retainedStageResults?.length ? {

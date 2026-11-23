@@ -50,6 +50,8 @@ export interface AppendWorkItemEvidenceInput {
   readonly optionId?: string;
   readonly sourceRefs?: readonly WorkItemEvidenceSourceRef[];
   readonly visibility?: WorkItemEvidenceVisibility;
+  /** Host-owned authorization check while the evidence write transaction is held. */
+  readonly assertCurrent?: () => void;
 }
 
 export interface AppendWorkItemEvidenceResult {

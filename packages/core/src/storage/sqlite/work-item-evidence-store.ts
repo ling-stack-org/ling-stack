@@ -14,6 +14,7 @@ import {
 import { parseJson, readNullableString, readNumber, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
+import { readSqliteWithinTransaction } from "./read-snapshot.js";
 
 export class SqliteWorkItemEvidenceStore {
   constructor(private readonly context: SqliteStoreContext) {}
@@ -39,6 +40,7 @@ export class SqliteWorkItemEvidenceStore {
   ): AppendWorkItemEvidenceResult | undefined {
     if (!this.context.database.isTransaction) throw new Error("work_item_evidence_requires_transaction");
     validateEvidenceInput(input);
+    if (input.assertCurrent) readSqliteWithinTransaction(this.context.database, input.assertCurrent);
     const workItem = this.context.database
       .prepare("SELECT revision FROM work_items WHERE workspace_id = ? AND id = ?")
       .get(DEFAULT_WORKSPACE_ID, input.workItemId) as Record<string, SQLOutputValue> | undefined;
