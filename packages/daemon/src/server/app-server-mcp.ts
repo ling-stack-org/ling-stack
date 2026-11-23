@@ -160,8 +160,9 @@ export async function runLingAppServerMcp(
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.settleWorkItemStageHandoff("return", params)));
     if (methods.has("workItem/message/send")) server.registerTool("ling_stage_message_send", {
-      description: "Queue coordination context for one receiving stage of the accepted Plan.",
-      inputSchema: z.strictObject({ ...planChange, targetStepId: objectId, expectedTargetRevision: objectId, body: z.string().min(1).max(1200) }),
+      description: "Queue coordination context for an accepted Plan stage. For a running stage, supply its current Run and Attempt.",
+      inputSchema: z.strictObject({ ...planChange, targetStepId: objectId, expectedTargetRevision: objectId, body: z.string().min(1).max(1200),
+        expectedExecution: z.strictObject({ runId: objectId, attemptId: objectId }).optional() }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.sendWorkItemStageMessage(params)));
     if (methods.has("workItem/question/ask")) server.registerTool("ling_stage_question_ask", {

@@ -606,6 +606,15 @@ Each recipient's delivery is identified by message ID and recipient ID and binds
 
 Message acceptance commits the message and makes its recipient delivery `queued`. `delivered` requires a durable receiver receipt for inclusion in the actual input accepted by the target Runner, tied to the Run/Attempt and prepared input basis. With a verified in-turn steering path, use its equivalent input receipt. Work Item observation or successful publication is a separate fact. If an adapter cannot establish delivery after an ambiguous call, report `delivery_unconfirmed` and reconcile with that adapter. Retry the same queued delivery only with current authorization and proof it is safe to do so. Pending delivery can close as `expired`, `superseded` or `scope_revoked`; a completed delivery remains a historical fact. A reply is a separate question-owner receipt. [Prepared input receiver](../../packages/daemon/src/features/runs/user-input-continuation-receiver.ts)
 
+For a running Pi Workflow stage, `workItem/stage/read` exposes the current
+`messageReceiver` to authorized operators. Send that Run and Attempt as
+`expectedExecution` together with the accepted Plan and current stage revisions.
+The next Pi task model-input boundary can include the message as scoped user
+data. `workItem/message/read` projects `queued`, `input_admitted` or
+`superseded`. The admitted receipt retains the Run, Attempt, prepared-input
+fingerprint and scoped message digest. Its meaning is local model-input
+admission. The message remains tied to that Attempt and the original Plan.
+
 ### 5.11 Scheduled Coordination Admission
 
 An Automation with the `coordination_round` action configures a checkpoint or retrospective for one explicit Work Item in the same workspace store. A Workflow or Goal selection resolves to that Work Item when configuring the schedule. Keep the Automation's real, authorized Thread as the home for managing its definition and occurrence log. The target Work Item uses its own scope and can be observed before it has a linked Thread. The home Thread grants neither Work Item access nor execution authority. Check both bindings at admission and expose each projection under its own grants.

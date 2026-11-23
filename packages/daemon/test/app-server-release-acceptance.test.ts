@@ -3020,15 +3020,18 @@ test("a GitHub Work Item recovers its Workflow, gathers independent ballots and 
 test("a paused Work Item replaces its accepted Workflow after the old Run settles", { timeout: 35_000 }, async t => {
   let finishPredecessor: () => void = () => undefined;
   const predecessorGate = new Promise<void>(resolve => { finishPredecessor = resolve; });
+  let finishFollowup: () => void = () => undefined;
+  const followupGate = new Promise<void>(resolve => { finishFollowup = resolve; });
   const provider = await startLoopbackPiProvider(async (_body: unknown, request: number) => {
-    if (request === 1) {
-      await predecessorGate;
-      return { tool: "read", input: { path: "old-contract.txt" } };
+    if (request === 1 || request === 2) {
+      await (request === 1 ? predecessorGate : followupGate);
+      return { tool: "read", input: { path: request === 1 ? "old-contract-input.txt" : "old-contract.txt" } };
     }
     return { text: "Stage completed" };
   });
-  t.after(async () => { finishPredecessor(); await provider.close(); });
+  t.after(async () => { finishPredecessor(); finishFollowup(); await provider.close(); });
   const fixture = await releaseFixture(t);
+  await writeFile(join(fixture.cwd, "old-contract-input.txt"), "Initial input\n");
   await writeFile(join(fixture.cwd, "old-contract.txt"), "Superseded contract contents\n");
   const store = fixture.getStore();
   const preset = addLoopbackPreset(store, provider.baseUrl);
@@ -3082,11 +3085,38 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
     deadlineAt: new Date(Date.now() + 120_000).toISOString(), question: "Does the predecessor allow the old contract?",
     idempotencyKey: "predecessor-question",
   });
-  const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
   const runWorkflow = (workflowId: string) => post(`/workflows/${workflowId}/orchestrate`, {});
   const started = await runWorkflow(original.workflowId);
   assert.equal((await started.json()).status, "started");
   await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const stages = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/stage/read", { workItemId: item.id });
+  const firstStage = stages.workflow?.steps.find(step => step.stepId === p01.id);
+  assert.ok(firstStage?.messageReceiver);
+  assert.ok(stages.workflow?.planRevision && stages.workflow.workItemRevision);
+  const liveMessage = {
+    workItemId: item.id, planRevision: stages.workflow.planRevision, targetStepId: p01.id,
+    expectedTargetRevision: firstStage.updatedAt, expectedWorkItemRevision: stages.workflow.workItemRevision,
+    expectedExecution: firstStage.messageReceiver, body: "Keep the existing optional field ordering.", idempotencyKey: "current-stage-note",
+  };
+  await assert.rejects(client.call("workItem/message/send", { ...liveMessage,
+    expectedExecution: { ...liveMessage.expectedExecution, attemptId: "stale-attempt" } }), { code: "stale_revision" });
+  const sent = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", liveMessage);
+  assert.equal((sent.record.payload as { delivery: { status: string } }).delivery.status, "queued");
+  finishPredecessor();
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  assert.doesNotMatch(JSON.stringify(provider.requests[0]), /existing optional field ordering/u);
+  assert.match(JSON.stringify(provider.requests[1]), /existing optional field ordering/u);
+  const readMessages = (connection: typeof client) => connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/message/list", { workItemId: item.id });
+  const delivered = (await readMessages(client)).records.find(record => record.id === sent.record.id);
+  const delivery = (delivered?.payload as { delivery: import("@ling-stack/contracts").LingAppServerStageMessageDelivery }).delivery;
+  assert.equal(delivery.status, "input_admitted");
+  assert.equal(delivery.runId, liveMessage.expectedExecution.runId);
+  assert.equal(delivery.attemptId, liveMessage.expectedExecution.attemptId);
+  assert.match(delivery.preparedInputFingerprint ?? "", /^[a-f0-9]{64}$/u);
+  const lateMessage = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", {
+    ...liveMessage, expectedWorkItemRevision: sent.workItemRevision, body: "A late message for the predecessor.", idempotencyKey: "late-stage-note",
+  });
+  const before = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId: item.id });
   assert.ok(store.updateAiTeammate(p02.toParticipantId, { status: "disabled" }, new Date().toISOString()));
 
   const { plan: draft } = await client.call<ProposedPlanActionResponse>("plan/refine", {
@@ -3134,12 +3164,15 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
     resolvedPlanChangeIds: [scopeChange.receipt.changeId],
   };
   await assert.rejects(client.call("workItem/workflow/bind", rebind), { code: "resume_blocked" });
-  finishPredecessor();
+  finishFollowup();
   await waitFor(() => store.getChannelWorkflowStep(p01.id)?.status === "succeeded" ? true : undefined);
-  assert.match(JSON.stringify(provider.requests[1]), /work_item_workflow_held/u);
-  assert.doesNotMatch(JSON.stringify(provider.requests[1]), /Superseded contract contents/u);
+  assert.match(JSON.stringify(provider.requests[2]), /work_item_workflow_held/u);
+  assert.doesNotMatch(JSON.stringify(provider.requests[2]), /Superseded contract contents|late message for the predecessor/u);
   await fixture.restart();
   const restored = await fixture.connect();
+  const liveHistoryAfter = (await readMessages(restored)).records;
+  assert.deepEqual(liveHistoryAfter.find(record => record.id === sent.record.id)?.payload, delivered?.payload);
+  assert.equal((liveHistoryAfter.find(record => record.id === lateMessage.record.id)?.payload as { delivery: { status: string } }).delivery.status, "superseded");
   await assert.rejects(restored.call("workItem/workflow/bind", { ...rebind, resolvedPlanChangeIds: [] }), { code: "resume_blocked" });
   const retainedSource = fixture.getStore().getChannelWorkflowStep(p01.id);
   assert.ok(retainedSource?.metadata?.outputArtifactId);
@@ -3211,12 +3244,18 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
   const successorRuns = restoredStore.listRuns({ workflowStepId: newStep.id });
   assert.equal(successorRuns.length, 1);
   assert.equal(successorRuns[0]?.teammateId, newStep.toParticipantId);
-  assert.equal(provider.requests.length, 4);
-  assert.match(JSON.stringify(provider.requests[2]), /Does the predecessor allow the old contract/u);
-  assert.match(JSON.stringify(provider.requests[3]), /Retained upstream results from the predecessor Plan/u);
-  assert.ok(JSON.stringify(provider.requests[3]).includes(retainedSource.metadata.outputArtifactId));
-  assert.match(JSON.stringify(provider.requests[3]), /accepted revision preserves the compatibility clause/u);
-  assert.doesNotMatch(JSON.stringify(provider.requests[3]), /answer applies to the old contract/u);
+  assert.equal(provider.requests.length, 5);
+  const predecessorRequest = provider.requests.find(body => JSON.stringify(body).includes("Does the predecessor allow the old contract"));
+  assert.ok(predecessorRequest);
+  const retainedRequest = provider.requests.find(body => JSON.stringify(body).includes("Retained upstream results from the predecessor Plan"));
+  assert.ok(retainedRequest);
+  assert.ok(JSON.stringify(retainedRequest).includes(retainedSource.metadata.outputArtifactId));
+  assert.match(JSON.stringify(retainedRequest), /accepted revision preserves the compatibility clause/u);
+  assert.doesNotMatch(JSON.stringify(retainedRequest), /answer applies to the old contract/u);
+  assert.doesNotMatch(JSON.stringify(provider.requests.slice(3)), /existing optional field ordering|late message for the predecessor/u);
+  const replayedMessage = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", liveMessage);
+  assert.equal(replayedMessage.status, "replayed");
+  assert.deepEqual(replayedMessage.record.payload, delivered?.payload);
 });
 
 async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string) {

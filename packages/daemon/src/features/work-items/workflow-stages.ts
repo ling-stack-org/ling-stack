@@ -9,6 +9,7 @@ import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
 import { isRecord } from "../../shared/validation.js";
 import { readAppServerStageBallot } from "./stage-ballot.js";
+import { readStageMessageReceiver } from "./stage-message-target.js";
 
 export function readWorkItemWorkflowBinding(store: RunStore, workflowId: string): LingAppServerWorkItemWorkflowBinding | undefined {
   const link = store.getAppServerState("work_item_workflow", workflowId)?.payload as { binding: LingAppServerWorkItemWorkflowBinding } | undefined;
@@ -65,6 +66,7 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
       ...(includeEvidence ? {
         runId: step.runId, outputArtifactId: step.metadata?.outputArtifactId, brief: (step.resultSummary ?? step.blocker)?.slice(0, 500),
         briefBasis: readStageBriefBasis(store, step),
+        messageReceiver: readStageMessageReceiver(store, step),
         decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),
         handoffs: readStageHandoffs(store, item.id, item.planRevision!, step),
         ...(binding.retainedStageResults?.length ? {

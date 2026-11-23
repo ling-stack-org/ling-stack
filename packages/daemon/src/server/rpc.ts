@@ -118,6 +118,7 @@ import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./
 import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
 import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
+import { projectStageMessageDelivery } from "../features/work-items/stage-message-receiver.js";
 import { sendWorkItemStageMessage, WORKFLOW_STAGE_MESSAGE_ID_PREFIX } from "../features/work-items/stage-messages.js";
 import { askWorkItemStageQuestion, replyToWorkItemStageQuestion } from "../features/work-items/stage-questions.js";
 import { readWorkItemWorkflowBinding, readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
@@ -1356,12 +1357,16 @@ class RpcConnection {
     const cwd = readRpcCwd(record, this.defaultCwd);
     try {
       const store = this.context.storeRegistry.getStore(cwd);
-      const result = store.readSnapshot(() => readAppServerWorkItemCollaboration(store, {
-        workItemId: readStringField(record, "workItemId"),
-        ...(kind ? { kind } : {}),
-        afterRevision: readOptionalIntegerField(record, "afterRevision"),
-        limit: readOptionalIntegerField(record, "limit"),
-      }));
+      const result = store.readSnapshot(() => {
+        const collaboration = readAppServerWorkItemCollaboration(store, {
+          workItemId: readStringField(record, "workItemId"),
+          ...(kind ? { kind } : {}),
+          afterRevision: readOptionalIntegerField(record, "afterRevision"),
+          limit: readOptionalIntegerField(record, "limit"),
+        });
+        return this.grant ? collaboration : { ...collaboration,
+          records: collaboration.records.map(entry => projectStageMessageDelivery(store, entry)) };
+      });
       if (!this.grant) return { cwd, ...result };
       const privatePrefixes = [WORKFLOW_STAGE_MESSAGE_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX];
       const records = result.records.filter(entry => !privatePrefixes.some(prefix => entry.id.startsWith(prefix))).map(entry => {
@@ -1489,14 +1494,16 @@ class RpcConnection {
   private sendStageMessage(params: unknown): unknown {
     const { cwd, ...record } = this.workspaceParams(params, true);
     const store = this.context.storeRegistry.getStore(cwd);
+    const execution = record.expectedExecution === undefined ? undefined : readParamsRecord(record.expectedExecution);
     const { event, ...receipt } = sendWorkItemStageMessage(store, {
       workItemId: readStringField(record, "workItemId"), planRevision: readStringField(record, "planRevision"),
       targetStepId: readStringField(record, "targetStepId"), expectedTargetRevision: readStringField(record, "expectedTargetRevision"),
       expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
       body: readStringField(record, "body"), idempotencyKey: readStringField(record, "idempotencyKey"),
-    }, new Date().toISOString());
+      ...(execution ? { expectedExecution: { runId: readStringField(execution, "runId"), attemptId: readStringField(execution, "attemptId") } } : {}),
+    }, new Date().toISOString(), this.context.activeRuns);
     if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
-    return { cwd, ...receipt };
+    return { cwd, ...receipt, record: projectStageMessageDelivery(store, receipt.record) };
   }
 
   private settleStageQuestion(action: "ask" | "reply", params: unknown): unknown {
@@ -3614,7 +3621,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     if (event.action === "work_item.thread.linked") return "workItem/thread/linked";
     if (event.action.includes("evidence")) return "workItem/evidence/updated";
     if (event.action.includes("control")) return "workItem/control/updated";
-    if (event.action === "work_item.collaboration.message.created" && event.data.visibility === "participants") return "workItem/message/updated";
+    if (event.action.startsWith("work_item.collaboration.message.") && event.data.visibility === "participants") return "workItem/message/updated";
     if (event.action.startsWith("work_item.collaboration.question.") && event.data.visibility === "participants") return "workItem/question/updated";
     if (event.action.includes("collaboration")) return "workItem/collaboration/updated";
     if (event.action.includes("delivery")) return "workItem/delivery/updated";

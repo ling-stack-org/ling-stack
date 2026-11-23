@@ -27,6 +27,7 @@ export interface ActiveRun {
   readonly attemptId?: string;
   readonly fencingToken?: string;
   readonly stopIntent?: ActiveRunStopIntentV1;
+  readonly acceptsStageMessages?: boolean;
   /** Host-selected current executor capability, not a persisted-version fallback. */
   readonly runtimeShutdownPolicy?: "checkpoint" | "stop_without_resume";
   /** Original Host request callback. Fulfilment acknowledges persistence only, never physical stop. */

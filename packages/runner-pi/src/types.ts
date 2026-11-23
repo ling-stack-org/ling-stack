@@ -553,6 +553,11 @@ export interface PiRunnerRunOptions {
   readonly appendSystemPrompt?: readonly string[];
   /** Host-owned scoped rules for a task model request, with a receipt at local payload admission. */
   readonly projectInstructionContext?: () => { readonly prompt: string; readonly onAdmitted: () => void } | undefined;
+  /** Scoped data for this execution, captured at the next task model-input boundary. */
+  readonly stageMessageContext?: () => {
+    readonly prompt: string;
+    readonly onAdmitted: (preparedInputFingerprint: string) => void;
+  } | undefined;
   readonly agentDir?: string;
   readonly runtimePaths?: PiRunnerRuntimePaths;
   readonly runtimeToolFeatures?: PiRunnerRuntimeToolFeatures;

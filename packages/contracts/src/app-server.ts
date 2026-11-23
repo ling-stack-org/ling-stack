@@ -775,6 +775,7 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly runId?: string;
     readonly outputArtifactId?: string;
     readonly brief?: string;
+    readonly messageReceiver?: LingAppServerStageMessageExecution;
     readonly decision?: LingAppServerWorkItemStageDecision;
     readonly handoffs?: readonly LingAppServerStageHandoffProgress[];
     readonly retainedStageResults?: readonly LingAppServerRetainedWorkflowStageResult[];
@@ -963,6 +964,18 @@ export interface LingAppServerWorkItemCollaborationAppendParams {
   readonly idempotencyKey: string;
 }
 
+export interface LingAppServerStageMessageExecution {
+  readonly runId: string;
+  readonly attemptId: string;
+}
+
+export interface LingAppServerStageMessageDelivery extends LingAppServerStageMessageExecution {
+  readonly status: "queued" | "input_admitted" | "superseded";
+  readonly admittedAt?: string;
+  readonly inputDigest?: string;
+  readonly preparedInputFingerprint?: string;
+}
+
 export interface LingAppServerStageMessageSendParams {
   readonly cwd?: string;
   readonly workItemId: string;
@@ -970,6 +983,7 @@ export interface LingAppServerStageMessageSendParams {
   readonly targetStepId: string;
   readonly expectedTargetRevision: string;
   readonly expectedWorkItemRevision: number;
+  readonly expectedExecution?: LingAppServerStageMessageExecution;
   readonly body: string;
   readonly idempotencyKey: string;
 }

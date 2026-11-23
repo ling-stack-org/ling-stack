@@ -87,6 +87,7 @@ import { reconcileWorkflowParallelParentFences } from "../channels/workflow-isol
 import { assertWorkflowRepositoryRunAllowed } from "../workspaces/workflow-repository-fence.js";
 import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolation-planning.js";
 import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
+import { createStageMessageReceiver } from "../work-items/stage-message-receiver.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
   failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
@@ -2758,9 +2759,14 @@ async function executeAdmittedRunRequest(
     }
   };
 
+  const executingStep = run.workflowStepId && runnerResolution.runner.adapter instanceof PiRunnerAdapter && !delegatedExecution
+    ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const acceptsStageMessages = Boolean(executingStep?.metadata?.planStageId && !executingStep.metadata.planBallotKey
+    && store.getAppServerState("work_item_workflow", executingStep.workflowId));
   activeRuns.add(run.id, {
     abortController,
     streamEnvelope,
+    acceptsStageMessages,
     completion: runCompletion,
     runtimeInstanceId: attempt.runtimeInstanceId,
     workUnitId: workUnit.id,
@@ -3522,6 +3528,8 @@ async function executeAdmittedRunRequest(
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
       ...(projectInstructions ? { projectInstructionContext: projectInstructions.projectContext } : {}),
+      ...(acceptsStageMessages ? { stageMessageContext: createStageMessageReceiver({ store, run, attemptId: attempt.id,
+        assertCurrent: assertCurrentRunAdmission, events: options.controlPlaneEvents, extraSecrets: resolvedSecretValues }) } : {}),
       ...(!isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
         && (!run.parentRunId || delegatedExecution) ? { providerBudget: bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) } : {}),
       ...(delegationRunnerToolHandler ? { onDelegationToolCall: delegationRunnerToolHandler } : {}),
