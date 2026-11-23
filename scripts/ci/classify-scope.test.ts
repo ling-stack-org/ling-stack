@@ -18,6 +18,7 @@ const packageEntries: PackageEntry[] = [
   entry("@ling-stack/daemon", "packages/daemon", ["@ling-stack/core", "@ling-stack/providers"], true, true),
   entry("@ling-stack/cli", "packages/cli", ["@ling-stack/daemon"], true, true),
   entry("@ling-stack/ui-react", "packages/ui-react", [], true, true),
+  entry("@ling-stack/conversation-ui-react", "packages/conversation-ui-react", [], true, true),
   entry("@ling-stack/chrome-extension", "apps/chrome-extension", [], true, true),
   entry("@ling-stack/web", "apps/web", ["@ling-stack/core", "@ling-stack/ui-react"], true, true),
   entry("@ling-stack/localization", "packages/localization", [], true, false),
@@ -381,6 +382,36 @@ test("shared test fixtures expand the importing package", () => {
   assert.ok(scope.packages.includes("@ling-stack/desktop"));
 });
 
+test("terminal report test migrations select only the changed Core files and consumer build closure", () => {
+  const files = [
+    "packages/core/test/terminal-report-fixture.d.mts",
+    "packages/core/test/terminal-report-idempotency.test.mjs",
+    "packages/core/test/terminal-report-idempotency.test.ts",
+    "packages/core/test/terminal-report-migration.test.mjs",
+    "packages/core/test/terminal-report-migration.test.ts",
+    "packages/core/test/terminal-report-privacy.test.mjs",
+    "packages/core/test/terminal-report-privacy.test.ts",
+    "packages/core/test/terminal-report-store.test.mjs",
+    "packages/core/test/terminal-report-store.test.ts",
+    "packages/core/test/terminal-report.test.mjs",
+    "packages/core/test/terminal-report.test.ts",
+  ];
+  const scope = classify(files);
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.testProfile, "terminal-report");
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.ok(scope.packages.includes("@ling-stack/daemon"));
+  assert.deepEqual(scope.daemonPlatforms, []);
+  assert.equal(scope.daemon, false);
+  assert.match(scope.reason, /focused Core files/u);
+});
+
+test("terminal report runtime fixture changes retain the Daemon consumer build dependency", () => {
+  const scope = classify(["packages/core/test/terminal-report-fixture.mjs"]);
+  assert.ok(scope.packages.includes("@ling-stack/conversation-ui-react"));
+});
+
 test("unknown paths and non-PR events use full scope", () => {
   assert.equal(classify(["CONTRIBUTORS.txt"]).mode, "full");
   assert.equal(classify(["packages/core/src/index.ts"], { eventName: "schedule" }).mode, "full");
@@ -406,6 +437,7 @@ function repositoryFixture(t: TestContext) {
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
   copyFileSync(new URL("./secret-scan.mjs", import.meta.url), join(root, "scripts/ci/secret-scan.mjs"));
   copyFileSync(new URL("./workflow-scope.mjs", import.meta.url), join(root, "scripts/ci/workflow-scope.mjs"));
+  copyFileSync(new URL("./test-file-profiles.mjs", import.meta.url), join(root, "scripts/ci/test-file-profiles.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
   copyFileSync(new URL("../release/desktop-release.mjs", import.meta.url), join(root, "scripts/release/desktop-release.mjs"));
   copyFileSync(new URL("./package-validation-scope.mjs", import.meta.url), join(root, "scripts/ci/package-validation-scope.mjs"));

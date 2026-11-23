@@ -4,10 +4,11 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
 import { deviceSuiteFiles, deviceTestPackages, matchesDeviceTestProfile } from "./device-test-profile.mjs";
-import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
+import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES, VALIDATION_INPUT_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
 import { isCatalogWorkflowPinUpdate } from "./workflow-scope.mjs";
+import { matchesTerminalReportProfile, terminalReportTestFiles } from "./test-file-profiles.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
@@ -240,19 +241,26 @@ export function classifyChangedFiles(input) {
     .filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
+  const terminalReportProfile = affectedTestPackages.length === 1
+    && affectedTestPackages[0] === "@ling-stack/core"
+    && testSupportImporters.size === 0
+    && matchesTerminalReportProfile(scopeFiles.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file)));
   const deviceProfile = affectedTestPackages.includes("@ling-stack/core") && affectedTestPackages.includes("@ling-stack/daemon")
     && [...testSupportImporters].every(name => deviceTestPackages.includes(name))
     && matchesDeviceTestProfile(scopeFiles.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file)))
     && hasDeviceTestCoverage();
-  const testPackages = deviceProfile
+  const testPackages = terminalReportProfile ? ["@ling-stack/core"] : deviceProfile
     ? affectedTestPackages.filter(name => deviceTestPackages.includes(name))
     : affectedTestPackages;
   const typecheckPackages = affectedEntries
     .filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
-  const validationBuildDependencies = [...new Set([...affectedTestPackages, ...typecheckPackages]
-    .flatMap(name => VALIDATION_BUILD_DEPENDENCIES.get(name) ?? []))];
+  const validationBuildDependencies = [...new Set([
+    ...affectedTestPackages,
+    ...typecheckPackages,
+  ].flatMap(name => VALIDATION_BUILD_DEPENDENCIES.get(name) ?? []))];
+  validationBuildDependencies.push(...new Set(scopeFiles.flatMap(file => VALIDATION_INPUT_BUILD_DEPENDENCIES.get(file) ?? [])));
   if (validationBuildDependencies.some(name => !packages.some(entry => entry.name === name))) {
     return buildScope("full", files, packages, "a workspace validation build dependency could not be verified");
   }
@@ -276,9 +284,11 @@ export function classifyChangedFiles(input) {
     macosNative: nativeSurfaceChanged || nativeRelease,
     macosHelper: nativeSurfaceChanged,
     nativeRelease,
-    ...(deviceProfile ? { testProfile: /** @type {const} */ ("device") } : {}),
+    ...(terminalReportProfile ? { testProfile: /** @type {const} */ ("terminal-report"), testFiles: { "@ling-stack/core": terminalReportTestFiles } }
+      : deviceProfile ? { testProfile: /** @type {const} */ ("device") } : {}),
     productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
-    reason: deviceProfile ? "device recovery and task trace tests with transitive consumer typechecks"
+    reason: terminalReportProfile ? "terminal report test migration with focused Core files"
+      : deviceProfile ? "device recovery and task trace tests with transitive consumer typechecks"
       : versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
       : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
       : changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
@@ -288,7 +298,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device", documentationOnly?: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device"|"terminal-report", testFiles?: Record<string, string[]>, documentationOnly?: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -478,7 +488,8 @@ function collectDependents(name, packages, affected, visited = new Set()) {
  */
 function findChangedValidationImporters({ files, packages }) {
   const affected = new Set(files.filter(file => isAssurancePath(file)
-    || (isTestPath(file) && TEST_SUPPORT_PATTERN.test(file))));
+    || (isTestPath(file) && TEST_SUPPORT_PATTERN.test(file)
+      && !/\.(?:d\.ts|d\.mts|d\.cts)$/u.test(file))));
   if (affected.size === 0) return new Set();
 
   const importers = new Set();
