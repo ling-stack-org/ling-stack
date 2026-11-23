@@ -9,6 +9,7 @@ import {
   validateLingAppServerServerRequestParams,
 } from "../dist/app-server-schema.js";
 import { LING_APP_SERVER_METHODS, LING_APP_SERVER_NOTIFICATION_METHODS, LING_APP_SERVER_SERVER_REQUEST_METHODS } from "../dist/app-server.js";
+import type { LingAppServerGitHubDeliveryResult, LingAppServerGitHubQueueResult } from "../dist/app-server.js";
 
 test("App Server exposes a versioned schema for every registered method", () => {
   const document = getLingAppServerSchema();
@@ -60,4 +61,40 @@ test("App Server recovery requires a pinned revision and validates the evidence 
   assert.equal(validateLingAppServerResult("server/recovery/read", {
     ...report, entries: [{ ...report.entries[0], repositoryId: undefined }],
   }).path, "result.entries[0]");
+});
+
+test("GitHub delivery results carry the source of each check and the exact run attempt", () => {
+  const delivery = {
+    cwd: "/workspace",
+    delivery: {
+      deliveryId: "delivery", workItemId: "work", acceptanceId: "acceptance", threadId: "thread",
+      candidateDigest: "candidate", policyRevision: "policy", baseCommit: "base",
+      subject: { githubInstanceId: "github.com", repository: "example/ling", repositoryId: "73", kind: "pull_request",
+        number: 12, title: "Repair replay", state: "open", sourceRevision: "source", headSha: "head" },
+      checks: [{
+        check: { name: "integration", appId: 19, workflowId: 5, workflowPath: ".github/workflows/ci.yml",
+          workflowSha256: "workflow", basis: "merge_group", coverageRefs: ["ci-integration"] },
+        outcome: "passed", testedCommit: "group", runId: 15, runAttempt: 2, checkRunId: 16, jobId: 16,
+      }],
+      status: "delivery_pending", observedAt: "2026-11-23T01:00:00Z",
+    },
+  } satisfies LingAppServerGitHubDeliveryResult;
+  assert.ok(validateLingAppServerResult("github/delivery/reconcile", delivery).ok);
+  const proof = delivery.delivery.checks[0]!;
+  assert.equal(validateLingAppServerResult("workItem/delivery/read", {
+    ...delivery, delivery: { ...delivery.delivery, checks: [{ ...proof, runAttempt: "2" }] },
+  }).path, "result.delivery.checks[0].runAttempt");
+  assert.equal(validateLingAppServerResult("delivery/read", {
+    ...delivery, delivery: { ...delivery.delivery, checks: [{ ...proof, check: { ...proof.check, appId: undefined } }] },
+  }).path, "result.delivery.checks[0].check.appId");
+
+  const queue = {
+    cwd: "/workspace",
+    receipt: { workItemId: "work", queueReceiptId: "queue", deliveryId: "delivery", repository: "example/ling",
+      repositoryId: "73", pullRequestNumber: 12, headSha: "head", status: "unknown", createdAt: "2026-11-23T01:00:00Z" },
+  } satisfies LingAppServerGitHubQueueResult;
+  assert.ok(validateLingAppServerResult("github/delivery/enqueue", queue).ok);
+  assert.equal(validateLingAppServerResult("github/delivery/queue/read", {
+    ...queue, receipt: { ...queue.receipt, status: "passed" },
+  }).path, "result.receipt.status");
 });

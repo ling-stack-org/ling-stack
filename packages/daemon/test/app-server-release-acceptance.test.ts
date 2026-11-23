@@ -3752,7 +3752,19 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
   const url = new URL(fixture.wssUrl());
   url.pathname = "/app-server/rpc";
   url.searchParams.set("cwd", fixture.cwd);
-  const ca = await readFile(join(fixture.root, "certificate.pem"));
+  const certificateFile = join(fixture.root, "certificate.pem");
+  const ca = await readFile(certificateFile);
+  const cli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
+  const { stdout } = await promisify(execFile)(process.execPath, [
+    cli, "--cwd", fixture.cwd, "--daemon-url", fixture.wssUrl(), "app-server", "probe",
+  ], {
+    env: { ...process.env, NODE_EXTRA_CA_CERTS: certificateFile, LING_STACK_AUTH_TOKEN: credential }, timeout: 8_000,
+  });
+  const probe = JSON.parse(stdout) as { ok: boolean; protocolVersion: string; methods: readonly string[] };
+  assert.equal(probe.ok, true);
+  assert.equal(probe.protocolVersion, "ling-app-server/1");
+  assert.ok(probe.methods.includes("turn/start"));
+  assert.ok(!probe.methods.includes("server/grants/revoke"));
   const open = (credential: string | undefined, options: { host?: string; origin?: string; trust?: boolean } = {}) => once(new WebSocket(url, {
     ca: options.trust === false ? undefined : ca,
     headers: { ...(credential ? { Authorization: `Bearer ${credential}` } : {}),

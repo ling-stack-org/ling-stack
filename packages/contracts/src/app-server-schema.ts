@@ -111,13 +111,38 @@ const confirmation = { expectedRevision: stringSchema, idempotencyKey: stringSch
 const recoveryFields = ["action", "threadId", "turnId"];
 const transferFields = ["action", "targetWorktree", "candidateDigest", "hunkIds"];
 const confirmationFields = ["expectedRevision", "idempotencyKey", "confirmed"];
+const gitHubTarget = { kind: { enum: ["issue", "pull_request"] }, number: integerSchema };
+const gitHubSubject = objectWith({
+  ...gitHubTarget, repository: stringSchema, githubInstanceId: { enum: ["github.com"] }, repositoryId: stringSchema,
+  title: stringSchema, labels: stringArraySchema, state: { enum: ["open", "closed"] }, sourceRevision: stringSchema,
+  baseRef: stringSchema, baseSha: stringSchema, headSha: stringSchema, mergeSha: stringSchema, merged: booleanSchema,
+}, ["kind", "number", "repository", "githubInstanceId", "repositoryId", "title", "state", "sourceRevision"]);
+const gitHubRequiredCheck = objectWith({
+  name: stringSchema, appId: integerSchema, workflowId: integerSchema, workflowPath: stringSchema, workflowSha256: stringSchema,
+  basis: { enum: ["head", "integration", "merge_group"] }, coverageRefs: stringArraySchema,
+}, ["name", "appId", "workflowId", "workflowPath", "workflowSha256", "basis", "coverageRefs"]);
+const gitHubCheckEvidence = objectWith({
+  check: gitHubRequiredCheck, testedCommit: stringSchema, checkRunId: integerSchema, runId: integerSchema,
+  runAttempt: integerSchema, jobId: integerSchema, outcome: { enum: ["passed", "failed", "pending", "unavailable"] },
+  reason: { enum: ["applicable_check_missing", "current_attempt_pending", "integration_unavailable",
+    "merge_group_membership_unavailable", "ambiguous_run", "observation_window_exceeded", "workflow_source_changed"] },
+}, ["check", "outcome"]);
+const gitHubQueueResult = objectWith({
+  cwd: stringSchema,
+  receipt: objectWith({
+    ...workItemTarget, queueReceiptId: stringSchema, deliveryId: stringSchema, repository: stringSchema,
+    repositoryId: stringSchema, pullRequestNumber: integerSchema, headSha: stringSchema,
+    status: { enum: ["pending", "enqueued", "merged", "unknown"] }, queueEntryId: stringSchema, mergedCommit: stringSchema, createdAt: stringSchema,
+  }, ["workItemId", "queueReceiptId", "deliveryId", "repository", "repositoryId", "pullRequestNumber", "headSha", "status", "createdAt"]),
+}, ["cwd", "receipt"]);
 const queueEvidence = objectWith({
   queueEntryId: stringSchema, baseCommit: stringSchema, testedCommit: stringSchema, testedTree: stringSchema, membershipProofRef: stringSchema,
 }, ["queueEntryId", "baseCommit", "testedCommit", "membershipProofRef"]);
 const deliveryResult = objectWith({
   cwd: stringSchema,
   delivery: objectWith({ deliveryId: stringSchema, workItemId: stringSchema, acceptanceId: stringSchema, threadId: stringSchema,
-    candidateDigest: stringSchema, policyRevision: stringSchema, subject: objectSchema, baseCommit: stringSchema, checks: arraySchema,
+    candidateDigest: stringSchema, policyRevision: stringSchema, subject: gitHubSubject, baseCommit: stringSchema,
+    checks: { type: "array", items: gitHubCheckEvidence },
     mergeGroup: queueEvidence, status: { enum: ["ci_pending", "ci_failed", "delivery_pending", "delivered"] },
     mergedCommit: stringSchema, observedAt: stringSchema },
   ["deliveryId", "workItemId", "acceptanceId", "threadId", "candidateDigest", "policyRevision", "subject", "baseCommit", "checks", "status", "observedAt"]),
@@ -450,8 +475,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "github/intake/poll":
       return { params: objectWith({ repository: stringSchema, page: integerSchema }, ["repository"]), result };
     case "github/subject/read":
-      return { params: objectWith({ repository: stringSchema, kind: { enum: ["issue", "pull_request"] }, number: integerSchema },
-      ["repository", "kind", "number"]), result };
+      return { params: objectWith({ repository: stringSchema, ...gitHubTarget }, ["repository", "kind", "number"]),
+        result: objectWith({ cwd: stringSchema, subject: gitHubSubject }, ["cwd", "subject"]) };
     case "github/delivery/reconcile":
       return { params: objectWith({ ...threadTarget, ...workItemTarget, repository: stringSchema, pullRequestNumber: integerSchema,
         candidateDigest: stringSchema, expectedWorkItemRevision: integerSchema, expectedRevision: integerSchema },
@@ -461,12 +486,10 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "github/delivery/enqueue":
       return { params: objectWith({ ...workItemTarget, deliveryId: stringSchema, expectedWorkItemRevision: integerSchema,
         idempotencyKey: stringSchema, confirmed: { enum: [true] } },
-      ["workItemId", "deliveryId", "expectedWorkItemRevision", "idempotencyKey", "confirmed"]), result: objectWith({
-        cwd: stringSchema, receipt: objectSchema,
-      }, ["cwd", "receipt"]) };
+      ["workItemId", "deliveryId", "expectedWorkItemRevision", "idempotencyKey", "confirmed"]), result: gitHubQueueResult };
     case "github/delivery/queue/read":
       return { params: objectWith({ ...workItemTarget, queueReceiptId: stringSchema }, ["workItemId", "queueReceiptId"]),
-        result: objectWith({ cwd: stringSchema, receipt: objectSchema }, ["cwd", "receipt"]) };
+        result: gitHubQueueResult };
     case "delivery/read":
       return { params: objectWith({ ...workItemTarget, deliveryId: stringSchema }, ["workItemId", "deliveryId"]), result: deliveryResult };
     case "turn/retry":

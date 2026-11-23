@@ -25,7 +25,7 @@ function appServerUrl(options: AppServerLocalTransportOptions): string {
   if (url.protocol === "ws:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
     throw new Error("A remote App Server requires WSS.");
   }
-  if (url.protocol === "wss:" && !options.authToken) throw new Error("WSS requires a Daemon bearer credential.");
+  if (url.protocol === "wss:" && !options.authToken) throw new Error("WSS requires an App Server grant credential.");
   if (url.protocol !== "ws:" && url.protocol !== "wss:") throw new Error("Invalid App Server transport URL.");
   url.searchParams.set("cwd", options.cwd);
   return url.href;

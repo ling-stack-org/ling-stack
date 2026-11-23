@@ -38,6 +38,12 @@ App Server grant 使用 `las1.<grantId>.<secret>` bearer 形式。Daemon 只在�
 
 独立 WSS 监听器通过 Host 的 `appServerWss` 或 `LING_STACK_APP_SERVER_WSS_CONFIG` 指向的 JSON 文件配置。配置包括 `host`、`port`、TLS 的 `certificateFile` 与 `privateKeyFile` 绝对路径、`allowedHosts` 和可选 `allowedOrigins`。它要求 scoped grant，并在同一 Daemon 的本机管理入口接受撤销。原有明文 App Server 升级入口限定直连回环。
 
+CLI 的 `app-server probe` 通过 `LING_STACK_AUTH_TOKEN` 接收 App Server grant 凭据。`--cwd` 指定 Daemon 已注册的服务端工作区。使用私有 CA 时，在客户端进程启动前将 CA 文件路径提供给 `NODE_EXTRA_CA_CERTS`。监听器的 TLS 证书和 `allowedHosts` 对应客户端 URL 中的服务端名称。
+
+```bash
+ling-stack --cwd /srv/ling/workspace --daemon-url wss://ling.example.test:7443 app-server probe
+```
+
 [Ling Device Fabric](ling-device-fabric.md#5-cross-device-task-graph) 的项目节点继续引用其执行主机的 WorkUnit 与证据。App Server 的游标与权限绑定本 Daemon 的工作区。远端设备动作及其状态由对应主机的日志、授权与配对投影管理。
 
 绑定以 Daemon 解析的规范化仓库、worktree 和当前授权版本为准。请求 ID 及客户端展示名用于关联与审计，可信 Actor 来自连接凭据。按操作取连接、工作区、目标 Work Item 或 Thread 和运行政策的交集。进入关联 Thread 的上下文还要核对它的访问授权。在受理、执行和提交决策前分别核对当前权属。撤销关闭对应订阅和新动作入口，已受理工作交由 Daemon 按其取消和恢复策略处置。
