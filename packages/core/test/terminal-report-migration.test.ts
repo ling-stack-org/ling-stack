@@ -31,7 +31,9 @@ test("sqlite terminal report migration creates the table and remains idempotent"
     reopened.close();
     const verified = new DatabaseSync(databasePath);
     try {
-      assert.equal(verified.prepare("SELECT count(*) AS count FROM schema_migrations WHERE version = 94").get().count, 1);
+      const row = verified.prepare("SELECT count(*) AS count FROM schema_migrations WHERE version = 94").get();
+      assert.ok(row);
+      assert.equal(row.count, 1);
     } finally {
       verified.close();
     }
