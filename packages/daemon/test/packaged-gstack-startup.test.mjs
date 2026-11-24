@@ -101,10 +101,11 @@ test("packaged startup admits and retains a descriptor without downloading the b
     export function resolveUserConfigPaths() { return { sourcesDir: fixture.sourcesDir }; }
     export function readPackagedGstackIdentity() { return fixture.identity; }
     export async function prepareBundledSkillStartup(selection, callback) {
-      return callback({
+      await callback({
         manifestChecksum: selection.expectedManifestChecksum,
         readResource: async () => fixture.receipt,
       });
+      return () => undefined;
     }
   `);
   (await import(fixtureModule)).configure({ sourcesDir: join(root, "sources"), identity, receipt });
@@ -168,7 +169,8 @@ test("packaged startup defers a third gstack generation while retaining existing
     export function resolveUserConfigPaths() { return { sourcesDir: fixture.sourcesDir }; }
     export function readPackagedGstackIdentity() { return fixture.identity; }
     export async function prepareBundledSkillStartup(selection, callback) {
-      return callback({ manifestChecksum: selection.expectedManifestChecksum, readResource: async () => fixture.receipt });
+      await callback({ manifestChecksum: selection.expectedManifestChecksum, readResource: async () => fixture.receipt });
+      return () => undefined;
     }
   // deferred-generation-case
   `);
