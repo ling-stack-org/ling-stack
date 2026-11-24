@@ -17,8 +17,8 @@ delivered page must show measured values and a measurement timestamp only.
 This is an inventory and navigation feature. It does not introduce a generic
 filesystem cleaner, batch conversation deletion, or permanent worktree snapshot
 deletion. No server beyond the existing local daemon and Desktop process is needed.
-The Web-only client hides the page because it has neither the Desktop browser
-profile nor a complete local filesystem view.
+The Web-only client can show daemon-measured local files. Browser data is
+unavailable when the Desktop browser capability is absent.
 
 ## Existing ownership and counting scope
 
@@ -35,7 +35,7 @@ created per workspace by `desktopBrowserPartition`.
 | Conversations and attachments | `sessions`, `attachments`, `artifacts` and other conversation-owned files beneath a registered workspace root | Mixed-purpose SQLite files go to Other; the category is a filesystem grouping, not a count of chat objects |
 | Worktrees | Only daemon-recorded managed worktree paths and retained recovery snapshot paths, including a custom root | The canonical project checkout, arbitrary Git worktrees and user directories |
 | Plugins and cache | User-level and workspace-level Ling plugin package/cache directories | Installed Desktop app binary and other applications' caches |
-| Browser data | Metadata and verified persistent Electron partition storage for the selected registered workspace(s) | System Chrome, external Chrome plugin profile and files downloaded to the user's chosen folder |
+| Browser data | Tab metadata, management records and verified persistent Electron partition storage for the selected registered workspace(s) | System Chrome, external Chrome plugin profile and files downloaded to the user's chosen folder |
 | Other | Remaining files within Ling-owned user/workspace roots: databases, configuration, logs, memory, snapshots and exports | The application binary, OS caches outside Ling roots, unregistered or unverified paths |
 
 The scope selector has **All registered workspaces** and the current workspace.
@@ -89,7 +89,7 @@ one for that scope.
 | Core | Add a paged, read-only registry enumeration method. Reuse runtime-path identity and recorded worktree ownership; avoid a second path registry or an on-disk scan index. |
 | daemon | Add a local-only scan coordinator under `features/settings/device-storage/` for user/workspace roots and recorded worktrees/snapshots. Use bounded in-memory jobs with start/status/cancel operations, admission limits and workspace identity checks. No deletion endpoint. |
 | Desktop | Add a separate read-only profile-size capability for browser metadata and the verified Electron partition path. Confirm the platform's actual partition storage path before counting; if unresolved, report Browser data unavailable instead of guessing. Keep this capability separate from conversation-scoped Browser actions. |
-| Web | Add a Desktop-only section to `settings-shell-model.ts`, a controller that combines daemon and Desktop category results, and a compact Settings page using existing shared UI. Category actions navigate to Archived Items, Worktrees, Plugin Manager or a browser-data clear flow. |
+| Web | Add a section to `settings-shell-model.ts`, a controller that combines daemon and available Desktop category results, and a compact Settings page using existing shared UI. Category actions navigate to Archived Items, Worktrees, Plugin Manager or a browser-data clear flow when Desktop browser management is present. |
 
 The new scan API is local and read-only in effect. A suggested boundary is
 `POST /device-storage/scans` with scope, `GET /device-storage/scans/:id`
