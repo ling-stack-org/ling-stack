@@ -94,6 +94,7 @@ export class SqliteProposedPlanActionStore {
               ...(dependencies?.length ? { dependsOnStepIds: dependencies.map(id => stepIds.get(id)!) } : {}),
               ...(preview?.handoffFromStageIds?.length ? { requiredPlanHandoffStepIds: preview.handoffFromStageIds.map(id => stepIds.get(id)!) } : {}),
               ...(preview?.requiredDecision ? { requiredPlanDecision: preview.requiredDecision } : {}),
+              ...(preview?.recoveryVerification ? { recoveryVerification: preview.recoveryVerification } : {}),
               ...(preview?.requiredTools ? { requiredTools: preview.requiredTools } : {}),
               ...(ballot ? { planBallotKey: ballot.key, requiredTools: [], policy: {
                 onRunFailed: "skip_if_optional", onRunCancelled: "skip_if_optional",
@@ -208,7 +209,7 @@ function planStageBallots(planId: string, previews: readonly ProposedPlanWorkflo
 function orderWorkflowStages(titles: readonly string[], previews: readonly ProposedPlanWorkflowStepPreviewInput[]): readonly number[] {
   const positions = titles.map((_, index) => index);
   if (!previews.some(stage => stage.stageId !== undefined || stage.dependsOnStageIds !== undefined
-    || stage.requiredDecision !== undefined || stage.handoffFromStageIds !== undefined)) return positions;
+    || stage.requiredDecision !== undefined || stage.handoffFromStageIds !== undefined || stage.recoveryVerification !== undefined)) return positions;
   const invalid = (message: string) => new ProposedPlanMutationError("bad_workflow_stage_dependencies", message, 400);
   if (titles.length !== previews.length || titles.length > 50) throw invalid("Provide one preview per stage, up to 50 stages.");
   const stages = new Map<string, number>();

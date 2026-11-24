@@ -62,8 +62,10 @@ const workItemTarget = { workItemId: stringSchema };
 const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: integerSchema };
 const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema, taskId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
+const recoveryVerification = objectWith({ checkId: stringSchema, verifierBasisRef: stringSchema, coverageDigest: stringSchema },
+  ["checkId", "verifierBasisRef", "coverageDigest"]);
 const planWorkflowStep = objectWith({ title: stringSchema, stageId: stringSchema, dependsOnStageIds: stringArraySchema,
-  handoffFromStageIds: stringArraySchema,
+  handoffFromStageIds: stringArraySchema, recoveryVerification,
   ownerId: stringSchema, ownerLabel: stringSchema, requiredTools: stringArraySchema,
   requiredDecision: objectWith({ question: stringSchema, options: stringArraySchema, trigger: { enum: ["when_ready"] },
     ballot: objectWith({ voterStageIds: stringArraySchema, quorum: integerSchema }, ["voterStageIds", "quorum"]) }, ["question", "options"]) }, ["title"]);
@@ -325,6 +327,18 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
           receipt: objectWith({ changeId: stringSchema, status: { enum: ["pending", "withdrawn"] },
             planRevision: stringSchema, affectedStepIds: stringArraySchema }, ["changeId", "status", "planRevision", "affectedStepIds"]),
         }, ["cwd", "workItem", "replayed", "receipt"]),
+      };
+    }
+    case "workItem/stage/recover": {
+      const subject = { workflowStepId: stringSchema, blockerId: stringSchema, failureEventId: stringSchema, operationId: stringSchema };
+      return {
+        params: objectWith({ ...workItemTarget, ...subject, planRevision: stringSchema, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema },
+          ["workItemId", ...Object.keys(subject), "planRevision", "expectedWorkItemRevision", "idempotencyKey"]),
+        result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,
+          receipt: objectWith({ id: stringSchema, ...subject, failedRunId: stringSchema, failedAt: stringSchema,
+            candidateDigest: stringSchema, committedAt: stringSchema },
+          ["id", ...Object.keys(subject), "failedRunId", "failedAt", "candidateDigest", "committedAt"]),
+        }, ["cwd", "workItemRevision", "replayed", "receipt"]),
       };
     }
     case "workItem/intake/list":

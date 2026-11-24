@@ -27,3 +27,20 @@ export async function workItemHandoffCandidatesCurrent(store: RunStore, step: Ch
   }
   return true;
 }
+
+export async function workItemStageRecoveryCandidateCurrent(store: RunStore, step: ChannelWorkflowStep, cwd: string): Promise<boolean> {
+  if (!step.metadata?.recoveryVerification) return true;
+  const binding = readWorkItemWorkflowBinding(store, step.workflowId);
+  const readRecovery = () => {
+    const item = binding && store.getWorkItem(binding.workItemId);
+    const recovery = item && store.getWorkItemStageProgress(item, step)?.lastVerified;
+    return recovery?.kind === "verification_passed" ? recovery : undefined;
+  };
+  const recovery = readRecovery();
+  if (!recovery) return true;
+  const source = store.getRun(recovery.failedRunId);
+  const latest = step.runId ? store.getRun(step.runId) : undefined;
+  if (latest?.startedAt && latest.startedAt > recovery.committedAt) return true;
+  return source?.cwd === cwd && await readCompleteHandoffCandidate(cwd) === recovery.candidateDigest
+    && readRecovery()?.id === recovery.id;
+}

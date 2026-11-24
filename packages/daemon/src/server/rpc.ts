@@ -151,6 +151,7 @@ import {
   startAppServerStageDeliberation,
 } from "./app-server-collaboration.js";
 import { readStageHandoffParams, settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
+import { recoverAppServerStage } from "./app-server-stage-recovery.js";
 
 type JsonRpcId = string | number | null;
 
@@ -213,6 +214,7 @@ const operatorMethods = new Set([
   "workItem/accept",
   "workItem/workflow/bind",
   "workItem/plan/change/request", "workItem/plan/change/withdraw",
+  "workItem/stage/recover",
   "workItem/feedback/add",
   "workItem/deliberation/decide", "workItem/deliberation/cancel",
   "artifact/read", "model/list", "skill/read",
@@ -226,7 +228,7 @@ const recoveryGuardedMethods = new Set([
   "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
   "plan/accept", "plan/refine", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
   "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
-  "workItem/plan/change/withdraw",
+  "workItem/plan/change/withdraw", "workItem/stage/recover",
   "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
   "workItem/feedback/add", "workItem/intake/accept", "workItem/intake/retry",
 ]);
@@ -946,6 +948,8 @@ class RpcConnection {
       case "workItem/stage/read":
       case "workItem/stage/brief/read":
         return this.readWorkItemStages(method === "workItem/stage/read" ? "stage" : "brief", params);
+      case "workItem/stage/recover":
+        return this.recoverWorkItemStage(params);
       case "workItem/coordination/start":
         return this.appendCollaboration("coordination", "started", params);
       case "workItem/coordination/close":
@@ -1361,6 +1365,9 @@ class RpcConnection {
     const subjectRevision = readStringField(record, "subjectRevision");
     const kind = readStringField(record, "kind") as import("@ling-stack/core").WorkItemEvidenceKind;
     const content = readStringField(record, "content");
+    if (kind === "stage_recovery_ref" || idempotencyKey.startsWith("stage-recovery:")) {
+      throw rpcError(-32602, "invalid_params", "Stage recovery evidence uses workItem/stage/recover.");
+    }
     if (content.startsWith(WORK_ITEM_COLLABORATION_CONTENT_PREFIX)) {
       throw rpcError(-32602, "invalid_params", "Collaboration records use the collaboration methods.");
     }
@@ -1496,6 +1503,32 @@ class RpcConnection {
         if (action === "accepted") this.context.taskSupervisor.poke(cwd);
       }
       return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
+  }
+
+  private async recoverWorkItemStage(params: unknown): Promise<import("@ling-stack/contracts").LingAppServerStageRecoverResult> {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const input = {
+      workItemId: readStringField(record, "workItemId"), workflowStepId: readStringField(record, "workflowStepId"),
+      planRevision: readStringField(record, "planRevision"), blockerId: readStringField(record, "blockerId"),
+      failureEventId: readStringField(record, "failureEventId"), operationId: readStringField(record, "operationId"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    const expectedWorkItemRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision");
+    if (expectedWorkItemRevision < 1 || input.idempotencyKey.length > 200
+      || Object.values(input).some(value => value.length > 256 || !value.trim() || /[\r\n\0]/u.test(value))) {
+      throw rpcError(-32602, "invalid_params", "Supply the current stage, blocker and a bounded request key.");
+    }
+    try {
+      const { event, ...result } = await recoverAppServerStage(this.context.storeRegistry.getStore(cwd),
+        { ...input, expectedWorkItemRevision }, this.context.activeRuns);
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        this.context.taskSupervisor.poke(cwd);
+      }
+      return result;
     } catch (error) {
       throw collaborationRpcError(error);
     }

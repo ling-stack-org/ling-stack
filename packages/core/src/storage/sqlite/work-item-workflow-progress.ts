@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isRunProviderErrorDiagnostic, type LingAppServerWorkflowStageProgress } from "@ling-stack/contracts";
+import { isRunProviderErrorDiagnostic, type LingAppServerStageRecoveryEvidence, type LingAppServerWorkflowStageProgress } from "@ling-stack/contracts";
 import type { WorkItem } from "../../work-item-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { parseJson, readNullableString, readString } from "./helpers.js";
@@ -33,8 +33,26 @@ export function readWorkItemStageProgress(context: SqliteStoreContext, item: Wor
   let lastVerified: LingAppServerWorkflowStageProgress["lastVerified"] = change
     ? { kind: "plan_change_accepted", id: readString(change, "plan_id"), committedAt: readString(change, "linked_at") }
     : undefined;
+  const planProgressAt = lastVerified?.committedAt ?? "";
+  const recoveries = new Map<string, LingAppServerStageRecoveryEvidence>();
+  if (step.metadata?.recoveryVerification && item.planRevision) {
+    const receipts = db.prepare(`
+      SELECT id, content FROM work_item_evidence
+      WHERE workspace_id=? AND work_item_id=? AND kind='stage_recovery_ref' AND subject_revision=?
+        AND created_at>? AND json_extract(content,'$.workflowStepId')=?
+      ORDER BY sequence DESC
+    `).iterate(item.workspaceId, item.id, item.planRevision, planProgressAt, step.id);
+    for (const receipt of receipts) {
+      const recovery = parseJson(readString(receipt, "content")) as LingAppServerStageRecoveryEvidence;
+      if (recoveries.has(recovery.blockerId)) continue;
+      recoveries.set(recovery.blockerId, recovery);
+      if (recovery.committedAt > (lastVerified?.committedAt ?? "")) {
+        lastVerified = { kind: "verification_passed", id: readString(receipt, "id"), ...recovery };
+      }
+    }
+  }
   const history = db.prepare(`
-    SELECT r.id, r.task_id, r.status, r.provider_preset_id, r.provider_name, r.provider_model,
+    SELECT r.id, r.task_id, r.status, r.ended_at, r.provider_preset_id, r.provider_name, r.provider_model,
       t.id AS transition_id, t.created_at AS accepted_at,
       e.id AS failure_id, e.type AS failure_type,
       CASE WHEN e.type='loop_detected' THEN json_extract(e.data_json,'$.fingerprint') END AS loop_fingerprint,
@@ -57,12 +75,15 @@ export function readWorkItemStageProgress(context: SqliteStoreContext, item: Wor
       AND json_extract(s.metadata_json,'$.planStageId')=? AND r.ended_at IS NOT NULL
       AND COALESCE(t.created_at,r.ended_at)>? AND ((r.status='succeeded' AND t.id IS NOT NULL) OR e.id IS NOT NULL)
     ORDER BY COALESCE(t.created_at,r.ended_at) DESC, r.id DESC
-  `).iterate(item.workspaceId, item.id, stageId, lastVerified?.committedAt ?? "");
+  `).iterate(item.workspaceId, item.id, stageId, planProgressAt);
   const blockers = new Map<string, Blocker>();
   const seenTasks = new Set<string>();
   for (const row of history) {
     if (row.status === "succeeded") {
-      lastVerified = { kind: "stage_completed", id: readString(row, "transition_id"), committedAt: readString(row, "accepted_at") };
+      const committedAt = readString(row, "accepted_at");
+      if (committedAt > (lastVerified?.committedAt ?? "")) {
+        lastVerified = { kind: "stage_completed", id: readString(row, "transition_id"), committedAt };
+      }
       break;
     }
     const taskId = readString(row, "task_id");
@@ -72,6 +93,8 @@ export function readWorkItemStageProgress(context: SqliteStoreContext, item: Wor
     if (!cause) continue;
     const provider = cause.kind === "provider" ? [row.provider_preset_id, row.provider_name, row.provider_model] : [];
     const id = createHash("sha256").update(JSON.stringify([item.id, stageId, cause.identity, provider])).digest("hex");
+    const recovery = recoveries.get(id);
+    if (recovery && (row.failure_id === recovery.failureEventId || readString(row, "ended_at") < recovery.failedAt)) continue;
     const prior = blockers.get(id);
     const failedStarts = (prior?.failedStarts ?? 0) + 1;
     const status = maxNoEvidenceContinuations !== undefined && failedStarts > maxNoEvidenceContinuations ? "stalled" : "observed";

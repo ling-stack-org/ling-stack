@@ -37,6 +37,7 @@ import {
   type ProposedPlanArtifact,
   type ProposedPlanArtifactStatus,
   type ProposedPlanWorkflowStepPreviewInput,
+  parseGoalVerificationRequirement,
   type RunEventEnvelope,
   type RunSession,
   type RunStore,
@@ -2526,6 +2527,15 @@ function readOptionalWorkflowStepPreviews(
         || new Set(requiredTools).size !== requiredTools.length)) {
         throw new HttpError(400, "bad_workflow_step_tools", "requiredTools must contain distinct Run tool names.");
       }
+      let recoveryVerification;
+      if (item.recoveryVerification !== undefined) {
+        try {
+          recoveryVerification = parseGoalVerificationRequirement(item.recoveryVerification);
+        } catch (error) {
+          if (!(error instanceof Error) || !["goal_spec_invalid", "goal_acceptance_criteria_invalid"].includes(error.message)) throw error;
+          throw new HttpError(400, "bad_workflow_recovery_verification", "Supply the stage's check ID, verifier basis and coverage digest.");
+        }
+      }
       return {
         title,
         requiredTools,
@@ -2533,6 +2543,7 @@ function readOptionalWorkflowStepPreviews(
         dependsOnStageIds: readOptionalWorkflowStageDependencies(item),
         handoffFromStageIds: readOptionalWorkflowStageDependencies(item, "handoffFromStageIds"),
         requiredDecision: item.requiredDecision === undefined ? undefined : parseProposedPlanStageDecision(item.requiredDecision),
+        recoveryVerification,
         ownerId: readOptionalString(item, "ownerId")?.trim() || undefined,
         ownerLabel: readOptionalString(item, "ownerLabel")?.trim() || undefined,
         ownerConfidence: readOptionalWorkflowOwnerConfidence(item, "ownerConfidence"),

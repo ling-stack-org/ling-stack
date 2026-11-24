@@ -31,7 +31,7 @@ import { writeJson } from "../../shared/response.js";
 import { readWorkItemStageMessages } from "../work-items/stage-messages.js";
 import { readWorkItemStageQuestionInputs, WORK_ITEM_STAGE_ANSWER_FORMAT } from "../work-items/stage-questions.js";
 import { readWorkItemRetainedStageInputs } from "../work-items/workflow-stages.js";
-import { workItemHandoffCandidatesCurrent } from "../work-items/stage-handoff-candidates.js";
+import { workItemHandoffCandidatesCurrent, workItemStageRecoveryCandidateCurrent } from "../work-items/stage-handoff-candidates.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -1102,6 +1102,9 @@ export async function prepareWorkflowStepStart(
     if (!workflowStepParticipantAvailable(store, step)) {
       return fail(unavailableHandoffRecipient.statusCode, unavailableHandoffRecipient.code, unavailableHandoffRecipient.message);
     }
+  }
+  if (step.metadata?.recoveryVerification && !await workItemStageRecoveryCandidateCurrent(store, step, runRequestBase.cwd)) {
+    return fail(409, "work_item_stage_candidate_stale", "The recovered stage needs a trusted check for its current candidate.");
   }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),

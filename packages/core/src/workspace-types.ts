@@ -2425,6 +2425,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly graphNodeId?: string;
   readonly planStageId?: string;
   readonly requiredPlanDecision?: import("@ling-stack/contracts").ProposedPlanStageDecision;
+  readonly recoveryVerification?: import("@ling-stack/contracts").GoalVerificationRequirement;
   readonly planBallotKey?: string;
   readonly requiredPlanHandoffStepIds?: readonly string[];
   readonly dependsOnStepIds?: readonly string[];

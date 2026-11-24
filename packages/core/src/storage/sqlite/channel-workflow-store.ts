@@ -1475,6 +1475,7 @@ export class SqliteChannelWorkflowStore {
       planStageId: existing.metadata.planStageId,
       dependsOnStepIds: existing.metadata.dependsOnStepIds,
       requiredPlanDecision: existing.metadata.requiredPlanDecision,
+      recoveryVerification: existing.metadata.recoveryVerification,
       planBallotKey: existing.metadata.planBallotKey,
       requiredPlanHandoffStepIds: existing.metadata.requiredPlanHandoffStepIds,
       requiredTools: existing.metadata.requiredTools,

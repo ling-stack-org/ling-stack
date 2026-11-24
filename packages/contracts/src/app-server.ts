@@ -180,6 +180,7 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/deliberation/decide",
   "workItem/stage/read",
   "workItem/stage/brief/read",
+  "workItem/stage/recover",
   "workItem/coordination/start",
   "workItem/coordination/read",
   "workItem/coordination/close",
@@ -794,6 +795,7 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly retryBudget?: LingAppServerWorkItemStageRetryBudget;
     readonly usage?: LingAppServerWorkflowUsage;
     readonly progress?: LingAppServerWorkflowStageProgress;
+    readonly recoveryVerification?: import("./threads.js").GoalVerificationRequirement;
     readonly updatedAt: string;
     readonly runId?: string;
     readonly outputArtifactId?: string;
@@ -839,7 +841,8 @@ export interface LingAppServerWorkflowGoalBudget {
 }
 
 export interface LingAppServerWorkflowStageProgress {
-  readonly lastVerified?: { readonly kind: "stage_completed" | "plan_change_accepted"; readonly id: string; readonly committedAt: string };
+  readonly lastVerified?: { readonly kind: "stage_completed" | "plan_change_accepted"; readonly id: string; readonly committedAt: string }
+    | ({ readonly kind: "verification_passed"; readonly id: string } & LingAppServerStageRecoveryEvidence);
   readonly blocker?: {
     readonly id: string;
     readonly kind: "provider" | "execution_loop";
@@ -850,6 +853,36 @@ export interface LingAppServerWorkflowStageProgress {
     readonly sourceEventId: string;
     readonly recoveryOwnerId: string;
   };
+}
+
+export interface LingAppServerStageRecoveryEvidence {
+  readonly workflowStepId: string;
+  readonly blockerId: string;
+  readonly failureEventId: string;
+  readonly failedRunId: string;
+  readonly failedAt: string;
+  readonly operationId: string;
+  readonly candidateDigest: string;
+  readonly committedAt: string;
+}
+
+export interface LingAppServerStageRecoverParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly workflowStepId: string;
+  readonly planRevision: string;
+  readonly expectedWorkItemRevision: number;
+  readonly blockerId: string;
+  readonly failureEventId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerStageRecoverResult {
+  readonly cwd: string;
+  readonly workItemRevision: number;
+  readonly receipt: LingAppServerStageRecoveryEvidence & { readonly id: string };
+  readonly replayed: boolean;
 }
 
 export interface LingAppServerWorkItemControlResult extends LingAppServerWorkItemResult {

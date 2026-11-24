@@ -43,7 +43,7 @@ export function parseGoalAcceptanceCriteria(value: unknown): GoalAcceptanceCrite
     return { id: criterion.id, description: criterion.description.trim(), kind: criterion.kind as GoalAcceptanceCriterion["kind"],
       ...(criterion.evidenceId === undefined ? {} : { evidenceId: criterion.evidenceId as string }),
       ...(criterion.contentSha256 === undefined ? {} : { contentSha256: criterion.contentSha256 as string }),
-      ...(criterion.kind === "verification_passed" ? { verification: parseVerificationRequirement(criterion.verification) } : {}),
+      ...(criterion.kind === "verification_passed" ? { verification: parseGoalVerificationRequirement(criterion.verification) } : {}),
       ...(criterion.kind === "github_delivered" ? { githubDelivery: parseGitHubDeliveryRequirement(criterion.githubDelivery) } : {}) };
   });
 }
@@ -57,7 +57,7 @@ function parseGitHubDeliveryRequirement(value: unknown): GoalGitHubDeliveryRequi
   return { workItemId, policyRevision };
 }
 
-function parseVerificationRequirement(value: unknown): GoalVerificationRequirement {
+export function parseGoalVerificationRequirement(value: unknown): GoalVerificationRequirement {
   const requirement = record(value);
   const { checkId, verifierBasisRef, coverageDigest } = requirement;
   if (Object.keys(requirement).some(key => !["checkId", "verifierBasisRef", "coverageDigest"].includes(key))

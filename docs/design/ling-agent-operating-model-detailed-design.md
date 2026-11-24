@@ -321,6 +321,21 @@ once. A preparing start reserves a slot before its Run is committed. A
 stage's first start leaves the shared retry allowance available. The stage
 read exposes starts and remaining stage and Work Item retry allowances.
 
+When a stage declares a recovery verification requirement in its accepted Plan,
+the coordinator can recover a stalled stage through `workItem/stage/recover`.
+The request names the current Work Item, stable stage, blocker and failure
+event, plus a completed Verify operation. The host accepts it only when the
+operation belongs to the Work Item and accepted Plan, passed after the failed
+Run, matches the current candidate and required verifier basis, coverage and
+producer references, and the failed Run has settled its execution and effects.
+The recovery receipt is an owner-visible Work Item evidence entry committed with
+the candidate digest and failure identity. Its idempotency key and evidence
+identity make concurrent retries and restart replay return one receipt. The
+stage progress projection removes only that blocker, preserves the consumed
+retry count, and the next start checks that the candidate is still the verified
+one. Candidate drift or a different failure requires a new verification or an
+accepted Plan change.
+
 When the next automatic step exceeds the allowance, or the blocker needs a user decision, policy repair or effect reconciliation, park that automatic path with a typed reason, affected criteria, last verified delta, remaining budget and recovery owner. Keep independent eligible work under its own gates. Resume through a current evidence delta or an authorized continuation or Plan change, within the owner's current authority and remaining limits. Pausing automation preserves open questions, write leases and effect receipts for their owning lifecycles.
 
 [Goal supervision](../../packages/core/src/goal-supervision.ts) · [Execution loop detector](../../packages/daemon/src/features/runs/execution-loop-detector.ts)

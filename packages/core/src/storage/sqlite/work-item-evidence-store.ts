@@ -193,8 +193,9 @@ function validateEvidenceInput(input: AppendWorkItemEvidenceInput): void {
   if (input.subjectRevision.trim().length === 0 || input.content.trim().length === 0) {
     throw new Error("work_item_evidence subject and content are required");
   }
-  const kinds: readonly WorkItemEvidenceKind[] = ["observation", "proposal", "challenge", "evidence_ref", "correction", "recommendation", "decision_ref"];
+  const kinds: readonly WorkItemEvidenceKind[] = ["observation", "proposal", "challenge", "evidence_ref", "correction", "recommendation", "decision_ref", "stage_recovery_ref"];
   if (!kinds.includes(input.kind)) throw new Error("work_item_evidence kind is not supported");
+  if (input.kind === "stage_recovery_ref" && !input.assertCurrent) throw new Error("stage_recovery_ref requires a Host current-state check");
   const visibilities: readonly WorkItemEvidenceVisibility[] = ["work_item", "participants", "owner"];
   if (input.visibility !== undefined && !visibilities.includes(input.visibility)) throw new Error("work_item_evidence visibility is not supported");
   for (const ref of input.sourceRefs ?? []) {

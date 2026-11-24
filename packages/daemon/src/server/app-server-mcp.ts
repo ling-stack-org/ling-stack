@@ -310,6 +310,12 @@ export async function runLingAppServerMcp(
         sourceScope: z.string().min(1).max(200).optional(), limit: z.number().int().min(1).max(LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT).optional() }),
       annotations: { readOnlyHint: true, destructiveHint: false },
     }, async params => describe(await client.listNativeWorkIntake(params)));
+    if (methods.has("workItem/stage/recover")) server.registerTool("ling_work_item_stage_recover", {
+      description: "Recover a stalled stage using the accepted Plan's trusted verification for its current failure event and candidate.",
+      inputSchema: z.strictObject({ workItemId: objectId, workflowStepId: objectId, planRevision: objectId, blockerId: objectId,
+        failureEventId: objectId, operationId: objectId, expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.recoverWorkItemStage(params)));
     if (methods.has("workItem/intake/accept")) server.registerTool("ling_native_intake_accept", {
       description: "Accept a suggested Channel Task or Automation occurrence by receipt ID. The original execution owner handles dispatch.",
       inputSchema: z.strictObject({ receiptId: z.string().regex(/^intake_[a-f0-9]{64}$/u) }),

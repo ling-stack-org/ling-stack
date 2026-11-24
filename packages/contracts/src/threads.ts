@@ -288,6 +288,7 @@ export interface ProposedPlanWorkflowStepPreview {
   readonly dependsOnStageIds?: readonly string[];
   readonly handoffFromStageIds?: readonly string[];
   readonly requiredDecision?: ProposedPlanStageDecision;
+  readonly recoveryVerification?: GoalVerificationRequirement;
   readonly requiredTools?: readonly RunTool[];
   readonly ownerId?: string;
   readonly ownerLabel?: string;

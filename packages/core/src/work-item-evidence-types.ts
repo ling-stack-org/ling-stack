@@ -8,7 +8,8 @@ export type WorkItemEvidenceKind =
   | "evidence_ref"
   | "correction"
   | "recommendation"
-  | "decision_ref";
+  | "decision_ref"
+  | "stage_recovery_ref";
 
 export type WorkItemEvidenceVisibility = "work_item" | "participants" | "owner";
 
