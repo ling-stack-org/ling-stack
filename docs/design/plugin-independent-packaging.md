@@ -80,6 +80,12 @@ macOS arm64 使用同一隔离用户目录，从 `14be1bdeb` 的兼容开发包�
 
 在另一个测试配置中，已留存两代 gstack 资源时，加载第三代会触发 `packaged_skill_history_retention_limit` 并中断启动。上面的单次切换复用了只有一代资源的配置。默认打包切换前仍需验证不同资源留存状态的现有配置。
 
+### Windows 已有配置切换
+
+Windows x64 在隔离 runner 上先把 `14be1bdeb` 的 0.6.1 兼容包安装到自定义路径，再用 `b60f0c396` 的 0.6.1 瘦包沿注册路径覆盖安装。两次安装后的文件均匹配对应候选包的完整校验清单，两版 Desktop 均连接各自启动的 daemon、加载主窗口并正常退出。
+
+覆盖安装后，主工作区仍启用 Office 和 Chrome，第二工作区仍禁用 Office。MCP 绑定、两个工作区的写入审批以及已有插件启停事件均与切换前一致。卸载清理了测试安装目录。[Windows 迁移验证](https://github.com/ling-stack-org/ling-stack/actions/runs/45317805635)
+
 ## 瘦包对照和切换
 
 1. 在相同的已独立审核源码提交和工具链上，分别构建兼容基线和 `LING_PLUGIN_EXTERNAL_ONLY=1` 的瘦包。仍需通过平台原有的 Desktop 发布前置检查。
