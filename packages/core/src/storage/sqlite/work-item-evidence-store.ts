@@ -146,7 +146,7 @@ export class SqliteWorkItemEvidenceStore {
       SELECT * FROM work_item_evidence
       WHERE workspace_id = ? AND work_item_id = ? AND sequence > ?
       ${prefix ? "AND substr(id, 1, length(?)) = ?" : ""}
-      ORDER BY sequence ASC
+      ORDER BY sequence ${options.newestFirst ? "DESC" : "ASC"}
       LIMIT ?
     `).all(DEFAULT_WORKSPACE_ID, options.workItemId, afterSequence, ...(prefix ? [prefix, prefix] : []), limit)
       .map((row) => mapWorkItemEvidence(row as Record<string, SQLOutputValue>));

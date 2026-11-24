@@ -72,6 +72,7 @@ export interface ListWorkItemEvidenceOptions {
   readonly recordIdPrefix?: string;
   readonly afterSequence?: number;
   readonly limit?: number;
+  readonly newestFirst?: boolean;
 }
 
 export function createWorkItemEvidenceId(): string {

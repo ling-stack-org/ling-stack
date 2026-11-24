@@ -1,4 +1,8 @@
 import {
+  LING_APP_SERVER_DECISION_MATERIALITIES,
+  LING_APP_SERVER_DELIBERATION_CHECKPOINTS,
+  LING_APP_SERVER_DELIBERATION_DECISION_KINDS,
+  LING_APP_SERVER_DELIBERATION_OUTCOMES,
   LING_APP_SERVER_METHODS,
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
@@ -59,6 +63,18 @@ const pingResult = objectWith({ ok: { enum: [true] }, connectionId: stringSchema
   ["ok", "connectionId", "serverTime"]);
 const threadTarget = { threadId: stringSchema };
 const workItemTarget = { workItemId: stringSchema };
+const deliberationCheckpoint = { enum: LING_APP_SERVER_DELIBERATION_CHECKPOINTS } as const;
+const deliberationSubject = { oneOf: [
+  objectWith({ kind: { enum: ["draft_plan"] }, planId: stringSchema, planRevision: integerSchema }, ["kind", "planId", "planRevision"]),
+  objectWith({ kind: { enum: ["workflow_stage"] }, workflowStepId: stringSchema, planRevision: stringSchema }, ["kind", "workflowStepId", "planRevision"]),
+] };
+const deliberationEvaluationFields = {
+  evaluationId: stringSchema, decisionId: stringSchema, decisionRevision: stringSchema, subjectRevision: stringSchema,
+  policyRevision: stringSchema, checkpoint: deliberationCheckpoint, checkpointRef: stringSchema,
+  outcome: { enum: LING_APP_SERVER_DELIBERATION_OUTCOMES }, reasonCode: stringSchema,
+  optionRefs: stringArraySchema, evidenceRefs: stringArraySchema, participantIds: stringArraySchema,
+  expiresAt: stringSchema, evaluatedAt: stringSchema,
+};
 const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: integerSchema };
 const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema, taskId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
@@ -380,6 +396,22 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ ...collaborationAppend, kind: stringSchema, action: stringSchema }, ["workItemId", "kind", "action"]), result };
     case "workItem/deliberation/start":
       return { params: objectWith({ ...collaborationAppend, workflowStepId: stringSchema }, ["workItemId"]), result };
+    case "workItem/deliberation/evaluate":
+      return {
+        params: objectWith({ ...workItemTarget, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema,
+          decisionKey: stringSchema, subject: deliberationSubject, checkpoint: deliberationCheckpoint, checkpointRef: stringSchema,
+          decisionKind: { enum: LING_APP_SERVER_DELIBERATION_DECISION_KINDS }, materiality: { enum: LING_APP_SERVER_DECISION_MATERIALITIES },
+          question: stringSchema, participantIds: stringArraySchema, optionRefs: stringArraySchema, evidenceRefs: stringArraySchema,
+          unresolved: { enum: ["intent", "fact", "handoff"] },
+        }, ["workItemId", "expectedWorkItemRevision", "idempotencyKey", "decisionKey", "subject", "checkpoint", "checkpointRef",
+          "decisionKind", "materiality", "question", "participantIds", "optionRefs", "evidenceRefs"]),
+        result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,
+          evaluation: objectWith(deliberationEvaluationFields, Object.keys(deliberationEvaluationFields)),
+        }, ["cwd", "workItemRevision", "replayed", "evaluation"]),
+      };
+    case "workItem/deliberation/open":
+      return { params: objectWith({ ...workItemTarget, evaluationId: stringSchema, expectedWorkItemRevision: integerSchema,
+        idempotencyKey: stringSchema }, ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result };
     case "workItem/deliberation/cancel":
       return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result };
     case "workItem/deliberation/decide":

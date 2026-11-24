@@ -150,6 +150,8 @@ import {
   settleAppServerDeliberation,
   startAppServerStageDeliberation,
 } from "./app-server-collaboration.js";
+import { deliberationEvaluateInput, deliberationOpenInput, evaluateAppServerDeliberation,
+  isCheckpointDeliberationRecord, openAppServerEvaluatedDeliberation } from "./app-server-deliberation.js";
 import { readStageHandoffParams, settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
 import { recoverAppServerStage } from "./app-server-stage-recovery.js";
 
@@ -216,7 +218,7 @@ const operatorMethods = new Set([
   "workItem/plan/change/request", "workItem/plan/change/withdraw",
   "workItem/stage/recover",
   "workItem/feedback/add",
-  "workItem/deliberation/decide", "workItem/deliberation/cancel",
+  "workItem/deliberation/evaluate", "workItem/deliberation/open", "workItem/deliberation/decide", "workItem/deliberation/cancel",
   "artifact/read", "model/list", "skill/read",
   "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
   "changes/read", "changes/apply/preview", "changes/apply",
@@ -228,6 +230,7 @@ const recoveryGuardedMethods = new Set([
   "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
   "plan/accept", "plan/refine", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
   "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
+  "workItem/deliberation/open",
   "workItem/plan/change/withdraw", "workItem/stage/recover",
   "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
   "workItem/feedback/add", "workItem/intake/accept", "workItem/intake/retry",
@@ -939,6 +942,9 @@ class RpcConnection {
         return this.controlWorkItem("cancel", params);
       case "workItem/deliberation/start":
         return this.startWorkItemDeliberation(params);
+      case "workItem/deliberation/evaluate":
+      case "workItem/deliberation/open":
+        return this.checkpointDeliberation(method, params);
       case "workItem/deliberation/decide":
         return this.settleWorkItemDeliberation("decided", params);
       case "workItem/deliberation/cancel":
@@ -1411,7 +1417,8 @@ class RpcConnection {
       });
       if (!this.grant || this.grant.stageCoordination) return { cwd, ...result };
       const privatePrefixes = [WORKFLOW_STAGE_MESSAGE_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX];
-      const records = result.records.filter(entry => !privatePrefixes.some(prefix => entry.id.startsWith(prefix))).map(entry => {
+      const records = result.records.filter(entry => !isCheckpointDeliberationRecord(entry)
+        && !privatePrefixes.some(prefix => entry.id.startsWith(prefix))).map(entry => {
         if (this.grant?.subject.kind !== "workItem") return entry;
         if (entry.kind !== "handoff" || !entry.id.startsWith(WORKFLOW_STAGE_HANDOFF_ID_PREFIX)) return entry;
         const payload = isRecord(entry.payload) && typeof entry.payload.reason === "string"
@@ -1472,6 +1479,24 @@ class RpcConnection {
     } catch (error) {
       throw collaborationRpcError(error);
     }
+  }
+
+  private checkpointDeliberation(method: "workItem/deliberation/evaluate" | "workItem/deliberation/open", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const now = new Date().toISOString();
+    if (method === "workItem/deliberation/evaluate") {
+      const parsed = deliberationEvaluateInput.safeParse(record);
+      if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply a current subject, checkpoint and bounded decision inputs.");
+      const { event, ...result } = evaluateAppServerDeliberation(store, parsed.data, now, cwd);
+      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      return result;
+    }
+    const parsed = deliberationOpenInput.safeParse(record);
+    if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an evaluation, Work Item revision and bounded request key.");
+    const { event, ...result } = openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd);
+    if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+    return { cwd, ...result };
   }
 
   private addWorkItemFeedback(params: unknown): unknown {
@@ -3715,6 +3740,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     if (event.action === "work_item.intake.dispatch.updated") return "workItem/intake/updated";
     if (event.action.startsWith("work_item.plan_change.")) return "workItem/plan/change/updated";
     if (event.action.startsWith("work_item.deliberation.")) return "workItem/deliberation/updated";
+    if (event.action.startsWith("work_item.collaboration.deliberation.")) return "workItem/deliberation/updated";
     if (event.action === "work_item.created") return "workItem/created";
     if (event.action === "work_item.thread.linked") return "workItem/thread/linked";
     if (event.action.includes("evidence")) return "workItem/evidence/updated";

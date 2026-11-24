@@ -175,6 +175,8 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/collaboration/read",
   "workItem/collaboration/append",
   "workItem/deliberation/start",
+  "workItem/deliberation/evaluate",
+  "workItem/deliberation/open",
   "workItem/deliberation/read",
   "workItem/deliberation/cancel",
   "workItem/deliberation/decide",
@@ -1166,6 +1168,77 @@ export interface LingAppServerDeliberationTriggerDecisionV1 {
   readonly requiresHumanDecision: boolean;
   readonly reason: string;
   readonly triggerKind: LingAppServerDeliberationTriggerKindV1;
+}
+
+export const LING_APP_SERVER_DELIBERATION_CHECKPOINTS = [
+  "plan_review", "verify_review_conflict", "blocked_stage_changed", "handoff_returned", "repeated_failure", "scheduled_checkpoint",
+] as const;
+
+export const LING_APP_SERVER_DELIBERATION_DECISION_KINDS = [
+  "plan_or_contract", "implementation_tradeoff", "recovery_tradeoff", "review_disposition",
+] as const;
+
+export const LING_APP_SERVER_DECISION_MATERIALITIES = ["low", "medium", "high"] as const;
+export const LING_APP_SERVER_DELIBERATION_OUTCOMES = [
+  "clarify", "verify", "handoff_repair", "suggest", "defer", "suppress",
+] as const;
+
+export type LingAppServerDeliberationCheckpoint = typeof LING_APP_SERVER_DELIBERATION_CHECKPOINTS[number];
+export type LingAppServerDeliberationDecisionKind = typeof LING_APP_SERVER_DELIBERATION_DECISION_KINDS[number];
+export type LingAppServerDecisionMateriality = typeof LING_APP_SERVER_DECISION_MATERIALITIES[number];
+
+export type LingAppServerDeliberationSubject =
+  | { readonly kind: "draft_plan"; readonly planId: string; readonly planRevision: number }
+  | { readonly kind: "workflow_stage"; readonly workflowStepId: string; readonly planRevision: string };
+
+export interface LingAppServerDeliberationEvaluateParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+  readonly decisionKey: string;
+  readonly subject: LingAppServerDeliberationSubject;
+  readonly checkpoint: LingAppServerDeliberationCheckpoint;
+  readonly checkpointRef: string;
+  readonly decisionKind: LingAppServerDeliberationDecisionKind;
+  readonly materiality: LingAppServerDecisionMateriality;
+  readonly question: string;
+  readonly participantIds: readonly string[];
+  readonly optionRefs: readonly string[];
+  readonly evidenceRefs: readonly string[];
+  readonly unresolved?: "intent" | "fact" | "handoff";
+}
+
+export interface LingAppServerDeliberationEvaluation {
+  readonly evaluationId: string;
+  readonly decisionId: string;
+  readonly decisionRevision: string;
+  readonly subjectRevision: string;
+  readonly policyRevision: string;
+  readonly checkpoint: LingAppServerDeliberationCheckpoint;
+  readonly checkpointRef: string;
+  readonly outcome: typeof LING_APP_SERVER_DELIBERATION_OUTCOMES[number];
+  readonly reasonCode: string;
+  readonly optionRefs: readonly string[];
+  readonly evidenceRefs: readonly string[];
+  readonly participantIds: readonly string[];
+  readonly expiresAt: string;
+  readonly evaluatedAt: string;
+}
+
+export interface LingAppServerDeliberationEvaluateResult {
+  readonly cwd: string;
+  readonly workItemRevision: number;
+  readonly replayed: boolean;
+  readonly evaluation: LingAppServerDeliberationEvaluation;
+}
+
+export interface LingAppServerDeliberationOpenParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly evaluationId: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
 }
 
 export interface LingAppServerDeliberationSettlementParams {

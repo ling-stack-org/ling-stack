@@ -51,6 +51,9 @@ import type {
   LingAppServerReconcileGitHubDeliveryParams,
   LingAppServerCoordinationSchedule,
   LingAppServerCoordinationScheduleParams,
+  LingAppServerDeliberationEvaluateParams,
+  LingAppServerDeliberationEvaluateResult,
+  LingAppServerDeliberationOpenParams,
   LingAppServerGrant,
   LingAppServerGrantCreateParams,
   LingAppServerHandoffCreateParams,
@@ -644,6 +647,16 @@ export class LingAppServerClient {
   async startStageDeliberation(params: LingAppServerStageDeliberationStartParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
     await this.connect();
     return await this.request("workItem/deliberation/start", params);
+  }
+
+  async evaluateWorkItemDeliberation(params: LingAppServerDeliberationEvaluateParams): Promise<LingAppServerDeliberationEvaluateResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/evaluate", params);
+  }
+
+  async openWorkItemDeliberation(params: LingAppServerDeliberationOpenParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/open", params);
   }
 
   async recoverWorkItemStage(params: LingAppServerStageRecoverParams): Promise<LingAppServerStageRecoverResult> {

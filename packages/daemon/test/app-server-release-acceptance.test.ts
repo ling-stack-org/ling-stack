@@ -34,6 +34,8 @@ import type {
   LingAppServerRecoveryResult,
   LingAppServerCoordinationSchedule,
   LingAppServerDeliberationDecideParams,
+  LingAppServerDeliberationEvaluateParams,
+  LingAppServerDeliberationEvaluateResult,
   LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemCollaborationReadResult,
   LingAppServerGrant,
@@ -2565,6 +2567,134 @@ test("an operator resolves a deliberation round once against its current revisio
   assert.equal(fixture.getStore().listRuns().length, 0);
 });
 
+test("a draft deliberation uses current evidence in Plan Mode and recovers the original suggestion and round", { timeout: 30_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Plan context prepared." }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  const [client, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
+  const store = fixture.getStore();
+  const now = new Date().toISOString();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const channel = store.createChannel({ name: "Contract review", boundPath: fixture.cwd }, now);
+  const participants = ["teammate_builtin_engineer", "teammate_builtin_qa"];
+  for (const id of participants) store.replaceTeammateChannelMemberships(id, [{ channelId: channel.id }], now);
+  const thread = store.createLingThread({ kind: "conversation", title: "Compatibility planning", objective: "Propose a contract." }, now);
+  const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "plan-checkpoint", channelId: channel.id,
+    title: "Review two compatibility plans", initialStatus: "ready" }, now);
+  await client.call<LingAppServerWorkItemAcceptResult>("workItem/accept", {
+    workItemId: item.id, expectedWorkItemRevision: item.revision, idempotencyKey: "plan-owner",
+    dispatch: { threadId: thread.id, message: "Summarize the interface contract.", providerPresetId: preset.id },
+  });
+  await waitFor(() => store.listRuns({ threadId: thread.id }).some(run => run.status === "succeeded") ? true : undefined);
+  await client.call("thread/mode/set", { threadId: thread.id, mode: "plan" });
+  const plan = store.upsertProposedPlanArtifact({ id: "plan_compatibility_checkpoint", threadId: thread.id,
+    title: "Interface compatibility", bodyMarkdown: "Preserve the existing response shape." }, now);
+  const { cursor } = await peer.call<LingAppServerSubscriptionResult>("workItem/subscribe", { workItemId: item.id });
+  const subjectRevision = `${plan.id}:${plan.revision}`;
+  const { optionRefs, evidenceRef } = await recordDeliberationEvidence(client.call, item.id, subjectRevision);
+  const evaluate = (input: LingAppServerDeliberationEvaluateParams) =>
+    client.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", input);
+  const request: LingAppServerDeliberationEvaluateParams = {
+    workItemId: item.id, expectedWorkItemRevision: store.getWorkItem(item.id)!.revision,
+    idempotencyKey: "needs-preference", decisionKey: "response-shape",
+    subject: { kind: "draft_plan", planId: plan.id, planRevision: plan.revision },
+    checkpoint: "plan_review", checkpointRef: plan.id, decisionKind: "plan_or_contract", materiality: "high",
+    question: "Which shape should the compatibility plan keep?", participantIds: participants, optionRefs,
+    evidenceRefs: [evidenceRef], unresolved: "intent",
+  };
+  await assert.rejects(evaluate({ ...request, checkpointRef: "foreign-checkpoint" }), { code: "stale_revision" });
+  await assert.rejects(evaluate({ ...request, optionRefs: ["fabricated-option", optionRefs[0]!] }), { code: "stale_revision" });
+  const needsPreference = await evaluate(request);
+  assert.equal(needsPreference.evaluation.outcome, "clarify");
+  await assert.rejects(client.call("workItem/deliberation/open", {
+    workItemId: item.id, expectedWorkItemRevision: needsPreference.workItemRevision,
+    idempotencyKey: "try-open-without-preference", evaluationId: needsPreference.evaluation.evaluationId,
+  }), { code: "resume_blocked" });
+  const { unresolved: _intent, ...clarified } = request;
+  const input = { ...clarified, expectedWorkItemRevision: needsPreference.workItemRevision, idempotencyKey: "plan-assessment" };
+  const mcp = await connectReleaseMcp(t, fixture.transportOptions());
+  const [first, second] = await Promise.all([
+    evaluate(input), mcp.callTool<LingAppServerDeliberationEvaluateResult>("ling_deliberation_evaluate", input),
+  ]);
+  assert.equal(first.evaluation.outcome, "suggest");
+  assert.equal(first.evaluation.decisionId, needsPreference.evaluation.decisionId);
+  assert.notEqual(first.evaluation.decisionRevision, needsPreference.evaluation.decisionRevision);
+  assert.deepEqual(first.evaluation, second.evaluation);
+  assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
+  const suggested = await client.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", { workItemId: item.id });
+  assert.deepEqual(suggested.records.map(record => record.action), ["created", "created"]);
+  assert.ok(suggested.records.every(record => record.sourceRefs.every(ref => ref.id !== thread.id)));
+  assert.equal(first.evaluation.subjectRevision, subjectRevision);
+  assert.equal(store.listRuns({ threadId: thread.id }).length, 1);
+
+  const open = { workItemId: item.id, evaluationId: first.evaluation.evaluationId, expectedWorkItemRevision: first.workItemRevision, idempotencyKey: "open-plan" };
+  const { credential, scoped } = await createObserver(client, fixture, item.id);
+  await assert.rejects(scoped.call("workItem/deliberation/open", open), { code: "capability_denied" });
+  const [opened, other] = await Promise.all([
+    mcp.callTool<LingAppServerWorkItemCollaborationAppendResult>("ling_deliberation_open", open),
+    client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", open),
+  ]);
+  assert.equal(opened.record.id, other.record.id);
+  assert.deepEqual([opened.status, other.status].sort(), ["appended", "replayed"]);
+  await mcp.close();
+  const repeated = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", { ...open,
+    idempotencyKey: "another-open-key" });
+  assert.equal(repeated.record.id, opened.record.id);
+  assert.equal(repeated.workItemRevision, opened.workItemRevision);
+  const seen = await waitFor(() => peer.notices.find(notice => notice.method === "workItem/deliberation/updated"
+    && notice.params?.event?.data?.collaborationId === opened.record.id));
+  assert.ok(validateLingAppServerNotificationParams("workItem/deliberation/updated", seen.params).ok);
+
+  await fixture.restart();
+  const restored = await fixture.connect();
+  await restored.call("workItem/subscribe", { workItemId: item.id, cursor });
+  await waitFor(() => restored.notices.find(notice => notice.params?.eventId === seen.params?.eventId));
+  const replay = await restored.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", input);
+  assert.deepEqual(replay.evaluation, first.evaluation);
+  assert.equal(replay.replayed, true);
+  assert.equal((await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", open)).record.id, opened.record.id);
+  const observer = await fixture.connect("/app-server/rpc", fixture.cwd, credential);
+  const scopedRead = await observer.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", { workItemId: item.id });
+  assert.deepEqual(scopedRead.records, []);
+  const scopedEvidence = await observer.call<{ evidence: { id: string }[] }>("workItem/evidence/read", { workItemId: item.id });
+  assert.ok(scopedEvidence.evidence.every(record => record.id !== opened.record.id && record.id !== first.evaluation.evaluationId));
+
+  fixture.getStore().upsertProposedPlanArtifact({ id: plan.id, threadId: thread.id, expectedRevision: plan.revision,
+    title: plan.title, bodyMarkdown: "Require the new response fields." }, new Date().toISOString());
+  const settle = { workItemId: item.id, roundId: opened.record.id, expectedRoundRevision: opened.record.collaborationRevision,
+    expectedWorkItemRevision: opened.workItemRevision, idempotencyKey: "old-plan-choice", reason: "Keep the captured compatibility requirement." };
+  await assert.rejects(restored.call("workItem/deliberation/decide", {
+    ...settle, decision: { disposition: "selected", option: optionRefs[0] },
+  }), { code: "stale_revision" });
+  const cancelled = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/cancel", settle);
+  assert.equal(cancelled.record.parentRecordId, opened.record.id);
+  assert.equal(fixture.getStore().listRuns({ threadId: thread.id }).length, 1);
+  assert.equal(fixture.getStore().getLingThreadConversationMode(thread.id)?.mode, "plan");
+});
+
+async function createObserver(client: Awaited<ReturnType<Awaited<ReturnType<typeof releaseFixture>>["connect"]>>,
+  fixture: Awaited<ReturnType<typeof releaseFixture>>, workItemId: string) {
+  const secret = randomBytes(32).toString("hex");
+  const { grant } = await client.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+    label: "Observe Work Item", subject: { kind: "workItem", id: workItemId }, scopes: ["observe"],
+    expiresAt: new Date(Date.now() + 120_000).toISOString(),
+    credentialSha256: createHash("sha256").update(secret).digest("hex"), idempotencyKey: "checkpoint-observer",
+  });
+  const credential = `las1.${grant.grantId}.${secret}`;
+  return { credential, scoped: await fixture.connect("/app-server/rpc", fixture.cwd, credential) };
+}
+
+async function recordDeliberationEvidence(call: <T>(method: string, input: object) => Promise<T>, workItemId: string, subjectRevision: string) {
+  const append = async (key: string, kind: "proposal" | "observation", content: string) =>
+    (await call<{ entry: { id: string } }>("workItem/evidence/append", {
+      workItemId, actorId: "local-user", subjectRevision, kind, content, idempotencyKey: `${subjectRevision}:${key}`,
+    })).entry.id;
+  const adapter = await append("adapter", "proposal", "Keep the adapter compatible with existing callers.");
+  const migration = await append("migration", "proposal", "Move callers atomically to the replacement interface.");
+  const evidenceRef = await append("interface", "observation", "The public interface has existing clients.");
+  return { optionRefs: [adapter, migration], evidenceRef };
+}
+
 test("a GitHub Work Item recovers its Workflow, gathers independent ballots and releases one decision dependency", { timeout: 40_000 }, async t => {
   let completeContract: () => void = () => undefined;
   const contractGate = new Promise<void>(resolve => { completeContract = resolve; });
@@ -3448,6 +3578,79 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
   assert.ok(workItem.planRevision);
   return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent, channel, thread, plan, preset };
 }
+
+test("an in-flight stage routes fact disputes to Verify and keeps only the current tradeoff eligible for a decision", { timeout: 30_000 }, async t => {
+  let finishStage = () => {};
+  const stageGate = new Promise<void>(resolve => { finishStage = resolve; });
+  const provider = await startLoopbackPiProvider(async () => {
+    await stageGate;
+    return { text: "Compatibility stage completed." };
+  });
+  t.after(() => { finishStage(); return provider.close(); });
+  const { fixture, store, client, workItem, item, respondent, channel, workflowId } = await stageQuestionWorkflow(t, provider.baseUrl);
+  const now = new Date().toISOString();
+  const participantIds = ["teammate_builtin_engineer", "teammate_builtin_qa"];
+  for (const id of participantIds) store.replaceTeammateChannelMemberships(id, [{ channelId: channel.id }], now);
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const active = await fetch(`${daemonUrl}/workflow-steps/${respondent.id}/start?cwd=${encodeURIComponent(fixture.cwd)}`, {
+    method: "POST", headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" },
+    body: JSON.stringify({ mode: "create_and_run_task" }),
+  });
+  if (!active.ok) assert.fail(await active.text());
+  void active.text();
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  assert.equal(store.getChannelWorkflowStep(respondent.id)?.status, "running");
+  const planRevision = workItem.planRevision!;
+  const workItemId = item.id;
+  const currentRevision = () => store.getWorkItem(workItemId)!.revision;
+  const { optionRefs, evidenceRef } = await recordDeliberationEvidence(client.call, workItemId, planRevision);
+  const input: LingAppServerDeliberationEvaluateParams = {
+    workItemId, expectedWorkItemRevision: currentRevision(), idempotencyKey: "review-verify-disagreement", decisionKey: "compatibility",
+    subject: { kind: "workflow_stage", workflowStepId: respondent.id, planRevision },
+    checkpoint: "verify_review_conflict", checkpointRef: evidenceRef, decisionKind: "implementation_tradeoff",
+    materiality: "medium", question: "How should the current stage preserve compatibility?",
+    participantIds, optionRefs, evidenceRefs: [evidenceRef], unresolved: "fact",
+  };
+  const evaluate = (params: LingAppServerDeliberationEvaluateParams) =>
+    client.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", params);
+  const { evaluation: requiresCheck } = await evaluate(input);
+  assert.equal(requiresCheck.outcome, "verify");
+  assert.equal(provider.requests.length, 1);
+  const { entry } = await client.call<{ entry: { id: string } }>("workItem/evidence/append", {
+    workItemId, actorId: "local-user", subjectRevision: planRevision, kind: "observation",
+    idempotencyKey: "fact-resolved", content: "Both remedies preserve the caller contract. The implementation cost differs.",
+  });
+  const { unresolved: _fact, ...tradeoff } = input;
+  const { evaluation: suggested } = await evaluate({
+    ...tradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "tradeoff", evidenceRefs: [evidenceRef, entry.id],
+  });
+  assert.equal(suggested.outcome, "suggest");
+  const open = (evaluationId: string, idempotencyKey: string) =>
+    client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", {
+      workItemId, evaluationId, idempotencyKey, expectedWorkItemRevision: currentRevision(),
+    });
+  const first = await open(suggested.evaluationId, "tradeoff-round");
+  const { evaluation: successor } = await evaluate({
+    ...tradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "tradeoff-with-current-evidence",
+    evidenceRefs: [entry.id], checkpointRef: entry.id,
+  });
+  assert.equal(successor.decisionId, suggested.decisionId);
+  assert.notEqual(successor.decisionRevision, suggested.decisionRevision);
+  const latest = await open(successor.evaluationId, "current-tradeoff-round");
+  const decide = (record: typeof first.record, idempotencyKey: string) =>
+    client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", {
+      workItemId, roundId: record.id, expectedRoundRevision: record.collaborationRevision, idempotencyKey,
+      expectedWorkItemRevision: currentRevision(), reason: "Preserve the existing callers while rollout windows differ.",
+      decision: { disposition: "selected", option: optionRefs[0]! },
+    } satisfies LingAppServerDeliberationDecideParams);
+  await assert.rejects(decide(first.record, "superseded-tradeoff"), { code: "stale_revision" });
+  const choice = await decide(latest.record, "resolved-tradeoff");
+  assert.equal(choice.record.parentRecordId, latest.record.id);
+  assert.equal(store.getWorkItem(workItemId)?.workflowId, workflowId);
+  assert.equal(provider.requests.length, 1);
+  finishStage();
+  await waitFor(() => store.getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
+});
 
 test("a successor Workflow waits for an independent live Run owned by its predecessor", { timeout: 30_000 }, async t => {
   let finishOriginal!: () => void;

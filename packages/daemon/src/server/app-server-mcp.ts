@@ -6,6 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { connectToAppServer, type AppServerLocalTransportOptions } from "./app-server-local-transport.js";
+import { deliberationEvaluateInput, deliberationOpenInput } from "./app-server-deliberation.js";
 
 const objectId = z.string().min(1).max(256);
 const requestKey = z.string().min(1).max(128);
@@ -316,6 +317,32 @@ export async function runLingAppServerMcp(
         failureEventId: objectId, operationId: objectId, expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.recoverWorkItemStage(params)));
+    if (methods.has("workItem/deliberation/evaluate")) server.registerTool("ling_deliberation_evaluate", {
+      description: "Evaluate a Work Item decision using a current draft or stage checkpoint and its evidence. A suggestion waits for operator acceptance.",
+      inputSchema: deliberationEvaluateInput,
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.evaluateWorkItemDeliberation(params)));
+    if (methods.has("workItem/deliberation/open")) server.registerTool("ling_deliberation_open", {
+      description: "Accept a current Work Item deliberation suggestion and record the round for that decision revision.",
+      inputSchema: deliberationOpenInput,
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.openWorkItemDeliberation(params)));
+    const roundSettlement = deliberationOpenInput.omit({ evaluationId: true }).extend({
+      roundId: objectId, expectedRoundRevision: z.number().int().positive(), reason: z.string().trim().min(1).max(2000),
+    });
+    if (methods.has("workItem/deliberation/decide")) server.registerTool("ling_deliberation_decide", {
+      description: "Record the operator's decision for the current round. Supply the selected option reference exactly as recorded.",
+      inputSchema: roundSettlement.extend({ decision: z.discriminatedUnion("disposition", [
+        z.object({ disposition: z.literal("selected"), option: z.string().min(1).max(200) }),
+        z.object({ disposition: z.enum(["deferred", "replan_required"]) }),
+      ]) }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.decideWorkItemDeliberation(params)));
+    if (methods.has("workItem/deliberation/cancel")) server.registerTool("ling_deliberation_cancel", {
+      description: "Close a deliberation without a decision and retain its record.",
+      inputSchema: roundSettlement,
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.cancelWorkItemDeliberation(params)));
     if (methods.has("workItem/intake/accept")) server.registerTool("ling_native_intake_accept", {
       description: "Accept a suggested Channel Task or Automation occurrence by receipt ID. The original execution owner handles dispatch.",
       inputSchema: z.strictObject({ receiptId: z.string().regex(/^intake_[a-f0-9]{64}$/u) }),

@@ -10,6 +10,7 @@ import {
 } from "../dist/app-server-schema.js";
 import { LING_APP_SERVER_METHODS, LING_APP_SERVER_NOTIFICATION_METHODS, LING_APP_SERVER_SERVER_REQUEST_METHODS } from "../dist/app-server.js";
 import type {
+  LingAppServerDeliberationEvaluateParams, LingAppServerDeliberationEvaluateResult,
   LingAppServerGitHubDeliveryResult, LingAppServerGitHubQueueResult,
   LingAppServerVerifyOperation, LingAppServerVerifyPlanResult,
 } from "../dist/app-server.js";
@@ -103,6 +104,38 @@ test("Verify results validate check provenance, execution and cancellation", () 
   ] }).path, "result.checks[0].execution.exitCode");
   assert.ok(validateLingAppServerResult("verify/cancel", { operationId: operation.operationId, status: "unknown" }).ok);
   assert.equal(validateLingAppServerResult("verify/cancel", { operationId: operation.operationId, status: "passed" }).path, "result.status");
+});
+
+test("deliberation schemas describe the checkpoint and the frozen evaluation basis", () => {
+  const input = {
+    workItemId: "item", expectedWorkItemRevision: 2, idempotencyKey: "evaluate", decisionKey: "compatibility",
+    subject: { kind: "draft_plan", planId: "plan", planRevision: 1 },
+    checkpoint: "plan_review", checkpointRef: "plan", decisionKind: "plan_or_contract", materiality: "medium",
+    question: "How should the plan preserve compatibility?", participantIds: ["engineer", "qa"],
+    optionRefs: ["adapter", "migration"], evidenceRefs: ["callers"],
+  } satisfies LingAppServerDeliberationEvaluateParams;
+  assert.ok(validateLingAppServerParams("workItem/deliberation/evaluate", input).ok);
+  assert.ok(validateLingAppServerParams("workItem/deliberation/evaluate", {
+    ...input, subject: { kind: "workflow_stage", workflowStepId: "step", planRevision: "plan:1" },
+  }).ok);
+  assert.equal(validateLingAppServerParams("workItem/deliberation/evaluate", {
+    ...input, subject: { ...input.subject, planRevision: "plan:1" },
+  }).ok, false);
+  assert.equal(validateLingAppServerParams("workItem/deliberation/evaluate", { ...input, checkpoint: "timer" }).path, "params.checkpoint");
+  const { checkpoint, checkpointRef, optionRefs, evidenceRefs, participantIds } = input;
+  const result = { cwd: "/workspace", workItemRevision: 3, replayed: false, evaluation: {
+    evaluationId: "evaluation", decisionId: "decision", decisionRevision: "decision-sha", subjectRevision: "plan:1",
+    policyRevision: "suggestion-policy", checkpoint, checkpointRef, optionRefs, evidenceRefs, participantIds,
+    outcome: "suggest", reasonCode: "material_choice_with_evidence",
+    evaluatedAt: "2026-11-24T01:00:00.000Z", expiresAt: "2026-11-24T01:15:00.000Z",
+  } } satisfies LingAppServerDeliberationEvaluateResult;
+  assert.ok(validateLingAppServerResult("workItem/deliberation/evaluate", result).ok);
+  assert.equal(validateLingAppServerResult("workItem/deliberation/evaluate", {
+    ...result, evaluation: { ...result.evaluation, outcome: "run" },
+  }).path, "result.evaluation.outcome");
+  assert.equal(validateLingAppServerParams("workItem/deliberation/open", {
+    workItemId: "item", expectedWorkItemRevision: 3, idempotencyKey: "open",
+  }).path, "params.evaluationId");
 });
 
 test("GitHub delivery results carry the source of each check and the exact run attempt", () => {

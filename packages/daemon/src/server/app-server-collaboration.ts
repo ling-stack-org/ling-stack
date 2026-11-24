@@ -28,6 +28,7 @@ import type { ControlPlaneEvent, RunStore } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
 import { readAppServerStageBallot } from "../features/work-items/stage-ballot.js";
+import { assertCheckpointRoundCurrent, isCheckpointDeliberationRecord } from "./app-server-deliberation.js";
 
 export class AppServerCollaborationError extends Error {
   constructor(
@@ -185,6 +186,7 @@ export function settleAppServerDeliberation(
   }
 
   const workflowDecision = readWorkflowDecisionSubject(round);
+  const privateRound = isCheckpointDeliberationRecord(round);
   const id = workflowDecision ? workItemWorkflowDecisionId(workflowDecision, "resolution")
     : `work_item_deliberation_${createHash("sha256").update(round.id).digest("hex")}`;
   const prior = store.getWorkItemEvidence(id);
@@ -194,7 +196,7 @@ export function settleAppServerDeliberation(
   if (!prior && (item.revision !== input.expectedWorkItemRevision || !workflowDecision && hasPriorResolution(store, round))) {
     throw new AppServerCollaborationError("stale_revision", "The Work Item revision changed or the deliberation round already has a resolution.");
   }
-  if (!prior && decision && (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission
+  if (!prior && decision && !privateRound && (item.control.state !== "active" || item.holds.some(hold => hold.blocksNewAdmission
     && (!hold.workflowStepIds || !workflowDecision || hold.workflowStepIds.includes(workflowDecision.workflowStepId))))) {
     throw new HttpError(409, "resume_blocked", "The Work Item is held. A held round can be cancelled.");
   }
@@ -243,6 +245,14 @@ export function settleAppServerDeliberation(
       schemaVersion: 1, kind: "deliberation", action, payload, parentRecordId: round.id,
     })}`,
     sourceRefs,
+    ...(privateRound ? {
+      visibility: "owner" as const,
+      ...(decision ? { assertCurrent: () => {
+        const current = store.getWorkItem(item.id);
+        if (!current) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
+        assertCheckpointRoundCurrent(store, current, round, now);
+      } } : {}),
+    } : {}),
   }, now, {
     cwd,
     project: (entry, workItemRevision) => ({
