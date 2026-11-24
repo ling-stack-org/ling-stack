@@ -188,7 +188,8 @@ const gitHubQueueResult = objectWith({
   receipt: objectWith({
     ...workItemTarget, queueReceiptId: stringSchema, deliveryId: stringSchema, repository: stringSchema,
     repositoryId: stringSchema, pullRequestNumber: integerSchema, headSha: stringSchema,
-    status: { enum: ["pending", "enqueued", "merged", "unknown"] }, queueEntryId: stringSchema, mergedCommit: stringSchema, createdAt: stringSchema,
+    status: { enum: ["pending", "enqueued", "merged", "rejected", "unknown"] }, rejectedHttpStatus: { enum: [401, 429] },
+    queueEntryId: stringSchema, mergedCommit: stringSchema, createdAt: stringSchema,
   }, ["workItemId", "queueReceiptId", "deliveryId", "repository", "repositoryId", "pullRequestNumber", "headSha", "status", "createdAt"]),
 }, ["cwd", "receipt"]);
 const queueEvidence = objectWith({

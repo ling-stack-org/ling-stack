@@ -9,8 +9,8 @@ import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
 import { reconcileGitHubDelivery, readGitHubDelivery } from "./app-server-github-delivery.js";
-import { commitSha, digest, gitHubReadClient, type GitHubReadClient } from "./app-server-github-subject.js";
-import { appServerRecoveryFor } from "./app-server-recovery.js";
+import { commitSha, digest, gitHubReadClient, GitHubResponseError, type GitHubReadClient } from "./app-server-github-subject.js";
+import { appServerRecoveryFor, type AppServerRecoveryJournal } from "./app-server-recovery.js";
 
 type GitHubQueueContext = Pick<DaemonContext, "config" | "secretResolver" | "externalWorkFetch" | "storeRegistry" | "controlPlaneEvents">;
 
@@ -52,10 +52,15 @@ export async function enqueueGitHubDelivery(
   }
   const fingerprint = digest([input.workItemId, input.deliveryId, input.expectedWorkItemRevision, input.idempotencyKey]);
   const keyed = store.findAppServerStateByIdempotencyKey("github_queue_intent", input.idempotencyKey);
-  if (keyed) {
-    const prior = keyed.payload as QueueIntent;
-    if (prior.fingerprint !== fingerprint) throw new HttpError(409, "idempotency_conflict", "The queue key belongs to another request.");
-    return readGitHubQueue(context, store, input.workItemId, keyed.recordId);
+  const journalEntry = keyed ? recovery.getGitHubQueueEnqueue(keyed.recordId) : recovery.findGitHubQueueEnqueue(input.idempotencyKey);
+  const priorReceiptId = keyed?.recordId ?? journalEntry?.fact.id;
+  let retryAfter: string | undefined;
+  if (priorReceiptId) {
+    if ((keyed && (keyed.payload as QueueIntent).fingerprint !== fingerprint)
+      || (journalEntry && journalEntry.fact.fingerprint !== fingerprint)) throw queueKeyConflict();
+    const prior = await readGitHubQueue(context, store, input.workItemId, priorReceiptId);
+    retryAfter = journalEntry?.fact.rejectedHttpStatus !== undefined && !journalEntry.confirmed ? journalEntry.fact.attemptId : undefined;
+    if (prior.receipt.status !== "rejected" || !retryAfter) return prior;
   }
   assertWorkItemReady(store, input.workItemId, input.expectedWorkItemRevision);
   const delivery = readGitHubDelivery(store, input.workItemId);
@@ -69,6 +74,20 @@ export async function enqueueGitHubDelivery(
   const gate = policy?.mergeQueue?.requiredGate;
   if (!policy || !gate || delivery.policyRevision !== digest([client.source.repositoryId, policy])
     || delivery.subject.repositoryId !== client.source.repositoryId) throw guardUnavailable();
+  const queueReceiptId = `github_queue_${digest([delivery.subject.repositoryId, delivery.subject.number, headSha])}`;
+  if (priorReceiptId && priorReceiptId !== queueReceiptId) throw queueKeyConflict();
+  const receipt: LingAppServerGitHubQueueReceipt = {
+    queueReceiptId, workItemId: delivery.workItemId, deliveryId: delivery.deliveryId, repository: delivery.subject.repository,
+    repositoryId: delivery.subject.repositoryId, pullRequestNumber: delivery.subject.number, headSha,
+    status: "pending", createdAt: journalEntry?.fact.createdAt ?? new Date().toISOString(),
+  };
+  const subject = await currentQueueSubject(client, receipt, baseRef);
+  if (priorReceiptId && (subject?.merged === true || subject?.isInMergeQueue === true)) {
+    return readGitHubQueue(context, store, input.workItemId, queueReceiptId);
+  }
+  if (!subject || typeof subject.id !== "string" || !subject.id || subject.closed !== false || subject.isDraft !== false
+    || subject.isMergeQueueEnabled !== true || subject.stackEntry !== null || subject.isInMergeQueue !== false) throw guardUnavailable();
+  await requireQueueProtection(client, delivery, gate);
   const fresh = await reconcileGitHubDelivery(context, {
     cwd, workItemId: delivery.workItemId, threadId: delivery.threadId, expectedWorkItemRevision: input.expectedWorkItemRevision,
     repository: delivery.subject.repository, pullRequestNumber: delivery.subject.number, candidateDigest: delivery.candidateDigest,
@@ -76,52 +95,54 @@ export async function enqueueGitHubDelivery(
   if (fresh.deliveryId !== input.deliveryId || fresh.checks.some(({ check, outcome }) => check.basis === "head" && outcome !== "passed")) {
     throw new HttpError(409, "stale_revision", "The delivery or a required head check changed before queue admission.");
   }
-  const queueReceiptId = `github_queue_${digest([delivery.subject.repositoryId, delivery.subject.number, headSha])}`;
-  const receipt: LingAppServerGitHubQueueReceipt = {
-    queueReceiptId, workItemId: delivery.workItemId, deliveryId: delivery.deliveryId, repository: delivery.subject.repository,
-    repositoryId: delivery.subject.repositoryId, pullRequestNumber: delivery.subject.number, headSha,
-    status: "pending", createdAt: new Date().toISOString(),
-  };
-  const subject = await currentQueueSubject(client, receipt, baseRef);
-  if (!subject || typeof subject.id !== "string" || !subject.id || subject.closed !== false || subject.isDraft !== false
-    || subject.isMergeQueueEnabled !== true || subject.stackEntry !== null || subject.isInMergeQueue !== false) throw guardUnavailable();
-  await requireQueueProtection(client, delivery, gate);
 
   assertWorkItemReady(store, input.workItemId, input.expectedWorkItemRevision);
   if (readGitHubDelivery(store, input.workItemId)?.deliveryId !== input.deliveryId) {
     throw new HttpError(409, "stale_revision", "The delivery changed before queue admission.");
   }
+  const known = recovery.getGitHubQueueEnqueue(queueReceiptId);
+  if (known && known.fact.fingerprint !== fingerprint) throw queueKeyConflict();
   const intent = { fingerprint, baseRef, acceptanceId: delivery.acceptanceId, receipt };
   const retained = store.putAppServerState({
     kind: "github_queue_intent", recordId: queueReceiptId, idempotencyKey: input.idempotencyKey,
     expectedRevision: 0, replayByIdempotencyKey: true, payload: intent,
   }, receipt.createdAt);
   if (!retained || (retained.record.payload as QueueIntent).fingerprint !== fingerprint) {
-    throw new HttpError(409, "idempotency_conflict", "A queue request already owns this pull request head.");
+    throw queueKeyConflict();
   }
-  if (retained.status !== "created") return readGitHubQueue(context, store, input.workItemId, queueReceiptId);
-  if (!recovery.reserveGitHubQueueEnqueue({
+  if (retained.status !== "created" && !retryAfter) return readGitHubQueue(context, store, input.workItemId, queueReceiptId);
+  const attemptId = recovery.reserveGitHubQueueEnqueue({
     id: queueReceiptId, workItemId: receipt.workItemId, repository: receipt.repository, repositoryId: receipt.repositoryId, baseRef,
     pullRequestNumber: receipt.pullRequestNumber, headSha, createdAt: receipt.createdAt, deliveryId: receipt.deliveryId,
     acceptanceId: delivery.acceptanceId, fingerprint, idempotencyKey: input.idempotencyKey,
-  })) return readGitHubQueue(context, store, input.workItemId, queueReceiptId);
+  }, retryAfter);
+  if (!attemptId) return readGitHubQueue(context, store, input.workItemId, queueReceiptId);
 
-  const observation = await client.query(enqueueMutation, { id: subject.id, head: headSha, key: queueReceiptId }).catch(() => undefined);
+  const observation = await client.query(enqueueMutation, { id: subject.id, head: headSha, key: queueReceiptId }).catch((error: unknown) => {
+    if (error instanceof GitHubResponseError && (error.responseStatus === 401 || error.responseStatus === 429)) {
+      recovery.rejectGitHubQueueEnqueue(queueReceiptId, attemptId, error.responseStatus);
+    }
+    return undefined;
+  });
   const accepted = observation?.enqueuePullRequest;
   const entryId = isRecord(accepted) && accepted.clientMutationId === queueReceiptId
     ? readQueueEntryId(accepted.mergeQueueEntry, receipt, baseRef) : undefined;
-  const committed = commitQueueStatus(store, intent, retained.record.revision, entryId
+  if (entryId) recovery.confirmGitHubQueueEnqueue(queueReceiptId);
+  const latest = store.getAppServerState("github_queue_intent", queueReceiptId) ?? retained.record;
+  const current = latest.payload as QueueIntent;
+  if (current.receipt.status === "merged" || (!entryId && current.receipt.status === "enqueued")) {
+    return { cwd, receipt: current.receipt };
+  }
+  return commitQueueStatus(store, current, latest.revision, entryId
     ? { ...receipt, status: "enqueued", queueEntryId: entryId }
-    : { ...receipt, status: "unknown" });
-  if (committed.receipt.status === "enqueued") recovery.confirmGitHubQueueEnqueue(queueReceiptId);
-  return committed;
+    : unresolvedQueueReceipt(receipt, recovery));
 }
 
 export async function readGitHubQueue(
   context: GitHubQueueContext, store: RunStore, workItemId: string, queueReceiptId: string,
 ): Promise<LingAppServerGitHubQueueResult> {
   const recovery = appServerRecoveryFor(context.config, store);
-  const fact = recovery?.getGitHubQueueEnqueue(queueReceiptId);
+  const fact = recovery?.getGitHubQueueEnqueue(queueReceiptId)?.fact;
   const saved = store.getAppServerState("github_queue_intent", queueReceiptId) ?? (() => {
     const accepted = store.getAppServerState("work_item_acceptance", workItemId)?.payload;
     if (fact?.workItemId !== workItemId || !store.getWorkItem(workItemId) || !isRecord(accepted) || accepted.id !== fact.acceptanceId) return undefined;
@@ -137,13 +158,12 @@ export async function readGitHubQueue(
   if (!saved || !intent || intent.receipt.workItemId !== workItemId) {
     throw new HttpError(404, "github_queue_intent_not_found", "The GitHub queue receipt is unavailable for this Work Item.");
   }
-  const receipt = intent.receipt;
-  const observed = receipt.status === "merged" ? receipt : await observeQueueReceipt(context, store, receipt, intent.baseRef);
-  const committed = commitQueueStatus(store, intent, saved.revision, observed);
-  if (fact && (committed.receipt.status === "enqueued" || committed.receipt.status === "merged")) {
-    recovery?.confirmGitHubQueueEnqueue(queueReceiptId);
-  }
-  return committed;
+  if (fact && fact.fingerprint !== intent.fingerprint) throw queueKeyConflict();
+  if (intent.receipt.status === "merged") return { cwd: store.paths.cwd, receipt: intent.receipt };
+  const { queueEntryId: _entry, mergedCommit: _merge, rejectedHttpStatus: _rejected, ...receipt } = intent.receipt;
+  const observed = await observeQueueReceipt(context, store, receipt, intent.baseRef);
+  if (fact && observed) recovery?.confirmGitHubQueueEnqueue(queueReceiptId);
+  return commitQueueStatus(store, intent, saved.revision, observed ?? unresolvedQueueReceipt(receipt, recovery));
 }
 
 export function gitHubQueueReceiptConfirmed(store: RunStore, fact: {
@@ -159,14 +179,22 @@ export function gitHubQueueReceiptConfirmed(store: RunStore, fact: {
 
 async function observeQueueReceipt(
   context: GitHubQueueContext, store: RunStore, receipt: LingAppServerGitHubQueueReceipt, baseRef: string,
-): Promise<LingAppServerGitHubQueueReceipt> {
+): Promise<LingAppServerGitHubQueueReceipt | undefined> {
   const client = gitHubReadClient(context, store.paths.cwd, receipt.repository);
   const current = await currentQueueSubject(client, receipt, baseRef).catch(() => undefined);
   const mergedCommit = current?.merged === true && isRecord(current.mergeCommit) ? commitSha(current.mergeCommit.oid) : undefined;
   if (mergedCommit) return { ...receipt, status: "merged", mergedCommit };
   const queueEntryId = current?.isInMergeQueue === true ? readQueueEntryId(current.mergeQueueEntry, receipt, baseRef) : undefined;
   if (queueEntryId) return { ...receipt, status: "enqueued", queueEntryId };
-  return { ...receipt, status: "unknown" };
+  return undefined;
+}
+
+function unresolvedQueueReceipt(
+  receipt: LingAppServerGitHubQueueReceipt, recovery: AppServerRecoveryJournal | undefined,
+): LingAppServerGitHubQueueReceipt {
+  const entry = recovery?.getGitHubQueueEnqueue(receipt.queueReceiptId);
+  const rejectedHttpStatus = entry && !entry.confirmed ? entry.fact.rejectedHttpStatus : undefined;
+  return rejectedHttpStatus === undefined ? { ...receipt, status: "unknown" } : { ...receipt, status: "rejected", rejectedHttpStatus };
 }
 
 function commitQueueStatus(store: RunStore, intent: QueueIntent, revision: number, receipt: LingAppServerGitHubQueueReceipt): LingAppServerGitHubQueueResult {
@@ -224,4 +252,8 @@ async function requireQueueProtection(
 
 function guardUnavailable(): HttpError {
   return new HttpError(409, "github_queue_guard_unavailable", "The repository has no matching provider-enforced merge queue and trusted CI gate.");
+}
+
+function queueKeyConflict(): HttpError {
+  return new HttpError(409, "idempotency_conflict", "A different queue request owns this key or pull request head.");
 }

@@ -169,6 +169,11 @@ test("GitHub delivery results carry the source of each check and the exact run a
       repositoryId: "73", pullRequestNumber: 12, headSha: "head", status: "unknown", createdAt: "2026-11-23T01:00:00Z" },
   } satisfies LingAppServerGitHubQueueResult;
   assert.ok(validateLingAppServerResult("github/delivery/enqueue", queue).ok);
+  const rejected = { ...queue, receipt: { ...queue.receipt, status: "rejected", rejectedHttpStatus: 429 } };
+  assert.ok(validateLingAppServerResult("github/delivery/enqueue", rejected).ok);
+  assert.equal(validateLingAppServerResult("github/delivery/queue/read", {
+    ...rejected, receipt: { ...rejected.receipt, rejectedHttpStatus: 503 },
+  }).path, "result.receipt.rejectedHttpStatus");
   assert.equal(validateLingAppServerResult("github/delivery/queue/read", {
     ...queue, receipt: { ...queue.receipt, status: "passed" },
   }).path, "result.receipt.status");

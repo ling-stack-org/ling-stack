@@ -18,6 +18,13 @@ export function gitHubWorkItemTargetKey(subject: Pick<LingAppServerGitHubSubject
   return `github_${digest([subject.githubInstanceId, subject.repositoryId, subject.kind, subject.number])}`;
 }
 
+export class GitHubResponseError extends HttpError {
+  constructor(readonly responseStatus: number) {
+    super(responseStatus === 404 || responseStatus === 403 ? 404 : 502,
+      "github_observation_unavailable", "GitHub could not confirm the requested object.");
+  }
+}
+
 export function gitHubReadClient(context: Pick<DaemonContext, "config" | "secretResolver" | "externalWorkFetch">, cwd: string, repository: string) {
   const source = context.config.appServerGitHubSources.find(item => item.workspaceRoot === cwd && item.repository === repository);
   if (!source) throw new HttpError(403, "github_subject_unavailable", "The GitHub repository is unavailable in this workspace.");
@@ -39,10 +46,7 @@ export function gitHubReadClient(context: Pick<DaemonContext, "config" | "secret
     } catch {
       throw new HttpError(502, "github_observation_unavailable", "GitHub could not confirm the requested object.");
     }
-    if (!response.ok) {
-      throw new HttpError(response.status === 404 || response.status === 403 ? 404 : 502,
-        "github_observation_unavailable", "GitHub could not confirm the requested object.");
-    }
+    if (!response.ok) throw new GitHubResponseError(response.status);
     return await response.json().catch(() => undefined);
   }
   const getJson = (path: string) => requestJson(`https://api.github.com/repos/${repository}${path}`);

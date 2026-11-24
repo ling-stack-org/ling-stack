@@ -2178,6 +2178,7 @@ test("GitHub delivery requires current queue membership and a provider-attested 
   let guardPresent = false;
   let queuePresent = false;
   let queueStarts = 0;
+  const enqueueMutationIds: string[] = [];
   const fixture = await releaseFixture(t, {
     recoveryJournal: true,
     secretResolver: createEnvSecretResolver({ LING_QUEUE_FIXTURE_AUTH: credential }),
@@ -2195,8 +2196,10 @@ test("GitHub delivery requires current queue membership and a provider-attested 
         if (request.query.startsWith("mutation LingEnqueue")) {
           assert.equal(request.variables.id, "pr-13");
           assert.equal(request.variables.head, head);
+          enqueueMutationIds.push(request.variables.key);
+          if (enqueueMutationIds.length === 1) return Response.json({}, { status: 429 });
+          if (enqueueMutationIds.length === 2) return Response.json({}, { status: 401 });
           assert.equal(queuePresent, false);
-          queuePresent = true;
           queueStarts++;
           throw new Error("The fixture loses the response after the provider accepts.");
         }
@@ -2259,7 +2262,7 @@ test("GitHub delivery requires current queue membership and a provider-attested 
   git("add", "candidate.txt");
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
   head = git("rev-parse", "HEAD");
-  const client = await fixture.connect();
+  let client = await fixture.connect();
   const { workItem } = await client.call<LingAppServerWorkItemResult>("workItem/create", { sourceId: "queue", title: "Queue changes" });
   const accepted = await client.call<LingAppServerWorkItemResult>("workItem/accept", {
     workItemId: workItem.workItemId, expectedWorkItemRevision: Number(workItem.revision), idempotencyKey: "accept-queue",
@@ -2272,27 +2275,58 @@ test("GitHub delivery requires current queue membership and a provider-attested 
   })).delivery;
   const beforeQueue = await reconcile();
   assert.equal(beforeQueue.checks[0]?.reason, "merge_group_membership_unavailable");
+  const databasePath = fixture.getStore().paths.databasePath;
+  const backup = join(fixture.root, "before-queue-attempt.sqlite");
+  backupSqlite(databasePath, backup);
   const enqueue = { workItemId: workItem.workItemId, deliveryId: beforeQueue.deliveryId,
     expectedWorkItemRevision: Number(accepted.workItem.revision), idempotencyKey: "enqueue-once", confirmed: true };
   await assert.rejects(client.call("github/delivery/enqueue", enqueue), { code: "github_queue_guard_unavailable" });
-  assert.equal(queueStarts, 0);
+  assert.equal(enqueueMutationIds.length, 0);
+  guardPresent = true;
+  const rejected = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
+  assert.equal(rejected.receipt.status, "rejected");
+  assert.equal(rejected.receipt.rejectedHttpStatus, 429);
+  const { queueReceiptId } = rejected.receipt;
+  const prepared = await client.call<LingAppServerRecoveryResult>("server/recovery/prepare", {
+    expectedRevision: 0, idempotencyKey: "restore-before-queue-attempt",
+  });
+  await fixture.restart({ beforeStart: () => restoreSqlite(databasePath, backup) });
+  client = await fixture.connect();
+  await assert.rejects(client.call("github/delivery/enqueue", enqueue), { code: "resume_blocked" });
+  const recovery = await client.call<LingAppServerRecoveryResult>("server/recovery/reconcile", { expectedRevision: prepared.revision });
+  assert.equal(recovery.status, "ready");
+  await assert.rejects(client.call("github/delivery/enqueue", { ...enqueue, deliveryId: "other-delivery" }), { code: "idempotency_conflict" });
+  const queueRead = { workItemId: workItem.workItemId, queueReceiptId };
+  assert.deepEqual(await client.call("github/delivery/queue/read", queueRead), rejected);
+  await assert.rejects(client.call("github/delivery/enqueue", { ...enqueue, idempotencyKey: "different-key" }), { code: "idempotency_conflict" });
+  guardPresent = false;
+  await assert.rejects(client.call("github/delivery/enqueue", enqueue), { code: "github_queue_guard_unavailable" });
   guardPresent = true;
   const uncommitted = join(fixture.cwd, "local-only.txt");
   await writeFile(uncommitted, "Uncommitted queue input\n");
   await assert.rejects(client.call("github/delivery/enqueue", enqueue), { code: "candidate_stale" });
-  assert.equal(queueStarts, 0);
+  assert.deepEqual(enqueueMutationIds, [queueReceiptId]);
   await unlink(uncommitted);
-  const first = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
-  assert.equal(first.receipt.status, "unknown");
+  const retry = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
+  assert.deepEqual(retry, { ...rejected, receipt: { ...rejected.receipt, rejectedHttpStatus: 401 } });
+  const peer = await fixture.connect();
+  const concurrent = await Promise.all([client, peer].map(connection =>
+    connection.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue)));
+  for (const { receipt } of concurrent) {
+    assert.equal(receipt.queueReceiptId, queueReceiptId);
+    assert.equal(receipt.status, "unknown");
+    assert.equal(receipt.rejectedHttpStatus, undefined);
+  }
+  const again = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
+  assert.equal(again.receipt.status, "unknown");
+  assert.deepEqual(enqueueMutationIds, [queueReceiptId, queueReceiptId, queueReceiptId]);
+  queuePresent = true;
   const queued = await client.call<LingAppServerGitHubQueueResult>("github/delivery/enqueue", enqueue);
   assert.equal(queued.receipt.status, "enqueued");
   assert.equal(queued.receipt.queueEntryId, "entry-13");
   assert.equal(queueStarts, 1);
-  const { queueReceiptId } = queued.receipt;
   assert.ok(fixture.getStore().deleteAppServerState("github_queue_intent", queueReceiptId));
-  assert.deepEqual(await client.call<LingAppServerGitHubQueueResult>("github/delivery/queue/read", {
-    workItemId: workItem.workItemId, queueReceiptId,
-  }), queued);
+  assert.deepEqual(await client.call<LingAppServerGitHubQueueResult>("github/delivery/queue/read", queueRead), queued);
   assert.equal(queueStarts, 1);
   assert.equal((await reconcile()).checks[0]?.reason, "merge_group_membership_unavailable");
   unrelatedHead = false;

@@ -18,13 +18,18 @@ type JournalFact =
   | { readonly kind: "github_queue_enqueue"; readonly id: string; readonly workItemId: string; readonly repositoryId: string;
       readonly pullRequestNumber: number; readonly headSha: string; readonly repository: string; readonly baseRef: string;
       readonly deliveryId: string; readonly acceptanceId: string; readonly fingerprint: string; readonly idempotencyKey: string;
-      readonly createdAt: string }
+      readonly createdAt: string; readonly attemptId?: string; readonly rejectedHttpStatus?: 401 | 429 }
   | { readonly kind: "github_delivery"; readonly id: string; readonly workItemId: string; readonly mergedCommit: string;
       readonly repositoryId: string; readonly number: number; readonly headSha?: string; readonly acceptanceId: string };
 
 type DeliveryFact = Extract<JournalFact, { kind: "github_delivery" }>;
 type DispatchFact = Extract<JournalFact, { kind: "external_agent_dispatch" }>;
 type QueueFact = Extract<JournalFact, { kind: "github_queue_enqueue" }>;
+
+interface QueueRecoveryEntry {
+  readonly fact: QueueFact;
+  readonly confirmed: boolean;
+}
 
 interface RecoveryEpoch {
   readonly revision: number;
@@ -129,7 +134,10 @@ export class AppServerRecoveryJournal {
       const accept = db.prepare("UPDATE recovery_journal SET reconciled_revision=? WHERE kind=? AND id=?");
       for (const row of pending) {
         const fact = readFact(row);
-        if (fact.kind !== "grant_revocation" && (row.completed_at || confirmed(fact))) accept.run(current.revision, fact.kind, fact.id);
+        if (fact.kind !== "grant_revocation" && (row.completed_at
+          || (fact.kind === "github_queue_enqueue" && fact.rejectedHttpStatus !== undefined) || confirmed(fact))) {
+          accept.run(current.revision, fact.kind, fact.id);
+        }
       }
       if (!pendingCount(db, current.revision)) {
         db.prepare("UPDATE recovery_epochs SET reconciled_at=? WHERE revision=?").run(now(), current.revision);
@@ -182,18 +190,40 @@ export class AppServerRecoveryJournal {
     });
   }
 
-  reserveGitHubQueueEnqueue(fact: Omit<QueueFact, "kind">): boolean {
+  reserveGitHubQueueEnqueue(
+    fact: Omit<QueueFact, "kind" | "attemptId" | "rejectedHttpStatus">, retryAfter?: string,
+  ): string | undefined {
     return this.transaction(db => {
       assertReady(readEpoch(db));
-      return insertFact(db, { kind: "github_queue_enqueue", ...fact }, now());
+      const attemptId = randomUUID();
+      if (retryAfter === undefined) {
+        return insertFact(db, { kind: "github_queue_enqueue", ...fact, attemptId }, now()) ? attemptId : undefined;
+      }
+      const reserved = db.prepare(`UPDATE recovery_journal
+        SET fact_json=json_set(json_remove(fact_json, '$.rejectedHttpStatus'), '$.attemptId', ?)
+        WHERE kind='github_queue_enqueue' AND id=? AND completed_at IS NULL
+          AND json_extract(fact_json, '$.fingerprint')=? AND json_extract(fact_json, '$.attemptId')=?
+          AND json_extract(fact_json, '$.rejectedHttpStatus') IN (401, 429)`)
+        .run(attemptId, fact.id, fact.fingerprint, retryAfter);
+      return reserved.changes === 1 ? attemptId : undefined;
     });
   }
 
-  getGitHubQueueEnqueue(id: string): QueueFact | undefined {
-    return this.access(db => {
-      const row = db.prepare("SELECT id, kind, fact_json FROM recovery_journal WHERE kind='github_queue_enqueue' AND id=?").get(id);
-      const fact = row && readFact(row);
-      return fact?.kind === "github_queue_enqueue" ? fact : undefined;
+  getGitHubQueueEnqueue(id: string): QueueRecoveryEntry | undefined {
+    return this.access(db => readQueueEntry(db.prepare(`SELECT id, kind, fact_json, completed_at FROM recovery_journal
+      WHERE kind='github_queue_enqueue' AND id=?`).get(id)));
+  }
+
+  findGitHubQueueEnqueue(idempotencyKey: string): QueueRecoveryEntry | undefined {
+    return this.access(db => readQueueEntry(db.prepare(`SELECT id, kind, fact_json, completed_at FROM recovery_journal
+      WHERE kind='github_queue_enqueue' AND json_extract(fact_json, '$.idempotencyKey')=?`).get(idempotencyKey)));
+  }
+
+  rejectGitHubQueueEnqueue(id: string, attemptId: string, httpStatus: 401 | 429): void {
+    this.access(db => {
+      db.prepare(`UPDATE recovery_journal SET fact_json=json_set(fact_json, '$.rejectedHttpStatus', ?)
+        WHERE kind='github_queue_enqueue' AND id=? AND completed_at IS NULL AND json_extract(fact_json, '$.attemptId')=?`)
+        .run(httpStatus, id, attemptId);
     });
   }
 
@@ -302,6 +332,11 @@ function readFact(row: Record<string, SQLOutputValue>): JournalFact {
     throw new Error("App Server recovery journal is corrupt.");
   }
   return fact;
+}
+
+function readQueueEntry(row: Record<string, SQLOutputValue> | undefined): QueueRecoveryEntry | undefined {
+  const fact = row && readFact(row);
+  return fact?.kind === "github_queue_enqueue" ? { fact, confirmed: typeof row?.completed_at === "string" } : undefined;
 }
 
 function requiresReconciliation(epoch: RecoveryEpoch): boolean {

@@ -79,6 +79,8 @@ Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI std
 
 ### 受保护 GitHub 合并队列
 
+源码验收覆盖 GitHub 返回 401 和 429 时用原键显式重试。恢复到入队前的 SQLite 快照后，Host 用独立日志确认拒绝并重建原回执。重试重新核对队列规则和干净候选。两个客户端并发提交只触发一次新 mutation。服务接受后丢失响应时，重复请求只对账，等原队列项出现后复用回执。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
+
 测试仓库的 `main` 使用活动规则集 `27867253`，要求合并队列，以及 GitHub Actions App `15368` 发布的两个必需检查。规则集没有绕过身份。候选 `99310081a` 在入队前记录了通过的 PR head 检查，合并组证据尚不可用，Goal 此时拒绝结案。GitHub 原生入队后，Daemon 把队列成员绑定到 base 和受测提交 `d6f96bd331502ec8417269009fc95682bc01991a`。实际合并提交与该提交一致。Daemon 重启后复用交付回执并完成 Goal。 [测试 PR](https://github.com/ling-stack-org/ling-delivery-acceptance-20261123/pull/1) · [head 检查](https://github.com/ling-stack-org/ling-delivery-acceptance-20261123/actions/runs/45093476859) · [队列检查](https://github.com/ling-stack-org/ling-delivery-acceptance-20261123/actions/runs/45094004869)
 
 测试仓库未配置独立检查 App，Ling 主动入队返回 `github_queue_guard_unavailable`。第二个合成 PR 的两个 head 检查通过后，使用固定 head 调用直接合并，GitHub 返回 405 并要求经过合并队列。GitHub 原生入队后，该 PR 使用推进后的 base 生成合并组。运行器启动延迟导致队列以 `checks_timed_out` 移除该 PR，合并组检查随后通过。Daemon 重启后可读取历史队列回执，当前对账继续保留通过的 head 检查，将合并组证据标为 `merge_group_membership_unavailable`，并拒绝完成 Goal。 [直接合并校验 PR](https://github.com/ling-stack-org/ling-delivery-acceptance-20261123/pull/2) · [迟到的队列检查](https://github.com/ling-stack-org/ling-delivery-acceptance-20261123/actions/runs/45095947983)

@@ -1672,7 +1672,8 @@ export interface LingAppServerGitHubQueueReceipt {
   readonly repositoryId: string;
   readonly pullRequestNumber: number;
   readonly headSha: string;
-  readonly status: "pending" | "enqueued" | "merged" | "unknown";
+  readonly status: "pending" | "enqueued" | "merged" | "rejected" | "unknown";
+  readonly rejectedHttpStatus?: 401 | 429;
   readonly queueEntryId?: string;
   readonly mergedCommit?: string;
   readonly createdAt: string;
