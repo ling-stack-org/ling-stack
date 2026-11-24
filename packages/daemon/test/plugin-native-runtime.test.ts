@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
+import { pathToFileURL } from "node:url";
 import JSZip from "jszip";
 import { LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import { createSqliteRunStore, resolveStoragePaths } from "@ling-stack/core";
@@ -14,6 +16,7 @@ import {
 } from "@ling-stack/core/official-plugin-runtime";
 import type { LingPluginArtifactDescriptor, LingPluginCatalog } from "@ling-stack/plugin-sdk";
 import type { McpBroker } from "../dist/context.js";
+import type { BundledPluginIndexEntry } from "../dist/features/plugins/bundled-index.js";
 import { startDaemon } from "../dist/index.js";
 import { createCuaDriverDescriptor, CUA_DRIVER_MCP_SERVER_ID, CUA_DRIVER_PLUGIN_ID,
   isCuaDriverPlatformSupported } from "../dist/features/plugins/presets.js";
@@ -25,6 +28,29 @@ const manifestPath = ".ling-plugin/plugin.json";
 const checksumPath = ".ling-plugin/checksums.json";
 const platform = process.platform as LingPluginArtifactDescriptor["platform"];
 const arch = process.arch as LingPluginArtifactDescriptor["arch"];
+
+test("packaged plugin discovery supports a Desktop without bundled plugin resources", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ling-packaged-plugin-index-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const resourcesPath = join(root, "Resources");
+  const indexPath = join(resourcesPath, "app.asar", "dist", "daemon", "bundled-index.mjs");
+  await mkdir(dirname(indexPath), { recursive: true });
+  await copyFile(new URL("../dist/features/plugins/bundled-index.js", import.meta.url), indexPath);
+
+  const probe = `
+    process.resourcesPath = process.argv[2];
+    const { listBundledPluginIndexEntries } = await import(process.argv[1]);
+    console.log(JSON.stringify(listBundledPluginIndexEntries()));
+  `;
+  const entries = (): readonly BundledPluginIndexEntry[] => JSON.parse(execFileSync(process.execPath, [
+    "--input-type=module", "--eval", probe, pathToFileURL(indexPath).href, resourcesPath,
+  ], { cwd: root, encoding: "utf8" }));
+  assert.deepEqual(entries(), []);
+
+  const bundledRoot = join(resourcesPath, "bundled", "cua-driver");
+  await mkdir(bundledRoot, { recursive: true });
+  assert.deepEqual(entries().map(({ id, packageRoot }) => [id, packageRoot]), [[CUA_DRIVER_PLUGIN_ID, bundledRoot]]);
+});
 
 test("native plugin installs from a clean workspace and can roll back offline from a second workspace", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-native-plugin-"));

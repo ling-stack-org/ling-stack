@@ -21,11 +21,13 @@ export interface BundledPackageRootResolutionOptions {
 }
 
 export function listBundledPluginIndexEntries(): readonly BundledPluginIndexEntry[] {
+  const packageRoot = resolveBundledPackageRoot("cua-driver");
+  if (!existsSync(packageRoot)) return [];
   return [
     {
       id: CUA_DRIVER_PLUGIN_ID,
       sourceKind: "bundled",
-      packageRoot: resolveBundledPackageRoot("cua-driver"),
+      packageRoot,
       pinnedVersion: "0.2.0",
       defaultInstalled: false,
     },
