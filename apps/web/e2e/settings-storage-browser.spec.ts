@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
+import type { DesktopBrowserSettingsAction } from "../../desktop/shared/browser-capabilities.js";
+import type { BrowserManagementState } from "../../desktop/shared/browser-management.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
@@ -8,14 +10,14 @@ test("Desktop Settings shows measured storage and editable browser defaults", as
   page.on("pageerror", error => errors.push(error.message));
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
-    const management = { history: [{ id: "visited", title: "Example", url: "https://example.com", visitedAt: Date.now() }],
+    let management: BrowserManagementState = { history: [{ id: "visited", title: "Example", url: "https://example.com", visitedAt: Date.now() }],
       downloads: [], devices: [], downloadDirectory: "/tmp/downloads", askBeforeDownload: true, extensions: [] };
     const browser = {
       getState: async () => ({ generation: 1, revision: 0, tabs: [], preferences: { websiteLinks: "in_app", localhostLinks: "in_app", restoreTabs: true } }),
       act: async () => ({ generation: 1, revision: 0, tabs: [], preferences: { websiteLinks: "in_app", localhostLinks: "in_app", restoreTabs: true } }),
       getSettingsState: async () => management,
-      actSettings: async (request: { action: string; rule?: { origin: string; permission: string; decision: string } }) => {
-        if (request.action === "device_permission" && request.rule) management.devices = [request.rule];
+      actSettings: async (request: DesktopBrowserSettingsAction) => {
+        if (request.action === "device_permission") management = { ...management, devices: [request.rule] };
         if (request.action === "download_preferences") return { ...management, error: true };
         return management;
       },
