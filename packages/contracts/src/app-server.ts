@@ -1206,6 +1206,7 @@ export interface LingAppServerDeliberationEvaluateParams {
   readonly participantIds: readonly string[];
   readonly optionRefs: readonly string[];
   readonly evidenceRefs: readonly string[];
+  readonly candidateDigest?: string;
   readonly unresolved?: "intent" | "fact" | "handoff";
 }
 
@@ -1222,6 +1223,7 @@ export interface LingAppServerDeliberationEvaluation {
   readonly optionRefs: readonly string[];
   readonly evidenceRefs: readonly string[];
   readonly participantIds: readonly string[];
+  readonly candidateDigest?: string;
   readonly expiresAt: string;
   readonly evaluatedAt: string;
 }

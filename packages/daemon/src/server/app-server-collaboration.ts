@@ -28,7 +28,7 @@ import type { ControlPlaneEvent, RunStore } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
 import { readAppServerStageBallot } from "../features/work-items/stage-ballot.js";
-import { assertCheckpointRoundCurrent, isCheckpointDeliberationRecord } from "./app-server-deliberation.js";
+import { assertCheckpointRoundCandidate, assertCheckpointRoundCurrent, isCheckpointDeliberationRecord } from "./app-server-deliberation.js";
 
 export class AppServerCollaborationError extends Error {
   constructor(
@@ -167,13 +167,13 @@ export function openReadyWorkItemStageDeliberations(store: RunStore, workflowId:
   return events;
 }
 
-export function settleAppServerDeliberation(
+export async function settleAppServerDeliberation(
   store: RunStore,
   input: LingAppServerDeliberationSettlementParams,
   decision: LingAppServerDeliberationDecideParams["decision"] | undefined,
   now: string,
   cwd: string,
-): LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent } {
+): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent }> {
   const item = store.getWorkItem(input.workItemId);
   if (!item) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
   const round = readWorkItemCollaborationRecord(store, item.id, input.roundId);
@@ -233,6 +233,7 @@ export function settleAppServerDeliberation(
     }
     return { status: "replayed", record: { ...saved, workItemRevision: item.revision }, workItemRevision: item.revision };
   }
+  if (privateRound && decision) await assertCheckpointRoundCandidate(store, item, round, now);
   const resolution = store.appendWorkItemEvidence({
     id,
     workItemId: item.id,

@@ -402,11 +402,11 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
           decisionKey: stringSchema, subject: deliberationSubject, checkpoint: deliberationCheckpoint, checkpointRef: stringSchema,
           decisionKind: { enum: LING_APP_SERVER_DELIBERATION_DECISION_KINDS }, materiality: { enum: LING_APP_SERVER_DECISION_MATERIALITIES },
           question: stringSchema, participantIds: stringArraySchema, optionRefs: stringArraySchema, evidenceRefs: stringArraySchema,
-          unresolved: { enum: ["intent", "fact", "handoff"] },
+          candidateDigest: stringSchema, unresolved: { enum: ["intent", "fact", "handoff"] },
         }, ["workItemId", "expectedWorkItemRevision", "idempotencyKey", "decisionKey", "subject", "checkpoint", "checkpointRef",
           "decisionKind", "materiality", "question", "participantIds", "optionRefs", "evidenceRefs"]),
         result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,
-          evaluation: objectWith(deliberationEvaluationFields, Object.keys(deliberationEvaluationFields)),
+          evaluation: objectWith({ ...deliberationEvaluationFields, candidateDigest: stringSchema }, Object.keys(deliberationEvaluationFields)),
         }, ["cwd", "workItemRevision", "replayed", "evaluation"]),
       };
     case "workItem/deliberation/open":

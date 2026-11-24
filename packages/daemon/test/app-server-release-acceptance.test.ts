@@ -3579,7 +3579,7 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
   return { fixture, store, client, item, workItem, workflowId: accepted.workflowId, waiting, respondent, channel, thread, plan, preset };
 }
 
-test("an in-flight stage routes fact disputes to Verify and keeps only the current tradeoff eligible for a decision", { timeout: 30_000 }, async t => {
+test("an in-flight stage verifies disputed facts and fences decisions to the current candidate", { timeout: 30_000 }, async t => {
   let finishStage = () => {};
   const stageGate = new Promise<void>(resolve => { finishStage = resolve; });
   const provider = await startLoopbackPiProvider(async () => {
@@ -3587,7 +3587,25 @@ test("an in-flight stage routes fact disputes to Verify and keeps only the curre
     return { text: "Compatibility stage completed." };
   });
   t.after(() => { finishStage(); return provider.close(); });
-  const { fixture, store, client, workItem, item, respondent, channel, workflowId } = await stageQuestionWorkflow(t, provider.baseUrl);
+  const { fixture, store, client, workItem, item, respondent, channel, workflowId } = await stageQuestionWorkflow(t, provider.baseUrl, false, undefined, {
+    async verificationRecipes(root, cwd) {
+      const verifier = join(root, "check-compatibility.cjs");
+      const script = 'const fs = require("node:fs"); if (!fs.readFileSync("contract.txt", "utf8").includes("legacy field")) process.exit(1);';
+      await writeFile(verifier, script);
+      return [{ id: "compatibility", label: "Check the public contract", kind: "test", workspaceRoot: cwd, argv: [process.execPath, verifier],
+        paths: ["contract.txt"], required: true, verifier: { coverage: "Check the legacy caller's field",
+          sources: [{ path: verifier, sha256: createHash("sha256").update(script).digest("hex") }] } }];
+    },
+  });
+  const contractPath = join(fixture.cwd, "contract.txt");
+  const contract = "The legacy field remains readable.\n";
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(contractPath, "The legacy field remains visible.\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  git("init", "-q");
+  git("add", "contract.txt", ".gitignore");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Record the original contract");
+  await writeFile(contractPath, contract);
   const now = new Date().toISOString();
   const participantIds = ["teammate_builtin_engineer", "teammate_builtin_qa"];
   for (const id of participantIds) store.replaceTeammateChannelMemberships(id, [{ channelId: channel.id }], now);
@@ -3616,26 +3634,49 @@ test("an in-flight stage routes fact disputes to Verify and keeps only the curre
   const { evaluation: requiresCheck } = await evaluate(input);
   assert.equal(requiresCheck.outcome, "verify");
   assert.equal(provider.requests.length, 1);
+  const { candidate } = await client.call<LingAppServerCaptureChangesResult>("changes/capture");
+  const { unresolved: _fact, ...tradeoff } = input;
+  const { evaluation: missingCheck } = await evaluate({
+    ...tradeoff, candidateDigest: candidate.candidateDigest,
+    expectedWorkItemRevision: currentRevision(), idempotencyKey: "candidate-without-check",
+  });
+  assert.equal(missingCheck.reasonCode, "verification_missing_for_candidate");
+  const plan = await client.call<LingAppServerVerifyPlanResult>("verify/plan", {
+    workItemId, planRevision, candidate, requestedChecks: ["compatibility"], idempotencyKey: "plan-disputed-check",
+  });
+  const operation = await client.call<LingAppServerVerifyOperation>("verify/start", {
+    planId: plan.planId, planRevision: plan.planRevision, candidateDigest: candidate.candidateDigest, idempotencyKey: "check-disputed-fact",
+  });
+  const verified = await waitFor(async () => {
+    const status = await client.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: operation.operationId });
+    return status.operation.completedAt ? status.operation : undefined;
+  });
+  assert.equal(verified.status, "passed");
   const { entry } = await client.call<{ entry: { id: string } }>("workItem/evidence/append", {
     workItemId, actorId: "local-user", subjectRevision: planRevision, kind: "observation",
     idempotencyKey: "fact-resolved", content: "Both remedies preserve the caller contract. The implementation cost differs.",
+    sourceRefs: [{ type: "verification", id: verified.operationId }],
   });
-  const { unresolved: _fact, ...tradeoff } = input;
+  const checkedTradeoff = { ...tradeoff, candidateDigest: candidate.candidateDigest };
   const { evaluation: suggested } = await evaluate({
-    ...tradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "tradeoff", evidenceRefs: [evidenceRef, entry.id],
+    ...checkedTradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "tradeoff", evidenceRefs: [evidenceRef, entry.id],
   });
   assert.equal(suggested.outcome, "suggest");
+  assert.equal(suggested.candidateDigest, candidate.candidateDigest);
   const open = (evaluationId: string, idempotencyKey: string) =>
     client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", {
       workItemId, evaluationId, idempotencyKey, expectedWorkItemRevision: currentRevision(),
     });
   const first = await open(suggested.evaluationId, "tradeoff-round");
   const { evaluation: successor } = await evaluate({
-    ...tradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "tradeoff-with-current-evidence",
+    ...checkedTradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "tradeoff-with-current-evidence",
     evidenceRefs: [entry.id], checkpointRef: entry.id,
   });
   assert.equal(successor.decisionId, suggested.decisionId);
   assert.notEqual(successor.decisionRevision, suggested.decisionRevision);
+  await writeFile(contractPath, "The new field is required.\n");
+  await assert.rejects(open(successor.evaluationId, "try-stale-candidate"), { code: "stale_revision" });
+  await writeFile(contractPath, contract);
   const latest = await open(successor.evaluationId, "current-tradeoff-round");
   const decide = (record: typeof first.record, idempotencyKey: string) =>
     client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", {
@@ -3644,6 +3685,9 @@ test("an in-flight stage routes fact disputes to Verify and keeps only the curre
       decision: { disposition: "selected", option: optionRefs[0]! },
     } satisfies LingAppServerDeliberationDecideParams);
   await assert.rejects(decide(first.record, "superseded-tradeoff"), { code: "stale_revision" });
+  await writeFile(contractPath, "The new field is required.\n");
+  await assert.rejects(decide(latest.record, "try-decide-for-stale-candidate"), { code: "stale_revision" });
+  await writeFile(contractPath, contract);
   const choice = await decide(latest.record, "resolved-tradeoff");
   assert.equal(choice.record.parentRecordId, latest.record.id);
   assert.equal(store.getWorkItem(workItemId)?.workflowId, workflowId);

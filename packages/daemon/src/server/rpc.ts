@@ -1481,20 +1481,20 @@ class RpcConnection {
     }
   }
 
-  private checkpointDeliberation(method: "workItem/deliberation/evaluate" | "workItem/deliberation/open", params: unknown): unknown {
+  private async checkpointDeliberation(method: "workItem/deliberation/evaluate" | "workItem/deliberation/open", params: unknown): Promise<unknown> {
     const { cwd, ...record } = this.workspaceParams(params, true);
     const store = this.context.storeRegistry.getStore(cwd);
     const now = new Date().toISOString();
     if (method === "workItem/deliberation/evaluate") {
       const parsed = deliberationEvaluateInput.safeParse(record);
       if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply a current subject, checkpoint and bounded decision inputs.");
-      const { event, ...result } = evaluateAppServerDeliberation(store, parsed.data, now, cwd);
+      const { event, ...result } = await evaluateAppServerDeliberation(store, parsed.data, now, cwd);
       if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
       return result;
     }
     const parsed = deliberationOpenInput.safeParse(record);
     if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an evaluation, Work Item revision and bounded request key.");
-    const { event, ...result } = openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd);
+    const { event, ...result } = await openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd);
     if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
     return { cwd, ...result };
   }
@@ -1559,7 +1559,7 @@ class RpcConnection {
     }
   }
 
-  private settleWorkItemDeliberation(action: "decided" | "cancelled", params: unknown): unknown {
+  private async settleWorkItemDeliberation(action: "decided" | "cancelled", params: unknown): Promise<unknown> {
     const { cwd, ...record } = this.workspaceParams(params, true);
     const input = {
       workItemId: readStringField(record, "workItemId"),
@@ -1576,7 +1576,7 @@ class RpcConnection {
     const decision = action === "decided" ? readDeliberationDecision(record.decision) : undefined;
     try {
       const store = this.context.storeRegistry.getStore(cwd);
-      const { event, ...result } = settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
+      const { event, ...result } = await settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         if (decision?.disposition === "selected") this.context.taskSupervisor.poke(cwd);
