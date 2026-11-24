@@ -23,7 +23,7 @@ async function statIfPresent(path: string) {
   }
 }
 
-export async function measureBrowserProfileSize(storagePath: string | null, metadataPath?: string,
+export async function measureBrowserProfileSize(storagePath: string | null, metadataPaths: readonly (string | undefined)[] = [],
   sharedBudget?: BrowserProfileScanBudget): Promise<DeviceStorageCategorySize> {
   if (!storagePath) return { category: "browser", knownBytes: 0, status: "unavailable", reason: "browser_profile_unavailable" };
   const root = resolve(storagePath);
@@ -51,10 +51,14 @@ export async function measureBrowserProfileSize(storagePath: string | null, meta
         else if (stat.isFile()) bytes += stat.size;
       }
     }
-    if (metadataPath) {
+    for (const metadataPath of metadataPaths) {
+      if (!metadataPath) continue;
+      const metadataLimit = budgetLimit();
+      if (metadataLimit) return metadataLimit;
       const metadata = resolve(metadataPath);
       const stat = await statIfPresent(metadata);
       if (stat?.isFile()) {
+        budget.remainingEntries--;
         if (!await hasExpectedPhysicalPath(metadata)) return partial("read_error");
         bytes += stat.size;
       }

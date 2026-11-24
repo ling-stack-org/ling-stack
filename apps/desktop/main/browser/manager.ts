@@ -1,6 +1,7 @@
 import { BrowserDebugLog, debugUrl } from "./debug.js";
 import { BrowserWebMcp } from "./webmcp.js";
 import { BrowserManagement } from "./management.js";
+import { browserDataPath } from "./data-store.js";
 import { measureBrowserProfileSize } from "./profile-size.js";
 import { browserAnnotationScript } from "./annotation-runtime.js";
 import { parseBrowserAnnotationAnchor, type DesktopBrowserAnnotation } from "../../shared/browser-annotations.js";
@@ -122,7 +123,8 @@ export class DesktopBrowserManager {
     this.profileSizeScan = controller;
     const budget = { deadlineMs: Date.now() + 20_000, remainingEntries: 300_000,
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) };
-    if (scope === "current") return measureBrowserProfileSize(this.session.getStoragePath(), this.profileStore.metadataPath, budget);
+    if (scope === "current") return measureBrowserProfileSize(this.session.getStoragePath(),
+      [this.profileStore.metadataPath, browserDataPath(workspaceCwd, this.options.profileDirectory)], budget);
     const registry = createWorkspaceRegistryStore();
     const workspaces = new Set<string>([workspaceCwd]);
     let incomplete = false;
@@ -144,7 +146,8 @@ export class DesktopBrowserManager {
       if (budget.remainingEntries <= 0) { incomplete = true; reason = "entry_limit"; break; }
       const partition = this.electron.session.fromPartition(desktopBrowserPartition(cwd));
       const metadata = new BrowserProfileStore(cwd, this.options.profileDirectory);
-      const result = await measureBrowserProfileSize(partition.getStoragePath(), metadata.metadataPath, budget);
+      const result = await measureBrowserProfileSize(partition.getStoragePath(),
+        [metadata.metadataPath, browserDataPath(cwd, this.options.profileDirectory)], budget);
       bytes += result.knownBytes;
       incomplete ||= result.status !== "complete";
       if (result.status !== "complete") reason ??= result.reason;

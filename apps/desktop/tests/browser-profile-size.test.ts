@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, realpath, writeFile, symlink, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, stat, writeFile, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { measureBrowserProfileSize } from "../dist/main/browser/profile-size.js";
+import { browserDataPath, BrowserDataStore } from "../dist/main/browser/data-store.js";
 
 test("browser profile size counts only its persistent storage and metadata", async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), "ling-browser-size-"));
@@ -14,9 +15,14 @@ test("browser profile size counts only its persistent storage and metadata", asy
     await writeFile(outside, Buffer.alloc(50));
     await writeFile(metadata, Buffer.alloc(4));
     await symlink(outside, join(profile, "linked"));
-    const result = await measureBrowserProfileSize(profile, metadata);
+    const workspaceCwd = join(root, "workspace");
+    const data = new BrowserDataStore(root, workspaceCwd, join(root, "downloads"));
+    data.record("https://example.com/", "Example");
+    const managementData = browserDataPath(workspaceCwd, root);
+    assert.ok(managementData);
+    const result = await measureBrowserProfileSize(profile, [metadata, managementData]);
     assert.equal(result.status, "complete");
-    assert.equal(result.knownBytes, 13);
+    assert.equal(result.knownBytes, 13 + (await stat(managementData)).size);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
