@@ -67,6 +67,32 @@ CLI 的 Linux 包测试运行真实 daemon 生命周期和新工作区 doctor �
 
 本地化包的 `typecheck:ci` 和 `test:ci` 已补齐；前者在干净 runner 重新生成未跟踪的 TypeScript 目录文件后检查类型，后者执行翻译目录完整性、占位符检查及本地化单元测试，复用构建阶段的 `dist`。新增[入口覆盖契约](../../scripts/ci/package-script-coverage.test.mjs)，要求分类器选中的每个类型检查／测试包都有对应 CI 脚本，防止 `--if-present` 静默跳过漏配包。
 
+## PR CI 范围检查
+
+提交或审查 PR 时，以实际目标分支和当前待检提交为准。更新目标分支的本地引用后，在 PR 工作区查看整个 PR 已提交改动的分类。以下以 `main` 为例。
+
+```bash
+node scripts/ci/classify-scope.mjs --event=pull_request --base=origin/main --head=HEAD
+```
+
+PR 带 `full-ci` 标签时，在命令末尾加 `--force-full=true`。
+
+1. **核对范围。** 查看 `mode`、`reason`、构建／类型检查／测试包和所选平台。纯文档改动同时确认 `documentationOnly`。
+   CI 运行后核对当前提交的 `Determine CI scope` 和可用的 `ci-scope-report`，确认任务选中或跳过的理由。Draft 转正式后复核预览档延后的任务。
+2. **核对覆盖。** 局部源码改动按当前 CI 契约验证所属包和直接、间接消费者，并构建所需依赖。仅改测试时核对测试发现、类型检查、共享夹具使用方和平台归属。
+   共享锁文件、全局构建配置和 CI 策略等输入按现有规则验证。影响广泛、路径未知或影响无法核实，保留全量回归。`full-ci`、手动和定时运行使用完整矩阵。
+   Web 本地检查等独立验证按贡献指南记录实际结果。见 [Contributing 的验证要求](../../CONTRIBUTING.md#validation)。
+3. **处理范围偏差。** 发现漏检时补齐必要任务。遇到可疑的 `full` 或无关平台任务，用分类理由定位触发路径、配置或依赖关系。
+   能够验证边界时，优先通过现有分类器、依赖图和平台清单修正误触发。超出本 PR 范围的共享规则优化单独跟进，原 PR 按当前规则验证。
+4. **验证规则调整。** 对照强制全量计划确认省去的任务与变更无关。用 CI 契约测试覆盖可收窄、混合变更和保守回退。
+   保留必需质量门和适用的依赖、安全、原生和发布检查。核对当前提交在 GitHub Actions 上执行的任务和 `Required CI lanes` 结果。范围和计划的自动审计见 [CI 测试执行说明](../../scripts/ci/README.md#scope-and-required-checks)。
+
+范围合适但有重复构建或依赖准备时，用 `ci-telemetry` 定位耗时，对照现有产物和缓存的复用条件。在同等覆盖下比较优化前后的 GitHub Actions 用时。
+
+在 PR 的 `CI Scope` 记录模式、分类理由、必要任务和平台或范围报告链接，以及是否需要调整。现有范围合适时一行即可。可延后的优化说明触发原因、拟省去的任务和必须保留的验证。
+
+> `docs`（仅改规则和指南）。主 CI 做范围判定，本地文档检查通过。
+
 ## 新模块接入 CI
 
 - 可独立构建和测试的 Node.js／TypeScript 模块放在 `packages/<name>`，清单使用 `@ling-stack/<name>` 和 `"type": "module"`。在使用方清单显式声明 `workspace:*` 依赖。CI 用依赖图选择消费者并构建依赖闭包。
