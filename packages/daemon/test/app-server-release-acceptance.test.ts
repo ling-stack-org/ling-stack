@@ -79,6 +79,7 @@ import { prepareConversationSubmission } from "../dist/features/conversations/co
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { createRunnerRegistry, type RunnerRegistrationInput } from "../dist/runtime/runners.js";
 import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-server.js";
+import { resolveAppServerGitHubSources, type AppServerGitHubSourceConfig } from "../dist/server/app-server-github-sources.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
 
@@ -1802,6 +1803,20 @@ test("signed GitHub webhooks and polling converge on one work item across restar
   assert.deepEqual(repeatedPoll.receipts, poll.receipts);
   assert.equal(fixture.getStore().listWorkItems({ sourceType: "external_work" }).length, 1);
   assert.equal(fixture.getStore().listWorkItems({ sourceType: "external_work" })[0]?.status, "intake");
+});
+
+test("GitHub auto-start requires a source label while a suggestion can omit it", () => {
+  const source = { workspaceRoot: process.cwd(), repository: "example/ling", repositoryId: "714" };
+  const [suggestion] = resolveAppServerGitHubSources([
+    { ...source, intake: { enabled: true, mode: "suggest" } },
+  ]);
+  assert.equal(suggestion?.intake?.mode, "suggest");
+  assert.equal(suggestion.intake.requiredLabel, undefined);
+  const automatic = {
+    ...source, intake: { enabled: true, mode: "auto_start", providerPresetId: "fixture-provider",
+      budget: { maxConcurrent: 1, maxStartsPerWindow: 2, windowMs: 60_000 } },
+  } as unknown as AppServerGitHubSourceConfig;
+  assert.throws(() => resolveAppServerGitHubSources([automatic]), /Automatic GitHub intake requires a label/u);
 });
 
 test("automatic GitHub intake resumes a scoped dispatch once and preserves admission limits", { timeout: 35_000 }, async t => {
