@@ -1,11 +1,29 @@
 # Scoped macOS Development Packaging Review
 
-The current source prerequisite includes the [Conversation media inputs](#conversation-media-inputs),
+The current source prerequisite includes [Bundled plugin discovery](#bundled-plugin-discovery),
+[Conversation media inputs](#conversation-media-inputs),
 [Plugin rollback compatibility](#plugin-rollback-compatibility),
 [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
 and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Bundled plugin discovery
+
+Date 2026-11-24. The Cua Driver bundled index includes its entry when the
+resolved package directory exists. An on-demand Desktop can omit that
+directory and still serve the plugin manager. The emitted-index test covers
+both resource layouts.
+
+The only changed packaging input is
+`packages/daemon/src/features/plugins/bundled-index.ts` at SHA-256
+`9c0025d1aa6bb1538501b29fda5b4dafc2d1b4ff512b9efc2ea3584ffe3b8feb`. The audit matched the other 2,012 packaging inputs and
+all 15 Office native inputs. The 260,282-byte record binds the existing runtime,
+toolchain, signing and trust metadata byte for byte.
+
+The fixed-order packaging aggregate is
+`3c4cf0565182469157e3b86c58969d5c68c9ac895e355f786c432e440ac90d11`.
+Record SHA-256 is `289a121388fa1e5593a0aadb9008fb4efb137eb8534de0af01a2e1e845e19e6e`.
 
 ## Conversation media inputs
 
