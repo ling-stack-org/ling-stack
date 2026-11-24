@@ -1,0 +1,28 @@
+.drawing-board[data-state] { width: min(600px, calc(100vw - 32px)); max-width: none; height: min(660px, calc(100vh - 32px)); max-height: none; padding: 0; display: flex; flex-direction: column; overflow: hidden; border: 0; border-radius: 18px; background: #202024; color: #ececef; }
+.drawing-board-overlay { background: rgba(0,0,0,.48); }
+.drawing-board-header { display: flex; align-items: center; justify-content: space-between; padding: 12px; gap: 8px; }
+.drawing-board-header button, .drawing-board-history button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; color: #bbbcc3; background: transparent; cursor: pointer; }
+.drawing-board-header button:hover, .drawing-board-toolbar button[aria-pressed="true"] { background: #f8f8f9; color: #17171a; }
+.drawing-board button:disabled { opacity: .4; cursor: not-allowed; }
+.drawing-board button:focus-visible, .drawing-board input:focus-visible { outline: 2px solid #81a9ff; outline-offset: 2px; }
+.drawing-board-toolbar { display: flex; align-items: center; padding: 3px; background: #303035; border-radius: 24px; }
+.drawing-board-toolbar button:last-child { width: 22px; }
+.drawing-board-history { display: flex; }
+.drawing-board-stage { position: relative; flex: 1; min-height: 0; background: #19191c; overflow: hidden; display: grid; place-items: center; }
+.drawing-board-stage canvas { position: absolute; inset: 0; margin: auto; width: auto; height: auto; max-width: 100%; max-height: 100%; aspect-ratio: 1; touch-action: none; cursor: crosshair; }
+.drawing-board-stroke { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); background: #28282d; border-radius: 24px; padding: 12px 7px; }
+.drawing-board-stroke input { writing-mode: vertical-lr; direction: rtl; width: 16px; height: 120px; accent-color: #fff; }
+.drawing-board .drawing-board-text { width: calc(100% - 24px); flex-shrink: 0; margin: 0 12px 8px; background: #333338; color: white; border: 1px solid #64646a; border-radius: 6px; }
+.drawing-board-text input { color: white; }
+.drawing-board-footer { min-height: 62px; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 8px 12px; }
+.drawing-board-colors { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.drawing-board-colors button { width: 24px; height: 24px; border: 1px solid #777; border-radius: 50%; cursor: pointer; }
+.drawing-board-colors button[aria-pressed="true"] { outline: 2px solid white; outline-offset: 2px; }
+.drawing-board-color-picker { width: 25px; height: 25px; border-radius: 50%; overflow: hidden; background: conic-gradient(#ff526b, #ffbd2e, #18bc91, #3b82f6, #a855f7, #ff526b); }
+.drawing-board-color-picker:focus-within { outline: 2px solid #81a9ff; outline-offset: 2px; }
+.drawing-board-color-picker > * { display: block; width: 100%; height: 100%; opacity: 0; }
+.drawing-board-color-picker input { width: 100%; height: 100%; border: 0; padding: 0; opacity: 0; cursor: pointer; }
+.drawing-board-done { margin-left: auto; width: 40px; height: 40px; border: 0; border-radius: 50%; background: white; color: #17171a; cursor: pointer; display: grid; place-items: center; }
+.drawing-board-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.drawing-board-error, .drawing-board-selection { color: #f1b1a9; padding: 4px 12px; font-size: 12px; }
+.drawing-board-selection { position: absolute; bottom: 4px; right: 8px; color: #ddd; pointer-events: none; }

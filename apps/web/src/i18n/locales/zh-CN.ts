@@ -1,4 +1,9 @@
 export const zhCN = {
+  "Drawing board": "绘图板",
+  "Drawing canvas": "绘图画布",
+  "Change shape": "切换形状",
+  "Drag to move": "拖动以移动",
+  "Erase drawing": "擦除图形",
     "Worktrees": "工作树",
     "Manage isolated Git workspaces for channels and private chats.": "管理频道和私聊使用的独立 Git 工作区。",
     "Worktree creation": "创建工作树",

@@ -1,3 +1,4 @@
+import { DrawingBoardEntry } from "../../shared/conversation/drawing/DrawingBoard.js";
 import { type DragEvent, type KeyboardEvent, type ReactNode, type RefObject, useRef } from "react";
 import { ArrowUp, CircleAlert, FileText, Mic, MicOff, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
@@ -62,7 +63,7 @@ export interface NormalConversationComposerProps {
   readonly onComposerPasteFiles: (files: readonly File[]) => void;
   readonly onComposerSelect: (value: string, caret: number) => void;
   readonly onCommitSlashCommand: (option: ComposerSlashCommandOption) => void;
-  readonly onAttachFiles: (files: FileList) => void | Promise<void>;
+  readonly onAttachFiles: (files: FileList | readonly File[]) => void | Promise<void>;
   readonly onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   readonly onDragLeave: (event: DragEvent<HTMLDivElement>) => void;
   readonly onDrop: (event: DragEvent<HTMLDivElement>) => void;
@@ -72,7 +73,6 @@ export interface NormalConversationComposerProps {
   readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
   readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
-  readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
   readonly onThinkingLevelChange: (level: ProviderThinkingMode) => void;
   readonly onSubmit: () => void | Promise<void>;
@@ -93,7 +93,6 @@ export function NormalConversationComposer({
   modelOptions,
   notice,
   onAuthorizationModeChange,
-  onPermissionPresetChange,
   onAttachFiles,
   onDragLeave,
   onDragOver,
@@ -290,6 +289,7 @@ export function NormalConversationComposer({
               }}
             />
           </label>
+          <DrawingBoardEntry identity={`${workspaceCwd}:${threadId ?? ""}`} disabled={attachmentsLocked || pendingAttachments.length >= 10} onAttach={file => onAttachFiles([file])} />
           {desktopHosted ? (
             <DesktopDictationButton
               cwd={workspaceCwd}
@@ -316,7 +316,6 @@ export function NormalConversationComposer({
             fullAccessConfirmed={fullAccessConfirmed}
             disabled={configurationLocked}
             onAuthorizationModeChange={onAuthorizationModeChange}
-            onPermissionPresetChange={onPermissionPresetChange}
           />
         </>
       )}

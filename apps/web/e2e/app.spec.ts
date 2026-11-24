@@ -191,7 +191,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expectSelectedDefaultChannelConversation(page, "Engineering");
   const channelComposer = page.getByLabel("Channel composer");
   await expect(channelComposer).toHaveClass(/conversation-composer/);
-  await expect(channelComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
+  await expect(channelComposer.getByRole("button", { name: /Selected authorization mode/ })).toBeVisible();
   await expect(channelComposer.getByRole("button", { name: "Mention teammate" })).toBeVisible();
   await expect(channelComposer.getByRole("button", { name: /Selected model/ })).toHaveCount(0);
 
@@ -375,7 +375,7 @@ test("recent conversations only show records created from the conversation home"
   const home = page.getByLabel("Conversation home");
   const homeComposer = home.locator(".conversation-composer");
   await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
-  await expect(homeComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
+  await expect(homeComposer.getByRole("button", { name: /Selected authorization mode/ })).toBeVisible();
   await expect(homeComposer.getByRole("button", { name: /Selected model/ })).toBeVisible();
   await expect(homeComposer.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Plan launch");
@@ -1059,7 +1059,7 @@ test("normal conversation full access confirms before creating the run", async (
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
-  await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
+  await expect(home.getByRole("button", { name: /Selected authorization mode Full access/ })).toBeVisible();
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Inspect trusted files");
   await home.getByRole("button", { name: "Send" }).click();
 
@@ -1101,7 +1101,7 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   const home = page.getByLabel("Conversation home");
   const homeComposer = home.locator(".conversation-composer");
   await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
-  await expect(homeComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
+  await expect(homeComposer.getByRole("button", { name: /Selected authorization mode/ })).toBeVisible();
   await expect(homeComposer.getByRole("button", { name: /Selected model/ })).toBeVisible();
   await expect(homeComposer.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
 
