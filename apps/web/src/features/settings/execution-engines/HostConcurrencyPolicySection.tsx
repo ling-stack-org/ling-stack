@@ -50,7 +50,7 @@ export function HostConcurrencyPolicySection({ cwd }: { readonly cwd: string }):
       {state.phase === "ready" ? <dl className="engine-host-concurrency-grid">
         <ConcurrencyValue label={t("Total concurrent runs")} value={state.policy.maxConcurrentRuns} />
         <ConcurrencyValue label={t("Read-only runs")} value={state.policy.maxReadOnlyRuns} />
-        <ConcurrencyValue label={t("Workspace write runs")} value={state.policy.maxWorkspaceWriteRuns} />
+        <ConcurrencyValue label={`${t("Edit files")} · ${t("Runs")}`} value={state.policy.maxWorkspaceWriteRuns} />
         <ConcurrencyValue label={t("Runs per Provider")} value={state.policy.maxRunsPerProvider} />
         <ConcurrencyValue label={t("Runs per Runner")} value={state.policy.maxRunsPerRunner} />
         <ConcurrencyValue label={t("Isolated workflow branches")} value={state.policy.isolatedWriteMaxConcurrentSteps} />

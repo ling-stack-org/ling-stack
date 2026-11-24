@@ -1,5 +1,7 @@
 # Codex-Inspired Settings And Permission Presets
 
+> Current UI contract: [Conversation Authorization Simplification](conversation-authorization-simplification.md). The preset UI described below is historical design context; it is superseded for conversation and settings surfaces.
+
 ## Status
 
 Design plan; the daemon-owned policy preview slice is implemented locally on

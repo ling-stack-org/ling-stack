@@ -26,9 +26,10 @@ test("Default Authorization uses shared rows and segmented choices at 1440x960 l
   const authorization = surface.getByRole("radiogroup", { name: "Authorization mode" });
   const access = surface.getByRole("radiogroup", { name: "Sandbox settings" });
   await expect(authorization.getByRole("radio")).toHaveCount(3);
-  await expect(access.getByRole("radio")).toHaveCount(3);
+  await expect(access.getByRole("radio")).toHaveCount(2);
   await expect(authorization.getByRole("radio", { name: "Help me approve" })).toHaveAttribute("aria-checked", "true");
-  await expect(access.getByRole("radio", { name: "Workspace write" })).toHaveAttribute("aria-checked", "true");
+  await expect(access.getByRole("radio", { name: "Workspace write" })).toHaveCount(0);
+  await expect(surface.getByRole("button", { name: "Reset", exact: true })).toBeDisabled();
 
   await authorization.getByRole("radio", { name: "Ask first" }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("ask");
@@ -41,6 +42,9 @@ test("Default Authorization uses shared rows and segmented choices at 1440x960 l
   await expect(surface.locator('[data-authorization-choice="access"]')).toContainText(
     "Access files outside the workspace; each run still requires explicit confirmation.",
   );
+  await surface.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("workspace_write");
+  await expect(surface.locator('[data-authorization-choice="access"]')).toContainText("Edit files inside the current workspace; commands still ask for approval.");
   await expect(surface).not.toContainText("Tool permission policy");
   await expect(surface).not.toContainText("Execution runners");
   await expect(surface).not.toContainText("Advanced workspace policy");
@@ -70,8 +74,8 @@ test("Default Authorization preserves keyboard selection and dark compact geomet
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("always");
 
   const access = surface.getByRole("radiogroup", { name: "Sandbox settings" });
-  const workspaceWrite = access.getByRole("radio", { name: "Workspace write" });
-  await workspaceWrite.focus();
+  const fullAccess = access.getByRole("radio", { name: "Full access" });
+  await fullAccess.focus();
   await page.keyboard.press("ArrowLeft");
   await expect(access.getByRole("radio", { name: "Read only" })).toBeFocused();
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("read_only");

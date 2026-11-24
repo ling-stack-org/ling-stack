@@ -273,7 +273,7 @@ export interface WorkspaceClientViewProps {
   readonly onSelectTask: (taskId: string) => void;
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
-  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
+  readonly channelPermissionSelection: Omit<import("../../shared/conversation/conversation-permission-selection.js").PermissionSelectionInput, "disabled">;
   readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
   readonly onOpenSandboxSettings: () => void;
   readonly onCancelActiveRun: (run?: RunSession) => void;

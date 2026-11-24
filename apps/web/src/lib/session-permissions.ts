@@ -1,6 +1,5 @@
 import type {
   ConversationAuthorizationModeOption,
-  ConversationPermissionPresetOption,
 } from "@ling-stack/conversation-ui-core";
 import type { ApprovalPolicy, ApprovalPolicyFormState, ApprovalToolDecision, AuthorizationMode, EffectiveRunPolicySnapshot, PermissionPreset, SessionPermissionMode, ToolName, WorkspaceAccessMode } from "../types.js";
 import type { Translate } from "../i18n.js";
@@ -28,7 +27,7 @@ export function sessionPermissionModeLabel(mode: SessionPermissionMode | undefin
     return t("Request approval");
   }
   if (mode === "workspace_write") {
-    return t("Workspace write");
+    return t("Edit files");
   }
   if (mode === "full_access") {
     return t("Full access");
@@ -44,7 +43,7 @@ export function permissionPresetLabel(preset: PermissionPreset | undefined, t: T
     return t("Read only");
   }
   if (preset === "workspace_collaboration") {
-    return t("Workspace write");
+    return t("Edit files");
   }
   if (preset === "full_access") {
     return t("Full access");
@@ -104,27 +103,6 @@ export function workspaceAccessModeForPermissionPreset(preset: PermissionPreset 
     return preset;
   }
   return "workspace_write";
-}
-
-export function conversationPermissionPresetMenuOptions(
-  t: Translate,
-  fullAccessConfirmed = false,
-): readonly ConversationPermissionPresetOption[] {
-  return (["read_only", "workspace_collaboration", "full_access"] as const).map((preset) => ({
-    preset,
-    label: preset === "read_only"
-      ? t("Read only")
-      : preset === "workspace_collaboration"
-        ? t("Workspace write")
-        : fullAccessConfirmed
-          ? t("Full access · Confirmed for this conversation")
-          : t("Full access"),
-    description: preset === "read_only"
-      ? t("Read project files; editing and commands are blocked.")
-      : preset === "workspace_collaboration"
-        ? t("Edit files inside the current workspace; commands still ask for approval.")
-        : t("Access files outside the workspace; confirm once for the current conversation."),
-  }));
 }
 
 export function conversationAuthorizationModeMenuOptions(t: Translate): readonly ConversationAuthorizationModeOption[] {

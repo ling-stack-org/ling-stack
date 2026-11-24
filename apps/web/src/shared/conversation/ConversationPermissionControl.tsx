@@ -1,24 +1,21 @@
 import { useEffect, useState } from "react";
 import { Check, ChevronDown, Hand, Shield, ShieldAlert, ShieldCheck } from "lucide-react";
-import { ComposerPermissionMenu } from "@ling-stack/conversation-ui-react";
 import { useI18n } from "../../i18n.js";
-import { conversationAuthorizationModeMenuOptions, conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
+import { conversationAuthorizationModeMenuOptions } from "../../lib/session-permissions.js";
 import { Button, Menu, MenuContent, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../../shared/ui/index.js";
 import type { AuthorizationMode, PermissionPreset } from "../../types.js";
 
 const authorizationIcons = { ask: Hand, smart: Shield, always: ShieldAlert };
 
 export function ConversationPermissionControl({
-  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, showAuthorizationModeOptions = false, onAuthorizationModeChange, onPermissionPresetChange,
+  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, onAuthorizationModeChange,
 }: {
   readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly disabled: boolean;
   readonly disabledReason?: string;
-  readonly showAuthorizationModeOptions?: boolean;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
-  readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -36,6 +33,9 @@ export function ConversationPermissionControl({
   const triggerLabel = fullAccess ? t("Full access") : selectedAuthorization.label;
   const confirmationLabel = fullAccess && fullAccessConfirmed
     ? t("Full access · Confirmed for this conversation") : triggerLabel;
+  const accessDescription = permissionPreset === "read_only"
+    ? `${t("Read only")}: ${t("Read project files; editing and commands are blocked.")}`
+    : permissionPreset === "workspace_collaboration" ? t("Edit files inside the current workspace; commands still ask for approval.") : "";
   const Icon = selectedMode === "custom" ? ShieldCheck : authorizationIcons[authorizationMode];
 
   useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
@@ -52,7 +52,7 @@ export function ConversationPermissionControl({
           disabled={disabled}
           data-full-access={fullAccess}
           aria-label={t("Selected authorization mode {label}", { label: confirmationLabel })}
-          title={disabled ? disabledReason ?? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description}`}
+          title={disabled ? disabledReason ?? t("Permission is locked while the current message is running.") : `${confirmationLabel}. ${selectedAuthorization.description} ${accessDescription ?? ""}`}
         >
           {triggerLabel}
         </Button>
@@ -72,18 +72,5 @@ export function ConversationPermissionControl({
         </MenuRadioGroup>
       </MenuContent>
     </Menu>
-    <ComposerPermissionMenu
-      preset={permissionPreset}
-      options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
-      disabled={disabled}
-      disabledReason={disabledReason}
-      selectedPermissionLabel={t("Selected permission preset {label}")}
-      menuLabel={t("Permission preset")}
-      authorizationModeOptions={showAuthorizationModeOptions ? authorizationModes.map((option) => ({
-        label: option.label,
-        onSelect: () => onAuthorizationModeChange(option.mode),
-      })) : undefined}
-      onPresetChange={onPermissionPresetChange}
-    />
   </>;
 }

@@ -316,7 +316,7 @@ test("full access belongs to one draft and its created thread; cancelling anothe
   const initial = state.channelBranches.length;
   const dialog = page.getByRole("dialog", { name: "Confirm full access" });
   const send = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: "Send", exact: true });
-  const permission = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected permission preset/ });
+  const permission = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected authorization mode/ });
   await group.getByRole("button", { name: "New conversation in Engineering", exact: true }).click();
   await page.getByRole("textbox", { name: "Conversation name (optional)", exact: true }).fill("Access A");
   await composer(page).fill("A first confirmed message"); await send.click();

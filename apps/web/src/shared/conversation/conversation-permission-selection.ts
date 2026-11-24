@@ -6,7 +6,7 @@ export interface CompactPermissionSelection {
   readonly workspaceAccessMode: WorkspaceAccessMode;
 }
 
-interface PermissionSelectionInput extends CompactPermissionSelection {
+export interface PermissionSelectionInput extends CompactPermissionSelection {
   readonly ownerKey: string;
   readonly defaultWorkspaceAccessMode: WorkspaceAccessMode;
   readonly disabled: boolean;
