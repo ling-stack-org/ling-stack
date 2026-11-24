@@ -26,3 +26,14 @@ For new Node.js or TypeScript workspace modules, follow the
 [workspace CI contract](docs/maintenance/ci.md#新模块接入-ci). Declare workspace
 dependencies in the consuming manifest and keep CI entrypoints aligned with
 test discovery and type checking.
+
+## Pull Request CI
+
+Before opening or reviewing a pull request, check CI against the entire diff from
+its target branch. Confirm that the validation covers the changed packages,
+affected consumers, and required platforms. Investigate `full` runs for unrelated
+jobs and retain full regression when the impact is broad or uncertain.
+
+Record the scope decision and evidence in the PR. Preserve required checks and
+applicable dependency, security, native, and release validation when narrowing
+scope. Follow the [PR CI review procedure](docs/maintenance/ci.md#pr-ci-范围检查).
