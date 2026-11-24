@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createWorkspaceRegistryStore, resolveUserConfigPaths, type WorkspaceRegistryEntry } from "@ling-stack/core";
+import { createWorkspaceRegistryStore, resolveUserConfigPaths, type RunStore, type WorkspaceRegistryEntry } from "@ling-stack/core";
 import type { DeviceStorageScanJob, DeviceStorageScope, DeviceStorageSnapshot } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../../config.js";
 import type { RunStoreRegistry } from "../../../runtime/store-registry.js";
@@ -89,7 +89,7 @@ async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, defaultCw
       if (signal.aborted || Date.now() >= deadline) break;
       const store = stores.getInitializedStore(workspace.canonicalCwd);
       if (!store) { worktreeInventoryIncomplete = true; continue; }
-      const inventory = await listManagedWorktrees(store, workspace.canonicalCwd);
+      const inventory = await listWorktreesWithinScanBudget(store, workspace.canonicalCwd, signal, deadline);
       worktreeInventoryIncomplete ||= inventory.limitReached;
       for (const item of inventory.entries) {
         if (item.status === "blocked") worktreeInventoryIncomplete = true;
@@ -101,4 +101,19 @@ async function scanForWorkspace(stores: RunStoreRegistry, cwd: string, defaultCw
   return scanOwnedStorage({ scope, userRoot: scope === "all" ? userPaths.rootDir : undefined,
     workspaceRoots, worktreeRoots, workspaceInventoryIncomplete, worktreeInventoryIncomplete },
   { signal, deadlineMs: Math.max(0, deadline - Date.now()) });
+}
+
+async function listWorktreesWithinScanBudget(store: RunStore, cwd: string, signal: AbortSignal,
+  deadline: number): Promise<Awaited<ReturnType<typeof listManagedWorktrees>>> {
+  const budgetSignal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(1, deadline - Date.now()))]);
+  if (budgetSignal.aborted) throw new Error("worktree_inventory_interrupted");
+  let onAbort: () => void = () => {};
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new Error("worktree_inventory_interrupted"));
+    budgetSignal.addEventListener("abort", onAbort, { once: true });
+    if (budgetSignal.aborted) onAbort();
+  });
+  try {
+    return await Promise.race([listManagedWorktrees(store, cwd, { signal: budgetSignal, deadline }), interrupted]);
+  } finally { budgetSignal.removeEventListener("abort", onAbort); }
 }

@@ -80,7 +80,8 @@ test("the unregistered daemon default scans its initialized Store in both scopes
     assert.ok(job.snapshot, `scan status: ${job.status}`);
     assert.equal(job.snapshot.scope, scope);
     assert.deepEqual(job.snapshot.categories.find(item => item.category === "conversations"), {
-      category: "conversations", knownBytes: 31, status: "complete",
+      category: "conversations", knownBytes: 31, status: scope === "current" ? "complete" : "partial",
+      ...(scope === "all" ? { reason: "unavailable_path" } : {}),
     });
     if (scope === "all") assert.equal(job.snapshot.categories.find(item => item.category === "worktrees")?.status, "partial");
   }

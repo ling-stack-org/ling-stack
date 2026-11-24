@@ -84,6 +84,11 @@ export async function scanOwnedStorage(input: OwnedStorageRoots, options: { read
     const category = categoryFor(path);
     issues.set(category, reason);
   };
+  const markRoot = (root: string, reason: DeviceStorageCategorySize["reason"]): void => {
+    if (workspaceRoots.has(root)) for (const category of ["conversations", "worktrees", "plugins", "other"] as const) issues.set(category, reason);
+    if (root === userRoot) for (const category of ["plugins", "other"] as const) issues.set(category, reason);
+    if (worktreeRoots.has(root)) issues.set("worktrees", reason);
+  };
   const checkBudget = (): boolean => {
     const reason = options.signal?.aborted ? "cancelled" : Date.now() >= deadline ? "deadline" : entries >= maxEntries ? "entry_limit" : undefined;
     if (!reason) return true;
@@ -97,9 +102,9 @@ export async function scanOwnedStorage(input: OwnedStorageRoots, options: { read
       const stat = await lstat(root);
       if (!stat.isDirectory() || stat.isSymbolicLink() || await hasUntrustedSymlinkAncestor(root)
         || await hasSymlinkedFinalPath(root)) {
-        mark(root, "unavailable_path"); continue;
+        markRoot(root, "unavailable_path"); continue;
       }
-    } catch { mark(root, "unavailable_path"); continue; }
+    } catch { markRoot(root, "unavailable_path"); continue; }
     const pending = [root];
     while (pending.length && checkBudget()) {
       const directory = pending.pop()!;

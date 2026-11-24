@@ -44,6 +44,8 @@ test("device storage rejects a recorded root beneath a symlinked parent", async 
     await symlink(foreign, linked, "junction");
     const result = await scanOwnedStorage({ scope: "current", workspaceRoots: [join(linked, "state")], worktreeRoots: [] });
     assert.equal(result.knownBytes, 0);
-    assert.equal(result.categories.find(item => item.category === "other")?.reason, "unavailable_path");
+    for (const category of ["conversations", "worktrees", "plugins", "other"] as const) {
+      assert.equal(result.categories.find(item => item.category === category)?.reason, "unavailable_path");
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
