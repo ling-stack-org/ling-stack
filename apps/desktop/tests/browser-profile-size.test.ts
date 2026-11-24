@@ -20,6 +20,15 @@ test("browser profile size counts only its persistent storage and metadata", asy
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("browser profile size accepts the macOS system alias for its temporary profile", async t => {
+  const profile = await mkdtemp(join(tmpdir(), "ling-browser-size-system-alias-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  await writeFile(join(profile, "entry"), Buffer.alloc(9));
+  assert.deepEqual(await measureBrowserProfileSize(profile), {
+    category: "browser", knownBytes: 9, status: "complete",
+  });
+});
+
 test("browser profile size stops inside a flat directory when its deadline expires", async t => {
   const profile = await mkdtemp(join(await realpath(tmpdir()), "ling-browser-size-budget-"));
   t.after(() => rm(profile, { recursive: true, force: true }));

@@ -8,6 +8,12 @@ export interface BrowserProfileScanBudget {
   readonly signal?: AbortSignal;
 }
 
+async function hasExpectedPhysicalPath(path: string): Promise<boolean> {
+  const physical = await realpath(path);
+  return physical === path || process.platform === "darwin"
+    && (path.startsWith("/var/") || path.startsWith("/tmp/")) && physical === `/private${path}`;
+}
+
 async function statIfPresent(path: string) {
   try {
     return await lstat(path);
@@ -33,7 +39,7 @@ export async function measureBrowserProfileSize(storagePath: string | null, meta
       const directoryLimit = budgetLimit();
       if (directoryLimit) return directoryLimit;
       const directory = pending.pop()!;
-      if (await realpath(directory) !== directory) return partial("read_error");
+      if (!await hasExpectedPhysicalPath(directory)) return partial("read_error");
       for await (const entry of await opendir(directory)) {
         const entryLimit = budgetLimit();
         if (entryLimit) return entryLimit;
@@ -49,7 +55,7 @@ export async function measureBrowserProfileSize(storagePath: string | null, meta
       const metadata = resolve(metadataPath);
       const stat = await statIfPresent(metadata);
       if (stat?.isFile()) {
-        if (await realpath(metadata) !== metadata) return partial("read_error");
+        if (!await hasExpectedPhysicalPath(metadata)) return partial("read_error");
         bytes += stat.size;
       }
     }

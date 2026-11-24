@@ -71,7 +71,7 @@ test("standard Electron browser performs scoped tools through its authenticated 
   assert.equal(settings.devices.length, 0);
   const profileSize = await host.evaluate(cwd => window.lingDesktop!.browser!.getProfileSize(cwd, "current"), workspaceCwd);
   assert.equal(profileSize.category, "browser");
-  assert.equal(profileSize.status, "complete");
+  assert.equal(profileSize.status, "complete", JSON.stringify(profileSize));
   const deniedDevice = await host.evaluate(({ cwd, origin }) => window.lingDesktop!.browser!.actSettings({ workspaceCwd: cwd,
     action: "device_permission", rule: { origin, permission: "camera", decision: "deny" } }),
   { cwd: workspaceCwd, origin: new URL(siteUrl).origin });
