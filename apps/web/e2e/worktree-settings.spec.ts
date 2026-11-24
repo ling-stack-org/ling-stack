@@ -19,7 +19,7 @@ function snapshot(): ManagedWorktreeListResponse {
   };
 }
 
-async function prepare(page: Page, locale = "en-US", theme = "light", width = 1440, height = 960) {
+async function prepare(page: Page, locale = "en-US", theme = "light", width = 1440, height = 960, desktopSwitch = false) {
   await page.setViewportSize({ width, height });
   await page.addInitScript(({ locale, theme }) => {
     localStorage.setItem("ling-stack.locale", locale);
@@ -27,11 +27,30 @@ async function prepare(page: Page, locale = "en-US", theme = "light", width = 14
     for (const key of ["ling-stack.themeSelection", "ling-stack.themeBootstrapSelection"]) localStorage.setItem(key, selection);
     for (const key of ["ling-stack.themePreference", "ling-stack.themeBootstrapPreference"]) localStorage.setItem(key, theme);
   }, { locale, theme });
+  if (desktopSwitch) await page.addInitScript(() => {
+    Object.defineProperty(window, "lingDesktop", { configurable: true, value: {
+      platform: "macos", daemonBaseUrl: "http://127.0.0.1:17891",
+      daemon: { onStatusChanged: () => () => {} },
+      computerUse: { reportLocale: () => {}, reportSelectedDeckOwner: () => {},
+        onSummaryChanged: () => () => {}, reportHostLayout: () => {} },
+      localServices: { request: async ({ path, method, body }: { path: string; method: string; body?: string }) => {
+        const response = await fetch(`http://127.0.0.1:17891${path}`, { method, body,
+          headers: body ? { "Content-Type": "application/json" } : undefined });
+        return { status: response.status, body: await response.text() };
+      } },
+    } });
+  });
   const runtimeErrors: string[] = [];
   page.on("pageerror", error => runtimeErrors.push(error.message));
   page.on("console", message => { if (message.type() === "error" && !message.text().includes("Failed to load resource")) runtimeErrors.push(message.text()); });
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { notifications: [] } }));
+  const otherCwd = "/tmp/ling-second-workspace";
+  await page.route(/\/workspaces\/registered(?:\?.*)?$/u, route => route.fulfill({ json: { workspaces: [
+    { workspaceId: "first", cwd: "/tmp/ling-stack-workspace", name: "ling-stack-workspace", available: true },
+    { workspaceId: "second", cwd: otherCwd, name: "ling-second-workspace", available: true },
+  ] } }));
+  await page.route(/\/workspaces\/activate(?:\?.*)?$/u, route => route.fulfill({ json: { cwd: (route.request().postDataJSON() as { cwd: string }).cwd } }));
   let current = snapshot();
   const readInventory = (): ManagedWorktreeListResponse => {
     const env = current.policy.environment;
@@ -45,6 +64,10 @@ async function prepare(page: Page, locale = "en-US", theme = "light", width = 14
   let cleanupError = false;
   const actions: ManagedWorktreeActionRequest[] = [];
   await page.route(/\/worktrees(?:\?.*)?$/u, async route => {
+    if (new URL(route.request().url()).searchParams.get("cwd") === otherCwd) {
+      await route.fulfill({ json: { ...snapshot(), cwd: otherCwd, policy: { fetchBeforeCreate: true }, entries: [] } });
+      return;
+    }
     await route.fulfill(loadError ? { status: 503, json: { message: "Worktree list temporarily unavailable" } } : { json: readInventory() });
   });
   await page.route(/\/worktrees\/actions(?:\?.*)?$/u, async route => {
@@ -91,7 +114,7 @@ async function open(page: Page, chinese = false) {
 async function screenshot(page: Page, name: string) {
   if (!evidenceDirectory) return;
   await mkdir(evidenceDirectory, { recursive: true });
-  await page.screenshot({ path: `${evidenceDirectory}/${name}.png` });
+  await page.screenshot({ path: `${evidenceDirectory}/${name}.png`, fullPage: true });
 }
 
 async function expectNoOverflow(page: Page) {
@@ -135,13 +158,68 @@ test("worktree settings persist root and fetch policy, open paths, and survive n
   await expectNoOverflow(page);
 });
 
+test("Desktop workspace switch selects a registered workspace across the app and reload", async ({ page }) => {
+  const harness = await prepare(page, "en-US", "light", 1440, 960, true);
+  const surface = await open(page);
+  await expect(surface.getByText("ling-stack-workspace", { exact: true })).toBeVisible();
+  await surface.getByRole("button", { name: "Switch workspace" }).click();
+  const switcher = page.getByRole("dialog", { name: "Switch workspace" });
+  await expect(switcher.getByRole("button", { name: /ling-second-workspace/u })).toBeVisible();
+  await expect(switcher).toHaveCSS("opacity", "1");
+  await page.waitForTimeout(300);
+  await screenshot(page, "workspace-switcher-light");
+  await switcher.getByRole("button", { name: /ling-second-workspace/u }).click();
+  await expect(surface.getByText("ling-second-workspace", { exact: true })).toBeVisible();
+  await expect(surface.getByRole("switch", { name: "Fetch upstream before creating worktrees" })).toBeChecked();
+  expect(await page.evaluate(() => localStorage.getItem("ling-stack.activeWorkspaceCwd"))).toBe("/tmp/ling-second-workspace");
+  expect(harness.runtimeErrors).toEqual([]);
+  await screenshot(page, "workspace-switched-light");
+  const reopened = await open(page);
+  await expect(reopened.getByText("ling-second-workspace", { exact: true })).toBeVisible();
+  await expect(reopened.getByRole("switch", { name: "Fetch upstream before creating worktrees" })).toBeChecked();
+});
+
+test("worktree draft guard runs before global workspace switch", async ({ page }) => {
+  await prepare(page, "en-US", "light", 1440, 960, true);
+  const surface = await open(page);
+  await surface.getByRole("textbox", { name: "Worktree root directory" }).fill("/tmp/unsaved-root");
+  await surface.getByRole("button", { name: "Switch workspace" }).click();
+  await page.getByRole("dialog", { name: "Switch workspace" }).getByRole("button", { name: /ling-second-workspace/u }).click();
+  const guard = page.getByRole("dialog", { name: "Save worktree changes?" });
+  await guard.getByRole("button", { name: "Stay" }).click();
+  await expect(surface.getByRole("textbox", { name: "Worktree root directory" })).toHaveValue("/tmp/unsaved-root");
+  await surface.getByRole("button", { name: "Switch workspace" }).click();
+  await page.getByRole("dialog", { name: "Switch workspace" }).getByRole("button", { name: /ling-second-workspace/u }).click();
+  await guard.getByRole("button", { name: "Discard" }).click();
+  await expect(surface.getByText("ling-second-workspace", { exact: true })).toBeVisible();
+});
+
+test("workspace folder selection registers the chosen directory before switching", async ({ page }) => {
+  await prepare(page, "en-US", "light", 1440, 960, true);
+  let registerRequested = false;
+  await page.route(/\/workspace-directory\/select(?:\?.*)?$/u, route => {
+    registerRequested = new URL(route.request().url()).searchParams.get("register") === "1";
+    return route.fulfill({ json: { cancelled: false, path: "/tmp/ling-second-workspace", label: "ling-second-workspace" } });
+  });
+  const surface = await open(page);
+  await surface.getByRole("button", { name: "Switch workspace" }).click();
+  await page.getByRole("dialog", { name: "Switch workspace" }).getByRole("button", { name: "Select folder" }).click();
+  await expect(surface.getByText("ling-second-workspace", { exact: true })).toBeVisible();
+  expect(registerRequested).toBe(true);
+});
+
 test("cleanup snapshots dirty worktrees, protects active worktrees and keeps confirmation errors actionable", async ({ page }) => {
   const harness = await prepare(page);
   const surface = await open(page);
-  await expect(surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Research notes" }).getByRole("button", { name: "Clean up worktree" })).toBeEnabled();
-  await expect(surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Active project" }).getByRole("button", { name: "Clean up worktree" })).toBeDisabled();
-  const cleanup = surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "Clean up worktree" });
+  await surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Research notes" }).getByRole("button", { name: "Manage worktree" }).click();
+  await expect(page.getByRole("menuitem", { name: "Clean up worktree" })).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Active project" }).getByRole("button", { name: "Manage worktree" }).click();
+  await expect(page.getByRole("menuitem", { name: "Clean up worktree" })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  const cleanup = surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "Manage worktree" });
   await cleanup.click();
+  await page.getByRole("menuitem", { name: "Clean up worktree" }).click();
   const dialog = page.getByRole("dialog", { name: "Clean up worktree?" });
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   await dialog.getByRole("button", { name: "Cancel" }).click();
@@ -149,6 +227,7 @@ test("cleanup snapshots dirty worktrees, protects active worktrees and keeps con
   expect(harness.actions).toEqual([]);
   harness.cleanupError = true;
   await cleanup.click();
+  await page.getByRole("menuitem", { name: "Clean up worktree" }).click();
   await dialog.getByRole("button", { name: "Clean up worktree" }).click();
   await expect(dialog).toContainText("Worktree has unsaved changes");
   await screenshot(page, "cleanup-error");
@@ -159,7 +238,9 @@ test("cleanup snapshots dirty worktrees, protects active worktrees and keeps con
   await expectNoOverflow(page);
   expect(harness.runtimeErrors).toEqual([]);
   await surface.getByRole("button", { name: "Restore worktree" }).click();
-  await expect(surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "Clean up worktree" })).toBeEnabled();
+  await cleanup.click();
+  await expect(page.getByRole("menuitem", { name: "Clean up worktree" })).toBeEnabled();
+  await page.keyboard.press("Escape");
   await expect(surface.getByRole("heading", { name: "Recovery snapshots" })).toHaveCount(0);
   expect(harness.actions.filter(item => item.action === "cleanup").map(item => item.confirmed)).toEqual([true, true]);
 });
@@ -184,6 +265,9 @@ test("retention, confirmation and environment settings persist and recovery acti
   await surface.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(surface.getByRole("textbox", { name: "Setup script", exact: true })).toHaveValue("unsaved draft");
   await page.locator('[data-settings-section="personal-profile"]').click();
+  const draftDialog = page.getByRole("dialog", { name: "Save worktree changes?" });
+  await expect(draftDialog).toBeVisible();
+  await draftDialog.getByRole("button", { name: "Discard" }).click();
   await page.locator('[data-settings-section="worktrees"]').click();
   await surface.getByRole("radio", { name: "Environment", exact: true }).click();
   const script = surface.getByRole("textbox", { name: "Setup script", exact: true });
@@ -200,9 +284,11 @@ test("retention, confirmation and environment settings persist and recovery acti
   await surface.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => harness.current.policy.environment).toMatchObject({ enabled: false, setupScript: "" });
   const owner = surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" });
-  await owner.getByRole("button", { name: "Keep worktree" }).click();
-  await expect(owner.getByRole("button", { name: "Unpin worktree" })).toBeVisible();
-  await owner.getByRole("button", { name: "Clean up worktree" }).click();
+  await owner.getByRole("button", { name: "Manage worktree" }).click();
+  await page.getByRole("menuitem", { name: "Keep worktree" }).click();
+  await owner.getByRole("button", { name: "Manage worktree" }).click();
+  await expect(page.getByRole("menuitem", { name: "Unpin worktree" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Clean up worktree" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(surface.getByRole("heading", { name: "Recovery snapshots" })).toBeVisible();
   await screenshot(page, "recovery-light");
@@ -217,7 +303,9 @@ test("setup from a browser points to Desktop without invoking the action API", a
   harness.current = { ...harness.current, entries: harness.current.entries.map(entry => entry.ownerId === "channel_engineering"
     ? { ...entry, status: "blocked", initialization: { status: "pending" } } : entry) };
   const surface = await open(page);
-  await surface.getByRole("button", { name: "Retry setup" }).click();
+  await expect(surface.getByRole("button", { name: "Switch workspace" })).toHaveCount(0);
+  await surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "Manage worktree" }).click();
+  await page.getByRole("menuitem", { name: "Retry setup" }).click();
   await expect(surface.getByText("Use a supported macOS or Windows desktop client.")).toBeVisible();
   expect(harness.actions).toEqual([]);
   expect(harness.runtimeErrors).toEqual([]);
@@ -256,7 +344,8 @@ for (const theme of ["breeze", "ocean", "night", "journey"]) {
     await expect(surface.getByText("有待提交改动", { exact: true })).toBeVisible();
     await expectNoOverflow(page);
     await screenshot(page, `desktop-${theme}-zh`);
-    await surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "清理工作树" }).click();
+    await surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "管理工作树" }).click();
+    await page.getByRole("menuitem", { name: "清理工作树" }).click();
     const dialog = page.getByRole("dialog", { name: "清理工作树？" });
     await expect(dialog.getByRole("button", { name: "取消" })).toBeFocused();
     await expect(dialog).toContainText("Engineering");

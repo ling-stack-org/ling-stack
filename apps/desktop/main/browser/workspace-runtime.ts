@@ -1,6 +1,8 @@
 import { isAbsolute, resolve } from "node:path";
 import { statSync } from "node:fs";
-import type { DesktopBrowserUserAction, DesktopBrowserViewport, DesktopBrowserWorkspace, DesktopBrowserWorkspaceState } from "../../shared/browser-capabilities.js";
+import type { DesktopBrowserSettingsAction, DesktopBrowserUserAction, DesktopBrowserViewport, DesktopBrowserWorkspace, DesktopBrowserWorkspaceState } from "../../shared/browser-capabilities.js";
+import type { BrowserManagementState } from "../../shared/browser-management.js";
+import type { DeviceStorageCategorySize, DeviceStorageScope } from "@ling-stack/contracts";
 import { DesktopBrowserManager } from "./manager.js";
 import { DesktopBrowserRuntime } from "./runtime.js";
 
@@ -15,6 +17,11 @@ export class DesktopBrowserWorkspaceRuntime {
   constructor(private readonly options: ConstructorParameters<typeof DesktopBrowserManager>[0] & { readonly bridgeToken: string }) {}
   async start(): Promise<void> { this.get(this.options.workspaceCwd); }
   workspace(input: DesktopBrowserWorkspace): DesktopBrowserWorkspaceState { return this.get(input.workspaceCwd).manager.workspace(input); }
+  settingsState(workspaceCwd: string): Promise<BrowserManagementState> { return this.get(workspaceCwd).manager.settingsState(workspaceCwd); }
+  profileSize(workspaceCwd: string, scope: DeviceStorageScope): Promise<DeviceStorageCategorySize> { return this.get(workspaceCwd).manager.profileSize(workspaceCwd, scope); }
+  actSettings(input: DesktopBrowserSettingsAction, assertCurrent?: () => void): Promise<BrowserManagementState> {
+    return this.get(input.workspaceCwd).manager.actSettings(input, assertCurrent);
+  }
   act(input: DesktopBrowserUserAction, assertCurrent?: () => void): Promise<DesktopBrowserWorkspaceState> {
     if (input.action === "deactivate_workspace") {
       const runtime = this.runtimes.get(input.workspaceCwd);

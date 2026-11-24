@@ -1,0 +1,29 @@
+.settings-device-storage { display: grid; gap: 28px; min-width: 0; padding: var(--ling-space-7); background: var(--ling-bg-panel); color: var(--ling-text-default); }
+.settings-device-storage > header, .settings-device-storage-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+.settings-device-storage > header > div { min-width: 0; flex: 1; }
+.settings-device-storage > header .ling-ui-select { width: 180px; flex: 0 0 180px; }
+.settings-device-storage h1, .settings-device-storage h2 { margin: 0; color: var(--ling-text-strong); }
+.settings-device-storage h1 { font-size: 26px; }
+.settings-device-storage h2 { font-size: var(--ling-font-md); }
+.settings-device-storage p { margin: 8px 0 0; color: var(--ling-text-muted); }
+.settings-device-storage > header select { width: auto; min-width: 170px; }
+.settings-device-storage-summary > div { display: grid; gap: 6px; }
+.settings-device-storage-summary small { color: var(--ling-text-muted); }
+.settings-device-storage-summary strong { color: var(--ling-text-strong); font-size: 30px; font-weight: 600; }
+.settings-device-storage-bar { display: flex; height: 18px; overflow: hidden; border-radius: 100px; background: var(--ling-border-default); }
+.settings-device-storage-bar > span { min-width: 1px; }
+.settings-device-storage-bar--conversations, .settings-device-storage-dot--conversations { background: #f0b840; }
+.settings-device-storage-bar--worktrees, .settings-device-storage-dot--worktrees { background: #39a36c; }
+.settings-device-storage-bar--plugins, .settings-device-storage-dot--plugins { background: #5b8bd2; }
+.settings-device-storage-bar--browser, .settings-device-storage-dot--browser { background: #9d72c5; }
+.settings-device-storage-bar--other, .settings-device-storage-dot--other { background: #a7abb2; }
+.settings-device-storage-legend { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.settings-device-storage-legend > div { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 3px 8px; align-items: center; font-size: var(--ling-font-sm); }
+.settings-device-storage-dot { width: 10px; height: 10px; border-radius: 50%; }
+.settings-device-storage-legend strong { grid-column: 2; font-weight: 500; }
+.settings-device-storage section { display: grid; gap: 16px; margin-top: 10px; }
+.settings-device-storage-rows { border-top: 1px solid var(--ling-border-default); }
+.settings-device-storage-rows > div { display: grid; grid-template-columns: minmax(0, 1fr) 110px 180px; align-items: center; gap: 16px; min-height: 74px; padding-block: 10px; border-bottom: 1px solid var(--ling-border-default); }
+.settings-device-storage-rows > div > div { display: grid; gap: 4px; }
+.settings-device-storage-rows small { color: var(--ling-text-muted); }
+@media (max-width: 820px) { .settings-device-storage-legend { grid-template-columns: repeat(3, minmax(0, 1fr)); } .settings-device-storage-rows > div { grid-template-columns: minmax(0, 1fr) auto; } .settings-device-storage-rows button { grid-column: 1 / -1; justify-self: start; } }

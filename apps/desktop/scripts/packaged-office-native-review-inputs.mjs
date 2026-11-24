@@ -1398,6 +1398,8 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/workspace-directory/routes.ts",
   "packages/daemon/src/features/workspace-directory/terminal-runner.ts",
   "packages/daemon/src/features/workspaces/managed-worktrees.ts",
+  "packages/daemon/src/features/settings/device-storage/routes.ts",
+  "packages/daemon/src/features/settings/device-storage/scanner.ts",
   "packages/daemon/src/index.ts",
   "packages/daemon/src/run-control.ts",
   "packages/daemon/src/runtime/acp/capabilities.ts",

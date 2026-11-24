@@ -114,6 +114,13 @@ export class WorkspaceRegistryStore {
     return row ? mapWorkspaceRegistryEntry(row) : undefined;
   }
 
+  listWorkspaces(afterWorkspaceId = "", limit = 100): readonly WorkspaceRegistryEntry[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("Workspace registry page size is invalid");
+    const rows = this.database.prepare("SELECT * FROM workspaces_registry WHERE workspace_id > ? ORDER BY workspace_id LIMIT ?")
+      .all(afterWorkspaceId, limit) as Record<string, SQLOutputValue>[];
+    return rows.map(mapWorkspaceRegistryEntry);
+  }
+
   close(): void {
     this.database.close();
   }

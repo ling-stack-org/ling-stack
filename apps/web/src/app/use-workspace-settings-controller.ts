@@ -56,6 +56,8 @@ export function useWorkspaceSettingsController(input: {
   const interfaceSettingsSyncRef = useRef<{ readonly cwd: string; readonly theme: ThemePreference; readonly locale: Locale } | undefined>(undefined);
   const currentLocaleRef = useRef(input.locale);
   const workspaceCwd = input.form.cwd.trim();
+  const currentCwdRef = useRef(workspaceCwd);
+  currentCwdRef.current = workspaceCwd;
   const errorOwner = useFocusedDomainErrorOwner<"workspace-settings", WorkspaceSettingsErrorAction>(
     workspaceCwd || "workspace:unavailable",
   );
@@ -69,8 +71,10 @@ export function useWorkspaceSettingsController(input: {
     if (cwd.trim()) {
       void updateWorkspaceSettings(cwd.trim(), { workspaceCwd: cwd.trim() })
         .then((response) => {
-          setWorkspaceSettings(response.settings);
-          clearSavedWorkspaceCwd();
+          if (currentCwdRef.current === cwd.trim()) {
+            setWorkspaceSettings(response.settings);
+            clearSavedWorkspaceCwd();
+          }
         })
         .catch(() => undefined);
     }

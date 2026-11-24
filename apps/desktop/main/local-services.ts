@@ -10,6 +10,7 @@ export function registerLocalServiceIpc(input: {
   readonly getMainWindow: () => BrowserWindow | undefined;
   readonly trustedDocumentUrl: string;
   readonly baseUrl: string;
+  readonly desktopBridgeToken?: string;
   readonly fetchImpl?: typeof globalThis.fetch;
 }): () => void {
   const baseUrl = readLoopbackBaseUrl(input.baseUrl);
@@ -19,12 +20,15 @@ export function registerLocalServiceIpc(input: {
       assertSender(input, event);
       if (args.length !== 1) throw new Error("local_service_invalid_request");
       const request = readDesktopLocalServiceRequest(args[0]);
+      const workspaceRequest = request.path === "/workspaces/activate" || request.path === "/workspaces/registered";
+      if (workspaceRequest && !input.desktopBridgeToken) throw new Error("local_service_unavailable");
       const signal = AbortSignal.timeout(TIMEOUT_MS);
       const result = await withAbort(signal, async () => {
         const response = await fetchImpl(`${baseUrl}${request.path}`, {
           method: request.method,
           ...(request.body !== undefined ? { body: request.body } : {}),
-          headers: request.body !== undefined ? { Accept: "application/json", "Content-Type": "application/json" } : { Accept: "application/json" },
+          headers: { Accept: "application/json", ...(request.body !== undefined ? { "Content-Type": "application/json" } : {}),
+            ...(workspaceRequest ? { "X-Ling-Desktop-Bridge-Token": input.desktopBridgeToken! } : {}) },
           redirect: "error", signal,
         });
         if (response.status < 200 || response.status > 599 || (response.status >= 300 && response.status < 400)) {

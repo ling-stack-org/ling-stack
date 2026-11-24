@@ -4,7 +4,7 @@ import { lstatSync, readFileSync, realpathSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { BrowserWindow, DownloadItem, Event, Session, WebContents } from "electron";
 import { parseDesktopBrowserUrl } from "@ling-stack/contracts";
-import type { BrowserDevicePermission, BrowserDeviceRule, BrowserManagementState } from "../../shared/browser-management.js";
+import { filterBrowserHistory, type BrowserDevicePermission, type BrowserDeviceRule, type BrowserManagementState } from "../../shared/browser-management.js";
 import { BrowserDataStore } from "./data-store.js";
 import { loadBrowserNativeMessages, type BrowserNativeTranslate } from "./native-messages.js";
 
@@ -86,7 +86,7 @@ export class BrowserManagement {
     if (action === "cancel") this.downloads.get(id)?.cancel();
     else { const item = this.store.data.downloads.find(item => item.id === id); if (item?.status === "completed" && existsSync(item.path)) this.electron.shell.showItemInFolder(item.path); }
   }
-  clearHistory(since: number, id?: string): void { this.store.data.history = this.store.data.history.filter(item => id ? item.id !== id : item.visitedAt < since); this.changed(); }
+  clearHistory(since: number, id?: string): void { this.store.data.history = filterBrowserHistory(this.store.data.history, since, id); this.changed(); }
   async previewImport(): Promise<void> {
     const result = await this.electron.dialog.showOpenDialog({ properties: ["openFile"], filters: [{ name: this.translate("Chromium bookmarks JSON"), extensions: ["json", "*"] }] });
     if (result.canceled || !result.filePaths[0]) return;
