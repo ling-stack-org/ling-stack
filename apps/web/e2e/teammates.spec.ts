@@ -1298,7 +1298,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateToolbar.getByRole("button", { name: "Private attachments: 1" })).toBeVisible();
 
   const privateComposer = page.locator(".teammate-direct-composer");
-  await privateComposer.getByRole("button", { name: /Selected permission preset/ }).click();
+  await privateComposer.getByRole("button", { name: /Selected authorization mode/ }).click();
   await page.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
@@ -1461,7 +1461,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   await page.getByRole("button", { name: "Back to private chat" }).click();
   await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
-  await privateComposer.getByRole("button", { name: /Selected permission preset/ }).click();
+  await privateComposer.getByRole("button", { name: /Selected authorization mode/ }).click();
   await page.getByRole("menuitemradio", { name: "Help me approve", exact: true }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Use the newly saved model.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
@@ -1899,7 +1899,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
   const privateComposer = page.locator(".teammate-direct-composer");
   await expect(privateComposer).toBeVisible();
   await expect(privateComposer).toHaveClass(/conversation-composer/);
-  await expect(privateComposer.getByRole("button", { name: /选择的权限预设|Selected permission preset/ })).toBeVisible();
+  await expect(privateComposer.getByRole("button", { name: /已选择授权模式|Selected authorization mode/ })).toBeVisible();
   await expect(privateComposer.getByRole("button", { name: /选择的模型|Selected model/ })).toHaveCount(0);
   await expect(privateComposer.getByRole("button", { name: /提及队友|Mention teammate/ })).toHaveCount(0);
   const privateInput = privateComposer.getByRole("textbox", { name: "输入引导，回车加入队列" });

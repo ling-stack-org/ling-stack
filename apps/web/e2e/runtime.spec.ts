@@ -1436,8 +1436,8 @@ test("run detail can stop an active run and keeps the permission snapshot visibl
   const runSummary = detail.locator(".run-detail-summary");
   const permissionPresetRow = runSummary.getByText("Permission preset", { exact: true }).locator("..");
   const permissionModeRow = runSummary.getByText("Permission mode", { exact: true }).locator("..");
-  await expect(permissionPresetRow.locator("strong")).toHaveText("Workspace write");
-  await expect(permissionModeRow.locator("strong")).toHaveText("Workspace write");
+  await expect(permissionPresetRow.locator("strong")).toHaveText("Edit files");
+  await expect(permissionModeRow.locator("strong")).toHaveText("Edit files");
   await detail.getByRole("button", { name: "Stop" }).click();
   await expect(detail.getByRole("button", { name: "Stopping" })).toBeVisible();
   await expect.poll(() => state.workUnits.find((unit) => unit.id === "wu_running")?.status).toBe("cancelled");

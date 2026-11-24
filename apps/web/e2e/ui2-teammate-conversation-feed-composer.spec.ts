@@ -74,6 +74,7 @@ for (const fixture of [
     const failed = feed.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Provider failed after the request started." });
     const cancelled = feed.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Reply stopped" });
     await expect(pending).toHaveClass(/message-bubble-pending/);
+    await expect(pending.locator(".message-pending-spinner")).toHaveCount(1);
     await expect(pending.locator(".message-pending-spinner")).toBeVisible();
     await expect(failed).toHaveClass(/message-bubble-chat-blocked/);
     await expect(cancelled).toHaveClass(/message-bubble-chat-blocked/);
@@ -127,14 +128,14 @@ test("AI teammate composer preserves slash, permission, attachment, and send beh
   await expect(composerOwner).toBeVisible();
   await expect(composer).toHaveClass(/conversation-composer/);
 
-  const permission = composer.getByRole("button", { name: /Selected permission preset/ });
+  const permission = composer.getByRole("button", { name: /Selected authorization mode/ });
   await expectCompactMutedComposerControl(permission);
   await permission.click();
-  const permissionMenu = page.locator('[data-ling-overlay="menu"]').filter({ has: page.getByRole("menuitemradio", { name: /Read only/ }) });
+  const permissionMenu = page.locator('[data-ling-overlay="menu"]').filter({ has: page.getByRole("menuitemradio", { name: /Request approval/ }) });
   await expect(permissionMenu).toBeVisible();
   await captureEvidence(page, "1440x960-ling-light-teammate-composer-permission-menu.png");
-  await permissionMenu.getByRole("menuitemradio", { name: /Read only/ }).click();
-  await expect(permission).toContainText("Read only");
+  await permissionMenu.getByRole("menuitemradio", { name: /Request approval/ }).click();
+  await expect(permission).toContainText("Request approval");
 
   await input.fill("/rev");
   const slashPicker = page.getByRole("listbox", { name: "Slash command" });
@@ -152,7 +153,8 @@ test("AI teammate composer preserves slash, permission, attachment, and send beh
 
   await replaceTokenizedComposerValue(input, "Send this UI2 private message with the image.");
   await input.press("Enter");
-  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("read_only");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("workspace_write");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("ask");
   await expect.poll(() => state.lastTeammateDirectMessageRequest?.attachmentIds).toEqual(["tpatt_1"]);
   await expect(chat.getByText("Send this UI2 private message with the image.", { exact: true })).toBeVisible();
   await expect(input).toHaveAttribute("data-value", "");
@@ -175,7 +177,8 @@ test("AI teammate composer preserves active guidance, locked permission, and sto
   const composerOwner = chat.locator('[data-ui2-teammate-private-composer="true"]');
   const composer = composerOwner.getByLabel("Private chat composer", { exact: true });
   const input = composer.getByRole("textbox");
-  await expect(composer.getByRole("button", { name: /Selected permission preset/ })).toBeDisabled();
+  await expect(chat.getByText("Model needs setup", { exact: true })).toBeVisible();
+  await expect(composer.getByRole("button", { name: /Selected authorization mode/ })).toBeDisabled();
 
   await input.fill("/rev");
   const slashPicker = page.getByRole("listbox", { name: "Slash command" });
@@ -205,6 +208,21 @@ test("AI teammate composer preserves active guidance, locked permission, and sto
   await expect(chat.getByText("Reply stopped", { exact: true })).toBeVisible();
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
+});
+
+test("private authorization unlocks after an active reply stops without queued guidance", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  const state = createBaseState({ approvalStatus: "expired" });
+  installActiveComposerFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openTeammate(page, "UI2 Guidance Engineer");
+  const composer = page.getByLabel("Private chat composer", { exact: true });
+  const authorization = composer.getByRole("button", { name: /Selected authorization mode/ });
+  await expect(authorization).toBeDisabled();
+  await composer.getByRole("button", { name: "Stop reply" }).click();
+  await expect.poll(() => state.workUnits.find((item) => item.id === "wu_ui2_teammate_active")?.status).toBe("cancelled");
+  await expect(authorization).toBeEnabled();
 });
 
 test("AI teammate removes accepted guidance from the queue before its reply completes", async ({ page }) => {

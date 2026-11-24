@@ -213,7 +213,7 @@ function authorizationLabelKey(mode: AuthorizationMode): string {
 function workspaceAccessLabelKey(mode: WorkspaceAccessMode): string {
   if (mode === "read_only") return "Read only";
   if (mode === "full_access") return "Full access";
-  return "Workspace write";
+  return "Edit files";
 }
 
 function decisionProjection(decision: ApprovalToolDecision): Pick<

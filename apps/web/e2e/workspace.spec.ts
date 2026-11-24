@@ -325,19 +325,19 @@ test("workspace full access task run requires confirmation and sends confirmatio
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
   await taskDetail.getByText("Permissions", { exact: true }).click();
-  const permissionTrigger = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected permission preset/ });
+  const permissionTrigger = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected authorization mode/ });
   await permissionTrigger.click();
-  await page.getByRole("menuitemradio", { name: "Full access", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Full access permissions", exact: true }).click();
   const selectionSheet = page.getByRole("dialog", { name: "Confirm full access" });
   await expect(selectionSheet).toBeVisible();
   await selectionSheet.getByRole("button", { name: "Cancel" }).last().click();
   await expect(selectionSheet).toHaveCount(0);
-  await expect(permissionTrigger).toHaveText("Workspace write");
+  await expect(permissionTrigger).toHaveText("Help me approve");
   await expect(permissionTrigger).toBeFocused();
   expect(state.runs).toHaveLength(0);
 
   await permissionTrigger.click();
-  await page.getByRole("menuitemradio", { name: "Full access", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Full access permissions", exact: true }).click();
   await expect(selectionSheet).toBeVisible();
   await expect(selectionSheet).toHaveClass(/ling-ui-dialog-content/u);
   await selectionSheet.getByRole("button", { name: "Start with full access" }).click();
@@ -372,7 +372,7 @@ test("workspace full access task run requires confirmation and sends confirmatio
     const snapshot = state.runs[0]?.requestSnapshot;
     return isRecord(snapshot) ? snapshot.workspaceAccessMode : undefined;
   }).toBe("full_access");
-  expect(state.runs[0]?.requestSnapshot).toMatchObject({ schemaVersion: 2, authorizationMode: "smart" });
+  expect(state.runs[0]?.requestSnapshot).toMatchObject({ schemaVersion: 2, authorizationMode: "always" });
   expect(state.runs[0]?.requestSnapshot).not.toHaveProperty("permissionMode");
   expect(state.runs[0]?.requestSnapshot).not.toHaveProperty("permissionPreset");
 });

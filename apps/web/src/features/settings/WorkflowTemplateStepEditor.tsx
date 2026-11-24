@@ -7,7 +7,7 @@ import { setWorkflowTemplateMember, setWorkflowTemplateParallelPolicy, toggleWor
 
 const sideEffects = [
   ["analysis_readonly", "Read-only analysis"], ["test_artifact_only", "Test artifacts only"],
-  ["workspace_write", "Workspace write"], ["external_mutation", "External mutation"], ["release", "Release"],
+  ["workspace_write", "Edit files"], ["external_mutation", "External mutation"], ["release", "Release"],
 ] as const;
 
 export function WorkflowTemplateStepEditor({ step, steps, index, teammates, disabled, onChange, onRemove, onMove, t }: {
