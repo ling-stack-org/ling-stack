@@ -66,7 +66,20 @@ export function appendAppServerWorkItemCollaboration(
 ): LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent } {
   const workItem = store.getWorkItem(params.workItemId);
   if (!workItem) throw new AppServerCollaborationError("work_item_not_found", `Work Item was not found: ${params.workItemId}`);
-  const result = appendWorkItemCollaboration(store, fromAppServerCollaborationParams(params), now, params.cwd);
+  const opensRound = params.action === "started" && (params.kind === "deliberation" || params.kind === "coordination");
+  const acceptsHandoff = params.kind === "handoff" && params.action === "accepted";
+  const result = appendWorkItemCollaboration(store, {
+    ...fromAppServerCollaborationParams(params),
+    ...(opensRound || acceptsHandoff ? {
+      assertCurrent: () => {
+        if (store.findWorkItemEvidenceByKey(workItem.id, params.idempotencyKey)) return;
+        const current = store.getWorkItem(workItem.id);
+        if (current && (current.control.state !== "active" || current.holds.some(hold => hold.blocksNewAdmission))) {
+          throw new HttpError(409, "resume_blocked", "The Work Item is held. Resume it before starting a round or accepting a handoff.");
+        }
+      },
+    } : {}),
+  }, now, params.cwd);
   if (!result) throw new AppServerCollaborationError("stale_revision", "The Work Item revision or collaboration revision is stale.");
   return {
     status: result.status,

@@ -2489,6 +2489,20 @@ test("an operator resolves a deliberation round once against its current revisio
     workItemId, actorId: "local-user", expectedWorkItemRevision: Number(before.workItem.revision),
     expectedControlGeneration: 0, idempotencyKey: "review-pause",
   });
+  const pausedRevision = Number(paused.workItem.revision);
+  await assert.rejects(start(pausedRevision, "paused-review-start"), { code: "resume_blocked" });
+  const coordination = { workItemId, actorId: "coordinator", expectedWorkItemRevision: pausedRevision,
+    idempotencyKey: "paused-coordination", payload: { title: "Checkpoint" } };
+  await assert.rejects(operator.call("workItem/coordination/start", coordination), { code: "resume_blocked" });
+  await assert.rejects(operator.call("workItem/collaboration/append", {
+    ...coordination, kind: "deliberation", action: "started", idempotencyKey: "paused-manual-deliberation",
+  }), { code: "resume_blocked" });
+  await assert.rejects(operator.call("workItem/handoff/accept", {
+    ...coordination, idempotencyKey: "paused-handoff",
+  }), { code: "resume_blocked" });
+  assert.equal((await start(pausedRevision, "review-start")).record.id, round.record.id);
+  assert.equal((await operator.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId })).workItem.revision,
+    paused.workItem.revision);
   await assert.rejects(decide({ ...decision, expectedWorkItemRevision: Number(paused.workItem.revision) }), { code: "resume_blocked" });
   const resumed = await operator.call<LingAppServerWorkItemControlResult>("workItem/resume", {
     workItemId, actorId: "local-user", expectedWorkItemRevision: Number(paused.workItem.revision),
