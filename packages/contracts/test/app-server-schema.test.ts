@@ -9,7 +9,10 @@ import {
   validateLingAppServerServerRequestParams,
 } from "../dist/app-server-schema.js";
 import { LING_APP_SERVER_METHODS, LING_APP_SERVER_NOTIFICATION_METHODS, LING_APP_SERVER_SERVER_REQUEST_METHODS } from "../dist/app-server.js";
-import type { LingAppServerGitHubDeliveryResult, LingAppServerGitHubQueueResult } from "../dist/app-server.js";
+import type {
+  LingAppServerGitHubDeliveryResult, LingAppServerGitHubQueueResult,
+  LingAppServerVerifyOperation, LingAppServerVerifyPlanResult,
+} from "../dist/app-server.js";
 
 test("App Server exposes a versioned schema for every registered method", () => {
   const document = getLingAppServerSchema();
@@ -67,6 +70,39 @@ test("App Server recovery requires a pinned revision and validates the evidence 
   assert.equal(validateLingAppServerResult("server/recovery/read", {
     ...report, entries: [{ ...report.entries[0], repositoryId: undefined }],
   }).path, "result.entries[0]");
+});
+
+test("Verify results validate check provenance, execution and cancellation", () => {
+  const verifier = { verifierBasisRef: "basis", coverageDigest: "coverage", producerRefs: ["trusted-verifier"] };
+  const checkPlan = { checkId: "behavior", kind: "test", label: "Behavior", required: true, recipeDigest: "recipe", ...verifier } as const;
+  const plan = {
+    planId: "verify-plan", planRevision: "verify-plan-revision", candidate: { workspaceId: "/workspace", candidateDigest: "candidate" },
+    checks: [checkPlan], rationale: [], environmentRequirements: [],
+  } satisfies LingAppServerVerifyPlanResult;
+  assert.ok(validateLingAppServerResult("verify/plan", plan).ok);
+  assert.equal(validateLingAppServerResult("verify/plan", { ...plan, checks: [{ ...checkPlan, required: "yes" }] }).path,
+    "result.checks[0].required");
+
+  const check = {
+    checkId: checkPlan.checkId, candidateDigest: plan.candidate.candidateDigest, planRevision: plan.planRevision,
+    recipeDigest: checkPlan.recipeDigest, environmentDigest: "environment", ...verifier, attemptId: "attempt",
+    status: "passed", evidenceRefs: ["report"],
+  } as const;
+  const operation = {
+    operationId: "verify-operation", planId: plan.planId, candidateDigest: plan.candidate.candidateDigest, status: "passed", checks: [check],
+  } satisfies LingAppServerVerifyOperation;
+  assert.ok(validateLingAppServerResult("verify/start", operation).ok);
+  assert.equal(validateLingAppServerResult("verify/status", { operation: { ...operation, checks: [{ ...check, producerRefs: "trusted-verifier" }] } }).path,
+    "result.operation.checks[0].producerRefs");
+  const execution = { startedAt: "start", endedAt: "end", exitCode: null, timedOut: true, output: "", outputTruncated: false };
+  assert.ok(validateLingAppServerResult("verify/status", { operation: { ...operation, status: "blocked", checks: [
+    { ...check, status: "blocked", execution },
+  ] } }).ok);
+  assert.equal(validateLingAppServerResult("verify/start", { ...operation, checks: [
+    { ...check, execution: { ...execution, exitCode: "0" } },
+  ] }).path, "result.checks[0].execution.exitCode");
+  assert.ok(validateLingAppServerResult("verify/cancel", { operationId: operation.operationId, status: "unknown" }).ok);
+  assert.equal(validateLingAppServerResult("verify/cancel", { operationId: operation.operationId, status: "passed" }).path, "result.status");
 });
 
 test("GitHub delivery results carry the source of each check and the exact run attempt", () => {

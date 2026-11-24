@@ -22,7 +22,7 @@
 - `changes/read` 以候选 digest 分页返回受限 diff 和排除原因。`changes/apply/preview` 与 `changes/apply` 复用 Turn 的不可变变更快照、工作区 fence、幂等收据和重启恢复，候选或工作区漂移会拒绝旧预览。
 - 候选 hunk 可从一个托管工作树转移到同仓库的另一个托管工作树。Daemon 验收覆盖选中部分修改、创建和删除文件、目标无关 WIP、目标候选漂移，以及写入后回执提交失败再重启的对账。
 - 普通 Pi 会话进入新目录时可发现并封存逐级项目规则。验收验证首次写入等待模型收到子目录规则、第二次写入生效，以及重启后从 Thread 游标读取原规则凭据。
-- Host 登记的 Verify 配方可以选择受影响路径，并把独立 verifier source 的摘要、coverage 和 producer refs 封存到每个检查结果。
+- Host 登记的 Verify 配方可以选择受影响路径，并把独立 verifier source 的摘要、coverage 和 producer refs 封存到每个检查结果。 App Server 的 Verify Schema 描述计划中的检查、操作状态、尝试和执行证据，客户端可验证取消回执和独立检查来源。
 - 复核工作台的「验证」页使用和 App Server 相同的 Verify operation。浏览器验收在隔离仓库中从 Web 触发已登记的 Chromium 检查，读取实际断言输出，刷新后恢复原结果并显示候选漂移。
 - Goal 的 `verification_passed` 条件要求同一 Thread 的已完成 Verify operation、当前候选摘要、匹配的 verifier basis、coverage 和 producer refs。候选漂移、检查来源漂移、缺少独立证据和过期的接受版本都会阻止完成。
 - 工作项 Review 在捕获候选后核对 Work Item、接受的 Plan 修订和控制代次，并在 assessment 事务中封存该归属。真实 Daemon 回归覆盖工作项不匹配、旧 Plan、暂停期间拒绝新 Review，以及重启后重读原审查和发现项处置回执。

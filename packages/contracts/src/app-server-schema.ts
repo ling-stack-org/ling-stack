@@ -86,8 +86,30 @@ const serverRecoveryResult = objectWith({ cwd: stringSchema, revision: integerSc
 ["cwd", "revision", "status", "pendingCount", "entries"]);
 const candidate = objectWith({ workspaceId: stringSchema, candidateDigest: stringSchema, worktreeId: stringSchema,
   baseCommit: stringSchema, headCommit: stringSchema, filePaths: stringArraySchema }, ["workspaceId", "candidateDigest"]);
-const planResult = objectWith({ planId: stringSchema, planRevision: stringSchema, candidate, checks: arraySchema },
-  ["planId", "planRevision", "candidate", "checks"]);
+const verifierBasis = { verifierBasisRef: stringSchema, coverageDigest: stringSchema, producerRefs: stringArraySchema };
+const verifyCheckPlan = objectWith({
+  checkId: stringSchema, kind: { enum: ["command", "test", "typecheck", "browser", "platform"] }, label: stringSchema,
+  required: booleanSchema, command: stringSchema, recipeDigest: stringSchema, estimatedDurationMs: integerSchema, ...verifierBasis,
+}, ["checkId", "kind", "label", "required", "recipeDigest"]);
+const verifyPlanResult = objectWith({ planId: stringSchema, planRevision: stringSchema, candidate,
+  ...threadTarget, ...workItemTarget, acceptedPlanRevision: stringSchema, checks: { type: "array", items: verifyCheckPlan },
+  rationale: stringArraySchema, requiredApproval: stringSchema, environmentRequirements: stringArraySchema,
+}, ["planId", "planRevision", "candidate", "checks", "rationale", "environmentRequirements"]);
+const verifyExecutionFields = {
+  startedAt: stringSchema, endedAt: stringSchema, exitCode: { oneOf: [integerSchema, { type: "null" }] },
+  timedOut: booleanSchema, output: stringSchema, outputTruncated: booleanSchema,
+} satisfies Record<string, LingAppServerJsonSchema>;
+const verifyCheckEvidence = objectWith({
+  checkId: stringSchema, candidateDigest: stringSchema, planRevision: stringSchema, recipeDigest: stringSchema, environmentDigest: stringSchema,
+  ...verifierBasis, attemptId: stringSchema, evidenceRefs: stringArraySchema,
+  status: { enum: ["pending", "running", "passed", "failed", "not_run", "blocked", "cancelled", "unknown"] },
+  execution: objectWith(verifyExecutionFields, Object.keys(verifyExecutionFields)),
+}, ["checkId", "candidateDigest", "planRevision", "recipeDigest", "environmentDigest", "producerRefs", "attemptId", "status", "evidenceRefs"]);
+const verifyOperationResult = objectWith({
+  operationId: stringSchema, planId: stringSchema, revision: stringSchema, ...threadTarget, ...workItemTarget, candidateDigest: stringSchema,
+  status: { enum: ["queued", "running", "passed", "failed", "blocked", "cancelled", "unknown"] },
+  checks: { type: "array", items: verifyCheckEvidence }, startedAt: stringSchema, completedAt: stringSchema, blocker: stringSchema,
+}, ["operationId", "planId", "candidateDigest", "status", "checks"]);
 const operationResult = objectWith({ operationId: stringSchema, candidateDigest: stringSchema, status: stringSchema },
   ["operationId", "candidateDigest", "status"]);
 const nativeIntakeReceiptSchema = objectWith({
@@ -477,14 +499,18 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         offset: integerSchema, limit: integerSchema }, ["artifactId"]), result };
     case "verify/plan":
       return { params: objectWith({ candidate, ...threadTarget, ...workItemTarget, requestedChecks: stringArraySchema,
-        idempotencyKey: stringSchema, planRevision: stringSchema }, ["candidate"]), result: planResult };
+        idempotencyKey: stringSchema, planRevision: stringSchema }, ["candidate"]), result: verifyPlanResult };
     case "verify/start":
       return { params: objectWith({ planId: stringSchema, planRevision: stringSchema, candidateDigest: stringSchema, idempotencyKey: stringSchema },
-        ["planId", "planRevision", "candidateDigest", "idempotencyKey"]), result: operationResult };
+        ["planId", "planRevision", "candidateDigest", "idempotencyKey"]), result: verifyOperationResult };
     case "verify/status":
-      return { params: objectWith({ operationId: stringSchema }, ["operationId"]), result: objectWith({ operation: operationResult }, ["operation"]) };
+      return { params: objectWith({ operationId: stringSchema }, ["operationId"]),
+        result: objectWith({ operation: verifyOperationResult }, ["operation"]) };
     case "verify/cancel":
-      return { params: objectWith({ operationId: stringSchema, expectedRevision: stringSchema, idempotencyKey: stringSchema }, ["operationId", "idempotencyKey"]), result };
+      return { params: objectWith({ operationId: stringSchema, expectedRevision: stringSchema, idempotencyKey: stringSchema },
+        ["operationId", "idempotencyKey"]),
+        result: objectWith({ operationId: stringSchema, status: { enum: ["cancel_requested", "cancelled", "already_terminal", "unknown"] } },
+          ["operationId", "status"]) };
     case "review/start":
       return { params: objectWith({ candidate, ...workItemTarget, idempotencyKey: stringSchema, reviewRulesRefs: stringArraySchema,
         providerPresetId: stringSchema, baseInstructions: stringSchema, planRevision: stringSchema }, ["candidate", "idempotencyKey"]),
