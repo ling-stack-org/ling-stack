@@ -16,6 +16,12 @@ List the exact commands and manual checks that ran. Do not mark unrun checks as 
 command -> result
 ```
 
+## CI Scope
+
+Record the mode (`docs`, `affected`, or `full`), its reason, and the required jobs
+and platforms or a link to the scope report. Note whether the scope fits or needs
+a fix or follow-up. See the [PR CI review procedure](../docs/maintenance/ci.md#pr-ci-范围检查).
+
 ## Product And Visual Evidence
 
 For visible UI changes, include screenshots for the relevant light/dark, loading, empty,
