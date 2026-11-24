@@ -1,6 +1,6 @@
 {
   "locale": "zh-HK",
-  "sourceRevision": "14766ab3ea5977c0b9e71d84c184f934a682c76cb4350cd82fbe75c16575e4cd",
+  "sourceRevision": "3114def232352d65521d56a32a2bc07303bfbccbdfd2c5173facc5b7e0d46efb",
   "sourceHashes": {
     "{action} (Enter)": "9472217728ec383f5dfdd37d2f84c381ed7b4546d115f6e3e536959810ef5af5",
     "{agent} wants to start task \"{task}\" and needs {permissions}.": "b87261e1f3ceaec90a862105f2885011d44b2722f9979327a3790af82a5dcdf1",
@@ -2374,6 +2374,7 @@
     "Device permission": "725493160bd2b22ebfc5ec907be86dc813ae0f6386c8353384dbffdceadc132a",
     "Device permissions": "8b91be20c68bf7bd71fd6aa84ab3f1da6c1600d43eb6cadb49e9a28fcd94c2af",
     "Device storage": "b2ca4043ebf7dac9bcc73690e334ab57f3d945c18ec262f283f6a9ed6b0bd0ea",
+    "device_task_graph_node": "3131678bbed5bebceba6ff2d564d2293c30d984e81c94b7ac1e643e7042c1821",
     "Diagnostics": "268f14bbfe119c1e92150583af960a086d7db9619a097f8aa72ff6779842f610",
     "Diagnostics and raw records": "391bf46c129a79ba6e9b52d9fb64fb4ddfb8981c34bea0da5d6447f7ef3084f4",
     "Diagram": "913c5e96ccce08c180f5ba8c522dc44bb3e4d8a33b269c048a3365ea4131cf6b",
@@ -10170,6 +10171,7 @@
     "Device permission": "設備權限",
     "Device permissions": "設備權限",
     "Device storage": "裝置儲存",
+    "device_task_graph_node": "設備任務圖節點",
     "Diagnostics": "診斷",
     "Diagnostics and raw records": "診斷和原始記錄",
     "Diagram": "Diagram",
