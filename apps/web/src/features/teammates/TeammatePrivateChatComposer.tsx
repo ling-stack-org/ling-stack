@@ -1,3 +1,4 @@
+import { DrawingBoardEntry } from "../../shared/conversation/drawing/DrawingBoard.js";
 import { CircleAlert, FileText, Plus, Send, SlidersHorizontal, Square } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -26,6 +27,8 @@ import type { TeammatePrivateComposerController } from "./useTeammatePrivateComp
 
 export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfaceProps,
   | "cwd"
+  | "teammate"
+  | "threadId"
   | "changeSummaryThreadId"
   | "onOpenReview"
   | "composerDragActive"
@@ -75,6 +78,8 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
 
 export function TeammatePrivateChatComposer({
   cwd,
+  teammate,
+  threadId,
   changeSummaryThreadId,
   onOpenReview,
   composerDragActive,
@@ -121,8 +126,7 @@ export function TeammatePrivateChatComposer({
   uploadingAttachments,
 }: TeammatePrivateChatComposerProps): React.JSX.Element {
   const { t, locale } = useI18n();
-  const permissionLocked = privateComposerSending || Boolean(directGuidanceSubmitting) ||
-    (hasDirectRuntimeActivity && !modelNotice);
+  const permissionLocked = privateComposerSending || Boolean(directGuidanceSubmitting) || hasDirectRuntimeActivity;
   const visibleDirectInterventions = openDirectInterventions.filter((intervention) =>
     isConversationGuidanceQueueVisible(intervention.status)
   );
@@ -297,15 +301,14 @@ export function TeammatePrivateChatComposer({
                 }}
               />
             </label>
+            <DrawingBoardEntry identity={`${cwd}:${teammate.id}:${threadId ?? ""}`} disabled={uploadingAttachments || privateComposerSending || pendingAttachments.length >= 10} onAttach={file => onUploadPrivateFiles([file])} />
             <ConversationPermissionControl
               authorizationMode={controller.selectedAuthorizationMode}
               permissionPreset={controller.selectedPermissionPreset}
               fullAccessConfirmed={fullAccessConfirmed}
               disabled={permissionLocked}
               disabledReason={t("Permission is locked while the private reply is running.")}
-              showAuthorizationModeOptions
               onAuthorizationModeChange={controller.handleAuthorizationModeChange}
-              onPermissionPresetChange={controller.handlePermissionPresetChange}
             />
           </>
         )}

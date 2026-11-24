@@ -161,7 +161,7 @@ test("1280x800 Ling Dark keeps Normal and Teammate command menus and focus conta
   await normalCommands.getByRole("option", { name: /^\/review\b/u }).click();
   await expect(normalInput).toHaveAttribute("data-value", "/review ");
 
-  const normalPermission = normalComposer.getByRole("button", { name: /Selected permission preset/u });
+  const normalPermission = normalComposer.getByRole("button", { name: /Selected authorization mode/u });
   await normalPermission.click();
   const normalMenu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
   await expect(normalMenu).toBeVisible();
@@ -185,7 +185,7 @@ test("1280x800 Ling Dark keeps Normal and Teammate command menus and focus conta
   await teammateCommands.getByRole("option", { name: /^\/review\b/u }).click();
   await expect(teammateInput).toHaveAttribute("data-value", "/review ");
 
-  const teammatePermission = teammateComposer.getByRole("button", { name: /Selected permission preset/u });
+  const teammatePermission = teammateComposer.getByRole("button", { name: /Selected authorization mode/u });
   await teammatePermission.click();
   const teammateMenu = permissionMenu(page);
   await expect(teammateMenu).toBeVisible();
@@ -389,7 +389,7 @@ async function openTeammate(page: Page, displayName: string): Promise<void> {
 
 function permissionMenu(page: Page): Locator {
   return page.locator('[data-ling-overlay="menu"]').filter({
-    has: page.getByRole("menuitemradio", { name: /Read only/u }),
+    has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }),
   });
 }
 

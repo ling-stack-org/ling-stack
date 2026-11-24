@@ -1,4 +1,9 @@
 export const enUS = {
+  "Drawing board": "Drawing board",
+  "Drawing canvas": "Drawing canvas",
+  "Change shape": "Change shape",
+  "Drag to move": "Drag to move",
+  "Erase drawing": "Erase drawing",
     "Worktrees": "Worktrees",
     "Manage isolated Git workspaces for channels and private chats.": "Manage isolated Git workspaces for channels and private chats.",
     "Worktree creation": "Worktree creation",

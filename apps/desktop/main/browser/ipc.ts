@@ -1,7 +1,7 @@
 import { parseBrowserAnnotation } from "../../shared/browser-annotations.js";
 import type { BrowserWindow, IpcMain, IpcMainEvent, IpcMainInvokeEvent } from "electron";
 import { browserInteger, browserRecord, browserString, parseDesktopBrowserScope, parseDesktopBrowserUrl } from "@ling-stack/contracts";
-import type { DesktopBrowserUserAction, DesktopBrowserViewport, DesktopBrowserWorkspace } from "../../shared/browser-capabilities.js";
+import type { DesktopBrowserSettingsAction, DesktopBrowserUserAction, DesktopBrowserViewport, DesktopBrowserWorkspace } from "../../shared/browser-capabilities.js";
 import { DESKTOP_BROWSER_IPC_CHANNELS as CHANNELS } from "../../shared/ipc-channels.js";
 import type { DesktopBrowserManager } from "./manager.js";
 import { parseBrowserPreferences } from "./profile-store.js";
@@ -18,6 +18,41 @@ export function assertBrowserIpcSender(event: Pick<IpcMainInvokeEvent | IpcMainE
 export function parseBrowserWorkspace(value: unknown): DesktopBrowserWorkspace {
   const record = browserRecord(value, ["workspaceCwd", "scope"]);
   return { workspaceCwd: browserString(record.workspaceCwd, 4096), scope: parseDesktopBrowserScope(record.scope) };
+}
+
+export function parseBrowserSettingsWorkspace(value: unknown): string {
+  return browserString(value, 4096);
+}
+
+export function parseBrowserSettingsAction(value: unknown): DesktopBrowserSettingsAction {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("browser_request_invalid");
+  const action = (value as { action?: unknown }).action;
+  const keys: Record<string, readonly string[]> = {
+    history_clear: ["since", "id"], clear_data: ["cookies", "cache", "storage", "history"],
+    download_preferences: ["askBeforeDownload"], download_directory: [], device_permission: ["rule"],
+  };
+  if (typeof action !== "string" || !Object.hasOwn(keys, action)) throw new Error("browser_action_invalid");
+  const record = browserRecord(value, ["workspaceCwd", "action", ...keys[action]!]);
+  const workspaceCwd = parseBrowserSettingsWorkspace(record.workspaceCwd);
+  if (action === "history_clear") return { workspaceCwd, action, since: browserInteger(record.since),
+    ...(record.id === undefined ? {} : { id: browserString(record.id, 128) }) };
+  if (action === "clear_data") {
+    if (![record.cookies, record.cache, record.storage, record.history].every(item => typeof item === "boolean")) throw new Error("browser_clear_invalid");
+    return { workspaceCwd, action, cookies: record.cookies as boolean, cache: record.cache as boolean,
+      storage: record.storage as boolean, history: record.history as boolean };
+  }
+  if (action === "download_preferences") {
+    if (typeof record.askBeforeDownload !== "boolean") throw new Error("browser_preferences_invalid");
+    return { workspaceCwd, action, askBeforeDownload: record.askBeforeDownload };
+  }
+  if (action === "download_directory") return { workspaceCwd, action };
+  const rule = browserRecord(record.rule, ["origin", "permission", "decision"]);
+  const origin = new URL(parseDesktopBrowserUrl(rule.origin)).origin;
+  if (origin !== rule.origin || !["camera", "microphone", "geolocation", "notifications"].includes(String(rule.permission))
+    || !["ask", "allow", "deny"].includes(String(rule.decision))) throw new Error("browser_permission_invalid");
+  return { workspaceCwd, action: "device_permission", rule: { origin,
+    permission: rule.permission as "camera" | "microphone" | "geolocation" | "notifications",
+    decision: rule.decision as "ask" | "allow" | "deny" } };
 }
 
 export function parseBrowserUserAction(value: unknown): DesktopBrowserUserAction {
@@ -69,13 +104,30 @@ export function parseBrowserViewport(value: unknown): DesktopBrowserViewport {
 }
 
 export function registerDesktopBrowserIpc(input: { readonly ipcMain: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeListener">;
-  readonly manager: Pick<DesktopBrowserManager, "workspace" | "act" | "reportViewport" | "onChanged" | "onAddressFocusRequested" | "hide">; readonly getMainWindow: () => BrowserWindow | undefined; readonly trustedDocumentUrl: string;
+  readonly manager: Pick<DesktopBrowserManager, "workspace" | "act" | "settingsState" | "actSettings" | "profileSize" | "reportViewport" | "onChanged" | "onAddressFocusRequested" | "hide">; readonly getMainWindow: () => BrowserWindow | undefined; readonly trustedDocumentUrl: string;
   readonly onDiagnostic?: (code: string) => void }): () => void {
   const assertSender = (event: IpcMainInvokeEvent | IpcMainEvent): void => assertBrowserIpcSender(event, input.getMainWindow(), input.trustedDocumentUrl);
   input.ipcMain.handle(CHANNELS.state, (event, value: unknown) => { assertSender(event); return input.manager.workspace(parseBrowserWorkspace(value)); });
   input.ipcMain.handle(CHANNELS.act, async (event, value: unknown) => {
     assertSender(event);
     const result = await input.manager.act(parseBrowserUserAction(value), () => assertSender(event));
+    assertSender(event); return result;
+  });
+  input.ipcMain.handle(CHANNELS.settingsState, async (event, value: unknown) => {
+    assertSender(event);
+    const result = await input.manager.settingsState(parseBrowserSettingsWorkspace(value));
+    assertSender(event); return result;
+  });
+  input.ipcMain.handle(CHANNELS.profileSize, async (event, value: unknown) => {
+    assertSender(event);
+    const record = browserRecord(value, ["workspaceCwd", "scope"]);
+    if (record.scope !== "all" && record.scope !== "current") throw new Error("browser_request_invalid");
+    const result = await input.manager.profileSize(parseBrowserSettingsWorkspace(record.workspaceCwd), record.scope);
+    assertSender(event); return result;
+  });
+  input.ipcMain.handle(CHANNELS.settingsAct, async (event, value: unknown) => {
+    assertSender(event);
+    const result = await input.manager.actSettings(parseBrowserSettingsAction(value), () => assertSender(event));
     assertSender(event); return result;
   });
   const viewport = (event: IpcMainEvent, value: unknown): void => {
@@ -91,5 +143,6 @@ export function registerDesktopBrowserIpc(input: { readonly ipcMain: Pick<IpcMai
     const owner = input.getMainWindow();
     if (owner && !owner.isDestroyed() && !owner.webContents.isDestroyed()) owner.webContents.send(CHANNELS.focusAddress);
   });
-  return () => { unsubscribe(); unsubscribeAddress(); input.manager.hide(); input.ipcMain.removeHandler(CHANNELS.state); input.ipcMain.removeHandler(CHANNELS.act); input.ipcMain.removeListener(CHANNELS.viewport, viewport); };
+  return () => { unsubscribe(); unsubscribeAddress(); input.manager.hide(); input.ipcMain.removeHandler(CHANNELS.state); input.ipcMain.removeHandler(CHANNELS.act);
+    input.ipcMain.removeHandler(CHANNELS.settingsState); input.ipcMain.removeHandler(CHANNELS.settingsAct); input.ipcMain.removeHandler(CHANNELS.profileSize); input.ipcMain.removeListener(CHANNELS.viewport, viewport); };
 }

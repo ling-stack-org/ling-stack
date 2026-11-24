@@ -54,6 +54,8 @@ function routeRules(path: string): { readonly methods: readonly string[]; readon
   if (path === "/startup/status" || path === "/diagnostics/doctor") return { methods: ["GET"], query: ["cwd"] };
   if (path === "/startup/refresh") return { methods: ["POST"], query: ["cwd"] };
   if (path === "/diagnostics/logs") return { methods: ["GET"], query: ["lines"] };
+  if (path === "/workspaces/registered") return { methods: ["GET"], query: [] };
+  if (path === "/workspaces/activate") return { methods: ["POST"], query: [] };
   if (path === "/skills/marketplace/inspect") return { methods: ["GET"], query: ["url"] };
   if (path === "/im-destinations") return { methods: ["GET", "POST"], query: [] };
   if (/^\/im-destinations\/[A-Za-z0-9_-]+$/u.test(path)) return { methods: ["PATCH", "DELETE"], query: [] };

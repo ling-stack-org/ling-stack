@@ -54,6 +54,21 @@ test("release metadata cannot hide mixed product inputs, native source or unknow
   assert.equal(missing.mode, "full");
 });
 
+test("test registration and release review metadata keep their independent product checks", () => {
+  const files = [reviews[0], "native/office-local/reviewed-packaged-source-v1-review.md",
+    "scripts/ci/daemon-test-platforms.json", "packages/daemon/src/server/router.ts"];
+  const scope = classifyChangedFiles({ files });
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.nativeRelease, true);
+  assert.equal(scope.macosNative, true);
+  assert.equal(scope.macosHelper, false);
+  assert.equal(scope.dependencyPolicy, false);
+  assert.ok(scope.testPackages.includes("@ling-stack/daemon"));
+  assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
+  assert.equal(scope.linuxContract, true);
+  assert.equal(classifyChangedFiles({ files: [...files, "native/office-local/src/runtime.cc"] }).mode, "full");
+});
+
 test("full regression retains real helper smoke and a changed review still requires its contracts", () => {
   for (const options of [{ forceFull: true }, { eventName: "schedule" }, { eventName: "workflow_dispatch" }]) {
     const scope = classifyChangedFiles({ files: reviews, ...options });

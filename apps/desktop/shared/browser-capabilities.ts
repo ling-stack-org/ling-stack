@@ -1,6 +1,7 @@
 import type { BrowserManagementState, BrowserDeviceRule } from "./browser-management.js";
 import type { DesktopBrowserAnnotation } from "./browser-annotations.js";
 import type { DesktopBrowserScope, DesktopBrowserTab } from "@ling-stack/contracts";
+import type { DeviceStorageCategorySize, DeviceStorageScope } from "@ling-stack/contracts";
 
 export interface DesktopBrowserWorkspace {
   readonly workspaceCwd: string;
@@ -55,9 +56,20 @@ export interface DesktopBrowserViewport extends DesktopBrowserWorkspace {
   readonly bounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 }
 
+export type DesktopBrowserSettingsAction = { readonly workspaceCwd: string } & (
+  | { readonly action: "history_clear"; readonly since: number; readonly id?: string }
+  | { readonly action: "clear_data"; readonly cookies: boolean; readonly cache: boolean; readonly storage: boolean; readonly history: boolean }
+  | { readonly action: "download_preferences"; readonly askBeforeDownload: boolean }
+  | { readonly action: "download_directory" }
+  | { readonly action: "device_permission"; readonly rule: BrowserDeviceRule }
+);
+
 export interface DesktopBrowserCapabilities {
   getState(workspace: DesktopBrowserWorkspace): Promise<DesktopBrowserWorkspaceState>;
   act(request: DesktopBrowserUserAction): Promise<DesktopBrowserWorkspaceState>;
+  getSettingsState(workspaceCwd: string): Promise<BrowserManagementState>;
+  getProfileSize(workspaceCwd: string, scope: DeviceStorageScope): Promise<DeviceStorageCategorySize>;
+  actSettings(request: DesktopBrowserSettingsAction): Promise<BrowserManagementState>;
   reportViewport(viewport: DesktopBrowserViewport): void;
   onStateChanged(listener: () => void): () => void;
   onAddressFocusRequested(listener: () => void): () => void;

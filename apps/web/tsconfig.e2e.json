@@ -13,6 +13,7 @@
   },
   "files": [
     "e2e/worktree-settings.spec.ts",
+    "e2e/settings-storage-browser.spec.ts",
     "e2e/app.spec.ts",
     "e2e/code-assessments.spec.ts",
     "e2e/workspace-verification.spec.ts",

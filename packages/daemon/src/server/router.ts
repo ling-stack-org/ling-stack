@@ -214,7 +214,7 @@ import { handleDesktopBrowserRoute } from "../features/desktop-browser/routes.js
 import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
 import { handleNativeWorkIntakeCollection } from "../features/work-items/native-intake-routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
-import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
+import { handleRegisteredWorkspaces, handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
 import {
   handleProviderDraftCheck,
   handleProviderItem,
@@ -305,6 +305,7 @@ import {
 } from "../features/runs/workspace-change-recovery.js";
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
+import { handleDeviceStorageScans } from "../features/settings/device-storage/routes.js";
 import { handleManagedWorktrees } from "../features/workspaces/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleWorkflowTemplateRoute } from "../features/channels/workflow-template-routes.js";
@@ -817,6 +818,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/device-storage/scans" || url.pathname.startsWith("/device-storage/scans/")) {
+    await handleDeviceStorageScans(request, response, url, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/worktrees" || url.pathname === "/worktrees/actions" || url.pathname.startsWith("/worktrees/initialization/")) {
     await handleManagedWorktrees(request, response, url, config, storeRegistry, context.desktopBridgeToken);
     return;
@@ -824,6 +830,11 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-directory/select") {
     await handleWorkspaceDirectorySelect(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/workspaces/registered" || url.pathname === "/workspaces/activate") {
+    await handleRegisteredWorkspaces(request, response, url, config, storeRegistry, context.desktopBridgeToken);
     return;
   }
 

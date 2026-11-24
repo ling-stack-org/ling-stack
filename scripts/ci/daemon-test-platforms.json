@@ -182,6 +182,8 @@
     "test/deliverables.test.mjs",
     "test/desktop-browser-api.test.ts",
     "test/desktop-browser-controller.test.ts",
+    "test/device-storage-routes.test.ts",
+    "test/device-storage-scanner.test.ts",
     "test/diagnostics-api.test.mjs",
     "test/docker-sandbox.test.mjs",
     "test/edit-diff-preview.test.mjs",
@@ -555,6 +557,7 @@
     "test/workspace-snapshot-routes.test.mjs",
     "test/workspace-snapshot-stream-lifecycle.test.mjs",
     "test/workspace-state-storage.test.mjs",
+    "test/registered-workspaces-routes.test.ts",
     "test/worktree-http-boundary.test.ts",
     "test/worktree-management.test.ts"
   ],

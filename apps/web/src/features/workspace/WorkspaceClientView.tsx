@@ -1,4 +1,5 @@
 import { ReviewDraftContext, ReviewDraftShelf, useReviewDraftController } from "../../shared/conversation/review/ReviewDraftContext.js";
+import { useConversationPermissionSelection } from "../../shared/conversation/conversation-permission-selection.js";
 import { channelActivityItemBelongsToSession, type ChannelSessionActivityScope } from "./channel-session-activity-scope.js";
 import { channelSessionWorkOwnership } from "./channel-session-work-ownership.js";
 import { useChannelWorkflowComposerController } from "./useChannelWorkflowComposerController.js";
@@ -89,7 +90,7 @@ import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { loadPreviewContent } from "../../lib/previews.js";
 
 
-import { inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
+import { inferPermissionPreset } from "../../lib/session-permissions.js";
 import {
   channelFormPersistenceKey,
   channelToForm,
@@ -434,7 +435,7 @@ export function WorkspaceClientView({
   onSelectTask,
   onCheckThenRunTask,
   onRunTask,
-  onAuthorizationModeChange,
+  channelPermissionSelection,
   onPermissionModeChange,
   onOpenSandboxSettings,
   onCancelActiveRun,
@@ -3069,6 +3070,7 @@ export function WorkspaceClientView({
   }
 
   const channelComposerPermissionLocked = guidanceModeActive || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
+  const selectChannelAuthorization = useConversationPermissionSelection({ ...channelPermissionSelection, disabled: channelComposerPermissionLocked });
   const channelComposer = sessionReadOnly ? <InlineFeedback tone="info">
     {t("Restore this conversation to continue.")}
     {sessionRestore.id === channelSession?.id && sessionRestore.error ? <span role="alert">{sessionRestore.error}</span> : null}
@@ -3156,8 +3158,7 @@ export function WorkspaceClientView({
       onInputPasteFiles={handleComposerPasteFiles}
       onInputSelect={updateMentionPicker}
       onInsertMentionTrigger={insertMentionTrigger}
-      onAuthorizationModeChange={onAuthorizationModeChange}
-      onPermissionPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
+      onAuthorizationModeChange={selectChannelAuthorization}
       onTogglePlanMode={toggleChannelPlanModeFromComposer}
       onRevealPlanModeChip={() => setChannelPlanModeChipVisible(true)}
       onClosePlanModeChip={closeChannelPlanModeChip}
