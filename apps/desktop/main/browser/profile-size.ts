@@ -11,11 +11,11 @@ async function statIfPresent(path: string) {
   }
 }
 
-export async function measureBrowserProfileSize(storagePath: string | null, metadataPath?: string): Promise<DeviceStorageCategorySize> {
+export async function measureBrowserProfileSize(storagePath: string | null, metadataPath?: string, overallDeadline?: number): Promise<DeviceStorageCategorySize> {
   if (!storagePath) return { category: "browser", knownBytes: 0, status: "unavailable", reason: "browser_profile_unavailable" };
   const root = resolve(storagePath);
   let bytes = 0, entries = 0;
-  const deadline = Date.now() + 20_000;
+  const deadline = Math.min(Date.now() + 20_000, overallDeadline ?? Number.POSITIVE_INFINITY);
   const partial = (reason: NonNullable<DeviceStorageCategorySize["reason"]>): DeviceStorageCategorySize =>
     ({ category: "browser", knownBytes: bytes, status: "partial", reason });
   const budgetLimit = () => Date.now() > deadline ? partial("deadline") : entries >= 300_000 ? partial("entry_limit") : undefined;

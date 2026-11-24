@@ -118,22 +118,24 @@ export class DesktopBrowserManager {
     this.assertWorkspaceCwd(workspaceCwd);
     if (scope === "current") return measureBrowserProfileSize(this.session.getStoragePath(), this.profileStore.metadataPath);
     const registry = createWorkspaceRegistryStore();
-    const workspaces: string[] = [];
+    const workspaces = new Set<string>([workspaceCwd]);
     try {
       let cursor = "";
       for (;;) {
         const page = registry.listWorkspaces(cursor, 500);
-        workspaces.push(...page.map(entry => entry.canonicalCwd));
-        if (page.length < 500 || workspaces.length >= 5_000) break;
+        for (const entry of page) workspaces.add(entry.canonicalCwd);
+        if (page.length < 500 || workspaces.size >= 5_000) break;
         cursor = page.at(-1)!.workspaceId;
       }
     } finally { registry.close(); }
     let bytes = 0;
-    let incomplete = workspaces.length >= 5_000;
-    for (const cwd of new Set(workspaces)) {
+    let incomplete = workspaces.size >= 5_000;
+    const deadline = Date.now() + 20_000;
+    for (const cwd of workspaces) {
+      if (Date.now() >= deadline) { incomplete = true; break; }
       const partition = this.electron.session.fromPartition(desktopBrowserPartition(cwd));
       const metadata = new BrowserProfileStore(cwd, this.options.profileDirectory);
-      const result = await measureBrowserProfileSize(partition.getStoragePath(), metadata.metadataPath);
+      const result = await measureBrowserProfileSize(partition.getStoragePath(), metadata.metadataPath, deadline);
       bytes += result.knownBytes;
       incomplete ||= result.status !== "complete";
     }

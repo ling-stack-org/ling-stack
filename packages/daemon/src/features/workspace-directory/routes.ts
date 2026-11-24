@@ -107,7 +107,7 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
       const item = registry.getWorkspaceByCanonicalCwd(cwd);
       if (cwd !== config.defaultWorkspaceCwd && !item) { writeJson(response, 404, { error: "workspace_not_registered" }); return; }
       const physicalRoot = availableWorkspaceRoot(cwd, config.defaultWorkspaceCwd, storeRegistry);
-      if (!physicalRoot || cwd !== config.defaultWorkspaceCwd && !storeRegistry.trustWorkspaceRoot(cwd, physicalRoot)) {
+      if (!physicalRoot) {
         writeJson(response, 409, { error: "workspace_unavailable" }); return;
       }
       writeJson(response, 200, { cwd });

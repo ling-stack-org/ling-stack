@@ -363,7 +363,7 @@ export function SettingsPage({
         {visibleActiveSection === "worktrees" && !workspaceToolDetailOpen ? <WorktreeSettingsPanel key={cwd} cwd={cwd} registerGuard={registerWorktreeGuard}
           onSwitchWorkspace={() => setWorkspaceSwitcherOpen(true)} /> : null}
         {visibleActiveSection === "browser" && browserVisible && !workspaceToolDetailOpen ? <BrowserSettingsPanel key={cwd} cwd={cwd} /> : null}
-        {visibleActiveSection === "device-storage" && browserVisible && !workspaceToolDetailOpen ? <DeviceStorageSettingsPanel key={cwd} cwd={cwd}
+        {visibleActiveSection === "device-storage" && !workspaceToolDetailOpen ? <DeviceStorageSettingsPanel key={cwd} cwd={cwd}
           onOpenConversations={() => onOpenConversations?.()} onOpenPlugins={() => onOpenPlugins?.()}
           onOpenWorktrees={() => selectSettingsSection("worktrees")} onOpenBrowser={() => selectSettingsSection("browser")} /> : null}
 
