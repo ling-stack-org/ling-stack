@@ -76,6 +76,11 @@ export async function runLingAppServerMcp(
     inputSchema: z.strictObject({ workspaceId: objectId, workItemId: objectId }),
     annotations: { readOnlyHint: true },
   }, async ({ workspaceId, workItemId }) => describe(await client.readWorkItemSnapshot(workspaceId, workItemId)));
+  if (methods.has("workItem/device/read")) server.registerTool("ling_work_item_device_read", {
+    description: "Read the durable Work Item to Device Fabric graph/node, owner host, WorkUnit and receipt projection.",
+    inputSchema: z.strictObject({ workItemId: objectId }),
+    annotations: { readOnlyHint: true },
+  }, async ({ workItemId }) => describe(await client.readWorkItemDevice(workItemId)));
   if (methods.has("workItem/stage/read")) server.registerTool("ling_work_item_stages", {
     description: "Read the accepted Workflow stages, current blockers, and bounded stage evidence for a Work Item.",
     inputSchema: z.strictObject({ workItemId: objectId, stageOffset: z.number().int().nonnegative().optional() }),
@@ -117,7 +122,7 @@ export async function runLingAppServerMcp(
       description: "Submit a source occurrence to the task inbox. A GitHub subject joins existing work. Link a channel Task or AutomationRun by its source ID to follow that execution.",
       inputSchema: z.strictObject({ sourceId: objectId, title: z.string().min(1).max(200), idempotencyKey: requestKey,
         gitHubSubject: z.strictObject({ repository: z.string().min(3).max(201), kind: z.enum(["issue", "pull_request"]), number: z.number().int().positive() }).optional(),
-        sourceType: z.enum(["channel_task", "automation_run"]).optional(), linkExistingExecution: z.boolean().optional(),
+        sourceType: z.enum(["channel_task", "automation_run", "device_task_graph_node"]).optional(), linkExistingExecution: z.boolean().optional(),
       }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.createWorkItem(params)));
@@ -128,6 +133,21 @@ export async function runLingAppServerMcp(
       }),
       annotations: { idempotentHint: true },
     }, async params => describe(await client.acceptWorkItem(params)));
+    if (methods.has("workItem/device/bind")) server.registerTool("ling_work_item_device_bind", {
+      description: "Bind one accepted Work Item to a Device Fabric graph node and its owner-host WorkUnit. Retry with the same key.",
+      inputSchema: z.strictObject({ workItemId: objectId, graphId: objectId, graphNodeId: objectId,
+        graphRevision: z.number().int().positive(), ownerHostId: objectId, ownerRouteGeneration: z.number().int().positive(),
+        workUnitId: objectId, attemptId: objectId.optional(), expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.bindWorkItemDevice(params)));
+    if (methods.has("workItem/device/receipt")) server.registerTool("ling_work_item_device_receipt", {
+      description: "Record an owner-host Device Fabric receipt. Unknown remains durable until the owner supplies a later reconciliation receipt.",
+      inputSchema: z.strictObject({ workItemId: objectId, bindingId: objectId, expectedBindingRevision: z.number().int().positive(),
+        expectedWorkItemRevision: z.number().int().positive(), ownerHostId: objectId, ownerRouteGeneration: z.number().int().positive(),
+        workUnitId: objectId, attemptId: objectId.optional(), status: z.enum(["succeeded", "failed", "cancelled", "unknown"]),
+        resultRef: z.string().min(1).max(512), reconciled: z.boolean().optional(), idempotencyKey: requestKey }),
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.recordWorkItemDeviceReceipt(params)));
     if (methods.has("workItem/workflow/bind")) server.registerTool("ling_work_item_workflow_bind", {
       description: "Bind an accepted Plan to its converted Workflow. Supply the paused predecessor, accepted successor and any retained independent results or active executions. Retry with the same key.",
       inputSchema: z.strictObject({ workItemId: objectId, planId: objectId,

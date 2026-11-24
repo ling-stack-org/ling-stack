@@ -7,7 +7,7 @@ export type AppServerStateKind = "verify_plan" | "verify_operation" | "review_su
   | "automation_coordination" | "coordination_round" | "coordination_automation_run" | "project_instruction_update"
   | "change_recovery_request" | "change_transfer_request" | "github_intake_pending" | "github_intake_receipt" | "github_intake_dispatch"
   | "work_item_workflow" | "work_item_plan_change" | "native_intake_receipt" | "work_item_stage_message_delivery"
-  | "work_item_stage_tool_receipt" | "work_item_stage_ballot";
+  | "work_item_stage_tool_receipt" | "work_item_stage_ballot" | "work_item_device_binding" | "work_item_device_receipt";
 
 export interface AppServerStateRecord {
   readonly workspaceId: string;

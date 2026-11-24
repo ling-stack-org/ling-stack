@@ -22,3 +22,14 @@ test("disabled policy suppresses automatic triggers while preserving manual inte
   assert.equal(manual.shouldOpen, false);
   assert.equal(manual.requiresHumanDecision, true);
 });
+
+test("deliberation admission applies roster, round, materiality and cooldown limits", () => {
+  const policy = { ...defaultDeliberationTriggerPolicy(), cooldownMs: 60_000 };
+  assert.equal(evaluateDeliberationTrigger({ kind: "conflicting_recommendations", workItemRevision: 1, conflictCount: 1, participantCount: 1 }, policy).shouldOpen, false);
+  assert.equal(evaluateDeliberationTrigger({ kind: "conflicting_recommendations", workItemRevision: 1, conflictCount: 1, participantCount: 2, priorRoundCount: 2 }, policy).shouldOpen, false);
+  assert.equal(evaluateDeliberationTrigger({ kind: "material_requirement_change", workItemRevision: 1, materiality: "medium", participantCount: 2,
+    lastTriggeredAt: "2026-11-25T00:00:00.000Z", evaluatedAt: "2026-11-25T00:00:30.000Z" }, policy).shouldOpen, false);
+  const admitted = evaluateDeliberationTrigger({ kind: "material_requirement_change", workItemRevision: 1, materiality: "high", participantCount: 2,
+    lastTriggeredAt: "2026-11-25T00:00:00.000Z", evaluatedAt: "2026-11-25T00:02:00.000Z" }, policy);
+  assert.equal(admitted.shouldOpen, true);
+});

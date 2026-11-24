@@ -146,6 +146,20 @@ const collaborationAppend = { ...workItemTarget, idempotencyKey: stringSchema, a
 const deliberationSettlement = { ...workItemTarget, roundId: stringSchema, expectedRoundRevision: integerSchema,
   expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema, reason: stringSchema };
 const deliberationSettlementFields = ["workItemId", "roundId", "expectedRoundRevision", "expectedWorkItemRevision", "idempotencyKey", "reason"];
+const deviceBindingFields = {
+  bindingId: stringSchema, workItemId: stringSchema, graphId: stringSchema, graphNodeId: stringSchema, graphRevision: integerSchema,
+  ownerHostId: stringSchema, ownerRouteGeneration: integerSchema, workUnitId: stringSchema, attemptId: stringSchema,
+  status: { enum: ["bound", "queued", "running", "succeeded", "failed", "cancelled", "unknown"] },
+  revision: integerSchema, boundAt: stringSchema, updatedAt: stringSchema, receipt: objectSchema,
+};
+const deviceBinding = objectWith(deviceBindingFields, ["bindingId", "workItemId", "graphId", "graphNodeId", "graphRevision",
+  "ownerHostId", "ownerRouteGeneration", "workUnitId", "status", "revision", "boundAt", "updatedAt"]);
+const deviceReceiptParams = {
+  ...workItemTarget, bindingId: stringSchema, expectedBindingRevision: integerSchema, expectedWorkItemRevision: integerSchema,
+  ownerHostId: stringSchema, ownerRouteGeneration: integerSchema, workUnitId: stringSchema, attemptId: stringSchema,
+  status: { enum: ["succeeded", "failed", "cancelled", "unknown"] }, resultRef: stringSchema,
+  reconciled: booleanSchema, idempotencyKey: stringSchema,
+};
 const reviewResultFields = ["operationId", "assessmentId", "candidateDigest", "status"];
 const reviewResult = {
   operationId: stringSchema, assessmentId: stringSchema, candidateDigest: stringSchema,
@@ -337,6 +351,21 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "workItem/handoff/read":
       return { params: objectWith({ ...workItemTarget, afterRevision: integerSchema, afterSequence: integerSchema,
         offset: integerSchema, limit: integerSchema }, ["workItemId"]), result };
+    case "workItem/device/read":
+      return { params: objectWith({ ...workItemTarget }, ["workItemId"]),
+        result: objectWith({ cwd: stringSchema, workItemId: stringSchema, bindings: { type: "array", items: deviceBinding } }, ["cwd", "workItemId", "bindings"]) };
+    case "workItem/device/bind":
+      return { params: objectWith({ ...workItemTarget, graphId: stringSchema, graphNodeId: stringSchema, graphRevision: integerSchema,
+        ownerHostId: stringSchema, ownerRouteGeneration: integerSchema, workUnitId: stringSchema, attemptId: stringSchema,
+        expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema },
+      ["workItemId", "graphId", "graphNodeId", "graphRevision", "ownerHostId", "ownerRouteGeneration", "workUnitId",
+        "expectedWorkItemRevision", "idempotencyKey"]),
+      result: objectWith({ cwd: stringSchema, binding: deviceBinding, replayed: booleanSchema }, ["cwd", "binding", "replayed"]) };
+    case "workItem/device/receipt":
+      return { params: objectWith(deviceReceiptParams,
+        ["workItemId", "bindingId", "expectedBindingRevision", "expectedWorkItemRevision", "ownerHostId",
+          "ownerRouteGeneration", "workUnitId", "status", "resultRef", "idempotencyKey"]),
+      result: objectWith({ cwd: stringSchema, binding: deviceBinding, replayed: booleanSchema }, ["cwd", "binding", "replayed"]) };
     case "workItem/list":
       return { params: objectWith({ status: stringSchema, channelId: stringSchema, limit: integerSchema }), result };
     case "workItem/create":
@@ -666,6 +695,7 @@ function notificationSchemaFor(method: LingAppServerNotificationMethod): LingApp
     case "workItem/message/updated":
     case "workItem/question/updated":
     case "workItem/handoff/updated":
+    case "workItem/device/updated":
       return { oneOf: [durableNotice, objectWith({ ...directNotice, record: objectSchema }, [...Object.keys(directNotice), "record"])] };
     case "externalAgent/registered":
       return objectWith({ registrationId: stringSchema, agentId: stringSchema, authorizationEpoch: stringSchema,

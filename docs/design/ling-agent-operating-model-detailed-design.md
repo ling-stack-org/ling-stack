@@ -2,7 +2,7 @@
 
 - **Status** 主线已接入工作项接单、控制、证据与协作记录。其余运行时能力见 [实施计划](ling-app-server-implementation-plan.md#当前实现证据)。
 - **Owner** Conversation、Core、Daemon、External Agent、GitHub Automation 与开发工具维护者
-- **Implementation status verified** 2026-11-22 against `origin/main@e6007992a`
+- **Implementation status verified** 2026-11-25 against `origin/main@7b47c21ab` plus the App Server completion branch
 - **Document type** 跨域状态、授权、事件与恢复详细设计
 - **Contract** [Ling Agent Operating Model](ling-agent-operating-model.md)
 - **Related contracts** [Ling Agent Session](ling-agent-session.md) · [Channel Team Operating System](channel-team-operating-system.md) · [Ling App Server Detailed Design](ling-app-server-detailed-design.md) · [GitHub Automation](github-automation.md) · [Ling Device Fabric](ling-device-fabric.md)
@@ -127,7 +127,7 @@ Source normalization rules:
 - GitHub sources preserve provider delivery IDs and source revisions. Repository ID, subject kind and number identify the stable subject. Base and head SHA describe the PR revision and its evidence basis.
 - Automations use definition id, scheduled occurrence or monitor fingerprint and source revision. One occurrence or fingerprint can create at most one Work Item.
 - External Agents use caller id, caller task id, submission key and context digest. The same caller submission can be observed through more than one transport without duplication.
-- Device Fabric nodes use graph id, node id, graph revision and owner-host execution id. The project Work Item references the owner journal instead of owning device effects.
+- Device Fabric nodes use graph id, node id, graph revision and owner-host execution id. The project Work Item references the owner journal instead of owning device effects. The App Server Device Work Item Bridge persists this mapping and its receipts under the Work Item scope. `workItem/device/read` is observational. `workItem/device/bind` admits a graph/node owner mapping after the current Work Item control check. `workItem/device/receipt` accepts only the bound owner host, route generation and WorkUnit and retains `unknown` until an owner reconciliation receipt arrives.
 
 Normalization preserves untrusted content as bounded source data. It does not execute commands, parse source prose as policy, or grant tools.
 

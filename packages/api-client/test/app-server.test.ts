@@ -54,6 +54,25 @@ class FakeSocket implements LingAppServerSocket {
             },
           },
         }));
+      } else if (request.method === "workItem/device/read") {
+        this.emit("message", JSON.stringify({ jsonrpc: "2.0", id: request.id,
+          result: { cwd: "/fixture", workItemId: "item", bindings: [] } }));
+      } else if (request.method === "workItem/device/bind") {
+        this.emit("message", JSON.stringify({ jsonrpc: "2.0", id: request.id,
+          result: { cwd: "/fixture", replayed: false, binding: {
+            bindingId: "binding", workItemId: "item", graphId: "graph", graphNodeId: "node", graphRevision: 1,
+            ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", status: "bound", revision: 1,
+            boundAt: "2026-11-25T00:00:00.000Z", updatedAt: "2026-11-25T00:00:00.000Z",
+          } } }));
+      } else if (request.method === "workItem/device/receipt") {
+        this.emit("message", JSON.stringify({ jsonrpc: "2.0", id: request.id,
+          result: { cwd: "/fixture", replayed: false, binding: {
+            bindingId: "binding", workItemId: "item", graphId: "graph", graphNodeId: "node", graphRevision: 1,
+            ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", status: "unknown", revision: 1,
+            boundAt: "2026-11-25T00:00:00.000Z", updatedAt: "2026-11-25T00:00:01.000Z",
+            receipt: { receiptId: "receipt", bindingRevision: 1, ownerHostId: "host", ownerRouteGeneration: 1,
+              workUnitId: "unit", status: "unknown", resultRef: "journal", receivedAt: "2026-11-25T00:00:01.000Z", reconciled: false },
+          } } }));
       } else if (request.method === "workItem/subscribe" && this.enableSubscriptionResponses) {
         this.emit("message", JSON.stringify({
           jsonrpc: "2.0",
@@ -216,6 +235,12 @@ test("Ling App Server client routes the development, delivery, grant, worktree a
     enabled: true, kind: "checkpoint", durationMs: 1000 });
   await client.createWorkItem({ sourceId: "source", title: "Fixture" });
   await client.acceptWorkItem({ workItemId: "item", expectedWorkItemRevision: 1, idempotencyKey: "accept" });
+  await client.readWorkItemDevice("item");
+  await client.bindWorkItemDevice({ workItemId: "item", graphId: "graph", graphNodeId: "node", graphRevision: 1,
+    ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", expectedWorkItemRevision: 1, idempotencyKey: "bind-device" });
+  await client.recordWorkItemDeviceReceipt({ workItemId: "item", bindingId: "binding", expectedBindingRevision: 1,
+    expectedWorkItemRevision: 1, ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", status: "unknown",
+    resultRef: "journal", idempotencyKey: "receipt-device" });
   await client.readWorkItemStageQuestions({ workItemId: "item" });
   await client.listWorkItemStageMessages({ workItemId: "item" });
   await client.captureChanges();
@@ -228,7 +253,7 @@ test("Ling App Server client routes the development, delivery, grant, worktree a
     "server/grants/create", "server/grants/create", "server/grants/list", "server/grants/revoke", "handoff/create", "handoff/read", "handoff/resume",
     "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
     "workItem/coordination/schedule/read", "workItem/coordination/schedule/set", "workItem/create", "workItem/accept",
-    "workItem/question/read", "workItem/message/list", "changes/capture", "worktree/list", "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
+    "workItem/device/read", "workItem/device/bind", "workItem/device/receipt", "workItem/question/read", "workItem/message/list", "changes/capture", "worktree/list", "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
   ]);
   client.close();
 });

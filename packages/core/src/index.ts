@@ -153,6 +153,7 @@ export type * from "./native-work-intake-types.js";
 export { nativeTaskIntakeRevision, nativeWorkIntakeReceiptId, nativeWorkIntakeRetryReceiptId } from "./native-work-intake-identity.js";
 export * from "./work-item-evidence-types.js";
 export * from "./work-item-collaboration.js";
+export * from "./work-item-device-bridge.js";
 export * from "./work-item-workflow-decision.js";
 export * from "./work-item-retained-workflow-stage.js";
 export * from "./work-item-workflow-handoff.js";

@@ -48,6 +48,7 @@ const workItemSourceTypes = [
   "external_work_action",
   "approval",
   "run",
+  "device_task_graph_node",
   "manual",
 ] as const satisfies readonly WorkItemSourceType[];
 

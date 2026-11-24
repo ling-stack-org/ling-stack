@@ -18,6 +18,7 @@ export type WorkItemSourceType =
   | "external_work_action"
   | "approval"
   | "run"
+  | "device_task_graph_node"
   | "manual";
 
 export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resource" | "user" | "scheduler" | "provider";

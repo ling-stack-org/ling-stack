@@ -12,6 +12,8 @@ const defaultPolicy: LingAppServerDeliberationTriggerPolicyV1 = {
   onMaterialRequirementChange: true,
   minimumParticipants: 2,
   maxRounds: 2,
+  minimumMateriality: "medium",
+  cooldownMs: 5 * 60_000,
 };
 
 /** Decides whether a durable deliberation round should be opened. This helper
@@ -36,6 +38,21 @@ export function evaluateDeliberationTrigger(
   if (!effective.enabled) {
     return { shouldOpen: false, requiresHumanDecision: false, reason: "Deliberation is disabled by policy.", triggerKind: signal.kind };
   }
+  if (signal.priorRoundCount !== undefined && signal.priorRoundCount >= effective.maxRounds) {
+    return { shouldOpen: false, requiresHumanDecision: false, reason: "The configured deliberation round limit has been reached.", triggerKind: signal.kind };
+  }
+  if (signal.participantCount !== undefined && signal.participantCount < effective.minimumParticipants) {
+    return { shouldOpen: false, requiresHumanDecision: false, reason: "The eligible participant roster is below the configured minimum.", triggerKind: signal.kind };
+  }
+  if (signal.lastTriggeredAt && signal.evaluatedAt && (effective.cooldownMs ?? 0) > 0
+    && Date.parse(signal.evaluatedAt) - Date.parse(signal.lastTriggeredAt) < (effective.cooldownMs ?? 0)) {
+    return { shouldOpen: false, requiresHumanDecision: false, reason: "The same decision is inside its deliberation cooldown.", triggerKind: signal.kind };
+  }
+  if (signal.materiality && effective.minimumMateriality
+    && materialityRank(signal.materiality) < materialityRank(effective.minimumMateriality)
+    ) {
+    return { shouldOpen: false, requiresHumanDecision: false, reason: "The decision materiality is below the configured threshold.", triggerKind: signal.kind };
+  }
   if (signal.kind === "plan_formation" && effective.onPlanFormation) {
     return { shouldOpen: true, requiresHumanDecision: false, reason: "The Work Item is forming an execution plan.", triggerKind: signal.kind };
   }
@@ -52,4 +69,8 @@ export function evaluateDeliberationTrigger(
 }
 export function defaultDeliberationTriggerPolicy(): LingAppServerDeliberationTriggerPolicyV1 {
   return { ...defaultPolicy };
+}
+
+function materialityRank(value: "low" | "medium" | "high"): number {
+  return value === "high" ? 2 : value === "medium" ? 1 : 0;
 }

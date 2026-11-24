@@ -3293,6 +3293,7 @@ export const zhCN = {
     "external_work_action": "外部动作",
     "approval": "审批",
     "run": "运行",
+    "device_task_graph_node": "设备任务节点",
     "manual": "手动",
     "task": "任务",
     "bash": "命令",

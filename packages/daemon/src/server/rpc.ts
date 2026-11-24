@@ -10,6 +10,10 @@ import {
   WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX,
   UserInputStoreError,
   evaluateDeliberationTrigger,
+  bindWorkItemDevice,
+  recordWorkItemDeviceReceipt,
+  readWorkItemDeviceBindings,
+  WorkItemDeviceBridgeError,
   readWorkItemStageQuestion,
   type ControlPlaneDomain,
   type ControlPlaneEvent,
@@ -54,6 +58,8 @@ import {
   type LingAppServerWorkItemResult,
   type LingAppServerWorkflowStageExecutionSource,
   type LingAppServerWorkflowStageResultSource,
+  type LingAppServerWorkItemDeviceBindParams,
+  type LingAppServerWorkItemDeviceReceiptParams,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
@@ -934,6 +940,12 @@ class RpcConnection {
         return this.appendCollaborationFromParams(params);
       case "workItem/read":
         return this.readWorkItem(params);
+      case "workItem/device/read":
+        return this.readWorkItemDevice(params);
+      case "workItem/device/bind":
+        return this.bindWorkItemDevice(params);
+      case "workItem/device/receipt":
+        return this.recordWorkItemDeviceReceipt(params);
       case "workItem/pause":
         return this.controlWorkItem("pause", params);
       case "workItem/resume":
@@ -1015,6 +1027,7 @@ class RpcConnection {
       if (grantAllowsMethod(this.grant, "approval/respond")) capabilities.push("approval.respond");
       if (grantAllowsMethod(this.grant, "input/respond")) capabilities.push("input.respond");
       if (grantAllowsMethod(this.grant, "workItem/read")) capabilities.push("workItem.read", "workItem.evidence");
+      if (grantAllowsMethod(this.grant, "workItem/device/read")) capabilities.push("workItem.device");
       if (grantAllowsMethod(this.grant, "workItem/pause")) capabilities.push("workItem.control");
       return capabilities;
     }
@@ -2689,6 +2702,54 @@ class RpcConnection {
     });
   }
 
+  private readWorkItemDevice(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemDeviceReadResult {
+    const record = this.workspaceParams(params);
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", "The Work Item was not found.");
+    return { cwd: record.cwd, workItemId, bindings: readWorkItemDeviceBindings(store, workItemId) };
+  }
+
+  private bindWorkItemDevice(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemDeviceBindResult {
+    const record = this.workspaceParams(params, true);
+    const input: LingAppServerWorkItemDeviceBindParams = {
+      cwd: record.cwd, workItemId: readStringField(record, "workItemId"), graphId: readStringField(record, "graphId"),
+      graphNodeId: readStringField(record, "graphNodeId"), graphRevision: readIntegerField(record, "graphRevision", "graphRevision"),
+      ownerHostId: readStringField(record, "ownerHostId"), ownerRouteGeneration: readIntegerField(record, "ownerRouteGeneration", "ownerRouteGeneration"),
+      workUnitId: readStringField(record, "workUnitId"), attemptId: readOptionalStringField(record, "attemptId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    try {
+      const result = bindWorkItemDevice(this.context.storeRegistry.getStore(record.cwd), input, new Date().toISOString(), record.cwd);
+      if (result.event) this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
+      return { cwd: record.cwd, binding: result.binding, replayed: result.replayed };
+    } catch (error) {
+      throw deviceBridgeRpcError(error);
+    }
+  }
+
+  private recordWorkItemDeviceReceipt(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemDeviceReceiptResult {
+    const record = this.workspaceParams(params, true);
+    const input: LingAppServerWorkItemDeviceReceiptParams = {
+      cwd: record.cwd, workItemId: readStringField(record, "workItemId"), bindingId: readStringField(record, "bindingId"),
+      expectedBindingRevision: readIntegerField(record, "expectedBindingRevision", "expectedBindingRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      ownerHostId: readStringField(record, "ownerHostId"), ownerRouteGeneration: readIntegerField(record, "ownerRouteGeneration", "ownerRouteGeneration"),
+      workUnitId: readStringField(record, "workUnitId"), attemptId: readOptionalStringField(record, "attemptId"),
+      status: readStringField(record, "status") as LingAppServerWorkItemDeviceReceiptParams["status"],
+      resultRef: readStringField(record, "resultRef"), reconciled: record.reconciled === true,
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    try {
+      const result = recordWorkItemDeviceReceipt(this.context.storeRegistry.getStore(record.cwd), input, new Date().toISOString(), record.cwd);
+      if (result.event) this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
+      return { cwd: record.cwd, binding: result.binding, replayed: result.replayed };
+    } catch (error) {
+      throw deviceBridgeRpcError(error);
+    }
+  }
+
   private readArtifact(params: unknown): import("@ling-stack/contracts").LingAppServerArtifactReadResult {
     const record = this.workspaceParams(params);
     const artifactId = readStringField(record, "artifactId");
@@ -3386,12 +3447,21 @@ function readRetainedWorkflowStageSources(value: unknown, kind: "result" | "exec
 function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | undefined {
   if (value === undefined) return undefined;
   const sourceTypes: readonly WorkItemSourceType[] = [
-    "channel_task", "channel_workflow_step", "automation_run", "external_work", "external_work_action", "approval", "run", "manual",
+    "channel_task", "channel_workflow_step", "automation_run", "external_work", "external_work_action", "approval", "run", "device_task_graph_node", "manual",
   ];
   if (typeof value !== "string" || !sourceTypes.includes(value as WorkItemSourceType)) {
     throw rpcError(-32602, "invalid_params", "sourceType is not a supported Work Item source type.");
   }
   return value as WorkItemSourceType;
+}
+
+function deviceBridgeRpcError(error: unknown): never {
+  if (!(error instanceof WorkItemDeviceBridgeError)) throw error;
+  const status = error.code === "work_item_not_found" ? -32040
+    : error.code === "invalid_params" ? -32602
+      : error.code === "resume_blocked" ? -32061
+        : error.code === "stale_revision" ? -32030 : -32031;
+  throw rpcError(status, error.code, error.message);
 }
 
 function readOptionalWorkItemPriority(value: unknown): WorkItem["priority"] | undefined {
@@ -3740,6 +3810,7 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     if (event.action.startsWith("turn.")) return "turn/status/changed";
   }
   if (event.entityType === "work_item") {
+    if (event.action === "work_item.device.updated") return "workItem/device/updated";
     if (event.action === "work_item.stage.updated") return "workItem/stage/updated";
     if (event.action === "work_item.intake.dispatch.updated") return "workItem/intake/updated";
     if (event.action.startsWith("work_item.plan_change.")) return "workItem/plan/change/updated";

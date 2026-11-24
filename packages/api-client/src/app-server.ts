@@ -119,6 +119,11 @@ import type {
   LingAppServerWorkItemPlanChangeRequestParams,
   LingAppServerWorkItemPlanChangeWithdrawParams,
   LingAppServerWorkItemPlanChangeResult,
+  LingAppServerWorkItemDeviceBindParams,
+  LingAppServerWorkItemDeviceBindResult,
+  LingAppServerWorkItemDeviceReadResult,
+  LingAppServerWorkItemDeviceReceiptParams,
+  LingAppServerWorkItemDeviceReceiptResult,
   LingAppServerWorktreeTarget,
   LingAppServerWorktreeCreateParams,
   LingAppServerWorktreeResult,
@@ -601,6 +606,18 @@ export class LingAppServerClient {
   async readWorkItemSnapshot(workspaceId: string, workItemId: string): Promise<LingAppServerWorkItemReadResult> {
     await this.connect();
     return await this.request("workItem/read", { workspaceId, workItemId });
+  }
+
+  async readWorkItemDevice(workItemId: string): Promise<LingAppServerWorkItemDeviceReadResult> {
+    return await this.request("workItem/device/read", { workItemId });
+  }
+
+  async bindWorkItemDevice(params: LingAppServerWorkItemDeviceBindParams): Promise<LingAppServerWorkItemDeviceBindResult> {
+    return await this.request("workItem/device/bind", params);
+  }
+
+  async recordWorkItemDeviceReceipt(params: LingAppServerWorkItemDeviceReceiptParams): Promise<LingAppServerWorkItemDeviceReceiptResult> {
+    return await this.request("workItem/device/receipt", params);
   }
 
   async controlWorkItem(

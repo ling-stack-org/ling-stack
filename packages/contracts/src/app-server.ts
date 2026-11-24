@@ -38,6 +38,7 @@ export const LING_APP_SERVER_CAPABILITIES = [
   "workItem.read",
   "workItem.control",
   "workItem.evidence",
+  "workItem.device",
   "workItem.deliberation",
   "workItem.coordination",
   "externalAgent.federation",
@@ -61,6 +62,7 @@ export const LING_APP_SERVER_IMPLEMENTED_CAPABILITIES = [
   "workItem.read",
   "workItem.control",
   "workItem.evidence",
+  "workItem.device",
   "workItem.deliberation",
   "workItem.coordination",
   "externalAgent.federation",
@@ -157,6 +159,9 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/cancel",
   "workItem/subscribe",
   "workItem/unsubscribe",
+  "workItem/device/read",
+  "workItem/device/bind",
+  "workItem/device/receipt",
   "workItem/delivery/read",
   "workItem/intake/list",
   "workItem/intake/accept",
@@ -311,6 +316,7 @@ export const LING_APP_SERVER_NOTIFICATION_METHODS = [
   "workItem/message/updated",
   "workItem/question/updated",
   "workItem/handoff/updated",
+  "workItem/device/updated",
   "externalAgent/registered",
   "externalAgent/task/started",
   "externalAgent/task/reconnected",
@@ -1125,6 +1131,93 @@ export interface LingAppServerWorkItemCollaborationAppendResult {
   readonly workItemRevision: number;
 }
 
+export type LingAppServerWorkItemDeviceStatus =
+  | "bound"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "unknown";
+
+export interface LingAppServerWorkItemDeviceReceipt {
+  readonly receiptId: string;
+  readonly bindingRevision: number;
+  readonly ownerHostId: string;
+  readonly ownerRouteGeneration: number;
+  readonly workUnitId: string;
+  readonly attemptId?: string;
+  readonly status: Exclude<LingAppServerWorkItemDeviceStatus, "bound" | "queued" | "running">;
+  readonly resultRef: string;
+  readonly receivedAt: string;
+  readonly reconciled: boolean;
+}
+
+export interface LingAppServerWorkItemDeviceBinding {
+  readonly bindingId: string;
+  readonly workItemId: string;
+  readonly graphId: string;
+  readonly graphNodeId: string;
+  readonly graphRevision: number;
+  readonly ownerHostId: string;
+  readonly ownerRouteGeneration: number;
+  readonly workUnitId: string;
+  readonly attemptId?: string;
+  readonly status: LingAppServerWorkItemDeviceStatus;
+  readonly revision: number;
+  readonly boundAt: string;
+  readonly updatedAt: string;
+  readonly receipt?: LingAppServerWorkItemDeviceReceipt;
+}
+
+export interface LingAppServerWorkItemDeviceReadResult {
+  readonly cwd: string;
+  readonly workItemId: string;
+  readonly bindings: readonly LingAppServerWorkItemDeviceBinding[];
+}
+
+export interface LingAppServerWorkItemDeviceBindParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly graphId: string;
+  readonly graphNodeId: string;
+  readonly graphRevision: number;
+  readonly ownerHostId: string;
+  readonly ownerRouteGeneration: number;
+  readonly workUnitId: string;
+  readonly attemptId?: string;
+  readonly expectedWorkItemRevision: number;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerWorkItemDeviceBindResult {
+  readonly cwd: string;
+  readonly binding: LingAppServerWorkItemDeviceBinding;
+  readonly replayed: boolean;
+}
+
+export interface LingAppServerWorkItemDeviceReceiptParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly bindingId: string;
+  readonly expectedBindingRevision: number;
+  readonly expectedWorkItemRevision: number;
+  readonly ownerHostId: string;
+  readonly ownerRouteGeneration: number;
+  readonly workUnitId: string;
+  readonly attemptId?: string;
+  readonly status: Exclude<LingAppServerWorkItemDeviceStatus, "bound" | "queued" | "running">;
+  readonly resultRef: string;
+  readonly reconciled?: boolean;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerWorkItemDeviceReceiptResult {
+  readonly cwd: string;
+  readonly binding: LingAppServerWorkItemDeviceBinding;
+  readonly replayed: boolean;
+}
+
 export interface LingAppServerWorkItemFeedbackParams {
   readonly cwd?: string;
   readonly workItemId: string;
@@ -1148,6 +1241,8 @@ export interface LingAppServerDeliberationTriggerPolicyV1 {
   readonly onMaterialRequirementChange: boolean;
   readonly minimumParticipants: number;
   readonly maxRounds: number;
+  readonly minimumMateriality?: "low" | "medium" | "high";
+  readonly cooldownMs?: number;
 }
 
 export type LingAppServerDeliberationTriggerKindV1 =
@@ -1164,6 +1259,10 @@ export interface LingAppServerDeliberationTriggerSignalV1 {
   readonly conflictCount?: number;
   readonly materiality?: "low" | "medium" | "high";
   readonly requestedBy?: string;
+  readonly participantCount?: number;
+  readonly priorRoundCount?: number;
+  readonly lastTriggeredAt?: string;
+  readonly evaluatedAt?: string;
 }
 
 export interface LingAppServerDeliberationTriggerDecisionV1 {
