@@ -150,7 +150,7 @@ const workItemReads = new Set([
   "workItem/message/read", "workItem/message/list", "workItem/question/read", "workItem/handoff/read",
   "workItem/coordination/schedule/read",
 ]);
-const workItemControls = new Set(["workItem/pause", "workItem/resume", "workItem/cancel", "workItem/stage/recover"]);
+const workItemControls = new Set(["workItem/pause", "workItem/resume", "workItem/cancel"]);
 const stageCoordinationMethods = new Set(["workItem/stage/read", "workItem/question/read", "workItem/message/read", "workItem/message/list",
   "workItem/question/ask", "workItem/question/reply", "workItem/message/send"]);
 

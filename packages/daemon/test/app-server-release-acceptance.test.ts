@@ -3737,9 +3737,12 @@ test("parallel Work Item stages reserve their shared Goal budget before sending 
   assert.equal(provider.requests.length, 1);
 });
 
-for (const recoveryPath of ["accepted Plan change", "trusted verification"] as const) {
-test(`the same stage blocker survives reassignment and restart until ${recoveryPath}`, { timeout: 45_000 }, async t => {
-  const useVerification = recoveryPath === "trusted verification";
+test("the same stage blocker survives reassignment and restart until a scoped Plan change is accepted", { timeout: 45_000 },
+  t => exerciseStageBlockerRecovery(t, false));
+test("the same stage blocker survives reassignment and restart until trusted verification", { timeout: 45_000 },
+  t => exerciseStageBlockerRecovery(t, true));
+
+async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boolean) {
   const provider = await startLoopbackPiProvider((_body: unknown, invocation: number) => invocation <= 2
     ? { errorStatus: 400, errorCode: "invalid_request_error" }
     : { text: "Independent contract verified." });
@@ -3897,6 +3900,14 @@ test(`the same stage blocker survives reassignment and restart until ${recoveryP
       idempotencyKey: "fake-and-ignore", subjectRevision: basis.planRevision,
     }), { code: "invalid_params" });
     const proof = await verify(restored, checkId);
+    const limitedSecret = randomBytes(32).toString("hex");
+    const { grant } = await restored.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+      label: "Stage observer and controller", scopes: ["observe", "control"], subject: { kind: "workItem", id: item.id },
+      credentialSha256: createHash("sha256").update(limitedSecret).digest("hex"),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(), idempotencyKey: "stage-recovery-controller",
+    });
+    const limited = await fixture.connect("/app-server/rpc", fixture.cwd, `las1.${grant.grantId}.${limitedSecret}`);
+    await assert.rejects(recover(proof.operationId, limited), { code: "capability_denied" });
     const unverifiedChange = join(fixture.cwd, "unverified-change.txt");
     await writeFile(unverifiedChange, "candidate drift\n");
     await assert.rejects(recover(proof.operationId), { code: "work_item_stage_candidate_stale" });
@@ -3919,7 +3930,16 @@ test(`the same stage blocker survives reassignment and restart until ${recoveryP
     assert.equal(staleStart.status, 409);
     assert.equal((await staleStart.json()).error, "work_item_stage_candidate_stale");
     assert.equal(provider.requests.length, 3);
-    await rm(unverifiedChange);
+    const freshProof = await verify(reconnected, checkId);
+    const mcp = await connectReleaseMcp(t, fixture.transportOptions());
+    const refreshed = await mcp.callTool<import("@ling-stack/contracts").LingAppServerStageRecoverResult>(
+      "ling_work_item_stage_recover", {
+        ...basis, expectedWorkItemRevision: results[0].workItemRevision,
+        operationId: freshProof.operationId, idempotencyKey: "recover-drifted-stage",
+      });
+    assert.equal(refreshed.replayed, false);
+    assert.equal(refreshed.receipt.candidateDigest, freshProof.candidateDigest);
+    assert.equal(refreshed.receipt.failureEventId, results[0].receipt.failureEventId);
     assert.ok(recovered.retryBudget);
     const { starts } = recovered.retryBudget;
     await startAndSettle(stalled.stepId, "succeeded");
@@ -3944,7 +3964,6 @@ test(`the same stage blocker survives reassignment and restart until ${recoveryP
   await startAndSettle(recovered.stepId, "succeeded");
   assert.equal((await read(restored)).stage.progress?.lastVerified?.kind, "stage_completed");
   assert.equal(provider.requests.length, 4);
-});
 }
 
 for (const guard of ["event usage", "Host reservation"] as const) {

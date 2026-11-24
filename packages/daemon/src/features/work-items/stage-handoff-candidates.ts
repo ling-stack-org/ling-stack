@@ -29,7 +29,6 @@ export async function workItemHandoffCandidatesCurrent(store: RunStore, step: Ch
 }
 
 export async function workItemStageRecoveryCandidateCurrent(store: RunStore, step: ChannelWorkflowStep, cwd: string): Promise<boolean> {
-  if (!step.metadata?.recoveryVerification) return true;
   const binding = readWorkItemWorkflowBinding(store, step.workflowId);
   const readRecovery = () => {
     const item = binding && store.getWorkItem(binding.workItemId);
