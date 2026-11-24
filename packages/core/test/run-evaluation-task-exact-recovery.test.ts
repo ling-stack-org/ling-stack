@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { createSqliteRunStore } from "../dist/index.js";
-test("public exact expired task recovery is available without enumerating history", async t => {
+test("public exact expired task recovery is available without enumerating history", async (t: TestContext) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-evaluation-task-exact-"));
   const store = createSqliteRunStore(cwd);
   t.after(async () => {
