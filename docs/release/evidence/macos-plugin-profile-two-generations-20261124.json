@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "status": "passed",
+  "target": "macos-arm64",
+  "signingTier": "unsigned_dev",
+  "distributionChannel": "development",
+  "baseline": {
+    "sourceSha": "14be1bdebd3d295a4f822981ae8cc18a32b9dd51",
+    "workflowRun": 45187207804,
+    "archiveSha256": "4e5d3b9a3b6dc0623899f2873d97f7af6a35eee95d092a79b80d3862a2fce91f",
+    "gstackGeneration": "4aff92f42e8b639eef278d399ec9c2578700f64041045178b6ca8f5ad6976fd1"
+  },
+  "slim": {
+    "sourceSha": "b60f0c396c6f1dad3023018a1f14f8e793d2d406",
+    "workflowRun": 45293564788,
+    "archiveSha256": "ae79242fe8c69615be408c6b127d1e61190f2e776570b0f034bf050703de5597",
+    "gstackGeneration": "8be8757dfe9171c1ae1988252581bf09a2ae6491e77bbb5ab77bb366d98a8e83"
+  },
+  "launchOrder": [
+    "bundled",
+    "on-demand",
+    "bundled",
+    "on-demand"
+  ],
+  "retainedGstackGenerations": [
+    "4aff92f42e8b639eef278d399ec9c2578700f64041045178b6ca8f5ad6976fd1",
+    "8be8757dfe9171c1ae1988252581bf09a2ae6491e77bbb5ab77bb366d98a8e83"
+  ],
+  "pluginStates": {
+    "official:office-documents": "enabled",
+    "official:chrome-browser": "enabled",
+    "official:office-documents@second-workspace": "disabled"
+  },
+  "workspaceApprovals": {
+    "firstWorkspace": "deny",
+    "secondWorkspace": "ask"
+  },
+  "retained": {
+    "pluginEventIdentities": true,
+    "linkedResources": true,
+    "teammateMcpBindings": true
+  },
+  "officialNativeRuntimeAcceptance": "not_run"
+}
