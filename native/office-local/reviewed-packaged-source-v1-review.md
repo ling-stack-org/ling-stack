@@ -1,11 +1,29 @@
 # Scoped macOS Development Packaging Review
 
-The current source prerequisite includes the [Conversation media inputs](#conversation-media-inputs),
+The current source prerequisite includes the [Workspace and device storage inputs](#workspace-and-device-storage-inputs),
+[Conversation media inputs](#conversation-media-inputs),
 [Plugin rollback compatibility](#plugin-rollback-compatibility),
 [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
 and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Workspace and device storage inputs
+
+The development packaging closure includes the device storage route and scanner.
+Workspace activation uses the Desktop Main bridge credential and checks the
+registered workspace's physical path before adding trust. Storage inventory uses
+initialized Stores and reports partial worktree measurements when ownership
+records are unavailable.
+
+The 2,015 fixed packaging inputs include 68 updated digests, including 55
+generated localization catalogs. The 15 Office native inputs and the toolchain,
+header, runtime, signing, and trust fields retain their prior values.
+
+The 260,549-byte record has SHA-256
+`021e6d2c4f4613682692e628098a37c0834bb6dd8e472b7545b5f12874e09994`.
+Its fixed-order packaging aggregate is
+`a53e399202fbf9e849b55593664cff3ec4a4fdba126910701629e7fdf14c66bd`.
 
 ## Conversation media inputs
 
