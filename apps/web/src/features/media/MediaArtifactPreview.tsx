@@ -85,6 +85,7 @@ export function MediaArtifactPreview({
         <video
           ref={videoRef}
           key={src}
+          crossOrigin="anonymous"
           autoPlay={autoPlay && resolvedMode !== "hero"}
           controls={resolvedMode !== "tile"}
           muted={resolvedMode === "tile" || autoPlay}
