@@ -71,6 +71,7 @@
 | O7/O9 决策检查点 | `workItem/deliberation/evaluate` 在当前草案或 Workflow 阶段核对检查点、选项、证据和参与人。缺意图、事实或交接材料会给出澄清、Verify 或交接修复；有实质取舍时保存建议，操作方可通过 App Server、SDK 或 MCP 接受、裁决或取消。Verify／Review 的事实争议需引用同工作项、同 Plan 和同候选的实际 Verify 执行。开轮和裁决复核当前候选。联调覆盖 Plan Mode 建议、在途争议转 Verify、并发只开一轮、重启重放、限域读取，以及草案、证据或候选变化后的旧裁决失效。该入口产生供草案或当前阶段参考的决策记录。声明式 Workflow 仍按已接受的条件执行投票和派发。 |
 | O7 定时协调轮次 | 已配置的 Automation 在同一事务中写入终态回执、轮次和事件。实际调度器从重启前的时段恢复。故障注入验证提交失败不会留下回执或轮次。回执重放复用原轮次。截止后生成简报和关闭事件，暂停的工作项产生跳过回执。已暂停、禁用或归档的 Automation 在「立即运行」和时段受理入口均返回 `automation_not_runnable`，保留既有记录。该用例启动的 Runner 数量为零。 |
 | O7/O9 阶段交接修复 | 源阶段修订更新后，已接受计划中的交接依赖仍保留原退回。真实 Daemon 回归覆盖省略退回回执、沿用旧候选或旧检查的拒绝，以及用当前结果包和可信检查并发接受。HTTP 与 App Server 返回同一接受回执，重启后复用退回与接受记录，QA 只启动一次。 |
+| O7/O9 阶段停滞恢复 | 已接受的 Plan 可以为阶段指定可信 Verify 或绑定 Provider preset 的 Review 作为恢复证据。实际 Daemon 验收覆盖换人和重启后的同一阻塞、早于失败的 Review 或仍有打开项的 Review 被拒绝、两个连接复用同一恢复收据。重启后派发重新检查 Review 修订及当前候选。重开的发现项、候选漂移会阻止派发，补交当前候选的零发现项 Review 后可恢复。 |
 | O1 首次会话派发 | `workItem/accept` 可选定主执行会话，接单和首发意图同事务保存。正常会话 Run 创建核对该意图并原子更新 Work Item。脚本化 Pi Provider 验证了重启、两个并发受理、暂停恢复、实际派发一次，以及当前绑定阻止删除会话。Codex MCP 已提供同一创建和受理入口。 |
 
 源码兼容用例由 `LING_APP_SERVER_PREVIOUS_BUILD` 指向已构建的上一版源码目录。`LING_APP_SERVER_CODEX_EXECUTABLE` 指向已安装的 Codex。两项均使用隔离状态和回环服务，配置 Pi Runner 使用脚本化 Provider。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
@@ -92,7 +93,7 @@ Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI std
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入。专用 TLS 监听器实测分离控制和答复权限，支持用户答复原回执与撤权。审批和答复仍需在其他宿主和实际远程部署验收。目标游标已绑定存储代次、授权代次和目标，本机兼容用例覆盖上一版源码与候选组合。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
 | F1、F2 | 普通会话 Handoff 的候选封存、Goal 预算承接与接手已接入。CLI `app-server codex-host --thread <id> --state <file> --view` 在回环地址提供双端会话视图。本机 Codex 0.171.0-alpha.13、实际 Ling Daemon 与受控 Provider 联调验证两端状态、Ling 在途排队、活跃 Codex Turn 指导、浏览器重连补齐、回执重放和审批提醒。故障回归覆盖原状态库升级、未写出的请求在重连后补投一次，以及已发出但缺少有效回执时保留待确认结果。Pi Host 预算路径的逐请求预留已使用受控 Provider 验证，仍需真实 Provider、隔离工作树和其他 Runner 的对应验收。 |
-| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛或仍在途的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端和支持协作工具的 Pi 阶段按 Run/Attempt 收发，Pi 在下一次模型输入接收消息和问答。Workflow 执行使用工作项重试上限，并可依据跨 Run 的结构化故障记录暂停单项阶段。可信 Verify 驱动的停滞恢复已接入并有定向回归。决策检查点支持计划前和在途阶段的建议、接受与手工裁决。剩余实现包括 Device Fabric 桥接、计划前多角色塑形、在途只读审议 Workflow、策略自动准入和裁决回接依赖，以及 Review 证据联动。完整 O9 仍需联合验收。 |
+| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛或仍在途的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端和支持协作工具的 Pi 阶段按 Run/Attempt 收发，Pi 在下一次模型输入接收消息和问答。Workflow 执行使用工作项重试上限，并可依据跨 Run 的结构化故障记录暂停单项阶段。可信 Verify 和已接受 Plan 指定的 Review 均可提供停滞恢复证据。决策检查点支持计划前和在途阶段的建议、接受与手工裁决。剩余实现包括 Device Fabric 桥接、计划前多角色塑形、在途只读审议 Workflow、策略自动准入和裁决回接依赖。完整 O9 仍需联合验收。 |
 | G | 独立恢复日志已验证 SQLite 快照恢复、撤权、旧游标失效和 GitHub 对账后派发。上一版源码通过同一套本地兼容验收。签名安装产物、实际远程 WSS、带独立检查 App 的 Ling 主动入队及三个真实 Provider 自研试点仍需对应环境的证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
 
 ## 目标与开工顺序
