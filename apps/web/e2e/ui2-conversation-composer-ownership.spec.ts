@@ -259,7 +259,7 @@ test("T13-O.31-E Dark 1280 Normal keeps slash, permission, reduced motion, long 
   await slashPicker.getByRole("option", { name: /^\/review\b/u }).click();
   await expect(input).toHaveAttribute("data-value", "/review ");
 
-  const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/u });
+  const permissionTrigger = composer.getByRole("button", { name: /Selected authorization mode/u });
   await permissionTrigger.click();
   const permissionOverlay = page.locator('[data-ling-overlay="menu"]').filter({
     has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }),

@@ -44,6 +44,7 @@ and consumption work.
   through existing SSE/control-plane streams without idle polling.
 - Shared message bodies use stable 15px/550 strong text from the first pending frame;
   the 13px pending spinner uses a shared 5px first-line offset.
+  This includes streaming rows with a custom body node; each row renders the indicator once.
 - Channel optimistic sends retain one virtual render identity through acknowledgement and
   reply start. The daemon emits canonical `reply_pending` only for a message that owns an idle
   lane; queued follow-ups return durable dispatch directly and move out of the transcript.

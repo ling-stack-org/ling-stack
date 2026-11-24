@@ -120,7 +120,7 @@ for (const viewport of [
     await expect(page.getByRole("button", { name: "Jump to latest message" })).toBeVisible();
     expect(Math.abs(((await composer.boundingBox())?.y ?? 0) - composerY)).toBeLessThanOrEqual(1);
 
-    const permissionButton = composer.getByRole("button", { name: /Selected permission preset/ });
+    const permissionButton = composer.getByRole("button", { name: /Selected authorization mode/ });
     await expectCompactMutedComposerControl(permissionButton);
     await permissionButton.click();
     const permissionMenu = page.locator('[data-ling-overlay="menu"]');

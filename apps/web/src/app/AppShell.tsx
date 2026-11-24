@@ -151,6 +151,7 @@ import {
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
 import { permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../lib/session-permissions.js";
+import type { PermissionSelectionInput } from "../shared/conversation/conversation-permission-selection.js";
 import { authorizationAndAccessToLegacyPermission, resolveWorkspaceAccessMode } from "../lib/conversation-authorization.js";
 import { StatusBadge } from "../shared/components/index.js";
 import { CurrentSessionHeaderCapabilityProvider } from "../shared/current-session/CurrentSessionHeaderCapability.js";
@@ -1298,6 +1299,18 @@ export function AppShell(): React.JSX.Element {
     workspaceCwd: form.cwd,
     policyRevision: currentFullAccessPolicyRevision,
   }), [channels, currentFullAccessPolicyRevision, form.cwd, selectedChannelBranchId, selectedChannelId, channelSessions.threadId, channelSessions.drafts]);
+  const channelPermissionSelection: Omit<PermissionSelectionInput, "disabled"> = {
+    ownerKey: JSON.stringify(channelConversationFullAccessScope),
+    authorizationMode: form.authorizationMode,
+    workspaceAccessMode: form.workspaceAccessMode,
+    defaultWorkspaceAccessMode: workspaceSettings?.defaultWorkspaceAccessMode ?? "workspace_write",
+    confirmFullAccess: () => fullAccessConfirmation.request(channelConversationFullAccessScope),
+    onChange: ({ authorizationMode, workspaceAccessMode }) => setForm((current) => ({
+      ...current, authorizationMode, workspaceAccessMode,
+      ...authorizationAndAccessToLegacyPermission(authorizationMode, workspaceAccessMode),
+    })),
+    onError: (error) => showToast({ message: error instanceof Error ? error.message : String(error), tone: "error", scope: "channel:authorization" }),
+  };
   const teammateConversationFullAccessScope = useMemo(() => teammateFullAccessScope({
     workspaceCwd: form.cwd,
     teammateId: selectedAiTeammate?.id,
@@ -2983,17 +2996,7 @@ export function AppShell(): React.JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
-            onAuthorizationModeChange={(authorizationMode) => {
-              setForm((current) => {
-                const legacy = authorizationAndAccessToLegacyPermission(authorizationMode, current.workspaceAccessMode);
-                return {
-                  ...current,
-                  authorizationMode,
-                  permissionMode: legacy.permissionMode,
-                  permissionPreset: legacy.permissionPreset,
-                };
-              });
-            }}
+            channelPermissionSelection={channelPermissionSelection}
             onPermissionModeChange={async (permissionMode) => {
               if (permissionMode === "full_access") {
                 const confirmation = await fullAccessConfirmation.request(channelConversationFullAccessScope);
