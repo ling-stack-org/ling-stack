@@ -1760,7 +1760,6 @@ export async function routeRequest(
     return;
   }
   if (request.method === "POST" && runRoute?.kind === "artifacts") {
-    if (!allowLocalServiceRequest(request, response)) return;
     await handlePublishRunVideo(request, response, url, storeRegistry, runRoute.runId, config.maxBodyBytes);
     return;
   }

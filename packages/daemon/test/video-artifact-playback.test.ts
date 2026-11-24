@@ -85,3 +85,31 @@ test("publishes a large workspace MP4 once and serves its stored bytes with HTTP
   assert.equal(legacy.status, 206);
   assert.equal(await legacy.text(), "ta");
 });
+
+test("publishes an MP4 through an authenticated non-loopback daemon", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-video-authenticated-"));
+  const store = createSqliteRunStore(cwd);
+  const now = new Date().toISOString();
+  const run = store.createRun({ id: "video-authenticated-run", cwd, taskId: "fixture", providerName: "fixture",
+    providerModel: "fixture", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+  store.markRunStarted(run.id, now);
+  store.markRunSucceeded(run.id, now);
+  const daemon = createDaemonServer({ host: "0.0.0.0", port: 0, authToken: "video-auth-token", defaultWorkspaceCwd: cwd }, {
+    runner: { async runTask() { assert.fail("publishing a file must not execute a runner"); } },
+    storeFactory: () => store,
+  });
+  t.after(async () => { await daemon.stop(); store.close(); await rm(cwd, { recursive: true, force: true }); });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+  const source = join(cwd, "remote-export.mp4");
+  await writeFile(source, Buffer.from([0, 0, 0, 20, 102, 116, 121, 112, 105, 115, 111, 109, 0, 0, 0, 0]));
+  const response = await fetch(`${base}/runs/${run.id}/artifacts?cwd=${encodeURIComponent(cwd)}`, {
+    method: "POST",
+    headers: { Authorization: "Bearer video-auth-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ path: "remote-export.mp4" }),
+  });
+  assert.equal(response.status, 201);
+  assert.equal((await response.json() as { artifact: RunArtifact }).artifact.type, "video");
+});
