@@ -199,6 +199,40 @@ test("root dependency and build configuration changes retain full scope", () => 
   }
 });
 
+test("a verified lockfile closure selects affected workspace validation without full CI", () => {
+  const scope = classify(["pnpm-lock.yaml"], {
+    lockfileScope: {
+      mode: "affected",
+      directories: ["packages/core"],
+      reason: "verified lockfile dependency closure",
+    },
+  });
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.dependencyPolicy, true);
+  assert.ok(scope.packages.includes("@ling-stack/core"));
+  assert.ok(scope.packages.includes("@ling-stack/daemon"));
+  assert.equal(scope.assurance, false);
+});
+
+test("development-only manifest changes keep validation local to the workspace", () => {
+  const previous = packageEntries.map(entry => entry.name === "@ling-stack/core"
+    ? { ...entry, manifest: { name: entry.name, scripts: {}, dependencies: {}, devDependencies: { probe: "1.0.0" } } }
+    : entry);
+  const current = previous.map(entry => entry.name === "@ling-stack/core"
+    ? { ...entry, manifest: { ...entry.manifest, devDependencies: { probe: "1.1.0" } } }
+    : entry);
+  const scope = classifyChangedFiles({
+    files: ["packages/core/package.json"],
+    packageEntries: current,
+    basePackageEntries: previous,
+  });
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.dependencyPolicy, true);
+});
+
 test("CI tooling mixed with product changes keeps the product scope", () => {
   const scope = classify(["scripts/ci/new-check.mjs", "packages/core/src/index.ts"]);
   assert.equal(scope.mode, "affected");
@@ -455,6 +489,7 @@ function repositoryFixture(t: TestContext) {
   mkdirSync(join(root, "scripts/ci"), { recursive: true });
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
+  copyFileSync(new URL("./lockfile-scope.mjs", import.meta.url), join(root, "scripts/ci/lockfile-scope.mjs"));
   copyFileSync(new URL("./dependency-security.mjs", import.meta.url), join(root, "scripts/ci/dependency-security.mjs"));
   copyFileSync(new URL("./device-test-profile.mjs", import.meta.url), join(root, "scripts/ci/device-test-profile.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));

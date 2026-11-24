@@ -17,6 +17,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 - 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
 - 已有包的源码和生产配置按新旧依赖边的并集选择本包和消费者。只迁移测试入口且生产清单字段、构建脚本和生命周期 hook 均不变时，CI 跑本包的完整测试、类型检查及共享测试夹具的实际使用方。分类器会核对 Node 测试发现、no-emit TypeScript 配置和已知包装命令，保留基线的测试文件和源代码类型检查。任意命令、名称过滤、未核验的脚本变化和未知路径回退全量。根清单的纯版本变更按版本消费者运行，共享构建配置、依赖解析、补丁和 CI 策略保留完整回归。
   本地 `test` 和 `typecheck` 可以先构建声明的工作区依赖和[登记的测试构建依赖](../../scripts/ci/package-validation-scope.mjs)。CI 只构建一次依赖闭包，再直接执行选择到的 `typecheck:ci` 和 `test:ci`。
+- `pnpm-lock.yaml` 先比较 base 和当前提交的 importer、package 和 snapshot 依赖闭包。只有锁文件顶层策略未变、所有变更节点都能追溯到工作区消费者且 importer 关系可解析时，才按受影响工作区选择验证，并始终保留依赖策略检查。根 importer、overrides、patch、workspace 结构、不可达节点或无法解析的形状继续回退全量。仅更新 `devDependencies` 的工作区清单进入本包验证范围，不沿生产依赖边扩散。
 - 包内已有的 `tsconfig.test.json` 或 `tsconfig.tests.json` 仅修改 `target`、`lib` 或 `allowImportingTsExtensions` 时，分类器会比较 Git 基线和当前配置。两侧都须是接入包类型检查的独立 no-emit 测试配置，且测试发现、继承和模块解析设置一致。`target` 变更还要求显式设置 `module` 和 `moduleResolution`。符合条件时按包内测试选择范围，其他配置改动沿用源码或全量验证规则。
 
 - 两份固定发布审查清单 `native/office-local/reviewed-packaged-source-v1.json`、`native/sandbox/reviewed-codesign-source-v1.json` 选择 Daemon 构建依赖图及现有 macOS 任务中的 codesign publication、Office publication、Office daemon source-input 三个完整契约文件，不选择无关包或 Daemon 的类型检查和测试分片。`macos-native` 仍要求该任务成功；`macos-helper`、`native-release` 分别选择真实 helper smoke 和发布契约步骤。清单单独变化不编译 helper，混合原生源码改动保留两者；未识别的 Office 路径仍全量，Sandbox 目录其他文件保留 Daemon 验证与真实 helper smoke。全量回归保留原有真实 helper smoke，PR 同时修改审查清单时还执行发布契约。契约核对清单与固定源码 hash，并用明确的模拟编译／签名 fixture 检查发布边界，不生成审批记录，也不代表真实签名或打包验收。复用任务不增加完整矩阵的 runner 数。
@@ -170,7 +171,7 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 | 包内 TypeScript／构建配置、可核验且全部 scripts 不变的包 manifest（已实现） | 所属包及消费者；manifest 另选依赖策略 | manifest 身份变化、未识别的 scripts 变化或无法核验时全量；新旧依赖边并集不能丢失消费者 |
 | 已核验的包内 Node／TypeScript 测试迁移 | 所属包完整测试、类型检查和共享测试输入的实际使用方 | 生产字段、构建入口和 hook 不变，依赖检查随实际依赖输入变更执行 |
 | 固定 Office／codesign 审查清单（已实现） | 必需的 Daemon 构建及 macOS 发布契约 | 清单单独变化省去产品测试与 helper 编译；混合原生源码保留真实 helper smoke；未知路径全量 |
-| 根配置、workspace、共享锁文件更新、补丁、CI 工作流或脚本 | 完整回归 | 标准新工作区包仅新增自身锁文件 importer 时按包验证 |
+| 根配置、workspace、未验证的共享锁文件、补丁、CI 工作流或脚本 | 完整回归 | 已验证的锁文件依赖闭包按实际 importer 消费者验证，并保留依赖策略检查；标准新工作区包仅新增自身锁文件 importer 时按包验证 |
 
 分类结果会在 CI Step Summary 和 `ci-scope-report` artifact 中输出命中文件数量、分类理由、受影响包、选中任务、Daemon 平台和每个跳过 lane 的原因，供 PR 摘要核对。scope 阶段同时用同一组变更路径生成一次强制 full scope，并由 [`scope-audit.mjs`](../../scripts/ci/scope-audit.mjs) 验证选择结果是 full scope 的子集；包、平台或任务越界，以及文档范围误选产品任务都会使 scope 失败。这是只读的选择器审计，不代替产品测试，也不放宽 unknown／root／workflow 路径的全量回退。`macos-required` 不能仅由当前的 `daemon=true` 或单个路径正则替代，需要包含共享契约和调用链的影响传播。
 
