@@ -54,7 +54,7 @@ export function BrowserSettingsPanel({ cwd }: { readonly cwd: string }): React.J
     {error || state?.error ? <InlineFeedback tone="danger" role="alert">{t("Browser data could not be saved or restored.")} <Button size="sm" onClick={() => setRetry(value => value + 1)}>{t("Retry")}</Button></InlineFeedback> : null}
     {state ? <>
       <section><h2>{t("Browser history")}</h2>
-        <Input value={query} aria-label={t("Search browser history")} onChange={event => setQuery(event.currentTarget.value)} />
+        <Input value={query} aria-label={t("Search browser history")} placeholder={t("Search browser history")} onChange={event => setQuery(event.currentTarget.value)} />
         <div className="settings-browser-history">{state.history.filter(item => `${item.title} ${item.url}`.toLowerCase().includes(query.toLowerCase())).slice(0, 50).map(item =>
           <div key={item.id}><span title={item.url}>{item.title || item.url}</span><Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => act({ action: "history_clear", since: 0, id: item.id })}>{t("Remove")}</Button></div>)}</div>
         {state.history.length ? <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => act({ action: "history_clear", since: BROWSER_HISTORY_CLEAR_ALL_SINCE })}>{t("Clear history")}</Button> : null}
