@@ -1,6 +1,7 @@
 # Scoped macOS Development Packaging Review
 
 The current source prerequisite includes the [Workspace and device storage inputs](#workspace-and-device-storage-inputs),
+[Bundled plugin discovery](#bundled-plugin-discovery),
 [Conversation media inputs](#conversation-media-inputs),
 [Plugin rollback compatibility](#plugin-rollback-compatibility),
 [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
@@ -21,9 +22,26 @@ generated localization catalogs. The 15 Office native inputs and the toolchain,
 header, runtime, signing, and trust fields retain their prior values.
 
 The 260,549-byte record has SHA-256
-`021e6d2c4f4613682692e628098a37c0834bb6dd8e472b7545b5f12874e09994`.
+`0943f9d75168c19793097ba0b1dcfee3322fdfe19f10d58cafaec03100cfb974`.
 Its fixed-order packaging aggregate is
-`a53e399202fbf9e849b55593664cff3ec4a4fdba126910701629e7fdf14c66bd`.
+`0ba2f7e0df57aaf5264e2a9eec9f93031cbb9a39f1973a8cfc0cec74a1449819`.
+
+## Bundled plugin discovery
+
+Date 2026-11-24. The Cua Driver bundled index includes its entry when the
+resolved package directory exists. An on-demand Desktop can omit that
+directory and still serve the plugin manager. The emitted-index test covers
+both resource layouts.
+
+The only changed packaging input is
+`packages/daemon/src/features/plugins/bundled-index.ts` at SHA-256
+`9c0025d1aa6bb1538501b29fda5b4dafc2d1b4ff512b9efc2ea3584ffe3b8feb`. The audit matched the other 2,012 packaging inputs and
+all 15 Office native inputs. The 260,282-byte record binds the existing runtime,
+toolchain, signing and trust metadata byte for byte.
+
+The fixed-order packaging aggregate is
+`3c4cf0565182469157e3b86c58969d5c68c9ac895e355f786c432e440ac90d11`.
+Record SHA-256 is `289a121388fa1e5593a0aadb9008fb4efb137eb8534de0af01a2e1e845e19e6e`.
 
 ## Conversation media inputs
 
