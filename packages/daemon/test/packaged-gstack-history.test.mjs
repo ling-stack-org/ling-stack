@@ -56,6 +56,31 @@ test("retention is bounded and never deletes a pinned old generation to admit a 
   await assert.rejects(retainPackagedSkillGeneration(cache, await selection(3)), /retention_limit/);
   assert.deepEqual(await readdir(cache), before);
 });
+test("a full cache defers a third package while both authenticated generations remain available", async t => {
+  const { cwd, cache, selection } = await fixture(t);
+  const first = await selection(1), second = await selection(2), third = await selection(3);
+  await retainPackagedSkillGeneration(cache, first);
+  await retainPackagedSkillGeneration(cache, second);
+  const before = await readdir(cache);
+  const result = await retainPackagedSkillGeneration(cache, third, undefined, { onRetentionLimit: "use-existing" });
+  assert.equal(result.retained.length, 1);
+  assert.deepEqual(await readdir(cache), before);
+  const catalog = new PackagedSkillRuntimeCatalog(result.current, result.retained);
+  const contexts = [first, second].map(input => ({ skillId: "qa", sourceKind: "gstack-skill-directory", loaded: true, truncated: false,
+    sourceChecksum: hash(`# qa ${input === first ? 1 : 2}\n`), referencedFiles: [{ path: "manifest.json", checksum: input.expectedManifestChecksum }] }));
+  const boundContexts = contexts.map(context => catalog.bind(context)).map(context => catalog.restore(context, "qa"));
+  for (const context of boundContexts) assert.ok(context?.resourceBinding);
+  await rm(third.rootPath, { recursive: true });
+  for (const context of boundContexts) assert.match(await readFile(join(catalog.environment(context, cwd).GSTACK_ROOT, "SKILL.md"), "utf8"), /^# qa [12]\n$/);
+});
+test("full-cache deferral still rejects a tampered candidate", async t => {
+  const { cwd, cache, selection } = await fixture(t);
+  await retainPackagedSkillGeneration(cache, await selection(1));
+  await retainPackagedSkillGeneration(cache, await selection(2));
+  const third = await selection(3);
+  await writeFile(join(third.rootPath, "runtime/SKILL.md"), "tampered\n");
+  await assert.rejects(retainPackagedSkillGeneration(cache, third, undefined, { onRetentionLimit: "use-existing" }), /checksum_mismatch/);
+});
 test("tampering, aliases and private in-progress stages cannot become active", async t => {
   const { cwd, cache, selection } = await fixture(t);
   const first = await selection(1);

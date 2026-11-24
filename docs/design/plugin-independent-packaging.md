@@ -31,6 +31,8 @@ daemon 验证归档签名后解压到暂存目录，校验 ZIP 路径、逐文�
 
 Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容构建可使用包内资源。Cua Driver 的按需模式由 Desktop 包提供运行信任策略。它沿用平台代码签名、系统权限、交互会话、进程隔离和租约检查。Cua Driver 无缓存时保留 Desktop 管理边界，外部进程无法取得该托管运行权。
 
+Desktop 另外保留最多两代已验证的 gstack 运行时，用于恢复仍引用旧快照的任务。第三个不同版本到达而两代都仍被保留时，启动继续使用现有目录并延后本次 gstack 快照发布，不删除旧目录或绕过鉴权。未知目录、篡改、未完成写入和验签失败仍按阻断处理。
+
 ## 发布
 
 - `GET /plugins/catalog` 获取已验签的目录及匹配本机平台、架构和 Ling 版本的官方包。
@@ -80,7 +82,7 @@ macOS arm64 使用同一隔离用户目录，从 `14be1bdeb` 的兼容开发包�
 
 另一份隔离配置按兼容包 → 瘦包 → 兼容包 → 瘦包的顺序完成四次启动、三次切换。四次均连接 Desktop 自有 daemon、加载主窗口并正常退出。最后两次启动时，两代 gstack 资源均已留存。主工作区启用 Office 和 Chrome，第二工作区禁用 Office。三次切换后的启停状态、MCP 绑定、写入审批和既有插件事件 ID 均与首次启动后的状态一致。[两代资源迁移证据](../release/evidence/macos-plugin-profile-two-generations-20261124.json)
 
-这次复验使用 ad-hoc 签名的开发包。另一项启动探针显示，当配置已留存两代 gstack 资源且目标包携带第三个不同版本时，`packaged_skill_history_retention_limit` 会中断启动。正式切换仍需覆盖该情形。
+这次复验使用 ad-hoc 签名的开发包。两代 gstack 资源已占满缓存时，Desktop 会保留两代已验证运行时并延后第三代 gstack 的快照发布，已有技能绑定仍可恢复，其他缓存异常仍会阻止启动。针对该路径的 daemon 回归覆盖了第三代延后和两代绑定恢复。正式签名版仍需覆盖该情形。
 
 ### Windows 已有配置切换
 

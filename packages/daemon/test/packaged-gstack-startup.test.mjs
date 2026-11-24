@@ -6,7 +6,25 @@ import { join } from "node:path";
 import test from "node:test";
 import { readPackagedGstackIdentity } from "../dist/features/skills/packaged-identity.js";
 import { preparePackagedGstackStartup } from "../dist/features/skills/packaged-startup.js";
+import { retainPackagedSkillGeneration } from "../dist/features/skills/packaged-history.js";
 import { browserAcquisitionFixture } from "../../core/test/support/browser-acquisition-fixture.mjs";
+
+const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+async function writeSelection(rootPath, target, version, descriptor) {
+  await mkdir(join(rootPath, "runtime"), { recursive: true });
+  const body = `# qa ${version}\n`, files = new Map([["LICENSE", "MIT\n"], ["runtime/SKILL.md", body]]);
+  if (descriptor) files.set("executable-build.json", JSON.stringify({ browser: descriptor.selection }));
+  for (const [path, bytes] of files) await writeFile(join(rootPath, path), bytes);
+  const manifest = { schemaVersion: 1, packId: "gstack-default", deliveryStage: "executable",
+    upstream: { repository: "https://github.com/garrytan/gstack", revision: String(version).repeat(40), version: `1.0.${version}.0` },
+    adaptationRevision: `ling-startup-${version}`, target, licensePath: "LICENSE",
+    skills: [{ id: "qa", entryPath: "runtime/SKILL.md", resourcePaths: [] }],
+    files: [...files].map(([path, bytes]) => ({ path, checksum: digest(bytes), sizeBytes: Buffer.byteLength(bytes) })) };
+  const bytes = JSON.stringify(manifest);
+  await writeFile(join(rootPath, "manifest.json"), bytes);
+  return { rootPath, expectedManifestChecksum: digest(bytes), expectedUpstreamRevision: manifest.upstream.revision,
+    expectedAdaptationRevision: manifest.adaptationRevision, expectedTarget: target, expectedSkillIds: ["qa"] };
+}
 
 test("an ordinary development daemon has no implicitly selected package", async () => {
   assert.equal(readPackagedGstackIdentity(), undefined);
@@ -110,5 +128,67 @@ test("packaged startup admits and retains a descriptor without downloading the b
   assert.equal(installed.current.manifestChecksum, identity.manifestChecksum);
   assert.deepEqual(await readdir(installed.current.browser.root), ["browser-acquisition.json"]);
   installed.current.assertCurrent();
+  assert.equal(globalThis.fetch.mock.callCount(), 0);
+});
+
+test("packaged startup defers a third gstack generation while retaining existing bindings", {
+  skip: !["darwin", "win32"].includes(process.platform),
+}, async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ling-gstack-full-history-startup-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const executable = process.platform === "darwin" ? join(root, "Ling.app/Contents/MacOS/Ling") : join(root, "app/Ling.exe");
+  const resources = process.platform === "darwin" ? join(root, "Ling.app/Contents/Resources") : join(root, "app/resources");
+  const gstack = join(resources, "gstack"), browserRoot = join(resources, "gstack-browser");
+  await mkdir(join(executable, ".."), { recursive: true }); await writeFile(executable, "test-only; never executed");
+  const target = { platform: process.platform, arch: process.arch }, descriptor = browserAcquisitionFixture(target);
+  await mkdir(browserRoot, { recursive: true }); await writeFile(join(browserRoot, "browser-acquisition.json"), descriptor.bytes);
+  const third = await writeSelection(gstack, target, 3, descriptor);
+  const first = await writeSelection(join(root, "source-1"), target, 1);
+  const second = await writeSelection(join(root, "source-2"), target, 2);
+  const sourcesDir = join(root, "sources"), cache = join(sourcesDir, "bundled-gstack");
+  await retainPackagedSkillGeneration(cache, first);
+  await retainPackagedSkillGeneration(cache, second);
+  const before = await readdir(cache);
+  const identity = { manifestChecksum: third.expectedManifestChecksum, upstreamRevision: third.expectedUpstreamRevision,
+    adaptationRevision: third.expectedAdaptationRevision, target, skillIds: ["qa"] };
+  const receipt = JSON.stringify({ browser: descriptor.selection });
+  const priorExec = Object.getOwnPropertyDescriptor(process, "execPath"), priorElectron = Object.getOwnPropertyDescriptor(process.versions, "electron");
+  Object.defineProperty(process, "execPath", { ...priorExec, value: executable });
+  Object.defineProperty(process.versions, "electron", { configurable: true, value: "44.8.0" });
+  t.after(() => {
+    Object.defineProperty(process, "execPath", priorExec);
+    if (priorElectron) Object.defineProperty(process.versions, "electron", priorElectron); else delete process.versions.electron;
+  });
+  t.mock.method(globalThis, "fetch", () => assert.fail("startup must not acquire browser bytes"));
+  const module = code => `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
+  const installedModule = module("export let installed; export function installPackagedSkillRuntime(current,retained){installed={current,retained};}\n// deferred-generation-case");
+  const fixtureModule = module(`
+    let fixture;
+    export function configure(value) { fixture = value; }
+    export function resolveUserConfigPaths() { return { sourcesDir: fixture.sourcesDir }; }
+    export function readPackagedGstackIdentity() { return fixture.identity; }
+    export async function prepareBundledSkillStartup(selection, callback) {
+      return callback({ manifestChecksum: selection.expectedManifestChecksum, readResource: async () => fixture.receipt });
+    }
+  // deferred-generation-case
+  `);
+  (await import(fixtureModule)).configure({ sourcesDir, identity, receipt });
+  const replacements = new Map([
+    ["@ling-stack/core/bundled-skill-browser", new URL("../../core/dist/bundled-skill-browser.js", import.meta.url).href],
+    ["@ling-stack/core", fixtureModule], ["./packaged-identity.js", fixtureModule], ["./bundled-startup.js", fixtureModule],
+    ["./packaged-runtime.js", installedModule], ["./packaged-history.js", new URL("../dist/features/skills/packaged-history.js", import.meta.url).href],
+  ]);
+  let source = await readFile(new URL("../dist/features/skills/packaged-startup.js", import.meta.url), "utf8");
+  for (const [name, url] of replacements) {
+    const marker = `from ${JSON.stringify(name)}`; assert.equal(source.split(marker).length, 2);
+    source = source.replace(marker, `from ${JSON.stringify(url)}`);
+  }
+  const initialize = await (await import(module(source))).preparePackagedGstackStartup();
+  const { installed } = await import(installedModule);
+  assert.notEqual(installed.current.manifestChecksum, identity.manifestChecksum);
+  assert.equal(installed.retained.length, 1);
+  assert.deepEqual(await readdir(cache), before);
+  assert.equal(typeof initialize, "function");
+  initialize();
   assert.equal(globalThis.fetch.mock.callCount(), 0);
 });
