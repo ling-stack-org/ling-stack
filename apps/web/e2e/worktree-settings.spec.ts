@@ -19,7 +19,7 @@ function snapshot(): ManagedWorktreeListResponse {
   };
 }
 
-async function prepare(page: Page, locale = "en-US", theme = "light", width = 1440, height = 960) {
+async function prepare(page: Page, locale = "en-US", theme = "light", width = 1440, height = 960, desktopSwitch = false) {
   await page.setViewportSize({ width, height });
   await page.addInitScript(({ locale, theme }) => {
     localStorage.setItem("ling-stack.locale", locale);
@@ -27,6 +27,19 @@ async function prepare(page: Page, locale = "en-US", theme = "light", width = 14
     for (const key of ["ling-stack.themeSelection", "ling-stack.themeBootstrapSelection"]) localStorage.setItem(key, selection);
     for (const key of ["ling-stack.themePreference", "ling-stack.themeBootstrapPreference"]) localStorage.setItem(key, theme);
   }, { locale, theme });
+  if (desktopSwitch) await page.addInitScript(() => {
+    Object.defineProperty(window, "lingDesktop", { configurable: true, value: {
+      platform: "macos", daemonBaseUrl: "http://127.0.0.1:17891",
+      daemon: { onStatusChanged: () => () => {} },
+      computerUse: { reportLocale: () => {}, reportSelectedDeckOwner: () => {},
+        onSummaryChanged: () => () => {}, reportHostLayout: () => {} },
+      localServices: { request: async ({ path, method, body }: { path: string; method: string; body?: string }) => {
+        const response = await fetch(`http://127.0.0.1:17891${path}`, { method, body,
+          headers: body ? { "Content-Type": "application/json" } : undefined });
+        return { status: response.status, body: await response.text() };
+      } },
+    } });
+  });
   const runtimeErrors: string[] = [];
   page.on("pageerror", error => runtimeErrors.push(error.message));
   page.on("console", message => { if (message.type() === "error" && !message.text().includes("Failed to load resource")) runtimeErrors.push(message.text()); });
@@ -143,6 +156,11 @@ test("worktree settings persist root and fetch policy, open paths, and survive n
   await page.locator('[data-settings-section="worktrees"]').click();
   await expect(surface.getByRole("textbox", { name: "Worktree root directory" })).toHaveValue("/tmp/Ling worktrees");
   await expectNoOverflow(page);
+});
+
+test("Desktop workspace switch selects a registered workspace across the app and reload", async ({ page }) => {
+  const harness = await prepare(page, "en-US", "light", 1440, 960, true);
+  const surface = await open(page);
   await expect(surface.getByText("ling-stack-workspace", { exact: true })).toBeVisible();
   await surface.getByRole("button", { name: "Switch workspace" }).click();
   const switcher = page.getByRole("dialog", { name: "Switch workspace" });
@@ -162,7 +180,7 @@ test("worktree settings persist root and fetch policy, open paths, and survive n
 });
 
 test("worktree draft guard runs before global workspace switch", async ({ page }) => {
-  await prepare(page);
+  await prepare(page, "en-US", "light", 1440, 960, true);
   const surface = await open(page);
   await surface.getByRole("textbox", { name: "Worktree root directory" }).fill("/tmp/unsaved-root");
   await surface.getByRole("button", { name: "Switch workspace" }).click();
@@ -177,7 +195,7 @@ test("worktree draft guard runs before global workspace switch", async ({ page }
 });
 
 test("workspace folder selection registers the chosen directory before switching", async ({ page }) => {
-  await prepare(page);
+  await prepare(page, "en-US", "light", 1440, 960, true);
   let registerRequested = false;
   await page.route(/\/workspace-directory\/select(?:\?.*)?$/u, route => {
     registerRequested = new URL(route.request().url()).searchParams.get("register") === "1";
@@ -285,6 +303,7 @@ test("setup from a browser points to Desktop without invoking the action API", a
   harness.current = { ...harness.current, entries: harness.current.entries.map(entry => entry.ownerId === "channel_engineering"
     ? { ...entry, status: "blocked", initialization: { status: "pending" } } : entry) };
   const surface = await open(page);
+  await expect(surface.getByRole("button", { name: "Switch workspace" })).toHaveCount(0);
   await surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "Manage worktree" }).click();
   await page.getByRole("menuitem", { name: "Retry setup" }).click();
   await expect(surface.getByText("Use a supported macOS or Windows desktop client.")).toBeVisible();

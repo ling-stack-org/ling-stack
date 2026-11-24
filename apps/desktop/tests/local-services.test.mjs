@@ -54,11 +54,27 @@ test("the precise route, method and query allowlist retains existing local APIs"
     ["GET", "/notifications/preferences"], ["PATCH", "/notifications/preferences"],
     ["GET", "/startup/status?cwd=%2Ffixture%2Fworkspace"], ["POST", "/startup/refresh?cwd=%2Ffixture"],
     ["GET", "/diagnostics/doctor?cwd=%2Ffixture"], ["GET", "/diagnostics/logs?lines=200"],
+    ["GET", "/workspaces/registered"], ["POST", "/workspaces/activate"],
     ["GET", "/skills/marketplace/inspect?url=https%3A%2F%2Fexample.com%2Findex.json"],
     ["GET", "/im-destinations"], ["POST", "/im-destinations"],
     ["PATCH", "/im-destinations/fixture-1_A"], ["DELETE", "/im-destinations/fixture-1_A"],
     ["POST", "/im-destinations/fixture-1_A/test"],
   ]) assert.deepEqual(readDesktopLocalServiceRequest({ method, path }), { method, path });
+});
+
+test("workspace activation is sent only by trusted Desktop Main with its bridge token", async () => {
+  const f = fixture(async () => new Response('{"cwd":"/fixture/second"}'));
+  f.input.desktopBridgeToken = "fixture-desktop-bridge";
+  const { invoke } = register(f);
+  const body = '{"cwd":"/fixture/second"}';
+  assert.deepEqual(await invoke(f.event, { method: "POST", path: "/workspaces/activate", body }),
+    { status: 200, body: '{"cwd":"/fixture/second"}' });
+  assert.equal(f.calls[0][1].headers["X-Ling-Desktop-Bridge-Token"], "fixture-desktop-bridge");
+  await invoke(f.event, { method: "GET", path: "/workspaces/registered" });
+  assert.equal(f.calls[1][1].headers["X-Ling-Desktop-Bridge-Token"], "fixture-desktop-bridge");
+  await assert.rejects(invoke({ ...f.event, senderFrame: { url: "file:///foreign.html" } },
+    { method: "POST", path: "/workspaces/activate", body }), /local_service_forbidden/u);
+  assert.equal(f.calls.length, 2);
 });
 
 test("invalid paths, methods, queries, bodies and extra authority fail before fetch", async () => {

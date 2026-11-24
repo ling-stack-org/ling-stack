@@ -5,6 +5,7 @@ import { createWorkspaceRegistryStore, registerResolvedWorkspace } from "@ling-s
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { allowLocalServiceRequest, isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
+import { desktopBridgeTokenStatus } from "../computer-use/desktop-bridge-auth.js";
 import { writeJson } from "../../shared/response.js";
 import {
   selectWorkspaceDirectory,
@@ -70,8 +71,14 @@ export async function handleWorkspaceDirectorySelect(
 }
 
 export async function handleRegisteredWorkspaces(request: IncomingMessage, response: ServerResponse,
-  url: URL, config: ResolvedDaemonConfig, storeRegistry: RunStoreRegistry): Promise<void> {
+  url: URL, config: ResolvedDaemonConfig, storeRegistry: RunStoreRegistry, desktopBridgeToken?: string): Promise<void> {
   if (!allowLocalServiceRequest(request, response)) return;
+  const auth = desktopBridgeTokenStatus(request, desktopBridgeToken);
+  if (auth !== "accepted" || request.headers.origin !== undefined) {
+    writeJson(response, auth === "unavailable" ? 503 : 403,
+      { error: auth === "unavailable" ? "desktop_bridge_unavailable" : "desktop_bridge_forbidden" });
+    return;
+  }
   const registry = createWorkspaceRegistryStore();
   try {
     if (url.pathname === "/workspaces/registered" && request.method === "GET") {
@@ -110,6 +117,7 @@ export async function handleRegisteredWorkspaces(request: IncomingMessage, respo
       if (!physicalRoot) {
         writeJson(response, 409, { error: "workspace_unavailable" }); return;
       }
+      storeRegistry.trustWorkspaceRoot(physicalRoot);
       writeJson(response, 200, { cwd });
       return;
     }

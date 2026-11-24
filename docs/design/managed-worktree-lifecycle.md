@@ -289,15 +289,17 @@ its appearance; the daemon response remains authoritative.
 
 #### App-wide workspace selection
 
-The header's **Switch workspace** button opens a dialog of registered canonical
-workspaces. The list is paged from the local user registry and marks missing
+The Desktop header's **Switch workspace** button opens a dialog of registered canonical
+workspaces. The list is paged from the local user registry through Desktop Main
+and marks missing
 directories unavailable. **Select folder** uses the existing native directory
 picker; that explicit choice registers the folder before it becomes selectable.
 The Settings UI never accepts a typed path as a workspace identity.
 
-Activation is a separate local-only daemon request. It accepts only a registered
-and currently available directory (or the daemon's default workspace), then
-admits that directory as a trusted workspace root for this daemon process.
+Activation is sent from the trusted Desktop main frame through the allowlisted
+local-service IPC. Main adds its private bridge token; the daemon rejects browser
+origins and requests without that token before admitting a registered, available
+directory (or the daemon's default workspace) as a trusted root for this process.
 The app persists the selected canonical path, revalidates it on startup, and
 falls back to the daemon default when it is no longer registered or available.
 Changing selection resets workspace-scoped controllers, selected channel branch,

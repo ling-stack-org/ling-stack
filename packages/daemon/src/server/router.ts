@@ -828,7 +828,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/workspaces/registered" || url.pathname === "/workspaces/activate") {
-    await handleRegisteredWorkspaces(request, response, url, config, storeRegistry);
+    await handleRegisteredWorkspaces(request, response, url, config, storeRegistry, context.desktopBridgeToken);
     return;
   }
 

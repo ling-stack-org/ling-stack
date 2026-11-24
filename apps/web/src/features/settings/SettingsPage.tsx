@@ -361,7 +361,7 @@ export function SettingsPage({
 
         {visibleActiveSection === "personalization" && !workspaceToolDetailOpen ? <PersonalizationSettingsPanel cwd={cwd} /> : null}
         {visibleActiveSection === "worktrees" && !workspaceToolDetailOpen ? <WorktreeSettingsPanel key={cwd} cwd={cwd} registerGuard={registerWorktreeGuard}
-          onSwitchWorkspace={() => setWorkspaceSwitcherOpen(true)} /> : null}
+          onSwitchWorkspace={window.lingDesktop?.localServices ? () => setWorkspaceSwitcherOpen(true) : undefined} /> : null}
         {visibleActiveSection === "browser" && browserVisible && !workspaceToolDetailOpen ? <BrowserSettingsPanel key={cwd} cwd={cwd} /> : null}
         {visibleActiveSection === "device-storage" && !workspaceToolDetailOpen ? <DeviceStorageSettingsPanel key={cwd} cwd={cwd}
           onOpenConversations={() => onOpenConversations?.()} onOpenPlugins={() => onOpenPlugins?.()}
