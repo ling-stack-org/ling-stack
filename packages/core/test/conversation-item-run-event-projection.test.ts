@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { projectRunEventsToConversationItems } from "../dist/index.js";
+import {
+  projectRunEventsToConversationItems,
+  type LingTurn,
+  type RunEventEnvelope,
+  type RunSession,
+} from "../dist/index.js";
 
-const run = {
+const run: RunSession = {
   id: "run_projection_1",
   status: "running",
   cwd: "/tmp/workspace",
@@ -17,11 +22,11 @@ const run = {
   updatedAt: "2026-08-25T00:00:00.000Z",
 };
 
-const turn = {
+const turn: LingTurn = {
   id: "turn_projection_1",
   workspaceId: "workspace_default",
   threadId: "thread_projection_1",
-  kind: "conversation",
+  kind: "initial_request",
   status: "running",
   title: "Projection",
   userInstruction: "Inspect the workspace",
@@ -30,15 +35,15 @@ const turn = {
   updatedAt: "2026-08-25T00:00:00.000Z",
 };
 
-function event(seq, type, data) {
+function event(seq: number, type: RunEventEnvelope["type"], data: unknown): RunEventEnvelope {
   return {
     id: `event-${seq}`,
     runId: run.id,
     seq,
     ts: `2026-08-25T00:00:0${seq}.000Z`,
     type,
-    data,
-  };
+    data: data as RunEventEnvelope["data"],
+  } as RunEventEnvelope;
 }
 
 test("run evidence projects to deterministic typed items and replays idempotently", () => {
@@ -68,9 +73,11 @@ test("run evidence projects to deterministic typed items and replays idempotentl
     "operation_state",
   ]);
   const assistant = first.find((item) => item.kind === "assistant_message");
+  assert.ok(assistant);
   assert.equal(assistant.payload.body, "Inspect complete.");
   assert.equal(assistant.payload.streaming, false);
   const approval = first.find((item) => item.kind === "approval_decision");
+  assert.ok(approval);
   assert.equal(approval.payload.decision, "denied");
   assert.ok(first.every((item) => item.domainRefs.some((ref) => ref.type === "run" && ref.id === run.id)));
 });
