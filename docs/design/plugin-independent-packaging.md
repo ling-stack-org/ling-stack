@@ -72,6 +72,14 @@ Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容�
 
 早期 macOS runner 的完整启动在资源准备阶段超时。同批 DMG 的 daemon-only 探针记录了兼容包与瘦包的资源鉴权用时，分别为 115.672 和 136.420 秒，均超过原先的 60 秒上限。当前 macOS 和 Windows 安装版为资源鉴权预留 180 秒，收到鉴权回执后有独立的 20 秒服务就绪时限。[测量运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45177615505)
 
+瘦包插件索引修复提交 `b60f0c396` 的 macOS arm64 和 Windows x64 开发包均通过归档校验与安装启动。Windows 还通过同版本覆盖安装及卸载。[候选构建复验](https://github.com/ling-stack-org/ling-stack/actions/runs/45293564788/attempts/2)
+
+### macOS 已有配置切换
+
+macOS arm64 使用同一隔离用户目录，从 `14be1bdeb` 的兼容开发包切到 `b60f0c396` 的瘦包。两次均连接 Desktop 自有 daemon、加载主窗口和正常退出。切换前后，主工作区保持 Office 和 Chrome 启用，第二工作区保持 Office 禁用。MCP 绑定、工作区写入审批和已有插件启停事件也通过了切换前后对照。瘦包使用构建保留的诊断 DMG，镜像和应用的 ad-hoc 签名均通过本机校验。[修复和验证记录](https://github.com/ling-stack-org/ling-stack/pull/808)
+
+在另一个测试配置中，已留存两代 gstack 资源时，加载第三代会触发 `packaged_skill_history_retention_limit` 并中断启动。上面的单次切换复用了只有一代资源的配置。默认打包切换前仍需验证不同资源留存状态的现有配置。
+
 ## 瘦包对照和切换
 
 1. 在相同的已独立审核源码提交和工具链上，分别构建兼容基线和 `LING_PLUGIN_EXTERNAL_ONLY=1` 的瘦包。仍需通过平台原有的 Desktop 发布前置检查。
