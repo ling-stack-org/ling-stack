@@ -4048,11 +4048,15 @@ test("parallel Work Item stages reserve their shared Goal budget before sending 
 });
 
 test("the same stage blocker survives reassignment and restart until a scoped Plan change is accepted", { timeout: 45_000 },
-  t => exerciseStageBlockerRecovery(t, false));
+  t => exerciseStageBlockerRecovery(t));
 test("the same stage blocker survives reassignment and restart until trusted verification", { timeout: 45_000 },
-  t => exerciseStageBlockerRecovery(t, true));
+  t => exerciseStageBlockerRecovery(t, "verification"));
+test("the same stage blocker requires the accepted Review and rechecks its findings before dispatch", { timeout: 45_000 },
+  t => exerciseStageBlockerRecovery(t, "review"));
 
-async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boolean) {
+async function exerciseStageBlockerRecovery(t: TestContext, evidenceKind?: "verification" | "review") {
+  const useVerification = evidenceKind === "verification";
+  const useReview = evidenceKind === "review";
   const provider = await startLoopbackPiProvider((_body: unknown, invocation: number) => invocation <= 2
     ? { errorStatus: 400, errorCode: "invalid_request_error" }
     : { text: "Independent contract verified." });
@@ -4070,6 +4074,33 @@ async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boo
       },
     } : undefined);
   const target = { workItemId: item.id };
+  let reviewCandidateDigest: string | undefined;
+  let reviewFinding = false;
+  const reviewProvider = useReview ? await startLoopbackPiProvider(() => ({ text: JSON.stringify({
+    snapshotDigest: reviewCandidateDigest, summary: "Reviewed the updated compatibility contract.",
+    findings: reviewFinding ? [{
+      title: "Review the updated value", body: "Confirm the expected value with callers.",
+      severity: "medium", confidence: "high", path: "contract.txt", side: "new",
+      startLine: 1, endLine: 1, evidence: "reviewed",
+    }] : [],
+  }) })) : undefined;
+  if (reviewProvider) t.after(() => reviewProvider.close());
+  const recoveryReview = reviewProvider && { providerPresetId: addLoopbackPreset(fixture.getStore(), reviewProvider.baseUrl).id };
+  const review = async (connection: typeof client, withFinding = false) => {
+    assert.ok(recoveryReview);
+    const { candidate } = await connection.call<LingAppServerCaptureChangesResult>("changes/capture");
+    reviewCandidateDigest = candidate.candidateDigest;
+    reviewFinding = withFinding;
+    const started = await connection.call<LingAppServerReviewStartResult>("review/start", {
+      ...target, candidate, ...recoveryReview, idempotencyKey: randomUUID(),
+    });
+    const result = await waitFor(async () => {
+      const status = await connection.call<LingAppServerReviewStatusResult>("review/status", { operationId: started.operationId });
+      return ["queued", "running"].includes(status.status) ? undefined : status;
+    });
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    return { ...result, candidateDigest: candidate.candidateDigest };
+  };
   const planVerification = async (connection: typeof client, checkId: string) => {
     const { candidate } = await connection.call<{ candidate: LingAppServerCandidateReference }>("changes/capture");
     return connection.call<LingAppServerVerifyPlanResult>("verify/plan", { ...target, threadId: thread.id, candidate, requestedChecks: [checkId] });
@@ -4088,16 +4119,20 @@ async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boo
   };
   const checkId = "contract-recovery";
   let recoveryVerification: import("@ling-stack/contracts").GoalVerificationRequirement | undefined;
-  if (useVerification) {
+  if (evidenceKind) {
     const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
     await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
     await writeFile(join(fixture.cwd, "contract.txt"), "supported\n");
     git("init", "-q");
     git("add", ".gitignore", "contract.txt");
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Contract fixture");
-    const [check] = (await planVerification(client, checkId)).checks;
-    assert.ok(check?.verifierBasisRef && check.coverageDigest);
-    recoveryVerification = { checkId, verifierBasisRef: check.verifierBasisRef, coverageDigest: check.coverageDigest };
+    if (useVerification) {
+      const [check] = (await planVerification(client, checkId)).checks;
+      assert.ok(check?.verifierBasisRef && check.coverageDigest);
+      recoveryVerification = { checkId, verifierBasisRef: check.verifierBasisRef, coverageDigest: check.coverageDigest };
+    } else {
+      await writeFile(join(fixture.cwd, "contract.txt"), "reviewed\n");
+    }
   }
   await client.call("thread/goal/set", { threadId: thread.id, objective: "Verify the compatibility contract",
     supervisionPolicy: { maxNoEvidenceContinuations: 1 } });
@@ -4144,7 +4179,7 @@ async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boo
     const accepted = await connection.call<ProposedPlanActionResponse>("plan/accept", {
       mode: "workflow", threadId: thread.id, planId: draft.id, expectedRevision: draft.revision,
       workflowStepPreviews: [
-        { title, stageId: "P01", ownerId: "teammate_builtin_qa", ownerLabel: "QA", recoveryVerification },
+        { title, stageId: "P01", ownerId: "teammate_builtin_qa", ownerLabel: "QA", recoveryVerification, recoveryReview },
         { title: "Prepare independent docs", stageId: "QA", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer" },
       ],
     });
@@ -4168,7 +4203,7 @@ async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boo
   assert.equal(original.recoveryOwnerId, "teammate_builtin_engineer");
 
   const reassigned = await replace(client, plan.id, workflowId, 0, "Reassign the same contract check");
-  const early = useVerification ? await verify(client, checkId) : undefined;
+  const early = useVerification ? await verify(client, checkId) : useReview ? await review(client) : undefined;
   const { stage: retryStage } = await read();
   await startAndSettle(retryStage.stepId, "failed");
   const stalled = (await read()).stage;
@@ -4201,15 +4236,30 @@ async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boo
     };
     const recover = (operationId: string, connection = restored, idempotencyKey = "recover-stage") =>
       connection.call<import("@ling-stack/contracts").LingAppServerStageRecoverResult>(
-        "workItem/stage/recover", { ...basis, operationId, idempotencyKey });
-    assert.deepEqual((await read(restored)).stage.recoveryVerification, recoveryVerification);
-    await assert.rejects(recover(early.operationId), { code: "work_item_stage_verification_required" });
-    await assert.rejects(recover((await verify(restored, "unrelated-check")).operationId), { code: "work_item_stage_verification_required" });
+        "workItem/stage/recover", { ...basis, operationId, evidenceKind, idempotencyKey });
+    assert.deepEqual(afterRestart.stage.recoveryVerification, recoveryVerification);
+    assert.deepEqual(afterRestart.stage.recoveryReview, recoveryReview);
+    const evidenceRequired = useReview ? "work_item_stage_review_required" : "work_item_stage_verification_required";
+    await assert.rejects(recover(early.operationId), { code: evidenceRequired });
+    if (useVerification) {
+      await assert.rejects(recover((await verify(restored, "unrelated-check")).operationId), { code: evidenceRequired });
+    }
     await assert.rejects(restored.call("workItem/evidence/append", {
       ...target, kind: "stage_recovery_ref", actorId: "local-user", content: "fake recovery",
       idempotencyKey: "fake-and-ignore", subjectRevision: basis.planRevision,
     }), { code: "invalid_params" });
-    const proof = await verify(restored, checkId);
+    const reviewProof = useReview ? await review(restored, true) : undefined;
+    let findingRevision: string | undefined;
+    if (reviewProof) {
+      await assert.rejects(recover(reviewProof.operationId), { code: evidenceRequired });
+      const closed = await restored.call<LingAppServerReviewFindingUpdateResult>("review/finding/update", {
+        assessmentId: reviewProof.assessmentId, findingId: reviewProof.findingIds[0], disposition: "resolved",
+        closeReason: "not_reproducible", reason: "The existing consumers permit the reviewed value.",
+        expectedRevision: reviewProof.revision, idempotencyKey: "clear-recovery-finding",
+      });
+      findingRevision = closed.revision;
+    }
+    const proof = reviewProof ?? await verify(restored, checkId);
     const limitedSecret = randomBytes(32).toString("hex");
     const { grant } = await restored.call<{ grant: LingAppServerGrant }>("server/grants/create", {
       label: "Stage observer and controller", scopes: ["observe", "control"], subject: { kind: "workItem", id: item.id },
@@ -4228,24 +4278,34 @@ async function exerciseStageBlockerRecovery(t: TestContext, useVerification: boo
     assert.deepEqual(results.map(result => result.replayed).sort(), [false, true]);
     let recovered = (await read(restored)).stage;
     assert.equal(recovered.progress?.lastVerified?.id, results[0].receipt.id);
-    assert.equal(recovered.progress?.lastVerified?.kind, "verification_passed");
+    assert.equal(recovered.progress?.lastVerified?.kind, useReview ? "review_passed" : "verification_passed");
+    assert.equal(results[0].receipt.reviewRevision, findingRevision);
     assert.equal(recovered.progress?.blocker, undefined);
     assert.deepEqual(recovered.retryBudget, stalled.retryBudget);
     await fixture.restart();
     const reconnected = await fixture.connect();
     assert.equal((await recover(proof.operationId, reconnected)).replayed, true);
     assert.deepEqual((await read(reconnected)).stage.progress, recovered.progress);
+    if (reviewProof) {
+      await reconnected.call("review/finding/update", {
+        assessmentId: reviewProof.assessmentId, findingId: reviewProof.findingIds[0], disposition: "open",
+        expectedRevision: findingRevision, idempotencyKey: "reopen-recovery-finding",
+      });
+      const staleReview = await start(stalled.stepId);
+      assert.equal(staleReview.status, 409);
+      assert.equal((await staleReview.json()).error, "work_item_stage_candidate_stale");
+    }
     await writeFile(unverifiedChange, "candidate changed after the receipt\n");
     const staleStart = await start(stalled.stepId);
     assert.equal(staleStart.status, 409);
     assert.equal((await staleStart.json()).error, "work_item_stage_candidate_stale");
     assert.equal(provider.requests.length, 3);
-    const freshProof = await verify(reconnected, checkId);
+    const freshProof = useReview ? await review(reconnected) : await verify(reconnected, checkId);
     const mcp = await connectReleaseMcp(t, fixture.transportOptions());
     const refreshed = await mcp.callTool<import("@ling-stack/contracts").LingAppServerStageRecoverResult>(
       "ling_work_item_stage_recover", {
         ...basis, expectedWorkItemRevision: results[0].workItemRevision,
-        operationId: freshProof.operationId, idempotencyKey: "recover-drifted-stage",
+        operationId: freshProof.operationId, evidenceKind, idempotencyKey: "recover-drifted-stage",
       });
     assert.equal(refreshed.replayed, false);
     assert.equal(refreshed.receipt.candidateDigest, freshProof.candidateDigest);

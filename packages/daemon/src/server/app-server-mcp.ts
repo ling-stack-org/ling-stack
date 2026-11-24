@@ -312,9 +312,10 @@ export async function runLingAppServerMcp(
       annotations: { readOnlyHint: true, destructiveHint: false },
     }, async params => describe(await client.listNativeWorkIntake(params)));
     if (methods.has("workItem/stage/recover")) server.registerTool("ling_work_item_stage_recover", {
-      description: "Recover a stalled stage using the accepted Plan's trusted verification for its current failure event and candidate.",
+      description: "Recover a stalled stage using the accepted Plan's Verify or Review evidence for its current failure and candidate.",
       inputSchema: z.strictObject({ workItemId: objectId, workflowStepId: objectId, planRevision: objectId, blockerId: objectId,
-        failureEventId: objectId, operationId: objectId, expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey }),
+        failureEventId: objectId, operationId: objectId, evidenceKind: z.enum(["verification", "review"]).optional(),
+        expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.recoverWorkItemStage(params)));
     if (methods.has("workItem/deliberation/evaluate")) server.registerTool("ling_deliberation_evaluate", {

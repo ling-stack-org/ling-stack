@@ -35,7 +35,7 @@ export function readWorkItemStageProgress(context: SqliteStoreContext, item: Wor
     : undefined;
   const planProgressAt = lastVerified?.committedAt ?? "";
   const recoveries = new Map<string, LingAppServerStageRecoveryEvidence>();
-  if (step.metadata?.recoveryVerification && item.planRevision) {
+  if ((step.metadata?.recoveryVerification || step.metadata?.recoveryReview) && item.planRevision) {
     const receipts = db.prepare(`
       SELECT id, content FROM work_item_evidence
       WHERE workspace_id=? AND work_item_id=? AND kind='stage_recovery_ref' AND subject_revision=?
@@ -47,7 +47,7 @@ export function readWorkItemStageProgress(context: SqliteStoreContext, item: Wor
       if (recoveries.has(recovery.blockerId)) continue;
       recoveries.set(recovery.blockerId, recovery);
       if (recovery.committedAt > (lastVerified?.committedAt ?? "")) {
-        lastVerified = { kind: "verification_passed", id: readString(receipt, "id"), ...recovery };
+        lastVerified = { kind: recovery.reviewRevision ? "review_passed" : "verification_passed", id: readString(receipt, "id"), ...recovery };
       }
     }
   }

@@ -798,6 +798,7 @@ export interface LingAppServerWorkItemWorkflowStages {
     readonly usage?: LingAppServerWorkflowUsage;
     readonly progress?: LingAppServerWorkflowStageProgress;
     readonly recoveryVerification?: import("./threads.js").GoalVerificationRequirement;
+    readonly recoveryReview?: import("./threads.js").StageRecoveryReviewRequirement;
     readonly updatedAt: string;
     readonly runId?: string;
     readonly outputArtifactId?: string;
@@ -844,7 +845,7 @@ export interface LingAppServerWorkflowGoalBudget {
 
 export interface LingAppServerWorkflowStageProgress {
   readonly lastVerified?: { readonly kind: "stage_completed" | "plan_change_accepted"; readonly id: string; readonly committedAt: string }
-    | ({ readonly kind: "verification_passed"; readonly id: string } & LingAppServerStageRecoveryEvidence);
+    | ({ readonly kind: "verification_passed" | "review_passed"; readonly id: string } & LingAppServerStageRecoveryEvidence);
   readonly blocker?: {
     readonly id: string;
     readonly kind: "provider" | "execution_loop";
@@ -864,6 +865,7 @@ export interface LingAppServerStageRecoveryEvidence {
   readonly failedRunId: string;
   readonly failedAt: string;
   readonly operationId: string;
+  readonly reviewRevision?: string;
   readonly candidateDigest: string;
   readonly committedAt: string;
 }
@@ -877,6 +879,7 @@ export interface LingAppServerStageRecoverParams {
   readonly blockerId: string;
   readonly failureEventId: string;
   readonly operationId: string;
+  readonly evidenceKind?: "verification" | "review";
   readonly idempotencyKey: string;
 }
 

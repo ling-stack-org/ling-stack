@@ -1,5 +1,6 @@
 import { readWorkflowStageHandoff, type ChannelWorkflowStep, type RunStore } from "@ling-stack/core";
 import { captureCodeAssessmentSnapshot } from "../code-assessments/snapshot.js";
+import { readStageRecoveryReview } from "./stage-recovery-review.js";
 import { readWorkItemWorkflowBinding } from "./workflow-stages.js";
 
 export async function readCompleteHandoffCandidate(cwd: string): Promise<string | undefined> {
@@ -30,16 +31,24 @@ export async function workItemHandoffCandidatesCurrent(store: RunStore, step: Ch
 
 export async function workItemStageRecoveryCandidateCurrent(store: RunStore, step: ChannelWorkflowStep, cwd: string): Promise<boolean> {
   const binding = readWorkItemWorkflowBinding(store, step.workflowId);
-  const readRecovery = () => {
-    const item = binding && store.getWorkItem(binding.workItemId);
+  const readItem = () => binding && store.getWorkItem(binding.workItemId);
+  const readRecovery = (item = readItem()) => {
     const recovery = item && store.getWorkItemStageProgress(item, step)?.lastVerified;
-    return recovery?.kind === "verification_passed" ? recovery : undefined;
+    return recovery?.kind === "verification_passed" || recovery?.kind === "review_passed" ? recovery : undefined;
   };
   const recovery = readRecovery();
   if (!recovery) return true;
   const source = store.getRun(recovery.failedRunId);
   const latest = step.runId ? store.getRun(step.runId) : undefined;
   if (latest?.startedAt && latest.startedAt > recovery.committedAt) return true;
-  return source?.cwd === cwd && await readCompleteHandoffCandidate(cwd) === recovery.candidateDigest
-    && readRecovery()?.id === recovery.id;
+  if (source?.cwd !== cwd || await readCompleteHandoffCandidate(cwd) !== recovery.candidateDigest) return false;
+  const item = readItem();
+  if (readRecovery(item)?.id !== recovery.id) return false;
+  if (!recovery.reviewRevision) return true;
+  const requirement = step.metadata?.recoveryReview;
+  const proof = requirement && item?.planRevision && readStageRecoveryReview(store, {
+    operationId: recovery.operationId, workItemId: item.id, planRevision: item.planRevision,
+    controlGeneration: item.control.generation, requirement, after: recovery.failedAt, cwd,
+  });
+  return Boolean(proof && proof.reviewRevision === recovery.reviewRevision && proof.candidateDigest === recovery.candidateDigest);
 }

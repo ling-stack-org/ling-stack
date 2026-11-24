@@ -289,12 +289,17 @@ export interface ProposedPlanWorkflowStepPreview {
   readonly handoffFromStageIds?: readonly string[];
   readonly requiredDecision?: ProposedPlanStageDecision;
   readonly recoveryVerification?: GoalVerificationRequirement;
+  readonly recoveryReview?: StageRecoveryReviewRequirement;
   readonly requiredTools?: readonly RunTool[];
   readonly ownerId?: string;
   readonly ownerLabel?: string;
   readonly ownerConfidence?: "high" | "medium" | "low" | "none";
   readonly ownerReason?: string;
   readonly sourceSignals?: readonly string[];
+}
+
+export interface StageRecoveryReviewRequirement {
+  readonly providerPresetId: string;
 }
 
 export interface ProposedPlanStageDecision {

@@ -87,6 +87,7 @@ export function readWorkItemWorkflowStages(store: RunStore, item: WorkItem, incl
           usage: step.metadata?.planStageId ? usage?.byStage.get(step.metadata.planStageId) : usage?.byStep.get(step.id),
           progress: store.getWorkItemStageProgress(item, step),
           ...(step.metadata?.recoveryVerification ? { recoveryVerification: step.metadata.recoveryVerification } : {}),
+          ...(step.metadata?.recoveryReview ? { recoveryReview: step.metadata.recoveryReview } : {}),
           briefBasis: readStageBriefBasis(store, step),
           ...(retryBudget ? { retryBudget } : {}),
           decision: readStageDecision(store, item.id, item.planRevision!, binding.planId, step),

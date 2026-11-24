@@ -1,7 +1,7 @@
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { createProposedPlanArtifactId, type ProposedPlanArtifact, type RunStore } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { assertProposedPlanRevision, assertProposedPlanSnapshot, parseProposedPlanStageDecision, planStageBallotKey, proposedPlanHasAcceptance, ProposedPlanMutationError,
+import { assertProposedPlanRevision, assertProposedPlanSnapshot, parseProposedPlanStageDecision, parseStageRecoveryReviewRequirement, planStageBallotKey, proposedPlanHasAcceptance, ProposedPlanMutationError,
   type ApplyProposedPlanArtifactActionInput, type ProposedPlanArtifactActionResult, type ProposedPlanWorkflowStepPreviewInput } from "../../proposed-plan-mutation.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -95,6 +95,7 @@ export class SqliteProposedPlanActionStore {
               ...(preview?.handoffFromStageIds?.length ? { requiredPlanHandoffStepIds: preview.handoffFromStageIds.map(id => stepIds.get(id)!) } : {}),
               ...(preview?.requiredDecision ? { requiredPlanDecision: preview.requiredDecision } : {}),
               ...(preview?.recoveryVerification ? { recoveryVerification: preview.recoveryVerification } : {}),
+              ...(preview?.recoveryReview ? { recoveryReview: parseStageRecoveryReviewRequirement(preview.recoveryReview) } : {}),
               ...(preview?.requiredTools ? { requiredTools: preview.requiredTools } : {}),
               ...(ballot ? { planBallotKey: ballot.key, requiredTools: [], policy: {
                 onRunFailed: "skip_if_optional", onRunCancelled: "skip_if_optional",
@@ -209,7 +210,8 @@ function planStageBallots(planId: string, previews: readonly ProposedPlanWorkflo
 function orderWorkflowStages(titles: readonly string[], previews: readonly ProposedPlanWorkflowStepPreviewInput[]): readonly number[] {
   const positions = titles.map((_, index) => index);
   if (!previews.some(stage => stage.stageId !== undefined || stage.dependsOnStageIds !== undefined
-    || stage.requiredDecision !== undefined || stage.handoffFromStageIds !== undefined || stage.recoveryVerification !== undefined)) return positions;
+    || stage.requiredDecision !== undefined || stage.handoffFromStageIds !== undefined
+    || stage.recoveryVerification !== undefined || stage.recoveryReview !== undefined)) return positions;
   const invalid = (message: string) => new ProposedPlanMutationError("bad_workflow_stage_dependencies", message, 400);
   if (titles.length !== previews.length || titles.length > 50) throw invalid("Provide one preview per stage, up to 50 stages.");
   const stages = new Map<string, number>();
@@ -217,6 +219,9 @@ function orderWorkflowStages(titles: readonly string[], previews: readonly Propo
     if (!stage.stageId || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u.test(stage.stageId) || stages.has(stage.stageId)
       || stage.title !== titles[index]) throw invalid("Workflow stages require unique identifiers and matching titles.");
     if (stage.requiredDecision !== undefined) parseProposedPlanStageDecision(stage.requiredDecision);
+    if (stage.recoveryReview !== undefined && stage.recoveryVerification !== undefined) {
+      throw new ProposedPlanMutationError("bad_workflow_recovery_review", "Choose one recovery evidence requirement per stage.", 400);
+    }
     stages.set(stage.stageId, index);
   }
   const ordered = new Set<number>();

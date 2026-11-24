@@ -1542,13 +1542,17 @@ class RpcConnection {
       idempotencyKey: readStringField(record, "idempotencyKey"),
     };
     const expectedWorkItemRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision");
+    const evidenceKind = readOptionalStringField(record, "evidenceKind");
+    if (evidenceKind !== undefined && evidenceKind !== "verification" && evidenceKind !== "review") {
+      throw rpcError(-32602, "invalid_params", "Choose verification or review as the recovery evidence kind.");
+    }
     if (expectedWorkItemRevision < 1 || input.idempotencyKey.length > 200
       || Object.values(input).some(value => value.length > 256 || !value.trim() || /[\r\n\0]/u.test(value))) {
       throw rpcError(-32602, "invalid_params", "Supply the current stage, blocker and a bounded request key.");
     }
     try {
       const { event, ...result } = await recoverAppServerStage(this.context.storeRegistry.getStore(cwd),
-        { ...input, expectedWorkItemRevision }, this.context.activeRuns);
+        { ...input, expectedWorkItemRevision, evidenceKind }, this.context.activeRuns);
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         this.context.taskSupervisor.poke(cwd);

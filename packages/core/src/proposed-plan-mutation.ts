@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ProposedPlanStageDecision, ProposedPlanWorkflowStepPreview } from "@ling-stack/contracts";
+import type { ProposedPlanStageDecision, ProposedPlanWorkflowStepPreview, StageRecoveryReviewRequirement } from "@ling-stack/contracts";
 import type { CreateProposedPlanArtifactInput, ProposedPlanArtifact, UpdateProposedPlanArtifactInput } from "./run-types.js";
 
 export type ProposedPlanArtifactAction = "accept" | "refine" | "save" | "archive" | "convert-workflow";
@@ -61,6 +61,15 @@ export function parseProposedPlanStageDecision(value: unknown): ProposedPlanStag
 export function planStageBallotKey(planId: string, stageId: string, decision: ProposedPlanStageDecision): string {
   return createHash("sha256").update(JSON.stringify([planId, stageId, decision.question, decision.options,
     decision.ballot?.voterStageIds, decision.ballot?.quorum])).digest("hex");
+}
+
+export function parseStageRecoveryReviewRequirement(value: unknown): StageRecoveryReviewRequirement {
+  const review = value as Partial<StageRecoveryReviewRequirement> | null;
+  if (!review || typeof review.providerPresetId !== "string" || !review.providerPresetId.trim()
+    || review.providerPresetId.length > 200 || /[\r\n\0]/u.test(review.providerPresetId)) {
+    throw new ProposedPlanMutationError("bad_workflow_recovery_review", "Supply the stage's recovery Review provider preset.", 400);
+  }
+  return { providerPresetId: review.providerPresetId.trim() };
 }
 
 export const proposedPlanContentFields = ["channelId", "goalId", "sourceAgentId", "ownerAgentId", "sourceTurnId",

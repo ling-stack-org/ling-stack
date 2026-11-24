@@ -1103,8 +1103,9 @@ export async function prepareWorkflowStepStart(
       return fail(unavailableHandoffRecipient.statusCode, unavailableHandoffRecipient.code, unavailableHandoffRecipient.message);
     }
   }
-  if (step.metadata?.recoveryVerification && !await workItemStageRecoveryCandidateCurrent(store, step, runRequestBase.cwd)) {
-    return fail(409, "work_item_stage_candidate_stale", "The recovered stage needs a trusted check for its current candidate.");
+  if ((step.metadata?.recoveryVerification || step.metadata?.recoveryReview)
+    && !await workItemStageRecoveryCandidateCurrent(store, step, runRequestBase.cwd)) {
+    return fail(409, "work_item_stage_candidate_stale", "The recovered stage needs current evidence for its candidate.");
   }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),

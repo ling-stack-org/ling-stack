@@ -129,6 +129,7 @@ export function workflowStepStartAuthorityBasis(store: WorkflowStepStartReadStor
       requirement: metadata?.delegatedRequirement, dependsOnStepIds: metadata?.dependsOnStepIds,
       planStageId: metadata?.planStageId, requiredPlanDecision: metadata?.requiredPlanDecision,
       recoveryVerification: metadata?.recoveryVerification,
+      ...(metadata?.recoveryReview ? { recoveryReview: metadata.recoveryReview } : {}),
       dependencyMode: metadata?.dependencyMode, gates: metadata?.gates, approvalGate: metadata?.approvalGate,
       policy: metadata?.policy, requiredTools: metadata?.requiredTools, runnerId: metadata?.requestedRunnerId,
       sideEffectClass: metadata?.sideEffectClass, parallelPolicy: metadata?.parallelPolicy,

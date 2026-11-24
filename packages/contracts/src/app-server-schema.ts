@@ -80,8 +80,9 @@ const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
 const recoveryVerification = objectWith({ checkId: stringSchema, verifierBasisRef: stringSchema, coverageDigest: stringSchema },
   ["checkId", "verifierBasisRef", "coverageDigest"]);
+const recoveryReview = objectWith({ providerPresetId: stringSchema }, ["providerPresetId"]);
 const planWorkflowStep = objectWith({ title: stringSchema, stageId: stringSchema, dependsOnStageIds: stringArraySchema,
-  handoffFromStageIds: stringArraySchema, recoveryVerification,
+  handoffFromStageIds: stringArraySchema, recoveryVerification, recoveryReview,
   ownerId: stringSchema, ownerLabel: stringSchema, requiredTools: stringArraySchema,
   requiredDecision: objectWith({ question: stringSchema, options: stringArraySchema, trigger: { enum: ["when_ready"] },
     ballot: objectWith({ voterStageIds: stringArraySchema, quorum: integerSchema }, ["voterStageIds", "quorum"]) }, ["question", "options"]) }, ["title"]);
@@ -371,11 +372,12 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "workItem/stage/recover": {
       const subject = { workflowStepId: stringSchema, blockerId: stringSchema, failureEventId: stringSchema, operationId: stringSchema };
       return {
-        params: objectWith({ ...workItemTarget, ...subject, planRevision: stringSchema, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema },
+        params: objectWith({ ...workItemTarget, ...subject, planRevision: stringSchema, expectedWorkItemRevision: integerSchema,
+          evidenceKind: { enum: ["verification", "review"] }, idempotencyKey: stringSchema },
           ["workItemId", ...Object.keys(subject), "planRevision", "expectedWorkItemRevision", "idempotencyKey"]),
         result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,
           receipt: objectWith({ id: stringSchema, ...subject, failedRunId: stringSchema, failedAt: stringSchema,
-            candidateDigest: stringSchema, committedAt: stringSchema },
+            candidateDigest: stringSchema, committedAt: stringSchema, reviewRevision: stringSchema },
           ["id", ...Object.keys(subject), "failedRunId", "failedAt", "candidateDigest", "committedAt"]),
         }, ["cwd", "workItemRevision", "replayed", "receipt"]),
       };
