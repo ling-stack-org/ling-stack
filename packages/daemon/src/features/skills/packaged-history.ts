@@ -9,6 +9,7 @@ import { PackagedSkillRuntime } from "./packaged-runtime.js";
 type Selection = Parameters<typeof verifyBundledSkillSource>[0];
 type Identity = Omit<Selection, "rootPath" | "requireExecutable">;
 type RetentionOptions = { onRetentionLimit?: "reject" | "use-existing" };
+const CURRENT_MARKER = ".current.json";
 const MAX_GENERATIONS = 2, MAX_BYTES = 6 * 1024 ** 3, MIN_FREE_BYTES = 2 * 1024 ** 3;
 const fail = (code: string): never => { throw new Error(`packaged_skill_history_${code}`); };
 
@@ -54,6 +55,35 @@ async function load(root: string): Promise<PackagedSkillRuntime> {
   if (JSON.stringify((await readdir(root)).sort()) !== JSON.stringify(expected)) fail("requires_review");
   return admit(root, record.identity, record.browserChecksum);
 }
+async function readCurrentKey(cache: string, names: readonly string[]): Promise<string | undefined> {
+  const path = join(cache, CURRENT_MARKER);
+  let stat;
+  try { stat = await lstat(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
+  if (!stat.isFile() || stat.isSymbolicLink() || await realpath(path) !== path || stat.size > 65536) fail("requires_review");
+  let marker: unknown;
+  try { marker = JSON.parse(await readFile(path, "utf8")); }
+  catch { fail("requires_review"); }
+  const schemaVersion = marker && typeof marker === "object" ? Reflect.get(marker, "schemaVersion") : undefined;
+  const checksum = marker && typeof marker === "object" ? Reflect.get(marker, "manifestChecksum") : undefined;
+  if (schemaVersion !== 1 || typeof checksum !== "string"
+    || !/^sha256:[a-f0-9]{64}$/.test(checksum) || !names.includes(checksum.slice(7))) fail("requires_review");
+  return checksum.slice(7);
+}
+async function inferCurrentKey(cache: string, names: readonly string[]): Promise<string | undefined> {
+  const marked = await readCurrentKey(cache, names);
+  if (marked) return marked;
+  if (!names.length) return undefined;
+  const candidates = await Promise.all(names.map(async name => ({ name, mtimeMs: (await lstat(join(cache, name))).mtimeMs })));
+  candidates.sort((left, right) => left.mtimeMs - right.mtimeMs || left.name.localeCompare(right.name));
+  return candidates.at(-1)!.name;
+}
+async function publishCurrentKey(cache: string, key: string): Promise<void> {
+  const marker = await open(join(cache, CURRENT_MARKER), constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC
+    | (constants.O_NOFOLLOW ?? 0), 0o600);
+  try { await marker.writeFile(JSON.stringify({ schemaVersion: 1, manifestChecksum: `sha256:${key}` })); }
+  finally { await marker.close(); }
+}
 
 /** Immutable, bounded generations with atomic publication and process-restart retention.
  * Not a power-loss durability guarantee. Interrupted ownership requires review;
@@ -73,15 +103,26 @@ export async function retainPackagedSkillGeneration(cache: string, selection: Se
   try {
     await lock.writeFile(JSON.stringify({ schemaVersion: 1, token, pid: process.pid }));
     const names = (await readdir(cache)).filter(name => name !== ".writer.json").sort();
-    if (names.length > MAX_GENERATIONS || names.some(name => !/^[a-f0-9]{64}$/.test(name))) fail("requires_review");
+    const generationNames = names.filter(name => name !== CURRENT_MARKER);
+    if (generationNames.length > MAX_GENERATIONS || generationNames.some(name => !/^[a-f0-9]{64}$/.test(name))) fail("requires_review");
     const existingBytes = await treeBytes(cache);
     const { rootPath, requireExecutable: ignored, ...identity } = selection;
     const checksum = identity.expectedManifestChecksum;
     if (typeof checksum !== "string" || !/^sha256:[a-f0-9]{64}$/.test(checksum)) throw new Error("packaged_skill_history_identity_invalid");
     const key = checksum.slice(7);
+    const currentKey = await inferCurrentKey(cache, generationNames);
     const retained: PackagedSkillRuntime[] = [];
-    for (const name of names) if (name !== key) retained.push(await load(join(cache, name)));
-    if (names.includes(key)) return { current: await load(join(cache, key)), retained };
+    const retainedByKey = new Map<string, PackagedSkillRuntime>();
+    for (const name of generationNames) if (name !== key) {
+      const runtime = await load(join(cache, name));
+      retained.push(runtime);
+      retainedByKey.set(name, runtime);
+    }
+    if (generationNames.includes(key)) {
+      const current = await load(join(cache, key));
+      await publishCurrentKey(cache, key);
+      return { current, retained };
+    }
     // Authenticate the candidate before deciding whether it can be deferred.
     // A full cache may skip publication, but it must not turn an invalid
     // package or browser descriptor into an accepted update attempt.
@@ -90,13 +131,18 @@ export async function retainPackagedSkillGeneration(cache: string, selection: Se
       ? JSON.parse(await source.readResource("executable-build.json")) : undefined;
     if (Boolean(receipt?.browser?.componentChecksum) !== Boolean(browserRoot)) fail("browser_mismatch");
     const browser = browserRoot ? verifyPackagedBrowser(browserRoot, receipt.browser, identity.expectedTarget!) : undefined;
-    if (names.length >= MAX_GENERATIONS) {
+    if (generationNames.length >= MAX_GENERATIONS) {
       if (options.onRetentionLimit !== "use-existing") fail("retention_limit");
       // A running task may still be pinned to either retained generation. Keep
       // both authenticated runtimes available and defer this package update.
-      const [current, ...rest] = retained;
-      if (!current) fail("retention_limit");
-      return { current, retained: rest };
+      const deferredKey = currentKey ?? fail("retention_limit");
+      const current = retainedByKey.get(deferredKey) ?? fail("requires_review");
+      await publishCurrentKey(cache, deferredKey);
+      const deferred = generationNames.filter(name => name !== deferredKey).map(name => {
+        const runtime = retainedByKey.get(name);
+        return runtime ?? fail("requires_review");
+      });
+      return { current, retained: deferred };
     }
     const original = new PackagedSkillRuntime(rootPath, source, browser);
     const volume = await statfs(cache);
@@ -111,6 +157,7 @@ export async function retainPackagedSkillGeneration(cache: string, selection: Se
     await admit(staging, identity, browser?.checksum);
     await writeFile(join(staging, "identity.json"), JSON.stringify({ schemaVersion: 1, identity, browserChecksum: browser?.checksum }), { flag: "wx", mode: 0o600 });
     await rename(staging, join(cache, key));
+    await publishCurrentKey(cache, key);
     return { current: await load(join(cache, key)), retained };
   } catch (error) { failed = true; throw error; }
   finally {

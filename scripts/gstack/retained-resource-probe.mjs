@@ -47,7 +47,7 @@ if (phase === "retain-real") {
   const before = { names: (await readdir(cache)).sort(), bytes: await resourceTreeBytes(cache) };
   const reused = await retainPackagedSkillGeneration(cache, selection);
   assert.deepEqual({ names: (await readdir(cache)).sort(), bytes: await resourceTreeBytes(cache) }, before);
-  assert.equal(before.names.length, 2);
+  assert.equal(before.names.filter(name => /^[a-f0-9]{64}$/.test(name)).length, 2);
   assert.equal(reused.retained[0].manifestChecksum, contexts[0].resourceBinding.manifestChecksum);
   const historicalRoot = join(cache, contexts[0].resourceBinding.manifestChecksum.slice(7));
   const manifest = JSON.parse(await readFile(join(historicalRoot, "gstack/manifest.json")));
