@@ -16,6 +16,7 @@
     "test/agent-capabilities-integration.test.ts",
     "test/agent-capabilities.test.ts",
     "test/app-server-collaboration.test.mjs",
+    "test/app-server-device-bridge.test.ts",
     "test/app-server-development-rpc.test.ts",
     "test/app-server-development.test.ts",
     "test/app-server-release-acceptance.test.ts",
