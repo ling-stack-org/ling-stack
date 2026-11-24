@@ -5,6 +5,7 @@ import {
   type MessageRowTone,
 } from "@ling-stack/conversation-ui-react";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
+import { Loader2 } from "lucide-react";
 
 export type { MessageRowAuthorType, MessageRowTone };
 
@@ -29,7 +30,8 @@ export function MessageRow({
     />
   ) : null;
   const resolvedBodyNode = bodyNode && !bodyStreaming ? bodyNode : (bodyNode ?? generatedBodyNode) ? (
-    <div className="message-body-shell">
+    <div className={bodyStreaming ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
+      {bodyStreaming ? <Loader2 className="message-pending-spinner spin" size={13} aria-hidden="true" /> : null}
       {bodyNode ?? generatedBodyNode}
     </div>
   ) : null;

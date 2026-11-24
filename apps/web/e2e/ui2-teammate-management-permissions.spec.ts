@@ -47,7 +47,7 @@ test("ordinary teammate edits its own capabilities and confirmation level withou
   await expect(permissions.getByRole("heading", { name: "Available capabilities" })).toBeVisible();
   await expect(permissions.getByRole("heading", { name: "Default execution scope" })).toBeVisible();
   await expect(permissions.getByText("Smart authorization", { exact: true })).toHaveCount(0);
-  await expect(permissions.getByText("Workspace write", { exact: true })).toBeVisible();
+  await expect(permissions.getByText("Edit files", { exact: true }).first()).toBeVisible();
   await expect(permissions.getByRole("button", { name: "Go to resolve" })).toHaveCount(0);
   await expect(permissions.getByRole("switch")).toHaveCount(7);
 

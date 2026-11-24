@@ -3,6 +3,41 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, createMockTeammate, isRecord } from "./support/mock-state";
 import { openEngineeringChannel, openTaskFromAttentionQueue } from "./support/test-helpers";
 
+test("an unrelated running task does not lock an idle channel's authorization", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
+  const state = createBaseState({ approvalStatus: "approved" });
+  state.workspaceSettings.defaultAuthorizationMode = "ask";
+  state.providers = [createChatProvider({ id: "provider_channel_lock", model: "gpt-5.5",
+    lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-10-28T00:00:00.000Z" } })];
+  state.workspaceSettings.defaultProviderPresetId = "provider_channel_lock";
+  state.channels = state.channels.map((channel) => ({ ...channel, defaultProviderPresetId: "provider_channel_lock" }));
+  state.tasks = state.tasks.map((task) => task.id === "task_inspect" ? { ...task, status: "todo", currentRunId: undefined } : task);
+  state.runs = [];
+  await mockDaemon(page, state);
+  let releaseRun!: () => void;
+  const runGate = new Promise<void>((resolve) => { releaseRun = resolve; });
+  await page.route(/\/runs(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    await runGate;
+    await route.fallback();
+  });
+  try {
+    await page.goto("/");
+    await openTaskFromAttentionQueue(page, "Inspect workspace");
+    const request = page.waitForRequest((item) => item.method() === "POST" && new URL(item.url()).pathname === "/runs");
+    await page.getByRole("article", { name: "Task detail", exact: true }).getByRole("button", { name: "Run", exact: true }).click();
+    await request;
+    await openEngineeringChannel(page);
+    const trigger = page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected authorization mode/ });
+    await expect(trigger).toBeEnabled();
+    await trigger.click();
+    await page.getByRole("menuitemradio", { name: "Help me approve", exact: true }).click();
+    await expect(trigger).toHaveText("Help me approve");
+  } finally {
+    releaseRun();
+  }
+});
+
 for (const [surface, finalMode] of [
   ["normal", "smart"], ["normal", "always"],
   ["channel", "smart"], ["channel", "always"],
@@ -32,8 +67,8 @@ for (const [surface, finalMode] of [
       : surface === "channel" ? "Channel composer" : "Private chat composer", { exact: true });
     await expect(composer).toBeVisible();
     await expect(composer.locator(".conversation-permission-trigger")).toHaveCount(1);
-    await expect(composer.getByRole("button", { name: /Selected authorization mode/ })).toHaveCount(0);
-    const trigger = composer.getByRole("button", { name: /Selected permission preset/ });
+    await expect(composer.getByRole("button", { name: /Selected permission preset/ })).toHaveCount(0);
+    const trigger = composer.getByRole("button", { name: /Selected authorization mode/ });
     await trigger.click();
     await expect(page.getByRole("menuitemradio", { name: "Request approval", exact: true })).toBeVisible();
     await expect(page.getByRole("menuitemradio", { name: "Help me approve", exact: true })).toBeVisible();
@@ -67,6 +102,7 @@ for (const [surface, finalMode] of [
     if (surface === "channel") {
       await openTaskFromAttentionQueue(page, "Inspect workspace");
       await page.getByRole("article", { name: "Task detail", exact: true }).getByRole("button", { name: "Run", exact: true }).click();
+      if (finalMode === "always") await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access", exact: true }).click();
       await expect.poll(() => state.runs[0]?.requestSnapshot).toMatchObject(expectedPermissions);
     } else {
       const request = page.waitForRequest((request) => request.method() === "POST"
@@ -116,13 +152,13 @@ test("the task inspector links to Settings and all three composers inherit the s
   await sandbox.getByRole("radio", { name: "Read only", exact: true }).click();
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("read_only");
   await page.getByRole("button", { name: "Back to app", exact: true }).click();
-  await expect(page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected permission preset/ }))
+  await expect(page.getByLabel("Channel composer", { exact: true }).getByRole("button", { name: /Selected authorization mode/ }))
     .toHaveAttribute("title", /Read.only/i);
   const sidebar = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await sidebar.getByRole("button", { name: "New conversation", exact: true }).click();
-  await expect(page.getByLabel("New conversation composer", { exact: true }).getByRole("button", { name: /Selected permission preset/ }))
+  await expect(page.getByLabel("New conversation composer", { exact: true }).getByRole("button", { name: /Selected authorization mode/ }))
     .toHaveAttribute("title", /Read.only/i);
   await sidebar.getByRole("button", { name: "Settings Scope Teammate", exact: true }).click();
-  await expect(page.getByLabel("Private chat composer", { exact: true }).getByRole("button", { name: /Selected permission preset/ }))
+  await expect(page.getByLabel("Private chat composer", { exact: true }).getByRole("button", { name: /Selected authorization mode/ }))
     .toHaveAttribute("title", /Read.only/i);
 });

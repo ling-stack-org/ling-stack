@@ -3,6 +3,7 @@
 Status: active design addendum for shared conversation UI
 Date: 2026-06-28
 Permission UI contract updated: 2026-10-28 (supersedes the old four-preset composer menu)
+Current authorization contract: [Conversation Authorization Simplification](conversation-authorization-simplification.md).
 Scope: channel composer, normal conversation composer, teammate private chat composer,
 and future Desktop/PC conversation composers
 

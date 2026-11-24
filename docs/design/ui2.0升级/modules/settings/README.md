@@ -2,7 +2,7 @@
 
 Status: active UI2 product contract
 Owner: Settings shell and feature owners
-Last verified: 2026-10-28
+Last verified: 2026-11-23 (three Settings design plans added; existing UI state remains separately verified)
 Code anchors: `apps/web/src/features/settings/`, `apps/web/src/styles/settings-skill-library/`
 Test anchors: `apps/web/e2e/ui2-settings-shell.spec.ts`, `apps/web/e2e/settings.spec.ts`
 
@@ -51,6 +51,22 @@ scoped busy/error。
 
 按真实可恢复对象分类展示。Restore/Delete 使用服务端能力和共享确认 Dialog；没有对应能力的类型不显示
 动作。刷新失败保留已有列表并标记 stale。
+
+### 工作树、设备存储与浏览器
+
+工作树页的工作区切换使用全局所选工作区：从本机已登记目录选择，或通过系统目录选择器加入。
+切换前保护未保存的工作树设置；切换后工作树、浏览器和其他工作区级页面重新读取所选目录。
+缺失目录不可选，启动时重新验证上次选择。具体权限边界和验收见
+[Managed Worktree Lifecycle](../../../managed-worktree-lifecycle.md#app-wide-workspace-selection)。
+
+- 工作树沿用现有工作区策略与恢复语义，紧凑行布局、工作区范围、草稿保存和托管列表按
+  [工作树合同](../../../managed-worktree-lifecycle.md#settings-consolidation-plan)实施。
+- 设备存储是 Desktop 专属的本机文件大小清单；只计已核实的 Ling 数据根，扫描不完整时
+  不展示猜测总量。分类操作导航到各自管理页，详见
+  [设备存储实施计划](../../../device-storage-settings-implementation-plan.md)。
+- 浏览器设置只管理 Ling 内置浏览器。默认与逐站点规则、独立设置页的工作区级原生管理
+  接口及审批边界按[浏览器 M6](../../../desktop-browser-implementation-plan.md#m6--独立浏览器设置页拟实施)实施。
+  外部 Chrome 插件保留独立入口。
 
 ## Intentionally Hidden Or Pending
 

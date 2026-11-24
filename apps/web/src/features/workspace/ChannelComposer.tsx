@@ -1,3 +1,4 @@
+import { DrawingBoardEntry } from "../../shared/conversation/drawing/DrawingBoard.js";
 import type {
   CSSProperties,
   DragEvent,
@@ -144,7 +145,6 @@ interface ChannelComposerProps {
   readonly onInputSelect: (value: string, caret: number) => void;
   readonly onInsertMentionTrigger: () => void;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
-  readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onTogglePlanMode: () => void;
   readonly onRevealPlanModeChip: () => void;
   readonly onClosePlanModeChip: () => void;
@@ -201,7 +201,6 @@ export function ChannelComposer({
   onInputSelect,
   onInsertMentionTrigger,
   onAuthorizationModeChange,
-  onPermissionPresetChange,
   onTogglePlanMode,
   onRevealPlanModeChip,
   onClosePlanModeChip,
@@ -609,6 +608,7 @@ export function ChannelComposer({
               </div>
             ) : null}
           </div>
+          <DrawingBoardEntry identity={`${workspaceCwd}:${selectedChannelId}:${threadId ?? ""}`} disabled={!selectedChannelId || composerBusy || pendingAttachments.length >= 10} onAttach={file => onAttachFiles([file])} />
           <button className="icon-button composer-tool-button" type="button" onClick={onInsertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
             <AtSign size={16} />
           </button>
@@ -624,7 +624,6 @@ export function ChannelComposer({
             disabled={permissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
             onAuthorizationModeChange={onAuthorizationModeChange}
-            onPermissionPresetChange={onPermissionPresetChange}
           />
           {planModeChipVisible ? (
             <span className={planModeActive ? "conversation-mode-chip plan active" : "conversation-mode-chip plan"}>

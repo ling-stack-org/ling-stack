@@ -16,10 +16,11 @@ type OwnedWorktree = ManagedWorktreeOwner & {
 interface WorkspaceReference { readonly kind: "channel" | "teammate"; readonly id: string; readonly paths: readonly string[] }
 export class WorktreeActionError extends Error { constructor(readonly code: string, message: string) { super(message); } }
 
-function allPages<T extends { readonly id: string }>(load: (offset: number) => T[]): T[] {
+function allPages<T extends { readonly id: string }>(load: (offset: number) => T[], checkBudget: () => void = () => {}): T[] {
   const result: T[] = [];
   const seen = new Set<string>();
   for (let offset = 0; ; offset += 500) {
+    checkBudget();
     const page = load(offset);
     if (page.some((item) => seen.has(item.id))) throw new WorktreeActionError("worktree_owner_limit", "工作区归属分页不稳定，已停止清理。");
     for (const item of page) { seen.add(item.id); result.push(item); }
@@ -27,25 +28,27 @@ function allPages<T extends { readonly id: string }>(load: (offset: number) => T
   }
 }
 
-function owners(store: RunStore): { entries: OwnedWorktree[]; references: WorkspaceReference[]; limitReached: boolean } {
-  const activeChannels = allPages((offset) => store.listChannels({ limit: 500, offset }));
-  const archivedChannels = allPages((offset) => store.listChannels({ archived: true, limit: 500, offset }));
-  const threads = allPages((offset) => store.listTeammateDirectThreads({ limit: 500, offset }));
+function owners(store: RunStore, checkBudget: () => void = () => {}): { entries: OwnedWorktree[]; references: WorkspaceReference[]; limitReached: boolean } {
+  const activeChannels = allPages((offset) => store.listChannels({ limit: 500, offset }), checkBudget);
+  const archivedChannels = allPages((offset) => store.listChannels({ archived: true, limit: 500, offset }), checkBudget);
+  const threads = allPages((offset) => store.listTeammateDirectThreads({ limit: 500, offset }), checkBudget);
   const entries: OwnedWorktree[] = [];
   const references: WorkspaceReference[] = [];
   const protectedOwners = store.getWorkspaceSettings().worktreePolicy?.protectedOwners ?? [];
   for (const channel of [...activeChannels, ...archivedChannels]) {
+    checkBudget();
     references.push({ kind: "channel", id: channel.id, paths: [channel.workspaceBinding?.executionPath, channel.workspaceBinding?.worktreePath, channel.boundPath].filter((path): path is string => Boolean(path)) });
     if (channel.workspaceBinding?.mode !== "managed_worktree" || !channel.workspaceBinding.worktreePath) continue;
-    const chats = allPages((offset) => store.listLingThreads({ channelId: channel.id, includeArchived: true, limit: 500, offset }));
+    const chats = allPages((offset) => store.listLingThreads({ channelId: channel.id, includeArchived: true, limit: 500, offset }), checkBudget);
     entries.push({ kind: "channel", id: channel.id, name: channel.name, boundPath: channel.boundPath, binding: channel.workspaceBinding, path: channel.workspaceBinding.worktreePath,
       pinned: chats.some((chat) => Boolean(chat.pinnedAt)) || protectedOwners.some((item) => item.ownerKind === "channel" && item.ownerId === channel.id),
       lastUsedAt: [channel.updatedAt, ...chats.map((chat) => chat.updatedAt)].sort().at(-1)! });
   }
   for (const thread of threads) {
+    checkBudget();
     references.push({ kind: "teammate", id: thread.id, paths: [thread.workspaceBinding?.executionPath, thread.workspaceBinding?.worktreePath].filter((path): path is string => Boolean(path)) });
     if (thread.workspaceBinding?.mode !== "managed_worktree" || !thread.workspaceBinding.worktreePath) continue;
-    const chats = allPages((offset) => store.listLingThreads({ teammateId: thread.teammateId, includeArchived: true, limit: 500, offset }));
+    const chats = allPages((offset) => store.listLingThreads({ teammateId: thread.teammateId, includeArchived: true, limit: 500, offset }), checkBudget);
     const teammate = store.getAiTeammate(thread.teammateId);
     entries.push({ kind: "teammate", id: thread.id, name: teammate?.displayName ?? thread.title, teammateId: thread.teammateId, binding: thread.workspaceBinding, path: thread.workspaceBinding.worktreePath,
       pinned: Boolean(teammate?.pinned) || chats.some((chat) => Boolean(chat.pinnedAt)) || protectedOwners.some((item) => item.ownerKind === "teammate" && item.ownerId === thread.id),
@@ -86,14 +89,23 @@ function publicInitialization(value: WorktreeInitialization | undefined): Worktr
   return { status, output, completedAt, errorMessage };
 }
 
-export async function listManagedWorktrees(store: RunStore, cwd: string): Promise<ManagedWorktreeListResponse> {
-  const owned = owners(store);
+export async function listManagedWorktrees(store: RunStore, cwd: string,
+  options: { readonly signal?: AbortSignal; readonly deadline?: number } = {}): Promise<ManagedWorktreeListResponse> {
+  const checkBudget = (): void => {
+    if (options.signal?.aborted || options.deadline !== undefined && Date.now() >= options.deadline) {
+      throw new Error("worktree_inventory_interrupted");
+    }
+  };
+  const owned = owners(store, checkBudget);
   const policy = store.getWorkspaceSettings().worktreePolicy ?? { fetchBeforeCreate: false };
   const entries: ManagedWorktreeEntry[] = [];
   for (let i = 0; i < owned.entries.length; i += 4) {
+    checkBudget();
     entries.push(...await Promise.all(owned.entries.slice(i, i + 4).map(async (owner): Promise<ManagedWorktreeEntry> => {
+      checkBudget();
       const path = owner.path;
       const inspection = await inspectOwnedWorktree(store, owner);
+      checkBudget();
       return { ownerKind: owner.kind, ownerId: owner.id, ownerName: owner.name, path, branchName: owner.binding.branchName,
         status: !inspection.exists && owner.binding.status === "not_created" ? "not_created" : inspection.status,
         isDirty: inspection.isDirty, inUse: inUse(store, path), pinned: owner.pinned,
@@ -101,8 +113,11 @@ export async function listManagedWorktrees(store: RunStore, cwd: string): Promis
         initialization: publicInitialization(inspection.initialization), errorMessage: inspection.status === "blocked" ? inspection.errorMessage : undefined };
     })));
   }
+  checkBudget();
+  const snapshots = await listWorktreeSnapshots(store.paths);
+  checkBudget();
   return { cwd, policy: redactWorktreePolicy(policy)!, defaultRootDir: store.paths.worktreesDir, effectiveRootDir: worktreeRoot(store.paths, policy),
-    snapshots: await listWorktreeSnapshots(store.paths), entries, limitReached: owned.limitReached };
+    snapshots, entries, limitReached: owned.limitReached };
 }
 
 export async function actOnManagedWorktree(store: RunStore, cwd: string, input: ManagedWorktreeActionRequest): Promise<string> {

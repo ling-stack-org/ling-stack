@@ -1,7 +1,11 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { lstatSync, realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { createWorkspaceRegistryStore, registerResolvedWorkspace } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
+import { allowLocalServiceRequest, isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
+import { desktopBridgeTokenStatus } from "../computer-use/desktop-bridge-auth.js";
 import { writeJson } from "../../shared/response.js";
 import {
   selectWorkspaceDirectory,
@@ -44,9 +48,14 @@ export async function handleWorkspaceDirectorySelect(
   }
 
   try {
-    const selected = await selectWorkspaceDirectory({ defaultPath: cwd });
+    let selected = await selectWorkspaceDirectory({ defaultPath: cwd });
     if (!selected.cancelled && selected.path) {
-      storeRegistry.trustWorkspaceRoot(selected.path);
+      if (url.searchParams.get("register") === "1") {
+        const selectedPath = realpathSync(selected.path);
+        registerResolvedWorkspace(selectedPath);
+        selected = { ...selected, path: selectedPath };
+      }
+      storeRegistry.trustWorkspaceRoot(selected.path!);
     }
     writeJson(response, 200, selected);
   } catch (error) {
@@ -59,6 +68,73 @@ export async function handleWorkspaceDirectorySelect(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export async function handleRegisteredWorkspaces(request: IncomingMessage, response: ServerResponse,
+  url: URL, config: ResolvedDaemonConfig, storeRegistry: RunStoreRegistry, desktopBridgeToken?: string): Promise<void> {
+  if (!allowLocalServiceRequest(request, response)) return;
+  const auth = desktopBridgeTokenStatus(request, desktopBridgeToken);
+  if (auth !== "accepted" || request.headers.origin !== undefined) {
+    writeJson(response, auth === "unavailable" ? 503 : 403,
+      { error: auth === "unavailable" ? "desktop_bridge_unavailable" : "desktop_bridge_forbidden" });
+    return;
+  }
+  const registry = createWorkspaceRegistryStore();
+  try {
+    if (url.pathname === "/workspaces/registered" && request.method === "GET") {
+      const workspaces = [];
+      let cursor = "";
+      let scanned = 0;
+      for (;;) {
+        const page = registry.listWorkspaces(cursor, 500);
+        scanned += page.length;
+        for (const item of page) {
+          if (item.archivedAt) continue;
+          const available = availableWorkspaceRoot(item.canonicalCwd, config.defaultWorkspaceCwd, storeRegistry) !== undefined;
+          workspaces.push({ workspaceId: item.workspaceId, cwd: item.canonicalCwd, name: item.displayName, available });
+        }
+        if (page.length < 500 || scanned >= 5_000) break;
+        cursor = page.at(-1)!.workspaceId;
+      }
+      if (!workspaces.some(item => item.cwd === config.defaultWorkspaceCwd)) {
+        workspaces.unshift({ workspaceId: "default", cwd: config.defaultWorkspaceCwd,
+          name: config.defaultWorkspaceCwd.split(/[\\/]/u).at(-1) ?? config.defaultWorkspaceCwd,
+          available: availableWorkspaceRoot(config.defaultWorkspaceCwd, config.defaultWorkspaceCwd, storeRegistry) !== undefined });
+      }
+      writeJson(response, 200, { workspaces });
+      return;
+    }
+    if (url.pathname === "/workspaces/activate" && request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 1
+        || typeof (body as { cwd?: unknown }).cwd !== "string") {
+        writeJson(response, 400, { error: "bad_request" }); return;
+      }
+      const cwd = (body as { cwd: string }).cwd;
+      const item = registry.getWorkspaceByCanonicalCwd(cwd);
+      if (cwd !== config.defaultWorkspaceCwd && !item) { writeJson(response, 404, { error: "workspace_not_registered" }); return; }
+      const physicalRoot = availableWorkspaceRoot(cwd, config.defaultWorkspaceCwd, storeRegistry);
+      if (!physicalRoot || !storeRegistry.trustWorkspaceRoot(cwd, physicalRoot)) {
+        writeJson(response, 409, { error: "workspace_unavailable" }); return;
+      }
+      writeJson(response, 200, { cwd });
+      return;
+    }
+    writeJson(response, 405, { error: "method_not_allowed" });
+  } finally { registry.close(); }
+}
+
+function availableWorkspaceRoot(cwd: string, defaultCwd: string, stores: RunStoreRegistry): string | undefined {
+  if (resolve(cwd) !== cwd) return undefined;
+  try {
+    if (!lstatSync(cwd).isDirectory()) return undefined;
+    const physicalRoot = realpathSync(cwd);
+    const isDarwinSystemAlias = process.platform === "darwin" && (cwd.startsWith("/var/") || cwd.startsWith("/tmp/"))
+      && physicalRoot === `/private${cwd}`;
+    if (physicalRoot !== cwd && !isDarwinSystemAlias) return undefined;
+    if (cwd === defaultCwd && !stores.isTrustedWorkspaceRoot(physicalRoot)) return undefined;
+    return physicalRoot;
+  } catch { return undefined; }
 }
 
 export async function handleWorkspaceTerminalCommand(

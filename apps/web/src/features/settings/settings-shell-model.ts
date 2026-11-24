@@ -6,6 +6,8 @@ import {
   Brain,
   CircuitBoard,
   Database,
+  HardDrive,
+  Globe,
   GitBranch,
   GitFork,
   Palette,
@@ -30,12 +32,14 @@ export type SettingsSectionId =
   | "personalization"
   | "interface-preferences"
   | "computer-control"
+  | "browser"
   | "mobile-access"
   | "external-work"
   | "worktrees"
   | "mcp-tools"
   | "skill-library"
   | "archived-items"
+  | "device-storage"
   | "startup-diagnostics";
 
 export type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils";
@@ -59,6 +63,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
     heading: "Device",
     items: [
       { id: "computer-control", label: "Computer Control", icon: MonitorCog },
+      { id: "browser", label: "Browser", icon: Globe },
       { id: "mobile-access", label: "Mobile Access", icon: Smartphone },
     ],
   },
@@ -98,6 +103,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
   {
     heading: "Maintenance",
     items: [
+      { id: "device-storage", label: "Device storage", icon: HardDrive },
       { id: "archived-items", label: "Archived items", icon: Archive },
       { id: "startup-diagnostics", label: "Startup and diagnostics", icon: Database },
     ],

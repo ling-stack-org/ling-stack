@@ -1,5 +1,11 @@
 # Managed Worktree Lifecycle
 
+Status: lifecycle, Settings layout and app-wide workspace selection implemented; macOS Desktop switching verified, full visual and cross-platform acceptance pending
+Owner: workspace daemon and Settings UI
+Last verified: 2026-11-24 (Web worktree E2E, typecheck and macOS Desktop switch to a second registered workspace; full visual and Windows acceptance pending)
+Canonical replacement: none; this contract owns managed worktree lifecycle
+Code and test anchors: `packages/contracts/src/worktrees.ts`, `packages/daemon/src/features/workspaces/`, `apps/web/src/features/settings/WorktreeSettingsPanel.tsx`, `packages/daemon/test/worktree-management.test.ts`, `apps/web/e2e/worktree-settings.spec.ts`
+
 ## Goal
 
 Ling needs Codex-style isolated workspaces without losing the user's canonical checkout. A managed worktree is a repo-owned execution checkout created by Ling for a channel or direct teammate thread. The canonical workspace stays the durable project root, while the managed worktree absorbs agent edits, tests, and handoff artifacts.
@@ -232,6 +238,95 @@ Loading, empty, failed-load/retry, edited/saved, dirty/in-use, confirmation and 
 failure states are covered by the browser interaction suite. English and Chinese
 use the compiled localization catalogs; other supported locales receive the same
 message keys through the catalog translation pipeline.
+
+### Settings Layout and Acceptance
+
+The [approved Settings concept](prototypes/settings-storage-browser/01-worktrees.png) uses
+Ling's full-screen Settings shell, solid content background and existing shared
+components. It is a layout specification, not a change to worktree ownership or
+cleanup semantics. The workspace selector resolves through the application's selected
+workspace and passes its canonical `cwd` to the existing panel; it must not accept an
+arbitrary path from a Settings input.
+
+| Surface | Contract and interaction |
+| --- | --- |
+| Header and scope | Show the selected workspace name and a single way to switch workspaces. Reload policy, entries and snapshots after the app-level selection changes. Never reuse another workspace's draft or last response. |
+| General | Keep root directory, fetch before creation, automatic cleanup, retain count and manual confirmation in one compact row group. The root hint names the effective default and says changes affect future worktrees. Save remains explicit; display field-level validation. Changing tabs preserves the draft; switching workspaces or leaving Settings asks Save, Discard or Stay when dirty. |
+| Environment | Preserve the saved script, variable and timeout model. The stored placeholder remains redacted; viewing Settings never runs the script. A new worktree still needs the existing Desktop native approval before setup. |
+| Managed list | Use compact rows sorted by `lastUsedAt` with owner name, branch, last use and only exceptional status. Keep `Open` visible; put Keep/Unkeep, Clean up and Retry setup in a row action menu. Show why an action is unavailable when busy, dirty, shared, pinned or blocked. The list must retain the existing `limitReached` warning and recovery errors. |
+| Recovery | Show retained snapshots under the active worktree list with owner, date and Restore. Cleaning up moves a worktree into a recovery snapshot; it does not free its bytes. There is no permanent snapshot deletion or automatic expiry in this slice. |
+
+Implementation is divided into the following bounded changes:
+
+1. **Settings shell and scope:** keep the current `worktrees` section in
+   `settings-shell-model.ts`; connect the visual selector to the existing
+   workspace selection flow. Key the panel and pending requests by canonical
+   workspace identity. Resolve navigation with Save, Discard or Stay only when
+   a draft is dirty.
+2. **Panel and controller:** split policy rows, environment editor, managed rows
+   and recovery rows into focused presentational components under
+   `apps/web/src/features/settings/`. Retain `useWorktreeSettings` as the
+   request/draft owner; do not duplicate policy state in the shell. Scope
+   loading and errors to save, refresh and the initiating row. Reuse shared
+   `SegmentedControl`, `DataRow`, `Switch`, `Input`, `Button` and
+   `Dialog` rather than adding a separate dropdown style.
+3. **Actions:** continue using `GET /worktrees`, workspace settings update and
+   `POST /worktrees/actions`. No new lifecycle route is required for the
+   layout. The menu must preserve server-owned target resolution,
+   `confirmed: true` where configured, initialization approval, mutation
+   fencing and blocked/dirty recovery behavior.
+4. **Copy and responsive layout:** use short Chinese labels, one consequence
+   sentence for cleanup, and no normal-state health badge or duplicate empty
+   message. Keep the right content surface opaque; at 1280×800, make the list
+   and dialogs scroll without clipping row actions. English uses equivalent
+   meaning through the existing i18n catalog.
+
+The settings row state is `loading | ready | empty | error`; mutations add only
+the initiating row's `busy` state. A failed refresh retains the last successful
+inventory with a visible stale marker. A workspace switch or unmount invalidates
+in-flight responses. The UI does not infer that a path is safe to delete from
+its appearance; the daemon response remains authoritative.
+
+#### App-wide workspace selection
+
+The Desktop header's **Switch workspace** button opens a dialog of registered canonical
+workspaces. The list is paged from the local user registry through Desktop Main
+and marks missing
+directories unavailable. **Select folder** uses the existing native directory
+picker; that explicit choice registers the folder before it becomes selectable.
+The Settings UI never accepts a typed path as a workspace identity.
+
+Activation is sent from the trusted Desktop main frame through the allowlisted
+local-service IPC. Main adds its private bridge token; the daemon rejects browser
+origins and requests without that token before admitting a registered, available
+directory (or the daemon's default workspace) as a trusted root for this process.
+The app persists the selected canonical path, revalidates it on startup, and
+falls back to the daemon default when it is no longer registered or available.
+Changing selection resets workspace-scoped controllers, selected channel branch,
+pending requests and the Settings panel instance. The Worktrees page stays open
+and reloads the new workspace's policy and inventory. A dirty policy draft uses
+the same Save, Discard or Stay guard as Settings navigation; Stay leaves both
+the draft and selected workspace untouched.
+
+The selected path determines all Web/daemon workspace requests. Native features
+retain their own capability checks and may be unavailable for a non-default
+workspace until their Desktop owner is separately bound to it. Selection never
+reassigns a running task or migrates files between workspace roots.
+
+Acceptance requires:
+
+- policy defaults, explicit save, draft guard and workspace switch preserve
+  per-workspace settings without stale-response overwrite;
+- registered selection, native folder registration, restart recovery and an
+  unavailable-folder fallback use the same selected workspace across Settings
+  and the main application;
+- active and recovery rows retain the existing cleanup, pin, retry setup and
+  restore behavior; dirty, shared, pinned and in-use entries are not silently
+  removed;
+- cleanup wording and the Device Storage page count retained recovery bytes;
+- narrow daemon worktree tests, Web worktree Settings E2E, owning package
+  typecheck, and real Desktop light/dark screenshots at 1440×900 and
+  1280×800 pass before this layout is marked implemented.
 
 ### Verification
 

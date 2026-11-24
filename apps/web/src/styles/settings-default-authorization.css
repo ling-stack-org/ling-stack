@@ -6,9 +6,31 @@
 }
 
 .settings-authorization-row {
+  position: relative;
+  isolation: isolate;
   grid-template-columns: minmax(220px, 1fr) auto;
   min-height: 72px;
   padding-inline: 0;
+  background: transparent;
+}
+
+.settings-default-authorization-section .settings-authorization-row:hover:not([data-disabled="true"]),
+.settings-default-authorization-section .settings-authorization-row[data-selected="true"] {
+  background: transparent;
+}
+
+.settings-authorization-row::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0 calc(-1 * var(--ling-space-4));
+  border-radius: var(--ling-card-radius);
+  content: "";
+  pointer-events: none;
+}
+
+.settings-default-authorization-section .settings-authorization-row:hover:not([data-disabled="true"])::before,
+.settings-default-authorization-section .settings-authorization-row[data-selected="true"]::before {
+  background: var(--ling-row-hover-bg);
 }
 
 .settings-authorization-copy {
@@ -34,7 +56,11 @@
 
 .settings-authorization-segments {
   justify-self: end;
+  min-width: 0;
 }
+
+.settings-authorization-row .ling-ui-data-row-actions { min-width: 0; }
+.settings-authorization-row .ling-ui-data-row-actions > .ling-ui-button { flex-shrink: 0; }
 
 .settings-write-path-add > .settings-write-path-control {
   min-width: 0;
@@ -93,7 +119,7 @@
   }
 
   .settings-authorization-segments {
-    width: 100%;
+    flex: 1 1 0;
     justify-self: stretch;
   }
 }

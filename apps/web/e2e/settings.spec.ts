@@ -309,7 +309,7 @@ test("settings default authorization hides internal tool policy and runner contr
   await expect(authorizationPanel.locator(".ling-ui-data-row")).toHaveCount(2);
   await expect(authorizationPanel.locator(".ling-ui-segmented-control")).toHaveCount(2);
   await expect(authorizationPanel.getByRole("radiogroup", { name: "Authorization mode" }).getByRole("radio")).toHaveCount(3);
-  await expect(authorizationPanel.getByRole("radiogroup", { name: "Sandbox settings" }).getByRole("radio")).toHaveCount(3);
+  await expect(authorizationPanel.getByRole("radiogroup", { name: "Sandbox settings" }).getByRole("radio")).toHaveCount(2);
   await expect(page.locator(".runtime-runner-settings-panel")).toHaveCount(0);
   await expect(page.getByText("Pi Runner", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Codex App Server", { exact: true })).toHaveCount(0);

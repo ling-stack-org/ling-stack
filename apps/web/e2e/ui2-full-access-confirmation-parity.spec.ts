@@ -33,7 +33,7 @@ test("channel permission selection confirms its conversation while an unowned ta
     exact: true,
   });
   await channelDraft.fill("Keep this channel draft while starting the task");
-  const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  const permissionTrigger = composer.getByRole("button", { name: /Selected authorization mode/ });
   const originalPreset = await permissionTrigger.textContent();
   await selectFullAccess(page, permissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(1);
@@ -95,7 +95,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
-  const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
+  const permissionTrigger = home.getByRole("button", { name: /Selected authorization mode/ });
   const originalPreset = await permissionTrigger.textContent();
   await selectFullAccess(page, permissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(1);
@@ -126,7 +126,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
   });
 
   const activeConversation = page.getByLabel("Conversation page");
-  const activePermissionTrigger = activeConversation.getByRole("button", { name: /Selected permission preset/ });
+  const activePermissionTrigger = activeConversation.getByRole("button", { name: /Selected authorization mode/ });
   await expect(activePermissionTrigger).toHaveText("Full access");
   await activeConversation.getByRole("textbox", { name: "Conversation message" }).fill("Continue in the same trusted conversation");
   await activeConversation.getByRole("button", { name: "Send" }).click();
@@ -140,7 +140,7 @@ test("normal conversation requires explicit confirmation and preserves the prese
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
   const nextHome = page.getByLabel("Conversation home");
-  const nextPermissionTrigger = nextHome.getByRole("button", { name: /Selected permission preset/ });
+  const nextPermissionTrigger = nextHome.getByRole("button", { name: /Selected authorization mode/ });
   await selectFullAccess(page, nextPermissionTrigger);
   await confirmFullAccessSelection(page);
   await expect(nextPermissionTrigger).toHaveText("Full access");
@@ -155,12 +155,12 @@ test("normal conversation requires explicit confirmation and preserves the prese
   });
 
   await expectSubmissionAcknowledged(page, [cwd, "normal", "", ""]);
-  await expect(page.getByLabel("Conversation page").getByRole("button", { name: /Selected permission preset/ }))
+  await expect(page.getByLabel("Conversation page").getByRole("button", { name: /Selected authorization mode/ }))
     .toHaveText("Full access");
   await page.reload();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Open recent conversation/ }).first().click();
   const restoredConversation = page.getByLabel("Conversation page");
-  const restoredPermissionTrigger = restoredConversation.getByRole("button", { name: /Selected permission preset/ });
+  const restoredPermissionTrigger = restoredConversation.getByRole("button", { name: /Selected authorization mode/ });
   await selectFullAccess(page, restoredPermissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(0);
   await expect(restoredPermissionTrigger).toHaveText("Full access");
@@ -199,7 +199,7 @@ test("normal conversation confirms inherited full access on the first run", asyn
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
-  const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
+  const permissionTrigger = home.getByRole("button", { name: /Selected authorization mode/ });
   await expect(permissionTrigger).toContainText("Full access");
   await expect(permissionTrigger).not.toContainText("Confirmed for this conversation");
 
@@ -238,7 +238,7 @@ for (const fixture of [
     await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
 
     const composer = page.getByLabel("New conversation composer");
-    const trigger = composer.getByRole("button", { name: /Selected permission preset/ });
+    const trigger = composer.getByRole("button", { name: /Selected authorization mode/ });
     await expect(trigger).toHaveText("Request approval");
     await selectFullAccess(page, trigger);
     await fullAccessDialog(page).getByRole("button", { name: "Cancel" }).last().click();
@@ -283,7 +283,7 @@ test("normal conversation distinguishes inherited always authorization from full
   await page.goto("/");
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
   const composer = page.getByLabel("New conversation composer");
-  const trigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  const trigger = composer.getByRole("button", { name: /Selected authorization mode/ });
   await expect(trigger).toHaveText("Always authorize");
   await trigger.click();
   const menu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
@@ -331,7 +331,7 @@ test("teammate private chat confirms explicit selection per conversation", async
 
   const chat = page.getByLabel("Private chat", { exact: true });
   const composer = chat.getByLabel("Private chat composer", { exact: true });
-  const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  const permissionTrigger = composer.getByRole("button", { name: /Selected authorization mode/ });
   const originalPreset = await permissionTrigger.textContent();
   await selectFullAccess(page, permissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(1);
@@ -379,7 +379,7 @@ test("teammate private chat confirms explicit selection per conversation", async
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Full Access Teammate", exact: true }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
   const restoredComposer = page.getByLabel("Private chat composer", { exact: true });
-  const restoredPermissionTrigger = restoredComposer.getByRole("button", { name: /Selected permission preset/ });
+  const restoredPermissionTrigger = restoredComposer.getByRole("button", { name: /Selected authorization mode/ });
   await selectFullAccess(page, restoredPermissionTrigger);
   await expect(fullAccessDialog(page)).toHaveCount(0);
   await expect(restoredPermissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
@@ -396,7 +396,7 @@ test("teammate private chat confirms explicit selection per conversation", async
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Second Full Access Teammate" }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
   const nextComposer = page.getByLabel("Private chat composer", { exact: true });
-  const nextPermissionTrigger = nextComposer.getByRole("button", { name: /Selected permission preset/ });
+  const nextPermissionTrigger = nextComposer.getByRole("button", { name: /Selected authorization mode/ });
   await selectFullAccess(page, nextPermissionTrigger);
   await confirmFullAccessSelection(page);
   await expect(nextPermissionTrigger).toHaveAccessibleName(/Full access · Confirmed for this conversation/);
@@ -443,7 +443,7 @@ test("teammate private chat confirms inherited full access on the first run", as
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 
   const composer = page.getByLabel("Private chat composer", { exact: true });
-  const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  const permissionTrigger = composer.getByRole("button", { name: /Selected authorization mode/ });
   await expect(permissionTrigger).toContainText("Full access");
   await expect(permissionTrigger).not.toContainText("Confirmed for this conversation");
 

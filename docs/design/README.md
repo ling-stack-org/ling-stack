@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-20 (Ling App Server and Agent Operating Model, Ling Device Fabric and D14–D22, Ling Server Connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
+Last verified: 2026-11-23 (three Settings feature plans indexed), 2026-11-20 (Ling App Server and Agent Operating Model, Ling Device Fabric and D14–D22, Ling Server Connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -159,6 +159,8 @@ retains the detailed implementation brief and historical checkpoint.
 - [Runtime Control Plane](runtime-control-plane-roadmap.md)
 - [Secrets And Keychain](secrets-keychain.md)
 - [Workspace State Storage](workspace-state-storage.md)
+- [Managed Worktree Lifecycle and Settings Consolidation](managed-worktree-lifecycle.md)
+- [Device Storage Settings Implementation Plan](device-storage-settings-implementation-plan.md)
 - [SQLite Storage Slices](sqlite-storage-ling-and-domain-slices.md)
 - [Locked Computer Control](locked-computer-control-policy.md)
 - [Bundled Computer Use Driver](cua-driver-bundled-embedded.md)

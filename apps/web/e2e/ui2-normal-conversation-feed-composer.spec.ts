@@ -126,7 +126,7 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   const composerAfterFocus = await composer.boundingBox();
   expect(Math.abs((composerAfterFocus?.width ?? 0) - (composerBeforeFocus?.width ?? 0))).toBeLessThanOrEqual(1);
 
-  const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
+  const permissionTrigger = composer.getByRole("button", { name: /Selected authorization mode/ });
   await permissionTrigger.click();
   const permissionMenu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
   await expect(permissionMenu).toBeVisible();
@@ -143,7 +143,7 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await expect(permissionMenu).toHaveCount(0);
   await expect(permissionTrigger).toBeFocused();
 
-  await expect(composer.getByRole("button", { name: /^(Selected thinking mode|Selected reasoning summary|Selected authorization mode)/ })).toHaveCount(0);
+  await expect(composer.getByRole("button", { name: /^(Selected thinking mode|Selected reasoning summary)/ })).toHaveCount(0);
   const modelTrigger = composer.getByRole("button", { name: "Selected model gpt-5.5" });
   await expect(modelTrigger).toContainText("Thinking off");
   await expect(modelTrigger).toHaveAccessibleName("Selected model gpt-5.5 · Selected thinking mode Off");
@@ -613,30 +613,24 @@ test("normal conversation coalesces tail reconciliation per animation frame", as
   await prepareSurface(page, "light", 1440, 800);
   await page.addInitScript(() => {
     type ScrollProbe = {
-      rafCalls: number;
       triggerResize?: () => void;
     };
-    const probe: ScrollProbe = { rafCalls: 0 };
-    const observers: Array<{ trigger: () => void }> = [];
+    const probe: ScrollProbe = {};
+    const observers: Array<{ trigger: () => void; targets: Set<Element> }> = [];
     (globalThis as typeof globalThis & { __normalConversationScrollProbe?: ScrollProbe }).__normalConversationScrollProbe = probe;
-
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame.bind(globalThis);
-    globalThis.requestAnimationFrame = (callback) => {
-      probe.rafCalls += 1;
-      return originalRequestAnimationFrame(callback);
-    };
 
     class FakeResizeObserver {
       private readonly callback: ResizeObserverCallback;
+      readonly targets = new Set<Element>();
 
       constructor(callback: ResizeObserverCallback) {
         this.callback = callback;
         observers.push(this);
       }
 
-      observe(_target: Element): void {}
+      observe(target: Element): void { this.targets.add(target); }
 
-      unobserve(_target: Element): void {}
+      unobserve(target: Element): void { this.targets.delete(target); }
 
       disconnect(): void {
         const index = observers.indexOf(this);
@@ -648,7 +642,7 @@ test("normal conversation coalesces tail reconciliation per animation frame", as
       }
     }
     globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
-    probe.triggerResize = () => observers.slice().forEach((observer) => observer.trigger());
+    probe.triggerResize = () => observers.filter((observer) => [...observer.targets].some((target) => target.matches('[data-conversation-feed-viewport="true"]'))).forEach((observer) => observer.trigger());
   });
 
   const state = createBaseState({ approvalStatus: "expired" });
@@ -658,25 +652,27 @@ test("normal conversation coalesces tail reconciliation per animation frame", as
   await page.goto("/");
   await openConversation(page, "UI2 composer controls");
   await page.waitForTimeout(100);
-  await page.evaluate(() => {
-    const probe = (globalThis as typeof globalThis & {
-      __normalConversationScrollProbe?: { rafCalls: number };
-    }).__normalConversationScrollProbe;
-    if (probe) probe.rafCalls = 0;
-  });
-
-  await page.evaluate(() => {
+  const reconciliations = await page.evaluate(async () => {
+    const feed = document.querySelector<HTMLElement>('[data-conversation-feed-viewport="true"]');
+    const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    if (!feed || !descriptor?.get || !descriptor.set) throw new Error("Conversation feed scroll probe unavailable");
+    let writes = 0;
+    Object.defineProperty(feed, "scrollTop", {
+      configurable: true,
+      get: () => descriptor.get!.call(feed),
+      set: value => { writes++; descriptor.set!.call(feed, value); },
+    });
     const probe = (globalThis as typeof globalThis & {
       __normalConversationScrollProbe?: { triggerResize?: () => void };
     }).__normalConversationScrollProbe;
     probe?.triggerResize?.();
     probe?.triggerResize?.();
     probe?.triggerResize?.();
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    Reflect.deleteProperty(feed, "scrollTop");
+    return writes;
   });
-  await expect.poll(() => page.evaluate(() => (
-    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: { rafCalls: number } })
-      .__normalConversationScrollProbe?.rafCalls ?? -1
-  ))).toBe(1);
+  expect(reconciliations).toBe(1);
 });
 
 test("normal conversation replacement retry keeps the original idempotency key", async ({ page }) => {
@@ -968,7 +964,7 @@ async function expectMessageWidthPolicy(ownMessage: Locator, peerMessage: Locato
   expect(peerRow).not.toBeNull();
   expect(peerContent).not.toBeNull();
   expect(ownContent!.width).toBeLessThan(ownRow!.width);
-  expect(Math.abs(peerContent!.width - peerRow!.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(peerContent!.width - Math.min(peerRow!.width, 760))).toBeLessThanOrEqual(1);
 }
 
 async function expectInputContained(input: Locator, field: Locator): Promise<void> {

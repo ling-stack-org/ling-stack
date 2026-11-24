@@ -1,12 +1,30 @@
 # Scoped macOS Development Packaging Review
 
-The current source prerequisite includes [Bundled plugin discovery](#bundled-plugin-discovery),
+The current source prerequisite includes the [Workspace and device storage inputs](#workspace-and-device-storage-inputs),
+[Bundled plugin discovery](#bundled-plugin-discovery),
 [Conversation media inputs](#conversation-media-inputs),
 [Plugin rollback compatibility](#plugin-rollback-compatibility),
 [Cold-start resource authentication rebind](#cold-start-resource-authentication-rebind),
 and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Workspace and device storage inputs
+
+The development packaging closure includes the device storage route and scanner.
+Workspace activation uses the Desktop Main bridge credential and checks the
+registered workspace's physical path before adding trust. Storage inventory uses
+initialized Stores and reports partial worktree measurements when ownership
+records are unavailable.
+
+The 2,015 fixed packaging inputs include 68 updated digests, including 55
+generated localization catalogs. The 15 Office native inputs and the toolchain,
+header, runtime, signing, and trust fields retain their prior values.
+
+The 260,549-byte record has SHA-256
+`0943f9d75168c19793097ba0b1dcfee3322fdfe19f10d58cafaec03100cfb974`.
+Its fixed-order packaging aggregate is
+`0ba2f7e0df57aaf5264e2a9eec9f93031cbb9a39f1973a8cfc0cec74a1449819`.
 
 ## Bundled plugin discovery
 

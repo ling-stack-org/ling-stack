@@ -23,13 +23,17 @@ export function parseBrowserData(value: unknown): Data {
   return { history, downloads, devices, downloadDirectory: browserString(r.downloadDirectory, 4096), askBeforeDownload: r.askBeforeDownload };
 }
 
+export function browserDataPath(workspaceCwd: string, directory?: string): string | undefined {
+  return directory ? join(directory, `${createHash("sha256").update(workspaceCwd).digest("hex")}.data.json`) : undefined;
+}
+
 /** Profile-owned history and download records contain no Chromium credentials. */
 export class BrowserDataStore {
   readonly data: Data;
   error = false;
   private readonly path?: string;
   constructor(private readonly directory: string | undefined, workspaceCwd: string, downloadDirectory: string) {
-    this.path = directory ? join(directory, `${createHash("sha256").update(workspaceCwd).digest("hex")}.data.json`) : undefined;
+    this.path = browserDataPath(workspaceCwd, directory);
     this.data = { history: [], downloads: [], devices: [], downloadDirectory, askBeforeDownload: true };
     if (this.path) try {
       const stat = lstatSync(this.path); if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) throw new Error("browser_data_invalid");

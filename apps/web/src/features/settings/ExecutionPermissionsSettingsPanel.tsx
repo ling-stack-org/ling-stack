@@ -1,4 +1,4 @@
-import { Eye, FolderOpen, Hand, RefreshCw, Shield, ShieldCheck, Trash2, type LucideIcon } from "lucide-react";
+import { Eye, Hand, RefreshCw, Shield, ShieldCheck, Trash2, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
 import { listApprovalCommandRules, revokeApprovalCommandRule } from "../../api.js";
@@ -69,12 +69,6 @@ export function ExecutionPermissionsSettingsPanel({
       icon: Eye,
     },
     {
-      value: "workspace_write",
-      label: t("Workspace write"),
-      description: t("Edit files inside the current workspace; commands still ask for approval."),
-      icon: FolderOpen,
-    },
-    {
       value: "full_access",
       label: t("Full access"),
       description: t("Access files outside the workspace; each run still requires explicit confirmation."),
@@ -103,6 +97,9 @@ export function ExecutionPermissionsSettingsPanel({
         value={workspaceAccessMode}
         options={accessOptions}
         onChange={onWorkspaceDefaultWorkspaceAccessChange}
+        fallbackDescription={t("Edit files inside the current workspace; commands still ask for approval.")}
+        onReset={() => onWorkspaceDefaultWorkspaceAccessChange("workspace_write")}
+        resetLabel={t("Reset")}
       />
       <ApprovalCommandRulesSettings cwd={cwd} />
     </section>
@@ -235,6 +232,9 @@ function AuthorizationDecisionRow<Value extends string>({
   value,
   options,
   onChange,
+  fallbackDescription,
+  onReset,
+  resetLabel,
 }: {
   readonly id: "access" | "mode";
   readonly ariaLabel: string;
@@ -242,8 +242,11 @@ function AuthorizationDecisionRow<Value extends string>({
   readonly value: Value;
   readonly options: readonly AuthorizationChoice<Value>[];
   readonly onChange: (value: Value) => void;
+  readonly fallbackDescription?: string;
+  readonly onReset?: () => void;
+  readonly resetLabel?: string;
 }): React.JSX.Element {
-  const selected = options.find((option) => option.value === value) ?? options[0];
+  const selected = options.find((option) => option.value === value);
   return (
     <DataRow
       compact
@@ -252,11 +255,11 @@ function AuthorizationDecisionRow<Value extends string>({
       identity={(
         <span className="settings-authorization-copy">
           <strong>{label}</strong>
-          <small>{selected.description}</small>
+          <small>{selected?.description ?? fallbackDescription}</small>
         </span>
       )}
       actions={(
-        <SegmentedControl
+        <><SegmentedControl
           className="settings-authorization-segments"
           aria-label={ariaLabel}
           value={value}
@@ -274,7 +277,7 @@ function AuthorizationDecisionRow<Value extends string>({
               </SegmentedControlItem>
             );
           })}
-        </SegmentedControl>
+        </SegmentedControl>{onReset ? <Button size="sm" variant="ghost" onClick={onReset} disabled={!selected}>{resetLabel}</Button> : null}</>
       )}
     />
   );

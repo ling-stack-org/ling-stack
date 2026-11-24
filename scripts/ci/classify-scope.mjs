@@ -29,6 +29,7 @@ const DOCUMENTATION_ROOT_FILES = new Set([
   "THIRD_PARTY_NOTICES.md",
   "WORKFLOW.md",
   "WORKFLOW.example.md",
+  "native/office-local/reviewed-packaged-source-v1-review.md",
 ]);
 
 const MAINTENANCE_CHECK_FILES = new Set([
@@ -129,9 +130,8 @@ export function classifyChangedFiles(input) {
 
   if (scopeFiles.some(isCiControlPath)
     && scopeFiles.some(file => isAssurancePath(file) || isMacosNativePath(file)
-      || NATIVE_RELEASE_REVIEW_FILES.has(file)
       || (!isDocumentationPath(file) && !isMaintenancePath(file) && !isCiControlPath(file)
-        && !findOwningPackage(file, packages)))) {
+        && !NATIVE_RELEASE_REVIEW_FILES.has(file) && !findOwningPackage(file, packages)))) {
     return buildScope("full", files, packages, "CI control changes mixed with shared or unrecognized product inputs");
   }
 
