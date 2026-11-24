@@ -766,6 +766,8 @@ must be verified before use.
 
 ## Related
 
+- [Device Storage Settings Implementation Plan](device-storage-settings-implementation-plan.md)
+- [Managed Worktree Lifecycle](managed-worktree-lifecycle.md)
 - [Two-Layer Configuration](two-layer-configuration.md)
 - [Session Persistence](session-persistence.md)
 - [Ling Memory v1](ling-memory-v1.md)

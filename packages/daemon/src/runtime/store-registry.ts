@@ -73,8 +73,11 @@ export class RunStoreRegistry {
     this.storesByRunId.set(runId, store);
   }
 
-  trustWorkspaceRoot(cwd: string): void {
-    this.trustedWorkspaceRoots.add(normalizeWorkspaceRoot(cwd));
+  trustWorkspaceRoot(cwd: string, expectedPhysicalRoot?: string): boolean {
+    const root = normalizeWorkspaceRoot(cwd);
+    if (expectedPhysicalRoot !== undefined && root !== expectedPhysicalRoot) return false;
+    this.trustedWorkspaceRoots.add(root);
+    return true;
   }
 
   isTrustedWorkspaceRoot(cwd: string): boolean {

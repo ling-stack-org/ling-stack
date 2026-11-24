@@ -394,6 +394,15 @@ test("ownership pagination checks references beyond the first 500 channels", asy
   await access(managed.path);
 });
 
+test("storage inventory stops before inspecting owners after cancellation", async t => {
+  const f = await fixture(t);
+  await managedChannel(f);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(listManagedWorktrees(f.store, f.cwd,
+    { signal: controller.signal, deadline: Date.now() + 30_000 }), /worktree_inventory_interrupted/u);
+});
+
 test("cleanup preserves committed work and recreation reuses the recorded branch and path", async t => {
   const f = await fixture(t);
   const managed = await managedChannel(f);

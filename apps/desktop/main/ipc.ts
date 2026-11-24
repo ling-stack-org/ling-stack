@@ -82,6 +82,7 @@ export function registerDesktopIpc(input: {
     getMainWindow: input.getMainWindow,
     trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
     baseUrl: input.executionEngines.baseUrl,
+    desktopBridgeToken: input.worktrees?.bridgeToken,
   }) : undefined;
   const unregisterLocalFiles = input.executionEngines ? registerLocalFileIpc({
     ipcMainImpl: desktopIpcMain,

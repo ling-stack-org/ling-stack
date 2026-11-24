@@ -1,4 +1,12 @@
 export interface BrowserHistoryEntry { readonly id: string; readonly url: string; readonly title: string; readonly visitedAt: number }
+export const BROWSER_HISTORY_CLEAR_ALL_SINCE = Number.MAX_SAFE_INTEGER;
+
+export function filterBrowserHistory(history: readonly BrowserHistoryEntry[], since: number, id?: string): BrowserHistoryEntry[] {
+  if (id) return history.filter(item => item.id !== id);
+  if (since === BROWSER_HISTORY_CLEAR_ALL_SINCE) return [];
+  return history.filter(item => item.visitedAt < since);
+}
+
 export interface BrowserDownloadEntry {
   readonly id: string; readonly url: string; readonly filename: string; readonly path: string; readonly startedAt: number;
   readonly status: "progressing" | "completed" | "cancelled" | "interrupted"; readonly received: number; readonly total: number;

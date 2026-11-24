@@ -114,3 +114,4 @@ export * from "./code-assessments.js";
 export * from "./code-assessment-overview.js";
 export * from "./code-assessment-comments.js";
 export * from "./desktop-browser-policy.js";
+export type * from "./device-storage.js";

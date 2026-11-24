@@ -1,26 +1,33 @@
-import { FolderOpen, GitBranch, Pin, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { FolderOpen, GitBranch, MoreHorizontal, Pin, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { WORKTREE_CONFIGURATION_PLACEHOLDER, type ManagedWorktreeEntry } from "@ling-stack/contracts";
 import { useI18n, type Translate } from "../../i18n.js";
-import { Button, DataRow, Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, Field, InlineFeedback, Input, SegmentedControl, SegmentedControlItem, Skeleton, StatusIndicator, Switch, Textarea } from "../../shared/ui/index.js";
+import { Button, DataRow, Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, Field, IconButton, InlineFeedback, Input, Menu, MenuContent, MenuItem, MenuTrigger, SegmentedControl, SegmentedControlItem, Skeleton, StatusIndicator, Switch, Textarea } from "../../shared/ui/index.js";
 import { useWorktreeSettings } from "./useWorktreeSettings.js";
 
-export function WorktreeSettingsPanel({ cwd }: { readonly cwd: string }): React.JSX.Element {
+export function WorktreeSettingsPanel({ cwd, registerGuard, onSwitchWorkspace }: { readonly cwd: string;
+  readonly onSwitchWorkspace?: () => void;
+  readonly registerGuard?: (guard: { readonly dirty: boolean; readonly save: () => Promise<boolean> } | undefined) => void }): React.JSX.Element {
   const { t } = useI18n();
   const state = useWorktreeSettings(cwd);
   const [tab, setTab] = useState("general");
   const cancelRef = useRef<HTMLButtonElement>(null);
   const returnRef = useRef<HTMLButtonElement | null>(null);
+  const menuTriggers = useRef(new Map<string, HTMLButtonElement>());
   const refreshRef = useRef<HTMLButtonElement>(null);
   const disabled = state.loading || Boolean(state.busy);
   const target = state.cleanupTarget;
   const scriptConfigured = state.environment.setupScript === WORKTREE_CONFIGURATION_PLACEHOLDER;
+  const workspaceName = cwd.replaceAll("\\", "/").split("/").filter(Boolean).at(-1) ?? cwd;
+  useEffect(() => { registerGuard?.({ dirty: state.dirty, save: state.save }); }, [registerGuard, state.dirty, state.save]);
+  useEffect(() => () => registerGuard?.(undefined), [registerGuard]);
 
   return (
     <div className="settings-worktrees" data-worktree-settings="true" aria-busy={state.loading}>
       <header className="settings-worktrees-heading">
-        <h1>{t("Worktrees")}</h1>
-        <p>{t("Manage isolated Git workspaces for channels and private chats.")}</p>
+        <div><h1>{t("Worktrees")}</h1><p>{t("Manage isolated Git workspaces for channels and private chats.")}</p></div>
+        <div className="settings-worktrees-workspace"><span>{t("Current workspace")}: <strong>{workspaceName}</strong></span>
+          {onSwitchWorkspace ? <Button size="sm" variant="ghost" onClick={onSwitchWorkspace}>{t("Switch workspace")}</Button> : null}</div>
       </header>
       {state.error ? <InlineFeedback tone="danger">{state.error}</InlineFeedback> : null}
       {!state.data && state.loading ? (
@@ -85,34 +92,35 @@ export function WorktreeSettingsPanel({ cwd }: { readonly cwd: string }): React.
               <Button ref={refreshRef} leadingIcon={<RefreshCw size={16} />} size="sm" variant="ghost" loading={state.loading} loadingLabel={t("Refreshing...")}
                 disabled={Boolean(state.busy)} onClick={() => void state.refresh()}>{t("Refresh")}</Button>
             </div>
-            <p>{t("Cleanup moves the complete directory into a local recovery snapshot. Snapshots retain files, Git state and disk usage until restored.")}</p>
+            <p>{t("Recovery snapshots keep files and continue using disk space until restored.")}</p>
             {state.data.cleanup?.errorMessage ? <InlineFeedback tone="warning">{state.data.cleanup.errorMessage}</InlineFeedback> : null}
             {state.data.limitReached ? <InlineFeedback tone="warning">{t("Only the most recent workspace owners are shown.")}</InlineFeedback> : null}
             {state.data.entries.length ? (
               <ul className="settings-worktrees-list">
                 {state.data.entries.map((entry) => (
                   <li key={`${entry.ownerKind}:${entry.ownerId}`} className="settings-worktree-entry">
-                    <div className="settings-worktree-entry-header">
-                      <div className="settings-worktree-owner"><GitBranch size={18} aria-hidden="true" /><strong>{entry.ownerName}</strong><small>{entry.ownerKind === "channel" ? t("Channel") : t("Private chat")}</small></div>
-                      <div className="settings-worktree-status">
-                        <StatusIndicator tone={entry.status === "blocked" ? "danger" : entry.status === "ready" ? "success" : "neutral"} label={statusLabel(entry, t)} />
-                        {entry.inUse ? <StatusIndicator tone="warning" label={t("In use")} /> : null}
-                        {entry.isDirty ? <StatusIndicator tone="warning" label={t("Uncommitted changes")} /> : null}
-                        {entry.pinned ? <StatusIndicator tone="neutral" label={t("Pinned")} /> : null}
-                      </div>
+                    <div className="settings-worktree-entry-main"><strong>{entry.ownerName}</strong>
+                      <small>{[entry.branchName, entry.lastUsedAt ? new Date(entry.lastUsedAt).toLocaleDateString() : undefined].filter(Boolean).join(" · ")}</small></div>
+                    <div className="settings-worktree-status">
+                      {entry.status !== "ready" ? <StatusIndicator tone={entry.status === "blocked" ? "danger" : "neutral"} label={statusLabel(entry, t)} /> : null}
+                      {entry.inUse ? <StatusIndicator tone="warning" label={t("In use")} /> : null}
+                      {entry.isDirty ? <StatusIndicator tone="warning" label={t("Uncommitted changes")} /> : null}
+                      {entry.pinned || entry.kept ? <StatusIndicator tone="neutral" label={t("Pinned")} /> : null}
                     </div>
-                    {entry.branchName ? <code className="settings-worktree-branch">{entry.branchName}</code> : null}
-                    <code className="settings-worktree-path">{entry.path}</code>
-                    {entry.errorMessage ? <InlineFeedback tone="danger">{entry.errorMessage}</InlineFeedback> : null}
-                    {entry.initialization?.output ? <details><summary>{t("Setup output")}</summary><pre className="settings-worktree-output">{entry.initialization.output}</pre></details> : null}
                     <div className="settings-worktree-actions">
                       <Button leadingIcon={<FolderOpen size={15} />} size="sm" variant="secondary" disabled={disabled || entry.status !== "ready"}
                         loading={state.busy === `open:${entry.ownerKind}:${entry.ownerId}`} loadingLabel={t("Opening...")} onClick={() => void state.perform(entry, "open")}>{t("Open path")}</Button>
-                      <Button leadingIcon={<Trash2 size={15} />} size="sm" variant="ghost" disabled={disabled || entry.inUse || entry.status === "not_created" || entry.status === "missing" || entry.initialization?.status === "running" || entry.status === "blocked" && !entry.initialization}
-                        onClick={(event) => { returnRef.current = event.currentTarget; state.requestCleanup(entry); }}>{t("Clean up worktree")}</Button>
-                      <Button leadingIcon={<Pin size={15} />} size="sm" variant="ghost" disabled={disabled} onClick={() => void state.perform(entry, entry.kept ? "unpin" : "pin")}>{entry.kept ? t("Unpin worktree") : t("Keep worktree")}</Button>
-                      {entry.initialization && entry.initialization.status !== "succeeded" ? <Button size="sm" variant="secondary" disabled={disabled || entry.inUse} onClick={() => void state.perform(entry, "initialize")}>{t("Retry setup")}</Button> : null}
+                      <Menu><MenuTrigger asChild><IconButton ref={node => { const key = `${entry.ownerKind}:${entry.ownerId}`; if (node) menuTriggers.current.set(key, node); else menuTriggers.current.delete(key); }}
+                        icon={MoreHorizontal} label={t("Manage worktree")} size="sm" tooltip="" disabled={disabled} /></MenuTrigger>
+                        <MenuContent align="end">
+                          <MenuItem onSelect={() => void state.perform(entry, entry.kept ? "unpin" : "pin")}><Pin aria-hidden="true" />{entry.kept ? t("Unpin worktree") : t("Keep worktree")}</MenuItem>
+                          {entry.initialization && entry.initialization.status !== "succeeded" ? <MenuItem disabled={entry.inUse} onSelect={() => void state.perform(entry, "initialize")}><RefreshCw aria-hidden="true" />{t("Retry setup")}</MenuItem> : null}
+                          <MenuItem tone="danger" disabled={entry.inUse || entry.status === "not_created" || entry.status === "missing" || entry.initialization?.status === "running" || entry.status === "blocked" && !entry.initialization}
+                            onSelect={() => { returnRef.current = menuTriggers.current.get(`${entry.ownerKind}:${entry.ownerId}`) ?? null; state.requestCleanup(entry); }}><Trash2 aria-hidden="true" />{t("Clean up worktree")}</MenuItem>
+                        </MenuContent></Menu>
                     </div>
+                    {entry.errorMessage ? <InlineFeedback tone="danger">{entry.errorMessage}</InlineFeedback> : null}
+                    {entry.initialization?.output ? <details><summary>{t("Setup output")}</summary><pre className="settings-worktree-output">{entry.initialization.output}</pre></details> : null}
                   </li>
                 ))}
               </ul>
@@ -125,7 +133,6 @@ export function WorktreeSettingsPanel({ cwd }: { readonly cwd: string }): React.
               const owner = state.data?.entries.find((entry) => entry.ownerId === snapshot.ownerId && entry.ownerKind === snapshot.ownerKind);
               return <li key={snapshot.id} className="settings-worktree-entry">
                 <strong>{snapshot.ownerName}</strong><time dateTime={snapshot.createdAt}>{new Date(snapshot.createdAt).toLocaleString()}</time>
-                <code>{snapshot.snapshotPath}</code><code>{snapshot.originalPath}</code>
                 {snapshot.errorMessage ? <InlineFeedback tone="danger">{snapshot.errorMessage}</InlineFeedback> : null}
                 <div className="settings-worktree-actions"><Button size="sm" variant="secondary" leadingIcon={<RotateCcw size={15} />}
                   disabled={disabled || !owner || owner.inUse || owner.status === "ready"} onClick={() => void state.perform(snapshot, "restore", snapshot.id)}>{t("Restore worktree")}</Button></div>

@@ -20,16 +20,28 @@ import type {
   StartupStatusResponse,
   UserProfileResponse,
   WorkspaceDirectorySelectResponse,
+  RegisteredWorkspacesResponse,
   WorkspaceTerminalCommandRequest,
   WorkspaceTerminalCommandResponse,
   WorkspaceTerminalProfileResponse,
   WorkspaceSettingsResponse,
+  DeviceStorageScanJob,
+  DeviceStorageScope,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "../errors.js";
 import { readErrorMessage } from "../transport.js";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const systemEndpoints = {
+  async startDeviceStorageScan(this: LingDaemonEndpointContext, cwd: string, scope: DeviceStorageScope): Promise<DeviceStorageScanJob> {
+    return this._post("/device-storage/scans", { cwd }, { scope });
+  },
+  async getDeviceStorageScan(this: LingDaemonEndpointContext, cwd: string, id: string): Promise<DeviceStorageScanJob> {
+    return this._get(`/device-storage/scans/${encodeURIComponent(id)}`, { cwd });
+  },
+  async cancelDeviceStorageScan(this: LingDaemonEndpointContext, cwd: string, id: string): Promise<DeviceStorageScanJob> {
+    return this._delete(`/device-storage/scans/${encodeURIComponent(id)}`, { cwd });
+  },
   async listManagedWorktrees(this: LingDaemonEndpointContext, cwd: string): Promise<ManagedWorktreeListResponse> {
     return this._get("/worktrees", { cwd });
   },
@@ -113,8 +125,16 @@ export const systemEndpoints = {
       return this._patch("/notifications/preferences", undefined, input);
     },
 
-  async selectWorkspaceDirectory(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceDirectorySelectResponse> {
-      return this._post("/workspace-directory/select", { cwd });
+  async selectWorkspaceDirectory(this: LingDaemonEndpointContext, cwd: string, register = false): Promise<WorkspaceDirectorySelectResponse> {
+      return this._post("/workspace-directory/select", { cwd, ...(register ? { register: "1" } : {}) });
+    },
+
+  async listRegisteredWorkspaces(this: LingDaemonEndpointContext): Promise<RegisteredWorkspacesResponse> {
+      return this._get("/workspaces/registered");
+    },
+
+  async activateRegisteredWorkspace(this: LingDaemonEndpointContext, cwd: string): Promise<{ readonly cwd: string }> {
+      return this._post("/workspaces/activate", undefined, { cwd });
     },
 
   async getWorkspaceTerminalProfile(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceTerminalProfileResponse> {

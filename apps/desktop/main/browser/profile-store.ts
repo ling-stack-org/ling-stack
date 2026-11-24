@@ -37,6 +37,7 @@ export class BrowserProfileStore {
   constructor(readonly workspaceCwd: string, private readonly directory?: string) {
     if (directory) this.path = join(directory, `${createHash("sha256").update(workspaceCwd).digest("hex")}.json`);
   }
+  get metadataPath(): string | undefined { return this.path; }
 
   read(): BrowserProfileMetadata {
     if (this.path) {

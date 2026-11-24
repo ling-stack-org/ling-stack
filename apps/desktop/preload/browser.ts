@@ -6,6 +6,9 @@ export function createDesktopBrowserCapabilities(ipc: Pick<IpcRenderer, "invoke"
   return {
     getState: workspace => ipc.invoke(DESKTOP_BROWSER_IPC_CHANNELS.state, workspace),
     act: request => ipc.invoke(DESKTOP_BROWSER_IPC_CHANNELS.act, request),
+    getSettingsState: workspaceCwd => ipc.invoke(DESKTOP_BROWSER_IPC_CHANNELS.settingsState, workspaceCwd),
+    getProfileSize: (workspaceCwd, scope) => ipc.invoke(DESKTOP_BROWSER_IPC_CHANNELS.profileSize, { workspaceCwd, scope }),
+    actSettings: request => ipc.invoke(DESKTOP_BROWSER_IPC_CHANNELS.settingsAct, request),
     reportViewport: viewport => ipc.send(DESKTOP_BROWSER_IPC_CHANNELS.viewport, viewport),
     onStateChanged: listener => {
       const wrapped = (): void => listener();

@@ -1,0 +1,17 @@
+.settings-browser { display: grid; gap: 24px; padding: var(--ling-space-7); background: var(--ling-bg-panel); border: 1px solid var(--ling-card-border); border-radius: var(--ling-card-radius); min-width: 0; }
+.settings-browser h1, .settings-browser h2 { margin: 0; color: var(--ling-text-strong); }
+.settings-browser h1 { font-size: 24px; }
+.settings-browser h2 { font-size: var(--ling-font-md); }
+.settings-browser p { margin: 6px 0 0; color: var(--ling-text-muted); }
+.settings-browser section, .settings-browser .browser-management-section { display: grid; gap: 12px; min-width: 0; border-top: 1px solid var(--ling-border-default); padding-top: 20px; }
+.settings-browser .browser-management-section > h2:not(:first-child) { margin-top: 14px; }
+.settings-browser-history { max-height: 240px; overflow-y: auto; }
+.settings-browser-history > div, .settings-browser-inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.settings-browser-history > div { border-bottom: 1px solid var(--ling-border-default); }
+.settings-browser-history span, .settings-browser-inline span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-browser-options { display: flex; flex-wrap: wrap; gap: 16px; }
+.settings-browser-device-form { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(120px, 1fr)) auto; gap: 12px; align-items: end; }
+.settings-browser-device-row { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(120px, 1fr) minmax(120px, 1fr); align-items: center; gap: 12px; }
+.settings-browser-device-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) { .settings-browser { padding: var(--ling-space-5); } .settings-browser-inline { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 900px) { .settings-browser-device-form, .settings-browser-device-row { grid-template-columns: 1fr; } }

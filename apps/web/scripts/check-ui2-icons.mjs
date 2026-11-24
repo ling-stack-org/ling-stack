@@ -47,6 +47,7 @@ const typedActionOwners = [
   "src/features/settings/SkillLibraryInspectorPanel.tsx",
   "src/features/settings/SkillLibraryTable.tsx",
   "src/features/settings/StartupReadinessSummary.tsx",
+  "src/features/settings/WorktreeSettingsPanel.tsx",
   "src/features/settings/WorkflowTemplateEditor.tsx",
   "src/features/settings/WorkflowTemplateGateEditor.tsx",
   "src/features/settings/WorkflowTemplateList.tsx",
