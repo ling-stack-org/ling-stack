@@ -65,6 +65,7 @@ export class DesktopBrowserManager {
   private closingWindow = false;
   private selecting?: Tab;
   private workspaceActive = true;
+  private profileSizeScan?: AbortController;
 
   constructor(private readonly options: {
     readonly workspaceCwd: string; readonly desktopInstanceId: string; readonly daemonBaseUrl: string;
@@ -116,31 +117,40 @@ export class DesktopBrowserManager {
   }
   async profileSize(workspaceCwd: string, scope: DeviceStorageScope = "current"): Promise<DeviceStorageCategorySize> {
     this.assertWorkspaceCwd(workspaceCwd);
-    if (scope === "current") return measureBrowserProfileSize(this.session.getStoragePath(), this.profileStore.metadataPath);
+    this.profileSizeScan?.abort();
+    const controller = new AbortController();
+    this.profileSizeScan = controller;
+    const budget = { deadlineMs: Date.now() + 20_000, remainingEntries: 300_000,
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]) };
+    if (scope === "current") return measureBrowserProfileSize(this.session.getStoragePath(), this.profileStore.metadataPath, budget);
     const registry = createWorkspaceRegistryStore();
     const workspaces = new Set<string>([workspaceCwd]);
+    let incomplete = false;
+    let reason: DeviceStorageCategorySize["reason"];
     try {
       let cursor = "";
       for (;;) {
+        if (budget.signal.aborted || Date.now() >= budget.deadlineMs) { incomplete = true; reason = "deadline"; break; }
         const page = registry.listWorkspaces(cursor, 500);
         for (const entry of page) workspaces.add(entry.canonicalCwd);
-        if (page.length < 500 || workspaces.size >= 5_000) break;
+        if (page.length < 500) break;
+        if (workspaces.size >= 5_000) { incomplete = true; reason = "entry_limit"; break; }
         cursor = page.at(-1)!.workspaceId;
       }
     } finally { registry.close(); }
     let bytes = 0;
-    let incomplete = workspaces.size >= 5_000;
-    const deadline = Date.now() + 20_000;
     for (const cwd of workspaces) {
-      if (Date.now() >= deadline) { incomplete = true; break; }
+      if (budget.signal.aborted || Date.now() >= budget.deadlineMs) { incomplete = true; reason = "deadline"; break; }
+      if (budget.remainingEntries <= 0) { incomplete = true; reason = "entry_limit"; break; }
       const partition = this.electron.session.fromPartition(desktopBrowserPartition(cwd));
       const metadata = new BrowserProfileStore(cwd, this.options.profileDirectory);
-      const result = await measureBrowserProfileSize(partition.getStoragePath(), metadata.metadataPath, deadline);
+      const result = await measureBrowserProfileSize(partition.getStoragePath(), metadata.metadataPath, budget);
       bytes += result.knownBytes;
       incomplete ||= result.status !== "complete";
+      if (result.status !== "complete") reason ??= result.reason;
     }
     return { category: "browser", knownBytes: bytes, status: incomplete ? "partial" : "complete",
-      ...(incomplete ? { reason: "browser_profile_unavailable" as const } : {}) };
+      ...(incomplete ? { reason: reason ?? "browser_profile_unavailable" } : {}) };
   }
 
   async actSettings(input: DesktopBrowserSettingsAction, assertCurrent: () => void = () => {}): Promise<BrowserManagementState> {
@@ -352,6 +362,7 @@ export class DesktopBrowserManager {
   }
   dispose(): void {
     if (this.disposed) return;
+    this.profileSizeScan?.abort();
     this.persistProfile();
     this.management.dispose();
     this.closingWindow = true;

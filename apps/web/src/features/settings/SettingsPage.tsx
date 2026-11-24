@@ -270,7 +270,6 @@ export function SettingsPage({
       ...(item.id === "computer-control" ? { hidden: !computerControlVisible } : {}),
       ...(item.id === "mobile-access" ? { hidden: !mobileAccessVisible } : {}),
       ...(item.id === "browser" ? { hidden: !browserVisible } : {}),
-      ...(item.id === "device-storage" ? { hidden: !browserVisible } : {}),
     })),
   }));
   const workspaceToolDefinition = workspaceToolSection
@@ -365,7 +364,8 @@ export function SettingsPage({
         {visibleActiveSection === "browser" && browserVisible && !workspaceToolDetailOpen ? <BrowserSettingsPanel key={cwd} cwd={cwd} /> : null}
         {visibleActiveSection === "device-storage" && !workspaceToolDetailOpen ? <DeviceStorageSettingsPanel key={cwd} cwd={cwd}
           onOpenConversations={() => onOpenConversations?.()} onOpenPlugins={() => onOpenPlugins?.()}
-          onOpenWorktrees={() => selectSettingsSection("worktrees")} onOpenBrowser={() => selectSettingsSection("browser")} /> : null}
+          onOpenWorktrees={() => selectSettingsSection("worktrees")}
+          onOpenBrowser={browserVisible ? () => selectSettingsSection("browser") : undefined} /> : null}
 
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel

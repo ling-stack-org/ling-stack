@@ -11,7 +11,7 @@ export function DeviceStorageSettingsPanel({ cwd, onOpenConversations, onOpenPlu
   readonly onOpenConversations: () => void;
   readonly onOpenPlugins: () => void;
   readonly onOpenWorktrees: () => void;
-  readonly onOpenBrowser: () => void;
+  readonly onOpenBrowser?: () => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [scope, setScope] = useState<DeviceStorageScope>("all");
@@ -55,7 +55,7 @@ export function DeviceStorageSettingsPanel({ cwd, onOpenConversations, onOpenPlu
     conversations: { label: t("View conversations"), run: onOpenConversations },
     worktrees: { label: t("Manage worktrees"), run: onOpenWorktrees },
     plugins: { label: t("View plugins"), run: onOpenPlugins },
-    browser: { label: t("Manage browser data"), run: onOpenBrowser },
+    ...(onOpenBrowser ? { browser: { label: t("Manage browser data"), run: onOpenBrowser } } : {}),
   };
   const format = (bytes: number): string => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
     : bytes >= 1024 ** 2 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`;

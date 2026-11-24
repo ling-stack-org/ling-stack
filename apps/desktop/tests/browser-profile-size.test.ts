@@ -32,6 +32,34 @@ test("browser profile size stops inside a flat directory when its deadline expir
   });
 });
 
+test("browser profile size shares the entry limit across workspace profiles", async t => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), "ling-browser-size-shared-budget-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const first = join(root, "first"), second = join(root, "second");
+  await mkdir(first); await mkdir(second);
+  await writeFile(join(first, "entry"), Buffer.alloc(9));
+  await writeFile(join(second, "entry"), Buffer.alloc(12));
+  const budget = { deadlineMs: Date.now() + 20_000, remainingEntries: 1 };
+  assert.deepEqual(await measureBrowserProfileSize(first, undefined, budget), {
+    category: "browser", knownBytes: 9, status: "complete",
+  });
+  assert.deepEqual(await measureBrowserProfileSize(second, undefined, budget), {
+    category: "browser", knownBytes: 0, status: "partial", reason: "entry_limit",
+  });
+});
+
+test("browser profile size stops when a replaced scan is cancelled", async t => {
+  const profile = await mkdtemp(join(await realpath(tmpdir()), "ling-browser-size-cancel-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  await writeFile(join(profile, "entry"), Buffer.alloc(9));
+  const controller = new AbortController();
+  controller.abort();
+  assert.deepEqual(await measureBrowserProfileSize(profile, undefined,
+    { deadlineMs: Date.now() + 20_000, remainingEntries: 300_000, signal: controller.signal }), {
+    category: "browser", knownBytes: 0, status: "partial", reason: "deadline",
+  });
+});
+
 test("browser profile size rejects a storage root reached through a symlink", async t => {
   const root = await mkdtemp(join(await realpath(tmpdir()), "ling-browser-size-alias-"));
   t.after(() => rm(root, { recursive: true, force: true }));

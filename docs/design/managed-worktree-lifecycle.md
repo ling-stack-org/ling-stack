@@ -1,8 +1,8 @@
 # Managed Worktree Lifecycle
 
-Status: lifecycle, Settings layout and app-wide workspace selection implemented in source; native Desktop visual acceptance pending
+Status: lifecycle, Settings layout and app-wide workspace selection implemented; macOS Desktop switching verified, full visual and cross-platform acceptance pending
 Owner: workspace daemon and Settings UI
-Last verified: 2026-11-23 (source, Web worktree E2E and typecheck; native Desktop visual acceptance pending)
+Last verified: 2026-11-24 (Web worktree E2E, typecheck and macOS Desktop switch to a second registered workspace; full visual and Windows acceptance pending)
 Canonical replacement: none; this contract owns managed worktree lifecycle
 Code and test anchors: `packages/contracts/src/worktrees.ts`, `packages/daemon/src/features/workspaces/`, `apps/web/src/features/settings/WorktreeSettingsPanel.tsx`, `packages/daemon/test/worktree-management.test.ts`, `apps/web/e2e/worktree-settings.spec.ts`
 

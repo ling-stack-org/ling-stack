@@ -84,3 +84,33 @@ test("Desktop Settings shows measured storage and editable browser defaults", as
   await expect(saveError).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("Web Settings exposes daemon storage without a Desktop browser", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.route(/\/device-storage\/scans(?:\/[\w-]+)?(?:\?.*)?$/u, route => route.fulfill({
+    status: route.request().method() === "POST" ? 202 : 200,
+    json: route.request().method() === "POST"
+      ? { id: "11111111-1111-1111-1111-111111111111", status: "scanning" }
+      : { id: "11111111-1111-1111-1111-111111111111", status: "partial", snapshot: {
+        measurement: "logical_file_bytes", scope: "all", scannedAt: "2026-11-23T00:00:00Z", complete: false, knownBytes: 1024,
+        categories: [
+          { category: "conversations", knownBytes: 1024, status: "complete" },
+          { category: "worktrees", knownBytes: 0, status: "complete" },
+          { category: "plugins", knownBytes: 0, status: "complete" },
+          { category: "browser", knownBytes: 0, status: "unavailable" },
+          { category: "other", knownBytes: 0, status: "complete" },
+        ],
+      } },
+  }));
+  await page.goto("/");
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings", exact: true }).click();
+  const navigation = page.locator('[data-settings-section="device-storage"]');
+  await expect(navigation).toBeVisible();
+  await navigation.click();
+  const storage = page.locator("[data-device-storage]");
+  await expect(storage.getByRole("heading", { name: "Device storage" })).toBeVisible();
+  await expect(storage.locator(".settings-device-storage-summary strong")).toHaveText("1.0 KB");
+  await expect(storage.getByRole("button", { name: "Manage browser data" })).toHaveCount(0);
+  await expect(page.locator('[data-settings-section="browser"]')).toHaveCount(0);
+});

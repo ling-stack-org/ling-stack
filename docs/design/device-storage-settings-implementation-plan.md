@@ -1,8 +1,8 @@
 # Device Storage Settings Implementation Plan
 
-Status: source implementation and Web E2E verified; native Desktop interaction and cross-platform acceptance pending
+Status: source implementation, Web E2E and macOS Desktop interaction verified; measured-size comparison and cross-platform acceptance pending
 Owner: Core storage, daemon, Desktop browser and Web Settings
-Last verified: 2026-11-23 (scanner, routes, Settings page and Web E2E; no real Desktop disk-size acceptance)
+Last verified: 2026-11-24 (scanner, routes, Settings page, Web E2E and macOS Desktop scan/navigation; no measured-size comparison or Windows acceptance)
 Canonical replacement: none; this plan owns the Device Storage feature until delivered
 Code and test anchors: `packages/contracts/src/device-storage.ts`, `packages/core/src/storage/workspace-registry-store.ts`, `packages/daemon/src/features/settings/device-storage/`, `apps/desktop/main/browser/profile-size.ts`, `apps/web/src/features/settings/DeviceStorageSettingsPanel.tsx`, `apps/web/e2e/settings-storage-browser.spec.ts`
 
@@ -120,9 +120,13 @@ categories visible.
 The contract, paged registry read, bounded daemon scanner, Desktop profile-size
 capability and Settings page are implemented in source. The Web test covers
 measured and partial data plus navigation. Local scanner and route tests cover
-symlink, hard-link, cancellation and access boundaries. A real Desktop profile
-measurement and Windows run are still required before this feature is marked
-native accepted. The page reports logical file bytes, not reclaimed disk space.
+symlink, hard-link, cancellation and access boundaries. A real macOS Desktop
+session scanned the active workspace and opened the browser settings from this
+page. Inactive registered workspaces whose Store has not been opened are reported
+as partial for managed worktrees; the storage scan does not initialize a Store
+or dispatch recovery merely to estimate size. Sampled size comparison and a
+Windows run remain before native acceptance. The page reports logical file
+bytes, not reclaimed disk space.
 
 1. **Inventory contract:** fix category ownership and add read-only registry
    enumeration. Test repo-local, user-data-dir, shared data, archived entries,

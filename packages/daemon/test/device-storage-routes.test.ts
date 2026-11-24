@@ -55,8 +55,11 @@ test("the unregistered daemon default scans its initialized Store in both scopes
   const root = await mkdtemp(join(await realpath(tmpdir()), "ling-device-storage-default-"));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
+  const inactive = join(root, "inactive");
+  await mkdir(inactive);
   const prior = process.env.LING_STACK_HOME;
   process.env.LING_STACK_HOME = join(root, "test-user-root");
+  registerResolvedWorkspace(inactive);
   const paths = resolveStoragePaths(cwd, { workspaceStateLocation: "user-data-dir" }).workspace;
   const store = createSqliteRunStore(cwd, paths);
   let opened = 0;
@@ -79,6 +82,7 @@ test("the unregistered daemon default scans its initialized Store in both scopes
     assert.deepEqual(job.snapshot.categories.find(item => item.category === "conversations"), {
       category: "conversations", knownBytes: 31, status: "complete",
     });
+    if (scope === "all") assert.equal(job.snapshot.categories.find(item => item.category === "worktrees")?.status, "partial");
   }
   assert.equal(opened, 1);
   const registry = createWorkspaceRegistryStore();

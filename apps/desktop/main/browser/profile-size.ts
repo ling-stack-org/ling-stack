@@ -2,6 +2,12 @@ import { lstat, opendir, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { DeviceStorageCategorySize } from "@ling-stack/contracts";
 
+export interface BrowserProfileScanBudget {
+  readonly deadlineMs: number;
+  remainingEntries: number;
+  readonly signal?: AbortSignal;
+}
+
 async function statIfPresent(path: string) {
   try {
     return await lstat(path);
@@ -11,14 +17,16 @@ async function statIfPresent(path: string) {
   }
 }
 
-export async function measureBrowserProfileSize(storagePath: string | null, metadataPath?: string, overallDeadline?: number): Promise<DeviceStorageCategorySize> {
+export async function measureBrowserProfileSize(storagePath: string | null, metadataPath?: string,
+  sharedBudget?: BrowserProfileScanBudget): Promise<DeviceStorageCategorySize> {
   if (!storagePath) return { category: "browser", knownBytes: 0, status: "unavailable", reason: "browser_profile_unavailable" };
   const root = resolve(storagePath);
-  let bytes = 0, entries = 0;
-  const deadline = Math.min(Date.now() + 20_000, overallDeadline ?? Number.POSITIVE_INFINITY);
+  let bytes = 0;
+  const budget = sharedBudget ?? { deadlineMs: Date.now() + 20_000, remainingEntries: 300_000 };
   const partial = (reason: NonNullable<DeviceStorageCategorySize["reason"]>): DeviceStorageCategorySize =>
     ({ category: "browser", knownBytes: bytes, status: "partial", reason });
-  const budgetLimit = () => Date.now() > deadline ? partial("deadline") : entries >= 300_000 ? partial("entry_limit") : undefined;
+  const budgetLimit = () => budget.signal?.aborted || Date.now() >= budget.deadlineMs
+    ? partial("deadline") : budget.remainingEntries <= 0 ? partial("entry_limit") : undefined;
   try {
     const pending = (await statIfPresent(root)) ? [root] : [];
     while (pending.length) {
@@ -29,7 +37,7 @@ export async function measureBrowserProfileSize(storagePath: string | null, meta
       for await (const entry of await opendir(directory)) {
         const entryLimit = budgetLimit();
         if (entryLimit) return entryLimit;
-        entries++;
+        budget.remainingEntries--;
         const path = join(directory, entry.name);
         const stat = await lstat(path);
         if (stat.isSymbolicLink()) continue;
@@ -45,7 +53,7 @@ export async function measureBrowserProfileSize(storagePath: string | null, meta
         bytes += stat.size;
       }
     }
-    if (Date.now() > deadline) return partial("deadline");
+    if (budget.signal?.aborted || Date.now() >= budget.deadlineMs) return partial("deadline");
     return { category: "browser", knownBytes: bytes, status: "complete" };
   } catch {
     return partial("read_error");
