@@ -85,10 +85,7 @@ export class PackagedSkillRuntime {
     }
   }
   bind(context: SkillSourceRuntimeContext): SkillSourceRuntimeContext {
-    if (context.sourceKind !== "gstack-skill-directory") {
-      if (context.resourceBinding) throw new Error("packaged_skill_source_resource_mismatch");
-      return context;
-    }
+    if (context.sourceKind !== "gstack-skill-directory") return bindUnbundledContext(context);
     const entry = this.#source.manifest.skills.find(skill => skill.id === context.skillId);
     const checksum = entry && this.#source.manifest.files.find(file => file.path === entry.entryPath)?.checksum;
     if (!context.loaded || context.truncated || context.sourceChecksum !== checksum || !entry) throw new Error("packaged_skill_source_resource_mismatch");
@@ -118,8 +115,10 @@ export class PackagedSkillRuntime {
 /** Only fully admitted generations enter the catalog; task text never supplies paths. */
 export class PackagedSkillRuntimeCatalog {
   readonly #generations: ReadonlyMap<string, PackagedSkillRuntime>;
-  constructor(readonly current: PackagedSkillRuntime, retained: readonly PackagedSkillRuntime[] = []) {
-    this.#generations = new Map([...retained, current].map(runtime => [runtime.manifestChecksum, runtime]));
+  constructor(readonly current: PackagedSkillRuntime | undefined, retained: readonly PackagedSkillRuntime[] = []) {
+    const available = current ? [...retained, current] : retained;
+    this.#generations = new Map(available.map(runtime => [runtime.manifestChecksum, runtime]));
+    if (!this.#generations.size) throw new Error("packaged_skill_resource_version_unavailable");
   }
   #resolve(context: SkillSourceRuntimeContext): PackagedSkillRuntime {
     const key = context.resourceBinding?.manifestChecksum
@@ -129,17 +128,25 @@ export class PackagedSkillRuntimeCatalog {
     return runtime;
   }
   bind(context: SkillSourceRuntimeContext): SkillSourceRuntimeContext {
-    if (context.sourceKind !== "gstack-skill-directory") return this.current.bind(context);
+    if (context.sourceKind !== "gstack-skill-directory") return bindUnbundledContext(context);
     return this.#resolve(context).bind(context);
   }
   restore(context: SkillSourceRuntimeContext | undefined, skillId?: string): SkillSourceRuntimeContext | undefined {
-    if (!context || context.sourceKind !== "gstack-skill-directory") return this.current.restore(context, skillId);
+    if (!context || context.sourceKind !== "gstack-skill-directory") {
+      if (this.current) return this.current.restore(context, skillId);
+      for (const runtime of this.#generations.values()) runtime.restore(context, skillId);
+      return context;
+    }
     if (!context.resourceBinding) throw new Error("packaged_skill_resource_binding_missing");
     return this.#resolve(context).restore(context, skillId);
   }
   environment(context: SkillSourceRuntimeContext, stateRoot: string, path?: string): NodeJS.ProcessEnv {
     return this.#resolve(context).environment(context, stateRoot, path);
   }
+}
+function bindUnbundledContext(context: SkillSourceRuntimeContext): SkillSourceRuntimeContext {
+  if (context.resourceBinding) throw new Error("packaged_skill_source_resource_mismatch");
+  return context;
 }
 export function preparePackagedSkillState(workspaceRoot: string, key: string): string {
   if (!/^[a-f0-9]{64}$/.test(key) || realpathSync(workspaceRoot) !== workspaceRoot || !lstatSync(workspaceRoot).isDirectory()) {
@@ -160,7 +167,7 @@ function sameBinding(a: Binding, b: Binding) {
   return a.manifestChecksum === b.manifestChecksum && a.upstreamRevision === b.upstreamRevision
     && a.adaptationRevision === b.adaptationRevision && a.sourceChecksum === b.sourceChecksum;
 }
-export function installPackagedSkillRuntime(runtime: PackagedSkillRuntime, retained: readonly PackagedSkillRuntime[] = []): void {
+export function installPackagedSkillRuntime(runtime: PackagedSkillRuntime | undefined, retained: readonly PackagedSkillRuntime[] = []): void {
   if (activeRuntime) throw new Error("packaged_skill_runtime_already_installed");
   activeRuntime = new PackagedSkillRuntimeCatalog(runtime, retained);
 }
