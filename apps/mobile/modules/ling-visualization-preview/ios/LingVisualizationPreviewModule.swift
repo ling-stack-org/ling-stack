@@ -14,6 +14,15 @@ public final class LingVisualizationPreviewModule: Module {
 }
 
 final class LingVisualizationPreviewView: ExpoView, WKNavigationDelegate {
+  private static let offlineRules = #"""
+  [
+    {"trigger":{"url-filter":"^https?:"},"action":{"type":"block"}},
+    {"trigger":{"url-filter":"^wss?:"},"action":{"type":"block"}},
+    {"trigger":{"url-filter":"^file:"},"action":{"type":"block"}},
+    {"trigger":{"url-filter":"^ftp:"},"action":{"type":"block"}}
+  ]
+  """#
+
   let onLoadError = EventDispatcher()
   private let webView: WKWebView
   private var generation = 0
@@ -42,7 +51,7 @@ final class LingVisualizationPreviewView: ExpoView, WKNavigationDelegate {
     webView.loadHTMLString("", baseURL: nil)
     WKContentRuleListStore.default().compileContentRuleList(
       forIdentifier: "LingVisualizationOffline",
-      encodedContentRuleList: #"[{"trigger":{"url-filter":"^(https?|wss?|file|ftp):"},"action":{"type":"block"}}]"#
+      encodedContentRuleList: Self.offlineRules
     ) { [weak self] rules, _ in
       DispatchQueue.main.async {
         guard let self, self.generation == request else { return }
