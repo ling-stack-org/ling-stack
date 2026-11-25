@@ -8,6 +8,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./message-body": {
+      "types": "./dist/message-body.d.ts",
+      "default": "./dist/message-body.js"
     }
   },
   "scripts": {

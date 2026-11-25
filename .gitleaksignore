@@ -698,3 +698,33 @@ c3b2c4c5b3b4eff9f67de3948aca6b1e036d65d1:packages/daemon/test/conversation-summa
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1668
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837
+
+# Packaging inventory entries verified against the committed remote-access contract and pairing service.
+1e015ff246243d1ffd00f2306cf9c5aa6e2929e8:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:278
+1e015ff246243d1ffd00f2306cf9c5aa6e2929e8:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1160
+
+# Plugin migration squash of the reviewed packaging inventory with identical source digests.
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:26
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:277
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:410
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:426
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:501
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:641
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:793
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:924
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1024
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1135
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1148
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1149
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1157
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1390
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1549
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1599
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1643
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1645
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1651
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1653
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1656
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1668
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837
