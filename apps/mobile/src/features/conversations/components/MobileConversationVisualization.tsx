@@ -1,4 +1,4 @@
-import { createInteractiveHtmlPreviewDocument, type ConversationVisualization, type ConversationVisualizationReference, type RemoteConversationMessageV1 } from "@ling-stack/contracts";
+import { createNativeHtmlPreviewDocument, type ConversationVisualization, type ConversationVisualizationReference, type RemoteConversationMessageV1 } from "@ling-stack/contracts";
 import { requireNativeView, requireOptionalNativeModule } from "expo";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, AppState, Modal, Pressable, StyleSheet, Text, View, type ViewProps } from "react-native";
@@ -73,7 +73,7 @@ function VisualizationModal({ label, onClose, load }: {
   }, [load, revision]);
 
   const html = useMemo(() => document
-    ? createInteractiveHtmlPreviewDocument(document.html, document.title, false, theme.mode)
+    ? createNativeHtmlPreviewDocument(document.html, theme.mode)
     : undefined, [document, theme.mode]);
   return (
     <Modal animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>

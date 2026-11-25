@@ -43,7 +43,7 @@ class LingVisualizationPreviewView(context: Context, appContext: AppContext) : E
     setDownloadListener { _, _, _, _, _ -> }
     webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        request.url.toString().substringBefore('#') !in setOf("about:blank", "about:srcdoc")
+        !request.isForMainFrame || request.url.toString().substringBefore('#') != "about:blank"
 
       override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
         if (request.isForMainFrame) onLoadError(emptyMap<String, Any>())

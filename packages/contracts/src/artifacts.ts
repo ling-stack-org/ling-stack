@@ -45,8 +45,7 @@ export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
 export function createInteractiveHtmlPreviewDocument(html: string, title: string, allowScripts = false, colorScheme?: "light" | "dark"): string {
   const escapeAttribute = (value: string): string => value.replaceAll("&", "&amp;")
     .replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("'", "&#39;");
-  const resources = allowScripts ? HTML_INTERACTIVE_CSP
-    : HTML_INTERACTIVE_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
+  const resources = allowScripts ? HTML_INTERACTIVE_CSP : HTML_STATIC_PREVIEW_CSP;
   const outerCsp = `${resources}; frame-src about:`;
   return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
     + '<meta http-equiv="Content-Security-Policy" content="' + outerCsp + '">'
@@ -61,6 +60,16 @@ export function createInteractiveHtmlPreviewDocument(html: string, title: string
  * the daemon, the network, or form endpoints.
  */
 export const HTML_INTERACTIVE_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none'";
+
+const HTML_STATIC_PREVIEW_CSP = HTML_INTERACTIVE_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
+
+/** The native WebView supplies isolation and blocks top-level navigation. */
+export function createNativeHtmlPreviewDocument(html: string, colorScheme: "light" | "dark"): string {
+  return '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    + '<meta http-equiv="Content-Security-Policy" content="' + HTML_STATIC_PREVIEW_CSP + '">'
+    + '<style>:root{color-scheme:' + (colorScheme === "dark" ? "dark" : "light") + '}</style>'
+    + html;
+}
 
 /**
  * Keep all authored bytes inside a second opaque-origin srcdoc frame. CSP on

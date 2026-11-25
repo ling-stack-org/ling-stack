@@ -70,8 +70,7 @@ final class LingVisualizationPreviewView: ExpoView, WKNavigationDelegate {
   func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
     let destination = action.request.url?.absoluteString.split(separator: "#", maxSplits: 1).first
-    let local = destination == "about:blank" || destination == "about:srcdoc"
-    decisionHandler(local && action.targetFrame != nil ? .allow : .cancel)
+    decisionHandler(destination == "about:blank" && action.targetFrame?.isMainFrame == true ? .allow : .cancel)
   }
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

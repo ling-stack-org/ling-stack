@@ -18,4 +18,4 @@
 | 迁移与续跑 | 历史迁移测试从旧架构升级并保留原数据和约束。用户回答后的续跑沿用已冻结的工具集合，交由当前执行所有者发布。 |
 | Web 和 Desktop | [Chromium 端到端测试](../../apps/web/e2e/conversation-visualization.spec.ts)和本机 Electron 开发渲染器覆盖正文顺序、HTML 控件、展开与焦点恢复、脚本开关和刷新。Desktop 安装版的交互仍待验证。 |
 | 配对协议 | Daemon 的认证 WebSocket 集成测试覆盖协商后读取及未协商拒绝。[远程客户端测试](../../packages/remote-client/test/client.test.ts)覆盖旧 PC 降级、带摘要的读取与校验失败。 |
-| 原生构建 | 本机通过 iOS 无签名真机目标构建和 Android arm64 APK 构建。macOS WebKit 对 iOS 源码中的离线规则完成了实际编译检查。签名分发、iOS／Android 真机配对、跨网络读回与 WebView 触摸验收仍待验证。 |
+| 原生构建 | 本机通过 iOS 无签名真机目标构建和 Android arm64 APK 构建。macOS WebKit 验证了 iOS 离线规则和原生 WebView 文档的静态渲染。签名分发、iOS／Android 真机配对、跨网络读回与 WebView 触摸验收仍待验证。 |
