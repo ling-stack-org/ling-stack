@@ -1,3 +1,28 @@
+import { spawnSync } from "node:child_process";
+
+export const daemonBabelParser = "@babel/parser";
+export const daemonBabelParserProfile = "daemon-babel-parser";
+export const daemonBabelParserTestFiles = [
+  "test/codex-protocol-integrity.test.mjs",
+  "test/workflow-scheduler-wiring.test.mjs",
+];
+
+/** The focused profile covers every checked-in Daemon test that uses the parser. */
+export function hasDaemonBabelParserCoverage(root) {
+  const directory = "packages/daemon";
+  const expected = new Set([
+    "package.json",
+    "scripts/import-codex-protocol.mjs",
+    ...daemonBabelParserTestFiles,
+  ].map(file => `${directory}/${file}`));
+  const matches = spawnSync("git", ["grep", "-z", "-l", "-F", "-e", daemonBabelParser, "--", directory], {
+    cwd: root, encoding: "utf8",
+  });
+  if (matches.status !== 0) return false;
+  const files = matches.stdout.split("\0").filter(Boolean);
+  return files.length === expected.size && files.every(file => expected.has(file));
+}
+
 export const terminalReportTestFiles = [
   "test/terminal-report-idempotency.test.ts",
   "test/terminal-report-migration.test.ts",
