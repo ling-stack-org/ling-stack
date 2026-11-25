@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -146,7 +146,7 @@ test("packaged startup admits and publishes a descriptor without downloading the
   assert.equal(fixture.fetch.mock.callCount(), 0);
 });
 
-test("a full history preserves existing snapshots and admits the bundled update when space becomes available", {
+test("a full history preserves published and rollback-eligible snapshots and their runtime bindings", {
   skip: !desktopPlatform,
 }, async t => {
   const fixture = await desktopFixture(t, 3);
@@ -157,29 +157,29 @@ test("a full history preserves existing snapshots and admits the bundled update 
 
   const store = createSqliteRunStore(fixture.root);
   try {
+    (await prepareBundledSkillStartup(first))(store);
     (await prepareBundledSkillStartup(second))(store);
-    const snapshot = store.getSkillSourceSnapshot("qa");
-    assert.ok(snapshot);
+    const snapshots = store.listSkillSourceSnapshots({ skillId: "qa", includeArchived: true });
+    assert.deepEqual(snapshots.map(snapshot => snapshot.reviewStatus).sort(), ["archived", "published"]);
     assert.equal(await fixture.start(), undefined);
     const [current, retained] = await fixture.admitted();
     assert.equal(current, undefined);
     assert.ok(retained);
     const catalog = new PackagedSkillRuntimeCatalog(current, retained);
-    const { context: source } = resolveSkillSourceRuntimeView({
-      skillId: "qa", snapshot, optimizationMode: "no_operation", requireCompleteSource: true,
-    });
-    const context = catalog.bind(source);
-    assert.deepEqual(catalog.restore(context, "qa"), context);
-    assert.equal(context.resourceBinding?.manifestChecksum, second.expectedManifestChecksum);
-    assert.deepEqual(store.getSkillSourceSnapshot("qa"), snapshot);
+    for (const snapshot of snapshots) {
+      const { context: source } = resolveSkillSourceRuntimeView({
+        skillId: "qa", snapshot, optimizationMode: "no_operation", requireCompleteSource: true,
+      });
+      const context = catalog.bind(source);
+      assert.deepEqual(catalog.restore(context, "qa"), context);
+      assert.equal(context.resourceBinding?.manifestChecksum, snapshot.referencedFiles[0]?.checksum);
+    }
+    assert.deepEqual(store.listSkillSourceSnapshots({ skillId: "qa", includeArchived: true }), snapshots);
+    assert.equal(store.getSkillSourceSnapshot("qa")?.referencedFiles[0]?.checksum, second.expectedManifestChecksum);
     assert.deepEqual((await readdir(fixture.cache)).sort(), before);
-
-    // Only the second generation was published to this isolated store.
-    await rename(join(fixture.cache, first.expectedManifestChecksum.slice(7)), join(fixture.root, "unreferenced-generation"));
-    const initialize = await fixture.start();
-    assert.ok(initialize);
-    initialize(store);
-    assert.equal(store.getSkillSourceSnapshot("qa")?.referencedFiles[0]?.checksum, fixture.selection.expectedManifestChecksum);
+    const archived = snapshots.find(snapshot => snapshot.reviewStatus === "archived")!;
+    assert.equal(store.rollbackSkillSourceSnapshot(archived.id, new Date().toISOString())?.bundleUpdateMode, "pinned");
+    assert.equal(store.getSkillSourceSnapshot("qa")?.referencedFiles[0]?.checksum, first.expectedManifestChecksum);
     assert.equal(fixture.fetch.mock.callCount(), 0);
   } finally { store.close(); }
 });

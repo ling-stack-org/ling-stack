@@ -31,7 +31,7 @@ daemon 验证归档签名后解压到暂存目录，校验 ZIP 路径、逐文�
 
 Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容构建可使用包内资源。Cua Driver 的按需模式由 Desktop 包提供运行信任策略。它沿用平台代码签名、系统权限、交互会话、进程隔离和租约检查。Cua Driver 无缓存时保留 Desktop 管理边界，外部进程无法取得该托管运行权。
 
-Desktop 保留最多两代已验证的 gstack 运行时。两代占满缓存时，Desktop 启动并继续按任务与工作区记录的摘要解析运行时，第三代的快照发布等到缓存腾出一代后在下次启动重试。旧版 Desktop 可读取同一缓存。历史资源仍可能被任务引用，腾位需要先核对引用。未知目录、篡改、未完成写入和校验失败仍会阻止启动。[GStack 资源保留约定](gstack-bundled-client-upgrade.md#source-publication-and-upgrade)
+Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时，Desktop 启动并按任务与工作区记录的摘要解析已有运行时。第三代包的快照发布延后，未初始化的工作区也会等待。旧版 Desktop 可读取同一缓存。回收前需要确认 repo-local 工作区、可回滚的快照及冻结任务的引用，当前没有完整的回收依据。未知目录、篡改、未完成写入和校验失败仍会阻止启动。[GStack 资源保留约定](gstack-bundled-client-upgrade.md#source-publication-and-upgrade)
 
 ## 发布
 
@@ -89,6 +89,8 @@ macOS arm64 使用同一隔离用户目录，从 `14be1bdeb` 的兼容开发包�
 Windows x64 在隔离 runner 上先把 `14be1bdeb` 的 0.6.1 兼容包安装到自定义路径，再用 `b60f0c396` 的 0.6.1 瘦包沿注册路径覆盖安装。两次安装后的文件均匹配对应候选包的完整校验清单，两版 Desktop 均连接各自启动的 daemon、加载主窗口并正常退出。
 
 覆盖安装后，主工作区仍启用 Office 和 Chrome，第二工作区仍禁用 Office。MCP 绑定、两个工作区的写入审批以及已有插件启停事件均与切换前一致。卸载清理了测试安装目录。[Windows 迁移验证](https://github.com/ling-stack-org/ling-stack/actions/runs/45317805635)
+
+Windows x64 又用同一隔离配置依次安装了 `14be1bdeb` 兼容包、`b60f0c396` 瘦包和 `97ec6701` 瘦包。第三次启动时，两代 GStack 已占满缓存。Desktop 连接自有 daemon、加载主窗口并正常退出，两个工作区的已发布和归档技能快照及插件配置均通过前后对照。第三代快照延后发布，最后一次卸载清理了安装目录。[三代安装复验](https://github.com/ling-stack-org/ling-stack/actions/runs/45671212385)
 
 ## 瘦包对照和切换
 
