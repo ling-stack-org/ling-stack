@@ -12,8 +12,10 @@ export function getChannelPlanModeBlocker(store: RunStore, channelId: string | u
   return thread?.conversationMode.mode === "plan" ? PLAN_MODE_WORKFLOW_BLOCKER : undefined;
 }
 
-export function getWorkflowPlanModeBlocker(store: RunStore, workflow: ChannelWorkflow): string | undefined {
-  const deliberation = readWorkItemDeliberationWorkflowBinding(store, workflow.id);
+type WorkflowPlanningSubject = Pick<ChannelWorkflow, "channelId" | "metadata"> & Partial<Pick<ChannelWorkflow, "id">>;
+
+export function getWorkflowPlanModeBlocker(store: RunStore, workflow: WorkflowPlanningSubject): string | undefined {
+  const deliberation = workflow.id ? readWorkItemDeliberationWorkflowBinding(store, workflow.id) : undefined;
   if (deliberation) {
     const parent = store.getChannelWorkflow(deliberation.originWorkflowId);
     return parent?.channelId === workflow.channelId ? sourcePlanModeBlocker(store, parent) : SOURCE_CONVERSATION_BLOCKER;
@@ -21,7 +23,7 @@ export function getWorkflowPlanModeBlocker(store: RunStore, workflow: ChannelWor
   return sourcePlanModeBlocker(store, workflow);
 }
 
-function sourcePlanModeBlocker(store: RunStore, workflow: ChannelWorkflow): string | undefined {
+function sourcePlanModeBlocker(store: RunStore, workflow: WorkflowPlanningSubject): string | undefined {
   const turnId = workflow.metadata?.sourceTurnId;
   const itemId = workflow.metadata?.sourceMessageId;
   // Legacy channel work has no conversation attribution. It keeps the default
