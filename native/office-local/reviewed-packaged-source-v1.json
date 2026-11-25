@@ -29,7 +29,7 @@
 "packages/daemon/src/features/execution-engines/managed-engine-installer.ts":"e68925e46bca32016941db18cb162246803b3008e90cf57cc02b9b7186f984d2",
 "packages/daemon/src/runtime/acp/host-text-write-worker.ts":"8269454afe1baec2712b4d2bfaa583003a1a77edc116c9a1048c82e2977e470b",
 "packages/daemon/src/features/runs/run-execution-sink.ts":"f8ff874682c174e3a0a961c5ff7cc9b3d1959c8ce8e9371d671ab62ddf0d4415",
-"packages/contracts/src/artifacts.ts":"fc027c519875d5b564f694528d96ba7d82fb9ee081137ec0a158d183d88b6b41",
+"packages/contracts/src/artifacts.ts":"83b22a4eb897fec276dd34e2ac9699f6ac14fa426e280c7b3e9e8c0da20a0671",
 "packages/contracts/src/diagnostics.ts":"48a3c4a1073b7fdfa6b8e691b5b188ce8ad96fc36a1a879481f949c831fa7360",
 "packages/contracts/src/im-destinations.ts":"29d85d1fb5dbaa02494cb902510b7978aab3149244fa7d4f213099f4b3080130",
 "packages/contracts/src/marketplace.ts":"be1f6d64cc3d2be8bfdfc4230c95fe84bd5ff9ea442aa844b970c2397b531ab1",
