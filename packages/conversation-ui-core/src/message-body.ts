@@ -1,3 +1,4 @@
+import { CONVERSATION_VISUALIZATION_MAX_PER_RUN, readConversationVisualizationId, type ConversationVisualizationReference } from "@ling-stack/contracts";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
@@ -30,6 +31,7 @@ export interface MessageListItem {
 }
 
 export type MessageBodyBlock =
+  | { readonly kind: "visualization"; readonly reference: ConversationVisualizationReference }
   | { readonly kind: "paragraph"; readonly inlines: readonly MessageInlineToken[] }
   | { readonly kind: "heading"; readonly depth: 1 | 2 | 3 | 4 | 5 | 6; readonly inlines: readonly MessageInlineToken[] }
   | { readonly kind: "quote"; readonly blocks: readonly MessageBodyBlock[] }
@@ -43,6 +45,7 @@ export type MessageBodyBlock =
 export interface MessageBodyParseOptions {
   readonly allowMarkdown?: boolean;
   readonly streaming?: boolean;
+  readonly allowVisualizations?: boolean;
 }
 
 interface MarkdownNode {
@@ -90,6 +93,8 @@ export function parseMessageBody(
     sourceLength: normalized.length,
     incompleteFence,
     incompleteMath,
+    visualizations: options.allowVisualizations && !options.streaming
+      ? visualizationNodes(root.children ?? []) : undefined,
   });
 }
 
@@ -201,6 +206,28 @@ export function collectLocalFileReferences(blocks: readonly MessageBodyBlock[]):
   return references;
 }
 
+export function readConversationVisualizationReferences(text: string): readonly ConversationVisualizationReference[] {
+  if (!text.includes("#ling-visualization-v1-")) return [];
+  const root = markdownParser.parse(text.replace(/\r\n?/gu, "\n")) as unknown as MarkdownNode;
+  return [...visualizationNodes(root.children ?? []).values()];
+}
+
+function visualizationNodes(nodes: readonly MarkdownNode[]): ReadonlyMap<MarkdownNode, ConversationVisualizationReference> {
+  const references = new Map<MarkdownNode, ConversationVisualizationReference>();
+  const seen = new Set<string>();
+  for (const node of nodes) {
+    const link = node.children?.[0];
+    if (node.type !== "paragraph" || node.children?.length !== 1 || link?.type !== "link" || !link.url) continue;
+    const artifactId = readConversationVisualizationId(link.url);
+    const label = inlineTextContent(link.children ?? []).trim();
+    if (!artifactId || !label || seen.has(artifactId)) continue;
+    seen.add(artifactId);
+    references.set(node, { artifactId, label });
+    if (references.size === CONVERSATION_VISUALIZATION_MAX_PER_RUN) break;
+  }
+  return references;
+}
+
 function convertBlockNodes(
   nodes: readonly MarkdownNode[],
   context: {
@@ -208,14 +235,19 @@ function convertBlockNodes(
     readonly sourceLength: number;
     readonly incompleteFence: boolean;
     readonly incompleteMath: boolean;
+    readonly visualizations?: ReadonlyMap<MarkdownNode, ConversationVisualizationReference>;
   },
 ): MessageBodyBlock[] {
   const blocks: MessageBodyBlock[] = [];
   for (const node of nodes) {
     switch (node.type) {
-      case "paragraph":
-        blocks.push({ kind: "paragraph", inlines: convertInlineNodes(node.children ?? [], context.cwd) });
+      case "paragraph": {
+        const reference = context.visualizations?.get(node);
+        blocks.push(reference
+          ? { kind: "visualization", reference }
+          : { kind: "paragraph", inlines: convertInlineNodes(node.children ?? [], context.cwd) });
         break;
+      }
       case "heading":
         blocks.push({
           kind: "heading",

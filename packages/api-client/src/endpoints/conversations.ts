@@ -5,6 +5,7 @@ import type {
   ConversationStreamRequest,
   ConversationSubmissionQuery,
   ConversationSubmissionReceipt,
+  ConversationVisualization,
   CreateConversationAttachmentRequest,
   EditConversationMessageRequest,
   EditConversationMessageResponse,
@@ -19,6 +20,11 @@ export const conversationEndpoints = {
   },
   async getConversation(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<ConversationDetailResponse> {
     return this._get(`/conversations/${encodeURIComponent(threadId)}`, { cwd });
+  },
+
+  async getConversationVisualization(this: LingDaemonEndpointContext, cwd: string, threadId: string,
+    messageId: string, messageRevision: number, artifactId: string): Promise<ConversationVisualization> {
+    return this._get(`/conversation-visualizations/${encodeURIComponent(artifactId)}`, { cwd, threadId, messageId, messageRevision });
   },
 
   async streamConversation(this: LingDaemonEndpointContext, cwd: string, input: ConversationStreamRequest): Promise<Response> {

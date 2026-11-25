@@ -2,6 +2,7 @@ import type {
   ConversationTimelineMessageItem,
 } from "@ling-stack/conversation-ui-core";
 import { conversationTimelineRendererKey } from "@ling-stack/conversation-ui-core";
+import { ConversationVisualizationBlock } from "../blocks/ConversationVisualizationBlock.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { LocalFileLink } from "../blocks/LocalFileLink.js";
 import { useI18n } from "../../../i18n.js";
@@ -32,6 +33,7 @@ export function ConversationTimelineMessageRenderer({
 }: ConversationTimelineMessageRendererProps): React.JSX.Element {
   const { t } = useI18n();
   const paused = useDaemonObservation().paused;
+  const visualizationMessage = item.kind === "agentMessage" ? item.visualizationMessage : undefined;
   const streaming = item.status === "pending" || item.status === "running";
   // Only explicit adapter placeholders or empty live messages are waiting copy.
   const waiting = item.kind === "agentMessage" && streaming &&
@@ -46,6 +48,12 @@ export function ConversationTimelineMessageRenderer({
       cwd={cwd}
       compact={false}
       streaming={streaming && !paused}
+      renderVisualization={cwd && visualizationMessage && !streaming ? reference => (
+        item.visualizationArtifactIds && !item.visualizationArtifactIds.includes(reference.artifactId)
+          ? <p>{reference.label}</p>
+          : <ConversationVisualizationBlock key={JSON.stringify([cwd, visualizationMessage, reference.artifactId])}
+              cwd={cwd} message={visualizationMessage} reference={reference} />
+      ) : undefined}
       renderLocalFile={({ reference }) => {
         return <LocalFileLink reference={reference} />;
       }}

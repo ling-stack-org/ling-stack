@@ -1,0 +1,51 @@
+.conversation-visualization {
+  display: grid;
+  gap: 0.5rem;
+  inline-size: 100%;
+  max-inline-size: 48rem;
+  min-inline-size: 0;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+}
+
+.conversation-visualization[data-visualization-layout="wide"] {
+  max-inline-size: none;
+}
+
+.conversation-visualization-caption,
+.conversation-visualization-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+.conversation-visualization-summary,
+.conversation-visualization-status {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-size-sm, 0.875rem);
+}
+
+.conversation-visualization-summary {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.conversation-visualization-frame {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 0;
+  border: 0;
+}
+
+.conversation-visualization-dialog {
+  --ling-ui-dialog-width: min(64rem, calc(100vw - 2rem));
+}
+
+.conversation-visualization-dialog .conversation-visualization-frame {
+  margin-block-start: 0.75rem;
+}

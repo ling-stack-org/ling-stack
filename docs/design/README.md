@@ -66,6 +66,8 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 
 - [Conversation Position Navigation](conversation-position-navigation.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
+- [会话内可视化设计](conversation-inline-visualizations.md)
+- [会话内可视化实施计划](conversation-inline-visualizations-implementation-plan.md)
 - [Conversation Experience And Test-Duration Contract](five-point-optimization-contract.md)
 - [Conversation Experience And Test-Duration Implementation Plan](five-point-optimization-implementation-plan.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)

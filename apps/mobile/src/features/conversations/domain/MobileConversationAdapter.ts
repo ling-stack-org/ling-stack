@@ -60,7 +60,10 @@ export function adaptRemoteConversationMessage(
       status: conversationStatus(message.status),
       createdAt: message.createdAt,
     },
-    blocks: parseMessageBody(message.body, undefined, { streaming }),
+    blocks: parseMessageBody(message.body, undefined, {
+      streaming,
+      allowVisualizations: message.status === "ready" && (message.role === "assistant" || message.role === "teammate"),
+    }),
     mine: message.role === "local_user",
     system: message.role === "system",
     streaming,

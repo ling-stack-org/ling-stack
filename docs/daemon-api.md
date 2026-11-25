@@ -3939,6 +3939,29 @@ request streams from disk. The 8 MiB whole-transfer budget applies to other
 regular artifacts. Explicit `offset`/`limit` requests continue to use their bounded
 range contract.
 
+## Conversation Visualizations
+
+```http
+GET /conversation-visualizations/:artifactId?cwd=/path/to/project&threadId=thread_...&messageId=message_...&messageRevision=0
+```
+
+The authenticated Daemon route returns an immutable visualization from a
+trusted workspace. The real thread ID, committed assistant message ID and
+current message revision must match the document's owning reply and its Markdown
+reference. The response includes `artifactId`, `title`, `summary`, `html`,
+`sha256`, `sizeBytes`, `layout`, `interaction` and `preferredHeight`.
+Responses use `Cache-Control: no-store`. Missing, stale and out-of-scope
+references return `404 visualization_not_found`.
+
+The paired Remote Gateway exposes `conversation.visualization.read` over the
+authenticated session when the PC and phone negotiate
+`conversation.visualization.v1`. It accepts `commandId`, `workspaceId`,
+`conversationId`, `messageId`, `messageRevision` and `artifactId`. The message
+revision comes from the remote conversation projection. The request uses the
+existing conversation read policy. The correlated result uses
+`htmlBase64Url` for the UTF-8 document and carries the same size and SHA-256.
+See [Conversation Visualization Design](design/conversation-inline-visualizations.md#读取与跨设备兼容).
+
 ## Media Jobs
 
 Media jobs are persisted metadata for direct provider or Media Production workflow execution. The Generation Runtime Resolver decides whether a provider can run the requested image or video operation. Standalone jobs run after an explicit run request. Media Production scene runs, ordered project runs, and workflow tests treat the user's generation action as the explicit authorization and dispatch immediately without creating a second `media_cost` approval.

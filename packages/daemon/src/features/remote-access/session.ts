@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 import {
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_PROTOCOL_LIMITS,
+  REMOTE_VISUALIZATION_FEATURE,
   type RemoteAccessPolicySummaryV1,
   type RemoteClientFrameV1,
   type RemoteCommandCompletedV1,
@@ -159,6 +161,11 @@ export class RemoteGatewaySession {
       this.handleAck(frame.payload.streamId, frame.payload.ackServerSeq);
       return;
     }
+    if (frame.type === "conversation.visualization.read"
+      && !this.options.authenticated.negotiatedFeatures?.includes(REMOTE_VISUALIZATION_FEATURE)) {
+      this.closePolicyViolation("Visualization support was not negotiated.");
+      return;
+    }
     const commandType = frame.type as RemoteLifecycleCommandTypeV1;
     this.sendEvent("command.accepted", {
       commandId: frame.payload.commandId,
@@ -216,6 +223,11 @@ export class RemoteGatewaySession {
         );
         this.complete(frame, { kind: "conversation_opened", conversationId: frame.payload.conversationId });
         this.sendEvent("conversation.snapshot", snapshot, this.conversationStream(frame.payload.workspaceId, frame.payload.conversationId), frame.messageId);
+        return;
+      }
+      case "conversation.visualization.read": {
+        const document = this.options.facade.readVisualization(frame.payload);
+        this.complete(frame, { kind: "conversation_visualization", document });
         return;
       }
       case "conversation.send_text": {
@@ -336,7 +348,13 @@ export class RemoteGatewaySession {
       serverSeq: stream.serverSeq,
       occurredAt,
     } as RemoteServerFrameV1;
-    this.options.socket.send(JSON.stringify(frame));
+    const encoded = JSON.stringify(frame);
+    if (type === "command.completed" && (payload as RemoteCommandCompletedV1).commandType === "conversation.visualization.read"
+      && Buffer.byteLength(encoded) > REMOTE_PROTOCOL_LIMITS.maxFrameBytes) {
+      stream.serverSeq -= 1;
+      throw new RemoteAccessError("payload_too_large", "Visualization exceeds the remote frame limit.");
+    }
+    this.options.socket.send(encoded);
   }
 
   private handleAck(streamId: string, ackServerSeq: number): void {
@@ -425,7 +443,7 @@ export class RemoteGatewaySession {
 function commandCapability(
   commandType: RemoteLifecycleCommandTypeV1,
 ): RemoteAccessPolicySummaryV1["capabilities"][number] | undefined {
-  if (commandType === "conversation.list" || commandType === "conversation.open" || commandType === "snapshot.request" || commandType === "stream.subscribe") {
+  if (commandType === "conversation.list" || commandType === "conversation.open" || commandType === "conversation.visualization.read" || commandType === "snapshot.request" || commandType === "stream.subscribe") {
     return "conversation.read";
   }
   if (commandType === "conversation.send_text") {

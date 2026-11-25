@@ -5,6 +5,7 @@ import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "rea
 import { useMobileTheme } from "../../../theme/mobile-theme-provider";
 import { initials, messageTimestamp } from "../domain/conversation-view-model";
 import type { MobileConversationMessageViewModel } from "../domain/MobileConversationAdapter";
+import { MobileConversationVisualization } from "./MobileConversationVisualization";
 import { NativeMessageBody } from "./NativeMessageBody";
 
 export function NativeMessageRow({ viewModel }: { readonly viewModel: MobileConversationMessageViewModel }) {
@@ -39,7 +40,9 @@ export function NativeMessageRow({ viewModel }: { readonly viewModel: MobileConv
           </View>
         ) : null}
         <View style={[mine ? styles.ownBubble : styles.otherBubble, mine && { backgroundColor: theme.background.subtle }]}>
-          <NativeMessageBody blocks={viewModel.blocks} emptyFallback={streaming ? "正在回复…" : undefined} />
+          <NativeMessageBody blocks={viewModel.blocks} emptyFallback={streaming ? "正在回复…" : undefined}
+            renderVisualization={reference => <MobileConversationVisualization key={message.revision}
+              reference={reference} message={message} />} />
         </View>
         {mine ? (
           <Text style={[styles.mineMeta, { color: message.status === "failed" ? theme.status.danger : theme.text.soft }]}>
