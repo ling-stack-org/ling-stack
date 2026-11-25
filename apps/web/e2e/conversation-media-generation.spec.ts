@@ -210,6 +210,42 @@ test("normal conversation, channel, and teammate direct chat share one generated
   expect(new Set([normalClass, channelClass, teammateClass]).size).toBe(1);
 });
 
+test("a workspace MP4 can be published as an inline artifact on a finished response", async ({ page }) => {
+  await useEnglish(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const title = installNormalWorkCellFixture(state);
+  const runId = "run_ui2_normal_work_cell";
+  const artifact = {
+    id: "artifact-workspace-video", runId, type: "video" as const, path: "video-example/video.mp4",
+    title: "workspace-film.mp4", contentType: "video/mp4", sizeBytes: 10 * 1024 * 1024,
+    createdAt: "2026-11-24T00:00:00.000Z",
+  };
+  await mockDaemon(page, state);
+  await page.route(`**/runs/${runId}/artifacts?**`, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    expect(route.request().postDataJSON()).toEqual({ path: "output/workspace-film.mp4" });
+    state.artifactsByRun[runId] = [artifact];
+    await route.fulfill({ status: 201, json: { artifact } });
+  });
+  await page.goto("/");
+  await openNormalConversation(page, title);
+  const conversation = page.getByLabel("Conversation page");
+  await conversation.getByText("Focused normal WorkCell completed.", { exact: true }).hover();
+  await conversation.getByRole("button", { name: "Add video to response" }).click();
+  const dialog = page.getByRole("dialog", { name: "Add video to response" });
+  await dialog.getByLabel("Workspace MP4 path").fill("output/workspace-film.mp4");
+  await dialog.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  const video = conversation.locator('video[aria-label="workspace-film.mp4"]');
+  await expect(video).toBeVisible();
+  await expect(video).toHaveAttribute("controls", "");
+  await expect(video).toHaveAttribute("crossorigin", "anonymous");
+  await expect(video.locator("source")).toHaveAttribute("src", /\/artifacts\/artifact-workspace-video\/content\?/u);
+  await page.reload();
+  await openNormalConversation(page, title);
+  await expect(video).toBeVisible();
+});
+
 test("generated media renders ordered image, video, failure, and cancellation states without overflow", async ({ page }) => {
   await useEnglish(page, "dark");
   await page.setViewportSize({ width: 1280, height: 800 });

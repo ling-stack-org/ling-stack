@@ -4,6 +4,7 @@ import type {
   MediaJobListResponse,
   MediaJobMutationResponse,
   PreviewContentResponse,
+  RunArtifact,
 } from "@ling-stack/contracts";
 import type { MediaJobFormState } from "../types.js";
 import { daemonClient } from "./client.js";
@@ -33,6 +34,10 @@ export async function listMediaJobArtifacts(mediaJobId: string, cwd?: string): P
 
 export function artifactContentUrl(artifactId: string, cwd?: string): string {
   return daemonClient.artifactContentUrl(artifactId, cwd);
+}
+
+export async function publishRunVideo(cwd: string, runId: string, path: string): Promise<RunArtifact> {
+  return (await daemonClient.publishRunVideo(cwd, runId, path)).artifact;
 }
 
 export async function previewArtifactContent(cwd: string, artifactId: string, maxBytes?: number): Promise<PreviewContentResponse> {

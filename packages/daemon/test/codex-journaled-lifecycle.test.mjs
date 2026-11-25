@@ -89,7 +89,11 @@ for (const large of [false, true]) test(`owned native PNG reaches conversation a
   assert.equal(projection.find(item => item.kind === "artifact_ref").payload.artifactId, artifact.id);
   const server = createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");
-    (url.pathname.endsWith("preview") ? handleGetArtifactPreview : handleGetArtifactContent)(response, url, f.registry, artifact.id);
+    if (url.pathname.endsWith("preview")) {
+      handleGetArtifactPreview(response, url, f.registry, artifact.id);
+    } else {
+      handleGetArtifactContent(request, response, url, f.registry, artifact.id);
+    }
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));

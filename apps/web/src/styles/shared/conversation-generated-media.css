@@ -334,7 +334,7 @@
   background: transparent;
 }
 
-.conversation-generated-media-artifact figcaption {
+.conversation-generated-media-artifact figcaption[aria-label] {
   position: absolute;
   inset-block-start: var(--ling-space-2);
   inset-inline-end: var(--ling-space-2);
@@ -353,10 +353,17 @@
   transition: opacity var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
-.conversation-generated-media-artifact:hover figcaption,
-.conversation-generated-media-artifact:focus-within figcaption {
+.conversation-generated-media-artifact:hover figcaption[aria-label],
+.conversation-generated-media-artifact:focus-within figcaption[aria-label] {
   opacity: 1;
   pointer-events: auto;
+}
+
+.conversation-video-artifact-title {
+  margin-top: var(--ling-space-1);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  overflow-wrap: anywhere;
 }
 
 .conversation-generated-media-actions {

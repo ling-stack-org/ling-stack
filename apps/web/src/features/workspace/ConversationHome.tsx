@@ -912,6 +912,7 @@ export function ConversationHome({
           onOpenReportFile: openConversationReportFile,
           onOpenReview: openConversationReview,
           onOpenRun,
+          onVideoPublished: refreshConversationSurface,
         }}
         composerNode={visibleComposerNode}
         panelsProps={{
