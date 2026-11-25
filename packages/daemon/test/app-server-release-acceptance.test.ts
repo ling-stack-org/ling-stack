@@ -3701,7 +3701,18 @@ test("an in-flight stage verifies disputed facts and fences decisions to the cur
     client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", {
       workItemId, evaluationId, idempotencyKey, expectedWorkItemRevision: currentRevision(),
     });
-  const first = await open(suggested.evaluationId, "tradeoff-round");
+  const { evaluation: otherSource } = await evaluate({
+    ...checkedTradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "same-tradeoff-from-verify",
+    evidenceRefs: [evidenceRef, entry.id], checkpointRef: entry.id,
+  });
+  assert.notEqual(otherSource.evaluationId, suggested.evaluationId);
+  assert.equal(otherSource.decisionRevision, suggested.decisionRevision);
+  const [first, fromOtherSource] = await Promise.all([
+    open(suggested.evaluationId, "tradeoff-round"), open(otherSource.evaluationId, "tradeoff-round-from-verify"),
+  ]);
+  assert.equal(first.record.id, fromOtherSource.record.id);
+  assert.deepEqual([first.status, fromOtherSource.status].sort(), ["appended", "replayed"]);
+  assert.equal((await open(otherSource.evaluationId, "tradeoff-round")).record.id, first.record.id);
   const { evaluation: successor } = await evaluate({
     ...checkedTradeoff, expectedWorkItemRevision: currentRevision(), idempotencyKey: "tradeoff-with-current-evidence",
     evidenceRefs: [entry.id], checkpointRef: entry.id,

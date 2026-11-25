@@ -122,7 +122,7 @@ export async function evaluateAppServerDeliberation(
     id: evaluationId, workItemId, expectedWorkItemRevision, idempotencyKey,
     kind: "deliberation", action: "created", actorId: "local-user", visibility: "owner",
     payload: { evaluation, decision, basisDigest: basis.digest } satisfies FrozenEvaluation,
-    ...(predecessor ? { parentRecordId: predecessor.id } : {}),
+    ...(predecessor ? { parentRecordId: predecessor.evaluation.evaluationId } : {}),
     sourceRefs: basis.sourceRefs,
     assertCurrent: () => {
       if (readDecisionBasis(store, requireWorkItem(store, workItemId), decision).digest !== basis.digest) {
@@ -145,10 +145,9 @@ export async function openAppServerEvaluatedDeliberation(
   const roundId = roundPrefix + digest([workItemId, evaluation.decisionId, evaluation.decisionRevision]);
   const readReplay = () => {
     const prior = readMutationReceipt(store, workItemId, idempotencyKey);
-    if (prior && (prior.id !== roundId || prior.parentRecordId !== evaluationId)) throw keyConflict();
+    if (prior && prior.id !== roundId) throw keyConflict();
     const existing = prior ?? readWorkItemCollaborationRecord(store, workItemId, roundId);
     if (!existing) return undefined;
-    if (existing.parentRecordId !== evaluationId) throw stale("This decision revision already has a deliberation round.");
     const workItemRevision = requireWorkItem(store, workItemId).revision;
     return { status: "replayed" as const, record: { ...existing, workItemRevision }, workItemRevision };
   };
@@ -205,8 +204,10 @@ function assertEvaluationCurrent(store: RunStore, item: WorkItem, frozen: Frozen
   }
   if (deadline <= now) throw stale("The deliberation deadline expired.");
   const basis = readDecisionBasis(store, item, decision);
+  const latest = latestEvaluation(store, item.id, evaluation.decisionId);
   if (evaluation.policyRevision !== policyRevision
-    || latestEvaluation(store, item.id, evaluation.decisionId)?.id !== evaluation.evaluationId || basis.digest !== frozen.basisDigest) {
+    || latest?.evaluation.decisionRevision !== evaluation.decisionRevision
+    || latest.evaluation.outcome !== evaluation.outcome || basis.digest !== frozen.basisDigest) {
     throw stale("The decision basis or applicable evaluation changed.");
   }
   return basis;
@@ -232,7 +233,7 @@ function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEval
   const evidence = decision.evidenceRefs.map(id => readEntry(id, false));
   const evidenceRefs = evidence.map(entry => evidenceRef(entry, "work_item_evidence"));
   const candidate = decision.candidateDigest ? { digest: decision.candidateDigest, cwd: decisionCandidateCwd(store, subject) } : undefined;
-  const verificationRefs = candidate && decision.checkpoint === "verify_review_conflict"
+  const verificationRefs = candidate
     ? evidence.flatMap(entry => readDecisionVerificationRefs(store, item, candidate, entry)) : [];
   return {
     subject, options, evidence, candidate, verificationRefs,
@@ -360,7 +361,8 @@ function workItemAllowsDeliberation(item: WorkItem, subject: LingAppServerDelibe
 }
 
 function latestEvaluation(store: RunStore, workItemId: string, decisionId: string) {
-  return store.listWorkItemEvidence({ workItemId, recordIdPrefix: `${evaluationPrefix}${decisionId}_`, newestFirst: true, limit: 1 })[0];
+  const entry = store.listWorkItemEvidence({ workItemId, recordIdPrefix: `${evaluationPrefix}${decisionId}_`, newestFirst: true, limit: 1 })[0];
+  return entry && readEvaluation(readWorkItemCollaborationRecord(store, workItemId, entry.id));
 }
 
 function readEvaluation(record: WorkItemCollaborationRecord | undefined): FrozenEvaluation | undefined {
