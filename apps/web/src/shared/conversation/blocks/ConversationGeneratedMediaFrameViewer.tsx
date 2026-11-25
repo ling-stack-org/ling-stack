@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { artifactContentUrl } from "../../../api/media.js";
 import { useI18n } from "../../../i18n.js";
 import type { RunArtifact } from "../../../types.js";
-import { ConversationGeneratedMediaArtifact } from "./ConversationGeneratedMediaArtifact.js";
+import { ConversationMediaArtifact } from "./ConversationMediaArtifact.js";
 
 const frameIntervalMs = 180;
 
@@ -93,7 +93,7 @@ export function ConversationGeneratedMediaFrameViewer({
       </header>
 
       <div className="conversation-generated-media-frame-stage">
-        <ConversationGeneratedMediaArtifact artifact={currentFrame} cwd={cwd} />
+        <ConversationMediaArtifact artifact={currentFrame} cwd={cwd} generated />
       </div>
 
       <div className="conversation-generated-media-frame-strip" role="group" aria-label={t("Frames")}>

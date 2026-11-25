@@ -402,6 +402,7 @@ import {
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
 import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
+import { handlePublishRunVideo } from "../features/runs/video-artifacts.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { readOptionalJsonBody } from "../shared/request.js";
 import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION, parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
@@ -1758,6 +1759,10 @@ export async function routeRequest(
     handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
     return;
   }
+  if (request.method === "POST" && runRoute?.kind === "artifacts") {
+    await handlePublishRunVideo(request, response, url, storeRegistry, runRoute.runId, config.maxBodyBytes);
+    return;
+  }
   if (request.method === "GET" && runRoute?.kind === "assurance-evidence") {
     handleGetRunAssuranceEvidence(response, url, storeRegistry, activeRuns, runRoute.runId);
     return;
@@ -2025,10 +2030,10 @@ export async function routeRequest(
     handleGetArtifact(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
-  if (request.method === "GET" && artifactRoute?.kind === "content") {
+  if ((request.method === "GET" || request.method === "HEAD") && artifactRoute?.kind === "content") {
     const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
     if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
-    handleGetArtifactContent(response, url, storeRegistry, artifactRoute.artifactId);
+    handleGetArtifactContent(request, response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
   if (request.method === "GET" && artifactRoute?.kind === "preview") {
