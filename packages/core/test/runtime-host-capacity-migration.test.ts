@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore, resolveStoragePaths } from "../dist/index.js";
 import { applyRuntimeRunQueueMigration } from "../dist/storage/sqlite/runtime-run-queue-migration.js";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
-import { rewindAppServerFixture } from "./support/remaining-work-predecessor.ts";
+import { rewindToPreAppServerSchema } from "./support/remaining-work-predecessor.ts";
 import { createSqliteRunStoreFixture } from "./support/sqlite-run-store-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
@@ -87,7 +87,7 @@ function fixture(t: TestContext, { installed = false, fresh = false } = {}) {
   });
   store = fresh ? createSqliteRunStore(cwd, paths) : createSqliteRunStoreFixture(cwd, paths);
   const db = testDatabase(store);
-  rewindAppServerFixture(db);
+  rewindToPreAppServerSchema(db);
   dropCodeAssessmentOverlay(db);
   applyRuntimeRunQueueMigration(input(db));
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=217").get()!.name, predecessor);
@@ -144,7 +144,7 @@ function fixture(t: TestContext, { installed = false, fresh = false } = {}) {
       store!.close(); store = undefined;
       const next = createSqliteRunStore(cwd, paths);
       const nextDb = testDatabase(next);
-      rewindAppServerFixture(nextDb);
+      rewindToPreAppServerSchema(nextDb);
       dropCodeAssessmentOverlay(nextDb);
       nextDb.exec("PRAGMA foreign_keys=OFF");
       try {

@@ -1,3 +1,4 @@
+import { CONVERSATION_VISUALIZATION_TOOL } from "./extensions/conversation-visualization.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { PiRunnerEvent, PiRunnerTokenUsage } from "./types.js";
 import { extractSafeReasoningSummary } from "./reasoning-summary.js";
@@ -82,7 +83,8 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
         ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
         toolCallId: event.toolCallId,
         toolName: event.toolName,
-        args: event.args,
+        args: event.toolName === CONVERSATION_VISUALIZATION_TOOL
+          ? visualizationArguments(event.args) : event.args,
       };
     case "tool_execution_update":
       return {
@@ -215,4 +217,15 @@ function getMessageRole(message: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Keep document bytes in the visualization store rather than the tool journal. */
+function visualizationArguments(input: unknown): { readonly title?: string; readonly sizeBytes?: number } {
+  if (!input || typeof input !== "object") return {};
+  const title = Reflect.get(input, "title");
+  const html = Reflect.get(input, "html");
+  return {
+    ...(typeof title === "string" ? { title: title.slice(0, 240) } : {}),
+    ...(typeof html === "string" ? { sizeBytes: Buffer.byteLength(html, "utf8") } : {}),
+  };
 }

@@ -18,6 +18,7 @@ export interface MessageBodyRendererProps {
   readonly allowMarkdown?: boolean;
   readonly streaming?: boolean;
   readonly className?: string;
+  readonly renderVisualization?: SharedMessageBodyRendererProps["renderVisualization"];
   readonly renderLocalFile?: (input: MessageLocalFileRenderInput) => ReactNode;
   readonly onOpenLocalFile?: (reference: LocalFileReference) => void;
 }

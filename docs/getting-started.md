@@ -105,6 +105,21 @@ For project work, select the intended local directory and review the effective
 permission settings. File access, command execution, MCP tools, and native integrations
 each have their own readiness and approval requirements.
 
+### Open A Visualization In The Reply
+
+In a conversation using Pi, ask Ling to include a clickable mockup or chart in
+its reply. For example, ask for a project overview with two tabs and an expandable
+change list. Web and Desktop show the result between the assistant's paragraphs.
+Use **Expand** for more room. A visualization with custom JavaScript has a **Run
+interactive preview** button in the expanded view. Closing it ends the script
+session.
+
+On a paired phone, press **打开可视化** in the reply while the PC is connected.
+The phone can use built-in HTML controls such as tabs and expandable sections.
+For custom JavaScript, open the reply on Web or Desktop. Mobile access follows
+the PC's conversation permissions and includes the default conversation in a
+channel. See [Conversation Visualization Design](design/conversation-inline-visualizations.md).
+
 ## Start A Project Channel
 
 1. Open **Channels** and create a channel with a name, purpose, Ling Agent model, and

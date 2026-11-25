@@ -242,7 +242,7 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
     const anchor = related.find((item) => item.kind === "userMessage") ?? related.find((item) => item.sourceRefs.some((ref) => ref.kind === "conversation_item"));
     const lastRelated = [...related].sort(compareItems).at(-1);
     const threadSequence = existing?.threadSequence ?? lastRelated?.threadSequence ?? fallbackSequence(messageIndex, messages, canonical, sourceMessageId);
-    const messageItem = createConversationTimelineMessageItem({
+    const baseMessage = createConversationTimelineMessageItem({
       id: `message:${message.authorType === "local-user" ? "user" : "agent"}:${message.id}`,
       role: message.authorType === "local-user" ? "user" : "agent",
       markdown: body,
@@ -260,6 +260,9 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
       sourceRefs: [{ kind: "message", id: message.id }],
       fileRefs: message.fileRefs,
     });
+    const messageItem = baseMessage.kind === "agentMessage" && message.status === "ready" && input.canonicalThreadId
+      ? { ...baseMessage, visualizationMessage: { threadId: input.canonicalThreadId, messageId: message.id, messageRevision: message.revision ?? 1 } }
+      : baseMessage;
     if (messageItem.kind === "agentMessage" && message.linkedRunId && message.narrationSegments?.length) {
       narration.push(...projectConversationRunNarration({
         message: messageItem,

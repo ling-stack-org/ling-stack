@@ -14,3 +14,4 @@ export { isPiToolFreeCompletion, readPiCompletedToolCalls, readPiCompletedTools,
   type PiSettledBoundaryInventory, type PiSettledBoundarySnapshot } from "./tool-boundary-observation.js";
 export { fetchProvider, PROVIDER_CONNECT_TIMEOUT_MS } from "./provider-http.js";
 export { getPiRunnerExtension, PI_RUNNER_EXTENSION_ID } from "./metadata.js";
+export { CONVERSATION_VISUALIZATION_TOOL } from "./extensions/conversation-visualization.js";

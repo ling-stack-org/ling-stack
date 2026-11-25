@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
+import { CONVERSATION_VISUALIZATION_TOOL } from "../dist/index.js";
 import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.ts";
 
 const descriptor: PiRunnerMcpToolDefinition = {
@@ -71,6 +72,28 @@ test("MCP failure retains structured evidence in actual SDK tool_end", { timeout
   const end = f.events.find((event): event is Extract<PiRunnerEvent, { type: "tool_end" }> => event.type === "tool_end");
   assert.equal(end!.isError, true);
   assert.deepEqual((end!.result as ToolResult).details, { serverId: "fixture", rawName: "read_file", result: evidence });
+});
+
+test("Pi sends visualization HTML to the Host and journals only the publication metadata", { timeout: 10_000 }, async t => {
+  const input = { title: "Project overview", summary: "Example data", html: "<details><summary>Changes</summary>One file</details>" };
+  const toolCallId = "publish-visualization";
+  const markdown = "[Project overview](#ling-visualization-v1-viz_" + "a".repeat(32) + ")";
+  const calls: unknown[] = [];
+  const f = await fixture(t, [{ id: toolCallId, name: CONVERSATION_VISUALIZATION_TOOL, input }], {
+    runId: "visualization-run",
+    initialToolSurface: { mediaGeneration: false, toolHydration: false, conversationVisualization: true },
+    onToolBefore: () => ({ allowed: true }),
+    onConversationVisualization: request => {
+      calls.push({ toolCallId: request.toolCallId, input: request.input });
+      return { content: [{ type: "text", text: markdown }] };
+    },
+  });
+  assert.deepEqual(calls, [{ toolCallId, input }]);
+  const publication = f.events.find(event => event.type === "tool_start" && event.toolName === CONVERSATION_VISUALIZATION_TOOL);
+  assert.ok(publication?.type === "tool_start");
+  assert.deepEqual(publication.args, { title: input.title, sizeBytes: Buffer.byteLength(input.html) });
+  const toolResult = f.requests[1].find(message => message.role === "toolResult");
+  assert.deepEqual(toolResult?.content, [{ type: "text", text: markdown }]);
 });
 
 test("Host command failure remains failed in SDK model context, not only translated Host event", { timeout: 10000 }, async t => {

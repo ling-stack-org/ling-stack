@@ -288,3 +288,5 @@ export { reconcileCanonicalUserInputs, isUserInputAnchor, userInputTranscriptRev
 export type { CanonicalUserInput, CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable, CanonicalUserInputSource, CanonicalUserInputAnswerAuthority, CanonicalUserInputSnapshot } from "./user-input-transcript-snapshot.js";
 export { interleaveUserInputRunTimeline } from "./user-input-event-order.js";
 export { interleaveConversationUserInputRows } from "./conversation-user-input-order.js";
+
+export { readConversationVisualizationReferences } from "./message-body.js";
