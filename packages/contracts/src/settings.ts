@@ -1,5 +1,7 @@
 import type { AuthorizationMode, PermissionPreset, ReasoningSummaryMode, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { WorkspaceMediaGenerationDefaults } from "./media-generation-routing.js";
+import type { LingAppServerDecisionMateriality, LingAppServerDeliberationCheckpoint, LingAppServerDeliberationDecisionKind } from "./app-server.js";
+import type { AiTeammateRoleKey } from "./teammates.js";
 import type {
   ExplicitResponseLanguage,
   InterfaceLocale,
@@ -83,6 +85,41 @@ export function parseClaudeProjectRules(value: unknown): readonly string[] {
 export interface WorkspaceSettingsResponse {
   readonly cwd: string;
   readonly settings: WorkspaceSettings;
+}
+
+export type WorkspaceDeliberationPolicy =
+  | { readonly mode: "manual" }
+  | { readonly mode: "suggest" }
+  | {
+    readonly mode: "auto_start";
+    readonly allowedTriggers: readonly LingAppServerDeliberationCheckpoint[];
+    readonly allowedDecisionKinds: readonly LingAppServerDeliberationDecisionKind[];
+    readonly minimumViableOptions: number;
+    readonly minimumParticipants: number;
+    readonly requiredRoleIds: readonly AiTeammateRoleKey[];
+    readonly minDecisionMateriality: LingAppServerDecisionMateriality;
+    readonly maxEvidenceAgeMs?: number;
+    readonly cooldownMs: number;
+    readonly ballotMode: "disabled" | "when_unresolved";
+    readonly decisionOwner: { readonly kind: "user" };
+    readonly budget: { readonly maxTokens: number; readonly maxDurationMs: number };
+  };
+
+export interface WorkspaceDeliberationPolicyResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly revision: number;
+  readonly configured: WorkspaceDeliberationPolicy | null;
+  readonly hostPolicy: WorkspaceDeliberationPolicy | null;
+  readonly effective: WorkspaceDeliberationPolicy;
+  readonly effectiveRevision: string;
+  readonly restriction?: "host_policy";
+}
+
+export interface UpdateWorkspaceDeliberationPolicyRequest {
+  readonly expectedRevision: number;
+  /** Null restores the Host policy or the default suggestion mode. */
+  readonly policy: WorkspaceDeliberationPolicy | null;
 }
 
 export type EffectiveConfigSource = "workspace" | "user" | "built_in";

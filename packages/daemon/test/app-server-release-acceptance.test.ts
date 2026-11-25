@@ -74,8 +74,10 @@ import type {
   LingAppServerSubscriptionResult,
   LingAppServerTurnResumeResult,
   ControlPlaneEventsResponse,
+  WorkspaceDeliberationPolicy,
+  WorkspaceDeliberationPolicyResponse,
 } from "@ling-stack/contracts";
-import { LingAppServerClient, type LingAppServerSocket, type LingDaemonClient } from "@ling-stack/api-client";
+import { LingAppServerClient, LingDaemonClient, type LingAppServerSocket } from "@ling-stack/api-client";
 import { createEnvSecretResolver, createSqliteRunStore, DEFAULT_WORKSPACE_ID, resolveStoragePaths, toRuntimeAttemptFence, type LingThreadGoal, type RunIntervention, type SecretResolver, type SqliteRunStore } from "@ling-stack/core";
 import { WebSocket } from "ws";
 import { createDaemonServer, createDefaultRunnerRegistry, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio, type DaemonConfig } from "../dist/index.js";
@@ -2621,6 +2623,123 @@ test("an operator resolves a deliberation round once against its current revisio
   assert.equal(fixture.getStore().listRuns().length, 0);
 });
 
+test("workspace deliberation settings are scoped, versioned and rechecked before a new round", { timeout: 30_000 }, async t => {
+  const channelId = "workspace-deliberation-policy-channel";
+  let hostPolicy: Extract<WorkspaceDeliberationPolicy, { mode: "auto_start" }> = {
+    mode: "auto_start", allowedTriggers: ["scheduled_checkpoint"], allowedDecisionKinds: ["implementation_tradeoff"],
+    minimumViableOptions: 2, minimumParticipants: 2, requiredRoleIds: ["qa"], minDecisionMateriality: "medium",
+    cooldownMs: 30_000, ballotMode: "disabled", decisionOwner: { kind: "user" },
+    budget: { maxTokens: 60_000, maxDurationMs: 60_000 },
+  };
+  const fixture = await releaseFixture(t, { deliberationPolicies: cwd => [{ ...hostPolicy, workspaceRoot: cwd, channelId }] });
+  const settingsClient = () => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    return new LingDaemonClient({ baseUrl: daemonUrl, fetch: (input, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set("Authorization", `Bearer ${authToken}`);
+      return fetch(input, { ...init, headers });
+    } });
+  };
+  const client = await fixture.connect();
+  const settings = settingsClient();
+  const store = fixture.getStore();
+  const now = new Date().toISOString();
+  const channel = store.createChannel({ id: channelId, name: "Policy scope", boundPath: fixture.cwd }, now);
+  const participants = ["teammate_builtin_engineer", "teammate_builtin_qa"];
+  for (const id of participants) store.replaceTeammateChannelMemberships(id, [{ channelId }], now);
+  const thread = store.createLingThread({ kind: "conversation", title: "Consultation", objective: "Compare two plans." }, now);
+  const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "scope-policy", channelId,
+    title: "Review two plans", initialStatus: "ready" }, now);
+  store.putAppServerState({ kind: "work_item_thread", recordId: thread.id, expectedRevision: 0,
+    payload: { workItemId: item.id, acceptanceId: "scope-policy-acceptance", submissionKey: "scope-policy-submission" } }, now);
+  const plan = store.upsertProposedPlanArtifact({ threadId: thread.id, title: "Compatibility", bodyMarkdown: "Keep the response format." }, now);
+  const { optionRefs, evidenceRef } = await recordDeliberationEvidence(client.call, item.id, `${plan.id}:${plan.revision}`);
+  const revise = (idempotencyKey: string, manual = false) => client.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", {
+    workItemId: item.id, expectedWorkItemRevision: store.getWorkItem(item.id)!.revision, idempotencyKey,
+    decisionKey: "compatibility", subject: { kind: "draft_plan", planId: plan.id, planRevision: plan.revision },
+    checkpoint: "plan_review", checkpointRef: plan.id, decisionKind: "plan_or_contract", materiality: "high",
+    question: "Which compatibility plan should we use?", participantIds: participants, optionRefs, evidenceRefs: [evidenceRef],
+    ...(manual ? { requestKind: "manual_request" } : {}),
+  });
+  const old = await revise("suggestion-under-host-policy");
+  assert.equal(old.evaluation.outcome, "suggest");
+  const oldPolicy = await settings.getWorkspaceDeliberationPolicy(fixture.cwd, channelId);
+  assert.equal(oldPolicy.revision, 0);
+  assert.equal(oldPolicy.effectiveRevision, old.evaluation.policyRevision);
+  assert.equal(oldPolicy.effective.mode, "auto_start");
+
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const query = new URLSearchParams({ cwd: fixture.cwd, channelId });
+  const path = `${daemonUrl}/workspace-settings/deliberation?${query}`;
+  const { credential: scopedToken } = await createObserver(client, fixture, item.id);
+  assert.equal((await fetch(path, { headers: { Authorization: `Bearer ${scopedToken}` } })).status, 401);
+  assert.equal((await fetch(path, { headers: { Authorization: `Bearer ${authToken}`, Origin: "https://foreign.invalid" } })).status, 403);
+  await assert.rejects(settings.getWorkspaceDeliberationPolicy(fixture.root, channelId), { status: 403 });
+  const nested = join(fixture.cwd, "another");
+  await mkdir(nested);
+  const nestedStore = createSqliteRunStore(nested, resolveStoragePaths(nested, {
+    homeDir: join(fixture.root, "fixture-home"), env: {}, workspaceStateLocation: "repo-local",
+  }).workspace);
+  nestedStore.createChannel({ id: channel.id, name: "Separate workspace", boundPath: nested }, now);
+  nestedStore.close();
+  const otherChannel = store.createChannel({ name: "Another channel", boundPath: fixture.cwd }, now);
+  await assert.rejects(settings.updateWorkspaceDeliberationPolicy(fixture.cwd, otherChannel.id,
+    { expectedRevision: 0, policy: hostPolicy }), { code: "deliberation_policy_exceeds_host" });
+  await assert.rejects(settings.updateWorkspaceDeliberationPolicy(fixture.cwd, channelId, {
+    expectedRevision: 0, policy: { ...hostPolicy, allowedTriggers: ["scheduled_checkpoint", "plan_review"] },
+  }), { code: "deliberation_policy_exceeds_host" });
+  await assert.rejects(settings.updateWorkspaceDeliberationPolicy(fixture.cwd, channelId, {
+    expectedRevision: 0, policy: { ...hostPolicy, budget: { ...hostPolicy.budget, maxTokens: hostPolicy.budget.maxTokens + 1 } },
+  }), { code: "deliberation_policy_exceeds_host" });
+
+  const manual = { expectedRevision: 0, policy: { mode: "manual" } } as const;
+  const edits = await Promise.allSettled([
+    settings.updateWorkspaceDeliberationPolicy(fixture.cwd, channelId, manual),
+    settings.updateWorkspaceDeliberationPolicy(fixture.cwd, channelId, manual),
+  ]);
+  assert.equal(edits.filter(edit => edit.status === "fulfilled").length, 1);
+  const rejected = edits.find(edit => edit.status === "rejected");
+  assert.equal(rejected?.reason.code, "stale_revision");
+  const currentPolicy = await settings.getWorkspaceDeliberationPolicy(fixture.cwd, channelId);
+  assert.equal(currentPolicy.revision, 1);
+  assert.deepEqual(currentPolicy.effective, manual.policy);
+  assert.deepEqual((await settings.getWorkspaceDeliberationPolicy(nested, channelId)).effective, { mode: "suggest" });
+  assert.deepEqual((await settings.getWorkspaceDeliberationPolicy(fixture.cwd, otherChannel.id)).effective, { mode: "suggest" });
+  const open = (evaluationId: string, idempotencyKey: string, expectedWorkItemRevision: number, connection = client) =>
+    connection.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", {
+      workItemId: item.id, evaluationId, idempotencyKey, expectedWorkItemRevision,
+    });
+  await assert.rejects(open(old.evaluation.evaluationId, "old-suggestion", old.workItemRevision), { code: "stale_revision" });
+  const explicit = await revise("manual-consultation", true);
+  assert.equal(explicit.evaluation.outcome, "suggest");
+  assert.equal(explicit.evaluation.policyRevision, currentPolicy.effectiveRevision);
+  const suppressed = await revise("spontaneous-checkpoint");
+  assert.equal(suppressed.evaluation.outcome, "suppress");
+  assert.equal(suppressed.evaluation.reasonCode, "manual_policy");
+  const { record } = await open(explicit.evaluation.evaluationId, "manual-round", suppressed.workItemRevision);
+
+  const bounded = { ...hostPolicy, budget: { maxTokens: 30_000, maxDurationMs: 30_000 } };
+  const saved = await settings.updateWorkspaceDeliberationPolicy(fixture.cwd, channelId, { expectedRevision: 1, policy: bounded });
+  assert.deepEqual(saved.effective, bounded);
+  hostPolicy = { ...hostPolicy, budget: { ...hostPolicy.budget, maxTokens: 20_000 } };
+  await fixture.restart();
+  const afterRestart = await settingsClient().getWorkspaceDeliberationPolicy(fixture.cwd, channelId);
+  assert.equal(afterRestart.revision, saved.revision);
+  assert.deepEqual(afterRestart.configured, bounded);
+  assert.deepEqual(afterRestart.effective, { mode: "suggest" });
+  assert.equal(afterRestart.restriction, "host_policy");
+  assert.notEqual(afterRestart.effectiveRevision, saved.effectiveRevision);
+  const restored = await fixture.connect();
+  const prior = await open(explicit.evaluation.evaluationId, "manual-round", suppressed.workItemRevision, restored);
+  assert.equal(prior.status, "replayed");
+  assert.equal(prior.record.id, record.id);
+  const reset = await settingsClient().updateWorkspaceDeliberationPolicy(fixture.cwd, channelId,
+    { expectedRevision: afterRestart.revision, policy: null });
+  assert.equal(reset.configured, null);
+  assert.deepEqual(reset.effective, hostPolicy);
+  assert.equal(fixture.getStore().listRuns().length, 0);
+});
+
 test("a draft deliberation uses current evidence in Plan Mode and recovers the original suggestion and round", { timeout: 30_000 }, async t => {
   let releaseFirstConsultation: () => void = () => undefined;
   const firstConsultation = new Promise<void>(resolve => { releaseFirstConsultation = resolve; });
@@ -4358,17 +4477,27 @@ test("a scoped automatic policy opens exactly one checkpoint round and reserves 
   });
   t.after(() => provider.close());
   const channelId = "automatic-checkpoint-channel";
+  const policy = {
+    mode: "auto_start", allowedTriggers: ["scheduled_checkpoint"], allowedDecisionKinds: ["implementation_tradeoff"],
+    minimumViableOptions: 2, minimumParticipants: 2, requiredRoleIds: ["engineer", "qa"], minDecisionMateriality: "high",
+    maxEvidenceAgeMs: 60_000, cooldownMs: 60_000, ballotMode: "when_unresolved", decisionOwner: { kind: "user" },
+    budget: { maxTokens: 20_000, maxDurationMs: 60_000 },
+  } as const satisfies WorkspaceDeliberationPolicy;
   const { fixture, store, client, item, workItem, workflowId, waiting, thread } =
     await stageQuestionWorkflow(t, provider.baseUrl, true, undefined, {
       ...workflowProviderBudgetFixture, channelId,
-      deliberationPolicies: cwd => [{
-        workspaceRoot: cwd, channelId, mode: "auto_start",
-        allowedTriggers: ["scheduled_checkpoint"], allowedDecisionKinds: ["implementation_tradeoff"],
-        minimumViableOptions: 2, minimumParticipants: 2, requiredRoleIds: ["engineer", "qa"], minDecisionMateriality: "high",
-        maxEvidenceAgeMs: 60_000, cooldownMs: 60_000, ballotMode: "when_unresolved", decisionOwner: { kind: "user" },
-        budget: { maxTokens: 17_025, maxDurationMs: 60_000 },
-      }],
+      harness: { ...workflowProviderBudgetFixture.harness, delegations: { mode: "enforce",
+        rootBudget: { tokenBudget: 17_025, wallTimeBudgetMs: 60_000 } } },
+      deliberationPolicies: cwd => [{ workspaceRoot: cwd, channelId, ...policy }],
     });
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const query = new URLSearchParams({ cwd: fixture.cwd, channelId });
+  const saved = await fetch(`${daemonUrl}/workspace-settings/deliberation?${query}`, {
+    method: "PATCH", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedRevision: 0, policy: { ...policy, budget: { ...policy.budget, maxTokens: 18_000 } } }),
+  });
+  assert.ok(saved.ok, await saved.clone().text());
+  const workspacePolicy = await saved.json() as WorkspaceDeliberationPolicyResponse;
   const now = new Date().toISOString();
   const home = store.createLingThread({ kind: "automation", title: "Automatic checkpoint", objective: "Review the compatibility evidence" }, now);
   const automation = store.createAutomationDefinition({
@@ -4456,6 +4585,7 @@ test("a scoped automatic policy opens exactly one checkpoint round and reserves 
   };
   const linkedId = payload.execution.workflowId;
   assert.equal(payload.admission.policyRevision, accepted.evaluation.policyRevision);
+  assert.equal(payload.admission.policyRevision, workspacePolicy.effectiveRevision);
   assert.equal(payload.admission.decisionActorId, "local-user");
   assert.deepEqual(payload.admission.requiredRoleIds, ["engineer", "qa"]);
   assert.deepEqual(payload.admission.budget, { maxTokens: 17_025, maxDurationMs: 60_000 });

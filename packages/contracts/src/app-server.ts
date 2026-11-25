@@ -1329,6 +1329,8 @@ export interface LingAppServerDeliberationEvaluateParams {
   readonly decisionStepId?: string;
   readonly candidateDigest?: string;
   readonly unresolved?: "intent" | "fact" | "handoff";
+  /** An operator request for an evaluation and explicit round admission. */
+  readonly requestKind?: "manual_request";
 }
 
 export interface LingAppServerDeliberationEvaluation {

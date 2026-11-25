@@ -1507,15 +1507,16 @@ class RpcConnection {
     const { cwd, ...record } = this.workspaceParams(params, true);
     const store = this.context.storeRegistry.getStore(cwd);
     const now = new Date().toISOString();
+    const { appServerDeliberationPolicies: policies, harness } = this.context.config;
+    const policyContext = {
+      policies,
+      hostTokenBudget: harness.delegations.mode === "enforce" ? harness.delegations.rootBudget?.tokenBudget : undefined,
+      assertRecoveryReady: () => appServerRecoveryFor(this.context.config, store)?.assertReady(),
+    };
     if (method === "workItem/deliberation/evaluate") {
       const parsed = deliberationEvaluateInput.safeParse(record);
       if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply a current subject, checkpoint and bounded decision inputs.");
-      const { appServerDeliberationPolicies: policies, harness } = this.context.config;
-      const { event, admissionEvent, ...result } = await evaluateAppServerDeliberation(store, parsed.data, now, cwd, {
-        policies,
-        hostTokenBudget: harness.delegations.mode === "enforce" ? harness.delegations.rootBudget?.tokenBudget : undefined,
-        assertRecoveryReady: () => appServerRecoveryFor(this.context.config, store)?.assertReady(),
-      });
+      const { event, admissionEvent, ...result } = await evaluateAppServerDeliberation(store, parsed.data, now, cwd, policyContext);
       if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
       if (admissionEvent) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(admissionEvent));
@@ -1525,11 +1526,9 @@ class RpcConnection {
     }
     const parsed = deliberationOpenInput.safeParse(record);
     if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an evaluation, Work Item revision and bounded request key.");
-    const { harness } = this.context.config;
     const { event, collectShaping, ...result } = await openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd, {
+      ...policyContext,
       runners: this.context.runnerRegistry, secrets: this.context.secretResolver,
-      hostTokenBudget: harness.delegations.mode === "enforce" ? harness.delegations.rootBudget?.tokenBudget : undefined,
-      assertRecoveryReady: () => appServerRecoveryFor(this.context.config, store)?.assertReady(),
       publish: event => this.context.controlPlaneEvents.publish(trimOversizedEvent(event)),
     });
     if (event) {

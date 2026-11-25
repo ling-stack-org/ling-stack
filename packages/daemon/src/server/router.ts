@@ -304,7 +304,7 @@ import {
   handleMutateTurnWorkspaceChanges,
 } from "../features/runs/workspace-change-recovery.js";
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
-import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
+import { handleEffectiveConfig, handleWorkspaceDeliberationPolicy, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleDeviceStorageScans } from "../features/settings/device-storage/routes.js";
 import { handleManagedWorktrees } from "../features/workspaces/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
@@ -816,6 +816,11 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-settings") {
     await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver, cwd => context.desktopBrowser.forWorkspace(cwd).cancelAll());
+    return;
+  }
+
+  if (url.pathname === "/workspace-settings/deliberation") {
+    await handleWorkspaceDeliberationPolicy(request, response, url, config, storeRegistry);
     return;
   }
 

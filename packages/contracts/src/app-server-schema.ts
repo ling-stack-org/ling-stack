@@ -466,6 +466,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
           decisionKind: { enum: LING_APP_SERVER_DELIBERATION_DECISION_KINDS }, materiality: { enum: LING_APP_SERVER_DECISION_MATERIALITIES },
           question: stringSchema, participantIds: stringArraySchema, optionRefs: stringArraySchema, evidenceRefs: stringArraySchema,
           candidateDigest: stringSchema, decisionStepId: stringSchema, unresolved: { enum: ["intent", "fact", "handoff"] },
+          requestKind: { enum: ["manual_request"] },
         }, ["workItemId", "expectedWorkItemRevision", "idempotencyKey", "decisionKey", "subject", "checkpoint", "checkpointRef",
           "decisionKind", "materiality", "question", "participantIds", "optionRefs", "evidenceRefs"]),
         result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,

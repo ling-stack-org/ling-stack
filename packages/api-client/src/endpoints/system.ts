@@ -25,6 +25,8 @@ import type {
   WorkspaceTerminalCommandResponse,
   WorkspaceTerminalProfileResponse,
   WorkspaceSettingsResponse,
+  WorkspaceDeliberationPolicyResponse,
+  UpdateWorkspaceDeliberationPolicyRequest,
   DeviceStorageScanJob,
   DeviceStorageScope,
 } from "@ling-stack/contracts";
@@ -77,6 +79,15 @@ export const systemEndpoints = {
   async updateWorkspaceSettings(this: LingDaemonEndpointContext, cwd: string, input: UpdateWorkspaceSettingsRequest): Promise<WorkspaceSettingsResponse> {
       return this._patch("/workspace-settings", { cwd }, input);
     },
+
+  async getWorkspaceDeliberationPolicy(this: LingDaemonEndpointContext, cwd: string, channelId: string): Promise<WorkspaceDeliberationPolicyResponse> {
+    return this._get("/workspace-settings/deliberation", { cwd, channelId });
+  },
+
+  async updateWorkspaceDeliberationPolicy(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+    input: UpdateWorkspaceDeliberationPolicyRequest): Promise<WorkspaceDeliberationPolicyResponse> {
+    return this._patch("/workspace-settings/deliberation", { cwd, channelId }, input);
+  },
 
   async getUserProfile(this: LingDaemonEndpointContext, cwd: string): Promise<UserProfileResponse> {
       return this._get("/profile", { cwd });

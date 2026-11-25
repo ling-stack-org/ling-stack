@@ -5,46 +5,65 @@ import {
   LING_APP_SERVER_DECISION_MATERIALITIES,
   LING_APP_SERVER_DELIBERATION_CHECKPOINTS,
   LING_APP_SERVER_DELIBERATION_DECISION_KINDS,
+  type UpdateWorkspaceDeliberationPolicyRequest,
+  type WorkspaceDeliberationPolicy,
+  type WorkspaceDeliberationPolicyResponse,
 } from "@ling-stack/contracts";
+import type { RunStore } from "@ling-stack/core";
 import { z } from "zod";
+import { HttpError } from "../errors.js";
 
-const id = z.string().trim().min(1).max(200).regex(/^[^\r\n\0]+$/u);
+export const deliberationChannelId = z.string().trim().min(1).max(200).regex(/^[^\r\n\0]+$/u);
 const selectors = {
   workspaceRoot: z.string().refine(isAbsolute),
-  channelId: id,
+  channelId: deliberationChannelId,
+};
+const manual = { mode: z.literal("manual") };
+const suggest = { mode: z.literal("suggest") };
+const automatic = {
+  mode: z.literal("auto_start"),
+  allowedTriggers: z.array(z.enum(LING_APP_SERVER_DELIBERATION_CHECKPOINTS))
+    .min(1).max(LING_APP_SERVER_DELIBERATION_CHECKPOINTS.length).refine(containsUniqueEntries),
+  allowedDecisionKinds: z.array(z.enum(LING_APP_SERVER_DELIBERATION_DECISION_KINDS))
+    .min(1).max(LING_APP_SERVER_DELIBERATION_DECISION_KINDS.length).refine(containsUniqueEntries),
+  minimumViableOptions: z.number().int().min(2).max(12),
+  minimumParticipants: z.number().int().min(2).max(12),
+  requiredRoleIds: z.array(z.enum(["product", "architect", "engineer", "designer", "qa", "security", "release", "docs", "custom"]))
+    .min(1).max(9).refine(containsUniqueEntries),
+  minDecisionMateriality: z.enum(LING_APP_SERVER_DECISION_MATERIALITIES),
+  maxEvidenceAgeMs: z.number().int().positive().max(30 * 24 * 60 * 60_000).optional(),
+  cooldownMs: z.number().int().positive().max(24 * 60 * 60_000),
+  ballotMode: z.enum(["disabled", "when_unresolved"]),
+  decisionOwner: z.strictObject({ kind: z.literal("user") }),
+  budget: z.strictObject({
+    maxTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    maxDurationMs: z.number().int().positive().max(15 * 60_000),
+  }),
 };
 const policyConfig = z.discriminatedUnion("mode", [
-  z.strictObject({ ...selectors, mode: z.literal("manual") }),
-  z.strictObject({ ...selectors, mode: z.literal("suggest") }),
-  z.strictObject({
-    ...selectors,
-    mode: z.literal("auto_start"),
-    allowedTriggers: z.array(z.enum(LING_APP_SERVER_DELIBERATION_CHECKPOINTS))
-      .min(1).max(LING_APP_SERVER_DELIBERATION_CHECKPOINTS.length),
-    allowedDecisionKinds: z.array(z.enum(LING_APP_SERVER_DELIBERATION_DECISION_KINDS))
-      .min(1).max(LING_APP_SERVER_DELIBERATION_DECISION_KINDS.length),
-    minimumViableOptions: z.number().int().min(2).max(12),
-    minimumParticipants: z.number().int().min(2).max(12),
-    requiredRoleIds: z.array(z.enum(["product", "architect", "engineer", "designer", "qa", "security", "release", "docs", "custom"]))
-      .min(1).max(9),
-    minDecisionMateriality: z.enum(LING_APP_SERVER_DECISION_MATERIALITIES),
-    maxEvidenceAgeMs: z.number().int().positive().max(30 * 24 * 60 * 60_000).optional(),
-    cooldownMs: z.number().int().positive().max(24 * 60 * 60_000),
-    ballotMode: z.enum(["disabled", "when_unresolved"]),
-    decisionOwner: z.strictObject({ kind: z.literal("user") }),
-    budget: z.strictObject({
-      maxTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-      maxDurationMs: z.number().int().positive().max(15 * 60_000),
-    }),
-  }),
+  z.strictObject({ ...selectors, ...manual }),
+  z.strictObject({ ...selectors, ...suggest }),
+  z.strictObject({ ...selectors, ...automatic }),
 ]);
+const workspacePolicy = z.discriminatedUnion("mode", [
+  z.strictObject(manual),
+  z.strictObject(suggest),
+  z.strictObject(automatic),
+]).nullable() satisfies z.ZodType<WorkspaceDeliberationPolicy | null>;
 
-type ReadonlyFields<T> = T extends readonly (infer Item)[] ? readonly Item[]
-  : T extends object ? { readonly [Key in keyof T]: ReadonlyFields<T[Key]> } : T;
+export const workspaceDeliberationPolicyUpdate = z.strictObject({
+  expectedRevision: z.number().int().nonnegative(),
+  policy: workspacePolicy,
+}) satisfies z.ZodType<UpdateWorkspaceDeliberationPolicyRequest>;
 
-export type AppServerDeliberationPolicyConfig = ReadonlyFields<z.input<typeof policyConfig>>;
+export type AppServerDeliberationPolicyConfig = WorkspaceDeliberationPolicy & { readonly workspaceRoot: string; readonly channelId: string };
 export type AppServerDeliberationPolicy = AppServerDeliberationPolicyConfig & { readonly revision: string };
-export type AutomaticDeliberationPolicy = Extract<AppServerDeliberationPolicy, { readonly mode: "auto_start" }>;
+export type AutomaticDeliberationPolicy = Extract<WorkspaceDeliberationPolicy, { readonly mode: "auto_start" }>
+  & { readonly channelId: string; readonly revision: string };
+
+export const defaultDeliberationPolicyRevision = "checkpoint-suggestions:1";
+const defaultPolicy = Object.freeze({ mode: "suggest" } as const);
+const policyStateKind = "work_item_deliberation_policy";
 
 export function resolveAppServerDeliberationPolicies(configured: readonly AppServerDeliberationPolicyConfig[] | undefined):
   readonly AppServerDeliberationPolicy[] {
@@ -57,16 +76,80 @@ export function resolveAppServerDeliberationPolicies(configured: readonly AppSer
     const scope = JSON.stringify([workspaceRoot, entry.channelId]);
     if (seen.has(scope)) throw new Error("Duplicate App Server deliberation policy for a workspace channel.");
     seen.add(scope);
-    const policy = entry.mode === "auto_start" ? {
-      ...entry, workspaceRoot, allowedTriggers: uniqueSorted(entry.allowedTriggers),
-      allowedDecisionKinds: uniqueSorted(entry.allowedDecisionKinds), requiredRoleIds: uniqueSorted(entry.requiredRoleIds),
-      budget: Object.freeze(entry.budget), decisionOwner: Object.freeze(entry.decisionOwner),
-    } : { ...entry, workspaceRoot };
-    return Object.freeze({ ...policy, revision: createHash("sha256").update(JSON.stringify(policy)).digest("hex") });
+    const policy = normalizePolicy({ ...entry, workspaceRoot });
+    return Object.freeze({ ...policy, revision: digest(policy) });
   }));
 }
 
-function uniqueSorted<T extends string>(values: readonly T[]): readonly T[] {
-  if (new Set(values).size !== values.length) throw new Error("Deliberation policy allowlists must contain unique entries.");
-  return Object.freeze([...values].sort());
+export function readWorkspaceDeliberationPolicy(
+  store: RunStore, cwd: string, channelId: string, policies: readonly AppServerDeliberationPolicy[],
+): WorkspaceDeliberationPolicyResponse {
+  const host = policies.find(policy => policy.workspaceRoot === cwd && policy.channelId === channelId);
+  const { workspaceRoot: _workspaceRoot, channelId: _channelId, revision: hostRevision, ...hostSettings } = host ?? {};
+  const hostPolicy = host ? hostSettings as WorkspaceDeliberationPolicy : null;
+  const stored = store.getAppServerState(policyStateKind, channelId);
+  const configured = stored ? workspacePolicy.parse(stored.payload) : null;
+  const allowed = !configured || withinHostPolicy(configured, hostPolicy);
+  // If the Host policy tightens, keep the configured value visible and defer
+  // automatic start until the owner chooses a compatible setting.
+  const effective = allowed ? configured ?? hostPolicy ?? defaultPolicy
+    : hostPolicy?.mode === "manual" ? hostPolicy : defaultPolicy;
+  return {
+    cwd, channelId, revision: stored?.revision ?? 0, configured, hostPolicy, effective,
+    effectiveRevision: stored ? digest([cwd, channelId, stored.revision, hostRevision, effective])
+      : hostRevision ?? defaultDeliberationPolicyRevision,
+    ...(!allowed ? { restriction: "host_policy" } : {}),
+  };
+}
+
+export function updateWorkspaceDeliberationPolicy(
+  store: RunStore, cwd: string, channelId: string, policies: readonly AppServerDeliberationPolicy[],
+  input: UpdateWorkspaceDeliberationPolicyRequest, now: string,
+): WorkspaceDeliberationPolicyResponse {
+  const current = readWorkspaceDeliberationPolicy(store, cwd, channelId, policies);
+  if (input.policy && !withinHostPolicy(input.policy, current.hostPolicy)) {
+    throw new HttpError(409, "deliberation_policy_exceeds_host", "The policy exceeds this channel's trusted Host configuration.");
+  }
+  const result = store.putAppServerState({ kind: policyStateKind, recordId: channelId,
+    expectedRevision: input.expectedRevision, payload: input.policy && normalizePolicy(input.policy) }, now);
+  if (!result) throw new HttpError(409, "stale_revision", "Reload the channel's policy before editing it.");
+  return readWorkspaceDeliberationPolicy(store, cwd, channelId, policies);
+}
+
+function withinHostPolicy(policy: WorkspaceDeliberationPolicy, host: WorkspaceDeliberationPolicy | null): boolean {
+  if (host?.mode === "manual") return policy.mode === "manual";
+  if (policy.mode !== "auto_start") return true;
+  if (host?.mode !== "auto_start") return false;
+  return policy.allowedTriggers.every(trigger => host.allowedTriggers.includes(trigger))
+    && policy.allowedDecisionKinds.every(kind => host.allowedDecisionKinds.includes(kind))
+    && policy.minimumParticipants >= host.minimumParticipants
+    && policy.minimumViableOptions >= host.minimumViableOptions
+    && host.requiredRoleIds.every(role => policy.requiredRoleIds.includes(role))
+    && LING_APP_SERVER_DECISION_MATERIALITIES.indexOf(policy.minDecisionMateriality)
+      >= LING_APP_SERVER_DECISION_MATERIALITIES.indexOf(host.minDecisionMateriality)
+    && (policy.maxEvidenceAgeMs ?? Infinity) <= (host.maxEvidenceAgeMs ?? Infinity)
+    && policy.cooldownMs >= host.cooldownMs
+    && (host.ballotMode === "when_unresolved" || policy.ballotMode === "disabled")
+    && policy.budget.maxTokens <= host.budget.maxTokens
+    && policy.budget.maxDurationMs <= host.budget.maxDurationMs;
+}
+
+function normalizePolicy<T extends WorkspaceDeliberationPolicy>(value: T): T {
+  if (value.mode !== "auto_start") return value;
+  return {
+    ...value,
+    allowedTriggers: Object.freeze([...value.allowedTriggers].sort()),
+    allowedDecisionKinds: Object.freeze([...value.allowedDecisionKinds].sort()),
+    requiredRoleIds: Object.freeze([...value.requiredRoleIds].sort()),
+    budget: Object.freeze(value.budget),
+    decisionOwner: Object.freeze(value.decisionOwner),
+  };
+}
+
+function containsUniqueEntries(values: readonly string[]): boolean {
+  return new Set(values).size === values.length;
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
