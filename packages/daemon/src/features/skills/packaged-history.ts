@@ -8,6 +8,7 @@ import { PackagedSkillRuntime } from "./packaged-runtime.js";
 
 type Selection = Parameters<typeof verifyBundledSkillSource>[0];
 type Identity = Omit<Selection, "rootPath" | "requireExecutable">;
+type RetentionOptions = { deferWhenFull?: boolean };
 const MAX_GENERATIONS = 2, MAX_BYTES = 6 * 1024 ** 3, MIN_FREE_BYTES = 2 * 1024 ** 3;
 const fail = (code: string): never => { throw new Error(`packaged_skill_history_${code}`); };
 
@@ -57,8 +58,9 @@ async function load(root: string): Promise<PackagedSkillRuntime> {
 /** Immutable, bounded generations with atomic publication and process-restart retention.
  * Not a power-loss durability guarantee. Interrupted ownership requires review;
  * never evict a possibly pinned run or silently recover an unknown staging tree. */
-export async function retainPackagedSkillGeneration(cache: string, selection: Selection, browserRoot?: string): Promise<{
-  current: PackagedSkillRuntime; retained: readonly PackagedSkillRuntime[];
+export async function retainPackagedSkillGeneration(cache: string, selection: Selection, browserRoot?: string,
+  options: RetentionOptions = {}): Promise<{
+  current: PackagedSkillRuntime | undefined; retained: readonly PackagedSkillRuntime[];
 }> {
   await canonicalDirectory(cache);
   const token = randomUUID(), lockPath = join(cache, ".writer.json");
@@ -80,12 +82,14 @@ export async function retainPackagedSkillGeneration(cache: string, selection: Se
     const retained: PackagedSkillRuntime[] = [];
     for (const name of names) if (name !== key) retained.push(await load(join(cache, name)));
     if (names.includes(key)) return { current: await load(join(cache, key)), retained };
-    if (names.length >= MAX_GENERATIONS) fail("retention_limit");
+    if (names.length >= MAX_GENERATIONS && !options.deferWhenFull) fail("retention_limit");
     const source = await verifyBundledSkillSource({ ...selection, requireExecutable: true });
     const receipt = source.manifest.files.some(file => file.path === "executable-build.json")
       ? JSON.parse(await source.readResource("executable-build.json")) : undefined;
     if (Boolean(receipt?.browser?.componentChecksum) !== Boolean(browserRoot)) fail("browser_mismatch");
     const browser = browserRoot ? verifyPackagedBrowser(browserRoot, receipt.browser, identity.expectedTarget!) : undefined;
+    // Existing workspaces and tasks resolve either retained runtime by digest.
+    if (names.length >= MAX_GENERATIONS) return { current: undefined, retained };
     const original = new PackagedSkillRuntime(rootPath, source, browser);
     const volume = await statfs(cache);
     const additional = await treeBytes(rootPath) + (browserRoot ? await treeBytes(browserRoot) : 0) + 65536;
