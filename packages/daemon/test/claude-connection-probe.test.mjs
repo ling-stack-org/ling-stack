@@ -116,7 +116,10 @@ function fixture(t, scenario = "connected", ownCleanup = true) {
   };
   return { root, paths, profile, launch, processes, descendantPath, get home() { return home; },
     setScenario: value => { scenario = value; },
-    commands: () => existsSync(commandsPath) ? readFileSync(commandsPath, "utf8").trim().split("\n").map(JSON.parse) : [],
+    commands: () => {
+      if (!existsSync(commandsPath)) return [];
+      return readFileSync(commandsPath, "utf8").split("\n").slice(0, -1).map(JSON.parse);
+    },
     secretResolver: { resolve: () => ({ configured: true, value: key }) } };
 }
 
