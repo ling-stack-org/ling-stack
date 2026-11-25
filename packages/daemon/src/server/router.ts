@@ -168,6 +168,7 @@ import {
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
 import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
+import { handleConversationVisualization } from "../features/conversations/visualization-read.js";
 import { handleConversationSubmissionReceipt } from "../features/conversations/submission-receipts.js";
 import { startDetachedRunAndResolveReady } from "../features/runs/detached.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
@@ -1362,6 +1363,16 @@ export async function routeRequest(
   };
   if (url.pathname === "/user-input-answers") {
     await handleUserInputAnswer(request, response, config, storeRegistry, onUserInputAnswerAccepted);
+    return;
+  }
+
+  const visualizationRoute = /^\/conversation-visualizations\/(viz_[a-f0-9]{32})$/u.exec(url.pathname);
+  if (visualizationRoute) {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: "Conversation visualizations are read-only." });
+      return;
+    }
+    handleConversationVisualization(response, url, storeRegistry, visualizationRoute[1]!);
     return;
   }
 

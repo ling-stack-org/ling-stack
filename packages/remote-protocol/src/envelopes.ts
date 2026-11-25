@@ -75,6 +75,7 @@ export interface RemoteAuthChallengeSigningInputV1 {
   readonly issuedAt: string;
   readonly expiresAt: string;
   readonly supportedProtocolVersions: readonly [1];
+  readonly negotiatedFeatures?: RemoteAuthChallengeV1["negotiatedFeatures"];
 }
 
 export interface RemoteAuthProofSigningInputV1 {
@@ -88,6 +89,7 @@ export interface RemoteAuthProofSigningInputV1 {
   readonly deviceEpoch: number;
   readonly protocolVersion: 1;
   readonly resumeHash: string;
+  readonly negotiatedFeatures?: RemoteAuthChallengeV1["negotiatedFeatures"];
 }
 
 export interface RemoteCommandHashInputV1 {
@@ -261,6 +263,7 @@ export function authChallengeSigningInput(
     issuedAt: challenge.issuedAt,
     expiresAt: challenge.expiresAt,
     supportedProtocolVersions: challenge.supportedProtocolVersions,
+    ...(challenge.negotiatedFeatures ? { negotiatedFeatures: challenge.negotiatedFeatures } : {}),
   };
 }
 
@@ -281,6 +284,7 @@ export async function authProofSigningInput(
     deviceEpoch: proof.deviceEpoch,
     protocolVersion: proof.protocolVersion,
     resumeHash: await hashResumeCursors(proof.resume, sha256),
+    ...(challenge.negotiatedFeatures ? { negotiatedFeatures: challenge.negotiatedFeatures } : {}),
   };
 }
 

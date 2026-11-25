@@ -9,7 +9,8 @@ export * from "./user-input-transcript.js";
 export * from "./user-input-event-position.js";
 export * from "./user-input-validation.js";
 export type * from "./artifacts.js";
-export { HTML_INTERACTIVE_CSP, HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, createInteractiveHtmlPreviewDocument, injectInteractiveHtmlCsp, scanInteractiveHtml } from "./artifacts.js";
+export { HTML_INTERACTIVE_CSP, HTML_INTERACTIVE_MAX_BYTES, HTML_INTERACTIVE_SANDBOX, createInteractiveHtmlPreviewDocument,
+  createNativeHtmlPreviewDocument, injectInteractiveHtmlCsp, scanInteractiveHtml } from "./artifacts.js";
 export type * from "./runtime.js";
 export * from "./harness.js";
 export type * from "./harness-evaluation-qa.js";
@@ -24,6 +25,7 @@ export * from "./execution-engines.js";
 export * from "./engine-lifecycle.js";
 export * from "./threads.js";
 export type * from "./conversations.js";
+export * from "./conversation-visualizations.js";
 export type * from "./conversation-runtime-metrics.js";
 export * from "./conversation-continuity.js";
 export * from "./channel-operation-bindings.js";

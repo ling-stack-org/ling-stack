@@ -350,6 +350,9 @@ importers:
 
   packages/conversation-ui-core:
     dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@ling-stack/localization':
         specifier: workspace:*
         version: link:../localization
@@ -438,6 +441,9 @@ importers:
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@ling-stack/conversation-ui-core':
+        specifier: workspace:*
+        version: link:../conversation-ui-core
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core
@@ -523,9 +529,6 @@ importers:
       '@babel/parser':
         specifier: 8.1.2
         version: 8.1.2
-      '@ling-stack/conversation-ui-core':
-        specifier: workspace:*
-        version: link:../conversation-ui-core
       '@types/pdf-parse':
         specifier: 1.1.5
         version: 1.1.5

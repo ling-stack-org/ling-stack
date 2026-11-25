@@ -3,7 +3,7 @@ import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
 import { isDeepStrictEqual } from "node:util";
 import { isHostCapabilityToolDefinitionV1 } from "@ling-stack/contracts";
 import { redactSecrets, type RunStore, type SkillDefinition, type SkillSourceRuntimeContext } from "@ling-stack/core";
-import { assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, WORK_ITEM_COORDINATION_TOOL,
+import { CONVERSATION_VISUALIZATION_TOOL, assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, WORK_ITEM_COORDINATION_TOOL,
   readPreparedPiInput, readHookSet, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
@@ -92,6 +92,7 @@ export function restorePreparedRunnerOptions(
   const frozenSurface = payload.input.initialToolSurface;
   const currentSurface = current.initialToolSurface;
   if (payload.toolHydrationEnabled && !(currentSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
+    frozenSurface?.conversationVisualization === true && currentSurface?.conversationVisualization !== true ||
     frozenSurface?.userInput === true && currentSurface?.userInput !== true ||
     frozenSurface?.delegation === true && currentSurface?.delegation !== true ||
     frozenSurface?.codeIntelligence === true && currentSurface?.codeIntelligence !== true ||
@@ -191,8 +192,9 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
       ? surfaceRecord?.nativeFileCreate === true
       : surfaceRecord?.nativeFileCreate === undefined || surfaceRecord?.nativeFileCreate === false;
     const delegationSurfaceRequired = delegationSelected.length > 0 && surfaceRecord?.delegation !== true;
-    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation', 'codeIntelligence', 'codeMode', 'workItemCoordination'].includes(key)) ||
+    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation', 'codeIntelligence', 'codeMode', 'conversationVisualization', 'workItemCoordination'].includes(key)) ||
       Object.values(surfaceRecord).some(selected => typeof selected !== "boolean") ||
+      prepared.tools.some(tool => tool.name === CONVERSATION_VISUALIZATION_TOOL) !== (surfaceRecord.conversationVisualization === true) ||
       surfaceRecord.codeIntelligence !== undefined && prepared.tools.some(tool => tool.name === "code_intelligence") !== surfaceRecord.codeIntelligence ||
       surfaceRecord.codeMode !== undefined && prepared.tools.some(tool => tool.name === "code_mode") !== surfaceRecord.codeMode ||
       surfaceRecord.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surfaceRecord.userInput ||
@@ -253,7 +255,7 @@ function isNarrowIsolatedSurface(input: unknown): boolean {
   if (["mcpTools", "hostCapabilityTools", "mediaGenerationTools"].some(key => input[key] !== undefined &&
     (!Array.isArray(input[key]) || input[key].length !== 0))) return false;
   for (const [key, allowed] of [
-    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode"]],
+    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode", "conversationVisualization"]],
     ["runtimeToolFeatures", ["requestPermissions", "unifiedExec", "shellSnapshot"]],
   ] as const) {
     const flags = input[key];
@@ -261,7 +263,7 @@ function isNarrowIsolatedSurface(input: unknown): boolean {
       !(allowed as readonly string[]).includes(name) || enabled !== false && enabled !== undefined))) return false;
   }
   // Approval stays live in the Host handler; these other producers may not enter this profile.
-  return ["onMcpToolCall", "onHostCapabilityCall", "onMediaGenerationToolCall", "onToolHydrationRequest",
+  return ["onMcpToolCall", "onHostCapabilityCall", "onMediaGenerationToolCall", "onConversationVisualization", "onToolHydrationRequest",
     "onDelegationToolCall", "onUserInputRequest", "onPermissionRequired", "onWorkItemCoordinationCall"].every(key => input[key] === undefined);
 }
 

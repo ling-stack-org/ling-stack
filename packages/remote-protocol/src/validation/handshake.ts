@@ -1,5 +1,6 @@
 import {
   REMOTE_PROTOCOL_LIMITS,
+  REMOTE_VISUALIZATION_FEATURE,
   type RemoteAuthChallengeV1,
   type RemoteAuthProofV1,
   type RemotePairingAcceptedV1,
@@ -232,10 +233,15 @@ export function validateRemoteAuthChallengeV1(
     "expiresAt",
     "supportedProtocolVersions",
     "gatewaySignature",
-  ], [], path);
+  ], ["negotiatedFeatures"], path);
   const issuedAt = expectRfc3339(record.issuedAt, `${path}.issuedAt`);
   const expiresAt = expectRfc3339(record.expiresAt, `${path}.expiresAt`);
   assertExpiryWindow(issuedAt, expiresAt, 30_000, options, path);
+  const negotiatedFeatures = record.negotiatedFeatures === undefined ? undefined : expectArray(
+    record.negotiatedFeatures, `${path}.negotiatedFeatures`,
+    (feature, featurePath) => expectLiteral(feature, REMOTE_VISUALIZATION_FEATURE, featurePath),
+    { minItems: 1, maxItems: 1 },
+  );
   const supported = expectArray(
     record.supportedProtocolVersions,
     `${path}.supportedProtocolVersions`,
@@ -252,6 +258,7 @@ export function validateRemoteAuthChallengeV1(
     issuedAt,
     expiresAt,
     supportedProtocolVersions: supported as unknown as readonly [1],
+    ...(negotiatedFeatures ? { negotiatedFeatures: [negotiatedFeatures[0]!] } : {}),
     gatewaySignature: expectEs256Signature(record.gatewaySignature, `${path}.gatewaySignature`),
   };
 }

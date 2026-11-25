@@ -9,6 +9,7 @@ Related documents:
 - [Ling Server Connectivity](ling-server-connectivity.md)
 - [Mobile Remote Access Implementation Plan](mobile-remote-access-implementation-plan.md)
 - [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md)
+- [Conversation Visualization Design](conversation-inline-visualizations.md)
 - [Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md)
 - [Contracts and API Client](contracts-api-client.md)
 - [Platform Architecture](platform-architecture.md)

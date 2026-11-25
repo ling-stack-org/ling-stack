@@ -17,6 +17,7 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 - **Run policy previews and notification journals** expose the Host decision and delivery history without starting work or granting execution authority.
 - **Local code review and security scans** now inspect working-tree, branch, or commit changes from an immutable snapshot, with review history, staged phases, confidence and severity filters, anchored findings, comments, custom instructions, and read-only boundaries.
 - **The review workbench** now provides a full page and compact Right Dock with bounded summaries, lazy file Diffs, unified or split views, narrow-screen layouts, durable stale and triage states, and cancellation or restart recovery.
+- **Pi replies can include interactive visualizations** in Web and Desktop conversation history. Paired phones can open the same visualization with native HTML controls.
 
 ### Changed
 

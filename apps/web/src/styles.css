@@ -62,6 +62,7 @@
 @import "./styles/shared/conversation-runtime-feedback.css";
 @import "./styles/shared/product-error-details.css";
 @import "./styles/shared/conversation-artifact-preview.css";
+@import "./styles/shared/conversation-visualization.css";
 @import "./styles/shared/conversation-generated-media.css";
 @import "./styles/shared/conversation-terminal-report.css";
 @import "./styles/channel-execution-proposal.css";

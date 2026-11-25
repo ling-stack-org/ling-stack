@@ -59,6 +59,7 @@ export function projectCommittedRunNarration(
   const message: ConversationTimelineMessageItem = {
     logicalMessageId: saved.messageId,
     id: `message:agent:${saved.messageId}`, kind: "agentMessage", itemId: item.id, markdown: payload.body,
+    ...(payload.deliveryStatus === "ready" ? { visualizationMessage: { threadId: item.threadId, messageId: item.id, messageRevision: item.revision } } : {}),
     revision: item.revision, threadSequence: item.sequence, partIndex: 0, turnId: item.turnId,
     phase: payload.deliveryStatus === "ready" ? "final" : "commentary",
     status: payload.deliveryStatus === "ready" ? "succeeded" : payload.deliveryStatus === "failed" ? "failed" : "cancelled",

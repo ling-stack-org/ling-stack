@@ -1603,6 +1603,8 @@ function projectCanonicalMessage(item: CanonicalConversationItem, scope: Canonic
   return {
     id: `${item.kind === "user_message" ? "message:user:" : "message:agent:"}${item.id}`,
     kind: item.kind === "user_message" ? "userMessage" : "agentMessage",
+    ...(item.kind === "assistant_message" && item.status === "committed" && readStringField(item.payload, "deliveryStatus") === "ready"
+      ? { visualizationMessage: { threadId: item.threadId, messageId: item.id, messageRevision: item.revision } } : {}),
     markdown: body,
     phase: item.kind === "assistant_message" && readStringField(item.payload, "deliveryStatus") === "ready"
       && readStringField(item.payload, "presentationRole") !== "narration" ? "final" : "commentary",

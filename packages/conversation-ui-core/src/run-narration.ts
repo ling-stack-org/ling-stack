@@ -1,3 +1,4 @@
+import { readConversationVisualizationReferences } from "./message-body.js";
 import type { ConversationTimelineItem, ConversationTimelineMessageItem } from "./transcript-item.js";
 
 /** Structural mirror of the Host's message_end-delimited, redacted event projection. */
@@ -32,6 +33,7 @@ export function projectConversationRunNarration(input: {
   readonly anchor: ConversationTimelineItem;
 }): readonly ConversationTimelineMessageItem[] {
   const { attemptId: _attempt, participantId: _participant, workUnitId: _unit, workflowStepId: _step, ...message } = input.message;
+  const remaining = message.visualizationMessage ? new Set(readConversationVisualizationReferences(message.markdown).map(ref => ref.artifactId)) : undefined;
   return input.segments.map((segment, index) => {
     const source = segment.source;
     const owns = source && [source.workspaceId, source.threadId, source.turnId, source.runId,
@@ -43,6 +45,8 @@ export function projectConversationRunNarration(input: {
       ...(owns ? { attemptId: source.attemptId, participantId: source.participantId, workUnitId: source.workUnitId, workflowStepId: null } : {}),
       id: `${input.message.id}:event:${encodeURIComponent(segment.firstEventId)}`,
       markdown: segment.content,
+      ...(remaining ? { visualizationArtifactIds: readConversationVisualizationReferences(segment.content)
+        .filter(ref => remaining.delete(ref.artifactId)).map(ref => ref.artifactId) } : {}),
       revision: segment.endEventSequence + (segment.sourceRevision ?? 0),
       threadSequence: input.anchor.threadSequence,
       partIndex: segment.startEventSequence,

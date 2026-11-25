@@ -1,3 +1,4 @@
+import { CONVERSATION_VISUALIZATION_TOOL, createConversationVisualizationExtension, isConversationVisualizationEnabled } from "./extensions/conversation-visualization.js";
 import { DefaultResourceLoader, type ResourceLoader, type SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createLingStackApprovalExtension } from "./extensions/approval.js";
 import { assertHostCapabilityToolSurface, createLingStackHostCapabilityExtension } from "./extensions/host-capability.js";
@@ -29,7 +30,8 @@ export async function createLingStackResourceLoader(
   assertHostIsolatedFilesToolSurface(options);
   assertHostCapabilityToolSurface(options);
   assertHostReadonlyToolSurface(options);
-  if (options.mcpTools?.some(tool => ["code_mode", "code_intelligence", WORK_ITEM_COORDINATION_TOOL].includes(tool.registeredName))) {
+  if (options.mcpTools?.some(tool => ["code_mode", "code_intelligence", CONVERSATION_VISUALIZATION_TOOL, WORK_ITEM_COORDINATION_TOOL]
+    .includes(tool.registeredName))) {
     throw new Error("Agent capability tool names are reserved.");
   }
   if ((options.isolatedToolsProfile || options.readonlyToolsProfile)
@@ -55,6 +57,7 @@ export async function createLingStackResourceLoader(
       createLingStackModelContextBudgetExtension({ acceptedTaskPrompt: options.preparedInput?.userPrompt ?? formatTaskPrompt(options.task) }),
       ...(options.onTaskContinuationBoundary ? [createLingStackTaskContinuationExtension(options)] : []),
       ...(isolated ? [createLingStackToolBeforeExtension(options), createLingStackHostIsolatedFilesExtension(options)] : [
+        ...(isConversationVisualizationEnabled(options) ? [createConversationVisualizationExtension(options)] : []),
         ...(isUserInputToolSurfaceEnabled(options) ? [createLingStackUserInputExtension(options)] : []),
         ...(isDelegationToolSurfaceEnabled(options) ? [createLingStackDelegationExtension(options)] : []),
         ...(options.initialToolSurface?.workItemCoordination ? [createWorkItemCoordinationExtension(options)] : []),

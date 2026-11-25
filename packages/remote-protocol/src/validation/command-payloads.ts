@@ -1,5 +1,6 @@
 import {
   REMOTE_PROTOCOL_LIMITS,
+  isConversationVisualizationId,
   type RemoteClientCommandPayloadMapV1,
   type RemoteClientCommandTypeV1,
   type RemoteStreamScopeV1,
@@ -116,6 +117,21 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
         }),
       };
       break;
+    case "conversation.visualization.read": {
+      assertStrictKeys(record, ["commandId", "workspaceId", "conversationId", "messageId", "messageRevision", "artifactId"], [], path);
+      if (!isConversationVisualizationId(record.artifactId)) {
+        throw new RemoteProtocolError("invalid_field", "Invalid visualization reference", `${path}.artifactId`);
+      }
+      payload = {
+        commandId: expectIdentifier(record.commandId, `${path}.commandId`),
+        workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+        conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
+        messageId: expectIdentifier(record.messageId, `${path}.messageId`),
+        messageRevision: expectSafeInteger(record.messageRevision, `${path}.messageRevision`, { minimum: 1 }),
+        artifactId: record.artifactId,
+      };
+      break;
+    }
     case "conversation.send_text": {
       assertStrictKeys(
         record,

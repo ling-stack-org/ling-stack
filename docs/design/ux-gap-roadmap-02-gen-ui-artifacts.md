@@ -2,17 +2,19 @@
 
 ## Status
 
-Status: design approved for implementation
+Status: sandboxed HTML file previews and Pi-authored conversation visualizations are
+implemented. See the [conversation visualization design](conversation-inline-visualizations.md)
+for authoring, inline placement and paired Mobile viewing.
 Owner: Web / Contracts / Daemon
-Last verified: 2026-10-26
+Last verified: 2026-11-25
 
 ## Background and competitive reference
 
 ZCode renders assistant-produced HTML as inline interactive views (charts,
 simulators, tools) that the user can click through next to the conversation.
-Ling's artifact previews are static (`markdown`, `code`, `image`, `diff`, ...).
-A large class of useful outputs — data visualizations, small calculators,
-interactive mockups — currently arrive as code the user must save and open.
+Ling supports self-contained HTML in the artifact viewer. Pi assistants can also
+place generated charts, calculators and mockups between paragraphs of a reply.
+Web and Desktop use the same preview isolation and per-document script controls.
 
 ## Goal
 

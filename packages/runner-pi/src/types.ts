@@ -496,6 +496,7 @@ export interface PiRunnerRunOptions {
   /** Initial schema capabilities; not execution handlers or authorization grants. */
   readonly initialToolSurface?: {
     readonly mediaGeneration: boolean;
+    readonly conversationVisualization?: boolean;
     readonly toolHydration: boolean;
     readonly codeIntelligence?: boolean;
     readonly codeMode?: boolean;
@@ -629,6 +630,8 @@ export interface PiRunnerRunOptions {
     readonly input: unknown;
   }) => PiRunnerDelegationToolResult | Promise<PiRunnerDelegationToolResult>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
+  readonly onConversationVisualization?: (request: { readonly toolCallId: string; readonly input: unknown; readonly signal: AbortSignal }) =>
+    PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
   readonly onMediaGenerationToolCall?: (
     request: PiRunnerMediaGenerationToolCallRequest,
   ) => PiRunnerMediaGenerationToolCallResult | Promise<PiRunnerMediaGenerationToolCallResult>;
