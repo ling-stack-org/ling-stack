@@ -11,6 +11,8 @@ import type {
   RemoteConversationDeltaV1,
   RemoteConversationListSnapshotV1,
   RemoteConversationSnapshotV1,
+  RemoteConversationVisualizationReadCommandV1,
+  RemoteVisualizationDocument,
   RemoteMarkConversationReadCommandV1,
   RemoteProfileUpdateCommandV1,
   RemoteSendTextCommandV1,
@@ -23,6 +25,7 @@ import {
   TeammateDirectRemoteConversationAdapter,
   type RemoteConversationAdapter,
 } from "./conversation-adapters.js";
+import { readConversationVisualization } from "../conversations/visualization-read.js";
 import { RemoteAccessError } from "./errors.js";
 import { RemoteProfileService } from "./profile-service.js";
 
@@ -148,6 +151,17 @@ export class RemoteConversationFacade {
       ...(page.olderPageCursor ? { olderPageCursor: page.olderPageCursor } : {}),
       generatedAt: now,
     };
+  }
+
+  readVisualization(command: RemoteConversationVisualizationReadCommandV1): RemoteVisualizationDocument {
+    this.assertWorkspace(command.workspaceId);
+    const adapter = this.resolveAllowedAdapter(command.conversationId, this.now());
+    const document = readConversationVisualization(this.store, command, {
+      workspaceId: this.workspaceId, conversationId: command.conversationId, kind: adapter.kind,
+    });
+    if (!document) throw new RemoteAccessError("conversation_not_allowed", "Visualization unavailable in this message.");
+    const { html, ...metadata } = document;
+    return { ...metadata, htmlBase64Url: Buffer.from(html, "utf8").toString("base64url") };
   }
 
   sendText(

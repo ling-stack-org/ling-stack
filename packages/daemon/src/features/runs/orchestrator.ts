@@ -173,6 +173,7 @@ import {
   isConversationMediaGenerationEligible,
 } from "../media/conversation-tool-handler.js";
 import { appendContextCompactionInvalidation, appendExecutionActionInvalidation } from "./execution-action-invalidation.js";
+import { publishConversationVisualization } from "../conversations/visualization-publish.js";
 import { listConversationMediaGenerationTargets } from "../media/conversation-targets.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
 import { reviewPendingApprovalAutomatically } from "./approval-auto-review-host.js";
@@ -1069,6 +1070,10 @@ async function executeAdmittedRunRequest(
       && dynamicDelegationRegistry?.isSelectedWorkflow({ store, workflowStepId: runRequest.workflowStepId,
         channelId: runRequest.task.channelId }) === true;
     const currentAgentCapabilitySurface = () => ({
+      conversationVisualization: !runRequest.disableConversationVisualization && !runRequest.codeAssessment
+        && !runRequest.workflowStepId && !delegatedExecution && !isolatedFiles && !workflowSafetyPlan
+        && runnerResolution?.runner.adapter instanceof PiRunnerAdapter
+        && isConversationMediaGenerationEligible({ createdByActor: runRequest.createdByActor, workUnitKind: workUnitOwner.kind }),
       codeIntelligence: !runRequest.workflowStepId && !delegatedExecution && runnerResolution?.runner.adapter instanceof PiRunnerAdapter
         && (runtimeTools === undefined || runtimeTools.includes("read")),
       codeMode: !runRequest.workflowStepId && !delegatedExecution && runnerResolution?.runner.adapter instanceof PiRunnerAdapter,
@@ -3538,6 +3543,11 @@ async function executeAdmittedRunRequest(
           "An approval cannot authorize a native file-tool fallback in isolated execution.");
         return { isError: true, content: [{ type: "text" as const, text: decision?.reason ?? "The isolated file write was not approved." }] };
       } } : {}),
+      onConversationVisualization: runnerRequest.initialToolSurface?.conversationVisualization ? (request) => {
+        assertCurrentRunAdmission();
+        request.signal.throwIfAborted();
+        return publishConversationVisualization(store, run.id, runnerCallbackFence, request.toolCallId, request.input, executionNow());
+      } : undefined,
       onToolBefore: (request) => {
         try { assertCurrentRunAdmission(); }
         catch (error) { return { allowed: false, code: delegatedExecution ? "delegation.source_attempt_stale" : "workflow_start_owner_stale",

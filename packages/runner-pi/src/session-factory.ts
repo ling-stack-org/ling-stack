@@ -1,3 +1,4 @@
+import { CONVERSATION_VISUALIZATION_TOOL, isConversationVisualizationEnabled } from "./extensions/conversation-visualization.js";
 import { join } from "node:path";
 import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { createAgentSession, ModelRuntime, SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
@@ -58,6 +59,7 @@ export async function createInitializedPiSession(options: PiRunnerRunOptions, bi
     ...(options.initialToolSurface?.codeMode ? ["code_mode"] : []),
     ...(options.mcpTools?.map((tool) => tool.registeredName) ?? []),
     ...(options.hostCapabilityTools?.map(tool => tool.name) ?? []),
+    ...(isConversationVisualizationEnabled(options) ? [CONVERSATION_VISUALIZATION_TOOL] : []),
     ...(isUserInputToolSurfaceEnabled(options) ? ["request_user_input"] : []),
     ...(isDelegationToolSurfaceEnabled(options) ? DELEGATION_TOOL_NAMES : []),
     ...(options.runtimeToolFeatures?.requestPermissions ? ["request_permission"] : []),

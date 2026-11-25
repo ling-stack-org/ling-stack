@@ -1,5 +1,7 @@
 import {
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_VISUALIZATION_FEATURE,
+  type ConversationVisualization,
   type RemoteAuthChallengeV1,
   type RemoteAuthProofV1,
   type RemoteClientCommandPayloadMapV1,
@@ -20,6 +22,8 @@ import {
   authProofSigningBytes,
   authProofSigningInput,
   encodeBase64Url,
+  decodeBase64Url,
+  decodeUtf8Strict,
   parseRemoteServerFrameV1,
   sha256,
   validateRemoteAuthChallengeV1,
@@ -70,6 +74,7 @@ export interface RemoteSessionClientOptions {
   readonly clock: RemoteClock;
   readonly webSocketFactory: RemoteWebSocketFactory;
   readonly autoReconnect?: boolean;
+  readonly requestConversationVisualizations?: boolean;
 }
 
 export class RemoteSessionClient {
@@ -89,6 +94,7 @@ export class RemoteSessionClient {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private intentionalClose = false;
   private connectionGeneration = 0;
+  private visualizationNegotiated = false;
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
 
@@ -155,6 +161,34 @@ export class RemoteSessionClient {
       conversationId,
       ...(olderPageCursor ? { olderPageCursor } : {}),
     });
+  }
+
+  get supportsConversationVisualizations(): boolean {
+    return this.visualizationNegotiated && this.stateValue.connection === "connected";
+  }
+
+  async readConversationVisualization(conversationId: string, messageId: string, messageRevision: number,
+    artifactId: string): Promise<ConversationVisualization> {
+    if (!this.supportsConversationVisualizations) throw new Error("remote_visualization_unavailable");
+    const workspaceId = this.requireWorkspaceId();
+    const generation = this.connectionGeneration;
+    const sessionId = this.requireSessionId();
+    const { completion } = await this.sendCommand("conversation.visualization.read", {
+      commandId: await this.options.entropy.randomId("visualization"),
+      workspaceId, conversationId, messageId, messageRevision, artifactId,
+    }, { sessionId, timeoutMs: 15_000 });
+    const result = await completion;
+    this.assertConnectionActive(generation);
+    if (this.currentSessionId !== sessionId || !this.supportsConversationVisualizations || result.kind !== "conversation_visualization") {
+      throw new Error("remote_visualization_unavailable");
+    }
+    const { htmlBase64Url, ...document } = result.document;
+    const bytes = decodeBase64Url(htmlBase64Url);
+    const hash = Array.from(sha256(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
+    if (document.artifactId !== artifactId || document.sizeBytes !== bytes.length || document.sha256 !== hash) {
+      throw new Error("remote_visualization_integrity_mismatch");
+    }
+    return { ...document, html: decodeUtf8Strict(bytes) };
   }
 
   async sendText(
@@ -286,6 +320,7 @@ export class RemoteSessionClient {
       type: "connection",
       status: this.reconnectAttempts > 0 ? "reconnecting" : "connecting",
     });
+    this.visualizationNegotiated = false;
     const proof = await this.createAuthProof(generation);
     this.assertConnectionActive(generation);
     this.clientSeq = 0;
@@ -335,7 +370,9 @@ export class RemoteSessionClient {
 
   private async createAuthProof(generation: number): Promise<RemoteAuthProofV1> {
     const binding = this.binding;
-    const response = await this.options.http.postJson<unknown>(binding.gatewayOrigin, "/v1/auth/challenge", {
+    const path = this.options.requestConversationVisualizations
+      ? "/v1/auth/challenge?feature=" + REMOTE_VISUALIZATION_FEATURE : "/v1/auth/challenge";
+    const response = await this.options.http.postJson<unknown>(binding.gatewayOrigin, path, {
       deviceId: binding.deviceId,
     });
     this.assertConnectionActive(generation);
@@ -383,6 +420,8 @@ export class RemoteSessionClient {
     this.assertConnectionActive(generation);
     const signature = await this.options.keys.sign(binding.deviceKeyId, authProofSigningBytes(signingInput));
     this.assertConnectionActive(generation);
+    this.visualizationNegotiated = this.options.requestConversationVisualizations === true
+      && challenge.negotiatedFeatures?.includes(REMOTE_VISUALIZATION_FEATURE) === true;
     return {
       ...unsignedProof,
       signature,
@@ -473,7 +512,7 @@ export class RemoteSessionClient {
         }
         return;
       case "command.completed":
-        this.completeCommand(frame.payload.commandId, frame.payload.result);
+        this.completeCommand(frame.payload.commandId, frame.payload.result, frame.payload.commandType, frame.requestId);
         if (frame.payload.commandType === "conversation.send_text") {
           this.dispatch({
             type: "send_completed",
@@ -498,18 +537,28 @@ export class RemoteSessionClient {
   private async sendCommand<T extends CommandType>(
     type: T,
     payload: RemoteClientCommandPayloadMapV1[T],
+    bounds?: { readonly sessionId: string; readonly timeoutMs: number },
   ): Promise<RemoteCommandHandle<RemoteCommandResultMapV1[T]>> {
     this.requireConnectedSocket();
     const messageId = await this.options.entropy.randomId("message");
     this.requireConnectedSocket();
+    if (bounds && bounds.sessionId !== this.requireSessionId()) throw new Error("remote_session_changed");
     const completion = new Promise<RemoteCommandResultMapV1[T]>((resolve, reject) => {
+      const timer = bounds ? setTimeout(() => {
+        this.commands.delete(payload.commandId);
+        this.outboundByMessage.delete(messageId);
+        reject(new Error("remote_visualization_timeout"));
+      }, bounds.timeoutMs) : undefined;
+      function settle(): void {
+        if (timer !== undefined) clearTimeout(timer);
+      }
       const pending: PendingCommand<RemoteCommandResultMapV1[T]> = {
         commandId: payload.commandId,
         messageId,
         type,
         payload: payload as RemoteClientCommandPayloadMapV1[CommandType],
-        resolve,
-        reject,
+        resolve: result => { settle(); resolve(result); },
+        reject: error => { settle(); reject(error); },
       };
       this.commands.set(payload.commandId, pending as PendingCommand);
       this.outboundByMessage.set(messageId, pending as PendingCommand);
@@ -544,12 +593,14 @@ export class RemoteSessionClient {
     socket.send(JSON.stringify(frame));
   }
 
-  private completeCommand(commandId: string, result: unknown): void {
+  private completeCommand(commandId: string, result: unknown, type: CommandType, requestId?: string): void {
     const pending = this.commands.get(commandId);
     if (!pending) {
       return;
     }
+    if (pending.type === "conversation.visualization.read" && (pending.type !== type || pending.messageId !== requestId)) return;
     this.commands.delete(commandId);
+    if (pending.type === "conversation.visualization.read") this.outboundByMessage.delete(pending.messageId);
     pending.resolve(result);
   }
 
@@ -557,6 +608,7 @@ export class RemoteSessionClient {
     const pending = this.commands.get(failed.commandId);
     if (pending) {
       this.commands.delete(failed.commandId);
+      if (pending.type === "conversation.visualization.read") this.outboundByMessage.delete(pending.messageId);
       pending.reject(new Error(`${failed.error.code}: ${failed.error.message}`));
     }
     if (failed.commandType === "conversation.send_text") {

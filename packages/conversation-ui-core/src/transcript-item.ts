@@ -115,6 +115,8 @@ export interface ConversationTimelineOperationItemBase
 export interface ConversationTimelineMessageItem extends ConversationTimelineItemBase {
   /** Logical message identity stays stable when its canonical storage Item arrives. */
   readonly logicalMessageId?: string;
+  readonly visualizationMessage?: { readonly threadId: string; readonly messageId: string; readonly messageRevision: number };
+  readonly visualizationArtifactIds?: readonly string[];
   readonly kind: "userMessage" | "agentMessage";
   readonly markdown: string;
   readonly phase?: "commentary" | "final";

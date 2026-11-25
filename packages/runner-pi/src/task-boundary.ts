@@ -158,6 +158,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         return latchFailure(error);
       }
     } } : {}),
+    ...(options.onConversationVisualization ? { onConversationVisualization: guard(options.onConversationVisualization) } : {}),
     ...(options.onMediaGenerationToolCall ? { onMediaGenerationToolCall: guard(options.onMediaGenerationToolCall) } : {}),
     ...(options.onDelegationToolCall ? { onDelegationToolCall: async request => {
       try {

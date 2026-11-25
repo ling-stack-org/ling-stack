@@ -38,6 +38,7 @@ export interface MessageBodyRendererProps {
   readonly onOpenLocalFile?: (reference: LocalFileReference) => void;
   readonly onDeferredContentReady?: (target: Element | null) => void;
   readonly mermaidLabels?: MermaidBlockLabels;
+  readonly renderVisualization?: (reference: Extract<MessageBodyBlock, { kind: "visualization" }>["reference"]) => ReactNode;
 }
 
 export function MessageBodyRenderer({
@@ -53,8 +54,9 @@ export function MessageBodyRenderer({
   onOpenLocalFile,
   onDeferredContentReady,
   mermaidLabels,
+  renderVisualization,
 }: MessageBodyRendererProps): React.JSX.Element {
-  const blocks = parseMessageBody(text, cwd, { allowMarkdown, streaming });
+  const blocks = parseMessageBody(text, cwd, { allowMarkdown, streaming, allowVisualizations: Boolean(renderVisualization) });
   const rootClassName = [
     "message-body-renderer",
     compact ? "compact" : "",
@@ -75,12 +77,14 @@ export function MessageBodyRenderer({
         streaming,
         onDeferredContentReady,
         mermaidLabels,
+        renderVisualization,
       }))}
     </div>
   );
 }
 
 interface RenderBlockOptions {
+  readonly renderVisualization?: MessageBodyRendererProps["renderVisualization"];
   readonly mermaidLabels?: MermaidBlockLabels;
   readonly onOpenLocalFile?: (reference: LocalFileReference) => void;
   readonly renderCodeBlock?: (input: MessageCodeBlockRenderInput) => ReactNode;
@@ -96,6 +100,8 @@ function renderBlock(
   options: RenderBlockOptions,
 ): ReactNode {
   switch (block.kind) {
+    case "visualization":
+      return <Fragment key={`visualization-${block.reference.artifactId}`}>{options.renderVisualization?.(block.reference) ?? <p>{block.reference.label}</p>}</Fragment>;
     case "code": {
       const highlight = !options.streaming && block.complete;
       if (isDiffLanguage(block.language)) {

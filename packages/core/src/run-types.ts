@@ -2279,6 +2279,8 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[];
   deleteTeammatePrivateAttachment(id: string): boolean;
   appendConversationItem(input: AppendConversationItem, now: string): ConversationItemV1;
+  saveConversationVisualization(input: import("./conversation-visualization-types.js").SaveConversationVisualization): import("./conversation-visualization-types.js").SaveConversationVisualizationResult;
+  getConversationVisualization(artifactId: string): import("./conversation-visualization-types.js").SavedConversationVisualization | undefined;
   publishNormalRunNarration(runId: string, now: string): import("./normal-run-narration-types.js").PublishNormalRunNarrationResult;
   createNormalConversationFork(input: import("./normal-conversation-fork-types.js").CreateNormalConversationFork,
     capture: import("./normal-conversation-fork-types.js").CaptureNormalConversationFork, now: string): import("./normal-conversation-fork-types.js").CreateNormalConversationForkResult;

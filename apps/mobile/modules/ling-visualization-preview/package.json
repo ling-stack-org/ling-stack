@@ -1,0 +1,9 @@
+{
+  "name": "ling-visualization-preview",
+  "version": "0.0.1",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*",
+    "react-native": "*"
+  }
+}

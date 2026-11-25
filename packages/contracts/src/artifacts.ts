@@ -42,15 +42,15 @@ export const HTML_INTERACTIVE_MAX_BYTES = 2 * 1024 * 1024;
  * The inner content stays in an opaque-origin sandboxed iframe and scripts are
  * enabled only when the caller explicitly opts into them.
  */
-export function createInteractiveHtmlPreviewDocument(html: string, title: string, allowScripts = false): string {
+export function createInteractiveHtmlPreviewDocument(html: string, title: string, allowScripts = false, colorScheme?: "light" | "dark"): string {
   const escapeAttribute = (value: string): string => value.replaceAll("&", "&amp;")
     .replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("'", "&#39;");
   const resources = allowScripts ? HTML_INTERACTIVE_CSP
     : HTML_INTERACTIVE_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
   const outerCsp = `${resources}; frame-src about:`;
-  return '<!doctype html><html><head><meta charset="utf-8">'
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
     + '<meta http-equiv="Content-Security-Policy" content="' + outerCsp + '">'
-    + '<style>html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>'
+    + '<style>:root{color-scheme:' + (colorScheme === 'dark' ? 'dark' : colorScheme === 'light' ? 'light' : 'light dark') + '}html,body{margin:0;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style>'
     + '</head><body><iframe sandbox="' + (allowScripts ? "allow-scripts" : "") + '" title="' + escapeAttribute(title)
     + '" srcdoc="' + escapeAttribute(injectInteractiveHtmlCsp(html)) + '"></iframe></body></html>';
 }

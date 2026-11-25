@@ -880,6 +880,8 @@ import { applyRunProgressCheckpointMigration } from "./sqlite/run-progress-check
 import { applyConversationContextViewLineageMigration } from "./sqlite/conversation-context-view-lineage-migration.js";
 import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
+import { getConversationVisualization, migrateConversationVisualizations, saveConversationVisualization } from "./sqlite/conversation-visualization-store.js";
+
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
   readonly paths?: LingStackRuntimePaths;
@@ -2180,6 +2182,7 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
+        migrateConversationVisualizations(this.database, version => this.hasMigration(version), (version, name) => this.recordMigration(version, name));
         applyAppServerMigrations({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
@@ -5160,6 +5163,14 @@ export class SqliteRunStore implements RunStore {
 
   deleteTeammatePrivateAttachment(id: string): boolean {
     return this.teammateDirect.deleteTeammatePrivateAttachment(id);
+  }
+
+  saveConversationVisualization(input: Parameters<RunStore["saveConversationVisualization"]>[0]): ReturnType<RunStore["saveConversationVisualization"]> {
+    return saveConversationVisualization(this.database, this, input);
+  }
+
+  getConversationVisualization(artifactId: string): ReturnType<RunStore["getConversationVisualization"]> {
+    return getConversationVisualization(this.database, artifactId);
   }
 
   listUnpublishedNormalNarrationRunIds(afterRunId: string, limit: number): string[] {

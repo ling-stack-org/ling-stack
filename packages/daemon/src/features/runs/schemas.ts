@@ -92,6 +92,7 @@ export interface RunRequest extends Omit<
   | "hostCompactionEnabled"
   | "mediaGenerationTools"
   | "onMediaGenerationToolCall"
+  | "onConversationVisualization"
 > {
   readonly schemaVersion?: 2;
   /** Daemon-owned snapshot assessment binding. Public request parsing never accepts this field. */
@@ -139,6 +140,8 @@ export interface RunRequest extends Omit<
   readonly continuationReason?: RunContinuationReason;
   readonly sourceMessageId?: string;
   readonly linkedMessageId?: string;
+  /** Internal ceiling for text-only Remote Access replies. */
+  readonly disableConversationVisualization?: true;
   readonly createdByActor?: LingTurnCreatedByActor;
   readonly directWorkspaceBinding?: DirectWorkspaceBinding;
   readonly directWorkspaceSnapshot?: DirectWorkspaceSnapshot;
