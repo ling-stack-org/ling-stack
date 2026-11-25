@@ -72,6 +72,8 @@ const overlays = [
     indexes: ["idx_work_item_evidence_item_sequence"], triggers: [] },
   { version: 237, name: "create_app_server_state", tables: ["app_server_state"],
     indexes: ["idx_app_server_state_kind_updated"], triggers: [] },
+  { version: 238, name: "conversation_visualizations", tables: ["conversation_visualizations"],
+    indexes: ["idx_conversation_visualizations_run"], triggers: [] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();

@@ -67,6 +67,7 @@ export function rewindRemainingWorkSuccessors(db: DatabaseSync): void {
   if (has(227) || has(229)) rewindNodeRerunApprovalFixture(db);
 
   const future = [
+    { version: 238, name: "conversation_visualizations", table: "conversation_visualizations" },
     { version: 226, name: "node_rerun_intents", table: "node_rerun_intents" },
     { version: 225, name: "persist_rebuildable_context_view_lineage", table: "conversation_context_view_lineage" },
   ] as const;
