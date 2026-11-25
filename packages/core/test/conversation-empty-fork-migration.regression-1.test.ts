@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { applyConversationEmptyForkMigration } from "../dist/storage/sqlite/conversation-empty-fork-migration.js";
+import type { SqliteRunStoreMigrationContext } from "../dist/storage/sqlite/migrations.js";
 
 // Regression: C03-BRANCH-TOPOLOGY — empty origins must not discard snapshot payloads.
 // Found by /qa on 2026-10-25.
 // Report: output/e6-20260928/p3-bash-cwd-contract-live-20261025/c03-scope-findings.md
 // Real isolated SQLite; minimal parent schemas, no real profile/GUI coverage.
-function fixture(t) {
+function fixture(t: TestContext): SqliteRunStoreMigrationContext {
   const database = new DatabaseSync(":memory:"); t.after(() => database.close());
   database.exec(`PRAGMA foreign_keys=ON;
     CREATE TABLE workspaces(id TEXT PRIMARY KEY); CREATE TABLE ling_threads(id TEXT PRIMARY KEY);
@@ -30,17 +31,29 @@ function fixture(t) {
     INSERT INTO conversation_context_snapshots VALUES
       ('fork','workspace_default','parent','segment','projection',1,'[]','[]','policy','2026-10-25T00:00:00.000Z','fork_context',NULL,NULL,NULL,NULL),
       ('accepted','workspace_default','parent','segment','projection2',2,'[]','[]','policy','2026-10-25T00:00:01.000Z','accepted_input',1,'item','{"text":"EXACT\\nPAYLOAD"}','fingerprint');`);
-  return { database, hasMigration: version => Boolean(database.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version)),
-    recordMigration: (version, name) => database.prepare("INSERT INTO schema_migrations VALUES (?,?,?)").run(version, name, "2026-10-25T00:01:00.000Z") };
+  return {
+    database,
+    hasMigration: (version: number) => Boolean(database.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version)),
+    hasColumn: (tableName: string, columnName: string) => database.prepare(`PRAGMA table_info(${tableName})`).all()
+      .some((row) => row.name === columnName),
+    hasTable: (tableName: string) => Boolean(database.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(tableName)),
+    recordMigration: (version: number, name: string) => {
+      database.prepare("INSERT INTO schema_migrations VALUES (?,?,?)").run(version, name, "2026-10-25T00:01:00.000Z");
+    },
+  };
 }
-const rows = f => f.database.prepare("SELECT * FROM conversation_context_snapshots ORDER BY id").all();
-const segment = f => f.database.prepare("PRAGMA table_info(conversation_context_snapshots)").all().find(row => row.name === "segment_id");
+const rows = (f: SqliteRunStoreMigrationContext) => f.database.prepare("SELECT * FROM conversation_context_snapshots ORDER BY id").all();
+const segmentNotNull = (f: SqliteRunStoreMigrationContext) => {
+  const row = f.database.prepare("PRAGMA table_info(conversation_context_snapshots)").all().find((item) => item.name === "segment_id");
+  assert.ok(row);
+  return row.notnull;
+};
 test("migration preserves every snapshot and accepted payload column and both indexes", t => {
   const f = fixture(t), before = rows(f);
   applyConversationEmptyForkMigration(f);
-  assert.deepEqual(rows(f), before); assert.equal(segment(f).notnull, 0);
+  assert.deepEqual(rows(f), before); assert.equal(segmentNotNull(f), 0);
   assert.equal(f.hasMigration(190), true);
-  assert.equal(f.database.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+  assert.equal(f.database.prepare("PRAGMA foreign_keys").get()?.foreign_keys, 1);
   assert.deepEqual(f.database.prepare("PRAGMA foreign_key_check").all(), []);
   assert.equal(f.database.prepare("PRAGMA index_list(conversation_context_snapshots)").all().length, 3);
   assert.throws(() => f.database.exec(`INSERT INTO conversation_context_snapshots SELECT
@@ -52,7 +65,7 @@ test("migration preserves every snapshot and accepted payload column and both in
 test("a failed migration rolls back schema, payloads and marker together", t => {
   const f = fixture(t), before = rows(f);
   assert.throws(() => applyConversationEmptyForkMigration({ ...f, recordMigration() { throw new Error("fixture-write-failure"); } }), /fixture-write-failure/);
-  assert.deepEqual(rows(f), before); assert.equal(segment(f).notnull, 1);
+  assert.deepEqual(rows(f), before); assert.equal(segmentNotNull(f), 1);
   assert.equal(f.hasMigration(190), false);
   assert.equal(f.database.prepare("SELECT 1 FROM sqlite_master WHERE name='conversation_context_snapshots_v190'").get(), undefined);
 });
@@ -60,5 +73,5 @@ test("unknown schema extensions are refused before a rebuild can discard them", 
   const f = fixture(t);
   f.database.exec("ALTER TABLE conversation_context_snapshots ADD COLUMN future_payload TEXT");
   assert.throws(() => applyConversationEmptyForkMigration(f), /schema|source/);
-  assert.equal(segment(f).notnull, 1); assert.equal(f.hasMigration(190), false);
+  assert.equal(segmentNotNull(f), 1); assert.equal(f.hasMigration(190), false);
 });
