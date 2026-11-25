@@ -1340,6 +1340,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/runs/user-input-source-execution.ts",
   "packages/daemon/src/features/runs/user-input-source-policy.ts",
   "packages/daemon/src/features/runs/user-input-workflow-terminal.ts",
+  "packages/daemon/src/features/runs/video-artifacts.ts",
   "packages/daemon/src/features/runs/work-units.ts",
   "packages/daemon/src/features/runs/workflow-operation-effect-gate.ts",
   "packages/daemon/src/features/runs/workflow-operation-snapshot.ts",

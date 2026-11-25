@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import fsPromises, { mkdtemp, open, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,15 +46,62 @@ test("publishes a large workspace MP4 once and serves its stored bytes with HTTP
   await writeFile(join(cwd, "text.mp4"), "a text file");
   assert.equal((await publish("text.mp4")).status, 415);
 
-  const first = await publish(name);
-  assert.equal(first.status, 201);
+  const oversized = await open(join(cwd, "oversized.mp4"), "wx");
+  try {
+    await oversized.truncate(512 * 1024 * 1024 + 1);
+    await oversized.write(header, 0, header.length, 0);
+  } finally { await oversized.close(); }
+  const rejected = await publish("oversized.mp4");
+  assert.equal(rejected.status, 413);
+  assert.equal((await rejected.json() as { error: string }).error, "video_size_exceeded");
+
+  const changed = join(cwd, "changed.mp4");
+  const replacement = join(cwd, "replacement.mp4");
+  await Promise.all([writeFile(changed, header), writeFile(replacement, Buffer.concat([header, Buffer.from("replacement")]))]);
+  const changedPath = await realpath(changed);
+  const actualOpen = fsPromises.open;
+  const openDuringReplacement = t.mock.method(fsPromises, "open", async (...args: Parameters<typeof actualOpen>) => {
+    if (args[0] === changedPath) await rename(replacement, changed);
+    return actualOpen(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const conflict = await publish("changed.mp4");
+    assert.equal(conflict.status, 409);
+    assert.equal((await conflict.json() as { error: string }).error, "video_source_changed");
+  } finally {
+    openDuringReplacement.mock.restore();
+    syncBuiltinESMExports();
+  }
+  const artifactRoot = await realpath(store.paths.artifactsDir);
+  const lowDisk = t.mock.method(fs, "statfsSync", (path: string) => {
+    assert.equal(path, artifactRoot);
+    return { bavail: 1n, bsize: 4096n };
+  });
+  syncBuiltinESMExports();
+  try {
+    const unavailable = await publish(name);
+    assert.equal(unavailable.status, 507);
+    assert.equal((await unavailable.json() as { error: string }).error, "video_storage_insufficient");
+  } finally {
+    lowDisk.mock.restore();
+    syncBuiltinESMExports();
+  }
+  assert.equal(store.listArtifacts(run.id).length, 0);
+
+  const { dev, ino, size: sourceSize, mtimeMs, ctimeMs } = await stat(source);
+  const expectedId = "artifact_" + createHash("sha256")
+    .update(JSON.stringify([run.id, await realpath(source), dev, ino, sourceSize, mtimeMs, ctimeMs])).digest("hex");
+  const responses = await Promise.all([publish(name), publish(source)]);
+  assert.deepEqual(responses.map(response => response.status).sort(), [200, 201]);
+  const first = responses.find(response => response.status === 201)!;
   const { artifact } = await first.json() as { artifact: RunArtifact };
+  assert.equal(artifact.id, expectedId);
   assert.equal(artifact.type, "video");
   assert.equal(artifact.title, name);
   assert.equal(artifact.runId, run.id);
   assert.equal(artifact.sizeBytes, size);
-  const retry = await publish(source);
-  assert.equal(retry.status, 200);
+  const retry = responses.find(response => response.status === 200)!;
   assert.equal((await retry.json() as { artifact: RunArtifact }).artifact.id, artifact.id);
   assert.equal(store.listArtifacts(run.id).length, 1);
   await rm(source);
