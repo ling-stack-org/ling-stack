@@ -3691,8 +3691,11 @@ export function WorkspaceClientView({
   const progressPopoverMotionClass = progressPopoverPresence.expanded ? "is-popover-expanded" : "is-popover-collapsed";
   const progressPopoverNode = (
     <ProgressPopover
+      currentTarget={selectedChannelWorkspace?.status === "ready" && selectedChannelExecutionPath
+        ? { kind: "workspace", path: selectedChannelExecutionPath }
+        : undefined}
       onClose={() => setProgressPopoverOpen(false)}
-      onOpenChanges={(reviewCwd) => openRightDockPage("review", undefined, { cwd: reviewCwd, baseline: "head" })}
+      onOpenChanges={channelRightDock.available ? (reviewCwd) => openRightDockPage("review", undefined, { cwd: reviewCwd, baseline: "head" }) : undefined}
       expanded={attentionProgressExpanded}
       onExpandedChange={setAttentionProgressExpanded}
       progressRows={attentionProgressRows}
@@ -3711,6 +3714,7 @@ export function WorkspaceClientView({
     ...progressSummaryLayout.style,
   } as CSSProperties;
   const taskWorkbenchTitlebarStyle = {
+    ...progressSummaryLayout.style,
     "--channel-progress-popover-right": `${progressSummaryLayout.dockOffset}px`,
   } as CSSProperties;
 

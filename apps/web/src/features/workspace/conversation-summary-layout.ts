@@ -1,6 +1,7 @@
 import { useLayoutEffect, useState, type CSSProperties } from "react";
 import {
   conversationSummaryGap,
+  conversationSummaryPanelWidth,
   resolveConversationSummaryLayout,
   type ConversationSummaryLayoutInput,
   type ConversationSummaryLayoutResolution,
@@ -35,6 +36,7 @@ export function useConversationSummaryLayout(
     ...resolution,
     style: {
       "--conversation-summary-layout-width": `${resolution.reserveWidth}px`,
+      "--conversation-summary-panel-width": `${conversationSummaryPanelWidth}px`,
       "--conversation-summary-gap": `${conversationSummaryGap}px`,
     } as CSSProperties,
   };

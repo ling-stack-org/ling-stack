@@ -6,6 +6,7 @@ import {
   conversationSummaryDockHandleWidth,
   conversationSummaryReserveWidth,
   resolveConversationSummaryLayout,
+  type ConversationSummaryLayoutInput,
 } from "../src/features/workspace/conversation-summary-layout-resolver.ts";
 import { channelRightDockResizeHandleWidth } from "../src/features/workspace/layout/channel-workspace-layout.ts";
 
@@ -13,7 +14,7 @@ test("summary and dock geometry share the same resize-handle width", () => {
   assert.equal(conversationSummaryDockHandleWidth, channelRightDockResizeHandleWidth);
 });
 
-function resolve(overrides = {}) {
+function resolve(overrides: Partial<ConversationSummaryLayoutInput> = {}) {
   return resolveConversationSummaryLayout({
     requestedOpen: true,
     containerWidth: 1600,
@@ -35,7 +36,7 @@ test("summary hides without clearing the requested-open input when space is insu
   const layout = resolve({ containerWidth: 1200 });
   assert.equal(layout.visible, false);
   assert.equal(layout.reserveWidth, 0);
-  assert.equal(layout.requiredWidth, 560 + 48 + 296 + 360 + 8);
+  assert.equal(layout.requiredWidth, 560 + 48 + conversationSummaryReserveWidth + 360 + 8);
 });
 
 test("closing the dock can restore the same requested summary", () => {
@@ -63,6 +64,6 @@ test("closed intent always removes the reserved column", () => {
     visible: false,
     reserveWidth: 0,
     dockOffset: 384,
-    requiredWidth: 1272,
+    requiredWidth: resolve().requiredWidth,
   });
 });

@@ -78,6 +78,7 @@ export function NormalConversationPage({
             summaryNode={(
               <ConversationSummaryPopover
                 open={summaryLayout.visible}
+                currentTarget={dockViewModel.context.threadId ? { kind: "thread", threadId: dockViewModel.context.threadId } : undefined}
                 title={t("Environment")}
                 subtitle={dockViewModel.context.workspaceLabel}
                 rows={summaryRows}
@@ -86,7 +87,7 @@ export function NormalConversationPage({
                 dockMotion={summaryDockMotion}
                 motionState={dockController.motionState}
                 onClose={onCloseSummary}
-                onOpenChanges={onOpenSummaryChanges}
+                onOpenChanges={dockController.available ? onOpenSummaryChanges : undefined}
               />
             )}
           />
