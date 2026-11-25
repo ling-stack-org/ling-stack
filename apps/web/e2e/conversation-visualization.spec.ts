@@ -4,13 +4,35 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
 const artifactId = "viz_0123456789abcdef0123456789abcdef";
-const html = [
-  "<fieldset><legend>Workspace view</legend><label><input type='radio' name='view' checked>Current session</label>",
-  "<label><input type='radio' name='view'>Project overview</label></fieldset>",
-  "<details><summary>View changes</summary><p>Example branch</p></details>",
-  "<button id='counter' type='button'>Count 0</button>",
-  "<script>const counter = document.getElementById('counter'); counter.onclick = () => { counter.textContent = 'Count 1'; };</script>",
-].join("");
+const html = `
+  <style>
+    :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+    body { margin: 0; padding: 12px; }
+    main { padding: 16px; border-radius: 10px; background: light-dark(#f2f6f4, #202a26); }
+    fieldset { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; border: 0; }
+    legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
+    label { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 7px; }
+    label:has(:checked) { background: light-dark(#d5ebe0, #305442); }
+    input { accent-color: #358263; }
+    h2 { font-size: 16px; margin: 12px 0 6px; }
+    .project, main:has(#project:checked) .session { display: none; }
+    main:has(#project:checked) .project { display: block; }
+    summary { cursor: pointer; }
+    button { margin-top: 8px; font: inherit; }
+  </style>
+  <main>
+    <fieldset>
+      <legend>Workspace view</legend>
+      <label><input type="radio" name="view" checked>Current session</label>
+      <label><input type="radio" name="view" id="project">Project overview</label>
+    </fieldset>
+    <h2 class="session">Current session · UI review</h2>
+    <h2 class="project">Project overview · Example workspace</h2>
+    <details><summary>View changes</summary><p>Example branch</p></details>
+    <button id="counter" type="button">Count 0</button>
+  </main>
+  <script>const counter = document.getElementById('counter'); counter.onclick = () => { counter.textContent = 'Count 1'; };</script>
+`;
 
 test("committed assistant visualization is inline, expandable and separate from script consent", async ({ page }, info) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
@@ -32,7 +54,7 @@ test("committed assistant visualization is inline, expandable and separate from 
     reads += 1;
     await route.fulfill({ json: {
       artifactId, title: "Workspace mockup", summary: "Example data", html, interaction: "script", layout: "wide",
-      sizeBytes: Buffer.byteLength(html), sha256: "0".repeat(64), preferredHeight: 240,
+      sizeBytes: Buffer.byteLength(html), sha256: "0".repeat(64), preferredHeight: 252,
     } });
   });
   const open = async () => {
@@ -53,12 +75,13 @@ test("committed assistant visualization is inline, expandable and separate from 
   expect(after!.y).toBeGreaterThan(bounds!.y + bounds!.height);
   const innerInline = page.frameLocator("iframe[data-conversation-visualization-frame='inline']").frameLocator("iframe").frameLocator("iframe");
   await innerInline.getByRole("radio", { name: "Project overview" }).check();
+  await expect(innerInline.getByRole("heading", { name: "Project overview · Example workspace" })).toBeVisible();
   await innerInline.getByText("View changes").click();
   await expect(innerInline.getByText("Example branch")).toBeVisible();
   await innerInline.getByRole("button", { name: "Count 0" }).click();
   await expect(innerInline.getByRole("button", { name: "Count 0" })).toBeVisible();
   if (process.env.LING_CAPTURE_UI2_EVIDENCE === "1") {
-    await page.screenshot({ path: info.outputPath("visualization-inline.png") });
+    await figure.screenshot({ path: info.outputPath("visualization-inline.png") });
   }
 
   const expand = figure.getByRole("button", { name: "Expand", exact: true });

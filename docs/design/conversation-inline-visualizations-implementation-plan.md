@@ -14,7 +14,8 @@
 
 | 范围 | 证据 |
 | --- | --- |
-| 发布与历史 | [Daemon 集成测试](../../packages/daemon/test/conversation-visualization.test.ts)经过 Pi 注册、普通会话提交、频道回复、队友私聊、SQLite 重开和按消息读取。覆盖幂等、冲突、未提交拒绝、过期版本和跨会话拒绝。模型输出由测试夹具提供。 |
+| 发布与历史 | [Pi SDK 测试](../../packages/runner-pi/test/sdk-tool-result.test.ts)执行真实工具调用并验证回执与日志。 [Daemon 集成测试](../../packages/daemon/test/conversation-visualization.test.ts)覆盖普通会话、频道、队友私聊、SQLite 重开和按消息读取。覆盖幂等、冲突、未提交拒绝、过期版本和跨会话拒绝。模型输出由测试夹具提供。 |
+| 迁移与续跑 | 历史迁移测试从旧架构升级并保留原数据和约束。用户回答后的续跑沿用已冻结的工具集合，交由当前执行所有者发布。 |
 | Web 和 Desktop | [Chromium 端到端测试](../../apps/web/e2e/conversation-visualization.spec.ts)覆盖共享消息渲染器的正文顺序、HTML 控件、展开与焦点恢复、脚本开关和刷新。Desktop 安装版的交互仍待验证。 |
 | 配对协议 | Daemon 的认证 WebSocket 集成测试覆盖协商后读取及未协商拒绝。[远程客户端测试](../../packages/remote-client/test/client.test.ts)覆盖旧 PC 降级、带摘要的读取与校验失败。 |
 | 原生构建 | 本机通过 iOS 无签名真机目标构建和 Android arm64 APK 构建。签名分发、iOS／Android 真机配对、跨网络读回与 WebView 触摸验收仍待验证。 |

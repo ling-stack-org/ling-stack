@@ -4,13 +4,16 @@ import type { DatabaseSync } from "node:sqlite";
 import type { SavedConversationVisualization, SaveConversationVisualization, SaveConversationVisualizationResult } from "../../conversation-visualization-types.js";
 import type { RunStore } from "../../run-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import type { SqliteRunStoreMigrationContext } from "./migrations.js";
 
 const version = 238;
 
-export function migrateConversationVisualizations(database: DatabaseSync, hasMigration: (version: number) => boolean,
-  recordMigration: (version: number, name: string) => void): void {
+export function applyConversationVisualizationMigration({ database, hasMigration, recordMigration }:
+  Pick<SqliteRunStoreMigrationContext, "database" | "hasMigration" | "recordMigration">): void {
   if (hasMigration(version)) return;
-  database.exec(`
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.exec(`
     CREATE TABLE conversation_visualizations (
       id TEXT PRIMARY KEY NOT NULL,
       run_id TEXT NOT NULL REFERENCES run_sessions(id) ON DELETE CASCADE,
@@ -29,8 +32,13 @@ export function migrateConversationVisualizations(database: DatabaseSync, hasMig
       created_at TEXT NOT NULL
     );
     CREATE INDEX idx_conversation_visualizations_run ON conversation_visualizations(run_id);
-  `);
-  recordMigration(version, "conversation_visualizations");
+    `);
+    recordMigration(version, "conversation_visualizations");
+    database.exec("COMMIT");
+  } catch (error) {
+    rollbackOwnedSqliteTransaction(database);
+    throw error;
+  }
 }
 
 type Ports = Pick<RunStore, "isCurrentRunExecutionOwner" | "getRun" | "getLingThread" | "getLingTurnForRun" |

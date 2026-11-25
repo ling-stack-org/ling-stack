@@ -5,10 +5,11 @@ import { sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { rewindNodeRerunApprovalFixture } from "./node-rerun-approval-predecessor.ts";
 
-const appServerMarkers = [
+const appServerAndLaterMarkers = [
   [235, "add_work_item_control_projection"],
   [236, "create_work_item_evidence"],
   [237, "create_app_server_state"],
+  [238, "conversation_visualizations"],
 ] as const;
 
 const workItemControlDefaults = [
@@ -22,11 +23,11 @@ const workItemControlDefaults = [
   ["holds_json", "[]"],
 ] as const;
 
-/** Restore the Work Item schema of an owned temporary predecessor fixture. */
-export function rewindAppServerFixture(db: DatabaseSync): void {
-  const markers = db.prepare("SELECT version, name FROM schema_migrations WHERE version IN (235, 236, 237) ORDER BY version").all();
+/** Restore the schema from before App Server migrations in an owned temporary fixture. */
+export function rewindToPreAppServerSchema(db: DatabaseSync): void {
+  const markers = db.prepare("SELECT version, name FROM schema_migrations WHERE version IN (235, 236, 237, 238) ORDER BY version").all();
   if (markers.length === 0) return;
-  assert.deepEqual(markers.map(({ version, name }) => [version, name]), appServerMarkers);
+  assert.deepEqual(markers.map(({ version, name }) => [version, name]), appServerAndLaterMarkers);
   const file = db.prepare("PRAGMA database_list").all().find(row => row.name === "main")?.file;
   assert.ok(typeof file === "string" && realpathSync(file).startsWith(`${realpathSync(tmpdir())}${sep}`),
     "App Server rewind requires an owned temporary database");
@@ -37,6 +38,7 @@ export function rewindAppServerFixture(db: DatabaseSync): void {
     assert.equal(db.prepare(`SELECT id FROM work_items WHERE ${changedControls} LIMIT 1`)
       .get(...workItemControlDefaults.map(([, value]) => value)), undefined, "Work Item controls must hold their initial values");
     for (const [table, index] of [
+      ["conversation_visualizations", "idx_conversation_visualizations_run"],
       ["app_server_state", "idx_app_server_state_kind_updated"],
       ["work_item_evidence", "idx_work_item_evidence_item_sequence"],
     ]) {
@@ -46,7 +48,7 @@ export function rewindAppServerFixture(db: DatabaseSync): void {
       db.exec(`DROP TABLE ${table}`);
     }
     for (const [column] of [...workItemControlDefaults].reverse()) db.exec(`ALTER TABLE work_items DROP COLUMN ${column}`);
-    for (const [version, name] of appServerMarkers) {
+    for (const [version, name] of appServerAndLaterMarkers) {
       assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=? AND name=?").run(version, name).changes, 1);
     }
     db.exec("COMMIT");
@@ -62,12 +64,11 @@ export function rewindAppServerFixture(db: DatabaseSync): void {
  * their real predecessor schemas are restored by the dedicated helpers.
  */
 export function rewindRemainingWorkSuccessors(db: DatabaseSync): void {
-  rewindAppServerFixture(db);
+  rewindToPreAppServerSchema(db);
   const has = (version: number) => Boolean(db.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version));
   if (has(227) || has(229)) rewindNodeRerunApprovalFixture(db);
 
   const future = [
-    { version: 238, name: "conversation_visualizations", table: "conversation_visualizations" },
     { version: 226, name: "node_rerun_intents", table: "node_rerun_intents" },
     { version: 225, name: "persist_rebuildable_context_view_lineage", table: "conversation_context_view_lineage" },
   ] as const;

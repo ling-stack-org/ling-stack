@@ -282,7 +282,8 @@ async function completeAiChannelReply(input: {
       "Use only attachment/link metadata and preview/extraction text that is explicitly included in the turn envelope. Do not claim to inspect unavailable attachment bodies or web page bodies.",
       "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
       "If Ling web context is blocked, degraded, or has no usable source URLs, explain the limitation briefly in user-facing language and do not repeat provider, relay, or protocol diagnostics verbatim.",
-      "Do not use workspace tools, MCP tools, or other side effects. If Ling exposes image_generate, video_generate, or conversation_visualization_create for this run, use those first-party tools only when the user asks for generated content in this reply.",
+      "Do not use workspace tools, MCP tools, or other side effects. If Ling exposes image_generate or video_generate for this run, use those first-party media tools only when the user asks to generate media.",
+      "Use conversation_visualization_create when it is available and the user asks for an interactive visualization in this reply.",
       ...(!proposalSuggestionsAllowed
         ? [
             "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or other side effects; the explicitly exposed first-party reply generation tools are the only exception.",

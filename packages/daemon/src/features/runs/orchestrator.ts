@@ -1069,11 +1069,13 @@ async function executeAdmittedRunRequest(
     const delegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
       && dynamicDelegationRegistry?.isSelectedWorkflow({ store, workflowStepId: runRequest.workflowStepId,
         channelId: runRequest.task.channelId }) === true;
+    const visualizationEligible = frozenExecution
+      ? frozenExecution.input.initialToolSurface?.conversationVisualization === true
+      : isConversationMediaGenerationEligible({ createdByActor: runRequest.createdByActor, workUnitKind: workUnitOwner.kind });
     const currentAgentCapabilitySurface = () => ({
-      conversationVisualization: !runRequest.disableConversationVisualization && !runRequest.codeAssessment
+      conversationVisualization: visualizationEligible && !runRequest.disableConversationVisualization && !runRequest.codeAssessment
         && !runRequest.workflowStepId && !delegatedExecution && !isolatedFiles && !workflowSafetyPlan
-        && runnerResolution?.runner.adapter instanceof PiRunnerAdapter
-        && isConversationMediaGenerationEligible({ createdByActor: runRequest.createdByActor, workUnitKind: workUnitOwner.kind }),
+        && runnerResolution?.runner.adapter instanceof PiRunnerAdapter,
       codeIntelligence: !runRequest.workflowStepId && !delegatedExecution && runnerResolution?.runner.adapter instanceof PiRunnerAdapter
         && (runtimeTools === undefined || runtimeTools.includes("read")),
       codeMode: !runRequest.workflowStepId && !delegatedExecution && runnerResolution?.runner.adapter instanceof PiRunnerAdapter,

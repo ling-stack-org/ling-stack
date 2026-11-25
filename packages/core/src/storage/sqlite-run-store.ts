@@ -880,7 +880,7 @@ import { applyRunProgressCheckpointMigration } from "./sqlite/run-progress-check
 import { applyConversationContextViewLineageMigration } from "./sqlite/conversation-context-view-lineage-migration.js";
 import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
-import { getConversationVisualization, migrateConversationVisualizations, saveConversationVisualization } from "./sqlite/conversation-visualization-store.js";
+import { applyConversationVisualizationMigration, getConversationVisualization, saveConversationVisualization } from "./sqlite/conversation-visualization-store.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -2182,12 +2182,16 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
-        migrateConversationVisualizations(this.database, version => this.hasMigration(version), (version, name) => this.recordMigration(version, name));
         applyAppServerMigrations({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
           hasTable: (tableName) => this.hasTable(tableName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyConversationVisualizationMigration({
+          database: this.database,
+          hasMigration: version => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
       });
