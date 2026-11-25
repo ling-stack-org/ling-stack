@@ -1,4 +1,4 @@
-export const conversationSummaryPanelWidth = 280;
+export const conversationSummaryPanelWidth = 326;
 export const conversationSummaryGap = 16;
 export const conversationSummaryReserveWidth = conversationSummaryPanelWidth + conversationSummaryGap;
 export const conversationSummaryMinContentWidth = 560;

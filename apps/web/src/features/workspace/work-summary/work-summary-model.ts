@@ -1,4 +1,4 @@
-import type { WorkSummaryResponse, WorkSummaryGroupModel } from "./work-summary.types.js";
+import type { WorkSummaryResponse, WorkSummaryGroupModel, WorkSummaryTarget, WorkSummaryWorkspace } from "./work-summary.types.js";
 
 export function buildWorkSummaryGroups(summary: WorkSummaryResponse): WorkSummaryGroupModel[] {
   const groups = new Map<string, { id: string; sessions: WorkSummaryResponse["sessions"][number][]; workspace?: WorkSummaryResponse["workspaces"][number] }>();
@@ -12,6 +12,26 @@ export function buildWorkSummaryGroups(summary: WorkSummaryResponse): WorkSummar
     group.sessions.push(session);
   }
   return [...groups.values()];
+}
+
+export function findCurrentSummaryWorkspace(
+  summary: WorkSummaryResponse | undefined,
+  target: WorkSummaryTarget | undefined,
+): WorkSummaryWorkspace | undefined {
+  if (!summary || !target) return undefined;
+  if (target.kind === "workspace") {
+    return summary.workspaces.find((workspace) => workspace.cwd === target.path || workspace.key === target.path);
+  }
+  const key = summary.sessions.find((session) => session.threadId === target.threadId)?.workspaceKey;
+  return key ? summary.workspaces.find((workspace) => workspace.key === key) : undefined;
+}
+
+export function isCleanSummaryWorkspace(workspace: WorkSummaryWorkspace): boolean {
+  return workspace.state === "ready" && !workspace.partial && !workspace.error && workspace.changedFiles === 0;
+}
+
+export function summaryFolderLabel(path: string): string {
+  return path.split(/[\\/]/u).filter(Boolean).at(-1) ?? path;
 }
 
 /** Keep the last successful worktree/PR read during a partial service outage. */

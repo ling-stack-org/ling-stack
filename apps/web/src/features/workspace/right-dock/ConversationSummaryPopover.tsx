@@ -1,7 +1,9 @@
 import { WorkSummaryPanel } from "../work-summary/WorkSummaryPanel.js";
+import type { WorkSummaryTarget } from "../work-summary/work-summary.types.js";
 import type { CSSProperties, ReactNode } from "react";
 import { useI18n } from "../../../i18n.js";
 import { Popover, PopoverAnchor, PopoverContent } from "../../../shared/ui/index.js";
+import { conversationSummaryPanelWidth } from "../conversation-summary-layout-resolver.js";
 import type { ConversationPanelMotionState } from "../useConversationPanelPresence.js";
 
 export type ConversationSummaryTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
@@ -16,8 +18,9 @@ export interface ConversationSummaryRow {
 }
 
 export interface ConversationSummaryPopoverProps {
-  readonly onOpenChanges: (cwd: string) => void;
+  readonly onOpenChanges?: (cwd: string) => void;
   readonly open: boolean;
+  readonly currentTarget?: WorkSummaryTarget;
   readonly title: string;
   readonly subtitle?: string;
   readonly rows: readonly ConversationSummaryRow[];
@@ -30,6 +33,7 @@ export interface ConversationSummaryPopoverProps {
 
 export function ConversationSummaryPopover({
   open,
+  currentTarget,
   title,
   subtitle,
   rows,
@@ -65,12 +69,15 @@ export function ConversationSummaryPopover({
         data-resizing={motionState === "resizing" ? "true" : undefined}
         data-computer-use-obstacle="true"
         data-computer-use-obstacle-kind="summary"
-        style={{ "--conversation-summary-dock-offset": `${dockOffset}px` } as CSSProperties}
+        style={{
+          "--conversation-summary-dock-offset": `${dockOffset}px`,
+          "--conversation-summary-panel-width": `${conversationSummaryPanelWidth}px`,
+        } as CSSProperties}
         onOpenAutoFocus={(event) => event.preventDefault()}
         onCloseAutoFocus={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
       >
-        <WorkSummaryPanel visible={open} onClose={onClose} onOpenChanges={onOpenChanges}>
+        <WorkSummaryPanel visible={open} currentTarget={currentTarget} onClose={onClose} onOpenChanges={onOpenChanges}>
         <section className="attention-queue compact conversation-summary-popover" aria-label={title}>
           <div className="attention-section-head conversation-summary-head">
             <strong>{title}</strong>
