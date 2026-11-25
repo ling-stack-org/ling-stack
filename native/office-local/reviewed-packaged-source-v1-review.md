@@ -1,6 +1,7 @@
 # Scoped macOS Development Packaging Review
 
-The current source prerequisite includes the [MP4 publication and packaging inputs](#mp4-publication-and-packaging-inputs),
+The current source prerequisite includes the [visualization and GStack history inputs](#visualization-and-gstack-history-inputs),
+[MP4 publication and packaging inputs](#mp4-publication-and-packaging-inputs),
 [Workspace and device storage inputs](#workspace-and-device-storage-inputs),
 [Bundled plugin discovery](#bundled-plugin-discovery),
 [Conversation media inputs](#conversation-media-inputs),
@@ -9,6 +10,26 @@ The current source prerequisite includes the [MP4 publication and packaging inpu
 and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Visualization and GStack history inputs
+
+The independent review approved source commit
+`5b7956373f1ecab47ee4b48a143b7845e45dc693` for the hosted macOS arm64
+`unsigned_dev` development lane with ad-hoc signing and `provider=false` on
+Darwin 25.6.0. The Daemon reads visualization references through the
+`@ling-stack/conversation-ui-core/message-body` export. The reviewed source
+resolver binds that export and its imports to fixed authored file digests.
+When GStack history reaches its two-generation limit, Desktop can start with
+the retained, digest-bound generations and defer the incoming snapshot.
+
+The review matched 2,025 packaging inputs, including nine additions and 33
+updated entries, and all 15 Office native inputs. Focused endpoint regressions,
+Daemon and conversation UI core type checks, and the two esbuild source-input
+regressions passed on Node 22.22.1. The 261,814-byte record SHA-256 is
+`864049a50ce1e7dc48a9fac7ffcf4bc0fd1a7a298b94b30f8368d68c0229578e`.
+The fixed-order packaging and native aggregate SHA-256 values are
+`4e123fe7f982d7ad4b07196a9de15527267a8587c45da85c9d3911cefd46f861`
+and `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
 
 ## MP4 publication and packaging inputs
 
