@@ -1,4 +1,4 @@
-import { closeSync, constants, createReadStream, fstatSync, openSync, statSync } from "node:fs";
+import { closeSync, constants, createReadStream, fstatSync, openSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   ApprovalDecisionUnavailableError,
@@ -310,6 +310,7 @@ export function handleGetArtifact(
 }
 
 export function handleGetArtifactContent(
+  request: IncomingMessage,
   response: ServerResponse,
   url: URL,
   storeRegistry: RunStoreRegistry,
@@ -358,15 +359,6 @@ export function handleGetArtifactContent(
 
   try {
     const nativeContent = readNativeArtifactContent(lookup.store.paths.artifactsDir, lookup.artifact);
-    const stats = nativeContent ? undefined : statSync(artifactPath);
-    if (!nativeContent && !stats?.isFile()) {
-      writeJson(response, 404, {
-        error: "artifact_content_not_found",
-        message: `Artifact content is not a file: ${lookup.artifact.id}`,
-      });
-      return;
-    }
-
     const ranged = nativeContent
       ? (() => {
           const rangeOffset = offset ?? 0;
@@ -386,53 +378,15 @@ export function handleGetArtifactContent(
       : offset !== undefined || requestedLimit !== undefined
         ? readArtifactContentRange(artifactPath, offset ?? 0, requestedLimit ?? MAX_ARTIFACT_RANGE_BYTES)
         : undefined;
+    const contentType = lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact);
     if (!ranged) {
-      if (stats!.size > MAX_ARTIFACT_TRANSFER_BYTES) {
-        writeJson(response, 413, {
-          error: "artifact_transfer_budget_exceeded",
-          message: `Artifact is ${stats!.size} bytes; request a range of at most ${MAX_ARTIFACT_RANGE_BYTES} bytes.`,
-        });
-        return;
-      }
-      // Full-size media and downloads retain their existing HTTP contract, but
-      // must not allocate the entire artifact in the daemon's event loop.
-      const fd = openSync(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW);
-      let sizeBytes: number;
-      try {
-        const opened = fstatSync(fd);
-        if (!opened.isFile()) throw new Error(`Artifact content is not a file: ${lookup.artifact.id}`);
-        sizeBytes = opened.size;
-        if (sizeBytes === 0) {
-          closeSync(fd);
-          setCorsHeaders(response);
-          response.writeHead(200, {
-            "Content-Type": lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact),
-            "Content-Length": "0",
-            "X-Content-Type-Options": "nosniff",
-          });
-          response.end();
-          return;
-        }
-        const stream = createReadStream(artifactPath, { fd, autoClose: true, end: sizeBytes - 1, highWaterMark: 64 * 1024 });
-        stream.once("error", () => response.destroy());
-        response.once("close", () => stream.destroy());
-        setCorsHeaders(response);
-        response.writeHead(200, {
-          "Content-Type": lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact),
-          "Content-Length": String(sizeBytes),
-          "X-Content-Type-Options": "nosniff",
-        });
-        stream.pipe(response);
-        return;
-      } catch (error) {
-        closeSync(fd);
-        throw error;
-      }
+      streamArtifactFile(request, response, artifactPath, contentType, lookup.artifact.type === "video");
+      return;
     }
     const content = ranged.content;
     setCorsHeaders(response);
     response.writeHead(ranged.partial ? 206 : 200, {
-      "Content-Type": lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact),
+      "Content-Type": contentType,
       "Content-Length": String(content.byteLength),
       ...(ranged.content.byteLength > 0 ? {
         "Accept-Ranges": "bytes",
@@ -442,6 +396,10 @@ export function handleGetArtifactContent(
     });
     response.end(content);
   } catch (error) {
+    if (response.headersSent) {
+      response.destroy();
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     const invalidRange = message === "Artifact range offset exceeds content size.";
     writeJson(response, invalidRange ? 416 : 404, {
@@ -449,6 +407,73 @@ export function handleGetArtifactContent(
       message,
     });
   }
+}
+
+function streamArtifactFile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  artifactPath: string,
+  contentType: string,
+  video: boolean,
+): void {
+  let fd: number | undefined = openSync(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isFile()) throw new Error("Artifact content is not a file.");
+    const size = opened.size;
+    if (!video && size > MAX_ARTIFACT_TRANSFER_BYTES) {
+      writeJson(response, 413, {
+        error: "artifact_transfer_budget_exceeded",
+        message: `Artifact is ${size} bytes; request a range of at most ${MAX_ARTIFACT_RANGE_BYTES} bytes.`,
+      });
+      return;
+    }
+
+    const range = video && request.method === "GET" && request.headers["if-range"] === undefined
+      ? parseVideoByteRange(request.headers.range, size)
+      : undefined;
+    if (range === null) {
+      response.setHeader("Accept-Ranges", "bytes");
+      response.setHeader("Content-Range", `bytes */${size}`);
+      writeJson(response, 416, { error: "artifact_range_invalid", message: "Requested byte range is not satisfiable." });
+      return;
+    }
+    const start = range?.start ?? 0;
+    const end = range?.end ?? size - 1;
+    setCorsHeaders(response);
+    response.writeHead(range ? 206 : 200, {
+      "Content-Type": contentType,
+      "Content-Length": String(end - start + 1),
+      ...(video ? { "Accept-Ranges": "bytes" } : {}),
+      ...(range ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}),
+      "X-Content-Type-Options": "nosniff",
+    });
+    if (size === 0 || request.method === "HEAD") {
+      response.end();
+      return;
+    }
+    const stream = createReadStream(artifactPath, { fd, start, end, highWaterMark: 64 * 1024 });
+    fd = undefined;
+    stream.once("error", () => response.destroy());
+    response.once("close", () => stream.destroy());
+    stream.pipe(response);
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function parseVideoByteRange(header: string | undefined, size: number): { start: number; end: number } | null | undefined {
+  // Native media players use a single range. Other range formats receive a full response.
+  const match = header?.match(/^bytes=(\d*)-(\d*)$/iu);
+  if (!match || (!match[1] && !match[2])) return undefined;
+  if (size === 0) return null;
+  if (!match[1]) {
+    const length = Number(match[2]);
+    return length > 0 ? { start: Math.max(0, size - length), end: size - 1 } : null;
+  }
+  const start = Number(match[1]);
+  const end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+  return start <= end ? { start, end } : null;
 }
 
 export function handleGetArtifactPreview(

@@ -3,7 +3,7 @@ import { useI18n } from "../../../i18n.js";
 import type { ConversationGeneratedMedia } from "../../../types.js";
 import { displayableGeneratedMediaArtifacts } from "../generated-media.js";
 import { Spinner } from "../../ui/index.js";
-import { ConversationGeneratedMediaArtifact } from "./ConversationGeneratedMediaArtifact.js";
+import { ConversationMediaArtifact } from "./ConversationMediaArtifact.js";
 import { ConversationGeneratedMediaFrameViewer } from "./ConversationGeneratedMediaFrameViewer.js";
 
 export interface ConversationGeneratedMediaBlockProps {
@@ -57,7 +57,7 @@ export function ConversationGeneratedMediaBlock({
               ) : mediaArtifacts.length > 0 ? (
                 <div className="conversation-generated-media-artifacts">
                   {mediaArtifacts.map((artifact) => (
-                    <ConversationGeneratedMediaArtifact artifact={artifact} cwd={cwd} key={artifact.id} />
+                    <ConversationMediaArtifact artifact={artifact} cwd={cwd} generated key={artifact.id} />
                   ))}
                 </div>
               ) : (
