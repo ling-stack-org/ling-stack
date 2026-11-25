@@ -139,6 +139,10 @@ test("deliberation schemas describe the checkpoint and the frozen evaluation bas
   assert.equal(validateLingAppServerParams("workItem/deliberation/open", {
     workItemId: "item", expectedWorkItemRevision: 3, idempotencyKey: "open",
   }).path, "params.evaluationId");
+  assert.ok(validateLingAppServerParams("workItem/deliberation/open", {
+    workItemId: "item", evaluationId: "evaluation", expectedWorkItemRevision: 3,
+    idempotencyKey: "shape", execution: "read_only_shaping",
+  }).ok);
 });
 
 test("GitHub delivery results carry the source of each check and the exact run attempt", () => {

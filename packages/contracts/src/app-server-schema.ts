@@ -461,7 +461,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       };
     case "workItem/deliberation/open":
       return { params: objectWith({ ...workItemTarget, evaluationId: stringSchema, expectedWorkItemRevision: integerSchema,
-        idempotencyKey: stringSchema, execution: { enum: ["read_only_workflow"] }, ballotMode: { enum: ["when_unresolved"] } },
+        idempotencyKey: stringSchema, execution: { enum: ["read_only_shaping", "read_only_workflow"] }, ballotMode: { enum: ["when_unresolved"] } },
       ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result };
     case "workItem/deliberation/cancel":
       return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result };

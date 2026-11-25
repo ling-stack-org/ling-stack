@@ -260,9 +260,14 @@ export async function openAppServerEvaluatedDeliberation(
     if (prior && prior.id !== roundId) throw keyConflict();
     const existing = prior ?? readWorkItemCollaborationRecord(store, workItemId, roundId);
     if (!existing) return undefined;
-    const hasWorkflow = isRecord(existing.payload) && isRecord(existing.payload.execution);
+    const retainedExecution = isRecord(existing.payload) && isRecord(existing.payload.execution)
+      ? typeof existing.payload.execution.kind === "string" ? existing.payload.execution.kind
+        : typeof existing.payload.execution.workflowId === "string" ? "read_only_workflow" : undefined
+      : undefined;
+    const expectedExecution = execution === "read_only_workflow" ? "read_only_workflow"
+      : execution === "read_only_shaping" ? "read_only_shaping" : undefined;
     const retainedBallotMode = isRecord(existing.payload) ? existing.payload.ballotMode : undefined;
-    if (hasWorkflow !== (execution === "read_only_workflow") || retainedBallotMode !== ballotMode) {
+    if (retainedExecution !== expectedExecution || retainedBallotMode !== ballotMode) {
       if (prior) throw keyConflict();
       throw stale("This decision revision was already admitted with a different execution mode.");
     }
@@ -272,6 +277,12 @@ export async function openAppServerEvaluatedDeliberation(
   const prior = readReplay();
   if (prior) return prior;
   if (evaluation.outcome !== "suggest") throw new HttpError(409, "resume_blocked", "Only a current deliberation suggestion can open a round.");
+  if (execution === "read_only_shaping" && evaluation.decision.subject.kind !== "draft_plan") {
+    throw new HttpError(409, "resume_blocked", "Read-only shaping is available only before a draft plan is accepted.");
+  }
+  if (execution === "read_only_shaping" && ballotMode !== undefined) {
+    throw new HttpError(409, "resume_blocked", "Pre-acceptance shaping cannot start a ballot round.");
+  }
   if ((decision.decisionStepId || ballotMode) && execution !== "read_only_workflow") {
     throw new HttpError(409, "resume_blocked", "This round requires a participant Workflow.");
   }
@@ -285,7 +296,8 @@ export async function openAppServerEvaluatedDeliberation(
     if (committed) return committed;
   }
   const deadlineAt = new Date(Date.parse(now) + validityMs).toISOString();
-  const round = checkpointRound(frozen, workItemId, roundId, expectedWorkItemRevision, idempotencyKey, deadlineAt, admission);
+  const round = checkpointRound(frozen, workItemId, roundId, expectedWorkItemRevision, idempotencyKey, deadlineAt, admission,
+    execution === "read_only_shaping" ? "read_only_shaping" : undefined);
   if (execution === "read_only_workflow") {
     const result = store.admitWorkItemDeliberationWorkflow({
       workItemId, expectedWorkItemRevision, roundId, assertCurrent,
@@ -305,14 +317,26 @@ function checkpointRoundId(workItemId: string, evaluation: Pick<LingAppServerDel
 }
 
 function checkpointRound({ evaluation, decision }: FrozenEvaluation, workItemId: string, id: string,
-  expectedWorkItemRevision: number, idempotencyKey: string, deadlineAt: string, basis: ReturnType<typeof readDecisionBasis>) {
+  expectedWorkItemRevision: number, idempotencyKey: string, deadlineAt: string, basis: ReturnType<typeof readDecisionBasis>,
+  execution?: "read_only_shaping") {
   return {
     id, workItemId, expectedWorkItemRevision, idempotencyKey,
     kind: "deliberation" as const, action: "started" as const, actorId: "local-user", visibility: "owner" as const,
     parentRecordId: evaluation.evaluationId,
     payload: { decisionPoint: decision.question, options: evaluation.optionRefs, subject: decision.subject,
       decisionId: evaluation.decisionId, decisionRevision: evaluation.decisionRevision, deadlineAt,
-      ...(basis.candidate ? { candidateDigest: basis.candidate.digest } : {}) },
+      ...(basis.candidate ? { candidateDigest: basis.candidate.digest } : {}),
+      ...(execution === "read_only_shaping" ? {
+        execution: { kind: execution, planId: decision.subject.kind === "draft_plan" ? decision.subject.planId : undefined,
+          planRevision: decision.subject.kind === "draft_plan" ? decision.subject.planRevision : undefined,
+          participantRoles: basis.participants.map(participant => ({ id: participant.id, roleKey: participant.roleKey })),
+          evidenceRefs: [...evaluation.optionRefs, ...evaluation.evidenceRefs],
+          // Shaping itself performs no model execution. Its zero token budget
+          // makes that boundary explicit while the deadline bounds replies
+          // collected by the coordinator.
+          budget: { maxTokens: 0, maxDurationMs: validityMs },
+        },
+      } : {}) },
     sourceRefs: [{ type: "deliberation_evaluation", id: evaluation.evaluationId, revision: evaluation.decisionRevision }],
   };
 }

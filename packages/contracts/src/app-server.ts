@@ -1364,7 +1364,12 @@ export interface LingAppServerDeliberationOpenParams {
   readonly evaluationId: string;
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
-  readonly execution?: "read_only_workflow";
+  /**
+   * `read_only_shaping` records a bounded pre-acceptance planning round. It
+   * never creates a Workflow or starts a Run and is valid only for a draft
+   * plan subject. `read_only_workflow` is reserved for an accepted stage.
+   */
+  readonly execution?: "read_only_shaping" | "read_only_workflow";
   readonly ballotMode?: "when_unresolved";
 }
 

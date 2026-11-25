@@ -2680,7 +2680,8 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   assert.equal(first.evaluation.subjectRevision, subjectRevision);
   assert.equal(store.listRuns({ threadId: thread.id }).length, 1);
 
-  const open = { workItemId: item.id, evaluationId: first.evaluation.evaluationId, expectedWorkItemRevision: first.workItemRevision, idempotencyKey: "open-plan" };
+  const open = { workItemId: item.id, evaluationId: first.evaluation.evaluationId, expectedWorkItemRevision: first.workItemRevision,
+    idempotencyKey: "open-plan", execution: "read_only_shaping" as const };
   const { credential, scoped } = await createObserver(client, fixture, item.id);
   await assert.rejects(scoped.call("workItem/deliberation/open", open), { code: "capability_denied" });
   const [opened, other] = await Promise.all([
@@ -2689,6 +2690,12 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   ]);
   assert.equal(opened.record.id, other.record.id);
   assert.deepEqual([opened.status, other.status].sort(), ["appended", "replayed"]);
+  assert.deepEqual((opened.record.payload as { execution?: { kind?: string; planId?: string; planRevision?: number; participantRoles?: unknown[]; evidenceRefs?: string[]; budget?: { maxTokens?: number; maxDurationMs?: number } } }).execution, {
+    kind: "read_only_shaping", planId: plan.id, planRevision: plan.revision,
+    participantRoles: participants.map(id => ({ id, roleKey: store.getAiTeammate(id)!.roleKey })),
+    evidenceRefs: [...optionRefs, evidenceRef], budget: { maxTokens: 0, maxDurationMs: 15 * 60_000 },
+  });
+  assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 0);
   await mcp.close();
   const repeated = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", { ...open,
     idempotencyKey: "another-open-key" });
