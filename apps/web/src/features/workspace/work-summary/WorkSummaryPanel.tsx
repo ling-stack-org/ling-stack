@@ -1,42 +1,46 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { GitPullRequest, RefreshCw } from "lucide-react";
-import { daemonClient } from "../../../api/client.js";
+import { useEffect, useRef, type ReactNode } from "react";
+import { GitBranch } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
-import { Button, IconButton, Input } from "../../../shared/ui/index.js";
-import { WorkSummaryGroup } from "./WorkSummaryGroup.js";
-import { WorkSummaryPullRequestRow } from "./WorkSummaryPullRequestRow.js";
-import { buildWorkSummaryGroups } from "./work-summary-model.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/index.js";
+import { WorkSummaryChangeRow } from "./WorkSummaryChangeRow.js";
+import { WorkSummaryProjectOverview } from "./WorkSummaryProjectOverview.js";
+import { findCurrentSummaryWorkspace } from "./work-summary-model.js";
+import type { WorkSummaryTarget } from "./work-summary.types.js";
 import { useWorkSummary } from "./useWorkSummary.js";
 import { useWorkSummaryContext } from "./WorkSummaryProvider.js";
 
-export function WorkSummaryPanel({ visible, onClose, onOpenChanges, children }: {
-  readonly onOpenChanges: (cwd: string) => void;
+interface WorkSummaryPanelProps {
   readonly visible: boolean;
+  readonly currentTarget?: WorkSummaryTarget;
+  readonly showCurrentBranch?: boolean;
   readonly onClose: () => void;
+  readonly onOpenChanges?: (cwd: string) => void;
   readonly children: ReactNode;
-}): ReactNode {
-  const context = useWorkSummaryContext();
-  return context ? <ProjectWorkSummary key={context.cwd} visible={visible} onClose={onClose} onOpenChanges={onOpenChanges}>{children}</ProjectWorkSummary> : children;
 }
 
-function ProjectWorkSummary({ visible, onClose, onOpenChanges, children }: {
-  readonly onOpenChanges: (cwd: string) => void;
-  readonly visible: boolean;
-  readonly onClose: () => void;
-  readonly children: ReactNode;
-}): React.JSX.Element {
-  const context = useWorkSummaryContext()!;
+export function WorkSummaryPanel(props: WorkSummaryPanelProps): ReactNode {
+  const context = useWorkSummaryContext();
+  return context?.cwd.trim()
+    ? <ProjectWorkSummary key={context.cwd} {...props} context={context} />
+    : props.children;
+}
+
+function ProjectWorkSummary({
+  visible,
+  currentTarget,
+  showCurrentBranch = true,
+  onClose,
+  onOpenChanges,
+  children,
+  context,
+}: WorkSummaryPanelProps & { readonly context: NonNullable<ReturnType<typeof useWorkSummaryContext>> }): React.JSX.Element {
   const { cwd, rememberTrigger, restoreFocus } = context;
   const { t } = useI18n();
-  const [url, setUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [mutationError, setMutationError] = useState("");
   const summary = useWorkSummary(cwd, visible);
-  const mounted = useRef(true);
+  const currentWorkspace = findCurrentSummaryWorkspace(summary.data, currentTarget);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     if (!visible) return;
     rememberTrigger();
@@ -50,50 +54,48 @@ function ProjectWorkSummary({ visible, onClose, onOpenChanges, children }: {
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [visible, rememberTrigger, restoreFocus]);
 
-  async function mutatePullRequest(action: () => Promise<void>): Promise<void> {
-    if (busy) return;
-    setBusy(true);
-    setMutationError("");
-    try {
-      await action();
-      if (!mounted.current) return;
-      setUrl("");
-      await summary.refresh();
-    } catch (error) {
-      if (mounted.current) setMutationError(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
+  function openChanges(path: string): void {
+    onOpenChanges?.(path);
+    onClose();
   }
 
-  return <section className="work-summary-panel" aria-label={t("Work summary")}>
-    <header className="work-summary-head">
-      <strong>{t("Work summary")}</strong>
-      <IconButton icon={RefreshCw} label={t("Refresh work summary")} size="sm" loading={summary.loading} disabled={summary.loading} onClick={() => void summary.refresh()} />
-    </header>
-    {summary.data ? <small className="work-summary-time">{t("Updated")} {new Date(summary.data.checkedAt).toLocaleTimeString()}</small> : null}
-    {summary.error ? <p role="status" className="work-summary-note">{t("Refresh failed; showing last available data")}</p> : null}
-    {summary.loading && !summary.data ? <p className="work-summary-note">{t("Loading")}</p> : null}
-    <div className="work-summary-context">{children}</div>
-    <div className="work-summary-groups">
-      {summary.data ? buildWorkSummaryGroups(summary.data).map((group) => <WorkSummaryGroup key={group.id} group={group}
-        onOpenSession={(session) => { onClose(); context.onOpenSession(session); }}
-        onOpenChanges={(workspace) => { onOpenChanges(workspace.cwd); onClose(); }} />) : null}
-      {summary.data?.sessions.length === 0 ? <p className="work-summary-note">{t("No sessions in this project yet")}</p> : null}
-      {summary.data?.truncated ? <p className="work-summary-note">{t("Showing a limited summary of this project")}</p> : null}
-    </div>
-    <section className="work-summary-pulls" aria-label={t("Pull requests")}>
-      <strong><GitPullRequest size={15} aria-hidden="true" />{t("Pull requests")}</strong>
-      {summary.data?.pullRequests.map((pull) => <WorkSummaryPullRequestRow key={pull.url} pull={pull} busy={busy}
-        onDetach={() => void mutatePullRequest(() => daemonClient.detachWorkSummaryPullRequest(cwd, pull.url))} />)}
-      <form className="work-summary-pr-form" onSubmit={(event) => {
-        event.preventDefault();
-        if (url.trim()) void mutatePullRequest(() => daemonClient.attachWorkSummaryPullRequest(cwd, url.trim()));
-      }}>
-        <Input value={url} onChange={(event) => setUrl(event.target.value)} aria-label={t("Pull request URL")} placeholder="https://github.com/owner/repo/pull/123" disabled={busy} />
-        <Button type="submit" size="sm" disabled={busy || !url.trim()}>{t("Attach")}</Button>
-      </form>
-      {mutationError ? <p className="work-summary-note" role="alert">{mutationError}</p> : null}
+  return (
+    <section className="work-summary-panel" aria-label={t("Work summary")}>
+      <Tabs defaultValue="conversation">
+        <TabsList aria-label={t("Work summary")} className="work-summary-tabs" appearance="contained" size="sm">
+          <TabsTrigger value="conversation">{t("Current conversation")}</TabsTrigger>
+          <TabsTrigger value="project">{t("Project overview")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="conversation" className="work-summary-view">
+          {children}
+          {currentWorkspace ? (
+            <div className="work-summary-current-workspace">
+              {showCurrentBranch && currentWorkspace.branch ? (
+                <div className="work-summary-current-branch" title={currentWorkspace.cwd}>
+                  <GitBranch size={15} aria-hidden="true" />
+                  <span>{currentWorkspace.branch}</span>
+                </div>
+              ) : null}
+              <WorkSummaryChangeRow workspace={currentWorkspace} onOpen={onOpenChanges ? () => openChanges(currentWorkspace.cwd) : undefined} />
+              {currentWorkspace.error ? <small role="status" className="work-summary-note">{t("Workspace read failed; last available snapshot shown")}</small> : null}
+            </div>
+          ) : currentTarget && summary.error ? (
+            <p role="status" className="work-summary-note">{t("Unable to load workspace changes")}</p>
+          ) : null}
+        </TabsContent>
+        <TabsContent value="project" className="work-summary-view" forceMount>
+          <WorkSummaryProjectOverview
+            cwd={cwd}
+            data={summary.data}
+            error={summary.error}
+            loading={summary.loading}
+            currentWorkspaceKey={currentWorkspace?.key}
+            onRefresh={summary.refresh}
+            onOpenChanges={onOpenChanges ? openChanges : undefined}
+            onOpenSession={(session) => { onClose(); context.onOpenSession(session); }}
+          />
+        </TabsContent>
+      </Tabs>
     </section>
-  </section>;
+  );
 }

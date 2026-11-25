@@ -1741,7 +1741,8 @@ export function TeammateWorkspace({
           summaryDockMotion={chatSummaryDockMotion}
           summaryDockState={chatDockController.motionState}
           summaryRows={privateSummaryRows}
-          onOpenSummaryChanges={(reviewCwd) => openChatDockPage("review", undefined, { cwd: reviewCwd, baseline: "head" })}
+          summaryThreadId={workspaceSnapshotCurrent ? directCanonicalThreadId : undefined}
+          onOpenSummaryChanges={chatDockController.available ? (reviewCwd) => openChatDockPage("review", undefined, { cwd: reviewCwd, baseline: "head" }) : undefined}
           terminalOpen={chatTerminalOpen}
           terminalDisabled={!cwd.trim()}
           detailsOpen={chatDockController.expanded}

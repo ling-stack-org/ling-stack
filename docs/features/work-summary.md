@@ -2,14 +2,16 @@
 
 Status: current implementation reference
 Owner: Web and Daemon maintainers
-Last verified: 2026-10-23
+Last verified: 2026-11-25
 Document type: feature reference
 Code anchors: `packages/contracts/src/work-summary.ts`, `packages/daemon/src/features/work-summary/`, `apps/web/src/features/workspace/work-summary/`
 Test anchors: `packages/daemon/test/work-summary.test.mjs`, `packages/daemon/test/work-summary-routes.test.mjs`, `apps/web/e2e/work-summary.spec.ts`
 
-在频道、普通对话和 AI 队友私聊顶部点击现有“摘要”按钮，打开右侧工作摘要。环境信息、分支和原有操作入口保留在同一面板中，不再增加第二个汇总按钮。
+在频道、普通对话和 AI 队友私聊顶部点击“摘要”，打开右侧工作摘要。打开时显示“当前会话”，可在同一面板切换到“项目概览”。
 
-摘要列出当前项目已知会话、关联工作目录的净变更、最近三次提交，以及手动关联的 GitHub PR。多个会话共享同一 Git worktree 时，变更只统计一次；不同 worktree 分别展示。点击变更行，在当前会话的右侧审查抽屉打开对应目录的 diff；不会弹出独立对话框或离开会话页面。
+- **当前会话**保留所在页面的环境、进度和上下文入口。已识别当前工作区时补充其分支与未提交变更。普通对话和私聊按会话身份查找工作区，频道按当前绑定的执行目录查找。
+- **项目概览**按工作目录分组，显示项目名、会话数和已知工作区数。每组可展开看会话状态、未提交变更和最近三次提交。共用工作树的多个会话共享同一份变更和提交。已关联的 GitHub PR 和 CI 状态在底部，可展开表单关联已有 PR。
+- 在支持展示右侧审查工作台的窗口中，点击变更行会打开所选工作目录相对 HEAD 的 Diff。窄窗口仍可读取摘要和展开分组。
 
 ## 数据与边界
 
@@ -37,6 +39,6 @@ daemon 通过现有 SecretResolver 读取 `GITHUB_TOKEN` 或 `GH_TOKEN`。未配
 
 ## 验证范围
 
-自动化覆盖真实临时 Git 仓库的净抵消、特殊路径、无 HEAD、二进制和读取限制，以及 SQLite 关联持久化、HTTP 权限边界、PR 当前 SHA 判定。浏览器测试覆盖三种会话入口、共享统计、懒加载抽屉、PR 关联与解绑、刷新失败和窄窗口。GitHub 响应测试使用 fixture，不代表真实账号权限验证。
+自动化覆盖真实临时 Git 仓库的净抵消、特殊路径、无 HEAD、二进制和读取限制，以及 SQLite 关联持久化、HTTP 权限边界、PR 当前 SHA 判定。浏览器测试覆盖三个会话入口、键盘切换页签与展开分组、共享统计、按所选工作树懒加载 Diff、PR 关联与解绑、刷新失败和窄窗口。浏览器的 GitHub 状态使用模拟数据。
 
 本次新增专用文案提供英文与简体中文，其余语言缺失译文的条目使用英文回退，已有译文继续使用。

@@ -21,6 +21,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Changed
 
+- **Conversation summaries separate current work from the project overview**, with expandable worktree groups, one set of changes per shared worktree, and linked pull request status.
+
 - **Automation scheduling and run persistence are idempotent and recoverable**, preserving monitor history, poll-slot deduplication, and durable Run and artifact links.
 - **Approval, capacity, and context migrations preserve existing execution facts** while adding the new durable surfaces needed by the completion plan.
 - **Review evidence and diagnostics** now retain bounded source references, scan metrics, and explicit unverified security findings while keeping GitHub, deep scanning, external scanners, and remediation as later stages.
