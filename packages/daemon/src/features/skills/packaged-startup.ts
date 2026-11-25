@@ -29,7 +29,7 @@ export async function preparePackagedGstackStartup() {
   } else if (process.platform === "win32") resources = join(dirname(executable), "resources");
   else throw new Error("packaged_gstack_host_invalid");
   const rootPath = join(resources, "gstack");
-  let published = true;
+  let admitted = false;
   const initialize = await prepareBundledSkillStartup({ rootPath,
     expectedManifestChecksum: identity.manifestChecksum, expectedUpstreamRevision: identity.upstreamRevision,
     expectedAdaptationRevision: identity.adaptationRevision, expectedTarget: identity.target, expectedSkillIds: identity.skillIds },
@@ -40,12 +40,11 @@ export async function preparePackagedGstackStartup() {
       const generations = await retainPackagedSkillGeneration(cache, { rootPath,
         expectedManifestChecksum: source.manifestChecksum, expectedUpstreamRevision: identity.upstreamRevision,
         expectedAdaptationRevision: identity.adaptationRevision, expectedTarget: identity.target,
-        expectedSkillIds: identity.skillIds }, browser.root, { onRetentionLimit: "use-existing" });
-      published = generations.current.manifestChecksum === source.manifestChecksum;
+        expectedSkillIds: identity.skillIds }, browser.root, { deferWhenFull: true });
       installPackagedSkillRuntime(generations.current, generations.retained);
+      admitted = generations.current !== undefined;
     });
-  // Keep the existing source snapshots when the cache is already full. The
-  // authenticated catalog remains active, while this package waits for a
-  // later update after an older generation is no longer needed.
-  return published ? initialize : () => undefined;
+  if (admitted) return initialize;
+  console.warn("packaged_skill_history_retention_limit: bundled gstack publication deferred");
+  return undefined;
 }

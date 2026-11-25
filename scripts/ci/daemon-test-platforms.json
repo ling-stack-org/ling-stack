@@ -671,7 +671,7 @@
     "test/packaged-codesign-native-source.test.mjs",
     "test/packaged-codesign-original-issuer.test.mjs",
     "test/packaged-gstack-history.test.mjs",
-    "test/packaged-gstack-startup.test.mjs",
+    "test/packaged-gstack-startup.test.ts",
     "test/packaged-office-native-bootstrap.test.mjs",
     "test/packaged-office-native-published-review.test.mjs",
     "test/packaged-office-native-resources.test.mjs",

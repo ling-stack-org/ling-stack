@@ -60,40 +60,29 @@ test("a full cache defers a third package while both authenticated generations r
   const { cwd, cache, selection } = await fixture(t);
   const first = await selection(1), second = await selection(2), third = await selection(3);
   await retainPackagedSkillGeneration(cache, first);
-  const secondResult = await retainPackagedSkillGeneration(cache, second);
-  assert.equal(secondResult.current.manifestChecksum, second.expectedManifestChecksum);
+  await retainPackagedSkillGeneration(cache, second);
   const before = await readdir(cache);
-  const result = await retainPackagedSkillGeneration(cache, third, undefined, { onRetentionLimit: "use-existing" });
-  assert.equal(result.retained.length, 1);
+  const result = await retainPackagedSkillGeneration(cache, third, undefined, { deferWhenFull: true });
+  assert.equal(result.current, undefined);
+  assert.equal(result.retained.length, 2);
   assert.deepEqual(await readdir(cache), before);
   const catalog = new PackagedSkillRuntimeCatalog(result.current, result.retained);
-  const contexts = [first, second].map(input => ({ skillId: "qa", sourceKind: "gstack-skill-directory", loaded: true, truncated: false,
-    sourceChecksum: hash(`# qa ${input === first ? 1 : 2}\n`), referencedFiles: [{ path: "manifest.json", checksum: input.expectedManifestChecksum }] }));
-  const boundContexts = contexts.map(context => catalog.bind(context)).map(context => catalog.restore(context, "qa"));
-  for (const context of boundContexts) assert.ok(context?.resourceBinding);
-  await rm(third.rootPath, { recursive: true });
-  for (const context of boundContexts) assert.match(await readFile(join(catalog.environment(context, cwd).GSTACK_ROOT, "SKILL.md"), "utf8"), /^# qa [12]\n$/);
-});
-test("legacy full caches persist the inferred current generation before deferring", async t => {
-  const { cache, selection } = await fixture(t);
-  const first = await selection(1), second = await selection(2), third = await selection(3);
-  await retainPackagedSkillGeneration(cache, first);
-  await new Promise(resolve => setTimeout(resolve, 10));
-  await retainPackagedSkillGeneration(cache, second);
-  await rm(join(cache, ".current.json"));
-  const result = await retainPackagedSkillGeneration(cache, third, undefined, { onRetentionLimit: "use-existing" });
-  assert.equal(result.current.manifestChecksum, second.expectedManifestChecksum);
-  assert.deepEqual(JSON.parse(await readFile(join(cache, ".current.json"))), {
-    schemaVersion: 1, manifestChecksum: second.expectedManifestChecksum,
-  });
+  for (const [index, input] of [first, second].entries()) {
+    const body = `# qa ${index + 1}\n`;
+    const bound = catalog.bind({ skillId: "qa", sourceKind: "gstack-skill-directory", loaded: true, truncated: false,
+      sourceChecksum: hash(body), referencedFiles: [{ path: "manifest.json", checksum: input.expectedManifestChecksum }] });
+    assert.deepEqual(catalog.restore(bound, "qa"), bound);
+    assert.equal(await readFile(join(catalog.environment(bound, cwd).GSTACK_ROOT, "SKILL.md"), "utf8"), body);
+  }
+  assert.throws(() => catalog.restore(undefined, "qa"), /resource_binding_missing/);
 });
 test("full-cache deferral still rejects a tampered candidate", async t => {
-  const { cwd, cache, selection } = await fixture(t);
+  const { cache, selection } = await fixture(t);
   await retainPackagedSkillGeneration(cache, await selection(1));
   await retainPackagedSkillGeneration(cache, await selection(2));
   const third = await selection(3);
   await writeFile(join(third.rootPath, "runtime/SKILL.md"), "tampered\n");
-  await assert.rejects(retainPackagedSkillGeneration(cache, third, undefined, { onRetentionLimit: "use-existing" }), /checksum_mismatch/);
+  await assert.rejects(retainPackagedSkillGeneration(cache, third, undefined, { deferWhenFull: true }), /checksum_mismatch/);
 });
 test("tampering, aliases and private in-progress stages cannot become active", async t => {
   const { cwd, cache, selection } = await fixture(t);
@@ -136,7 +125,7 @@ test("concurrent generation writers are serialized without orphan staging", asyn
   const results = await Promise.allSettled([retainPackagedSkillGeneration(cache, input), retainPackagedSkillGeneration(cache, input)]);
   assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
   assert.match(results.find(result => result.status === "rejected").reason.message, /busy_requires_review/);
-  assert.deepEqual((await readdir(cache)).sort(), [input.expectedManifestChecksum.slice(7), ".current.json"].sort());
+  assert.deepEqual(await readdir(cache), [input.expectedManifestChecksum.slice(7)]);
 });
 
 test("reuse rejects unknown outer inventory and accounts for cache bytes without deleting evidence", async t => {
@@ -150,7 +139,7 @@ test("reuse rejects unknown outer inventory and accounts for cache bytes without
   const oversized = await open(orphan, "wx");
   await oversized.truncate(6 * 1024 ** 3 + 1); await oversized.close();
   await assert.rejects(retainPackagedSkillGeneration(cache, input), /history_budget_exceeded/);
-  assert.deepEqual((await readdir(cache)).sort(), [input.expectedManifestChecksum.slice(7), ".current.json"].sort());
+  assert.deepEqual(await readdir(cache), [input.expectedManifestChecksum.slice(7)]);
 });
 
 test("missing browser is rejected before copying any candidate bytes", async t => {
