@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -9,11 +9,11 @@ import { runOwnedWindowsProcess } from "../../apps/desktop/scripts/cua-driver-pa
 import { inventoryApplicationTree } from "./desktop-payload.mjs";
 import { fileRecord } from "./desktop-release.mjs";
 
-const [bundledDirectory, slimDirectory, outputPath] = process.argv.slice(2);
+const [bundledDirectory, slimDirectory, upgradeDirectory, outputPath] = process.argv.slice(2);
 assert(process.platform === "win32" && process.arch === "x64"
   && process.env.GITHUB_ACTIONS === "true" && process.env.RUNNER_ENVIRONMENT === "github-hosted"
   && process.env.RUNNER_TEMP && process.env.SystemRoot, "A fresh hosted Windows x64 runner is required.");
-assert(bundledDirectory && slimDirectory && outputPath, "Both candidate directories and an output path are required.");
+assert(bundledDirectory && slimDirectory && upgradeDirectory && outputPath, "Three candidate directories and an output path are required.");
 
 const bundledPin = {
   mode: "bundled", source: "14be1bdebd3d295a4f822981ae8cc18a32b9dd51",
@@ -23,10 +23,16 @@ const slimPin = {
   mode: "on-demand", source: "b60f0c396c6f1dad3023018a1f14f8e793d2d406",
   digest: "167d3f090e4556b0561b5ced253b634d8a326a1e6b45b9a5999cc9a1695d73d4",
 };
-const [bundled, slim] = await Promise.all([
+const upgradePin = {
+  mode: "on-demand", source: "97ec6701d9147afbd22b222bc7d285c1e3ece45d",
+  digest: "f326ec39e94f62095bc667a1b5577658a9caf700607c54b40e80826dc7956d72",
+};
+const [bundled, slim, upgrade] = await Promise.all([
   readCandidate(bundledDirectory, bundledPin),
   readCandidate(slimDirectory, slimPin),
+  readCandidate(upgradeDirectory, upgradePin),
 ]);
+assert.equal(new Set([bundled.gstack, slim.gstack, upgrade.gstack]).size, 3, "Each installer must contain a different GStack generation.");
 const root = await realpath(await mkdtemp(join(process.env.RUNNER_TEMP, "ling-plugin-profile-")));
 const install = join(root, "install");
 const executable = join(install, "Ling Stack.exe");
@@ -53,6 +59,7 @@ if ($keys.Count -or $shortcuts.Count) { throw 'The runner already has a Ling ins
 let installationStarted = false;
 let before;
 let after;
+let retained;
 try {
   installationStarted = true;
   await installCandidate(bundled, true);
@@ -63,9 +70,24 @@ try {
   assert.deepEqual(before.bindings.map(binding => [binding.server_id, binding.enabled]), [
     ["mcp_chrome_browser", 1], ["mcp_office_documents", 1],
   ]);
+  assert.deepEqual(await retainedGstack(), [bundled.gstack]);
   await installCandidate(slim, false);
   after = await readFromInstalledDesktop("on-demand", false);
   assert.deepEqual(after, before, "Plugin settings or audit history changed after the upgrade.");
+  retained = await retainedGstack();
+  assert.deepEqual(retained, [bundled.gstack, slim.gstack].sort());
+  const snapshotsBefore = [workspace, otherWorkspace].map(readGstackSnapshots);
+  for (const snapshots of snapshotsBefore) {
+    assert(snapshots.some(snapshot => snapshot.review_status === "archived"
+      && snapshot.referenced_files_json.includes(bundled.gstack)));
+    assert(snapshots.some(snapshot => snapshot.review_status === "published"
+      && snapshot.referenced_files_json.includes(slim.gstack)));
+  }
+  await installCandidate(upgrade, false);
+  const fullHistory = await readFromInstalledDesktop("on-demand with two retained GStack generations", false);
+  assert.deepEqual(fullHistory, before, "Plugin settings or audit history changed after the third installation.");
+  assert.deepEqual(await retainedGstack(), retained, "The cache changed while both GStack generations had snapshot references.");
+  assert.deepEqual([workspace, otherWorkspace].map(readGstackSnapshots), snapshotsBefore, "GStack snapshots changed during deferral.");
 } finally {
   if (installationStarted && await exists(uninstaller)) await runSetup(uninstaller);
 }
@@ -75,6 +97,12 @@ const evidence = {
   status: "passed", target: "windows-x64", version: bundled.version,
   bundledSourceSha: bundled.source, slimSourceSha: slim.source,
   bundledInstallerSha256: bundled.digest, slimInstallerSha256: slim.digest,
+  thirdInstaller: {
+    sourceSha: upgrade.source, installerSha256: upgrade.digest,
+    installedStartup: "passed", pluginProfilePreserved: true,
+    incomingGstack: upgrade.gstack, retainedGstack: retained, snapshotLineagePreserved: true,
+    gstackPublication: "deferred",
+  },
   customPathInstall: "passed", registeredPathUpgrade: "passed", uninstall: "passed",
   installedPayloadsMatch: true, desktopOwnedDaemonStartupAndExit: true,
   pluginStates: after.states, workspaceWriteApprovals: after.approvals,
@@ -96,7 +124,26 @@ async function readCandidate(directory, pin) {
   assert.equal(archive?.sha256, pin.digest);
   const installer = resolve(directory, archive.name);
   assert.deepEqual(await fileRecord(installer), archive);
-  return { ...pin, installer, version: report.version, payload: report.payload };
+  assert.match(report.gstack?.manifestChecksum, /^sha256:[a-f0-9]{64}$/u);
+  return { ...pin, installer, version: report.version, payload: report.payload, gstack: report.gstack.manifestChecksum };
+}
+
+async function retainedGstack() {
+  const names = await readdir(join(home, "sources", "bundled-gstack"));
+  return names.map(name => {
+    assert.match(name, /^[a-f0-9]{64}$/u);
+    return "sha256:" + name;
+  }).sort();
+}
+
+function readGstackSnapshots(cwd) {
+  const database = new DatabaseSync(join(cwd, ".ling-stack", "ling-stack.sqlite"), { readOnly: true });
+  try {
+    return database.prepare(`SELECT id, skill_id, review_status, referenced_files_json
+      FROM skill_source_snapshots WHERE source_kind = 'gstack-skill-directory' ORDER BY id`).all();
+  } finally {
+    database.close();
+  }
 }
 
 async function installCandidate(candidate, customPath) {
