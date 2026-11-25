@@ -10,7 +10,8 @@ import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { analyzeLockfileChange } from "./lockfile-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
 import { isCatalogWorkflowPinUpdate } from "./workflow-scope.mjs";
-import { matchesTerminalReportProfile, terminalReportTestFiles } from "./test-file-profiles.mjs";
+import { daemonBabelParser, daemonBabelParserProfile, daemonBabelParserTestFiles, hasDaemonBabelParserCoverage,
+  matchesTerminalReportProfile, terminalReportTestFiles } from "./test-file-profiles.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const LOCAL_OUTPUT_DIRECTORY = "output/";
@@ -314,7 +315,13 @@ export function classifyChangedFiles(input) {
   if (validationBuildDependencies.some(name => !packages.some(entry => entry.name === name))) {
     return buildScope("full", files, packages, "a workspace validation build dependency could not be verified");
   }
-  const daemonPlatforms = deviceProfile ? ["linux"] : affectedNames.has("@ling-stack/daemon")
+  const daemonParserUpdate = affectedTestPackages.includes("@ling-stack/daemon")
+    && scopeFiles.includes(LOCKFILE) && scopeFiles.includes("packages/daemon/package.json")
+    && scopeFiles.every(file => file === LOCKFILE || dependencyOnlyManifests.has(file) || isDocumentationPath(file))
+    && !testSupportImporters.has("@ling-stack/daemon")
+    && matchesDaemonBabelParserUpdate({ lockfileScope: input.lockfileScope, dependencyGraph, affectedNames,
+      basePackageEntries: input.basePackageEntries });
+  const daemonPlatforms = deviceProfile || daemonParserUpdate ? ["linux"] : affectedNames.has("@ling-stack/daemon")
     ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters }) : [];
   const linuxContract = affectedNames.has("@ling-stack/daemon") && daemonPlatforms.includes("linux");
 
@@ -336,10 +343,12 @@ export function classifyChangedFiles(input) {
     macosHelper: nativeSurfaceChanged,
     nativeRelease,
     ...(terminalReportProfile ? { testProfile: /** @type {const} */ ("terminal-report"), testFiles: { "@ling-stack/core": terminalReportTestFiles } }
-      : deviceProfile ? { testProfile: /** @type {const} */ ("device") } : {}),
+      : deviceProfile ? { testProfile: /** @type {const} */ ("device") }
+      : daemonParserUpdate ? { testProfile: daemonBabelParserProfile } : {}),
     productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
     reason: terminalReportProfile ? "terminal report test migration with focused Core files"
       : deviceProfile ? "device recovery and task trace tests with transitive consumer typechecks"
+      : daemonParserUpdate ? "verified Daemon Babel parser development dependency update"
       : input.lockfileScope?.mode === "affected" && changedSourceEntries.size === 0 ? input.lockfileScope.reason
       : versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
       : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
@@ -351,7 +360,35 @@ export function classifyChangedFiles(input) {
 
 /** @typedef {ReturnType<typeof analyzeLockfileChange>} LockfileScope */
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device"|"terminal-report", testFiles?: Record<string, string[]>, documentationOnly?: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device"|"terminal-report"|typeof daemonBabelParserProfile, testFiles?: Record<string, string[]>, documentationOnly?: boolean, reason: string}} CiScope */
+
+/** @param {{lockfileScope?: LockfileScope, dependencyGraph: PackageEntry[], affectedNames: Set<string>, basePackageEntries?: PackageEntry[]}} input */
+function matchesDaemonBabelParserUpdate({ lockfileScope, dependencyGraph, affectedNames, basePackageEntries }) {
+  const directory = "packages/daemon";
+  const daemon = "@ling-stack/daemon";
+  const update = lockfileScope?.isolatedDevelopmentUpdates?.get(directory);
+  const version = /^8\.\d+\.\d+$/u;
+  if (lockfileScope?.mode !== "affected" || update?.name !== daemonBabelParser
+    || !version.test(update.before) || !version.test(update.after) || update.before === update.after) return false;
+  const previous = basePackageEntries?.find(entry => entry.directory === directory)?.manifest;
+  const current = dependencyGraph.find(entry => entry.directory === directory)?.manifest;
+  if (previous?.devDependencies?.[daemonBabelParser] !== update.before
+    || !isDeepStrictEqual(current, {
+      ...previous, devDependencies: { ...previous.devDependencies, [daemonBabelParser]: update.after },
+    })) return false;
+
+  const otherAffected = new Set([...affectedNames].filter(name => name !== daemon));
+  const visited = new Set();
+  for (const name of [...otherAffected]) collectDependents(name, dependencyGraph, otherAffected, visited);
+  const validationInputs = [...VALIDATION_INPUT_BUILD_DEPENDENCIES]
+    .filter(([file]) => file.startsWith(directory + "/")).flatMap(([, packages]) => packages);
+  if (otherAffected.has(daemon) || [...(VALIDATION_BUILD_DEPENDENCIES.get(daemon) ?? []), ...validationInputs]
+    .some(name => otherAffected.has(name))) return false;
+
+  const platformManifest = loadDaemonPlatformManifest();
+  return daemonBabelParserTestFiles.every(file => platformManifest?.get(file) === "linux")
+    && hasDaemonBabelParserCoverage(repositoryRoot);
+}
 
 /** @param {string} value */
 function normalizePath(value) {

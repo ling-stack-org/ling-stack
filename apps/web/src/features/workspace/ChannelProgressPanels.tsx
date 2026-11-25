@@ -1,5 +1,6 @@
 import { WorkSummaryPanel } from "./work-summary/WorkSummaryPanel.js";
 import { useWorkSummaryContext } from "./work-summary/WorkSummaryProvider.js";
+import type { WorkSummaryTarget } from "./work-summary/work-summary.types.js";
 import type { ReactNode } from "react";
 import {
   Archive,
@@ -125,14 +126,16 @@ export function conversationContextSourceGroupIcon(type: string): ReactNode {
 
 export function ProgressPopover({
   expanded,
+  currentTarget,
   onExpandedChange,
   progressRows,
   environmentSummary,
   sourceSummary,
   onOpenSourceGroup,
   onClose = () => {},
-  onOpenChanges = () => {},
+  onOpenChanges,
 }: {
+  readonly currentTarget?: WorkSummaryTarget;
   readonly onClose?: () => void;
   readonly onOpenChanges?: (cwd: string) => void;
   readonly expanded: boolean;
@@ -150,7 +153,7 @@ export function ProgressPopover({
   }
   const sourceGroups = sourceSummary?.groups ?? [];
   return (
-    <WorkSummaryPanel visible onClose={onClose} onOpenChanges={onOpenChanges}>
+    <WorkSummaryPanel visible currentTarget={currentTarget} showCurrentBranch={false} onClose={onClose} onOpenChanges={onOpenChanges}>
     <section className="attention-queue compact" aria-label={t("Summary")}>
       {environmentRows.length > 0 ? (
         <ChannelEnvironmentPopoverSection summary={environmentSummary!} hideChanges={Boolean(workSummary)} />
