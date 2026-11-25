@@ -113,7 +113,7 @@ export function readCompletedDeliberationWorkflow(store: RunStore, workItemId: s
     }
     return { type: "workflow_step_output", id: artifactId, revision: step.updatedAt };
   });
-  return { workflow, sources };
+  return { workflow, binding, sources };
 }
 
 export function projectDeliberationWorkflowProgress(store: RunStore, round: WorkItemCollaborationRecord):

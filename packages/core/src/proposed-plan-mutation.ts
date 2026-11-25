@@ -52,8 +52,11 @@ export function parseProposedPlanStageDecision(value: unknown): ProposedPlanStag
     if (decision.trigger !== undefined && decision.trigger !== "when_ready") {
       throw new ProposedPlanMutationError("bad_workflow_stage_decision", "Choose when_ready for automatic opening of the decision round.", 400);
     }
+    if (decision.receiptSource !== undefined && (decision.receiptSource !== "checkpoint" || ballot || decision.trigger)) {
+      throw new ProposedPlanMutationError("bad_workflow_stage_decision", "A checkpoint decision uses the linked deliberation receipt.", 400);
+    }
     return { question: decision.question, options: decision.options, ...(ballot ? { ballot } : {}),
-      ...(decision.trigger ? { trigger: decision.trigger } : {}) };
+      ...(decision.trigger ? { trigger: decision.trigger } : {}), ...(decision.receiptSource ? { receiptSource: decision.receiptSource } : {}) };
   }
   throw new ProposedPlanMutationError("bad_workflow_stage_decision", "A required decision needs a question and 2–12 distinct options.", 400);
 }

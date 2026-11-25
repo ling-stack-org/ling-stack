@@ -45,7 +45,8 @@ import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, Lin
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
-import { checkpointDeliberationResolutionId, deliberationWorkflowStepDigest, type WorkItemDeliberationWorkflowBinding } from "../../work-item-deliberation-workflow.js";
+import { checkpointDeliberationResolutionId, deliberationWorkflowStepDigest, type WorkItemDeliberationApplication,
+  type WorkItemDeliberationWorkflowBinding } from "../../work-item-deliberation-workflow.js";
 import { stageHandoffAdmitsTarget } from "../../work-item-workflow-handoff.js";
 import { listWorkItemStageQuestions, workItemStageQuestionExpired } from "../../work-item-workflow-question.js";
 import { planStageBallotKey } from "../../proposed-plan-mutation.js";
@@ -956,6 +957,17 @@ export class SqliteWorkItemStore {
     const link = state.get("work_item_workflow", step.workflowId)?.payload as WorkItemWorkflowLink | undefined;
     if (!link) return undefined;
     const { workItemId, planId, planRevision } = link.binding;
+    if (required.receiptSource === "checkpoint") {
+      const application = state.get("work_item_deliberation_application", step.id)?.payload as WorkItemDeliberationApplication | undefined;
+      if (!application) return undefined;
+      const item = this.getWorkItem(workItemId);
+      if (!item || application.workItemId !== item.id || application.planRevision !== `${planId}:${planRevision}`
+        || application.workflowId !== step.workflowId || application.stepId !== step.id
+        || application.controlGeneration !== item.control.generation || application.stepDigest !== deliberationWorkflowStepDigest(step)
+        || !required.options.includes(application.option)
+        || !this.ports.getWorkItemEvidence(application.resolutionId)) return undefined;
+      return { id: application.resolutionId, option: application.option };
+    }
     const selected = readSelectedWorkflowDecision(this.ports, { workItemId, planRevision: `${planId}:${planRevision}`, workflowStepId: step.id });
     return selected && required.options.includes(selected.option) ? selected : undefined;
   }

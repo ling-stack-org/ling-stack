@@ -138,6 +138,10 @@ function readStageDecision(
   const decision = step.metadata?.requiredPlanDecision;
   if (!decision) return undefined;
   const { question } = decision;
+  if (decision.receiptSource === "checkpoint") {
+    const selected = store.getWorkItemWorkflowStepDecision(step);
+    return selected ? { question, status: "decided", selectedOption: selected.option } : { question, status: "not_open" };
+  }
   const subject = { workItemId, planRevision, workflowStepId: step.id };
   const round = readWorkItemCollaborationRecord(store, workItemId, workItemWorkflowDecisionId(subject, "round"));
   if (!round) return { question, status: "not_open" };

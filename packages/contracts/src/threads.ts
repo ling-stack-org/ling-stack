@@ -307,6 +307,7 @@ export interface ProposedPlanStageDecision {
   readonly options: readonly string[];
   readonly ballot?: { readonly voterStageIds: readonly string[]; readonly quorum: number };
   readonly trigger?: "when_ready";
+  readonly receiptSource?: "checkpoint";
 }
 
 export interface LingThread {

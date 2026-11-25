@@ -15,6 +15,7 @@ import {
 } from "@ling-stack/contracts";
 import {
   appendWorkItemCollaboration,
+  deliberationWorkflowStepDigest,
   readWorkItemCollaborationRecord,
   readWorkflowStageHandoff,
   type ChannelWorkflowStep,
@@ -23,6 +24,7 @@ import {
   type WorkItem,
   type WorkItemCollaborationRecord,
   type WorkItemConversationBinding,
+  type WorkItemDeliberationTarget,
   type WorkItemEvidenceEntry,
 } from "@ling-stack/core";
 import { z } from "zod";
@@ -61,6 +63,7 @@ export const deliberationEvaluateInput = z.object({
   participantIds: refs,
   optionRefs: refs,
   evidenceRefs: refs,
+  decisionStepId: boundedId.optional(),
   candidateDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   unresolved: z.enum(["intent", "fact", "handoff"]).optional(),
 });
@@ -102,7 +105,8 @@ export async function evaluateAppServerDeliberation(
   const prior = readReplay();
   if (prior) return prior;
   const basis = readDecisionBasis(store, item, decision);
-  const decisionId = digest([item.id, decision.decisionKey, decision.subject.kind, basis.subject.decisionAnchor]);
+  const decisionId = digest([item.id, decision.decisionKey, decision.subject.kind, basis.subject.decisionAnchor,
+    ...(decision.decisionStepId ? [decision.decisionStepId] : [])]);
   const decisionRevision = digest([basis.digest, decision.decisionKind, decision.materiality, decision.question, decision.unresolved]);
   const evaluationId = `${evaluationPrefix}${decisionId}_${digest([decisionRevision, decision.checkpoint, decision.checkpointRef])}`;
   if (basis.candidate) {
@@ -117,6 +121,7 @@ export async function evaluateAppServerDeliberation(
     evaluationId, decisionId, decisionRevision, subjectRevision: basis.subject.subjectRevision, policyRevision,
     checkpoint: decision.checkpoint, checkpointRef: decision.checkpointRef,
     optionRefs: decision.optionRefs, evidenceRefs: decision.evidenceRefs, participantIds: decision.participantIds,
+    ...(decision.decisionStepId ? { decisionStepId: decision.decisionStepId } : {}),
     ...(basis.candidate ? { candidateDigest: basis.candidate.digest } : {}),
     evaluatedAt: now, expiresAt: new Date(Date.parse(now) + validityMs).toISOString(),
     ...evaluateCheckpoint(item, basis, decision),
@@ -163,6 +168,9 @@ export async function openAppServerEvaluatedDeliberation(
   const prior = readReplay();
   if (prior) return prior;
   if (evaluation.outcome !== "suggest") throw new HttpError(409, "resume_blocked", "Only a current deliberation suggestion can open a round.");
+  if (decision.decisionStepId && execution !== "read_only_workflow") {
+    throw new HttpError(409, "resume_blocked", "An accepted dependency requires a participant Workflow.");
+  }
 
   const assertCurrent = () => assertEvaluationCurrent(store, requireWorkItem(store, workItemId), frozen, now, evaluation.expiresAt);
   const admission = assertEvaluationCurrent(store, item, frozen, now, evaluation.expiresAt);
@@ -192,7 +200,8 @@ export async function openAppServerEvaluatedDeliberation(
       compile: () => {
         const compiled = materializeDeliberationWorkflow(store, {
           binding: { workItemId, roundId, originWorkflowId: step.workflowId, originStepId: step.id, originStepRevision: step.updatedAt,
-            planRevision: admission.subject.subjectRevision, controlGeneration: item.control.generation, deadlineAt, candidate },
+            planRevision: admission.subject.subjectRevision, controlGeneration: item.control.generation, deadlineAt, candidate,
+            decisionTarget: admission.decisionTarget },
           origin: step, question: decision.question, participants: admission.participants,
           options: admission.optionEntries, evidence: admission.evidence, now,
         });
@@ -269,14 +278,36 @@ function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEval
   const evidence = decision.evidenceRefs.map(id => readEntry(id, false));
   const evidenceRefs = evidence.map(entry => evidenceRef(entry, "work_item_evidence"));
   const candidate = decision.candidateDigest ? { digest: decision.candidateDigest, cwd: decisionCandidateCwd(store, subject) } : undefined;
+  const decisionTarget = decision.decisionStepId
+    ? readDecisionTarget(store, item, subject.step, decision.decisionStepId, decision.question, optionEntries, candidate) : undefined;
   const verificationRefs = candidate
     ? evidence.flatMap(entry => readDecisionVerificationRefs(store, item, candidate, entry)) : [];
   return {
-    subject, options, optionEntries, evidence, candidate, verificationRefs, participants,
+    subject, options, optionEntries, evidence, candidate, verificationRefs, participants, decisionTarget,
     sourceRefs: [checkpoint, ...options, ...evidenceRefs, ...verificationRefs],
     digest: digest([policyRevision, item.control.generation, subject.scopeRevision,
-      participants.map(participant => [participant.id, participant.updatedAt]), options, evidenceRefs, candidate, verificationRefs]),
+      participants.map(participant => [participant.id, participant.updatedAt]), options, evidenceRefs, candidate, verificationRefs,
+      ...(decisionTarget ? [decisionTarget] : [])]),
   };
+}
+
+function readDecisionTarget(store: RunStore, item: WorkItem, origin: ChannelWorkflowStep | undefined, stepId: string,
+  question: string, options: readonly WorkItemEvidenceEntry[], candidate: unknown): WorkItemDeliberationTarget {
+  const step = store.getChannelWorkflowStep(stepId);
+  const dependency = step?.metadata?.requiredPlanDecision;
+  if (!origin || !candidate || !step || step.workflowId !== origin.workflowId || step.workflowId !== item.workflowId
+    || !["queued", "blocked"].includes(step.status) || dependency?.receiptSource !== "checkpoint" || dependency.question !== question) {
+    throw stale("The accepted stage does not accept this checkpoint decision for the current candidate.");
+  }
+  if (item.holds.some(hold => hold.blocksNewAdmission && hold.workflowStepIds?.includes(stepId))) {
+    throw new HttpError(409, "resume_blocked", "The decision dependency is held by a pending change.");
+  }
+  const values = options.map(option => option.optionId);
+  if (values.some(value => !value || !dependency.options.includes(value)) || values.length !== new Set(values).size) {
+    throw stale("Map each proposal to a distinct option in the accepted dependency.");
+  }
+  return { stepId, stepDigest: deliberationWorkflowStepDigest(step),
+    options: Object.fromEntries(options.map(entry => [entry.id, entry.optionId!])) };
 }
 
 function evidenceRef(entry: WorkItemEvidenceEntry, type: string) {

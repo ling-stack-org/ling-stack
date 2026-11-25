@@ -6263,6 +6263,25 @@ export class SqliteRunStore implements RunStore {
     }
   }
 
+  applyWorkItemDeliberationDecision(...[input, application, now, event]: Parameters<RunStore["applyWorkItemDeliberationDecision"]>) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.workItemEvidence.appendWithinTransaction(input, now, { ...event, store: this.controlPlane });
+      if (result?.status === "appended") {
+        const previous = this.appServerState.get("work_item_deliberation_application", application.stepId);
+        const updated = this.appServerState.putWithinTransaction({ kind: "work_item_deliberation_application",
+          recordId: application.stepId, expectedRevision: previous?.revision ?? 0, payload: application,
+        }, now);
+        if (!updated) throw new Error("work_item_deliberation_application_stale");
+      }
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
+  }
+
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined {
     if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
     return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState, step, executionRunId);

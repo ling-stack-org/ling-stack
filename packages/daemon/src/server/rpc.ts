@@ -1392,6 +1392,10 @@ class RpcConnection {
       throw rpcError(-32602, "invalid_params", "Collaboration records use the collaboration methods.");
     }
     const sourceRefs = Array.isArray(record.sourceRefs) ? record.sourceRefs : [];
+    const optionId = readOptionalStringField(record, "optionId");
+    if (optionId !== undefined && (kind !== "proposal" || !optionId.trim() || optionId !== optionId.trim() || optionId.length > 200)) {
+      throw rpcError(-32602, "invalid_params", "A decision option identifier must be a bounded proposal option.");
+    }
     const result = store.appendWorkItemEvidence({
       workItemId,
       expectedWorkItemRevision: readOptionalIntegerField(record, "expectedWorkItemRevision"),
@@ -1401,6 +1405,7 @@ class RpcConnection {
       subjectRevision,
       kind,
       content,
+      optionId,
       sourceRefs: sourceRefs as import("@ling-stack/core").WorkItemEvidenceSourceRef[],
       visibility: readOptionalStringField(record, "visibility") as import("@ling-stack/core").WorkItemEvidenceVisibility | undefined,
     }, new Date().toISOString(), { cwd });

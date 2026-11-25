@@ -1,6 +1,8 @@
 import type {
   LingAppServerCollaborationKind,
   LingAppServerDeliberationDecideParams,
+  LingAppServerDeliberationDecideResult,
+  LingAppServerDeliberationAppliedDecision,
   LingAppServerDeliberationSettlementParams,
   LingAppServerStageBallotProgress,
   LingAppServerStageDeliberationStartParams,
@@ -17,6 +19,7 @@ import {
   listWorkItemCollaboration,
   planStageBallotKey,
   readWorkItemCollaborationRecord,
+  readWorkItemDeliberationApplication,
   toAppServerCollaborationRecord,
   workItemWorkflowDecisionId,
   type WorkItemWorkflowDecisionSubject,
@@ -24,7 +27,8 @@ import {
   type WorkItemCollaborationRecord,
   type WorkItem,
 } from "@ling-stack/core";
-import type { ControlPlaneEvent, RunStore } from "@ling-stack/core";
+import type { AppendWorkItemEvidenceInput, ControlPlaneEvent, RunStore, WorkItemDeliberationApplication,
+  WorkItemEvidenceEventOptions } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
 import { readAppServerStageBallot } from "../features/work-items/stage-ballot.js";
@@ -120,6 +124,9 @@ export function startAppServerStageDeliberation(
   if (!item || !item.workflowId || !item.planRevision || step?.workflowId !== item.workflowId || !required) {
     throw new AppServerCollaborationError("stale_revision", "The Work Item does not have this accepted decision point.");
   }
+  if (required.receiptSource === "checkpoint") {
+    throw new HttpError(409, "resume_blocked", "The accepted stage requires a linked deliberation receipt.");
+  }
   const subject = { workItemId: item.id, planRevision: item.planRevision, workflowStepId: step.id };
   const id = workItemWorkflowDecisionId(subject, "round");
   const prior = readWorkItemCollaborationRecord(store, item.id, id);
@@ -180,7 +187,7 @@ export async function settleAppServerDeliberation(
   decision: LingAppServerDeliberationDecideParams["decision"] | undefined,
   now: string,
   cwd: string,
-): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent }> {
+): Promise<LingAppServerDeliberationDecideResult & { readonly event?: ControlPlaneEvent }> {
   const item = store.getWorkItem(input.workItemId);
   if (!item) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
   const round = readWorkItemCollaborationRecord(store, item.id, input.roundId);
@@ -229,22 +236,36 @@ export async function settleAppServerDeliberation(
     }
   }
   const action = decision ? "decided" : "cancelled";
-  const payload = decision ? { ...decision, reason: input.reason, ...(ballot ? { ballot: ballot.summary } : {}) } : { reason: input.reason };
+  const requestPayload = decision ? { ...decision, reason: input.reason } : { reason: input.reason };
   const saved = prior && readWorkItemCollaborationRecord(store, item.id, prior.id);
   if (saved) {
-    const { ballot: _ballot, ...request } = isRecord(saved.payload) ? saved.payload : {};
-    const { ballot: _tally, ...current } = payload as typeof payload & { ballot?: unknown };
-    if (saved.action !== action || JSON.stringify(request) !== JSON.stringify(current)) {
+    const { ballot: _ballot, appliedTo, ...request } = isRecord(saved.payload) ? saved.payload : {};
+    if (saved.action !== action || JSON.stringify(request) !== JSON.stringify(requestPayload)) {
       throw new AppServerCollaborationError("idempotency_conflict", "The deliberation key was used with a different decision.");
     }
-    return { status: "replayed", record: { ...saved, workItemRevision: item.revision }, workItemRevision: item.revision };
+    return { status: "replayed", record: { ...saved, workItemRevision: item.revision }, workItemRevision: item.revision,
+      ...(appliedTo ? { appliedTo: appliedTo as LingAppServerDeliberationAppliedDecision } : {}) };
   }
   if (privateRound && decision) await assertCheckpointRoundCandidate(store, item, round, now);
   const execution = privateRound && decision?.disposition === "selected"
     ? readCompletedDeliberationWorkflow(store, item.id, round.id, round.payload) : undefined;
+  let application: WorkItemDeliberationApplication | undefined;
+  if (execution?.binding.decisionTarget && decision?.disposition === "selected") {
+    const { decisionTarget: { stepId, stepDigest, options }, candidate, originWorkflowId, planRevision, controlGeneration } = execution.binding;
+    const option = options[decision.option];
+    if (!option || !candidate) throw new AppServerCollaborationError("stale_revision", "The selected option no longer belongs to the accepted dependency.");
+    application = { workItemId: item.id, workflowId: originWorkflowId, planRevision, controlGeneration,
+      stepId, stepDigest, candidate, roundId: round.id, resolutionId: id, option };
+  }
+  const appliedTo: LingAppServerDeliberationAppliedDecision | undefined = application ? {
+    workflowId: application.workflowId, workflowStepId: application.stepId, planRevision: application.planRevision,
+    option: application.option, candidateDigest: application.candidate.digest,
+  } : undefined;
+  const payload = { ...requestPayload, ...(ballot ? { ballot: ballot.summary } : {}), ...(appliedTo ? { appliedTo } : {}) };
   const sourceRefs = [{ type: "deliberation_round", id: round.id, revision: String(round.collaborationRevision) },
-    ...(ballot?.sourceRefs ?? []), ...(execution?.sources ?? [])];
-  const resolution = store.appendWorkItemEvidence({
+    ...(ballot?.sourceRefs ?? []), ...(execution?.sources ?? []),
+    ...(application ? [{ type: "workflow_step", id: application.stepId, revision: application.planRevision }] : [])];
+  const evidence: AppendWorkItemEvidenceInput = {
     id,
     workItemId: item.id,
     expectedWorkItemRevision: input.expectedWorkItemRevision,
@@ -259,22 +280,34 @@ export async function settleAppServerDeliberation(
     ...(privateRound ? {
       visibility: "owner" as const,
       ...(decision ? { assertCurrent: () => {
+        if (store.getWorkItemEvidence(id)?.idempotencyKey === input.idempotencyKey) return;
         const current = store.getWorkItem(item.id);
         if (!current) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
         assertCheckpointRoundCurrent(store, current, round, now);
         if (execution) readCompletedDeliberationWorkflow(store, item.id, round.id, round.payload);
+        if (application) {
+          const previous = readWorkItemDeliberationApplication(store, application.stepId);
+          if (previous?.workItemId === application.workItemId && previous.planRevision === application.planRevision
+            && previous.controlGeneration === application.controlGeneration && previous.stepDigest === application.stepDigest
+            && previous.candidate.digest === application.candidate.digest) {
+            throw new AppServerCollaborationError("stale_revision", "The current dependency already has a decision for this candidate.");
+          }
+        }
       } } : {}),
     } : {}),
-  }, now, {
+  };
+  const event: WorkItemEvidenceEventOptions = {
     cwd,
     project: (entry, workItemRevision) => ({
       action: `work_item.deliberation.${action}`,
       data: { workItemId: item.id, roundId: round.id, collaborationId: entry.id, collaborationRevision: entry.sequence, workItemRevision },
     }),
-  });
+  };
+  const resolution = application ? store.applyWorkItemDeliberationDecision(evidence, application, now, event)
+    : store.appendWorkItemEvidence(evidence, now, event);
   if (!resolution) throw new AppServerCollaborationError("stale_revision", "The Work Item revision changed before the deliberation resolution.");
-  const { entry, workItemRevision, event, status } = resolution;
-  return { status, workItemRevision, event, record: {
+  const { entry, workItemRevision, event: committedEvent, status } = resolution;
+  return { status, workItemRevision, event: committedEvent, ...(appliedTo ? { appliedTo } : {}), record: {
     id: entry.id,
     workspaceId: entry.workspaceId,
     workItemId: item.id,

@@ -8,6 +8,7 @@ import {
   effectiveWorkflowPreGate,
   inspectWorkflowPreApproval,
   readWorkItemDeliberationWorkflowBinding,
+  readWorkItemDeliberationApplication,
   type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelHandoff,
@@ -1120,6 +1121,14 @@ export async function prepareWorkflowStepStart(
   }
   if (deliberation?.candidate && await readCompleteHandoffCandidate(deliberation.candidate.cwd) !== deliberation.candidate.digest) {
     return fail(409, "work_item_deliberation_candidate_stale", "The read-only round requires its original worktree candidate.");
+  }
+  if (step.metadata?.requiredPlanDecision?.receiptSource === "checkpoint") {
+    const application = readWorkItemDeliberationApplication(store, step.id);
+    if (!application || selectedDecision?.id !== application.resolutionId || application.candidate.cwd !== runRequestBase.cwd
+      || await readCompleteHandoffCandidate(application.candidate.cwd) !== application.candidate.digest
+      || store.getWorkItemWorkflowStepDecision(step)?.id !== application.resolutionId) {
+      return fail(409, "work_item_deliberation_candidate_stale", "The accepted decision does not apply to the step's current candidate.");
+    }
   }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),

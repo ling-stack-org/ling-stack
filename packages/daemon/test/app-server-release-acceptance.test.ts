@@ -34,6 +34,7 @@ import type {
   LingAppServerRecoveryResult,
   LingAppServerCoordinationSchedule,
   LingAppServerDeliberationDecideParams,
+  LingAppServerDeliberationDecideResult,
   LingAppServerDeliberationEvaluateParams,
   LingAppServerDeliberationEvaluateResult,
   LingAppServerWorkItemCollaborationAppendResult,
@@ -2718,13 +2719,14 @@ async function createObserver(client: Awaited<ReturnType<Awaited<ReturnType<type
   return { credential, scoped: await fixture.connect("/app-server/rpc", fixture.cwd, credential) };
 }
 
-async function recordDeliberationEvidence(call: <T>(method: string, input: object) => Promise<T>, workItemId: string, subjectRevision: string) {
-  const append = async (key: string, kind: "proposal" | "observation", content: string) =>
+async function recordDeliberationEvidence(call: <T>(method: string, input: object) => Promise<T>, workItemId: string, subjectRevision: string,
+  optionIds?: readonly [string, string]) {
+  const append = async (key: string, kind: "proposal" | "observation", content: string, optionId?: string) =>
     (await call<{ entry: { id: string } }>("workItem/evidence/append", {
-      workItemId, actorId: "local-user", subjectRevision, kind, content, idempotencyKey: `${subjectRevision}:${key}`,
+      workItemId, actorId: "local-user", subjectRevision, kind, content, optionId, idempotencyKey: `${subjectRevision}:${key}`,
     })).entry.id;
-  const adapter = await append("adapter", "proposal", "Keep the adapter compatible with existing callers.");
-  const migration = await append("migration", "proposal", "Move callers atomically to the replacement interface.");
+  const adapter = await append("adapter", "proposal", "Keep the adapter compatible with existing callers.", optionIds?.[0]);
+  const migration = await append("migration", "proposal", "Move callers atomically to the replacement interface.", optionIds?.[1]);
   const evidenceRef = await append("interface", "observation", "The public interface has existing clients.");
   return { optionRefs: [adapter, migration], evidenceRef };
 }
@@ -3559,6 +3561,7 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
 
 async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false, retryBudget?: number,
   options?: { readonly harness?: DaemonConfig["harness"]; readonly secretResolver?: SecretResolver; readonly apiKeyRef?: string;
+    readonly decision?: import("@ling-stack/contracts").ProposedPlanStageDecision;
     readonly verificationRecipes?: (root: string, cwd: string) => Promise<DaemonConfig["appServerVerificationRecipes"]> }) {
   const fixture = await releaseFixture(t, { channels: { terminalReports: false, teamObserverBus: false },
     harness: options?.harness, secretResolver: options?.secretResolver, verificationRecipes: options?.verificationRecipes });
@@ -3586,7 +3589,8 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
   const accepted = await client.call<ProposedPlanActionResponse>("plan/accept", {
     mode: "workflow", threadId: thread.id, planId: plan.id, expectedRevision: plan.revision,
     workflowStepPreviews: [
-      { title: "Review", stageId: "QA", ownerId: "teammate_builtin_qa", ownerLabel: "QA", ...(parallelReadOnly ? { requiredTools: ["read"] } : {}) },
+      { title: "Review", stageId: "QA", ownerId: "teammate_builtin_qa", ownerLabel: "QA", requiredDecision: options?.decision,
+        ...(parallelReadOnly ? { requiredTools: ["read"] } : {}) },
       { title: "Explain the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer",
         ...(parallelReadOnly ? { requiredTools: ["read"] } : {}) },
     ],
@@ -3741,7 +3745,7 @@ test("an in-flight stage verifies disputed facts and fences decisions to the cur
   await waitFor(() => store.getChannelWorkflowStep(respondent.id)?.status === "succeeded" ? true : undefined);
 });
 
-test("an admitted read-only deliberation runs once beside the accepted Workflow and retains its evidence after restart",
+test("an admitted read-only deliberation runs once and releases its accepted decision dependency after restart",
   { timeout: 45_000 }, async t => {
     let releaseFirstProposal = () => {};
     const firstProposal = new Promise<void>(resolve => { releaseFirstProposal = resolve; });
@@ -3753,7 +3757,12 @@ test("an admitted read-only deliberation runs once beside the accepted Workflow 
       return { text: `Recommendation ${invocation}: preserve existing callers through the adapter.` };
     });
     t.after(() => { releaseFirstProposal(); releaseCancelledProposal(); return provider.close(); });
-    const { fixture, store, client, item, workItem, workflowId, waiting, channel, thread } = await stageQuestionWorkflow(t, provider.baseUrl);
+    const question = "Which compatible strategy should the stage use?";
+    const options = ["adapter", "migration"] as const;
+    const { fixture, store, client, item, workItem, workflowId, waiting, channel, thread } =
+      await stageQuestionWorkflow(t, provider.baseUrl, false, undefined, {
+        decision: { question, options, receiptSource: "checkpoint" },
+      });
     const participantIds = ["teammate_builtin_engineer", "teammate_builtin_qa"];
     const now = new Date().toISOString();
     for (const id of participantIds) store.replaceTeammateChannelMemberships(id, [{ channelId: channel.id }], now);
@@ -3764,13 +3773,21 @@ test("an admitted read-only deliberation runs once beside the accepted Workflow 
     git("init", "-q");
     git("add", "contract.txt", ".gitignore");
     git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Freeze the decision candidate");
-    const sourceTurn = store.createLingTurn({ threadId: thread.id, kind: "initial_request", title: "Implement the contract",
-      userInstruction: "Choose a compatibility strategy." }, now);
+    const source = store.appendConversationUserTurn({ threadId: thread.id, channelId: channel.id, turnKind: "initial_request",
+      title: "Implement the contract", userInstruction: "Choose a compatibility strategy.", idempotencyKey: "deliberation-source-turn",
+      payload: { body: "Choose a compatibility strategy.", format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+    }, now);
+    const sourceTurn = store.getLingTurn(source.turnId);
+    assert.ok(sourceTurn);
     const parentBefore = store.updateChannelWorkflow(workflowId, {
-      metadata: { ...store.getChannelWorkflow(workflowId)?.metadata, sourceTurnId: sourceTurn.id },
+      metadata: { ...store.getChannelWorkflow(workflowId)?.metadata, sourceTurnId: sourceTurn.id, sourceMessageId: source.item.id },
     }, now);
     const stepsBefore = store.listChannelWorkflowSteps({ workflowId, complete: true });
     const currentRevision = () => fixture.getStore().getWorkItem(item.id)!.revision;
+    assert.equal(store.getWorkItemWorkflowAdmissionBlocker(workflowId, waiting), "work_item_decision_pending");
+    await assert.rejects(client.call("workItem/deliberation/start", {
+      workItemId: item.id, workflowStepId: waiting.id, expectedWorkItemRevision: currentRevision(), idempotencyKey: "cannot-bypass-deliberation",
+    }), { code: "resume_blocked" });
     const home = store.createLingThread({ kind: "automation", title: "Compatibility checkpoint", objective: "Review the contract" }, now);
     const automation = store.createAutomationDefinition({
       threadId: home.id, title: "Compatibility checkpoint", kind: "custom_prompt",
@@ -3789,18 +3806,18 @@ test("an admitted read-only deliberation runs once beside the accepted Workflow 
     assert.ok(checkpoint);
     await client.call("workItem/coordination/close", { workItemId: item.id, parentRecordId: checkpoint.recordId, actorId: "local-user" });
     assert.ok(store.readScheduledCoordinationRound(checkpoint.recordId)?.closedRecordId);
-    const { optionRefs, evidenceRef } = await recordDeliberationEvidence(client.call, item.id, planRevision);
+    const { optionRefs, evidenceRef } = await recordDeliberationEvidence(client.call, item.id, planRevision, options);
     const { candidate } = await client.call<LingAppServerCaptureChangesResult>("changes/capture");
     const { entry } = await client.call<{ entry: { id: string } }>("workItem/evidence/append", {
       workItemId: item.id, actorId: "local-user", subjectRevision: planRevision, kind: "observation",
       idempotencyKey: "inaccessible-deliberation-input", content: "Private material", visibility: "owner",
     });
-    const evaluate = (evidenceRefs: string[], idempotencyKey: string, connection = client, decisionKey = "compatibility-strategy") =>
+    const evaluate = (evidenceRefs: string[], idempotencyKey: string, connection = client, decisionStepId: string | null = waiting.id) =>
       connection.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", {
         workItemId: item.id, expectedWorkItemRevision: currentRevision(), idempotencyKey,
-        decisionKey, subject: { kind: "workflow_stage", workflowStepId: waiting.id, planRevision },
+        decisionKey: "compatibility-strategy", subject: { kind: "workflow_stage", workflowStepId: waiting.id, planRevision },
         checkpoint: "scheduled_checkpoint", checkpointRef: checkpoint.recordId, decisionKind: "implementation_tradeoff",
-        materiality: "medium", question: "Which compatible strategy should the stage use?", participantIds,
+        materiality: "medium", question, participantIds, ...(decisionStepId ? { decisionStepId } : {}),
         optionRefs, evidenceRefs, candidateDigest: candidate.candidateDigest,
       } satisfies LingAppServerDeliberationEvaluateParams);
     const open = (evaluationId: string, idempotencyKey: string, connection = client) =>
@@ -3820,7 +3837,7 @@ test("an admitted read-only deliberation runs once beside the accepted Workflow 
     assert.equal(opened.record.id, replayed.record.id);
     assert.deepEqual([opened.status, replayed.status].sort(), ["appended", "replayed"]);
     const linkedId = (opened.record.payload as { execution: { workflowId: string } }).execution.workflowId;
-    const decide = (connection = client) => connection.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/decide", {
+    const decide = (connection = client) => connection.call<LingAppServerDeliberationDecideResult>("workItem/deliberation/decide", {
       workItemId: item.id, expectedWorkItemRevision: currentRevision(), idempotencyKey: "choose-compatibility-strategy",
       roundId: opened.record.id, expectedRoundRevision: opened.record.collaborationRevision,
       decision: { disposition: "selected", option: optionRefs[0] }, reason: "The participants identified a compatible adapter.",
@@ -3850,8 +3867,29 @@ test("an admitted read-only deliberation runs once beside the accepted Workflow 
       proposalsCompleted: 2, challengesCompleted: 2, participants: 2 });
     await waitFor(() => peer.notices.find(notice => notice.method === "workItem/deliberation/updated"
       && notice.params?.event?.action === "work_item.deliberation.workflow_progress" && notice.params.event.data?.status === "succeeded"));
-    const decided = await decide();
+    const database = new DatabaseSync(store.paths.databasePath);
+    try {
+      database.exec(`CREATE TRIGGER fixture_fail_decision_application BEFORE INSERT ON app_server_state
+        WHEN NEW.kind = 'work_item_deliberation_application'
+        BEGIN SELECT RAISE(ABORT, 'fixture_decision_application_write_failed'); END`);
+      const before = currentRevision();
+      await assert.rejects(decide(), /fixture_decision_application_write_failed/u);
+      assert.equal(currentRevision(), before);
+      assert.equal(store.getWorkItemWorkflowStepDecision(waiting), undefined);
+      assert.equal((await progress()).records.some(record => record.action === "decided"), false);
+      database.exec("DROP TRIGGER fixture_fail_decision_application");
+    } finally {
+      database.close();
+    }
+    const [decided, repeatedDecision] = await Promise.all([decide(), decide(peer)]);
+    assert.equal(decided.record.id, repeatedDecision.record.id);
+    assert.deepEqual([decided.status, repeatedDecision.status].sort(), ["appended", "replayed"]);
     assert.equal(decided.record.sourceRefs.filter(ref => ref.type === "workflow_step_output").length, 4);
+    assert.deepEqual(decided.appliedTo, {
+      workflowId, workflowStepId: waiting.id, planRevision, option: options[0], candidateDigest: candidate.candidateDigest,
+    });
+    assert.deepEqual(repeatedDecision.appliedTo, decided.appliedTo);
+    assert.deepEqual(store.getWorkItemWorkflowStepDecision(waiting), { id: decided.record.id, option: options[0] });
     assert.deepEqual(store.getChannelWorkflow(workflowId), parentBefore);
     assert.deepEqual(store.listChannelWorkflowSteps({ workflowId, complete: true }), stepsBefore);
     assert.deepEqual(store.getLingTurn(sourceTurn.id), sourceTurn);
@@ -3866,7 +3904,7 @@ test("an admitted read-only deliberation runs once beside the accepted Workflow 
     await waitFor(() => restored.notices.find(notice => notice.method === "workItem/deliberation/updated"
       && notice.params?.event?.action === "work_item.deliberation.workflow_progress" && notice.params.event.data?.status === "succeeded"));
 
-    const { evaluation: cancellation } = await evaluate([evidenceRef], "cancellation-evaluation", restored, "cancellation");
+    const { evaluation: cancellation } = await evaluate([evidenceRef], "cancellation-evaluation", restored, null);
     const activeRound = await open(cancellation.evaluationId, "open-cancellable-round", restored);
     const activeWorkflow = (activeRound.record.payload as { execution: { workflowId: string } }).execution.workflowId;
     await waitFor(() => provider.requests.length === 5 ? true : undefined);
@@ -3879,6 +3917,25 @@ test("an admitted read-only deliberation runs once beside the accepted Workflow 
     assert.equal(retainedStore.listChannelWorkflowSteps({ workflowId: activeWorkflow, complete: true }).filter(step => step.runId).length, 1);
     assert.equal((await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/cancel", cancel)).record.id, cancelled.id);
     assert.equal(provider.requests.length, 5);
+
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const startTarget = () => fetch(`${daemonUrl}/workflow-steps/${waiting.id}/start?cwd=${encodeURIComponent(fixture.cwd)}`, {
+      method: "POST", headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ mode: "create_and_run_task", idempotencyKey: "start-accepted-decision-stage" }),
+    });
+    const contractPath = join(fixture.cwd, "contract.txt");
+    await writeFile(contractPath, "A different candidate.\n");
+    const stale = await startTarget();
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json() as { error: string }).error, "work_item_deliberation_candidate_stale");
+    assert.equal(provider.requests.length, 5);
+    await writeFile(contractPath, "The legacy field remains readable.\n");
+    const started = await startTarget();
+    if (!started.ok) assert.fail(await started.text());
+    await started.text();
+    await waitFor(() => retainedStore.getChannelWorkflowStep(waiting.id)?.status === "succeeded" ? true : undefined);
+    assert.equal(retainedStore.listRuns({ workflowStepId: waiting.id, complete: true }).length, 1);
+    assert.match(JSON.stringify(provider.requests[5]), new RegExp(decided.record.id, "u"));
   });
 
 test("a successor Workflow waits for an independent live Run owned by its predecessor", { timeout: 30_000 }, async t => {

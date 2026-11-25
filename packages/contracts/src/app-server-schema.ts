@@ -90,6 +90,7 @@ const planWorkflowStep = objectWith({ title: stringSchema, stageId: stringSchema
   handoffFromStageIds: stringArraySchema, recoveryVerification, recoveryReview,
   ownerId: stringSchema, ownerLabel: stringSchema, requiredTools: stringArraySchema,
   requiredDecision: objectWith({ question: stringSchema, options: stringArraySchema, trigger: { enum: ["when_ready"] },
+    receiptSource: { enum: ["checkpoint"] },
     ballot: objectWith({ voterStageIds: stringArraySchema, quorum: integerSchema }, ["voterStageIds", "quorum"]) }, ["question", "options"]) }, ["title"]);
 const journalFields = { id: stringSchema, recordedAt: stringSchema, pending: booleanSchema };
 const journalRequired = ["id", "kind", "recordedAt", "pending"];
@@ -432,7 +433,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       result: objectWith({ cwd: stringSchema, receipt: nativeIntakeReceiptSchema }, ["cwd", "receipt"]) };
     case "workItem/evidence/append":
       return { params: objectWith({ ...workItemTarget, actorId: stringSchema, kind: stringSchema, subjectRevision: stringSchema,
-        content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arraySchema },
+        content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arraySchema, optionId: stringSchema },
       ["workItemId", "actorId", "kind", "subjectRevision", "content", "idempotencyKey"]), result };
     case "workItem/collaboration/append":
       return { params: objectWith({ ...collaborationAppend, kind: stringSchema, action: stringSchema }, ["workItemId", "kind", "action"]), result };
@@ -444,11 +445,12 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
           decisionKey: stringSchema, subject: deliberationSubject, checkpoint: deliberationCheckpoint, checkpointRef: stringSchema,
           decisionKind: { enum: LING_APP_SERVER_DELIBERATION_DECISION_KINDS }, materiality: { enum: LING_APP_SERVER_DECISION_MATERIALITIES },
           question: stringSchema, participantIds: stringArraySchema, optionRefs: stringArraySchema, evidenceRefs: stringArraySchema,
-          candidateDigest: stringSchema, unresolved: { enum: ["intent", "fact", "handoff"] },
+          candidateDigest: stringSchema, decisionStepId: stringSchema, unresolved: { enum: ["intent", "fact", "handoff"] },
         }, ["workItemId", "expectedWorkItemRevision", "idempotencyKey", "decisionKey", "subject", "checkpoint", "checkpointRef",
           "decisionKind", "materiality", "question", "participantIds", "optionRefs", "evidenceRefs"]),
         result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,
-          evaluation: objectWith({ ...deliberationEvaluationFields, candidateDigest: stringSchema }, Object.keys(deliberationEvaluationFields)),
+          evaluation: objectWith({ ...deliberationEvaluationFields, candidateDigest: stringSchema, decisionStepId: stringSchema },
+            Object.keys(deliberationEvaluationFields)),
         }, ["cwd", "workItemRevision", "replayed", "evaluation"]),
       };
     case "workItem/deliberation/open":
@@ -461,7 +463,11 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ ...deliberationSettlement, decision: { oneOf: [
         objectWith({ disposition: { enum: ["selected"] }, option: stringSchema }, ["disposition", "option"]),
         objectWith({ disposition: { enum: ["deferred", "replan_required"] } }, ["disposition"]),
-      ] } }, [...deliberationSettlementFields, "decision"]), result };
+      ] } }, [...deliberationSettlementFields, "decision"]), result: objectWith({
+        status: { enum: ["appended", "replayed"] }, record: objectSchema, workItemRevision: integerSchema,
+        appliedTo: objectWith({ workflowId: stringSchema, workflowStepId: stringSchema, planRevision: stringSchema,
+          option: stringSchema, candidateDigest: stringSchema }, ["workflowId", "workflowStepId", "planRevision", "option", "candidateDigest"]),
+      }, ["status", "record", "workItemRevision"]) };
     case "workItem/coordination/start":
     case "workItem/coordination/close":
       return { params: objectWith(collaborationAppend, ["workItemId"]), result };

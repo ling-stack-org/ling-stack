@@ -1320,6 +1320,7 @@ export interface LingAppServerDeliberationEvaluateParams {
   readonly participantIds: readonly string[];
   readonly optionRefs: readonly string[];
   readonly evidenceRefs: readonly string[];
+  readonly decisionStepId?: string;
   readonly candidateDigest?: string;
   readonly unresolved?: "intent" | "fact" | "handoff";
 }
@@ -1337,6 +1338,7 @@ export interface LingAppServerDeliberationEvaluation {
   readonly optionRefs: readonly string[];
   readonly evidenceRefs: readonly string[];
   readonly participantIds: readonly string[];
+  readonly decisionStepId?: string;
   readonly candidateDigest?: string;
   readonly expiresAt: string;
   readonly evaluatedAt: string;
@@ -1379,6 +1381,18 @@ export interface LingAppServerStageDeliberationStartParams {
 export interface LingAppServerDeliberationDecideParams extends LingAppServerDeliberationSettlementParams {
   readonly decision: { readonly disposition: "selected"; readonly option: string }
     | { readonly disposition: "deferred" | "replan_required" };
+}
+
+export interface LingAppServerDeliberationAppliedDecision {
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly planRevision: string;
+  readonly option: string;
+  readonly candidateDigest: string;
+}
+
+export interface LingAppServerDeliberationDecideResult extends LingAppServerWorkItemCollaborationAppendResult {
+  readonly appliedTo?: LingAppServerDeliberationAppliedDecision;
 }
 
 export const LING_APP_SERVER_SERVER_REQUEST_METHODS = ["approval/requestDecision", "input/requestAnswer"] as const;

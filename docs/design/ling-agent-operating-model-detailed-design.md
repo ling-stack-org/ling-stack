@@ -909,6 +909,7 @@ Mutations carry `expectedWorkItemRevision` and `idempotencyKey`, plus the applic
 | `workItem/evidence/append` | Subject digest and bounded contribution. Corrections include target ID and expected entry revision. Requires a contribution grant. |
 | `workItem/deliberation/start` | Authorized template revision, subject digest and question, proposal or stage reference. The coordinator returns the round and the admitted shaping or Workflow receipt. |
 | `workItem/deliberation/open` | Accept a checkpoint evaluation for its decision revision. With `execution: "read_only_workflow"`, atomically admit a linked participant Workflow for the accepted stage. The round includes its Workflow ID. |
+| `workItem/deliberation/evaluate` | Provide the checkpoint and its applicable evidence. A caller binding a candidate to a stage with `requiredDecision.receiptSource: "checkpoint"` supplies `decisionStepId` and maps each proposal's `optionId` to an eligible Plan option. |
 | `workItem/deliberation/read` | Decision or round ID and optional page cursor. Returns the visible trigger evaluation, phase, budget state, sealed outcome and decision as available. |
 | `workItem/deliberation/cancel` | Round ID and expected round revision. The shaping or Workflow owner returns its stop request receipt. |
 | `workItem/deliberation/decide` | Round ID, expected sealed outcome revision and the decision with its reason when required. The decision owner checks the current subject and commits the accepted receipt. |

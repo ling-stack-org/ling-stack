@@ -2718,6 +2718,9 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   };
   admitWorkItemDeliberationWorkflow(input: import("./work-item-deliberation-workflow.js").WorkItemDeliberationWorkflowAdmission,
     now: string): import("./work-item-collaboration.js").AppendWorkItemCollaborationResult | undefined;
+  applyWorkItemDeliberationDecision(input: import("./work-item-evidence-types.js").AppendWorkItemEvidenceInput,
+    application: import("./work-item-deliberation-workflow.js").WorkItemDeliberationApplication, now: string,
+    event: import("./work-item-evidence-types.js").WorkItemEvidenceEventOptions): import("./work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined;
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined;
   getWorkItemStageRetryBudget(step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkItemStageRetryBudget | undefined;
   getWorkItemWorkflowUsage(item: WorkItem, now: string): import("./work-item-types.js").WorkItemWorkflowUsage | undefined;
@@ -3348,6 +3351,7 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "claimWorkItem"
   | "commitWorkItemGitHubDelivery"
   | "admitWorkItemDeliberationWorkflow"
+  | "applyWorkItemDeliberationDecision"
   | "heartbeatWorkItem"
   | "releaseWorkItem"
   | "completeWorkItem"

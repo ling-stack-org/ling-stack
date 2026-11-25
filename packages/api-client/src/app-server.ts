@@ -107,6 +107,7 @@ import type {
   LingAppServerWorkItemFeedbackParams,
   LingAppServerWorkItemFeedbackResult,
   LingAppServerDeliberationDecideParams,
+  LingAppServerDeliberationDecideResult,
   LingAppServerDeliberationSettlementParams,
   LingAppServerStageDeliberationStartParams,
   LingAppServerStageRecoverParams,
@@ -681,7 +682,7 @@ export class LingAppServerClient {
     return await this.request("workItem/stage/recover", params);
   }
 
-  async decideWorkItemDeliberation(params: LingAppServerDeliberationDecideParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+  async decideWorkItemDeliberation(params: LingAppServerDeliberationDecideParams): Promise<LingAppServerDeliberationDecideResult> {
     await this.connect();
     return await this.request("workItem/deliberation/decide", params);
   }
