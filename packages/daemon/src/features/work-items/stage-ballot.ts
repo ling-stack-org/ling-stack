@@ -68,7 +68,7 @@ export function persistWorkflowStageBallot(store: RunStore, run: RunSession, att
   if (!result) throw new Error("workflow_stage_ballot_conflict");
 }
 
-function readVote(store: RunStore, run: RunSession, ballotKey: string, options: readonly string[]): string | null | undefined {
+export function readVote(store: RunStore, run: RunSession, ballotKey: string, options: readonly string[]): string | null | undefined {
   const unit = run.workUnitId ? store.getWorkUnit(run.workUnitId) : undefined;
   if (!unit || unit.linkedRunId !== run.id || unit.status !== "succeeded") return undefined;
   const attempt = store.listWorkUnitAttempts(unit.id).at(-1);

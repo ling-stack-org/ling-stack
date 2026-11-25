@@ -21,6 +21,7 @@ import {
   hostCompactionResourceBoundaryArtifactId,
   getEffectiveTeammateSkill,
   getRunSummaryPath,
+  readWorkItemDeliberationBallotBasis,
   redactSecrets,
   type EffectiveRunPolicySnapshot,
   type LingThread,
@@ -2771,7 +2772,9 @@ async function executeAdmittedRunRequest(
   };
 
   const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
-  const ballotKey = workflowStep?.metadata?.planBallotKey;
+  const ballotMarker = workflowStep?.metadata?.planBallotKey;
+  const linkedBallot = workflowStep && ballotMarker ? readWorkItemDeliberationBallotBasis(store, workflowStep.workflowId) : undefined;
+  const ballotKey = linkedBallot?.status === "voting" ? linkedBallot.key : ballotMarker;
   const executingStep = runnerResolution.runner.adapter instanceof PiRunnerAdapter && !delegatedExecution ? workflowStep : undefined;
   const acceptsStageMessages = Boolean(executingStep?.metadata?.planStageId && !executingStep.metadata.planBallotKey
     && store.getAppServerState("work_item_workflow", executingStep.workflowId));

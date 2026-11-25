@@ -3,6 +3,7 @@ import {
   type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
+  type ControlPlaneEvent,
   type RunSession,
   type RunStore,
   type SecretResolver,
@@ -20,6 +21,7 @@ import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
 import { readAdmittedStageQuestionIds, stripStageAnswerBlocks } from "../work-items/stage-questions.js";
+import { reconcileDeliberationBallot } from "../work-items/deliberation-ballot.js";
 import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 import {
@@ -69,6 +71,7 @@ export interface OrchestrateWorkflowInput {
   readonly startRun: StartOrchestratedWorkflowStepRun;
   readonly resolveParallelCapability?: ResolveWorkflowParallelCapability;
   readonly isolationHost?: WorkflowIsolationHost;
+  readonly onDeliberationEvent?: (event: ControlPlaneEvent) => void;
 }
 
 export type StartOrchestratedWorkflowStepRun = (input: {
@@ -176,6 +179,8 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   const beforeFailure = integrationFailure();
   if (beforeFailure) return beforeFailure;
   const reconciled = reconcileWorkflowStepRuns(input.store, workflow.id);
+  const ballotEvent = await reconcileDeliberationBallot(input.store, workflow.id, new Date().toISOString());
+  if (ballotEvent) input.onDeliberationEvent?.(ballotEvent);
   if (integrations.some(result => result.status === "waiting")) {
     integrations = await reconcileWorkflowIntegrations(input.store, workflow.id);
     const afterFailure = integrationFailure();

@@ -45,7 +45,7 @@ import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, Lin
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
-import { checkpointDeliberationResolutionId, deliberationWorkflowStepDigest, type WorkItemDeliberationApplication,
+import { checkpointDeliberationResolutionId, deliberationWorkflowStepDigest, type WorkItemDeliberationApplication, type WorkItemDeliberationBallotBasis,
   type WorkItemDeliberationWorkflowBinding } from "../../work-item-deliberation-workflow.js";
 import { stageHandoffAdmitsTarget } from "../../work-item-workflow-handoff.js";
 import { listWorkItemStageQuestions, workItemStageQuestionExpired } from "../../work-item-workflow-question.js";
@@ -922,6 +922,14 @@ export class SqliteWorkItemStore {
       const preset = presetId ? this.ports.getProviderConfigurationSnapshot(presetId) : undefined;
       if (!preset || preset.configRevision !== binding.providerRevisions[preset.provider.id]) {
         return "work_item_deliberation_provider_changed";
+      }
+      if (step.metadata.planBallotKey) {
+        const ballot = state.get("work_item_deliberation_ballot", step.workflowId)?.payload as WorkItemDeliberationBallotBasis | undefined;
+        if (ballot?.status !== "voting") return "work_item_ballot_pending";
+        if (ballot.challengeArtifacts.some(pin => {
+          const artifact = this.ports.getArtifact(pin.id);
+          return !artifact || artifact.contentSha256 !== pin.digest || artifact.sealedPayload === undefined;
+        })) return "work_item_deliberation_ballot_stale";
       }
     }
     const link = state.get("work_item_workflow", binding.originWorkflowId)?.payload as WorkItemWorkflowLink | undefined;

@@ -962,6 +962,7 @@ export function createDaemonServer(
     for (const event of openReadyWorkItemStageDeliberations(store, workflowId, new Date().toISOString())) controlPlaneEvents.publish(event);
     return orchestrateChannelWorkflow({
       store, cwd: store.paths.cwd, workflowId, secretResolver, runnerRegistry,
+      onDeliberationEvent: event => controlPlaneEvents.publish(event),
       resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
         { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
       isolationHost: { enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,

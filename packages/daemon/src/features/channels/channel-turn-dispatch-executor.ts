@@ -365,6 +365,7 @@ export function createStartOrchestratedRun(
                     ? options.runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
                 cwd,
                 workflowId: workflow.id,
+                onDeliberationEvent: event => options.controlPlaneEvents?.publish(event),
                 validateRunRequest: (request) => resolveProviderForRun(store, request, options.secretResolver),
                 startRun,
               });

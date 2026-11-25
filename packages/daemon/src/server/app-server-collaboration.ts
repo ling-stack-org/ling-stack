@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   LingAppServerCollaborationKind,
   LingAppServerDeliberationDecideParams,
@@ -239,7 +240,7 @@ export async function settleAppServerDeliberation(
   const requestPayload = decision ? { ...decision, reason: input.reason } : { reason: input.reason };
   const saved = prior && readWorkItemCollaborationRecord(store, item.id, prior.id);
   if (saved) {
-    const { ballot: _ballot, appliedTo, ...request } = isRecord(saved.payload) ? saved.payload : {};
+    const { ballot: _ballot, outcome: _outcome, appliedTo, ...request } = isRecord(saved.payload) ? saved.payload : {};
     if (saved.action !== action || JSON.stringify(request) !== JSON.stringify(requestPayload)) {
       throw new AppServerCollaborationError("idempotency_conflict", "The deliberation key was used with a different decision.");
     }
@@ -261,7 +262,8 @@ export async function settleAppServerDeliberation(
     workflowId: application.workflowId, workflowStepId: application.stepId, planRevision: application.planRevision,
     option: application.option, candidateDigest: application.candidate.digest,
   } : undefined;
-  const payload = { ...requestPayload, ...(ballot ? { ballot: ballot.summary } : {}), ...(appliedTo ? { appliedTo } : {}) };
+  const payload = { ...requestPayload, ...(ballot ? { ballot: ballot.summary } : {}),
+    ...(execution?.outcome ? { outcome: execution.outcome } : {}), ...(appliedTo ? { appliedTo } : {}) };
   const sourceRefs = [{ type: "deliberation_round", id: round.id, revision: String(round.collaborationRevision) },
     ...(ballot?.sourceRefs ?? []), ...(execution?.sources ?? []),
     ...(application ? [{ type: "workflow_step", id: application.stepId, revision: application.planRevision }] : [])];
@@ -284,7 +286,9 @@ export async function settleAppServerDeliberation(
         const current = store.getWorkItem(item.id);
         if (!current) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
         assertCheckpointRoundCurrent(store, current, round, now);
-        if (execution) readCompletedDeliberationWorkflow(store, item.id, round.id, round.payload);
+        if (execution && !isDeepStrictEqual(readCompletedDeliberationWorkflow(store, item.id, round.id, round.payload), execution)) {
+          throw new AppServerCollaborationError("stale_revision", "The deliberation outcome changed before the decision committed.");
+        }
         if (application) {
           const previous = readWorkItemDeliberationApplication(store, application.stepId);
           if (previous?.workItemId === application.workItemId && previous.planRevision === application.planRevision

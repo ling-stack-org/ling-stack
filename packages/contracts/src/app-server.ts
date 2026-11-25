@@ -1018,7 +1018,13 @@ export interface LingAppServerDeliberationWorkflowProgress {
   readonly challengesCompleted: number;
   readonly participants: number;
   readonly blocker?: string;
+  readonly outcome?: LingAppServerDeliberationWorkflowOutcome;
 }
+
+export type LingAppServerDeliberationWorkflowOutcome =
+  | { readonly status: "waiting" | "voting" | "verify_required" | "insufficient_evidence" }
+  | { readonly status: "consensus"; readonly recommendation: string }
+  | { readonly status: "tallied"; readonly summary: LingAppServerStageBallotTally; readonly recommendation?: string };
 
 export interface LingAppServerStageBallotTally {
   readonly ballotKey: string;
@@ -1358,6 +1364,7 @@ export interface LingAppServerDeliberationOpenParams {
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
   readonly execution?: "read_only_workflow";
+  readonly ballotMode?: "when_unresolved";
 }
 
 export interface LingAppServerDeliberationSettlementParams {

@@ -15,8 +15,17 @@ export interface WorkItemDeliberationWorkflowBinding {
   readonly candidate?: { readonly cwd: string; readonly digest: string };
   readonly providerRevisions: Readonly<Record<string, number>>;
   readonly decisionTarget?: WorkItemDeliberationTarget;
+  readonly ballot?: { readonly options: readonly string[]; readonly evidenceIds: readonly string[]; readonly quorum: number };
   readonly steps: Readonly<Record<string, string>>;
 }
+
+export type WorkItemDeliberationBallotBasis = {
+  readonly challengeArtifacts: readonly { readonly id: string; readonly digest: string }[];
+} & (
+  | { readonly status: "voting"; readonly key: string }
+  | { readonly status: "consensus"; readonly recommendation: string }
+  | { readonly status: "verify_required" | "insufficient_evidence" }
+);
 
 export interface WorkItemDeliberationTarget {
   readonly stepId: string;
@@ -58,6 +67,10 @@ export function readWorkItemDeliberationApplication(store: Pick<RunStore, "getAp
   return store.getAppServerState("work_item_deliberation_application", stepId)?.payload as WorkItemDeliberationApplication | undefined;
 }
 
+export function readWorkItemDeliberationBallotBasis(store: Pick<RunStore, "getAppServerState">, workflowId: string) {
+  return store.getAppServerState("work_item_deliberation_ballot", workflowId)?.payload as WorkItemDeliberationBallotBasis | undefined;
+}
+
 export function checkpointDeliberationResolutionId(roundId: string): string {
   return `work_item_deliberation_${createHash("sha256").update(roundId).digest("hex")}`;
 }
@@ -69,6 +82,6 @@ export function deliberationWorkflowStepDigest(step: ChannelWorkflowStep): strin
     metadata?.sideEffectClass, metadata?.dependsOnStepIds, metadata?.requiredTools, metadata?.requestedRunnerId,
     metadata?.providerPresetId, metadata?.policy, metadata?.skillId, metadata?.gates, metadata?.parallelPolicy,
     metadata?.providerBinding, metadata?.approvalGate, metadata?.executionPlan, metadata?.executionOperationIds,
-    metadata?.dependencyMode, metadata?.templateStepId, metadata?.planStageId, metadata?.requiredPlanDecision,
+    metadata?.dependencyMode, metadata?.templateStepId, metadata?.planStageId, metadata?.requiredPlanDecision, metadata?.planBallotKey,
   ])).digest("hex");
 }

@@ -80,6 +80,10 @@ const deliberationWorkflowProgressFields = {
   status: { enum: ["draft", "ready", "running", "waiting_for_approval", "waiting_for_input", "blocked", "succeeded", "failed", "cancelled"] },
   deadlineAt: stringSchema, proposalsCompleted: integerSchema, challengesCompleted: integerSchema, participants: integerSchema,
 };
+const deliberationWorkflowOutcome = objectWith({
+  status: { enum: ["waiting", "voting", "consensus", "verify_required", "insufficient_evidence", "tallied"] },
+  summary: objectSchema, recommendation: stringSchema,
+}, ["status"]);
 const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: integerSchema };
 const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema, taskId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
@@ -346,7 +350,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "workItem/deliberation/read":
       return { params: objectWith({ ...workItemTarget, afterRevision: integerSchema, limit: integerSchema }, ["workItemId"]),
         result: objectWith({ workItemId: stringSchema, records: arraySchema, nextAfterRevision: integerSchema, ballots: arraySchema,
-          deliberationWorkflows: { type: "array", items: objectWith({ ...deliberationWorkflowProgressFields, blocker: stringSchema },
+          deliberationWorkflows: { type: "array", items: objectWith({ ...deliberationWorkflowProgressFields, blocker: stringSchema,
+            outcome: deliberationWorkflowOutcome },
             Object.keys(deliberationWorkflowProgressFields)) },
         }, ["workItemId", "records", "nextAfterRevision"]) };
     case "workItem/read":
@@ -455,7 +460,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       };
     case "workItem/deliberation/open":
       return { params: objectWith({ ...workItemTarget, evaluationId: stringSchema, expectedWorkItemRevision: integerSchema,
-        idempotencyKey: stringSchema, execution: { enum: ["read_only_workflow"] } },
+        idempotencyKey: stringSchema, execution: { enum: ["read_only_workflow"] }, ballotMode: { enum: ["when_unresolved"] } },
       ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result };
     case "workItem/deliberation/cancel":
       return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result };

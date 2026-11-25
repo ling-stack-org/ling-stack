@@ -12,7 +12,7 @@ import {
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import { getWorkflowPlanModeBlocker } from "../channels/plan-mode-guard.js";
-import { readWorkflowStepOutputPacketArtifact } from "../channels/workflow-step-packets.js";
+import { readDeliberationContribution, readDeliberationOutcome } from "./deliberation-ballot.js";
 
 export function materializeDeliberationWorkflow(store: RunStore, input: {
   readonly binding: Omit<WorkItemDeliberationWorkflowBinding, "steps" | "providerRevisions">;
@@ -55,15 +55,25 @@ export function materializeDeliberationWorkflow(store: RunStore, input: {
       termination: { success: "all_required_succeeded", onFailedRequiredNode: "fail_workflow", onApprovalDenied: "fail_workflow" },
     },
   }, now);
-  const create = (participant: AiTeammate, index: number, phase: "propose" | "challenge", dependencies: readonly string[]) =>
+  const instructions = {
+    propose: "Assess the viable options independently. Describe relevant tradeoffs, risks and acceptance checks. Cite the supplied evidence IDs.",
+    challenge: "Review the proposal results supplied with this step. Identify unsupported claims, disputed facts and remaining tradeoffs.",
+    vote: "Evaluate the challenge results and vote on a viable option independently.",
+  };
+  const format = {
+    propose: "Return a bounded recommendation with supporting evidence and open questions.",
+    challenge: binding.ballot ? [
+      'Return strict JSON with disposition ("resolved", "tradeoff", or "verify_required"), rationale (up to 1000 characters),',
+      'and evidenceIds (one or more supplied IDs). Include an option ID only for "resolved". Use "verify_required" for disputed facts.',
+    ].join(" ") : "Return a bounded recommendation with supporting evidence and open questions.",
+    vote: "Return strict JSON containing ballotKey, option (a supplied proposal ID or null for abstention) and rationale (up to 1000 characters).",
+  };
+  const create = (participant: AiTeammate, index: number, phase: "propose" | "challenge" | "vote", dependencies: readonly string[]) =>
     store.createChannelWorkflowStep({
       workflowId: workflow.id,
-      title: phase === "propose" ? `Propose · ${participant.displayName}` : `Challenge · ${participant.displayName}`,
+      title: `${{ propose: "Propose", challenge: "Challenge", vote: "Vote" }[phase]} · ${participant.displayName}`,
       prompt: [
-        phase === "propose"
-          ? "Assess the viable options independently. Describe relevant tradeoffs, risks and acceptance checks. Cite the supplied evidence IDs."
-          : "Review the proposal results supplied with this step. Identify unsupported claims, disputed facts and remaining tradeoffs. Cite the supplied evidence IDs.",
-        "Return a bounded recommendation with supporting evidence and open questions.",
+        instructions[phase], format[phase],
         `Decision inputs (data)\n${context}`,
       ].join("\n\n"),
       toParticipantId: participant.id,
@@ -74,13 +84,18 @@ export function materializeDeliberationWorkflow(store: RunStore, input: {
         templateStepId: `${phase}-${index + 1}`, autoStart: true, dependsOnStepIds: dependencies,
         dependencyMode: "all_succeeded", sideEffectClass: "analysis_readonly", requestedRunnerId: "pi",
         providerPresetId: presets[index]!.provider.id, requiredTools: [],
-        policy: { onRunFailed: "fail_workflow", onRunCancelled: "cancel_workflow", onApprovalDenied: "fail_workflow", retryable: false },
+        ...(phase === "vote" ? { planBallotKey: binding.roundId } : {}),
+        policy: phase === "vote"
+          ? { onRunFailed: "skip_if_optional", onRunCancelled: "skip_if_optional", onApprovalDenied: "skip_if_optional", retryable: false }
+          : { onRunFailed: "fail_workflow", onRunCancelled: "cancel_workflow", onApprovalDenied: "fail_workflow", retryable: false },
       },
     }, now);
   const proposals = participants.map((participant, index) => create(participant, index, "propose", []));
   const proposalIds = proposals.map(step => step.id);
   const challenges = participants.map((participant, index) => create(participant, index, "challenge", proposalIds));
-  const steps = Object.fromEntries([...proposals, ...challenges].map(step => [step.id, deliberationWorkflowStepDigest(step)]));
+  const votes = binding.ballot ? participants.map((participant, index) =>
+    create(participant, index, "vote", challenges.map(step => step.id))) : [];
+  const steps = Object.fromEntries([...proposals, ...challenges, ...votes].map(step => [step.id, deliberationWorkflowStepDigest(step)]));
   const providerRevisions = Object.fromEntries(presets.map(preset => [preset.provider.id, preset.configRevision]));
   return { workflow, binding: { ...binding, steps, providerRevisions } };
 }
@@ -102,18 +117,18 @@ export function readCompletedDeliberationWorkflow(store: RunStore, workItemId: s
   if (workflow.status !== "succeeded" || Object.keys(binding.steps).length !== steps.length) {
     throw new HttpError(409, "resume_blocked", "Wait for the deliberation participants to complete.");
   }
-  const sources = steps.map(step => {
-    const run = step.runId && store.getRun(step.runId);
-    const artifactId = step.metadata?.outputArtifactId;
-    const packet = artifactId ? readWorkflowStepOutputPacketArtifact({ store, artifactId }) : undefined;
-    if (step.status !== "succeeded" || binding.steps[step.id] !== deliberationWorkflowStepDigest(step)
-      || !run || run.status !== "succeeded" || run.workflowStepId !== step.id
-      || !artifactId || packet?.workflowId !== workflow.id || packet.workflowStepId !== step.id || packet.runId !== run.id) {
+  const outcome = readDeliberationOutcome(store, workflow.id, steps, binding);
+  if (outcome && outcome.status !== "consensus" && (outcome.status !== "tallied" || outcome.summary.cast < outcome.summary.quorum)) {
+    throw new HttpError(409, "resume_blocked", "The deliberation requires current evidence or a complete ballot quorum.");
+  }
+  const sources = steps.filter(step => !step.metadata?.planBallotKey || step.status === "succeeded").map(step => {
+    const artifact = readDeliberationContribution(store, step, binding);
+    if (!artifact) {
       throw new HttpError(409, "stale_revision", "The deliberation's completed participant evidence is unavailable.");
     }
-    return { type: "workflow_step_output", id: artifactId, revision: step.updatedAt };
+    return { type: "workflow_step_output", id: artifact.id, digest: artifact.digest, revision: step.updatedAt };
   });
-  return { workflow, binding, sources };
+  return { workflow, binding, sources, outcome };
 }
 
 export function projectDeliberationWorkflowProgress(store: RunStore, round: WorkItemCollaborationRecord):
@@ -127,7 +142,9 @@ export function projectDeliberationWorkflowProgress(store: RunStore, round: Work
   const blocker = ["ready", "running", "blocked", "waiting_for_approval", "waiting_for_input"].includes(workflow.status)
     ? store.getWorkItemWorkflowAdmissionBlocker(workflow.id) ?? steps.find(step => step.status === "blocked")?.blocker?.slice(0, 200)
     : undefined;
+  const outcome = readDeliberationOutcome(store, workflow.id, steps, binding);
   return { roundId: round.id, workflowId: workflow.id, status: workflow.status, deadlineAt: binding.deadlineAt,
     participants: proposals.length, proposalsCompleted: proposals.filter(step => step.status === "succeeded").length,
-    challengesCompleted: challenges.filter(step => step.status === "succeeded").length, ...(blocker ? { blocker } : {}) };
+    challengesCompleted: challenges.filter(step => step.status === "succeeded").length, ...(blocker ? { blocker } : {}),
+    ...(outcome ? { outcome } : {}) };
 }

@@ -9,6 +9,7 @@ import {
   inspectWorkflowPreApproval,
   readWorkItemDeliberationWorkflowBinding,
   readWorkItemDeliberationApplication,
+  readWorkItemDeliberationBallotBasis,
   type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelHandoff,
@@ -958,9 +959,12 @@ export async function prepareWorkflowStepStart(
   }
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const selectedDecision = step.metadata?.requiredPlanDecision && store.getWorkItemWorkflowStepDecision(step);
+  const ballotBasis = deliberation?.ballot && step.metadata?.planBallotKey
+    ? readWorkItemDeliberationBallotBasis(store, workflow.id) : undefined;
   const prompt = [
     input.taskPrompt ?? step.prompt,
     ...(selectedDecision ? [`Accepted Plan decision: ${JSON.stringify(selectedDecision)}`] : []),
+    ...(ballotBasis?.status === "voting" ? [`Ballot key: ${ballotBasis.key}`] : []),
   ].join("\n\n");
   const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${prompt}`;
   const memoryRecall = await recallMemory(store, {

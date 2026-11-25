@@ -348,7 +348,7 @@ export async function runLingAppServerMcp(
       inputSchema: deliberationOpenInput,
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.openWorkItemDeliberation(params)));
-    const roundSettlement = deliberationOpenInput.omit({ evaluationId: true, execution: true }).extend({
+    const roundSettlement = deliberationOpenInput.omit({ evaluationId: true, execution: true, ballotMode: true }).extend({
       roundId: objectId, expectedRoundRevision: z.number().int().positive(), reason: z.string().trim().min(1).max(2000),
     });
     if (methods.has("workItem/deliberation/decide")) server.registerTool("ling_deliberation_decide", {

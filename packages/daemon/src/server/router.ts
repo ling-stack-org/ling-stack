@@ -2424,6 +2424,7 @@ export async function routeRequest(
             isolationHost: workflowIsolationHost,
             cwd,
             workflowId: workflowRoute.workflowId,
+            onDeliberationEvent: event => controlPlaneEvents.publish(event),
             validateRunRequest: (candidateRunRequest) => {
               resolveProviderForRun(store, candidateRunRequest, secretResolver);
             },

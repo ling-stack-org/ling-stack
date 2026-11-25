@@ -70,6 +70,7 @@ export const deliberationEvaluateInput = z.object({
 
 export const deliberationOpenInput = z.object({
   ...mutationFields, evaluationId: boundedId, execution: z.literal("read_only_workflow").optional(),
+  ballotMode: z.literal("when_unresolved").optional(),
 });
 
 interface FrozenEvaluation {
@@ -146,7 +147,7 @@ export async function evaluateAppServerDeliberation(
 export async function openAppServerEvaluatedDeliberation(
   store: RunStore, input: LingAppServerDeliberationOpenParams, now: string, cwd: string,
 ): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent }> {
-  const { workItemId, evaluationId, expectedWorkItemRevision, idempotencyKey, execution } = input;
+  const { workItemId, evaluationId, expectedWorkItemRevision, idempotencyKey, execution, ballotMode } = input;
   const item = requireWorkItem(store, workItemId);
   const frozen = readEvaluation(readWorkItemCollaborationRecord(store, workItemId, evaluationId));
   if (!frozen) throw stale("The deliberation evaluation is unavailable.");
@@ -158,7 +159,8 @@ export async function openAppServerEvaluatedDeliberation(
     const existing = prior ?? readWorkItemCollaborationRecord(store, workItemId, roundId);
     if (!existing) return undefined;
     const hasWorkflow = isRecord(existing.payload) && isRecord(existing.payload.execution);
-    if (hasWorkflow !== (execution === "read_only_workflow")) {
+    const retainedBallotMode = isRecord(existing.payload) ? existing.payload.ballotMode : undefined;
+    if (hasWorkflow !== (execution === "read_only_workflow") || retainedBallotMode !== ballotMode) {
       if (prior) throw keyConflict();
       throw stale("This decision revision was already admitted with a different execution mode.");
     }
@@ -168,8 +170,8 @@ export async function openAppServerEvaluatedDeliberation(
   const prior = readReplay();
   if (prior) return prior;
   if (evaluation.outcome !== "suggest") throw new HttpError(409, "resume_blocked", "Only a current deliberation suggestion can open a round.");
-  if (decision.decisionStepId && execution !== "read_only_workflow") {
-    throw new HttpError(409, "resume_blocked", "An accepted dependency requires a participant Workflow.");
+  if ((decision.decisionStepId || ballotMode) && execution !== "read_only_workflow") {
+    throw new HttpError(409, "resume_blocked", "This round requires a participant Workflow.");
   }
 
   const assertCurrent = () => assertEvaluationCurrent(store, requireWorkItem(store, workItemId), frozen, now, evaluation.expiresAt);
@@ -201,12 +203,14 @@ export async function openAppServerEvaluatedDeliberation(
         const compiled = materializeDeliberationWorkflow(store, {
           binding: { workItemId, roundId, originWorkflowId: step.workflowId, originStepId: step.id, originStepRevision: step.updatedAt,
             planRevision: admission.subject.subjectRevision, controlGeneration: item.control.generation, deadlineAt, candidate,
-            decisionTarget: admission.decisionTarget },
+            decisionTarget: admission.decisionTarget,
+            ...(ballotMode ? { ballot: { options: evaluation.optionRefs, evidenceIds: [...evaluation.optionRefs, ...evaluation.evidenceRefs],
+              quorum: Math.floor(admission.participants.length / 2) + 1 } } : {}) },
           origin: step, question: decision.question, participants: admission.participants,
           options: admission.optionEntries, evidence: admission.evidence, now,
         });
         return { ...compiled, round: {
-          ...round, payload: { ...round.payload, execution: { workflowId: compiled.workflow.id } },
+          ...round, payload: { ...round.payload, execution: { workflowId: compiled.workflow.id }, ...(ballotMode ? { ballotMode } : {}) },
           sourceRefs: [...round.sourceRefs, { type: "workflow", id: compiled.workflow.id }],
         } };
       },
