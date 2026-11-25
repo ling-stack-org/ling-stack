@@ -32,6 +32,7 @@ import {
 import { z } from "zod";
 import { HttpError } from "../errors.js";
 import { listEffectiveChannelAiTeammates } from "../features/channels/channel-teammate-availability.js";
+import { preparePlanShaping, type PlanShapingRuntime } from "../features/channels/plan-deliberation-shaping.js";
 import { materializeDeliberationWorkflow, readDeliberationWorkflowInputs } from "../features/work-items/deliberation-workflow.js";
 import { isRecord } from "../shared/validation.js";
 import { readCompleteHandoffCandidate } from "../features/work-items/stage-handoff-candidates.js";
@@ -72,8 +73,9 @@ export const deliberationEvaluateInput = z.object({
 });
 
 export const deliberationOpenInput = z.object({
-  ...mutationFields, evaluationId: boundedId, execution: z.literal("read_only_workflow").optional(),
+  ...mutationFields, evaluationId: boundedId, execution: z.enum(["read_only_shaping", "read_only_workflow"]).optional(),
   ballotMode: z.literal("when_unresolved").optional(),
+  shapingBudget: z.strictObject({ maxTokens: z.number().int().positive(), maxDurationMs: z.number().int().positive().max(validityMs) }).optional(),
 });
 
 interface FrozenEvaluation {
@@ -248,8 +250,9 @@ function automaticDeliberationBlocker(store: RunStore, item: WorkItem, input: {
 
 export async function openAppServerEvaluatedDeliberation(
   store: RunStore, input: LingAppServerDeliberationOpenParams, now: string, cwd: string,
-): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent }> {
-  const { workItemId, evaluationId, expectedWorkItemRevision, idempotencyKey, execution, ballotMode } = input;
+  shapingRuntime: PlanShapingRuntime,
+): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent; readonly collectShaping?: () => Promise<void> }> {
+  const { workItemId, evaluationId, expectedWorkItemRevision, idempotencyKey, execution, ballotMode, shapingBudget } = input;
   const item = requireWorkItem(store, workItemId);
   const frozen = readEvaluation(readWorkItemCollaborationRecord(store, workItemId, evaluationId));
   if (!frozen) throw stale("The deliberation evaluation is unavailable.");
@@ -260,14 +263,10 @@ export async function openAppServerEvaluatedDeliberation(
     if (prior && prior.id !== roundId) throw keyConflict();
     const existing = prior ?? readWorkItemCollaborationRecord(store, workItemId, roundId);
     if (!existing) return undefined;
-    const retainedExecution = isRecord(existing.payload) && isRecord(existing.payload.execution)
-      ? typeof existing.payload.execution.kind === "string" ? existing.payload.execution.kind
-        : typeof existing.payload.execution.workflowId === "string" ? "read_only_workflow" : undefined
-      : undefined;
-    const expectedExecution = execution === "read_only_workflow" ? "read_only_workflow"
-      : execution === "read_only_shaping" ? "read_only_shaping" : undefined;
+    const retained = isRecord(existing.payload) && isRecord(existing.payload.execution) ? existing.payload.execution : undefined;
+    const retainedExecution = retained?.kind === "read_only_shaping" ? retained.kind : retained?.workflowId ? "read_only_workflow" : undefined;
     const retainedBallotMode = isRecord(existing.payload) ? existing.payload.ballotMode : undefined;
-    if (retainedExecution !== expectedExecution || retainedBallotMode !== ballotMode) {
+    if (retainedExecution !== execution || retainedBallotMode !== ballotMode || !isDeepStrictEqual(retained?.budget, shapingBudget)) {
       if (prior) throw keyConflict();
       throw stale("This decision revision was already admitted with a different execution mode.");
     }
@@ -277,11 +276,11 @@ export async function openAppServerEvaluatedDeliberation(
   const prior = readReplay();
   if (prior) return prior;
   if (evaluation.outcome !== "suggest") throw new HttpError(409, "resume_blocked", "Only a current deliberation suggestion can open a round.");
-  if (execution === "read_only_shaping" && evaluation.decision.subject.kind !== "draft_plan") {
+  if (execution === "read_only_shaping" && decision.subject.kind !== "draft_plan") {
     throw new HttpError(409, "resume_blocked", "Read-only shaping is available only before a draft plan is accepted.");
   }
-  if (execution === "read_only_shaping" && ballotMode !== undefined) {
-    throw new HttpError(409, "resume_blocked", "Pre-acceptance shaping cannot start a ballot round.");
+  if (execution === "read_only_shaping" ? !shapingBudget || ballotMode !== undefined : shapingBudget !== undefined) {
+    throw new HttpError(400, "invalid_params", "Supply a shaping budget for a draft consultation without ballots.");
   }
   if ((decision.decisionStepId || ballotMode) && execution !== "read_only_workflow") {
     throw new HttpError(409, "resume_blocked", "This round requires a participant Workflow.");
@@ -295,9 +294,8 @@ export async function openAppServerEvaluatedDeliberation(
     const committed = readReplay();
     if (committed) return committed;
   }
-  const deadlineAt = new Date(Date.parse(now) + validityMs).toISOString();
-  const round = checkpointRound(frozen, workItemId, roundId, expectedWorkItemRevision, idempotencyKey, deadlineAt, admission,
-    execution === "read_only_shaping" ? "read_only_shaping" : undefined);
+  const deadlineAt = new Date(Date.parse(now) + (shapingBudget?.maxDurationMs ?? validityMs)).toISOString();
+  const round = checkpointRound(frozen, workItemId, roundId, expectedWorkItemRevision, idempotencyKey, deadlineAt, admission);
   if (execution === "read_only_workflow") {
     const result = store.admitWorkItemDeliberationWorkflow({
       workItemId, expectedWorkItemRevision, roundId, assertCurrent,
@@ -307,9 +305,23 @@ export async function openAppServerEvaluatedDeliberation(
     if (!retained) throw stale("The Work Item revision changed before the round opened.");
     return retained;
   }
-  const result = appendWorkItemCollaboration(store, { ...round, assertCurrent }, now, cwd);
+  const plan = shapingBudget && decision.subject.kind === "draft_plan" ? store.getProposedPlanArtifact(decision.subject.planId) : undefined;
+  const planningBinding = plan && store.getAppServerState("work_item_thread", plan.threadId)?.payload as WorkItemConversationBinding | undefined;
+  const channel = admission.subject.channelId && store.getChannel(admission.subject.channelId);
+  if (shapingBudget && (!plan || !channel || planningBinding?.workItemId !== workItemId)) {
+    throw stale("The planning draft lacks a current Work Item and participant channel binding.");
+  }
+  const shaping = shapingBudget && plan && channel ? preparePlanShaping(store, shapingRuntime, {
+    plan, channel, question: decision.question, participants: admission.participants, options: admission.optionEntries,
+    evidence: admission.evidence, budget: shapingBudget, policyRevision: evaluation.policyRevision,
+  }) : undefined;
+  const result = appendWorkItemCollaboration(store, { ...round, assertCurrent,
+    payload: { ...round.payload, ...(shaping ? { execution: shaping.frozen } : {}) },
+  }, now, cwd);
   if (!result) throw stale("The Work Item revision changed before the round opened.");
-  return result;
+  return { ...result, ...(shaping && result.status === "appended" ? { collectShaping: () => shaping.collect(result.record, deadlineAt, () => {
+    assertEvaluationCurrent(store, requireWorkItem(store, workItemId), frozen, now, evaluation.expiresAt, true);
+  }) } : {}) };
 }
 
 function checkpointRoundId(workItemId: string, evaluation: Pick<LingAppServerDeliberationEvaluation, "decisionId" | "decisionRevision">) {
@@ -317,26 +329,14 @@ function checkpointRoundId(workItemId: string, evaluation: Pick<LingAppServerDel
 }
 
 function checkpointRound({ evaluation, decision }: FrozenEvaluation, workItemId: string, id: string,
-  expectedWorkItemRevision: number, idempotencyKey: string, deadlineAt: string, basis: ReturnType<typeof readDecisionBasis>,
-  execution?: "read_only_shaping") {
+  expectedWorkItemRevision: number, idempotencyKey: string, deadlineAt: string, basis: ReturnType<typeof readDecisionBasis>) {
   return {
     id, workItemId, expectedWorkItemRevision, idempotencyKey,
     kind: "deliberation" as const, action: "started" as const, actorId: "local-user", visibility: "owner" as const,
     parentRecordId: evaluation.evaluationId,
     payload: { decisionPoint: decision.question, options: evaluation.optionRefs, subject: decision.subject,
       decisionId: evaluation.decisionId, decisionRevision: evaluation.decisionRevision, deadlineAt,
-      ...(basis.candidate ? { candidateDigest: basis.candidate.digest } : {}),
-      ...(execution === "read_only_shaping" ? {
-        execution: { kind: execution, planId: decision.subject.kind === "draft_plan" ? decision.subject.planId : undefined,
-          planRevision: decision.subject.kind === "draft_plan" ? decision.subject.planRevision : undefined,
-          participantRoles: basis.participants.map(participant => ({ id: participant.id, roleKey: participant.roleKey })),
-          evidenceRefs: [...evaluation.optionRefs, ...evaluation.evidenceRefs],
-          // Shaping itself performs no model execution. Its zero token budget
-          // makes that boundary explicit while the deadline bounds replies
-          // collected by the coordinator.
-          budget: { maxTokens: 0, maxDurationMs: validityMs },
-        },
-      } : {}) },
+      ...(basis.candidate ? { candidateDigest: basis.candidate.digest } : {}) },
     sourceRefs: [{ type: "deliberation_evaluation", id: evaluation.evaluationId, revision: evaluation.decisionRevision }],
   };
 }

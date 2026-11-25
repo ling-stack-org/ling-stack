@@ -158,6 +158,7 @@ import {
 } from "./app-server-collaboration.js";
 import { deliberationEvaluateInput, deliberationOpenInput, evaluateAppServerDeliberation,
   isCheckpointDeliberationRecord, openAppServerEvaluatedDeliberation } from "./app-server-deliberation.js";
+import { projectPlanShaping } from "../features/channels/plan-deliberation-shaping.js";
 import { readStageHandoffParams, settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
 import { recoverAppServerStage } from "./app-server-stage-recovery.js";
 
@@ -1522,12 +1523,19 @@ class RpcConnection {
     }
     const parsed = deliberationOpenInput.safeParse(record);
     if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an evaluation, Work Item revision and bounded request key.");
-    const { event, ...result } = await openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd);
+    const { harness } = this.context.config;
+    const { event, collectShaping, ...result } = await openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd, {
+      runners: this.context.runnerRegistry, secrets: this.context.secretResolver,
+      hostTokenBudget: harness.delegations.mode === "enforce" ? harness.delegations.rootBudget?.tokenBudget : undefined,
+      assertRecoveryReady: () => appServerRecoveryFor(this.context.config, store)?.assertReady(),
+      publish: event => this.context.controlPlaneEvents.publish(trimOversizedEvent(event)),
+    });
     if (event) {
       this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
-      if (parsed.data.execution) this.context.taskSupervisor.poke(cwd);
+      if (parsed.data.execution === "read_only_workflow") this.context.taskSupervisor.poke(cwd);
     }
-    return { cwd, ...result };
+    if (collectShaping) await collectShaping();
+    return { cwd, ...result, ...(collectShaping ? { workItemRevision: store.getWorkItem(parsed.data.workItemId)?.revision ?? result.workItemRevision } : {}) };
   }
 
   private addWorkItemFeedback(params: unknown): unknown {
@@ -2308,11 +2316,14 @@ class RpcConnection {
     const planId = readOptionalStringField(record, "planId");
     const threadId = readOptionalStringField(record, "threadId");
     if (!planId && !threadId) throw rpcError(-32602, "invalid_params", "planId or threadId is required.");
-    if (planId) {
+    if (planId) return store.readSnapshot(() => {
       const plan = store.getProposedPlanArtifact(planId);
       if (!plan || threadId && plan.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", `Plan was not found: ${planId}`);
-      return { cwd, threadId: plan.threadId, plan };
-    }
+      const binding = this.authenticated && !this.grant ? store.getAppServerState("work_item_thread", plan.threadId)?.payload as
+        import("@ling-stack/core").WorkItemConversationBinding | undefined : undefined;
+      const deliberations = binding && plan.status === "draft" ? projectPlanShaping(store, plan, binding.workItemId) : [];
+      return { cwd, threadId: plan.threadId, plan, ...(deliberations.length ? { deliberations } : {}) };
+    });
     return { cwd, threadId, plans: store.listProposedPlanArtifacts({ threadId, limit: readOptionalIntegerField(record, "limit") }) };
   }
 

@@ -37,6 +37,7 @@ import type {
   LingAppServerDeliberationDecideResult,
   LingAppServerDeliberationEvaluateParams,
   LingAppServerDeliberationEvaluateResult,
+  LingAppServerPlanShapingResult,
   LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemCollaborationReadResult,
   LingAppServerGrant,
@@ -2621,14 +2622,25 @@ test("an operator resolves a deliberation round once against its current revisio
 });
 
 test("a draft deliberation uses current evidence in Plan Mode and recovers the original suggestion and round", { timeout: 30_000 }, async t => {
-  const provider = await startLoopbackPiProvider(() => ({ text: "Plan context prepared." }));
+  const provider = await startLoopbackPiProvider((raw: unknown, request: number) => {
+    if (request === 1) return { text: "Plan context prepared." };
+    const { tools, messages } = raw as { tools?: readonly unknown[]; messages: readonly { content: string | readonly { text?: string }[] }[] };
+    assert.equal(tools?.length ?? 0, 0);
+    const content = messages.at(-1)!.content;
+    const prompt = typeof content === "string" ? content : content.map(block => block.text ?? "").join("\n");
+    const shaping = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1)) as { optionIds: readonly string[]; proposals: readonly unknown[] };
+    assert.equal(shaping.proposals.length, request <= 3 ? 0 : 2);
+    return { text: JSON.stringify({ disposition: "recommend", optionId: shaping.optionIds[0],
+      summary: "Preserve compatibility for current callers.", evidenceIds: [shaping.optionIds[0]] }),
+    usage: { prompt_tokens: 90, completion_tokens: 45, total_tokens: 135 } };
+  });
   t.after(() => provider.close());
-  const fixture = await releaseFixture(t);
+  const fixture = await releaseFixture(t, { secretResolver: createEnvSecretResolver({ PLAN_SHAPING_FIXTURE: "loopback-fixture-key" }) });
   const [client, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
   const store = fixture.getStore();
   const now = new Date().toISOString();
-  const preset = addLoopbackPreset(store, provider.baseUrl);
-  const channel = store.createChannel({ name: "Contract review", boundPath: fixture.cwd }, now);
+  const preset = addLoopbackPreset(store, provider.baseUrl, { apiKeyRef: "env:PLAN_SHAPING_FIXTURE", contextWindow: 16_384, maxTokens: 512 });
+  const channel = store.createChannel({ name: "Contract review", boundPath: fixture.cwd, defaultProviderPresetId: preset.id }, now);
   const participants = ["teammate_builtin_engineer", "teammate_builtin_qa"];
   for (const id of participants) store.replaceTeammateChannelMemberships(id, [{ channelId: channel.id }], now);
   const thread = store.createLingThread({ kind: "conversation", title: "Compatibility planning", objective: "Propose a contract." }, now);
@@ -2681,26 +2693,32 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   assert.equal(store.listRuns({ threadId: thread.id }).length, 1);
 
   const open = { workItemId: item.id, evaluationId: first.evaluation.evaluationId, expectedWorkItemRevision: first.workItemRevision,
-    idempotencyKey: "open-plan", execution: "read_only_shaping" as const };
+    idempotencyKey: "open-plan", execution: "read_only_shaping" as const, shapingBudget: { maxTokens: 70_000, maxDurationMs: 15_000 } };
   const { credential, scoped } = await createObserver(client, fixture, item.id);
   await assert.rejects(scoped.call("workItem/deliberation/open", open), { code: "capability_denied" });
+  await assert.rejects(client.call("workItem/deliberation/open", { ...open, shapingBudget: { ...open.shapingBudget, maxTokens: 1 } }),
+    { code: "resume_blocked" });
+  assert.equal(provider.requests.length, 1);
   const [opened, other] = await Promise.all([
     mcp.callTool<LingAppServerWorkItemCollaborationAppendResult>("ling_deliberation_open", open),
     client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", open),
   ]);
   assert.equal(opened.record.id, other.record.id);
   assert.deepEqual([opened.status, other.status].sort(), ["appended", "replayed"]);
-  assert.deepEqual((opened.record.payload as { execution?: { kind?: string; planId?: string; planRevision?: number; participantRoles?: unknown[]; evidenceRefs?: string[]; budget?: { maxTokens?: number; maxDurationMs?: number } } }).execution, {
-    kind: "read_only_shaping", planId: plan.id, planRevision: plan.revision,
-    participantRoles: participants.map(id => ({ id, roleKey: store.getAiTeammate(id)!.roleKey })),
-    evidenceRefs: [...optionRefs, evidenceRef], budget: { maxTokens: 0, maxDurationMs: 15 * 60_000 },
-  });
+  const execution = (opened.record.payload as { execution: { kind: string; participants: { participantId: string; roleKey: string }[];
+    evidence: { id: string }[]; budget: { maxTokens: number; maxDurationMs: number }; reservedTokens: number } }).execution;
+  assert.equal(execution.kind, "read_only_shaping");
+  assert.deepEqual(execution.participants.map(({ participantId }) => participantId), participants);
+  assert.deepEqual(execution.evidence.map(({ id }) => id), [...first.evaluation.optionRefs, ...first.evaluation.evidenceRefs]);
+  assert.deepEqual(execution.budget, open.shapingBudget);
+  assert.equal(execution.reservedTokens, 4 * (16_384 + 512));
   assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 0);
+  assert.equal(provider.requests.length, 5);
   await mcp.close();
   const repeated = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", { ...open,
     idempotencyKey: "another-open-key" });
   assert.equal(repeated.record.id, opened.record.id);
-  assert.equal(repeated.workItemRevision, opened.workItemRevision);
+  assert.equal(repeated.workItemRevision, store.getWorkItem(item.id)!.revision);
   const seen = await waitFor(() => peer.notices.find(notice => notice.method === "workItem/deliberation/updated"
     && notice.params?.event?.data?.collaborationId === opened.record.id));
   assert.ok(validateLingAppServerNotificationParams("workItem/deliberation/updated", seen.params).ok);
@@ -2713,6 +2731,14 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   assert.deepEqual(replay.evaluation, first.evaluation);
   assert.equal(replay.replayed, true);
   assert.equal((await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", open)).record.id, opened.record.id);
+  assert.equal(provider.requests.length, 5);
+  const readPlan = () => restored.call<{ deliberations?: readonly LingAppServerPlanShapingResult[] }>("plan/read", { planId: plan.id, threadId: thread.id });
+  const [shaped] = (await readPlan()).deliberations ?? [];
+  assert.equal(shaped?.status, "consensus");
+  assert.equal(shaped.recommendedOptionId, first.evaluation.optionRefs[0]);
+  assert.deepEqual(shaped.contributions.map(c => [c.phase, c.participantId]), [
+    ["proposal", participants[0]], ["proposal", participants[1]], ["challenge", participants[0]], ["challenge", participants[1]],
+  ]);
   const observer = await fixture.connect("/app-server/rpc", fixture.cwd, credential);
   const scopedRead = await observer.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", { workItemId: item.id });
   assert.deepEqual(scopedRead.records, []);
@@ -2721,8 +2747,9 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
 
   fixture.getStore().upsertProposedPlanArtifact({ id: plan.id, threadId: thread.id, expectedRevision: plan.revision,
     title: plan.title, bodyMarkdown: "Require the new response fields." }, new Date().toISOString());
+  assert.equal((await readPlan()).deliberations, undefined);
   const settle = { workItemId: item.id, roundId: opened.record.id, expectedRoundRevision: opened.record.collaborationRevision,
-    expectedWorkItemRevision: opened.workItemRevision, idempotencyKey: "old-plan-choice", reason: "Keep the captured compatibility requirement." };
+    expectedWorkItemRevision: repeated.workItemRevision, idempotencyKey: "old-plan-choice", reason: "Keep the captured compatibility requirement." };
   await assert.rejects(restored.call("workItem/deliberation/decide", {
     ...settle, decision: { disposition: "selected", option: optionRefs[0] },
   }), { code: "stale_revision" });

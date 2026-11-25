@@ -35,6 +35,7 @@ import { isRecord } from "../shared/validation.js";
 import { readAppServerStageBallot } from "../features/work-items/stage-ballot.js";
 import { projectDeliberationWorkflowProgress, readCompletedDeliberationWorkflow } from "../features/work-items/deliberation-workflow.js";
 import { assertCheckpointRoundCandidate, assertCheckpointRoundCurrent, isCheckpointDeliberationRecord } from "./app-server-deliberation.js";
+import { readPlanShapingResult } from "../features/channels/plan-deliberation-shaping.js";
 
 export class AppServerCollaborationError extends Error {
   constructor(
@@ -248,6 +249,11 @@ export async function settleAppServerDeliberation(
       ...(appliedTo ? { appliedTo: appliedTo as LingAppServerDeliberationAppliedDecision } : {}) };
   }
   if (privateRound && decision) await assertCheckpointRoundCandidate(store, item, round, now);
+  const shaping = privateRound && decision ? readPlanShapingResult(store, round) : undefined;
+  if (shaping && decision?.disposition === "selected"
+    && (!shaping.result || !["consensus", "open_tradeoff"].includes(shaping.result.status))) {
+    throw new HttpError(409, "resume_blocked", "Resolve incomplete planning evidence before selecting an option.");
+  }
   const execution = privateRound && decision?.disposition === "selected"
     ? readCompletedDeliberationWorkflow(store, item.id, round.id, round.payload) : undefined;
   let application: WorkItemDeliberationApplication | undefined;
@@ -265,6 +271,7 @@ export async function settleAppServerDeliberation(
   const payload = { ...requestPayload, ...(ballot ? { ballot: ballot.summary } : {}),
     ...(execution?.outcome ? { outcome: execution.outcome } : {}), ...(appliedTo ? { appliedTo } : {}) };
   const sourceRefs = [{ type: "deliberation_round", id: round.id, revision: String(round.collaborationRevision) },
+    ...(shaping?.record ? [{ type: "plan_shaping", id: shaping.record.id, revision: String(shaping.record.collaborationRevision) }] : []),
     ...(ballot?.sourceRefs ?? []), ...(execution?.sources ?? []),
     ...(application ? [{ type: "workflow_step", id: application.stepId, revision: application.planRevision }] : [])];
   const evidence: AppendWorkItemEvidenceInput = {

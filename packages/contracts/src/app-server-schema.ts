@@ -84,6 +84,17 @@ const deliberationWorkflowOutcome = objectWith({
   status: { enum: ["waiting", "voting", "consensus", "verify_required", "insufficient_evidence", "tallied"] },
   summary: objectSchema, recommendation: stringSchema,
 }, ["status"]);
+const planShapingContribution = objectWith({ participantId: stringSchema, roleKey: stringSchema,
+  phase: { enum: ["proposal", "challenge"] }, disposition: { enum: ["recommend", "open_tradeoff", "verify_required"] },
+  optionId: stringSchema, summary: stringSchema, evidenceIds: stringArraySchema,
+}, ["participantId", "roleKey", "phase", "disposition", "summary", "evidenceIds"]);
+const planShapingResult = objectWith({ roundId: stringSchema, planId: stringSchema, planRevision: integerSchema,
+  status: { enum: ["consensus", "open_tradeoff", "verify_required", "incomplete"] }, optionIds: stringArraySchema,
+  contributions: { type: "array", items: planShapingContribution }, recommendedOptionId: stringSchema,
+  blocker: { enum: ["provider_unavailable", "invalid_contribution", "deadline_expired"] },
+  decision: objectWith({ recordId: stringSchema, disposition: { enum: ["selected", "deferred", "replan_required"] },
+    option: stringSchema, reason: stringSchema }, ["recordId", "disposition", "reason"]),
+}, ["roundId", "planId", "planRevision", "status", "optionIds", "contributions"]);
 const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: integerSchema };
 const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema, taskId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
@@ -323,7 +334,11 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "thread/goal/complete":
       return { params: objectWith({ ...threadTarget, expectedGoalRevision: stringSchema }, ["threadId"]), result };
     case "plan/read":
-      return { params: objectWith({ ...threadTarget, planId: stringSchema, limit: integerSchema }), result };
+      return { params: objectWith({ ...threadTarget, planId: stringSchema, limit: integerSchema }), result: { oneOf: [
+        objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema,
+          deliberations: { type: "array", items: planShapingResult } }, ["cwd", "threadId", "plan"]),
+        objectWith({ cwd: stringSchema, threadId: stringSchema, plans: arraySchema }, ["cwd", "threadId", "plans"]),
+      ] } };
     case "plan/accept":
       return { params: objectWith({ ...planTarget, mode: { enum: ["workflow"] }, workflowTitle: stringSchema,
         workflowStepPreviews: { type: "array", items: planWorkflowStep } }, ["threadId", "planId"]), result: planActionResult };
@@ -461,7 +476,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       };
     case "workItem/deliberation/open":
       return { params: objectWith({ ...workItemTarget, evaluationId: stringSchema, expectedWorkItemRevision: integerSchema,
-        idempotencyKey: stringSchema, execution: { enum: ["read_only_shaping", "read_only_workflow"] }, ballotMode: { enum: ["when_unresolved"] } },
+        idempotencyKey: stringSchema, execution: { enum: ["read_only_shaping", "read_only_workflow"] }, ballotMode: { enum: ["when_unresolved"] },
+        shapingBudget: objectWith({ maxTokens: integerSchema, maxDurationMs: integerSchema }, ["maxTokens", "maxDurationMs"]) },
       ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result };
     case "workItem/deliberation/cancel":
       return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result };

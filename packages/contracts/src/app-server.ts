@@ -1365,13 +1365,41 @@ export interface LingAppServerDeliberationOpenParams {
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
   /**
-   * `read_only_shaping` records a bounded pre-acceptance planning round. It
-   * never creates a Workflow or starts a Run and is valid only for a draft
-   * plan subject. `read_only_workflow` is reserved for an accepted stage.
+   * Shaping runs tool-free consultations for a draft. A linked Workflow
+   * requires an accepted stage.
    */
   readonly execution?: "read_only_shaping" | "read_only_workflow";
+  readonly shapingBudget?: { readonly maxTokens: number; readonly maxDurationMs: number };
   readonly ballotMode?: "when_unresolved";
 }
+
+export interface LingAppServerPlanShapingContribution {
+  readonly participantId: string;
+  readonly roleKey: string;
+  readonly phase: "proposal" | "challenge";
+  readonly disposition: "recommend" | "open_tradeoff" | "verify_required";
+  readonly optionId?: string;
+  readonly summary: string;
+  readonly evidenceIds: readonly string[];
+}
+
+export interface LingAppServerPlanShapingResult {
+  readonly roundId: string;
+  readonly planId: string;
+  readonly planRevision: number;
+  readonly status: "consensus" | "open_tradeoff" | "verify_required" | "incomplete";
+  readonly optionIds: readonly string[];
+  readonly recommendedOptionId?: string;
+  readonly contributions: readonly LingAppServerPlanShapingContribution[];
+  readonly blocker?: "provider_unavailable" | "invalid_contribution" | "deadline_expired";
+  readonly decision?: { readonly recordId: string; readonly disposition: "selected" | "deferred" | "replan_required";
+    readonly option?: string; readonly reason: string };
+}
+
+export type LingAppServerPlanReadResult = { readonly cwd: string; readonly threadId: string } & (
+  | { readonly plan: import("./threads.js").ProposedPlanArtifact; readonly deliberations?: readonly LingAppServerPlanShapingResult[] }
+  | { readonly plans: readonly import("./threads.js").ProposedPlanArtifact[] }
+);
 
 export interface LingAppServerDeliberationSettlementParams {
   readonly cwd?: string;
