@@ -8,9 +8,11 @@ import { useMobileTheme } from "../../../theme/mobile-theme-provider";
 export function NativeMessageBody({
   blocks,
   emptyFallback,
+  renderVisualization,
 }: {
   readonly blocks: readonly MessageBodyBlock[];
   readonly emptyFallback?: string;
+  readonly renderVisualization?: (ref: Extract<MessageBodyBlock, { kind: "visualization" }>["reference"]) => ReactNode;
 }) {
   const { theme } = useMobileTheme();
   if (blocks.length === 0) {
@@ -18,13 +20,17 @@ export function NativeMessageBody({
   }
   return (
     <View style={styles.root}>
-      {blocks.map((block, index) => renderBlock(block, `${block.kind}:${index}`, theme))}
+      {blocks.map((block, index) => block.kind === "visualization" && renderVisualization
+        ? <View key={block.reference.artifactId}>{renderVisualization(block.reference)}</View>
+        : renderBlock(block, `${block.kind}:${index}`, theme))}
     </View>
   );
 }
 
 function renderBlock(block: MessageBodyBlock, key: string, theme: MobileThemeTokens): ReactNode {
   switch (block.kind) {
+    case "visualization":
+      return <Text key={key} selectable style={[styles.paragraph, { color: theme.text.default }]}>{block.reference.label}</Text>;
     case "paragraph":
       return <Text key={key} selectable style={[styles.paragraph, { color: theme.text.default }]}>{renderInlineTokens(block.inlines, theme)}</Text>;
     case "heading":

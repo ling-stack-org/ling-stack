@@ -100,7 +100,7 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
     }
     await createAiChannelReply({
       startRun: async (request, sink) => await executeRunRequest(
-        request,
+        { ...request, disableConversationVisualization: true },
         sink,
         this.options.runnerRegistry,
         this.options.storeRegistry,
@@ -197,7 +197,7 @@ export class DefaultRemoteReplyDispatcher implements RemoteReplyDispatcher {
     });
     await createAiTeammateDirectReply({
       startRun: async (request, sink) => await executeRunRequest(
-        request,
+        { ...request, disableConversationVisualization: true },
         sink,
         this.options.runnerRegistry,
         this.options.storeRegistry,
@@ -270,6 +270,7 @@ export function buildRemoteConversationRunRequest(input: {
     teammateId: LING_AGENT_ID,
     providerPresetId: input.providerPresetId,
     tools: [],
+    disableConversationVisualization: true,
     authorizationMode: "ask",
     workspaceAccessMode: "read_only",
     permissionPreset: "read_only",

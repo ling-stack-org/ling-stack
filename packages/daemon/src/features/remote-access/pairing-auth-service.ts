@@ -11,6 +11,7 @@ import {
   REMOTE_PROTOCOL_VERSION,
   REMOTE_SIGNING_ALGORITHM,
   REMOTE_SUPPORTED_PROTOCOL_VERSIONS,
+  REMOTE_VISUALIZATION_FEATURE,
   type RemoteAuthChallengeV1,
   type RemoteAuthProofV1,
   type RemotePairingAcceptedV1,
@@ -80,6 +81,7 @@ export interface AuthenticatedRemoteSession {
   readonly sessionId: string;
   readonly device: PairedRemoteDevice;
   readonly resume: RemoteAuthProofV1["resume"];
+  readonly negotiatedFeatures?: RemoteAuthChallengeV1["negotiatedFeatures"];
   readonly authenticatedAt: string;
 }
 
@@ -316,7 +318,7 @@ export class RemotePairingAuthService {
     this.pairing = undefined;
   }
 
-  createAuthChallenge(deviceId: string): RemoteAuthChallengeV1 {
+  createAuthChallenge(deviceId: string, requestedFeature?: string): RemoteAuthChallengeV1 {
     const state = this.requireEnabledState();
     const device = state.pairedDevice;
     if (!device || device.deviceId !== deviceId) {
@@ -333,6 +335,7 @@ export class RemotePairingAuthService {
       issuedAt,
       expiresAt: new Date(Date.parse(issuedAt) + AUTH_CHALLENGE_LIFETIME_MS).toISOString(),
       supportedProtocolVersions: REMOTE_SUPPORTED_PROTOCOL_VERSIONS,
+      ...(requestedFeature === REMOTE_VISUALIZATION_FEATURE ? { negotiatedFeatures: [REMOTE_VISUALIZATION_FEATURE] } : {}),
     };
     const challenge: RemoteAuthChallengeV1 = {
       ...unsigned,
@@ -377,6 +380,7 @@ export class RemotePairingAuthService {
       sessionId: proof.candidateSessionId,
       device,
       resume: proof.resume,
+      negotiatedFeatures: record.challenge.negotiatedFeatures,
       authenticatedAt: this.now(),
     };
   }

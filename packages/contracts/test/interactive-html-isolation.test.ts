@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HTML_INTERACTIVE_CSP, injectInteractiveHtmlCsp } from "../dist/artifacts.js";
+import { HTML_INTERACTIVE_CSP, createNativeHtmlPreviewDocument, injectInteractiveHtmlCsp } from "../dist/artifacts.js";
 
 const unescapeAttribute = (value: string) => value.replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 const policyMeta = `<meta http-equiv="Content-Security-Policy" content="${HTML_INTERACTIVE_CSP}">`;
@@ -45,4 +45,16 @@ test("interactive HTML never trusts a pre-existing permissive policy or skips a 
   const second = injectInteractiveHtmlCsp(first);
   assert.notEqual(first, second);
   assert.ok(second.startsWith("<!doctype html><html><head>" + policyMeta));
+});
+
+test("native HTML preview sets restrictive policy before author markup", () => {
+  const html = '<!doctype html><html><head><title>Preview</title></head><body><details><summary>Changes</summary>One file</details></body></html>';
+  const document = createNativeHtmlPreviewDocument(html, "dark");
+  const policy = HTML_INTERACTIVE_CSP.replace("script-src 'unsafe-inline'", "script-src 'none'");
+  assert.ok(document.endsWith(html));
+  const runtimePreamble = document.slice(0, -html.length);
+  assert.match(runtimePreamble, /name="viewport" content="width=device-width,initial-scale=1"/u);
+  assert.ok(runtimePreamble.includes(`<meta http-equiv="Content-Security-Policy" content="${policy}">`));
+  assert.match(runtimePreamble, /color-scheme:dark/u);
+  assert.doesNotMatch(runtimePreamble, /<iframe/u);
 });

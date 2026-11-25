@@ -161,6 +161,7 @@
     "test/conversation-submission-receipts.test.mjs",
     "test/conversation-summary-coordinator.test.mjs",
     "test/conversation-summary-execution.test.mjs",
+    "test/conversation-visualization.test.ts",
     "test/coordinator-workflow-narration.test.mjs",
     "test/daemon-resource-bootstrap.test.ts",
     "test/daemon-startup-cleanup.test.mjs",
