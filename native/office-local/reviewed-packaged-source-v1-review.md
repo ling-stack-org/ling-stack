@@ -1,6 +1,7 @@
 # Scoped macOS Development Packaging Review
 
-The current source prerequisite includes the [Workspace and device storage inputs](#workspace-and-device-storage-inputs),
+The current source prerequisite includes the [MP4 publication and packaging inputs](#mp4-publication-and-packaging-inputs),
+[Workspace and device storage inputs](#workspace-and-device-storage-inputs),
 [Bundled plugin discovery](#bundled-plugin-discovery),
 [Conversation media inputs](#conversation-media-inputs),
 [Plugin rollback compatibility](#plugin-rollback-compatibility),
@@ -8,6 +9,33 @@ The current source prerequisite includes the [Workspace and device storage input
 and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## MP4 publication and packaging inputs
+
+The independent review approved source commit
+`495228415e945c2822785c5c2f37dd29f3a3fd87` for the hosted macOS arm64
+`unsigned_dev` development lane with ad-hoc signing and no bundled Cua Driver
+provider. The source inventory includes the Daemon's MP4 publisher and its
+existing imports. The publisher binds the opened source and staging files to
+the checked paths. It reserves artifact volume space, caps new copies at
+512 MiB, and coalesces concurrent requests for the same revision.
+
+The reviewer matched all 2,016 fixed packaging inputs and 15 native inputs.
+The inventory adds `packages/daemon/src/features/runs/video-artifacts.ts` and
+updates 59 existing digests, including 55 regenerated language catalogs. Both
+HTTP publisher regressions and the Daemon source and test type checks passed
+under Node 22.22.1. The hosted compiler and SDK fingerprints, four header
+digests, and the Electron 45.3.1 / Node 24.22.2 / uv 1.52.1 runtime on
+Darwin 25.6.0 match the reviewed profile.
+
+The 260,672-byte record has SHA-256
+`a08d61e26c51625e7177154ea9a61b5827abc3dc5c3fa2cf4afa4b471f0d4d61`.
+The fixed-order packaging aggregate SHA-256 is
+`f98f80a6ed67e02a75642a4fbfecf265405aba5155489d6c0bf7cb8908f672af`.
+The native aggregate SHA-256 is
+`9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
+Fresh archives and installed runtime behavior are verified by the candidate
+workflow.
 
 ## Workspace and device storage inputs
 

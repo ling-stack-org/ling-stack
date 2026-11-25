@@ -56,6 +56,13 @@ Office helper 和 Chrome Native Host 优先使用通过验证的缓存，兼容�
 - Ling for Chrome 的 macOS 候选包在真实 Chrome 的隔离配置中验证了 Native Messaging 自动连接、全部六项浏览器工具、暂停恢复以及禁用后重新启用。Chrome Web Store 发布的 0.1.2 与候选归档的可执行代码及弹窗文件逐项一致，差异在四个图标、更新地址和商店元数据。商店安装的扩展仍需和正式签名的 Native Host 一起验收。[Chrome 候选构建](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45081594739) · [Chrome Web Store](https://chromewebstore.google.com/detail/ling-for-chrome/mbmlnnfhebclljonhedpjghbhibfapei)
 - Cua Driver 的独立复核根据四个原始归档核对了源码提交、补丁、二进制摘要和两平台锁。新锁在四台独立 runner 上完成原生重建与 MCP 探针，macOS 的 7 个稳定文件和 Windows 的 8 个稳定文件分别逐项一致。Windows 探针覆盖 Medium 完整性、状态目录用户 ACL、链接拒绝和配置持久化。发布文档记录这批签名前产物的来源和后续平台签名步骤。[Cua Driver 发布文档](https://github.com/ling-stack-org/ling-plugin-cua-driver/blob/main/docs/RELEASE.md)
 
+下表是独立仓库开发候选的 `.ling-plugin.zip` 字节数，已逐包核对随包 JSON 中的 SHA-256。Cua Driver 的下载体积待平台签名归档生成后记录。
+
+| 开发候选 | macOS arm64 | Windows x64 |
+| --- | ---: | ---: |
+| [Office Documents 0.1.0](https://github.com/ling-stack-org/ling-plugin-office-documents/actions/runs/45093987051) | 61,262 | 29,514,899 |
+| [Ling for Chrome 0.1.1](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45096848377) | 290,624 | 189,875 |
+
 ### Desktop 安装包对照
 
 四个候选均从 `14be1bdebd3d295a4f822981ae8cc18a32b9dd51` 构建，使用 Electron 45.3.1，各平台的两种模式使用同一版 gstack 源码及适配。各 runner 独立生成资源清单。Windows 候选未签名，macOS 候选使用 ad-hoc 签名。四个开发包均未包含正式 Cua Driver provider。[兼容包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187207804) · [瘦包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187216178)
