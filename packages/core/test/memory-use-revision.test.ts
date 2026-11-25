@@ -15,6 +15,7 @@ test("recording Memory use changes recency, not its semantic revision", async (t
   const event = store.recordUsedMemoryEvent({ memoryIds: [memory.id], teammateId: "owner",
     intent: "task-run", recallQuery: "project", policyVersion: "test" }, usedAt);
   const used = store.getMemoryObject(memory.id);
+  assert.ok(used);
   assert.equal(used.lastUsedAt, usedAt);
   assert.equal(used.updatedAt, createdAt, "use must not make frozen role evidence appear edited");
   assert.equal(event.createdAt, usedAt);
@@ -25,6 +26,7 @@ test("recording Memory use changes recency, not its semantic revision", async (t
   const changedAt = "2026-10-24T01:02:00.000Z";
   store.updateMemoryObject(memory.id, { body: "A corrected project rule." }, changedAt);
   const changed = store.getMemoryObject(memory.id);
+  assert.ok(changed);
   assert.equal(changed.updatedAt, changedAt, "actual semantic updates still invalidate old evidence");
   assert.equal(changed.lastUsedAt, usedAt);
 });
