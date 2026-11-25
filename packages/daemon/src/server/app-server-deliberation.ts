@@ -251,7 +251,7 @@ function automaticDeliberationBlocker(store: RunStore, item: WorkItem, input: {
 export async function openAppServerEvaluatedDeliberation(
   store: RunStore, input: LingAppServerDeliberationOpenParams, now: string, cwd: string,
   shapingRuntime: PlanShapingRuntime,
-): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent; readonly collectShaping?: () => Promise<void> }> {
+): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent; readonly collectShaping?: (signal: AbortSignal) => Promise<void> }> {
   const { workItemId, evaluationId, expectedWorkItemRevision, idempotencyKey, execution, ballotMode, shapingBudget } = input;
   const item = requireWorkItem(store, workItemId);
   const frozen = readEvaluation(readWorkItemCollaborationRecord(store, workItemId, evaluationId));
@@ -319,9 +319,9 @@ export async function openAppServerEvaluatedDeliberation(
     payload: { ...round.payload, ...(shaping ? { execution: shaping.frozen } : {}) },
   }, now, cwd);
   if (!result) throw stale("The Work Item revision changed before the round opened.");
-  return { ...result, ...(shaping && result.status === "appended" ? { collectShaping: () => shaping.collect(result.record, deadlineAt, () => {
+  return { ...result, ...(shaping && result.status === "appended" ? { collectShaping: (signal: AbortSignal) => shaping.collect(result.record, deadlineAt, () => {
     assertEvaluationCurrent(store, requireWorkItem(store, workItemId), frozen, now, evaluation.expiresAt, true);
-  }) } : {}) };
+  }, signal) } : {}) };
 }
 
 function checkpointRoundId(workItemId: string, evaluation: Pick<LingAppServerDeliberationEvaluation, "decisionId" | "decisionRevision">) {

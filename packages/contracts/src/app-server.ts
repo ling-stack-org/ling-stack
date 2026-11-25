@@ -1391,7 +1391,7 @@ export interface LingAppServerPlanShapingResult {
   readonly optionIds: readonly string[];
   readonly recommendedOptionId?: string;
   readonly contributions: readonly LingAppServerPlanShapingContribution[];
-  readonly blocker?: "provider_unavailable" | "invalid_contribution" | "deadline_expired";
+  readonly blocker?: "provider_unavailable" | "invalid_contribution" | "deadline_expired" | "interrupted";
   readonly decision?: { readonly recordId: string; readonly disposition: "selected" | "deferred" | "replan_required";
     readonly option?: string; readonly reason: string };
 }

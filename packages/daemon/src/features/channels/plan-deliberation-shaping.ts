@@ -75,12 +75,13 @@ export function preparePlanShaping(store: RunStore, runtime: PlanShapingRuntime,
       participants: roster.map(({ provider: _provider, reservedTokens: _tokens, ...identity }) => identity),
       evidence: entries.map(({ id, revision }) => ({ id, revision })),
     },
-    async collect(round: WorkItemCollaborationRecord, deadlineAt: string, assertCurrent: () => void) {
+    async collect(round: WorkItemCollaborationRecord, deadlineAt: string, assertCurrent: () => void, stopSignal: AbortSignal) {
       const contributions: LingAppServerPlanShapingContribution[] = [];
       const optionIds = options.map(option => option.id);
       const allowedEvidence = new Set(entries.map(entry => entry.id));
       const remainingMs = Math.max(0, Date.parse(deadlineAt) - Date.now());
-      const signal = AbortSignal.timeout(remainingMs);
+      const signal = AbortSignal.any([stopSignal, AbortSignal.timeout(remainingMs)]);
+      const stopped = (): Blocker => stopSignal.aborted ? "interrupted" : "deadline_expired";
       const assertOpen = () => {
         assertCurrent();
         runtime.assertRecoveryReady();
@@ -92,7 +93,7 @@ export function preparePlanShaping(store: RunStore, runtime: PlanShapingRuntime,
       for (const phase of ["proposal", "challenge"] as const) {
         for (const participant of roster) {
           assertOpen();
-          if (signal.aborted) { blocker = "deadline_expired"; break; }
+          if (signal.aborted) { blocker = stopped(); break; }
           if (store.getProviderConfigurationSnapshot(participant.presetId)?.configRevision !== participant.presetRevision) {
             blocker = "provider_unavailable";
             break;
@@ -132,11 +133,11 @@ export function preparePlanShaping(store: RunStore, runtime: PlanShapingRuntime,
             });
           } catch {
             assertOpen();
-            blocker = signal.aborted ? "deadline_expired" : "provider_unavailable";
+            blocker = signal.aborted ? stopped() : "provider_unavailable";
             break;
           }
           assertOpen();
-          if (signal.aborted) { blocker = "deadline_expired"; break; }
+          if (signal.aborted) { blocker = stopped(); break; }
           const decoded = readContribution(extractAssistantText(result.messages));
           if (!admitted || !isPiToolFreeCompletion(toolBoundary, round.id, taskId)
             || !decoded || decoded.evidenceIds.some(id => !allowedEvidence.has(id))

@@ -91,7 +91,7 @@ const planShapingContribution = objectWith({ participantId: stringSchema, roleKe
 const planShapingResult = objectWith({ roundId: stringSchema, planId: stringSchema, planRevision: integerSchema,
   status: { enum: ["consensus", "open_tradeoff", "verify_required", "incomplete"] }, optionIds: stringArraySchema,
   contributions: { type: "array", items: planShapingContribution }, recommendedOptionId: stringSchema,
-  blocker: { enum: ["provider_unavailable", "invalid_contribution", "deadline_expired"] },
+  blocker: { enum: ["provider_unavailable", "invalid_contribution", "deadline_expired", "interrupted"] },
   decision: objectWith({ recordId: stringSchema, disposition: { enum: ["selected", "deferred", "replan_required"] },
     option: stringSchema, reason: stringSchema }, ["recordId", "disposition", "reason"]),
 }, ["roundId", "planId", "planRevision", "status", "optionIds", "contributions"]);

@@ -17,7 +17,10 @@ export async function startLoopbackPiProvider(respond) {
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       requests.push(body);
-      const answer = await respond(body, requests.length);
+      const connection = new AbortController();
+      response.once("close", () => { if (!response.writableFinished) connection.abort(); });
+      const answer = await respond(body, requests.length, connection.signal);
+      if (connection.signal.aborted) return;
       if (answer.errorStatus) {
         response.writeHead(answer.errorStatus, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: { message: "Scripted provider error", code: answer.errorCode } }));

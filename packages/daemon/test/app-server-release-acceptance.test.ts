@@ -2622,19 +2622,28 @@ test("an operator resolves a deliberation round once against its current revisio
 });
 
 test("a draft deliberation uses current evidence in Plan Mode and recovers the original suggestion and round", { timeout: 30_000 }, async t => {
-  const provider = await startLoopbackPiProvider((raw: unknown, request: number) => {
+  let releaseFirstConsultation: () => void = () => undefined;
+  const firstConsultation = new Promise<void>(resolve => { releaseFirstConsultation = resolve; });
+  const abortedRequests: number[] = [];
+  const provider = await startLoopbackPiProvider(async (raw: unknown, request: number, signal: AbortSignal) => {
     if (request === 1) return { text: "Plan context prepared." };
+    if (request === 2) await firstConsultation;
+    if (request === 6 || request === 8) {
+      await once(signal, "abort");
+      abortedRequests.push(request);
+      return {};
+    }
     const { tools, messages } = raw as { tools?: readonly unknown[]; messages: readonly { content: string | readonly { text?: string }[] }[] };
     assert.equal(tools?.length ?? 0, 0);
     const content = messages.at(-1)!.content;
     const prompt = typeof content === "string" ? content : content.map(block => block.text ?? "").join("\n");
     const shaping = JSON.parse(prompt.slice(prompt.lastIndexOf("\n") + 1)) as { optionIds: readonly string[]; proposals: readonly unknown[] };
-    assert.equal(shaping.proposals.length, request <= 3 ? 0 : 2);
+    assert.equal(shaping.proposals.length, prompt.includes("Task: Plan shaping proposal") ? 0 : 2);
     return { text: JSON.stringify({ disposition: "recommend", optionId: shaping.optionIds[0],
       summary: "Preserve compatibility for current callers.", evidenceIds: [shaping.optionIds[0]] }),
     usage: { prompt_tokens: 90, completion_tokens: 45, total_tokens: 135 } };
   });
-  t.after(() => provider.close());
+  t.after(() => { releaseFirstConsultation(); return provider.close(); });
   const fixture = await releaseFixture(t, { secretResolver: createEnvSecretResolver({ PLAN_SHAPING_FIXTURE: "loopback-fixture-key" }) });
   const [client, peer] = await Promise.all([fixture.connect(), fixture.connect()]);
   const store = fixture.getStore();
@@ -2713,6 +2722,12 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   assert.deepEqual(execution.budget, open.shapingBudget);
   assert.equal(execution.reservedTokens, 4 * (16_384 + 512));
   assert.equal(store.listChannelWorkflows({ channelId: channel.id }).length, 0);
+  await waitFor(() => provider.requests.length === 2 ? true : undefined);
+  const readPlan = (connection: typeof client) => connection.call<{ deliberations?: readonly LingAppServerPlanShapingResult[] }>(
+    "plan/read", { planId: plan.id, threadId: thread.id });
+  assert.equal((await readPlan(client)).deliberations, undefined);
+  releaseFirstConsultation();
+  await waitFor(async () => (await readPlan(client)).deliberations?.[0]);
   assert.equal(provider.requests.length, 5);
   await mcp.close();
   const repeated = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", { ...open,
@@ -2724,7 +2739,7 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   assert.ok(validateLingAppServerNotificationParams("workItem/deliberation/updated", seen.params).ok);
 
   await fixture.restart();
-  const restored = await fixture.connect();
+  let restored = await fixture.connect();
   await restored.call("workItem/subscribe", { workItemId: item.id, cursor });
   await waitFor(() => restored.notices.find(notice => notice.params?.eventId === seen.params?.eventId));
   const replay = await restored.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", input);
@@ -2732,8 +2747,7 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   assert.equal(replay.replayed, true);
   assert.equal((await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", open)).record.id, opened.record.id);
   assert.equal(provider.requests.length, 5);
-  const readPlan = () => restored.call<{ deliberations?: readonly LingAppServerPlanShapingResult[] }>("plan/read", { planId: plan.id, threadId: thread.id });
-  const [shaped] = (await readPlan()).deliberations ?? [];
+  const [shaped] = (await readPlan(restored)).deliberations ?? [];
   assert.equal(shaped?.status, "consensus");
   assert.equal(shaped.recommendedOptionId, first.evaluation.optionRefs[0]);
   assert.deepEqual(shaped.contributions.map(c => [c.phase, c.participantId]), [
@@ -2745,11 +2759,43 @@ test("a draft deliberation uses current evidence in Plan Mode and recovers the o
   const scopedEvidence = await observer.call<{ evidence: { id: string }[] }>("workItem/evidence/read", { workItemId: item.id });
   assert.ok(scopedEvidence.evidence.every(record => record.id !== opened.record.id && record.id !== first.evaluation.evaluationId));
 
+  const nextRound = async (key: string) => {
+    const { evaluation, workItemRevision } = await restored.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", {
+      ...input, decisionKey: key, idempotencyKey: `${key}:evaluate`, expectedWorkItemRevision: fixture.getStore().getWorkItem(item.id)!.revision,
+    });
+    const params = { ...open, evaluationId: evaluation.evaluationId, expectedWorkItemRevision: workItemRevision, idempotencyKey: `${key}:open` };
+    return { params, ...await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", params) };
+  };
+  const cancelRound = await nextRound("cancel-consultation");
+  await waitFor(() => provider.requests.length === 6 ? true : undefined);
+  const cancellation = { workItemId: item.id, roundId: cancelRound.record.id, expectedRoundRevision: cancelRound.record.collaborationRevision,
+    expectedWorkItemRevision: cancelRound.workItemRevision, idempotencyKey: "cancel-shaping", reason: "Pause this planning consultation." };
+  await assert.rejects(restored.call("workItem/deliberation/decide", { ...cancellation,
+    decision: { disposition: "selected", option: optionRefs[0] } }), { code: "resume_blocked" });
+  const cancelledInFlight = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/cancel", cancellation);
+  assert.equal(cancelledInFlight.record.action, "cancelled");
+  await waitFor(() => abortedRequests.includes(6) ? true : undefined);
+  assert.equal((await readPlan(restored)).deliberations?.length, 1);
+
+  const interrupted = await nextRound("interrupted-consultation");
+  await waitFor(() => provider.requests.length === 8 ? true : undefined);
+  await fixture.restart();
+  restored = await fixture.connect();
+  assert.deepEqual(abortedRequests, [6, 8]);
+  const interruptedResult = (await readPlan(restored)).deliberations?.find(result => result.roundId === interrupted.record.id);
+  assert.equal(interruptedResult?.status, "incomplete");
+  assert.equal(interruptedResult.blocker, "interrupted");
+  assert.deepEqual(interruptedResult.contributions.map(entry => entry.participantId), participants.slice(0, 1));
+  const reopened = await restored.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/open", interrupted.params);
+  assert.equal(reopened.status, "replayed");
+  assert.equal(reopened.record.id, interrupted.record.id);
+  assert.equal(provider.requests.length, 8);
+
   fixture.getStore().upsertProposedPlanArtifact({ id: plan.id, threadId: thread.id, expectedRevision: plan.revision,
     title: plan.title, bodyMarkdown: "Require the new response fields." }, new Date().toISOString());
-  assert.equal((await readPlan()).deliberations, undefined);
+  assert.equal((await readPlan(restored)).deliberations, undefined);
   const settle = { workItemId: item.id, roundId: opened.record.id, expectedRoundRevision: opened.record.collaborationRevision,
-    expectedWorkItemRevision: repeated.workItemRevision, idempotencyKey: "old-plan-choice", reason: "Keep the captured compatibility requirement." };
+    expectedWorkItemRevision: reopened.workItemRevision, idempotencyKey: "old-plan-choice", reason: "Keep the captured compatibility requirement." };
   await assert.rejects(restored.call("workItem/deliberation/decide", {
     ...settle, decision: { disposition: "selected", option: optionRefs[0] },
   }), { code: "stale_revision" });

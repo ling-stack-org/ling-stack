@@ -205,6 +205,7 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "turn/retry", "turn/steer", "thread/compact/start", "thread/revert",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
+const activePlanShapingByContext = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const appServerConnectionsByContext = new WeakMap<DaemonContext, Set<RpcConnection>>();
 const appServerInstanceIds = new WeakMap<DaemonContext, string>();
 const operatorMethods = new Set([
@@ -346,6 +347,7 @@ export function attachRpcWebSocketServer(
     for (const connection of appServerConnections) connection.notifyDraining(drainId, startedAt);
     abortAppServerVerifications(context);
     for (const controller of activeExternalDispatches.get(context)?.values() ?? []) controller.abort();
+    for (const controller of activePlanShapingByContext.get(context)?.values() ?? []) controller.abort();
   };
   const closeAll = (): void => {
     if (closed) {
@@ -1534,8 +1536,17 @@ class RpcConnection {
       this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
       if (parsed.data.execution === "read_only_workflow") this.context.taskSupervisor.poke(cwd);
     }
-    if (collectShaping) await collectShaping();
-    return { cwd, ...result, ...(collectShaping ? { workItemRevision: store.getWorkItem(parsed.data.workItemId)?.revision ?? result.workItemRevision } : {}) };
+    if (collectShaping) {
+      const controller = new AbortController();
+      let active = activePlanShapingByContext.get(this.context);
+      if (!active) activePlanShapingByContext.set(this.context, active = new Map());
+      const key = JSON.stringify([cwd, result.record.id]);
+      active.set(key, controller);
+      if (this.context.activeRuns.isShuttingDown()) controller.abort();
+      const collection = collectShaping(controller.signal).finally(() => active.delete(key));
+      this.context.activeRuns.trackCompletion(collection);
+    }
+    return { cwd, ...result };
   }
 
   private addWorkItemFeedback(params: unknown): unknown {
@@ -1620,6 +1631,7 @@ class RpcConnection {
     try {
       const store = this.context.storeRegistry.getStore(cwd);
       const { event, ...result } = await settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
+      if (action === "cancelled") activePlanShapingByContext.get(this.context)?.get(JSON.stringify([cwd, input.roundId]))?.abort();
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         this.context.taskSupervisor.poke(cwd);
