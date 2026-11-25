@@ -610,14 +610,17 @@ export class LingAppServerClient {
   }
 
   async readWorkItemDevice(workItemId: string): Promise<LingAppServerWorkItemDeviceReadResult> {
+    await this.connect();
     return await this.request("workItem/device/read", { workItemId });
   }
 
   async bindWorkItemDevice(params: LingAppServerWorkItemDeviceBindParams): Promise<LingAppServerWorkItemDeviceBindResult> {
+    await this.connect();
     return await this.request("workItem/device/bind", params);
   }
 
   async recordWorkItemDeviceReceipt(params: LingAppServerWorkItemDeviceReceiptParams): Promise<LingAppServerWorkItemDeviceReceiptResult> {
+    await this.connect();
     return await this.request("workItem/device/receipt", params);
   }
 

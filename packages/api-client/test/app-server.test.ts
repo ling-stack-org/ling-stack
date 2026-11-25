@@ -235,12 +235,6 @@ test("Ling App Server client routes the development, delivery, grant, worktree a
     enabled: true, kind: "checkpoint", durationMs: 1000 });
   await client.createWorkItem({ sourceId: "source", title: "Fixture" });
   await client.acceptWorkItem({ workItemId: "item", expectedWorkItemRevision: 1, idempotencyKey: "accept" });
-  await client.readWorkItemDevice("item");
-  await client.bindWorkItemDevice({ workItemId: "item", graphId: "graph", graphNodeId: "node", graphRevision: 1,
-    ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", expectedWorkItemRevision: 1, idempotencyKey: "bind-device" });
-  await client.recordWorkItemDeviceReceipt({ workItemId: "item", bindingId: "binding", expectedBindingRevision: 1,
-    expectedWorkItemRevision: 1, ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", status: "unknown",
-    resultRef: "journal", idempotencyKey: "receipt-device" });
   await client.readWorkItemStageQuestions({ workItemId: "item" });
   await client.listWorkItemStageMessages({ workItemId: "item" });
   await client.captureChanges();
@@ -253,9 +247,42 @@ test("Ling App Server client routes the development, delivery, grant, worktree a
     "server/grants/create", "server/grants/create", "server/grants/list", "server/grants/revoke", "handoff/create", "handoff/read", "handoff/resume",
     "github/subject/read", "github/delivery/reconcile", "workItem/delivery/read", "delivery/read",
     "workItem/coordination/schedule/read", "workItem/coordination/schedule/set", "workItem/create", "workItem/accept",
-    "workItem/device/read", "workItem/device/bind", "workItem/device/receipt", "workItem/question/read", "workItem/message/list", "changes/capture", "worktree/list", "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
+    "workItem/question/read", "workItem/message/list", "changes/capture", "worktree/list", "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
   ]);
   client.close();
+});
+
+test("Ling App Server client initializes before each first work item device request", async t => {
+  const requests = {
+    "workItem/device/read": async (client: LingAppServerClient) => {
+      const result = await client.readWorkItemDevice("item");
+      assert.deepEqual(result.bindings, []);
+    },
+    "workItem/device/bind": async (client: LingAppServerClient) => {
+      const result = await client.bindWorkItemDevice({ workItemId: "item", graphId: "graph", graphNodeId: "node", graphRevision: 1,
+        ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", expectedWorkItemRevision: 1, idempotencyKey: "bind-device" });
+      assert.equal(result.binding.status, "bound");
+    },
+    "workItem/device/receipt": async (client: LingAppServerClient) => {
+      const result = await client.recordWorkItemDeviceReceipt({ workItemId: "item", bindingId: "binding", expectedBindingRevision: 1,
+        expectedWorkItemRevision: 1, ownerHostId: "host", ownerRouteGeneration: 1, workUnitId: "unit", status: "unknown",
+        resultRef: "journal", idempotencyKey: "receipt-device" });
+      assert.equal(result.binding.receipt?.receiptId, "receipt");
+    },
+  };
+  for (const [method, request] of Object.entries(requests)) {
+    await t.test(method, async subtest => {
+      const socket = new FakeSocket();
+      const client = new LingAppServerClient({
+        url: "ws://fixture/app-server/rpc",
+        createSocket: () => socket,
+        clientInfo: { name: "fixture-client", version: "1" },
+      });
+      subtest.after(() => client.close());
+      await request(client);
+      assert.deepEqual(socket.sent.map(message => message.method), ["initialize", "initialized", method]);
+    });
+  }
 });
 
 async function waitForCondition(predicate: () => boolean): Promise<void> {
