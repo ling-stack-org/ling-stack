@@ -6133,6 +6133,191 @@ test("App Server replay cursors survive restart and stay bound to the workspace,
   })).disposition, "complete");
 });
 
+test("one Work Item retains independent verification, review, delivery and rollback evidence across team reattach", { timeout: 45_000 }, async t => {
+  let reviewCandidateDigest = "";
+  const provider = await startLoopbackPiProvider(() => ({ text: JSON.stringify({
+    snapshotDigest: reviewCandidateDigest, summary: "The candidate preserves the accepted contract.", findings: [],
+  }) }));
+  t.after(() => provider.close());
+
+  const base = "b".repeat(40);
+  const mergedCommit = "d".repeat(40);
+  const workflowPath = ".github/workflows/verify.yml";
+  const workflow = "name: Trusted verification\n";
+  const workflowSha256 = createHash("sha256").update(workflow).digest("hex");
+  let head = "";
+  const fixture = await releaseFixture(t, {
+    recoveryJournal: true,
+    verificationRecipes: async (root, cwd) => {
+      const script = join(root, "o9-contract-check.cjs");
+      const source = "if (require('node:fs').readFileSync('contract.txt', 'utf8') !== 'candidate\\n') process.exit(1);\n";
+      await writeFile(script, source);
+      return [{ id: "o9-contract", label: "Check the accepted contract", kind: "test", workspaceRoot: cwd,
+        argv: [process.execPath, script], paths: ["contract.txt"], required: true,
+        verifier: { coverage: "Read the accepted contract", sources: [{ path: script, sha256: createHash("sha256").update(source).digest("hex") }] } }];
+    },
+    githubSources: cwd => [{ workspaceRoot: cwd, repository: "example/ling", repositoryId: "73",
+      deliveryPolicies: [{ baseRef: "main", requiredChecks: [{ name: "unit", appId: 19, workflowId: 5,
+        workflowPath, workflowSha256, basis: "head", coverageRefs: ["o9-contract"] }] }],
+    }],
+    externalWorkFetch: async input => {
+      const url = new URL(String(input));
+      assert.equal(url.origin, "https://api.github.com");
+      const prefix = "/repos/example/ling";
+      const path = url.pathname.slice(prefix.length);
+      if (path === "") return Response.json({ id: 73, full_name: "example/ling" });
+      if (path === "/pulls/12") return Response.json({ number: 12, title: "Preserve the contract", state: "closed", merged: true,
+        base: { sha: base, ref: "main", repo: { id: 73 } }, head: { sha: head }, merge_commit_sha: mergedCommit });
+      if (path === "/git/ref/heads/main") return Response.json({ ref: "refs/heads/main", object: { type: "commit", sha: base } });
+      if (path === `/git/commits/${mergedCommit}`) return Response.json({ sha: mergedCommit, parents: [{ sha: base }, { sha: head }] });
+      if (path === "/actions/workflows/5/runs") return Response.json({ total_count: 1, workflow_runs: [{ id: 15,
+        workflow_id: 5, head_sha: head, created_at: "2026-11-22T00:00:00Z", run_attempt: 1, status: "completed", path: workflowPath, event: "push" }] });
+      if (path === "/actions/runs/15") return Response.json({ id: 15, run_attempt: 1 });
+      if (path === "/actions/runs/15/attempts/1/jobs") return Response.json({ total_count: 1, jobs: [{ id: 16, run_id: 15,
+        head_sha: head, name: "unit", check_run_url: "https://api.github.com/repos/example/ling/check-runs/18", status: "completed", conclusion: "success" }] });
+      if (path === `/commits/${head}/check-runs`) return Response.json({ total_count: 1, check_runs: [{ id: 18, name: "unit",
+        head_sha: head, status: "completed", conclusion: "success", url: "https://api.github.com/repos/example/ling/check-runs/18", app: { id: 19 } }] });
+      if (path === `/contents/${workflowPath}`) return Response.json({ type: "file", path: workflowPath, encoding: "base64",
+        content: Buffer.from(workflow).toString("base64") });
+      return Response.json({}, { status: 404 });
+    },
+  });
+
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(join(fixture.cwd, "contract.txt"), "baseline\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, encoding: "utf8" }).trim();
+  git("init", "-q", "-b", "main");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Baseline");
+  await writeFile(join(fixture.cwd, "contract.txt"), "candidate\n");
+  git("add", "contract.txt");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
+  head = git("rev-parse", "HEAD");
+
+  const store = fixture.getStore();
+  const now = new Date().toISOString();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const channel = store.createChannel({ name: "O9 acceptance", boundPath: fixture.cwd, allowedTools: ["read"], defaultProviderPresetId: preset.id }, now);
+  const thread = store.createLingThread({ channelId: channel.id, kind: "channel_discussion", title: "O9 acceptance", objective: "Retain one evidence chain." }, now);
+  const plan = store.upsertProposedPlanArtifact({ id: "o9-plan", threadId: thread.id, channelId: channel.id,
+    title: "Preserve the contract", bodyMarkdown: "Run the independent checks and deliver the accepted candidate.", status: "draft" }, now);
+  const client = await fixture.connect();
+  const peer = await fixture.connect();
+  const accepted = await client.call<ProposedPlanActionResponse>("plan/accept", {
+    mode: "workflow", threadId: thread.id, planId: plan.id, expectedRevision: plan.revision,
+    workflowStepPreviews: [{ title: "Implement the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer", requiredTools: ["read"] }],
+  });
+  const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "o9-evidence-chain", title: "Preserve the contract",
+    channelId: channel.id, initialStatus: "ready" }, now);
+  const claimed = await client.call<LingAppServerWorkItemAcceptResult>("workItem/accept", {
+    workItemId: item.id, expectedWorkItemRevision: item.revision, idempotencyKey: "o9-accept",
+  });
+  const bound = await client.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/workflow/bind", {
+    workItemId: item.id, planId: plan.id, expectedPlanRevision: accepted.plan.revision,
+    expectedWorkItemRevision: Number(claimed.workItem.revision), idempotencyKey: "o9-bind",
+  });
+  const workItemId = item.id;
+  const initial = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  await Promise.all([
+    client.call("workItem/subscribe", { workItemId, cursor: initial.cursor }),
+    peer.call("workItem/subscribe", { workItemId, cursor: initial.cursor }),
+  ]);
+  assert.equal((await peer.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId })).workItem.workItemId, workItemId);
+
+  const paused = await client.call<LingAppServerWorkItemControlResult>("workItem/pause", {
+    workItemId, actorId: "local-user", expectedWorkItemRevision: Number(bound.workItem.revision), expectedControlGeneration: 0, idempotencyKey: "o9-pause",
+  });
+  const resumed = await client.call<LingAppServerWorkItemControlResult>("workItem/resume", {
+    workItemId, actorId: "local-user", expectedWorkItemRevision: Number(paused.workItem.revision), expectedControlGeneration: 1, idempotencyKey: "o9-resume",
+  });
+  assert.equal(Number(resumed.workItem.control.generation), 2);
+
+  const { candidate } = await client.call<LingAppServerCaptureChangesResult>("changes/capture", { scope: "head" });
+  const verificationPlan = await client.call<LingAppServerVerifyPlanResult>("verify/plan", {
+    workItemId, threadId: thread.id, candidate, requestedChecks: ["o9-contract"], idempotencyKey: "o9-verify-plan",
+  });
+  const verification = await client.call<LingAppServerVerifyOperation>("verify/start", {
+    planId: verificationPlan.planId, planRevision: verificationPlan.planRevision,
+    candidateDigest: verificationPlan.candidate.candidateDigest, idempotencyKey: "o9-verify",
+  });
+  const verified = await waitFor(async () => {
+    const result = await client.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: verification.operationId });
+    return result.operation.completedAt ? result.operation : undefined;
+  });
+  assert.equal(verified.status, "passed");
+  assert.equal(verified.workItemId, workItemId);
+  assert.equal(verified.candidateDigest, candidate.candidateDigest);
+
+  reviewCandidateDigest = candidate.candidateDigest;
+  const reviewStarted = await client.call<LingAppServerReviewStartResult>("review/start", {
+    workItemId, planRevision: resumed.workItem.planRevision, candidate, providerPresetId: preset.id, idempotencyKey: "o9-review",
+  });
+  const reviewed = await waitFor(async () => {
+    const result = await client.call<LingAppServerReviewStatusResult>("review/status", { operationId: reviewStarted.operationId });
+    return ["queued", "running"].includes(result.status) ? undefined : result;
+  });
+  assert.equal(reviewed.status, "completed");
+  assert.equal(reviewed.candidateDigest, candidate.candidateDigest);
+  assert.deepEqual(reviewed.workItem, { workItemId, acceptedPlanRevision: resumed.workItem.planRevision, controlGeneration: 2 });
+
+  const current = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+  const delivered = (await client.call<LingAppServerGitHubDeliveryResult>("github/delivery/reconcile", {
+    workItemId, threadId: thread.id, expectedWorkItemRevision: Number(current.workItem.revision),
+    repository: "example/ling", pullRequestNumber: 12, candidateDigest: candidate.candidateDigest,
+  })).delivery;
+  assert.equal(delivered.status, "delivered");
+  assert.equal(delivered.workItemId, workItemId);
+  assert.equal(delivered.candidateDigest, candidate.candidateDigest);
+  assert.equal(delivered.mergedCommit, mergedCommit);
+
+  const round = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/deliberation/start", {
+    workItemId, expectedWorkItemRevision: Number((await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId })).workItem.revision),
+    actorId: "local-user", idempotencyKey: "o9-deliberation", payload: { decisionPoint: "Retain the contract", options: ["adapter", "migration"] },
+  });
+  const reattached = await peer.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", { workItemId });
+  assert.ok(reattached.records.some(record => record.id === round.record.id));
+
+  const planRevision = String(resumed.workItem.planRevision);
+  type EvidenceReceipt = { entry: { id: string; workItemId: string; subjectRevision: string; sourceRefs: readonly { type: string; id: string; revision?: string; digest?: string }[] }; workItemRevision: number };
+  const proofs: EvidenceReceipt["entry"][] = [];
+  const appendProof = async (key: string, kind: "evidence_ref", source: { type: string; id: string }) => {
+    const read = await client.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
+    const result = await client.call<EvidenceReceipt>("workItem/evidence/append", {
+      workItemId, expectedWorkItemRevision: Number(read.workItem.revision), actorId: "local-user", subjectRevision: planRevision, kind,
+      content: `${source.type} evidence for the accepted candidate`, sourceRefs: [{ ...source, revision: planRevision, digest: candidate.candidateDigest }], idempotencyKey: key,
+    });
+    proofs.push(result.entry);
+    return result.entry;
+  };
+  await appendProof("o9-verify-evidence", "evidence_ref", { type: "verification", id: verified.operationId });
+  await appendProof("o9-review-evidence", "evidence_ref", { type: "review", id: reviewed.operationId });
+  await appendProof("o9-delivery-evidence", "evidence_ref", { type: "github_delivery", id: delivered.deliveryId });
+  await appendProof("o9-rollback-evidence", "evidence_ref", { type: "rollback", id: delivered.deliveryId });
+
+  const prepared = await client.call<LingAppServerRecoveryResult>("server/recovery/prepare", { expectedRevision: 0, idempotencyKey: "o9-rollback-journal" });
+  assert.ok(prepared.entries.some(entry => entry.kind === "github_delivery" && entry.workItemId === workItemId));
+  const journalEntry = prepared.entries.find(entry => entry.kind === "github_delivery" && entry.workItemId === workItemId);
+  assert.ok(journalEntry);
+  assert.equal(journalEntry?.id, delivered.deliveryId);
+
+  const evidenceIds = proofs.map(entry => entry.id);
+  assert.equal(new Set(evidenceIds).size, 4);
+  assert.ok(proofs.every(entry => entry.workItemId === workItemId && entry.subjectRevision === planRevision));
+  assert.deepEqual(proofs.map(entry => entry.sourceRefs[0]?.type), ["verification", "review", "github_delivery", "rollback"]);
+  assert.equal(new Set(proofs.map(entry => `${entry.sourceRefs[0]?.type}:${entry.sourceRefs[0]?.id}`)).size, 4);
+  assert.ok(proofs.every(entry => entry.sourceRefs[0]?.digest === candidate.candidateDigest));
+
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const restoredRound = await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", { workItemId });
+  assert.ok(restoredRound.records.some(record => record.id === round.record.id));
+  const reconciled = await restored.call<LingAppServerRecoveryResult>("server/recovery/reconcile", { expectedRevision: prepared.revision });
+  assert.equal(reconciled.status, "ready");
+  assert.equal(reconciled.pendingCount, 0);
+  const history = await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/collaboration/read", { workItemId });
+  assert.equal(history.records.filter(record => record.kind === "deliberation").length, 1);
+});
+
 test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observed GitHub delivery and grant revocation", { timeout: 35_000 }, async t => {
   const base = "b".repeat(40), mergedCommit = "c".repeat(40);
   const workflowPath = ".github/workflows/verify.yml";

@@ -158,7 +158,7 @@ import {
 } from "./app-server-collaboration.js";
 import { deliberationEvaluateInput, deliberationOpenInput, evaluateAppServerDeliberation,
   isCheckpointDeliberationRecord, openAppServerEvaluatedDeliberation } from "./app-server-deliberation.js";
-import { projectPlanShaping } from "../features/channels/plan-deliberation-shaping.js";
+import { planShapingRegistryKey, projectPlanShaping } from "../features/channels/plan-deliberation-shaping.js";
 import { readStageHandoffParams, settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
 import { recoverAppServerStage } from "./app-server-stage-recovery.js";
 
@@ -1539,7 +1539,7 @@ class RpcConnection {
       const controller = new AbortController();
       let active = activePlanShapingByContext.get(this.context);
       if (!active) activePlanShapingByContext.set(this.context, active = new Map());
-      const key = JSON.stringify([cwd, result.record.id]);
+      const key = planShapingRegistryKey(cwd, result.record.id);
       active.set(key, controller);
       if (this.context.activeRuns.isShuttingDown()) controller.abort();
       const collection = collectShaping(controller.signal).finally(() => active.delete(key));
@@ -1630,7 +1630,7 @@ class RpcConnection {
     try {
       const store = this.context.storeRegistry.getStore(cwd);
       const { event, ...result } = await settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
-      if (action === "cancelled") activePlanShapingByContext.get(this.context)?.get(JSON.stringify([cwd, input.roundId]))?.abort();
+      if (action === "cancelled") activePlanShapingByContext.get(this.context)?.get(planShapingRegistryKey(cwd, input.roundId))?.abort();
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         this.context.taskSupervisor.poke(cwd);

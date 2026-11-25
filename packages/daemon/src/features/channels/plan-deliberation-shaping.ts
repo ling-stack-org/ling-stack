@@ -23,6 +23,17 @@ const reply = z.discriminatedUnion("disposition", [
 type Budget = NonNullable<LingAppServerDeliberationOpenParams["shapingBudget"]>;
 type Blocker = NonNullable<LingAppServerPlanShapingResult["blocker"]>;
 
+/**
+ * Identifies an in-flight plan shaping collection within one daemon workspace.
+ *
+ * Open and cancel use the same value so a replayed round cannot leave a
+ * provider request running after the round has been settled. Shutdown aborts
+ * every value in the same registry.
+ */
+export function planShapingRegistryKey(cwd: string, roundId: string): string {
+  return JSON.stringify([cwd, roundId]);
+}
+
 export interface PlanShapingRuntime {
   readonly runners: RunnerRegistry;
   readonly secrets: SecretResolver;
