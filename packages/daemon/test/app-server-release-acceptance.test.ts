@@ -2114,10 +2114,28 @@ test("GitHub delivery keeps head checks across base changes and completes a Goal
   latestAttempt = 2;
   const current = await reconcile();
   assert.deepEqual(current.checks.map(check => [check.testedCommit, check.runAttempt]), [[head, 2], [newIntegration, 2]]);
-  const { delivery: old } = await client.call<LingAppServerGitHubDeliveryResult>("delivery/read", {
+  const other = await client.call<LingAppServerWorkItemResult>("workItem/create", {
+    sourceId: "other-delivery", title: "Separate delivery",
+  });
+  const secret = randomBytes(32).toString("hex");
+  const { grant } = await client.call<{ grant: LingAppServerGrant }>("server/grants/create", {
+    label: "Observe delivery", subject: { kind: "workItem", id: workItemId }, scopes: ["observe"],
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    credentialSha256: createHash("sha256").update(secret).digest("hex"), idempotencyKey: "observe-delivery",
+  });
+  const observer = await fixture.connect("/app-server/rpc", fixture.cwd, `las1.${grant.grantId}.${secret}`);
+  const { methods } = await observer.call<{ methods: string[] }>("server/capabilities");
+  assert.ok(methods.includes("workItem/delivery/read") && methods.includes("delivery/read"));
+  assert.deepEqual((await observer.call<LingAppServerGitHubDeliveryResult>("workItem/delivery/read", { workItemId })).delivery, current);
+  const { delivery: old } = await observer.call<LingAppServerGitHubDeliveryResult>("delivery/read", {
     workItemId, deliveryId: initial.deliveryId,
   });
   assert.deepEqual(old, initial);
+  await assert.rejects(observer.call("workItem/delivery/read", { workItemId: other.workItem.workItemId }), { code: "capability_denied" });
+  await assert.rejects(observer.call("delivery/read", {
+    workItemId: other.workItem.workItemId, deliveryId: initial.deliveryId,
+  }), { code: "capability_denied" });
+  await assert.rejects(reconcile(observer), { code: "capability_denied" });
 
   await client.call("thread/goal/set", { threadId: thread.id, objective: "Deliver the verified fix",
     acceptanceCriteria: [{ id: "merged", description: "Trusted checks on the merged candidate", kind: "github_delivered",
@@ -4932,6 +4950,7 @@ test("active Workflow stage grants bind questions, replies and messages to their
   assert.ok(capabilities.capabilities.includes("workItem.coordination"));
   assert.ok(capabilities.methods.includes("workItem/question/ask") && capabilities.methods.includes("workItem/message/send"));
   assert.ok(!capabilities.methods.includes("input/respond") && !capabilities.methods.includes("workItem/collaboration/append"));
+  assert.ok(!capabilities.methods.includes("workItem/delivery/read") && !capabilities.methods.includes("delivery/read"));
   const readStages = await sender.client.readWorkItemStages(item.id);
   assert.deepEqual(readStages.workflow?.steps.find(stage => stage.stepId === respondent.id)?.messageReceiver, respondentStage.messageReceiver);
   assert.ok(readStages.workflow?.steps.every(stage => !stage.runId && !stage.brief));
