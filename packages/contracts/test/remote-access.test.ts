@@ -38,6 +38,7 @@ test("remote V1 allowlists contain only the designed communication surface", () 
     "snapshot.request",
     "conversation.list",
     "conversation.open",
+    "conversation.visualization.read",
     "conversation.send_text",
     "conversation.mark_read",
     "profile.read",
