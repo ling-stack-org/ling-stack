@@ -283,6 +283,11 @@ Control Plane 使用现有 domain，不新增 `media` domain：
 - 频道只保留既有 speaker/mention 差异，不增加单独媒体生成 UI；
 - 结果更新不得插入一条伪造 assistant 文本消息，也不得暴露模型思考过程。
 
+普通对话已完成的助手回复提供「给回复添加视频」操作。用户输入该次运行工作区内的 MP4 路径，
+daemon 把成片保存为 Run 的视频产物，并在对应回复中显示内联播放器。播放器从产物接口按 HTTP
+字节范围读取，长视频可按需加载和定位。HTML、时间线及源素材属于 HyperFrames 编辑工程，导出后的
+MP4 是可以发布到回复的成片。
+
 普通频道回复的 `channel_ai_reply` 是会话回答，不是独立已执行任务。即使该 Run 调用了媒体工具或产生
 了 execution evidence，也不得再生成 Terminal Report 或“任务已完成”消息；媒体任务状态完全由共享
 媒体块表达。该资格规则必须同时用于实时调度、直接处理、daemon 启动恢复、Terminal Report API 和频道

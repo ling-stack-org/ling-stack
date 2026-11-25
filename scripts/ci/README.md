@@ -24,11 +24,12 @@ Mixed changes union their affected packages and required lanes.
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
 | Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests and typecheck plus shared test-support consumers |
+| Verified workspace lockfile updates or manifests changed only in `devDependencies` | Affected workspace validation and dependency policy; runtime changes also select downstream consumers |
 | Standard new Node/TypeScript package with isolated or unchanged lockfile inputs | Owner, declared consumers, build dependencies and dependency policy |
 | The fixed Office/codesign source-review JSON records | Daemon build closure and macOS publication contracts; no unrelated product tests/typechecks |
 | Dependency-security regression tests | Owning package plus dependency policy |
 | Verified changes to `VERSION` and the root manifest's `version` field | Version consistency and applicable consumers outside Web |
-| Root manifest or TypeScript/build configuration, shared lockfile changes, workspace configuration, patches, CI workflows/scripts, unknown paths | Full regression |
+| Root manifest or TypeScript/build configuration, unverified lockfile changes, workspace configuration, patches, CI workflows, unknown paths | Full regression |
 | Deleted, renamed, or unverifiable package identity, or unrecognized script changes | Full regression |
 | `full-ci`, manual dispatch, daily schedule | Full regression |
 
@@ -80,8 +81,20 @@ does not select core/daemon test shards just because a build needs their outputs
 New modules follow the [workspace CI contract](../../docs/maintenance/ci.md#新模块接入-ci).
 The scope job checks the new module's scripts and test inventory. A lockfile
 change stays local when removing the new workspace importer blocks yields the
-exact baseline lockfile. Changes to shared resolutions or workspace settings
-select full regression.
+exact baseline lockfile.
+
+### Lockfile Dependency Scope
+
+CI compares the base and candidate pnpm v9 importers, package metadata and
+resolved snapshots. A workspace whose resolution changes to an existing
+snapshot still receives validation. Changes to runtime or optional dependencies
+also select downstream workspace consumers. Changes confined to development
+dependencies validate the affected workspace. Dependency policy checks still run.
+
+Root dependency changes, including transitive changes, require full regression.
+The same applies to changes in workspace structure or lockfile policy such as
+overrides and patches, plus unsupported lockfile shapes or changes that cannot be
+traced to an importer. The isolated new module exception above still applies.
 
 Dependency policy runs for dependency inputs and its own regression tests, not
 for every source/test edit. Typecheck and Linux unit jobs run only for nonempty

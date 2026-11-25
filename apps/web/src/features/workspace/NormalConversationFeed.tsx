@@ -23,7 +23,8 @@ import {
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
 import { UserProfileAvatar } from "../../shared/components/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
-import type { ConversationGeneratedMedia, RunSession, UserProfile } from "../../types.js";
+import type { ConversationGeneratedMedia, RunArtifact, RunSession, UserProfile } from "../../types.js";
+import { ConversationMediaArtifact } from "../../shared/conversation/blocks/ConversationMediaArtifact.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -73,6 +74,7 @@ export interface NormalConversationFeedProps {
   readonly onOpenReportFile: (target: WorkspaceRightDockFileTarget) => void;
   readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onOpenRun?: (runId: string) => void;
+  readonly onVideoPublished?: () => Promise<void>;
 }
 
 export function NormalConversationFeed({
@@ -92,6 +94,7 @@ export function NormalConversationFeed({
   onOpenRun,
   onRetryReplacement,
   onSaveMessage,
+  onVideoPublished,
   projectPath,
   replacementRetryError,
   replacementRetryingMessageId,
@@ -116,6 +119,16 @@ export function NormalConversationFeed({
     workspaceCwd,
   }), [detailContext, messages, projectPath, runById, t, visibleMessages, workspaceCwd]);
   const generatedMediaByRunId = useMemo(() => groupGeneratedMediaByRunId(generatedMedia), [generatedMedia]);
+  const videosByRunId = useMemo(() => {
+    const videos = new Map<string, RunArtifact[]>();
+    for (const artifact of detailContext?.artifacts ?? []) {
+      if (artifact.type !== "video" || !artifact.runId) continue;
+      const items = videos.get(artifact.runId) ?? [];
+      items.push(artifact);
+      videos.set(artifact.runId, items);
+    }
+    return videos;
+  }, [detailContext?.artifacts]);
   const timelineSnapshot = useMemo(() => {
     const canonicalItems = detailContext?.timelineProjection?.items;
     const items = canonicalItems && canonicalItems.length > 0
@@ -241,10 +254,14 @@ export function NormalConversationFeed({
               const messageId = response.message?.logicalMessageId ?? response.message?.itemId;
               const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
               if (!item || item.message.role !== "assistant" || !item.message.content) return undefined;
+              const runId = item.message.runId;
+              const cwd = workspaceCwd.trim();
               return <NormalConversationResponseActions
                 copyText={copyText}
                 feedback={feedbackById[item.message.id]}
-                onToggleFeedback={(value) => toggleFeedback(item.message.id, value)} />;
+                onToggleFeedback={(value) => toggleFeedback(item.message.id, value)}
+                videoTarget={onVideoPublished && cwd && runId && runById.get(runId)?.status === "succeeded"
+                  ? { cwd, runId, onPublished: onVideoPublished } : undefined} />;
             },
             renderMessageChrome: (messageItem, body) => {
               const messageId = messageItem.logicalMessageId ?? messageItem.itemId;
@@ -257,6 +274,7 @@ export function NormalConversationFeed({
                   ownsMessageChrome={messageChromeOwnerIds.has(messageItem.id)}
                   composerGateApproval={composerGateApprovalPresentationForRunId(item.message.runId, composerGateApprovalByRunId)}
                   generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
+                  videos={item.message.runId ? videosByRunId.get(item.message.runId) ?? [] : []}
                   editing={editingMessageId === item.message.id}
                   editSaving={editSaving}
                   editable={item.message.id === latestEditableUserMessageId}
@@ -299,6 +317,7 @@ function NormalConversationMessageRow({
   editing,
   item,
   generatedMedia,
+  videos,
   onCancelEdit,
   onEdit,
   onOpenFiles,
@@ -318,6 +337,7 @@ function NormalConversationMessageRow({
   readonly ownsMessageChrome: boolean;
   readonly composerGateApproval?: ComposerGateApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
+  readonly videos: readonly RunArtifact[];
   readonly editing: boolean;
   readonly editSaving: boolean;
   readonly editable: boolean;
@@ -404,10 +424,13 @@ function NormalConversationMessageRow({
           />
         </>
       ) : null}
-      workCellNode={ownsMessageChrome && generatedMedia.length > 0 ? (
+      workCellNode={ownsMessageChrome && message.role === "assistant" && (generatedMedia.length > 0 || videos.length > 0) ? (
         <>
-          {message.role === "assistant" ? (
-            <ConversationGeneratedMediaBlock items={generatedMedia} cwd={workspaceCwd.trim()} />
+          <ConversationGeneratedMediaBlock items={generatedMedia} cwd={workspaceCwd.trim()} />
+          {videos.length > 0 ? (
+            <div className="conversation-generated-media-list">
+              {videos.map((artifact) => <ConversationMediaArtifact key={artifact.id} artifact={artifact} cwd={workspaceCwd.trim()} />)}
+            </div>
           ) : null}
         </>
       ) : null}

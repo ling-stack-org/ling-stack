@@ -3929,6 +3929,24 @@ Response:
 }
 ```
 
+### Publish an MP4 to a Run
+
+```http
+POST /runs/:id/artifacts?cwd=/path/to/project
+Content-Type: application/json
+```
+
+```json
+{ "path": "exports/demo.mp4" }
+```
+
+A local client can publish an MP4 from a successful Run's execution directory. The path may
+be relative to that directory or an absolute path within it. The daemon verifies the file and
+copies it into artifact storage before exposing it as a `video` artifact. The source can be
+moved after publication. The response contains `{ "artifact": ... }` with status `201` for a
+new artifact and `200` for an already published revision of the same file. In normal
+conversations, **Add video to response** publishes the file and shows the player in the reply.
+
 ### Get Artifact Metadata
 
 ```http
@@ -3957,6 +3975,13 @@ GET /artifacts/:id/content?cwd=/path/to/project
 ```
 
 The daemon resolves artifact content relative to `.ling-stack/artifacts` and rejects paths outside that directory with `403 artifact_outside_root`.
+
+Video artifacts support `HEAD` for metadata and `GET` with a single HTTP
+`Range: bytes=…`. A satisfiable range returns `206` with `Content-Range`. An
+unsatisfiable range returns `416` with `Content-Range: bytes */<size>`. A full video
+request streams from disk. The 8 MiB whole-transfer budget applies to other
+regular artifacts. Explicit `offset`/`limit` requests continue to use their bounded
+range contract.
 
 ## Media Jobs
 
