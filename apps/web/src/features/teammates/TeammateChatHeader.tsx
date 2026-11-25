@@ -33,6 +33,7 @@ export function TeammateChatHeader({
   summaryDockMotion,
   summaryDockState,
   summaryRows,
+  summaryThreadId,
   onOpenSummaryChanges,
   terminalOpen,
   terminalDisabled,
@@ -64,8 +65,9 @@ export function TeammateChatHeader({
   readonly summaryDockResizing: boolean;
   readonly summaryDockMotion?: string;
   readonly summaryDockState: "closed" | "opening" | "open" | "closing" | "resizing";
-  readonly onOpenSummaryChanges: (cwd: string) => void;
+  readonly onOpenSummaryChanges?: (cwd: string) => void;
   readonly summaryRows: readonly ConversationSummaryRow[];
+  readonly summaryThreadId?: string;
   readonly terminalOpen: boolean;
   readonly terminalDisabled?: boolean;
   readonly detailsOpen: boolean;
@@ -174,6 +176,7 @@ export function TeammateChatHeader({
       ) : null}
       <ConversationSummaryPopover
         open={summaryVisible}
+        currentTarget={summaryThreadId ? { kind: "thread", threadId: summaryThreadId } : undefined}
         title={t("Environment")}
         subtitle={teammate.displayName}
         rows={summaryRows}
