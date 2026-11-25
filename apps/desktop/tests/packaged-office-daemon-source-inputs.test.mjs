@@ -15,8 +15,8 @@ import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "../scripts/packa
 import { bundleInventory, digest, readExecutableBundle } from "../../../scripts/gstack/executable-bundle.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
-const workspaceNames = ["api-client", "browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk",
-  "providers", "remote-protocol", "runner-pi"];
+const workspaceNames = ["api-client", "browser-host", "contracts", "conversation-ui-core", "core", "daemon",
+  "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
 test("Office fixed closure contains no duplicate packaging inputs", () => {

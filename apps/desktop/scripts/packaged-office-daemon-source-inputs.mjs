@@ -8,8 +8,8 @@ import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "./packaged-offic
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const desktopRoot = resolve(repositoryRoot, "apps/desktop");
-const packageNames = Object.freeze(["api-client", "browser-host", "contracts", "core", "daemon", "localization",
-  "plugin-sdk", "providers", "remote-protocol", "runner-pi"]);
+const packageNames = Object.freeze(["api-client", "browser-host", "contracts", "conversation-ui-core", "core",
+  "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"]);
 const identityKeys = Object.freeze(["dev", "ino", "mode", "uid", "gid", "nlink", "size", "mtimeNs", "ctimeNs"]);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const maximumFileBytes = 8 * 1024 * 1024;

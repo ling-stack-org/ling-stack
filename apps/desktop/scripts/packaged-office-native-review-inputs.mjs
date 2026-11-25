@@ -2135,4 +2135,14 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/runs/user-input-events.ts",
   "packages/daemon/src/runtime/external-agent/federation.ts",
   "packages/daemon/src/runtime/external-agent/task-dispatcher.ts",
+  // Conversation visualization persistence and message-reference verification.
+  "packages/contracts/src/conversation-visualizations.ts",
+  "packages/conversation-ui-core/package.json",
+  "packages/conversation-ui-core/tsconfig.json",
+  "packages/conversation-ui-core/src/message-body.ts",
+  "packages/conversation-ui-core/src/string-boundaries.ts",
+  "packages/core/src/storage/sqlite/conversation-visualization-store.ts",
+  "packages/daemon/src/features/conversations/visualization-publish.ts",
+  "packages/daemon/src/features/conversations/visualization-read.ts",
+  "packages/runner-pi/src/extensions/conversation-visualization.ts",
 ]);

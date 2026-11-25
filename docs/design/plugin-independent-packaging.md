@@ -40,7 +40,7 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 - `POST /plugins/:id/check-update` 返回当前版本和最新匹配版本。
 - `POST /plugins/:id/rollback` 复验并恢复缓存的上一版本。
 
-`scripts/plugins/package-plugin.mjs` 与 `generate-catalog.mjs` 提供本地开发工具。生产者仓库发布固定版本。主仓的 Official plugin catalog 工作流对照审核的资产摘要复核版本、来源、包内容和平台运行文件，再生成签名。工作流输入采用以下格式。
+`scripts/plugins/package-plugin.mjs` 与 `generate-catalog.mjs` 提供本地开发工具。生产者仓库发布固定版本。主仓的 Official plugin catalog 工作流对照审核的资产摘要复核版本、来源、包内容和平台运行文件，再生成签名。工作流使用与客户端内置公钥匹配的 `LING_PLUGIN_ARTIFACT_PRIVATE_KEY` 和 `LING_PLUGIN_CATALOG_PRIVATE_KEY`。默认仅保留已签名的目录产物，发布时传入 `publish=true`，将目录及其签名写入同一分支提交。工作流的 `sources` 输入采用以下格式。[目录工作流](https://github.com/ling-stack-org/ling-stack/actions/workflows/plugin-release.yml)
 
 ```json
 {
@@ -84,6 +84,8 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 早期 macOS runner 的完整启动在资源准备阶段超时。同批 DMG 的 daemon-only 探针记录了兼容包与瘦包的资源鉴权用时，分别为 115.672 和 136.420 秒，均超过原先的 60 秒上限。当前 macOS 和 Windows 安装版为资源鉴权预留 180 秒，收到鉴权回执后有独立的 20 秒服务就绪时限。[测量运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45177615505)
 
 瘦包插件索引修复提交 `b60f0c396` 的 macOS arm64 和 Windows x64 开发包均通过归档校验与安装启动。Windows 还通过同版本覆盖安装及卸载。[候选构建复验](https://github.com/ling-stack-org/ling-stack/actions/runs/45293564788/attempts/2)
+
+提交 `fb48a9142201cd991a5e7a5e1848088199ca8aea` 的 0.6.1 瘦包通过归档核对和隔离启动。macOS arm64 从 DMG 复制应用后连接自有 daemon、加载主窗口并正常退出。Windows x64 同时通过安装、同版本升级和卸载。该提交的 DMG 为 794,456,589 字节，EXE 为 743,606,765 字节。上表的体积差值取自同一提交的配对构建。[0.6.1 开发候选](https://github.com/ling-stack-org/ling-stack/actions/runs/45677797080)
 
 ### macOS 已有配置切换
 
