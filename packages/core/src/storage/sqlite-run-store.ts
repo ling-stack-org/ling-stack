@@ -705,7 +705,7 @@ import { SqliteUserInputHostContinuationStore } from "./sqlite/user-input-host-c
 import { SqliteUserInputPrestartRecoveryStore } from "./sqlite/user-input-prestart-recovery-store.js";
 import { prepareUserInputWorkflowStepAdmissionRecovery, hasUserInputWorkflowTaskRunLineage } from "./sqlite/user-input-workflow-step-admission.js";
 import { applyUserInputDeliveryMigration } from "./sqlite/user-input-delivery-migration.js";
-import { readSqliteSnapshot } from "./sqlite/read-snapshot.js";
+import { readSqliteSnapshot, withSqliteSnapshotParentTransaction } from "./sqlite/read-snapshot.js";
 import { SqliteConversationThreadTopologyStore } from "./sqlite/conversation-thread-topology-store.js";
 import { SqliteMediaStore } from "./sqlite/media-store.js";
 import { SqliteMediaWorkflowStore } from "./sqlite/media-workflow-store.js";
@@ -778,6 +778,7 @@ import { applyHarnessReliabilityMigration } from "./sqlite/harness-reliability-m
 import { applyHarnessRetentionIndexMigration } from "./sqlite/harness-retention-index-migration.js";
 import { applyHarnessRecoveryIndexMigration } from "./sqlite/harness-recovery-index-migration.js";
 import { applyDelegationBudgetMigration } from "./sqlite/delegation-budget-migration.js";
+import { appendWorkItemCollaboration } from "../work-item-collaboration.js";
 import { applyDelegationInstructionMigration } from "./sqlite/delegation-instruction-migration.js";
 import { SqliteDelegationWriteStore } from "./sqlite/delegation-write-store.js";
 import { SqliteDelegationLifecycleStore } from "./sqlite/delegation-lifecycle-store.js";
@@ -1775,6 +1776,7 @@ export class SqliteRunStore implements RunStore {
         getAutomationRun: (id) => this.getAutomationRun(id),
         getRun: (id) => this.getRun(id),
         getArtifact: (id) => this.getArtifact(id),
+        getProviderConfigurationSnapshot: (id) => this.getProviderConfigurationSnapshot(id),
       },
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
@@ -6229,6 +6231,36 @@ export class SqliteRunStore implements RunStore {
   bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string,
     previousWorkflowSettled?: (workflowId: string, retainedRunIds: ReadonlySet<string>) => boolean) {
     return this.workItems.bindWorkflow(input, now, this.appServerState, { store: this.controlPlane, cwd: this.paths.cwd }, previousWorkflowSettled);
+  }
+
+  admitWorkItemDeliberationWorkflow(input: Parameters<RunStore["admitWorkItemDeliberationWorkflow"]>[0], now: string) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const item = this.getWorkItem(input.workItemId);
+      if (item?.revision !== input.expectedWorkItemRevision || this.getWorkItemEvidence(input.roundId)) {
+        this.database.exec("COMMIT");
+        return undefined;
+      }
+      const result = withSqliteSnapshotParentTransaction(this.database, () => {
+        const { workflow, binding, round } = input.compile();
+        const appended = appendWorkItemCollaboration({
+          getWorkItem: id => this.getWorkItem(id),
+          listWorkItemEvidence: options => this.listWorkItemEvidence(options),
+          appendWorkItemEvidence: (entry, createdAt, event) => this.workItemEvidence.appendWithinTransaction(entry, createdAt,
+            event ? { ...event, store: this.controlPlane } : undefined),
+        }, { ...round, assertCurrent: input.assertCurrent }, now, this.paths.cwd);
+        if (appended?.status !== "appended") throw new Error("work_item_deliberation_round_admission_changed");
+        const linked = this.appServerState.putWithinTransaction({ kind: "work_item_deliberation_workflow", recordId: workflow.id,
+          expectedRevision: 0, payload: { binding } }, now);
+        if (!linked) throw new Error("work_item_deliberation_workflow_already_linked");
+        return appended;
+      });
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
   }
 
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined {

@@ -23,6 +23,7 @@ export type WorkflowParticipantAuthorityOriginV1 =
   | "builtin_template"
   | "custom_template"
   | "workflow_graph"
+  | "work_item_deliberation"
   | "channel_handoff"
   | "external_work"
   | "proposed_plan"
@@ -76,6 +77,7 @@ export function isWorkflowParticipantAuthorityV1(value: unknown): value is Workf
     "builtin_template",
     "custom_template",
     "workflow_graph",
+    "work_item_deliberation",
     "channel_handoff",
     "external_work",
     "proposed_plan",
@@ -85,6 +87,7 @@ export function isWorkflowParticipantAuthorityV1(value: unknown): value is Workf
   if (!origins.includes(record.origin as WorkflowParticipantAuthorityOriginV1)) return false;
   const channelSelectionOrigins: readonly WorkflowParticipantAuthorityOriginV1[] = [
     "channel_intent_proposal",
+    "work_item_deliberation",
     "manual_channel_step",
     "legacy_migration",
   ];

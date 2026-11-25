@@ -488,8 +488,9 @@ class RpcConnection {
         const record = this.workspaceParams(params);
         const workItemId = readStringField(record, "workItemId");
         const prepared = this.prepareControlPlaneSubscription({ ...record, domains: ["work_items"] }, {
-          filterEvent: (event) => event.entityType === "work_item" && event.entityId === workItemId
-            || event.entityType === "verify_operation" && event.data.workItemId === workItemId,
+          filterEvent: (event) => this.deliberationWorkflowEventVisible(event)
+            && (event.entityType === "work_item" && event.entityId === workItemId
+              || event.entityType === "verify_operation" && event.data.workItemId === workItemId),
           replayReadyMethod: "workItem/replay/ready",
           replayScope: this.replayIdentity(record.cwd).scope("workItem", workItemId),
         });
@@ -508,7 +509,7 @@ class RpcConnection {
           ...record,
           domains: ["runs", "approvals", "work_items", "work_units"],
         }, {
-          ...(threadId ? { filterEvent: (event: ControlPlaneEvent) => threadEventMatches(event, threadId, store) } : {}),
+          filterEvent: (event) => this.deliberationWorkflowEventVisible(event) && (!threadId || threadEventMatches(event, threadId, store)),
           replayReadyMethod: "thread/replay/ready",
           replayScope: this.replayIdentity(record.cwd, store).scope("thread", threadId),
           threadId,
@@ -1420,7 +1421,7 @@ class RpcConnection {
           ...(kind ? { kind } : {}),
           afterRevision: readOptionalIntegerField(record, "afterRevision"),
           limit: readOptionalIntegerField(record, "limit"),
-        });
+        }, !this.grant);
         const stage = this.grant?.stageCoordination;
         if (stage) return { ...collaboration, records: collaboration.records
           .filter(entry => stageCoordinationRecordVisible(store, stage, entry))
@@ -1508,7 +1509,10 @@ class RpcConnection {
     const parsed = deliberationOpenInput.safeParse(record);
     if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an evaluation, Work Item revision and bounded request key.");
     const { event, ...result } = await openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd);
-    if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+    if (event) {
+      this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (parsed.data.execution) this.context.taskSupervisor.poke(cwd);
+    }
     return { cwd, ...result };
   }
 
@@ -1596,7 +1600,7 @@ class RpcConnection {
       const { event, ...result } = await settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
       if (event) {
         this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
-        if (decision?.disposition === "selected") this.context.taskSupervisor.poke(cwd);
+        this.context.taskSupervisor.poke(cwd);
       }
       return { cwd, ...result };
     } catch (error) {
@@ -2915,7 +2919,7 @@ class RpcConnection {
       // Leave room in the RPC response for the page envelope and cursor.
       let remaining = 120 * 1024;
       for (const event of rows) {
-        if (threadEventMatches(event, threadId, store)) {
+        if (this.deliberationWorkflowEventVisible(event) && threadEventMatches(event, threadId, store)) {
           const projected = trimOversizedEvent(event);
           const bytes = Buffer.byteLength(JSON.stringify(projected)) + 1;
           if (bytes > remaining) break;
@@ -3148,6 +3152,10 @@ class RpcConnection {
       computerUsePreviews: this.context.computerUsePreviews,
       nativeRunDispatcher: this.context.nativeRunDispatcher,
     });
+  }
+
+  private deliberationWorkflowEventVisible(event: ControlPlaneEvent): boolean {
+    return !this.grant || event.action !== "work_item.deliberation.workflow_progress";
   }
 
   private enqueueControlPlaneEvent(subscription: RpcSubscription, sourceEvent: ControlPlaneEvent): void {

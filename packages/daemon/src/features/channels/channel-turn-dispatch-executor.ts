@@ -343,7 +343,7 @@ export function createStartOrchestratedRun(
         options.secretResolver,
         options.mcpBroker,
         {
-          enableUserInputPause: true,
+          enableUserInputPause: workflowStep.participantAuthority.origin !== "work_item_deliberation",
           onRunReady: (runId) => {
             publishWorkItemWorkflowStep(store, options.controlPlaneEvents, workflowStep.id);
             resolveOnce(runId);

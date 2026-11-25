@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type {
   LingAppServerCollaborationKind,
   LingAppServerDeliberationDecideParams,
@@ -12,6 +11,7 @@ import type {
 } from "@ling-stack/contracts";
 import {
   appendWorkItemCollaboration,
+  checkpointDeliberationResolutionId,
   fromAppServerCollaborationParams,
   LING_AGENT_ID,
   listWorkItemCollaboration,
@@ -28,6 +28,7 @@ import type { ControlPlaneEvent, RunStore } from "@ling-stack/core";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
 import { readAppServerStageBallot } from "../features/work-items/stage-ballot.js";
+import { projectDeliberationWorkflowProgress, readCompletedDeliberationWorkflow } from "../features/work-items/deliberation-workflow.js";
 import { assertCheckpointRoundCandidate, assertCheckpointRoundCurrent, isCheckpointDeliberationRecord } from "./app-server-deliberation.js";
 
 export class AppServerCollaborationError extends Error {
@@ -42,6 +43,7 @@ export class AppServerCollaborationError extends Error {
 export function readAppServerWorkItemCollaboration(
   store: RunStore,
   params: LingAppServerWorkItemCollaborationReadParams,
+  includeDeliberationWorkflows = false,
 ): LingAppServerWorkItemCollaborationReadResult {
   const workItem = store.getWorkItem(params.workItemId);
   if (!workItem) throw new AppServerCollaborationError("work_item_not_found", `Work Item was not found: ${params.workItemId}`);
@@ -52,11 +54,16 @@ export function readAppServerWorkItemCollaboration(
     limit: params.limit,
   });
   const ballots = params.kind === "deliberation" ? readOpenStageBallots(store, workItem, page.records) : undefined;
+  const deliberationWorkflows = includeDeliberationWorkflows && params.kind === "deliberation" ? page.records.flatMap(record => {
+    const execution = projectDeliberationWorkflowProgress(store, record);
+    return execution ? [execution] : [];
+  }) : [];
   return {
     workItemId: params.workItemId,
     records: page.records.map(toAppServerCollaborationRecord),
     nextAfterRevision: page.nextAfterRevision,
     ...(ballots?.length ? { ballots } : {}),
+    ...(deliberationWorkflows.length ? { deliberationWorkflows } : {}),
   };
 }
 
@@ -188,7 +195,7 @@ export async function settleAppServerDeliberation(
   const workflowDecision = readWorkflowDecisionSubject(round);
   const privateRound = isCheckpointDeliberationRecord(round);
   const id = workflowDecision ? workItemWorkflowDecisionId(workflowDecision, "resolution")
-    : `work_item_deliberation_${createHash("sha256").update(round.id).digest("hex")}`;
+    : checkpointDeliberationResolutionId(round.id);
   const prior = store.getWorkItemEvidence(id);
   if (prior && prior.idempotencyKey !== input.idempotencyKey) {
     throw new AppServerCollaborationError("stale_revision", "The deliberation round already has a resolution.");
@@ -223,7 +230,6 @@ export async function settleAppServerDeliberation(
   }
   const action = decision ? "decided" : "cancelled";
   const payload = decision ? { ...decision, reason: input.reason, ...(ballot ? { ballot: ballot.summary } : {}) } : { reason: input.reason };
-  const sourceRefs = [{ type: "deliberation_round", id: round.id, revision: String(round.collaborationRevision) }, ...(ballot?.sourceRefs ?? [])];
   const saved = prior && readWorkItemCollaborationRecord(store, item.id, prior.id);
   if (saved) {
     const { ballot: _ballot, ...request } = isRecord(saved.payload) ? saved.payload : {};
@@ -234,6 +240,10 @@ export async function settleAppServerDeliberation(
     return { status: "replayed", record: { ...saved, workItemRevision: item.revision }, workItemRevision: item.revision };
   }
   if (privateRound && decision) await assertCheckpointRoundCandidate(store, item, round, now);
+  const execution = privateRound && decision?.disposition === "selected"
+    ? readCompletedDeliberationWorkflow(store, item.id, round.id, round.payload) : undefined;
+  const sourceRefs = [{ type: "deliberation_round", id: round.id, revision: String(round.collaborationRevision) },
+    ...(ballot?.sourceRefs ?? []), ...(execution?.sources ?? [])];
   const resolution = store.appendWorkItemEvidence({
     id,
     workItemId: item.id,
@@ -252,6 +262,7 @@ export async function settleAppServerDeliberation(
         const current = store.getWorkItem(item.id);
         if (!current) throw new AppServerCollaborationError("work_item_not_found", "The Work Item is unavailable.");
         assertCheckpointRoundCurrent(store, current, round, now);
+        if (execution) readCompletedDeliberationWorkflow(store, item.id, round.id, round.payload);
       } } : {}),
     } : {}),
   }, now, {

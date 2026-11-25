@@ -1006,6 +1006,18 @@ export interface LingAppServerWorkItemCollaborationReadResult {
   readonly nextAfterRevision: number;
   readonly workflow?: LingAppServerWorkItemWorkflowStages;
   readonly ballots?: readonly LingAppServerStageBallotProgress[];
+  readonly deliberationWorkflows?: readonly LingAppServerDeliberationWorkflowProgress[];
+}
+
+export interface LingAppServerDeliberationWorkflowProgress {
+  readonly roundId: string;
+  readonly workflowId: string;
+  readonly status: import("./workflows.js").ChannelWorkflowStatus;
+  readonly deadlineAt: string;
+  readonly proposalsCompleted: number;
+  readonly challengesCompleted: number;
+  readonly participants: number;
+  readonly blocker?: string;
 }
 
 export interface LingAppServerStageBallotTally {
@@ -1343,6 +1355,7 @@ export interface LingAppServerDeliberationOpenParams {
   readonly evaluationId: string;
   readonly expectedWorkItemRevision: number;
   readonly idempotencyKey: string;
+  readonly execution?: "read_only_workflow";
 }
 
 export interface LingAppServerDeliberationSettlementParams {

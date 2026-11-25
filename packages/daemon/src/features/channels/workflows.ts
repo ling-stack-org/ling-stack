@@ -7,6 +7,7 @@ import {
   createSqliteWorkflowUserCreationStore,
   effectiveWorkflowPreGate,
   inspectWorkflowPreApproval,
+  readWorkItemDeliberationWorkflowBinding,
   type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelHandoff,
@@ -31,7 +32,7 @@ import { writeJson } from "../../shared/response.js";
 import { readWorkItemStageMessages } from "../work-items/stage-messages.js";
 import { readWorkItemStageQuestionInputs, WORK_ITEM_STAGE_ANSWER_FORMAT } from "../work-items/stage-questions.js";
 import { readWorkItemRetainedStageInputs } from "../work-items/workflow-stages.js";
-import { workItemHandoffCandidatesCurrent, workItemStageRecoveryCandidateCurrent } from "../work-items/stage-handoff-candidates.js";
+import { readCompleteHandoffCandidate, workItemHandoffCandidatesCurrent, workItemStageRecoveryCandidateCurrent } from "../work-items/stage-handoff-candidates.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -749,6 +750,16 @@ export async function prepareWorkflowStepStart(
   if (workItemBlocker) {
     return { kind: "error", statusCode: 409, code: workItemBlocker, message: "The Work Item cannot start a Workflow step." };
   }
+  const deliberation = readWorkItemDeliberationWorkflowBinding(store, workflow.id);
+  if (deliberation && (input.mode !== "create_and_run_task"
+    || input.taskTitle !== undefined && input.taskTitle !== step.title
+    || input.taskPrompt !== undefined && input.taskPrompt !== step.prompt
+    || input.assigneeTeammateId !== undefined && input.assigneeTeammateId !== step.toParticipantId
+    || input.runnerId !== undefined && input.runnerId !== step.metadata?.requestedRunnerId
+    || input.providerPresetId !== undefined && input.providerPresetId !== step.metadata?.providerPresetId)) {
+    return { kind: "error", statusCode: 409, code: "work_item_deliberation_scope_override",
+      message: "A deliberation step uses the participant and execution inputs frozen at admission." };
+  }
   if (store.getWorkItemStageRetryBudget(step)?.exhausted) {
     return { kind: "error", statusCode: 409, code: "work_item_stage_retry_budget_exhausted",
       message: "The Workflow stage or Work Item has no retry capacity remaining." };
@@ -1107,6 +1118,9 @@ export async function prepareWorkflowStepStart(
     && !await workItemStageRecoveryCandidateCurrent(store, step, runRequestBase.cwd)) {
     return fail(409, "work_item_stage_candidate_stale", "The recovered stage needs current evidence for its candidate.");
   }
+  if (deliberation?.candidate && await readCompleteHandoffCandidate(deliberation.candidate.cwd) !== deliberation.candidate.digest) {
+    return fail(409, "work_item_deliberation_candidate_stale", "The read-only round requires its original worktree candidate.");
+  }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),
     executionPermit,
@@ -1197,7 +1211,7 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   if (!workflow || !workflowCoordinatorReplyStatusIsTerminal(workflow.status)) {
     return undefined;
   }
-  if (!terminalReportsEnabledForStore(store)) return undefined;
+  if (!terminalReportsEnabledForStore(store) || readWorkItemDeliberationWorkflowBinding(store, workflowId)) return undefined;
   return maybeScheduleWorkflowTerminalReport(store, workflowId, input);
 }
 

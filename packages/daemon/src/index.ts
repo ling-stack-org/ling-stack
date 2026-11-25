@@ -2,6 +2,7 @@ import { AutomationEventWorker } from "./features/automations/event-worker.js";
 import { dispatchGitHubIntake, processGitHubWebhookIntake } from "./server/app-server-github-intake.js";
 import { openReadyWorkItemStageDeliberations } from "./server/app-server-collaboration.js";
 import { reconcileWorkItemStageQuestionResults } from "./features/work-items/stage-question-results.js";
+import { publishWorkItemWorkflowStep } from "./features/work-items/workflow-stages.js";
 import { HttpError } from "./errors.js";
 import { isRecord } from "./shared/validation.js";
 import { NativeWorkIntake } from "./features/work-items/native-intake.js";
@@ -10,7 +11,8 @@ import { runAutomation, type StartAutomationRunExecution } from "./features/auto
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
-import { orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
+import { cancelChannelWorkflow, orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
+import { ensureRunCancelled } from "./features/runs/cancellation.js";
 import { createWorkflowParallelCapabilityResolver } from "./features/runs/workflow-safety.js";
 import { MemorySemanticService } from "./features/memory/semantic-service.js";
 import { registerMemorySemanticService } from "./features/memory/semantic-registry.js";
@@ -25,6 +27,7 @@ import { createServer, type Server } from "node:http";
 import {
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
+  readWorkItemDeliberationWorkflowBinding,
   createCompositeSecretResolver,
   getRunSummaryPath,
   resolveStoragePaths,
@@ -941,6 +944,20 @@ export function createDaemonServer(
   };
   taskSupervisor = new TaskSupervisor(storeRegistry, async (store, workflowId) => {
     if (storeRegistry.recoveryBlocksDispatch(store.paths.cwd)) return;
+    if (readWorkItemDeliberationWorkflowBinding(store, workflowId)) {
+      const blocker = store.getWorkItemWorkflowAdmissionBlocker(workflowId);
+      if (blocker === "work_item_deliberation_closed" || blocker === "work_item_deliberation_deadline_expired"
+        || blocker === "work_item_deliberation_workflow_stale") {
+        const result = await cancelChannelWorkflow({ store, workflowId, reason: blocker, cancelRun: run => {
+          const active = activeRuns.get(run.id);
+          const cancelled = ensureRunCancelled({ store, runId: run.id, taskId: run.taskId, startedAt: run.startedAt,
+            reason: blocker, active: Boolean(active), streamEnvelope: active?.streamEnvelope, controlPlaneEvents });
+          if (!cancelled.inputWait) active?.abortController.abort();
+        } });
+        for (const step of result.workflowSteps) publishWorkItemWorkflowStep(store, controlPlaneEvents, step.id);
+        return result;
+      }
+    }
     reconcileWorkItemStageQuestionResults(store, workflowId, controlPlaneEvents);
     for (const event of openReadyWorkItemStageDeliberations(store, workflowId, new Date().toISOString())) controlPlaneEvents.publish(event);
     return orchestrateChannelWorkflow({

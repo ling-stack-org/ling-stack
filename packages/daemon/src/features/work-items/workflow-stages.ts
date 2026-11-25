@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { LingAppServerStageBallotTally, LingAppServerStageHandoffProgress, LingAppServerWorkItemStageDecision, LingAppServerWorkItemWorkflowBinding,
   LingAppServerWorkItemWorkflowStages } from "@ling-stack/contracts";
-import { readRetainedWorkflowStageExecution, readWorkItemCollaborationRecord, readWorkflowStageHandoff, stageHandoffAdmitsTarget, workItemWorkflowDecisionId } from "@ling-stack/core";
+import { readRetainedWorkflowStageExecution, readWorkItemCollaborationRecord, readWorkflowStageHandoff, stageHandoffAdmitsTarget,
+  readWorkItemDeliberationWorkflowBinding, workItemWorkflowDecisionId } from "@ling-stack/core";
 import type { ChannelWorkflowStep, RunStore, WorkItem } from "@ling-stack/core";
 import { workflowStepParticipantAvailable } from "../channels/workflow-participant-run-profile.js";
 import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
@@ -169,15 +170,18 @@ export function publishWorkItemWorkflowStep(store: RunStore, events: ControlPlan
   const step = store.getChannelWorkflowStep(stepId);
   if (!step) return;
   const binding = readWorkItemWorkflowBinding(store, step.workflowId);
-  if (!binding) return;
-  const { workItemId, threadId, planId, planRevision } = binding;
+  const deliberation = readWorkItemDeliberationWorkflowBinding(store, step.workflowId);
+  const target = binding ? { workItemId: binding.workItemId, threadId: binding.threadId,
+    planRevision: `${binding.planId}:${binding.planRevision}` }
+    : deliberation ? { workItemId: deliberation.workItemId, roundId: deliberation.roundId } : undefined;
+  if (!target) return;
   const revision = createHash("sha256").update(JSON.stringify([step.id, step.updatedAt, step.status, step.runId])).digest("hex");
   const idempotencyKey = `work-item-stage:${revision}`;
   if (store.getControlPlaneEventByIdempotency(step.workspaceId, idempotencyKey)) return;
   appendControlPlaneEvent(store, events, {
     workspaceId: step.workspaceId, cwd: store.paths.cwd, domain: "work_items",
-    entityType: "work_item", entityId: workItemId, action: "work_item.stage.updated",
-    data: { workItemId, threadId, workflowId: step.workflowId, planRevision: `${planId}:${planRevision}`,
-      stepId, status: step.status, revision }, idempotencyKey,
+    entityType: "work_item", entityId: target.workItemId,
+    action: deliberation ? "work_item.deliberation.workflow_progress" : "work_item.stage.updated",
+    data: { ...target, workflowId: step.workflowId, stepId, status: step.status, revision }, idempotencyKey,
   });
 }

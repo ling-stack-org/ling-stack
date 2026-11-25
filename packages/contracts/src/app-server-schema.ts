@@ -75,6 +75,11 @@ const deliberationEvaluationFields = {
   optionRefs: stringArraySchema, evidenceRefs: stringArraySchema, participantIds: stringArraySchema,
   expiresAt: stringSchema, evaluatedAt: stringSchema,
 };
+const deliberationWorkflowProgressFields = {
+  roundId: stringSchema, workflowId: stringSchema,
+  status: { enum: ["draft", "ready", "running", "waiting_for_approval", "waiting_for_input", "blocked", "succeeded", "failed", "cancelled"] },
+  deadlineAt: stringSchema, proposalsCompleted: integerSchema, challengesCompleted: integerSchema, participants: integerSchema,
+};
 const planTarget = { ...threadTarget, planId: stringSchema, expectedRevision: integerSchema };
 const planActionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema, taskId: stringSchema,
   workflowId: stringSchema, workflowStepId: stringSchema, runId: stringSchema }, ["cwd", "threadId", "plan"]);
@@ -337,11 +342,16 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "thread/unsubscribe":
     case "workItem/unsubscribe":
       return { params: objectWith({ subscriptionId: stringSchema }, ["subscriptionId"]), result };
+    case "workItem/deliberation/read":
+      return { params: objectWith({ ...workItemTarget, afterRevision: integerSchema, limit: integerSchema }, ["workItemId"]),
+        result: objectWith({ workItemId: stringSchema, records: arraySchema, nextAfterRevision: integerSchema, ballots: arraySchema,
+          deliberationWorkflows: { type: "array", items: objectWith({ ...deliberationWorkflowProgressFields, blocker: stringSchema },
+            Object.keys(deliberationWorkflowProgressFields)) },
+        }, ["workItemId", "records", "nextAfterRevision"]) };
     case "workItem/read":
     case "workItem/clarify":
     case "workItem/evidence/read":
     case "workItem/collaboration/read":
-    case "workItem/deliberation/read":
     case "workItem/stage/read":
     case "workItem/stage/brief/read":
     case "workItem/coordination/read":
@@ -443,7 +453,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       };
     case "workItem/deliberation/open":
       return { params: objectWith({ ...workItemTarget, evaluationId: stringSchema, expectedWorkItemRevision: integerSchema,
-        idempotencyKey: stringSchema }, ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result };
+        idempotencyKey: stringSchema, execution: { enum: ["read_only_workflow"] } },
+      ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result };
     case "workItem/deliberation/cancel":
       return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result };
     case "workItem/deliberation/decide":

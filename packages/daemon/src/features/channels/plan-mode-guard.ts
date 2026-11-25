@@ -1,4 +1,4 @@
-import type { ChannelWorkflow, RunStore } from "@ling-stack/core";
+import { readWorkItemDeliberationWorkflowBinding, type ChannelWorkflow, type RunStore } from "@ling-stack/core";
 import { findChannelDefaultConversationThread } from "./conversation-thread-resolution.js";
 
 const PLAN_MODE_WORKFLOW_BLOCKER = "Plan Mode is active for this conversation. Exit Plan Mode or accept a proposed plan before starting workflow execution.";
@@ -13,6 +13,15 @@ export function getChannelPlanModeBlocker(store: RunStore, channelId: string | u
 }
 
 export function getWorkflowPlanModeBlocker(store: RunStore, workflow: ChannelWorkflow): string | undefined {
+  const deliberation = readWorkItemDeliberationWorkflowBinding(store, workflow.id);
+  if (deliberation) {
+    const parent = store.getChannelWorkflow(deliberation.originWorkflowId);
+    return parent?.channelId === workflow.channelId ? sourcePlanModeBlocker(store, parent) : SOURCE_CONVERSATION_BLOCKER;
+  }
+  return sourcePlanModeBlocker(store, workflow);
+}
+
+function sourcePlanModeBlocker(store: RunStore, workflow: ChannelWorkflow): string | undefined {
   const turnId = workflow.metadata?.sourceTurnId;
   const itemId = workflow.metadata?.sourceMessageId;
   // Legacy channel work has no conversation attribution. It keeps the default

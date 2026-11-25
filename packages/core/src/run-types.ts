@@ -2716,6 +2716,8 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
     readonly replayed: boolean;
     readonly event?: ControlPlaneEvent;
   };
+  admitWorkItemDeliberationWorkflow(input: import("./work-item-deliberation-workflow.js").WorkItemDeliberationWorkflowAdmission,
+    now: string): import("./work-item-collaboration.js").AppendWorkItemCollaborationResult | undefined;
   getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined;
   getWorkItemStageRetryBudget(step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkItemStageRetryBudget | undefined;
   getWorkItemWorkflowUsage(item: WorkItem, now: string): import("./work-item-types.js").WorkItemWorkflowUsage | undefined;
@@ -3345,6 +3347,7 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "routeWorkItem"
   | "claimWorkItem"
   | "commitWorkItemGitHubDelivery"
+  | "admitWorkItemDeliberationWorkflow"
   | "heartbeatWorkItem"
   | "releaseWorkItem"
   | "completeWorkItem"

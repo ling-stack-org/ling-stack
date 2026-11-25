@@ -37,7 +37,7 @@ export function readWorkItemWorkflowUsage(context: SqliteStoreContext, item: Wor
       FROM app_server_state link
       JOIN channel_workflow_steps s ON s.workspace_id=link.workspace_id AND s.workflow_id=link.record_id
       JOIN run_sessions r ON r.workflow_step_id=s.id AND r.channel_id=s.channel_id
-      WHERE link.workspace_id=? AND link.kind='work_item_workflow'
+      WHERE link.workspace_id=? AND link.kind IN ('work_item_workflow','work_item_deliberation_workflow')
         AND json_extract(link.payload_json, '$.binding.workItemId')=?
     ), attempt_charges AS (
       SELECT c.run_id, c.attempt_id, COUNT(*)=SUM(c.state='cancelled_before_dispatch') AS no_dispatch,

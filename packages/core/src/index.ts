@@ -155,6 +155,7 @@ export * from "./work-item-evidence-types.js";
 export * from "./work-item-collaboration.js";
 export * from "./work-item-device-bridge.js";
 export * from "./work-item-workflow-decision.js";
+export * from "./work-item-deliberation-workflow.js";
 export * from "./work-item-retained-workflow-stage.js";
 export * from "./work-item-workflow-handoff.js";
 export * from "./work-item-workflow-question.js";

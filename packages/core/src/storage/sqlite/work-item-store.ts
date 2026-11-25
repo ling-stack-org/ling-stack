@@ -45,6 +45,7 @@ import type { LingAppServerGitHubDelivery, LingAppServerGitHubIntakeReceipt, Lin
 import type { RunStore } from "../../run-types.js";
 import type { ChannelWorkflowStep } from "../../workspace-types.js";
 import { readSelectedWorkflowDecision, workItemWorkflowDecisionId } from "../../work-item-workflow-decision.js";
+import { checkpointDeliberationResolutionId, deliberationWorkflowStepDigest, type WorkItemDeliberationWorkflowBinding } from "../../work-item-deliberation-workflow.js";
 import { stageHandoffAdmitsTarget } from "../../work-item-workflow-handoff.js";
 import { listWorkItemStageQuestions, workItemStageQuestionExpired } from "../../work-item-workflow-question.js";
 import { planStageBallotKey } from "../../proposed-plan-mutation.js";
@@ -69,6 +70,7 @@ export interface SqliteWorkItemStorePorts {
   readonly getAutomationRun: RunStore["getAutomationRun"];
   readonly getRun: RunStore["getRun"];
   readonly getArtifact: RunStore["getArtifact"];
+  readonly getProviderConfigurationSnapshot: RunStore["getProviderConfigurationSnapshot"];
 }
 
 interface WorkItemCreationReceipt {
@@ -770,6 +772,8 @@ export class SqliteWorkItemStore {
   }
 
   getWorkflowAdmissionBlocker(workflowId: string, state: SqliteAppServerStateStore, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined {
+    const deliberation = this.readDeliberationWorkflowBinding(workflowId, state);
+    if (deliberation) return this.getDeliberationWorkflowAdmissionBlocker(deliberation, state, step);
     const link = state.get("work_item_workflow", workflowId)?.payload as WorkItemWorkflowLink | undefined;
     if (!link) {
       const planId = this.ports.getChannelWorkflow(workflowId)?.metadata?.sourceProposedPlanId;
@@ -870,10 +874,11 @@ export class SqliteWorkItemStore {
     const run = this.ports.getRun(rootRunId);
     const step = run?.workflowStepId ? this.ports.getChannelWorkflowStep(run.workflowStepId) : undefined;
     const link = step && state.get("work_item_workflow", step.workflowId)?.payload as WorkItemWorkflowLink | undefined;
-    if (!step || !link) return undefined;
+    const deliberation = step && this.readDeliberationWorkflowBinding(step.workflowId, state);
+    if (!step || !link && !deliberation) return undefined;
     const blocker = this.getWorkflowAdmissionBlocker(step.workflowId, state, step, rootRunId);
     if (blocker) return blocker;
-    const item = this.getWorkItem(link.binding.workItemId);
+    const item = this.getWorkItem((link?.binding ?? deliberation!).workItemId);
     if (!item?.workflowId) return "work_item_workflow_stale";
     const current = item.workflowId === step.workflowId
       ? link : state.get("work_item_workflow", item.workflowId)?.payload as WorkItemWorkflowLink | undefined;
@@ -887,6 +892,42 @@ export class SqliteWorkItemStore {
     if (requestedTokens === undefined) return "work_item_goal_usage_unconfirmed";
     if (requestedTokens > budget.tokenBudget - budget.accountedTokens - (budget.reservedTokens ?? 0)) {
       return "work_item_goal_token_budget_exhausted";
+    }
+    return undefined;
+  }
+
+  private readDeliberationWorkflowBinding(workflowId: string, state: SqliteAppServerStateStore) {
+    return (state.get("work_item_deliberation_workflow", workflowId)?.payload as
+      { readonly binding: WorkItemDeliberationWorkflowBinding } | undefined)?.binding;
+  }
+
+  private getDeliberationWorkflowAdmissionBlocker(binding: WorkItemDeliberationWorkflowBinding, state: SqliteAppServerStateStore,
+    step?: ChannelWorkflowStep): string | undefined {
+    const item = this.getWorkItem(binding.workItemId);
+    const origin = this.ports.getChannelWorkflowStep(binding.originStepId);
+    if (!item || item.workflowId !== binding.originWorkflowId || item.planRevision !== binding.planRevision
+      || origin?.workflowId !== binding.originWorkflowId || origin.updatedAt !== binding.originStepRevision
+      || item.control.generation !== binding.controlGeneration) return "work_item_deliberation_workflow_stale";
+    if (binding.deadlineAt <= new Date().toISOString()) return "work_item_deliberation_deadline_expired";
+    if (this.ports.getWorkItemEvidence(checkpointDeliberationResolutionId(binding.roundId))) return "work_item_deliberation_closed";
+    const parentBlocker = this.getWorkflowAdmissionBlocker(binding.originWorkflowId, state);
+    if (parentBlocker) return parentBlocker;
+    if (item.holds.some(hold => hold.blocksNewAdmission && hold.workflowStepIds?.includes(origin.id))) return "work_item_plan_change_pending";
+    if (step) {
+      if (step.metadata?.sideEffectClass !== "analysis_readonly" || binding.steps[step.id] !== deliberationWorkflowStepDigest(step)) {
+        return "work_item_deliberation_step_changed";
+      }
+      const presetId = step.metadata.providerPresetId;
+      const preset = presetId ? this.ports.getProviderConfigurationSnapshot(presetId) : undefined;
+      if (!preset || preset.configRevision !== binding.providerRevisions[preset.provider.id]) {
+        return "work_item_deliberation_provider_changed";
+      }
+    }
+    const link = state.get("work_item_workflow", binding.originWorkflowId)?.payload as WorkItemWorkflowLink | undefined;
+    if (!link) return "work_item_deliberation_workflow_stale";
+    const goal = this.readWorkflowGoal(item, link.binding, state);
+    if (goal && (goal.tokenBudget !== undefined || goal.supervisionPolicy?.maxTimeSeconds !== undefined)) {
+      return readWorkItemWorkflowUsage(this.context, item, goal, new Date().toISOString()).goalBudget?.blocker;
     }
     return undefined;
   }
@@ -960,7 +1001,7 @@ export class SqliteWorkItemStore {
 
   listActiveWorkflowIds(limit: number): readonly string[] {
     return this.context.database.prepare(`
-      SELECT workflow.id FROM channel_workflows workflow
+      SELECT workflow.id AS id, workflow.updated_at AS updated_at FROM channel_workflows workflow
       JOIN app_server_state binding ON binding.workspace_id=workflow.workspace_id
         AND binding.kind='work_item_workflow' AND binding.record_id=workflow.id
       JOIN work_items item ON item.id=json_extract(binding.payload_json, '$.binding.workItemId')
@@ -983,8 +1024,13 @@ export class SqliteWorkItemStore {
           LEFT JOIN work_items dependency ON dependency.id=edge.depends_on_work_item_id
           WHERE edge.work_item_id=item.id AND coalesce(dependency.status,'missing')!='done'
         )
-      ORDER BY workflow.updated_at ASC, workflow.id ASC LIMIT ?
-    `).all(DEFAULT_WORKSPACE_ID, limit).map(row => readString(row, "id"));
+      UNION ALL
+      SELECT workflow.id AS id, workflow.updated_at AS updated_at FROM channel_workflows workflow
+      JOIN app_server_state binding ON binding.workspace_id=workflow.workspace_id
+        AND binding.kind='work_item_deliberation_workflow' AND binding.record_id=workflow.id
+      WHERE workflow.workspace_id=? AND workflow.status IN ('ready','running','waiting_for_approval')
+      ORDER BY updated_at ASC, id ASC LIMIT ?
+    `).all(DEFAULT_WORKSPACE_ID, DEFAULT_WORKSPACE_ID, limit).map(row => readString(row, "id"));
   }
 
   checkConversationAdmission(threadId: string, submissionKey: unknown, state: SqliteAppServerStateStore, automaticIntakeReceiptId?: string): WorkItem | undefined {

@@ -344,11 +344,11 @@ export async function runLingAppServerMcp(
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.evaluateWorkItemDeliberation(params)));
     if (methods.has("workItem/deliberation/open")) server.registerTool("ling_deliberation_open", {
-      description: "Accept a current Work Item deliberation suggestion and record the round for that decision revision.",
+      description: "Accept a current Work Item deliberation suggestion. Request read_only_workflow to run the accepted stage's participants.",
       inputSchema: deliberationOpenInput,
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.openWorkItemDeliberation(params)));
-    const roundSettlement = deliberationOpenInput.omit({ evaluationId: true }).extend({
+    const roundSettlement = deliberationOpenInput.omit({ evaluationId: true, execution: true }).extend({
       roundId: objectId, expectedRoundRevision: z.number().int().positive(), reason: z.string().trim().min(1).max(2000),
     });
     if (methods.has("workItem/deliberation/decide")) server.registerTool("ling_deliberation_decide", {

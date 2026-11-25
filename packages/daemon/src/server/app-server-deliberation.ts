@@ -28,6 +28,8 @@ import {
 import { z } from "zod";
 import { HttpError } from "../errors.js";
 import { listEffectiveChannelAiTeammates } from "../features/channels/channel-teammate-availability.js";
+import { materializeDeliberationWorkflow } from "../features/work-items/deliberation-workflow.js";
+import { isRecord } from "../shared/validation.js";
 import { readCompleteHandoffCandidate } from "../features/work-items/stage-handoff-candidates.js";
 import { readWorkItemWorkflowBinding } from "../features/work-items/workflow-stages.js";
 
@@ -63,7 +65,9 @@ export const deliberationEvaluateInput = z.object({
   unresolved: z.enum(["intent", "fact", "handoff"]).optional(),
 });
 
-export const deliberationOpenInput = z.object({ ...mutationFields, evaluationId: boundedId });
+export const deliberationOpenInput = z.object({
+  ...mutationFields, evaluationId: boundedId, execution: z.literal("read_only_workflow").optional(),
+});
 
 interface FrozenEvaluation {
   readonly evaluation: LingAppServerDeliberationEvaluation;
@@ -137,7 +141,7 @@ export async function evaluateAppServerDeliberation(
 export async function openAppServerEvaluatedDeliberation(
   store: RunStore, input: LingAppServerDeliberationOpenParams, now: string, cwd: string,
 ): Promise<LingAppServerWorkItemCollaborationAppendResult & { readonly event?: ControlPlaneEvent }> {
-  const { workItemId, evaluationId, expectedWorkItemRevision, idempotencyKey } = input;
+  const { workItemId, evaluationId, expectedWorkItemRevision, idempotencyKey, execution } = input;
   const item = requireWorkItem(store, workItemId);
   const frozen = readEvaluation(readWorkItemCollaborationRecord(store, workItemId, evaluationId));
   if (!frozen) throw stale("The deliberation evaluation is unavailable.");
@@ -148,6 +152,11 @@ export async function openAppServerEvaluatedDeliberation(
     if (prior && prior.id !== roundId) throw keyConflict();
     const existing = prior ?? readWorkItemCollaborationRecord(store, workItemId, roundId);
     if (!existing) return undefined;
+    const hasWorkflow = isRecord(existing.payload) && isRecord(existing.payload.execution);
+    if (hasWorkflow !== (execution === "read_only_workflow")) {
+      if (prior) throw keyConflict();
+      throw stale("This decision revision was already admitted with a different execution mode.");
+    }
     const workItemRevision = requireWorkItem(store, workItemId).revision;
     return { status: "replayed" as const, record: { ...existing, workItemRevision }, workItemRevision };
   };
@@ -156,22 +165,48 @@ export async function openAppServerEvaluatedDeliberation(
   if (evaluation.outcome !== "suggest") throw new HttpError(409, "resume_blocked", "Only a current deliberation suggestion can open a round.");
 
   const assertCurrent = () => assertEvaluationCurrent(store, requireWorkItem(store, workItemId), frozen, now, evaluation.expiresAt);
-  const { candidate } = assertEvaluationCurrent(store, item, frozen, now, evaluation.expiresAt);
+  const admission = assertEvaluationCurrent(store, item, frozen, now, evaluation.expiresAt);
+  const { candidate } = admission;
   if (candidate) {
     await assertCandidateCurrent(candidate);
     const committed = readReplay();
     if (committed) return committed;
   }
   const deadlineAt = new Date(Date.parse(now) + validityMs).toISOString();
-  const result = appendWorkItemCollaboration(store, {
+  const round = {
     id: roundId, workItemId, expectedWorkItemRevision, idempotencyKey,
-    kind: "deliberation", action: "started", actorId: "local-user", visibility: "owner", parentRecordId: evaluationId,
+    kind: "deliberation" as const, action: "started" as const, actorId: "local-user", visibility: "owner" as const, parentRecordId: evaluationId,
     payload: { decisionPoint: decision.question, options: evaluation.optionRefs, subject: decision.subject,
       decisionId: evaluation.decisionId, decisionRevision: evaluation.decisionRevision, deadlineAt,
       ...(candidate ? { candidateDigest: candidate.digest } : {}) },
     sourceRefs: [{ type: "deliberation_evaluation", id: evaluationId, revision: evaluation.decisionRevision }],
     assertCurrent,
-  }, now, cwd);
+  };
+  if (execution === "read_only_workflow") {
+    const { step } = admission.subject;
+    if (decision.subject.kind !== "workflow_stage" || !step) {
+      throw new HttpError(409, "resume_blocked", "A linked deliberation Workflow requires a stage in the accepted Plan.");
+    }
+    const result = store.admitWorkItemDeliberationWorkflow({
+      workItemId, expectedWorkItemRevision, roundId, assertCurrent,
+      compile: () => {
+        const compiled = materializeDeliberationWorkflow(store, {
+          binding: { workItemId, roundId, originWorkflowId: step.workflowId, originStepId: step.id, originStepRevision: step.updatedAt,
+            planRevision: admission.subject.subjectRevision, controlGeneration: item.control.generation, deadlineAt, candidate },
+          origin: step, question: decision.question, participants: admission.participants,
+          options: admission.optionEntries, evidence: admission.evidence, now,
+        });
+        return { ...compiled, round: {
+          ...round, payload: { ...round.payload, execution: { workflowId: compiled.workflow.id } },
+          sourceRefs: [...round.sourceRefs, { type: "workflow", id: compiled.workflow.id }],
+        } };
+      },
+    }, now);
+    const retained = result ?? readReplay();
+    if (!retained) throw stale("The Work Item revision changed before the round opened.");
+    return retained;
+  }
+  const result = appendWorkItemCollaboration(store, round, now, cwd);
   if (!result) throw stale("The Work Item revision changed before the round opened.");
   return result;
 }
@@ -221,7 +256,7 @@ function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEval
   const participants = decision.participantIds.map(id => {
     const participant = eligible.find(entry => entry.id === id);
     if (!participant) throw stale("A requested participant is unavailable for this subject.");
-    return [participant.id, participant.updatedAt];
+    return participant;
   });
   const readEntry = (id: string, option: boolean) => {
     const entry = store.getWorkItemEvidence(id);
@@ -229,16 +264,18 @@ function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEval
       || option && entry.kind !== "proposal") throw stale("A decision input is unavailable for the current subject.");
     return entry;
   };
-  const options = decision.optionRefs.map(id => evidenceRef(readEntry(id, true), "deliberation_option"));
+  const optionEntries = decision.optionRefs.map(id => readEntry(id, true));
+  const options = optionEntries.map(entry => evidenceRef(entry, "deliberation_option"));
   const evidence = decision.evidenceRefs.map(id => readEntry(id, false));
   const evidenceRefs = evidence.map(entry => evidenceRef(entry, "work_item_evidence"));
   const candidate = decision.candidateDigest ? { digest: decision.candidateDigest, cwd: decisionCandidateCwd(store, subject) } : undefined;
   const verificationRefs = candidate
     ? evidence.flatMap(entry => readDecisionVerificationRefs(store, item, candidate, entry)) : [];
   return {
-    subject, options, evidence, candidate, verificationRefs,
+    subject, options, optionEntries, evidence, candidate, verificationRefs, participants,
     sourceRefs: [checkpoint, ...options, ...evidenceRefs, ...verificationRefs],
-    digest: digest([policyRevision, item.control.generation, subject.scopeRevision, participants, options, evidenceRefs, candidate, verificationRefs]),
+    digest: digest([policyRevision, item.control.generation, subject.scopeRevision,
+      participants.map(participant => [participant.id, participant.updatedAt]), options, evidenceRefs, candidate, verificationRefs]),
   };
 }
 
