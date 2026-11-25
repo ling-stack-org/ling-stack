@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import test from "node:test";
 import {
   defaultCompanionManifest,
   parseCompanionReply,
@@ -38,6 +38,7 @@ test("Companion reply text parser strips the optional metadata suffix without lo
     '你好，伙伴。\nLING_COMPANION_META: {"emotion":{"id":"happy","intensity":0.8},"actionRequests":[{"actionId":"greet"}]}',
   );
   assert.equal(parsed.displayText, "你好，伙伴。");
+  assert.ok(parsed.reply.emotion);
   assert.equal(parsed.reply.emotion.id, "happy");
   assert.deepEqual(parsed.reply.actionRequests, [{ actionId: "greet" }]);
   assert.equal(parsed.metadataError, undefined);
