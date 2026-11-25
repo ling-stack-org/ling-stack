@@ -698,3 +698,7 @@ c3b2c4c5b3b4eff9f67de3948aca6b1e036d65d1:packages/daemon/test/conversation-summa
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1668
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837
+
+# Packaging inventory entries verified against the committed remote-access contract and pairing service.
+1e015ff246243d1ffd00f2306cf9c5aa6e2929e8:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:278
+1e015ff246243d1ffd00f2306cf9c5aa6e2929e8:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1160
