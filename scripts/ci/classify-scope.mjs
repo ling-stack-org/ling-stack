@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEPENDENCY_CHECK_FILES } from "./dependency-security.mjs";
 import { deviceSuiteFiles, deviceTestPackages, matchesDeviceTestProfile } from "./device-test-profile.mjs";
 import { packageValidationScope, VALIDATION_BUILD_DEPENDENCIES, VALIDATION_INPUT_BUILD_DEPENDENCIES } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
+import { analyzeLockfileChange } from "./lockfile-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
 import { isCatalogWorkflowPinUpdate } from "./workflow-scope.mjs";
 import { matchesTerminalReportProfile, terminalReportTestFiles } from "./test-file-profiles.mjs";
@@ -100,7 +102,7 @@ function isCiControlPath(file) {
  * Classify a pull request by the narrowest safe CI scope.
  *
  * Unrecognized paths and unverified shared inputs select the full CI lane.
- * @param {{files: string[], deletedLocalArtifacts?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[]}} input
+ * @param {{files: string[], deletedLocalArtifacts?: string[], eventName?: string, forceFull?: boolean, catalogWorkflowPinUpdate?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], baseTestConfigs?: Map<string, string>, versionChange?: ReturnType<typeof inspectProductVersionChange>, addedLockImporters?: string[], lockfileScope?: LockfileScope}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -110,7 +112,7 @@ export function classifyChangedFiles(input) {
   const nativeSurfaceChanged = files.some(isMacosNativePath);
   const nativeRelease = files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file));
   const versionPaths = new Set(input.versionChange?.paths);
-  const scopedLockfile = (input.addedLockImporters?.length ?? 0) > 0;
+  const scopedLockfile = input.lockfileScope?.mode === "affected" || (input.addedLockImporters?.length ?? 0) > 0;
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
@@ -157,6 +159,7 @@ export function classifyChangedFiles(input) {
 
   const validationManifests = new Set();
   const validationInputs = new Set();
+  const dependencyOnlyManifests = new Set();
   const newPackages = new Set();
   const testConfigDirectories = new Set(scopeFiles.filter(file => WORKSPACE_TEST_CONFIG.test(file)).map(file => dirname(file)));
   const manifests = new Set(scopeFiles.filter(file => file.endsWith("/package.json")));
@@ -181,6 +184,9 @@ export function classifyChangedFiles(input) {
       continue;
     }
     const scriptsChanged = current.scriptsFingerprint !== previous.scriptsFingerprint;
+    if (manifestChanged && isDevelopmentDependencyOnlyChange(current.manifest, previous.manifest)) {
+      dependencyOnlyManifests.add(file);
+    }
     if (!scriptsChanged && !testConfigDirectories.has(directory)) continue;
     const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
       directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
@@ -192,7 +198,8 @@ export function classifyChangedFiles(input) {
     if (scriptsChanged) validationManifests.add(file);
     for (const input of validation.testInputs) validationInputs.add(input);
   }
-  if (scopedLockfile && input.addedLockImporters.some(directory => !newPackages.has(directory))) {
+  if ((input.addedLockImporters?.length ?? 0) > 0
+    && input.addedLockImporters.some(directory => !newPackages.has(directory))) {
     return buildScope("full", files, packages, "lockfile changes require verified new workspace importers");
   }
 
@@ -212,10 +219,21 @@ export function classifyChangedFiles(input) {
       continue;
     }
     changedEntries.add(entry.name);
-    if (isTestPath(file) || validationManifests.has(file) || validationInputs.has(file)) {
+    if (isTestPath(file) || validationManifests.has(file) || validationInputs.has(file)
+      || dependencyOnlyManifests.has(file)) {
       changedTestEntries.add(entry.name);
     } else {
       changedSourceEntries.add(entry.name);
+    }
+  }
+
+  if (input.lockfileScope?.mode === "affected") {
+    const runtimeDirectories = new Set(input.lockfileScope.runtimeDirectories);
+    for (const directory of input.lockfileScope.directories) {
+      const entry = packages.find(candidate => candidate.directory === directory);
+      if (!entry) return buildScope("full", files, packages, `lockfile scope references unknown workspace: ${directory}`);
+      changedEntries.add(entry.name);
+      if (runtimeDirectories.has(directory)) changedSourceEntries.add(entry.name);
     }
   }
 
@@ -250,8 +268,7 @@ export function classifyChangedFiles(input) {
     ...(input.basePackageEntries?.find((previous) => previous.name === entry.name)?.dependencies ?? []),
   ])] }));
   for (const name of sourceEntries) collectDependents(name, dependencyGraph, affectedNames);
-  // These are test inputs, not production edges. Rechecking an importer does
-  // not change its shipped output or select all of its production consumers.
+  // Some validation consumers read source outside their declared package graph.
   for (const name of sourceEntries) {
     for (const consumer of VALIDATION_CONSUMERS.get(name) ?? []) {
       if (packages.some((entry) => entry.name === consumer)) affectedNames.add(consumer);
@@ -308,7 +325,8 @@ export function classifyChangedFiles(input) {
       ...(nativeRelease ? ["@ling-stack/daemon"] : [])])].sort(),
     testPackages,
     typecheckPackages,
-    dependencyPolicy: scopeFiles.some(file => (file.endsWith("/package.json") && !validationManifests.has(file))
+    dependencyPolicy: scopeFiles.some(file => (file === LOCKFILE && scopedLockfile)
+      || (file.endsWith("/package.json") && !validationManifests.has(file))
       || DEPENDENCY_CHECK_FILES.has(file)),
     assurance: scopeFiles.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
@@ -322,6 +340,7 @@ export function classifyChangedFiles(input) {
     productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
     reason: terminalReportProfile ? "terminal report test migration with focused Core files"
       : deviceProfile ? "device recovery and task trace tests with transitive consumer typechecks"
+      : input.lockfileScope?.mode === "affected" && changedSourceEntries.size === 0 ? input.lockfileScope.reason
       : versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
       : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
       : changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
@@ -330,6 +349,7 @@ export function classifyChangedFiles(input) {
   };
 }
 
+/** @typedef {ReturnType<typeof analyzeLockfileChange>} LockfileScope */
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
 /** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device"|"terminal-report", testFiles?: Record<string, string[]>, documentationOnly?: boolean, reason: string}} CiScope */
 
@@ -603,6 +623,22 @@ function packageEntry(directory, manifest) {
   };
 }
 
+/**
+ * A dependency-only manifest update changes validation inputs while retaining
+ * the package's production metadata and workspace edges.
+ * @param {object} current
+ * @param {object} previous
+ */
+function isDevelopmentDependencyOnlyChange(current, previous) {
+  if (!current || !previous) return false;
+  const withoutDevelopmentDependencies = manifest => {
+    const copy = { ...manifest };
+    delete copy.devDependencies;
+    return copy;
+  };
+  return isDeepStrictEqual(withoutDevelopmentDependencies(current), withoutDevelopmentDependencies(previous));
+}
+
 /** @param {string} root */
 function listRepositoryFiles(root) {
   return execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
@@ -703,6 +739,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const baseTestConfigs = new Map();
   let versionChange;
   let addedLockImporters;
+  let lockfileScope;
   let catalogWorkflowPinUpdate;
   if (args.files) {
     files = JSON.parse(args.files);
@@ -718,7 +755,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         base, args.head, "--", LOCAL_OUTPUT_DIRECTORY, CODEX_ENVIRONMENT_FILE]).split("\0").filter(Boolean);
     }
     const changedTestConfigs = files.filter(file => WORKSPACE_TEST_CONFIG.test(file));
-    if (changedTestConfigs.length > 0 || files.some(file => file.endsWith("/package.json"))) {
+    if (changedTestConfigs.length > 0 || files.some(file => file.endsWith("/package.json")) || files.includes(LOCKFILE)) {
       basePackageEntries = discoverPackages(repositoryRoot, base);
     }
     for (const file of changedTestConfigs) {
@@ -727,6 +764,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
     }
     if (args["force-full"] !== "true" && files.includes(LOCKFILE) && basePackageEntries) {
+      if ([base, args.head].every(ref => /^100644 blob /u.test(git(["ls-tree", ref, "--", LOCKFILE])))) {
+        lockfileScope = analyzeLockfileChange({
+          before: git(["show", `${base}:${LOCKFILE}`]),
+          after: git(["show", `${args.head}:${LOCKFILE}`]),
+        });
+      }
       const directories = files.filter(file => /^packages\/[a-z0-9-]+\/package\.json$/u.test(file))
         .map(dirname).filter(directory => !basePackageEntries.some(entry => entry.directory === directory));
       if (directories.length > 0 && [base, args.head].every(ref =>
@@ -741,7 +784,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     files = [];
   }
   const scope = classifyChangedFiles({ files, deletedLocalArtifacts, eventName, catalogWorkflowPinUpdate,
-    forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, addedLockImporters });
+    forceFull: args["force-full"] === "true", basePackageEntries, baseTestConfigs, versionChange, addedLockImporters,
+    lockfileScope });
   if (scope.mode === "docs" && scope.files.every(isDocumentationPath) && !args.files && args.base && args.head) {
     scope.documentationOnly = documentationOnlyHistory({ base: args.base, head: args["pr-head"] ?? args.head });
   }
