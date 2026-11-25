@@ -3561,16 +3561,18 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
 
 async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false, retryBudget?: number,
   options?: { readonly harness?: DaemonConfig["harness"]; readonly secretResolver?: SecretResolver; readonly apiKeyRef?: string;
+    readonly channelId?: string; readonly deliberationPolicies?: (cwd: string) => DaemonConfig["appServerDeliberationPolicies"];
     readonly decision?: import("@ling-stack/contracts").ProposedPlanStageDecision;
     readonly verificationRecipes?: (root: string, cwd: string) => Promise<DaemonConfig["appServerVerificationRecipes"]> }) {
   const fixture = await releaseFixture(t, { channels: { terminalReports: false, teamObserverBus: false },
-    harness: options?.harness, secretResolver: options?.secretResolver, verificationRecipes: options?.verificationRecipes });
+    harness: options?.harness, secretResolver: options?.secretResolver, verificationRecipes: options?.verificationRecipes,
+    deliberationPolicies: options?.deliberationPolicies });
   const store = fixture.getStore();
   const now = new Date().toISOString();
   const preset = providerBaseUrl ? addLoopbackPreset(store, providerBaseUrl, options?.apiKeyRef ? {
     apiKeyRef: options.apiKeyRef, contextWindow: 16_000, maxTokens: 1_000,
   } : undefined) : undefined;
-  const channel = store.createChannel({ name: "Review", boundPath: fixture.cwd,
+  const channel = store.createChannel({ id: options?.channelId, name: "Review", boundPath: fixture.cwd,
     allowedTools: parallelReadOnly ? ["read"] : [], defaultProviderPresetId: preset?.id,
     ...(parallelReadOnly ? { runtimePolicy: { maxConcurrentRuns: 2, allowReadOnlyParallel: true } } : {}),
   }, now);
@@ -4250,6 +4252,141 @@ const workflowProviderBudgetFixture = {
   secretResolver: createEnvSecretResolver({ WORK_ITEM_PROVIDER_BUDGET_FIXTURE: "loopback-fixture-key" }),
   apiKeyRef: "env:WORK_ITEM_PROVIDER_BUDGET_FIXTURE",
 } as const;
+
+test("a scoped automatic policy opens exactly one checkpoint round and reserves its shared budget", { timeout: 35_000 }, async t => {
+  const provider = await startLoopbackPiProvider((_body: unknown, invocation: number) => {
+    assert.equal(invocation, 1);
+    return { text: "The adapter preserves compatibility.", usage: { prompt_tokens: 26, completion_tokens: 4, total_tokens: 30 } };
+  });
+  t.after(() => provider.close());
+  const channelId = "automatic-checkpoint-channel";
+  const { fixture, store, client, item, workItem, workflowId, waiting, thread } =
+    await stageQuestionWorkflow(t, provider.baseUrl, true, undefined, {
+      ...workflowProviderBudgetFixture, channelId,
+      deliberationPolicies: cwd => [{
+        workspaceRoot: cwd, channelId, mode: "auto_start",
+        allowedTriggers: ["scheduled_checkpoint"], allowedDecisionKinds: ["implementation_tradeoff"],
+        minimumViableOptions: 2, minimumParticipants: 2, requiredRoleIds: ["engineer", "qa"], minDecisionMateriality: "high",
+        maxEvidenceAgeMs: 60_000, cooldownMs: 60_000, ballotMode: "when_unresolved", decisionOwner: { kind: "user" },
+        budget: { maxTokens: 17_025, maxDurationMs: 60_000 },
+      }],
+    });
+  const now = new Date().toISOString();
+  const home = store.createLingThread({ kind: "automation", title: "Automatic checkpoint", objective: "Review the compatibility evidence" }, now);
+  const automation = store.createAutomationDefinition({
+    threadId: home.id, title: "Automatic checkpoint", kind: "custom_prompt",
+    trigger: { type: "schedule", timezone: "UTC", missedRunPolicy: "skip", schedule: { cadence: "daily", timeOfDay: "00:00" } },
+    target: { scope: "workspace", workspaceId: item.workspaceId }, executionPolicy: {},
+    promptTemplate: { templateVersion: 1, promptMarkdown: "Check the current compatibility evidence.", contextSelectors: [] },
+    outputPolicy: { artifactFormat: "markdown", destinations: [{ type: "automation_thread" }] },
+  }, now);
+  const target = { workItemId: item.id };
+  await client.call("workItem/coordination/schedule/set", {
+    automationId: automation.id, ...target, expectedRevision: 0, enabled: true, kind: "checkpoint", durationMs: 60_000,
+  });
+  const { round: checkpoint } = store.admitScheduledCoordination({
+    automationId: automation.id, expectedDefinitionRevision: automation.updatedAt, expectedPolicyRevision: 1,
+    triggerType: "manual", idempotencyKey: "automatic-checkpoint",
+  }, now);
+  assert.ok(checkpoint);
+  await client.call("workItem/coordination/close", { ...target, parentRecordId: checkpoint.recordId, actorId: "local-user" });
+  const planRevision = workItem.planRevision!;
+  const { optionRefs, evidenceRef } = await recordDeliberationEvidence(client.call, item.id, planRevision);
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(join(fixture.cwd, "contract.txt"), "The previous interface remains readable.\n");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  git("init", "-q");
+  git("add", ".gitignore", "contract.txt");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Freeze the checkpoint candidate");
+  const { candidate, coverage } = await client.call<LingAppServerCaptureChangesResult>("changes/capture", {});
+  assert.equal(coverage, "complete");
+  const revision = () => fixture.getStore().getWorkItem(item.id)!.revision;
+  const basis = {
+    ...target, decisionKey: "checkpoint-compatibility",
+    subject: { kind: "workflow_stage", workflowStepId: waiting.id, planRevision },
+    checkpoint: "scheduled_checkpoint", checkpointRef: checkpoint.recordId, decisionKind: "implementation_tradeoff",
+    materiality: "high", question: "Which compatibility strategy meets the accepted contract?",
+    participantIds: ["teammate_builtin_engineer", "teammate_builtin_qa"], optionRefs, evidenceRefs: [evidenceRef],
+    candidateDigest: candidate.candidateDigest,
+  } as const;
+  const evaluate = (key: string, overrides: Partial<LingAppServerDeliberationEvaluateParams> = {}, connection = client) =>
+    connection.call<LingAppServerDeliberationEvaluateResult>("workItem/deliberation/evaluate", {
+      ...basis, expectedWorkItemRevision: revision(), idempotencyKey: key, ...overrides,
+    });
+  await client.call("thread/goal/set", { threadId: thread.id, objective: "Review the compatibility evidence", tokenBudget: 16_000 });
+  const capacity = await evaluate("automatic-capacity-blocked");
+  assert.equal(capacity.evaluation.reasonCode, "automatic_budget_unavailable");
+  const goal = store.getLingThreadGoal(thread.id)!;
+  await client.call("thread/goal/set", { threadId: thread.id, objective: goal.objective, tokenBudget: 100_000,
+    expectedGoalRevision: goal.updatedAt, replaceExisting: true });
+  const { scoped } = await createObserver(client, fixture, item.id);
+  await assert.rejects(evaluate("unauthorized-automatic-evaluation", {}, scoped), { code: "capability_denied" });
+  assert.equal((await evaluate("below-configured-threshold", { materiality: "medium" })).evaluation.outcome, "suggest");
+  assert.equal((await evaluate("fact-disputed", { unresolved: "fact" })).evaluation.outcome, "verify");
+  assert.equal(store.listChannelWorkflows({ channelId }).length, 1);
+
+  const database = new DatabaseSync(store.paths.databasePath);
+  try {
+    database.exec(`CREATE TRIGGER fixture_fail_deliberation_admission BEFORE INSERT ON app_server_state
+      WHEN NEW.kind = 'work_item_deliberation_admission'
+      BEGIN SELECT RAISE(ABORT, 'fixture_deliberation_admission_write_failed'); END`);
+    const before = revision();
+    await assert.rejects(evaluate("automatic-evaluate"), /fixture_deliberation_admission_write_failed/u);
+    assert.equal(revision(), before);
+    assert.equal(store.findWorkItemEvidenceByKey(item.id, "automatic-evaluate"), undefined);
+    assert.equal(store.listChannelWorkflows({ channelId }).length, 1);
+    assert.equal(provider.requests.length, 0);
+    database.exec("DROP TRIGGER fixture_fail_deliberation_admission");
+  } finally {
+    database.close();
+  }
+
+  const peer = await fixture.connect();
+  const { cursor } = await peer.call<LingAppServerSubscriptionResult>("workItem/subscribe", target);
+  const [accepted, repeated] = await Promise.all([evaluate("automatic-evaluate"), evaluate("same-checkpoint-peer", {}, peer)]);
+  assert.deepEqual([accepted.replayed, repeated.replayed].sort(), [false, true]);
+  assert.equal(accepted.evaluation.outcome, "start");
+  assert.deepEqual(accepted.evaluation, repeated.evaluation);
+  const roundId = accepted.evaluation.existingRoundId;
+  assert.ok(roundId);
+  const read = (connection = client) =>
+    connection.call<LingAppServerWorkItemCollaborationReadResult>("workItem/deliberation/read", target);
+  const start = (await read()).records.find(record => record.id === roundId);
+  const payload = start?.payload as {
+    execution: { workflowId: string };
+    admission: { policyRevision: string; decisionActorId: string; requiredRoleIds: string[]; budget: { maxTokens: number; maxDurationMs: number } };
+  };
+  const linkedId = payload.execution.workflowId;
+  assert.equal(payload.admission.policyRevision, accepted.evaluation.policyRevision);
+  assert.equal(payload.admission.decisionActorId, "local-user");
+  assert.deepEqual(payload.admission.requiredRoleIds, ["engineer", "qa"]);
+  assert.deepEqual(payload.admission.budget, { maxTokens: 17_025, maxDurationMs: 60_000 });
+  await waitFor(() => store.getChannelWorkflow(linkedId)?.status === "failed" ? true : undefined);
+  const attempts = store.listChannelWorkflowSteps({ workflowId: linkedId, complete: true }).flatMap(step => step.runId ? [step.runId] : []);
+  const charges = store.getDelegationCompletionEvidence({ rootRunIds: attempts }).roots.flatMap(root => root.charges);
+  assert.equal(provider.requests.length, 1);
+  assert.deepEqual(charges.map(charge => charge.state).sort(), ["cancelled_before_dispatch", "measured"]);
+  assert.equal(store.getWorkItem(item.id)?.workflowId, workflowId);
+
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const replayed = await evaluate("automatic-evaluate", {}, restored);
+  assert.deepEqual(replayed.evaluation, accepted.evaluation);
+  assert.equal(replayed.replayed, true);
+  await restored.call("workItem/subscribe", { ...target, cursor });
+  await waitFor(() => restored.notices.find(notice => notice.method === "workItem/deliberation/updated"
+    && notice.params?.event?.data?.collaborationId === roundId));
+  const additional = await restored.call<{ entry: { id: string } }>("workItem/evidence/append", {
+    ...target, actorId: "local-user", subjectRevision: planRevision, kind: "observation",
+    idempotencyKey: "new-compatibility-evidence", content: "A later integration check supplies a distinct evidence basis.",
+  });
+  const next = await evaluate("automatic-cooldown", { evidenceRefs: [evidenceRef, additional.entry.id] }, restored);
+  assert.equal(next.evaluation.reasonCode, "automatic_cooldown");
+  assert.notEqual(next.evaluation.decisionRevision, accepted.evaluation.decisionRevision);
+  assert.equal((await read(restored)).deliberationWorkflows?.length, 1);
+  assert.equal(fixture.getStore().listChannelWorkflows({ channelId }).length, 2);
+  assert.equal(provider.requests.length, 1);
+});
 
 test("parallel Work Item stages reserve their shared Goal budget before sending Pi requests", { timeout: 30_000 }, async t => {
   let finishFirst: () => void = () => undefined;
@@ -6095,7 +6232,7 @@ const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunSt
 
 async function releaseFixture(t: TestContext, {
   runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, secretResolver, wssConfig,
-  recoveryJournal = false, channels,
+  recoveryJournal = false, channels, deliberationPolicies,
 }: {
   runner?: RunnerRegistrationInput;
   initialRuntime?: ReleaseRuntime;
@@ -6108,6 +6245,7 @@ async function releaseFixture(t: TestContext, {
   wssConfig?: (root: string) => Promise<DaemonConfig["appServerWss"]>;
   recoveryJournal?: boolean;
   channels?: DaemonConfig["channels"];
+  deliberationPolicies?: (cwd: string) => DaemonConfig["appServerDeliberationPolicies"];
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
@@ -6122,7 +6260,7 @@ async function releaseFixture(t: TestContext, {
   const clients = new Set<WebSocket>();
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
     host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness, channels,
-    appServerVerificationRecipes, appServerGitHubSources: githubSources?.(cwd), appServerWss,
+    appServerVerificationRecipes, appServerGitHubSources: githubSources?.(cwd), appServerWss, appServerDeliberationPolicies: deliberationPolicies?.(cwd),
     ...(recoveryJournal ? { appServerRecoveryDirectory: join(root, "recovery-journal") } : {}),
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),

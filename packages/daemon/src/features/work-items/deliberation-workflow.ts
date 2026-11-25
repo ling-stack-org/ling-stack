@@ -14,16 +14,16 @@ import { isRecord } from "../../shared/validation.js";
 import { getWorkflowPlanModeBlocker } from "../channels/plan-mode-guard.js";
 import { readDeliberationContribution, readDeliberationOutcome } from "./deliberation-ballot.js";
 
-export function materializeDeliberationWorkflow(store: RunStore, input: {
-  readonly binding: Omit<WorkItemDeliberationWorkflowBinding, "steps" | "providerRevisions">;
+interface DeliberationWorkflowInputs {
   readonly origin: ChannelWorkflowStep;
   readonly question: string;
   readonly participants: readonly AiTeammate[];
   readonly options: readonly WorkItemEvidenceEntry[];
   readonly evidence: readonly WorkItemEvidenceEntry[];
-  readonly now: string;
-}) {
-  const { binding, origin, participants, question, now } = input;
+}
+
+export function readDeliberationWorkflowInputs(store: RunStore, input: DeliberationWorkflowInputs) {
+  const { origin, participants, question } = input;
   const parent = store.getChannelWorkflow(origin.workflowId);
   const channel = store.getChannel(origin.channelId);
   if (!parent || !channel) throw new HttpError(409, "stale_revision", "The originating Workflow is unavailable.");
@@ -44,6 +44,15 @@ export function materializeDeliberationWorkflow(store: RunStore, input: {
     if (!preset || !preset.provider.enabled) throw new HttpError(409, "resume_blocked", "Each participant needs a current Provider preset.");
     return preset;
   });
+  return { channel, context, presets };
+}
+
+export function materializeDeliberationWorkflow(store: RunStore, input: DeliberationWorkflowInputs & {
+  readonly binding: Omit<WorkItemDeliberationWorkflowBinding, "steps" | "providerRevisions">;
+  readonly now: string;
+}) {
+  const { binding, participants, question, now } = input;
+  const { channel, context, presets } = readDeliberationWorkflowInputs(store, input);
   const workflow = store.createChannelWorkflow({
     channelId: channel.id,
     title: "Work Item deliberation",

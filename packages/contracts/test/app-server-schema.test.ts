@@ -130,6 +130,9 @@ test("deliberation schemas describe the checkpoint and the frozen evaluation bas
     evaluatedAt: "2026-11-24T01:00:00.000Z", expiresAt: "2026-11-24T01:15:00.000Z",
   } } satisfies LingAppServerDeliberationEvaluateResult;
   assert.ok(validateLingAppServerResult("workItem/deliberation/evaluate", result).ok);
+  assert.ok(validateLingAppServerResult("workItem/deliberation/evaluate", {
+    ...result, evaluation: { ...result.evaluation, outcome: "start", existingRoundId: "closed-checkpoint-round" },
+  }).ok);
   assert.equal(validateLingAppServerResult("workItem/deliberation/evaluate", {
     ...result, evaluation: { ...result.evaluation, outcome: "run" },
   }).path, "result.evaluation.outcome");

@@ -1507,8 +1507,17 @@ class RpcConnection {
     if (method === "workItem/deliberation/evaluate") {
       const parsed = deliberationEvaluateInput.safeParse(record);
       if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply a current subject, checkpoint and bounded decision inputs.");
-      const { event, ...result } = await evaluateAppServerDeliberation(store, parsed.data, now, cwd);
+      const { appServerDeliberationPolicies: policies, harness } = this.context.config;
+      const { event, admissionEvent, ...result } = await evaluateAppServerDeliberation(store, parsed.data, now, cwd, {
+        policies,
+        hostTokenBudget: harness.delegations.mode === "enforce" ? harness.delegations.rootBudget?.tokenBudget : undefined,
+        assertRecoveryReady: () => appServerRecoveryFor(this.context.config, store)?.assertReady(),
+      });
       if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (admissionEvent) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(admissionEvent));
+        this.context.taskSupervisor.poke(cwd);
+      }
       return result;
     }
     const parsed = deliberationOpenInput.safeParse(record);

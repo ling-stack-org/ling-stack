@@ -2717,7 +2717,9 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
     readonly event?: ControlPlaneEvent;
   };
   admitWorkItemDeliberationWorkflow(input: import("./work-item-deliberation-workflow.js").WorkItemDeliberationWorkflowAdmission,
-    now: string): import("./work-item-collaboration.js").AppendWorkItemCollaborationResult | undefined;
+    now: string): (import("./work-item-collaboration.js").AppendWorkItemCollaborationResult & {
+      readonly evaluationEvent?: ControlPlaneEvent;
+    }) | undefined;
   applyWorkItemDeliberationDecision(input: import("./work-item-evidence-types.js").AppendWorkItemEvidenceInput,
     application: import("./work-item-deliberation-workflow.js").WorkItemDeliberationApplication, now: string,
     event: import("./work-item-evidence-types.js").WorkItemEvidenceEventOptions): import("./work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined;

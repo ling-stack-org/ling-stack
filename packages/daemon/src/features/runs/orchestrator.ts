@@ -22,6 +22,7 @@ import {
   getEffectiveTeammateSkill,
   getRunSummaryPath,
   readWorkItemDeliberationBallotBasis,
+  readWorkItemDeliberationWorkflowBinding,
   redactSecrets,
   type EffectiveRunPolicySnapshot,
   type LingThread,
@@ -3550,13 +3551,20 @@ async function executeAdmittedRunRequest(
           }
         },
       }) : undefined;
+    const delegationMode = runtimeSupervisor.getHarnessFeatures().delegations.mode;
+    const providerBudget = !isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter
+      && delegationMode !== "off" && (!run.parentRunId || delegatedExecution)
+      ? bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) : undefined;
+    if (workflowStep && readWorkItemDeliberationWorkflowBinding(store, workflowStep.workflowId)?.automatic
+      && (delegationMode !== "enforce" || !providerBudget?.requiresTokenUpperBound)) {
+      throw new HttpError(409, "work_item_deliberation_budget_unavailable", "Automatic deliberation requires enforced Provider reservations.");
+    }
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
       ...(projectInstructions ? { projectInstructionContext: projectInstructions.projectContext } : {}),
       ...(acceptsStageMessages ? { stageMessageContext: createStageMessageReceiver({ store, run, attemptId: attempt.id,
         assertCurrent: assertCurrentRunAdmission, events: options.controlPlaneEvents, extraSecrets: resolvedSecretValues }) } : {}),
-      ...(!isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
-        && (!run.parentRunId || delegatedExecution) ? { providerBudget: bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) } : {}),
+      ...(providerBudget ? { providerBudget } : {}),
       ...(delegationRunnerToolHandler ? { onDelegationToolCall: delegationRunnerToolHandler } : {}),
       ...(workItemCoordinationToolHandler ? { onWorkItemCoordinationCall: workItemCoordinationToolHandler } : {}),
       ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter

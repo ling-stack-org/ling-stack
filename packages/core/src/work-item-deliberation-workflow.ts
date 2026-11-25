@@ -12,6 +12,11 @@ export interface WorkItemDeliberationWorkflowBinding {
   readonly planRevision: string;
   readonly controlGeneration: number;
   readonly deadlineAt: string;
+  readonly automatic?: {
+    readonly decisionId: string;
+    readonly policyRevision: string;
+    readonly maxTokens: number;
+  };
   readonly candidate?: { readonly cwd: string; readonly digest: string };
   readonly providerRevisions: Readonly<Record<string, number>>;
   readonly decisionTarget?: WorkItemDeliberationTarget;
@@ -50,6 +55,7 @@ export interface WorkItemDeliberationWorkflowAdmission {
   readonly workItemId: string;
   readonly expectedWorkItemRevision: number;
   readonly roundId: string;
+  readonly evaluation?: AppendWorkItemCollaborationInput;
   readonly assertCurrent: () => void;
   readonly compile: () => {
     readonly workflow: ChannelWorkflow;

@@ -6242,18 +6242,28 @@ export class SqliteRunStore implements RunStore {
         return undefined;
       }
       const result = withSqliteSnapshotParentTransaction(this.database, () => {
-        const { workflow, binding, round } = input.compile();
-        const appended = appendWorkItemCollaboration({
+        const append = (entry: Parameters<typeof appendWorkItemCollaboration>[1]) => appendWorkItemCollaboration({
           getWorkItem: id => this.getWorkItem(id),
           listWorkItemEvidence: options => this.listWorkItemEvidence(options),
-          appendWorkItemEvidence: (entry, createdAt, event) => this.workItemEvidence.appendWithinTransaction(entry, createdAt,
+          appendWorkItemEvidence: (input, createdAt, event) => this.workItemEvidence.appendWithinTransaction(input, createdAt,
             event ? { ...event, store: this.controlPlane } : undefined),
-        }, { ...round, assertCurrent: input.assertCurrent }, now, this.paths.cwd);
+        }, entry, now, this.paths.cwd);
+        const evaluation = input.evaluation && append(input.evaluation);
+        if (input.evaluation && evaluation?.status !== "appended") throw new Error("work_item_deliberation_evaluation_stale");
+        const { workflow, binding, round } = input.compile();
+        const appended = append({ ...round, assertCurrent: input.assertCurrent });
         if (appended?.status !== "appended") throw new Error("work_item_deliberation_round_admission_changed");
         const linked = this.appServerState.putWithinTransaction({ kind: "work_item_deliberation_workflow", recordId: workflow.id,
           expectedRevision: 0, payload: { binding } }, now);
         if (!linked) throw new Error("work_item_deliberation_workflow_already_linked");
-        return appended;
+        if (binding.automatic) {
+          const { decisionId, policyRevision } = binding.automatic;
+          const prior = this.appServerState.get("work_item_deliberation_admission", decisionId);
+          const admission = this.appServerState.putWithinTransaction({ kind: "work_item_deliberation_admission", recordId: decisionId,
+            expectedRevision: prior?.revision ?? 0, payload: { roundId: binding.roundId, policyRevision } }, now);
+          if (!admission) throw new Error("work_item_deliberation_admission_stale");
+        }
+        return { ...appended, ...(evaluation?.event ? { evaluationEvent: evaluation.event } : {}) };
       });
       this.database.exec("COMMIT");
       return result;

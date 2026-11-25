@@ -1300,7 +1300,7 @@ export const LING_APP_SERVER_DELIBERATION_DECISION_KINDS = [
 
 export const LING_APP_SERVER_DECISION_MATERIALITIES = ["low", "medium", "high"] as const;
 export const LING_APP_SERVER_DELIBERATION_OUTCOMES = [
-  "clarify", "verify", "handoff_repair", "suggest", "defer", "suppress",
+  "clarify", "verify", "handoff_repair", "suggest", "start", "defer", "suppress",
 ] as const;
 
 export type LingAppServerDeliberationCheckpoint = typeof LING_APP_SERVER_DELIBERATION_CHECKPOINTS[number];
@@ -1345,6 +1345,7 @@ export interface LingAppServerDeliberationEvaluation {
   readonly evidenceRefs: readonly string[];
   readonly participantIds: readonly string[];
   readonly decisionStepId?: string;
+  readonly existingRoundId?: string;
   readonly candidateDigest?: string;
   readonly expiresAt: string;
   readonly evaluatedAt: string;

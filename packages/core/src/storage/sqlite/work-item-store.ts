@@ -879,6 +879,21 @@ export class SqliteWorkItemStore {
     if (!step || !link && !deliberation) return undefined;
     const blocker = this.getWorkflowAdmissionBlocker(step.workflowId, state, step, rootRunId);
     if (blocker) return blocker;
+    if (deliberation?.automatic) {
+      const charges = this.context.database.prepare(`
+        SELECT SUM(CASE WHEN c.state='measured' THEN c.input_tokens+c.output_tokens
+          WHEN c.state='reserved' THEN c.reserved_tokens ELSE 0 END) AS tokens,
+          MAX(c.state='unresolved' OR c.state='reserved' AND c.reserved_tokens IS NULL) AS unknown
+        FROM channel_workflow_steps s
+        JOIN run_sessions r ON r.workflow_step_id=s.id AND r.channel_id=s.channel_id
+        JOIN delegation_budget_charges c ON c.root_run_id=r.id
+        WHERE s.workspace_id=? AND s.workflow_id=?
+      `).get(step.workspaceId, step.workflowId);
+      if (requestedTokens === undefined || charges?.unknown === 1) return "work_item_deliberation_budget_unconfirmed";
+      if (requestedTokens > deliberation.automatic.maxTokens - Number(charges?.tokens ?? 0)) {
+        return "work_item_deliberation_budget_exhausted";
+      }
+    }
     const item = this.getWorkItem((link?.binding ?? deliberation!).workItemId);
     if (!item?.workflowId) return "work_item_workflow_stale";
     const current = item.workflowId === step.workflowId

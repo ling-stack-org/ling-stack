@@ -18,6 +18,7 @@ import {
   deliberationWorkflowStepDigest,
   readWorkItemCollaborationRecord,
   readWorkflowStageHandoff,
+  type AppendWorkItemCollaborationInput,
   type ChannelWorkflowStep,
   type ControlPlaneEvent,
   type RunStore,
@@ -25,15 +26,17 @@ import {
   type WorkItemCollaborationRecord,
   type WorkItemConversationBinding,
   type WorkItemDeliberationTarget,
+  type WorkItemDeliberationWorkflowBinding,
   type WorkItemEvidenceEntry,
 } from "@ling-stack/core";
 import { z } from "zod";
 import { HttpError } from "../errors.js";
 import { listEffectiveChannelAiTeammates } from "../features/channels/channel-teammate-availability.js";
-import { materializeDeliberationWorkflow } from "../features/work-items/deliberation-workflow.js";
+import { materializeDeliberationWorkflow, readDeliberationWorkflowInputs } from "../features/work-items/deliberation-workflow.js";
 import { isRecord } from "../shared/validation.js";
 import { readCompleteHandoffCandidate } from "../features/work-items/stage-handoff-candidates.js";
 import { readWorkItemWorkflowBinding } from "../features/work-items/workflow-stages.js";
+import type { AppServerDeliberationPolicy, AutomaticDeliberationPolicy } from "./app-server-deliberation-config.js";
 
 const evaluationPrefix = "work_item_deliberation_evaluation_";
 const roundPrefix = "work_item_deliberation_round_";
@@ -87,9 +90,21 @@ interface SubjectBasis {
   readonly step?: ChannelWorkflowStep;
 }
 
+interface DeliberationPolicyContext {
+  readonly policies: readonly AppServerDeliberationPolicy[];
+  readonly hostTokenBudget?: number;
+  readonly assertRecoveryReady: () => void;
+}
+
+type DeliberationDisposition = Pick<LingAppServerDeliberationEvaluation, "outcome" | "reasonCode">;
+
 export async function evaluateAppServerDeliberation(
   store: RunStore, input: LingAppServerDeliberationEvaluateParams, now: string, cwd: string,
-): Promise<LingAppServerDeliberationEvaluateResult & { readonly event?: ControlPlaneEvent }> {
+  policyContext: DeliberationPolicyContext,
+): Promise<LingAppServerDeliberationEvaluateResult & {
+  readonly event?: ControlPlaneEvent;
+  readonly admissionEvent?: ControlPlaneEvent;
+}> {
   const { workItemId, expectedWorkItemRevision, idempotencyKey, cwd: _cwd, ...requested } = input;
   const item = requireWorkItem(store, workItemId);
   const decision = {
@@ -109,29 +124,47 @@ export async function evaluateAppServerDeliberation(
   const decisionId = digest([item.id, decision.decisionKey, decision.subject.kind, basis.subject.decisionAnchor,
     ...(decision.decisionStepId ? [decision.decisionStepId] : [])]);
   const decisionRevision = digest([basis.digest, decision.decisionKind, decision.materiality, decision.question, decision.unresolved]);
-  const evaluationId = `${evaluationPrefix}${decisionId}_${digest([decisionRevision, decision.checkpoint, decision.checkpointRef])}`;
   if (basis.candidate) {
     await assertCandidateCurrent(basis.candidate);
     const committed = readReplay();
     if (committed) return committed;
   }
+  const policy = policyContext.policies.find(entry => entry.workspaceRoot === cwd && entry.channelId === basis.subject.channelId);
+  const roundId = checkpointRoundId(workItemId, { decisionId, decisionRevision });
+  const retainedRound = readWorkItemCollaborationRecord(store, workItemId, roundId);
+  const disposition = evaluateCheckpoint(item, basis, decision);
+  const automatic = policy?.mode === "auto_start" && disposition.outcome === "suggest" && basis.subject.step
+    && policy.allowedTriggers.includes(decision.checkpoint) && policy.allowedDecisionKinds.includes(decision.decisionKind)
+    && LING_APP_SERVER_DECISION_MATERIALITIES.indexOf(decision.materiality)
+      >= LING_APP_SERVER_DECISION_MATERIALITIES.indexOf(policy.minDecisionMateriality) ? policy : undefined;
+  const retainedAdmission = isRecord(retainedRound?.payload) && isRecord(retainedRound.payload.admission)
+    && retainedRound.payload.admission.policyRevision === automatic?.revision;
+  const autoBlocker = automatic && !retainedRound
+    ? automaticDeliberationBlocker(store, item, { basis, decision, decisionId, policy: automatic, policyContext, now }) : undefined;
+  const outcome: DeliberationDisposition = autoBlocker ? { outcome: "defer", reasonCode: autoBlocker }
+    : automatic && (!retainedRound || retainedAdmission) ? { outcome: "start", reasonCode: "automatic_policy_match" }
+      : disposition;
+  const evaluationId = `${evaluationPrefix}${decisionId}_${digest([decisionRevision, decision.checkpoint, decision.checkpointRef,
+    ...(policy ? [policy.revision, outcome, retainedRound && outcome.outcome !== "start" ? roundId : null] : [])])}`;
   const existing = readEvaluation(readWorkItemCollaborationRecord(store, workItemId, evaluationId));
   if (existing) return { cwd, evaluation: existing.evaluation, workItemRevision: requireWorkItem(store, workItemId).revision, replayed: true };
   if (item.revision !== expectedWorkItemRevision) throw stale("The Work Item revision changed before evaluation.");
   const evaluation: LingAppServerDeliberationEvaluation = {
-    evaluationId, decisionId, decisionRevision, subjectRevision: basis.subject.subjectRevision, policyRevision,
+    evaluationId, decisionId, decisionRevision, subjectRevision: basis.subject.subjectRevision, policyRevision: policy?.revision ?? policyRevision,
     checkpoint: decision.checkpoint, checkpointRef: decision.checkpointRef,
     optionRefs: decision.optionRefs, evidenceRefs: decision.evidenceRefs, participantIds: decision.participantIds,
     ...(decision.decisionStepId ? { decisionStepId: decision.decisionStepId } : {}),
     ...(basis.candidate ? { candidateDigest: basis.candidate.digest } : {}),
+    ...(retainedRound || outcome.outcome === "start" ? { existingRoundId: roundId } : {}),
     evaluatedAt: now, expiresAt: new Date(Date.parse(now) + validityMs).toISOString(),
-    ...evaluateCheckpoint(item, basis, decision),
+    ...outcome,
   };
   const predecessor = latestEvaluation(store, item.id, decisionId);
-  const result = appendWorkItemCollaboration(store, {
+  const frozen = { evaluation, decision, basisDigest: basis.digest } satisfies FrozenEvaluation;
+  const evidence: AppendWorkItemCollaborationInput = {
     id: evaluationId, workItemId, expectedWorkItemRevision, idempotencyKey,
     kind: "deliberation", action: "created", actorId: "local-user", visibility: "owner",
-    payload: { evaluation, decision, basisDigest: basis.digest } satisfies FrozenEvaluation,
+    payload: frozen,
     ...(predecessor ? { parentRecordId: predecessor.evaluation.evaluationId } : {}),
     sourceRefs: basis.sourceRefs,
     assertCurrent: () => {
@@ -139,9 +172,78 @@ export async function evaluateAppServerDeliberation(
         throw stale("The decision basis changed before the evaluation committed.");
       }
     },
-  }, now, cwd);
+  };
+  if (outcome.outcome === "start" && automatic && !retainedRound) {
+    policyContext.assertRecoveryReady();
+    const { budget } = automatic;
+    const deadlineAt = new Date(Date.parse(now) + budget.maxDurationMs).toISOString();
+    const round = checkpointRound(frozen, workItemId, roundId, expectedWorkItemRevision + 1, roundId, deadlineAt, basis);
+    const result = store.admitWorkItemDeliberationWorkflow({
+      workItemId, expectedWorkItemRevision, roundId, evaluation: evidence,
+      assertCurrent: () => {
+        const current = requireWorkItem(store, workItemId);
+        const currentBasis = assertEvaluationCurrent(store, current, frozen, now, deadlineAt, true);
+        const blocker = automaticDeliberationBlocker(store, current,
+          { basis: currentBasis, decision, decisionId, policy: automatic, policyContext, now });
+        if (blocker) throw new HttpError(409, "resume_blocked", blocker);
+        policyContext.assertRecoveryReady();
+      },
+      compile: () => compileCheckpointWorkflow(store, round, frozen, basis, item.control.generation, now,
+        automatic.ballotMode === "when_unresolved" ? automatic.ballotMode : undefined, automatic),
+    }, now);
+    if (!result) throw stale("The Work Item changed before automatic deliberation admission.");
+    return { cwd, evaluation, workItemRevision: result.workItemRevision, replayed: false,
+      event: result.evaluationEvent, admissionEvent: result.event };
+  }
+  const result = appendWorkItemCollaboration(store, evidence, now, cwd);
   if (!result) throw stale("The Work Item revision changed before the evaluation committed.");
   return { cwd, evaluation, workItemRevision: result.workItemRevision, replayed: false, event: result.event };
+}
+
+function automaticDeliberationBlocker(store: RunStore, item: WorkItem, input: {
+  readonly basis: ReturnType<typeof readDecisionBasis>;
+  readonly decision: FrozenEvaluation["decision"];
+  readonly decisionId: string;
+  readonly policy: AutomaticDeliberationPolicy;
+  readonly policyContext: DeliberationPolicyContext;
+  readonly now: string;
+}): string | undefined {
+  const { basis, decision, decisionId, policy, policyContext, now } = input;
+  const origin = basis.subject.step;
+  if (!origin) return "automatic_stage_unavailable";
+  if (basis.optionEntries.length < policy.minimumViableOptions) return "automatic_options_incomplete";
+  if (basis.participants.length < policy.minimumParticipants
+    || policy.requiredRoleIds.some(role => !basis.participants.some(participant => participant.roleKey === role))) {
+    return "automatic_roster_incomplete";
+  }
+  const lastAdmission = store.getAppServerState("work_item_deliberation_admission", decisionId);
+  if (lastAdmission && Date.parse(now) - Date.parse(lastAdmission.updatedAt) < policy.cooldownMs) return "automatic_cooldown";
+  if (policy.maxEvidenceAgeMs !== undefined) {
+    const timestamps = [...basis.optionEntries, ...basis.evidence].map(entry => entry.updatedAt);
+    for (const ref of basis.verificationRefs) {
+      const record = store.getAppServerState("verify_operation", ref.id);
+      timestamps.push((record?.payload as { operation?: LingAppServerVerifyOperation } | undefined)?.operation?.completedAt ?? "");
+    }
+    const minimum = Date.parse(now) - policy.maxEvidenceAgeMs;
+    if (timestamps.some(timestamp => {
+      const time = Date.parse(timestamp);
+      return !(time >= minimum && time <= Date.parse(now));
+    })) return "automatic_evidence_expired";
+  }
+  if (store.getWorkItemWorkflowAdmissionBlocker(origin.workflowId)) return "work_item_held";
+  const goal = store.getWorkItemWorkflowUsage(item, now)?.goalBudget;
+  if (policyContext.hostTokenBudget === undefined || goal?.blocker) return "automatic_budget_unavailable";
+  const goalTokens = goal?.tokenBudget === undefined ? Infinity : goal.tokenBudget - goal.accountedTokens - (goal.reservedTokens ?? 0);
+  const available = Math.min(policy.budget.maxTokens, policyContext.hostTokenBudget, goalTokens);
+  try {
+    const { presets } = readDeliberationWorkflowInputs(store, { origin, question: decision.question, participants: basis.participants,
+      options: basis.optionEntries, evidence: basis.evidence });
+    if (presets.some(({ provider }) => provider.contextWindow === undefined || provider.maxTokens === undefined
+      || provider.contextWindow + provider.maxTokens > available)) return "automatic_budget_unavailable";
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    return error.code === "plan_mode_workflow_blocked" ? error.code : "automatic_participant_scope_unavailable";
+  }
 }
 
 export async function openAppServerEvaluatedDeliberation(
@@ -152,7 +254,7 @@ export async function openAppServerEvaluatedDeliberation(
   const frozen = readEvaluation(readWorkItemCollaborationRecord(store, workItemId, evaluationId));
   if (!frozen) throw stale("The deliberation evaluation is unavailable.");
   const { evaluation, decision } = frozen;
-  const roundId = roundPrefix + digest([workItemId, evaluation.decisionId, evaluation.decisionRevision]);
+  const roundId = checkpointRoundId(workItemId, evaluation);
   const readReplay = () => {
     const prior = readMutationReceipt(store, workItemId, idempotencyKey);
     if (prior && prior.id !== roundId) throw keyConflict();
@@ -174,8 +276,8 @@ export async function openAppServerEvaluatedDeliberation(
     throw new HttpError(409, "resume_blocked", "This round requires a participant Workflow.");
   }
 
-  const assertCurrent = () => assertEvaluationCurrent(store, requireWorkItem(store, workItemId), frozen, now, evaluation.expiresAt);
-  const admission = assertEvaluationCurrent(store, item, frozen, now, evaluation.expiresAt);
+  const assertCurrent = () => assertEvaluationCurrent(store, requireWorkItem(store, workItemId), frozen, now, evaluation.expiresAt, true);
+  const admission = assertEvaluationCurrent(store, item, frozen, now, evaluation.expiresAt, true);
   const { candidate } = admission;
   if (candidate) {
     await assertCandidateCurrent(candidate);
@@ -183,45 +285,62 @@ export async function openAppServerEvaluatedDeliberation(
     if (committed) return committed;
   }
   const deadlineAt = new Date(Date.parse(now) + validityMs).toISOString();
-  const round = {
-    id: roundId, workItemId, expectedWorkItemRevision, idempotencyKey,
-    kind: "deliberation" as const, action: "started" as const, actorId: "local-user", visibility: "owner" as const, parentRecordId: evaluationId,
-    payload: { decisionPoint: decision.question, options: evaluation.optionRefs, subject: decision.subject,
-      decisionId: evaluation.decisionId, decisionRevision: evaluation.decisionRevision, deadlineAt,
-      ...(candidate ? { candidateDigest: candidate.digest } : {}) },
-    sourceRefs: [{ type: "deliberation_evaluation", id: evaluationId, revision: evaluation.decisionRevision }],
-    assertCurrent,
-  };
+  const round = checkpointRound(frozen, workItemId, roundId, expectedWorkItemRevision, idempotencyKey, deadlineAt, admission);
   if (execution === "read_only_workflow") {
-    const { step } = admission.subject;
-    if (decision.subject.kind !== "workflow_stage" || !step) {
-      throw new HttpError(409, "resume_blocked", "A linked deliberation Workflow requires a stage in the accepted Plan.");
-    }
     const result = store.admitWorkItemDeliberationWorkflow({
       workItemId, expectedWorkItemRevision, roundId, assertCurrent,
-      compile: () => {
-        const compiled = materializeDeliberationWorkflow(store, {
-          binding: { workItemId, roundId, originWorkflowId: step.workflowId, originStepId: step.id, originStepRevision: step.updatedAt,
-            planRevision: admission.subject.subjectRevision, controlGeneration: item.control.generation, deadlineAt, candidate,
-            decisionTarget: admission.decisionTarget,
-            ...(ballotMode ? { ballot: { options: evaluation.optionRefs, evidenceIds: [...evaluation.optionRefs, ...evaluation.evidenceRefs],
-              quorum: Math.floor(admission.participants.length / 2) + 1 } } : {}) },
-          origin: step, question: decision.question, participants: admission.participants,
-          options: admission.optionEntries, evidence: admission.evidence, now,
-        });
-        return { ...compiled, round: {
-          ...round, payload: { ...round.payload, execution: { workflowId: compiled.workflow.id }, ...(ballotMode ? { ballotMode } : {}) },
-          sourceRefs: [...round.sourceRefs, { type: "workflow", id: compiled.workflow.id }],
-        } };
-      },
+      compile: () => compileCheckpointWorkflow(store, round, frozen, admission, item.control.generation, now, ballotMode),
     }, now);
     const retained = result ?? readReplay();
     if (!retained) throw stale("The Work Item revision changed before the round opened.");
     return retained;
   }
-  const result = appendWorkItemCollaboration(store, round, now, cwd);
+  const result = appendWorkItemCollaboration(store, { ...round, assertCurrent }, now, cwd);
   if (!result) throw stale("The Work Item revision changed before the round opened.");
   return result;
+}
+
+function checkpointRoundId(workItemId: string, evaluation: Pick<LingAppServerDeliberationEvaluation, "decisionId" | "decisionRevision">) {
+  return roundPrefix + digest([workItemId, evaluation.decisionId, evaluation.decisionRevision]);
+}
+
+function checkpointRound({ evaluation, decision }: FrozenEvaluation, workItemId: string, id: string,
+  expectedWorkItemRevision: number, idempotencyKey: string, deadlineAt: string, basis: ReturnType<typeof readDecisionBasis>) {
+  return {
+    id, workItemId, expectedWorkItemRevision, idempotencyKey,
+    kind: "deliberation" as const, action: "started" as const, actorId: "local-user", visibility: "owner" as const,
+    parentRecordId: evaluation.evaluationId,
+    payload: { decisionPoint: decision.question, options: evaluation.optionRefs, subject: decision.subject,
+      decisionId: evaluation.decisionId, decisionRevision: evaluation.decisionRevision, deadlineAt,
+      ...(basis.candidate ? { candidateDigest: basis.candidate.digest } : {}) },
+    sourceRefs: [{ type: "deliberation_evaluation", id: evaluation.evaluationId, revision: evaluation.decisionRevision }],
+  };
+}
+
+function compileCheckpointWorkflow(store: RunStore, round: ReturnType<typeof checkpointRound>, frozen: FrozenEvaluation,
+  admission: ReturnType<typeof readDecisionBasis>, controlGeneration: number, now: string,
+  ballotMode?: LingAppServerDeliberationOpenParams["ballotMode"], policy?: AutomaticDeliberationPolicy) {
+  const { decision, evaluation } = frozen;
+  const { step } = admission.subject;
+  if (!step) throw new HttpError(409, "resume_blocked", "A linked deliberation Workflow requires a stage in the accepted Plan.");
+  const automatic: WorkItemDeliberationWorkflowBinding["automatic"] = policy && {
+    decisionId: evaluation.decisionId, policyRevision: policy.revision, maxTokens: policy.budget.maxTokens,
+  };
+  const compiled = materializeDeliberationWorkflow(store, {
+    binding: { workItemId: round.workItemId, roundId: round.id, originWorkflowId: step.workflowId, originStepId: step.id,
+      originStepRevision: step.updatedAt, planRevision: admission.subject.subjectRevision, controlGeneration,
+      deadlineAt: round.payload.deadlineAt, candidate: admission.candidate, decisionTarget: admission.decisionTarget, automatic,
+      ...(ballotMode ? { ballot: { options: evaluation.optionRefs, evidenceIds: [...evaluation.optionRefs, ...evaluation.evidenceRefs],
+        quorum: Math.floor(admission.participants.length / 2) + 1 } } : {}) },
+    origin: step, question: decision.question, participants: admission.participants,
+    options: admission.optionEntries, evidence: admission.evidence, now,
+  });
+  const { workspaceRoot: _workspaceRoot, revision, ...settings } = policy ?? {};
+  return { ...compiled, round: {
+    ...round, payload: { ...round.payload, execution: { workflowId: compiled.workflow.id }, ...(ballotMode ? { ballotMode } : {}),
+      ...(policy ? { admission: { ...settings, policyRevision: revision, decisionActorId: "local-user" } } : {}) },
+    sourceRefs: [...round.sourceRefs, { type: "workflow", id: compiled.workflow.id }],
+  } };
 }
 
 export function isCheckpointDeliberationRecord(record: WorkItemCollaborationRecord): boolean {
@@ -245,7 +364,8 @@ export async function assertCheckpointRoundCandidate(store: RunStore, item: Work
   if (candidate) await assertCandidateCurrent(candidate);
 }
 
-function assertEvaluationCurrent(store: RunStore, item: WorkItem, frozen: FrozenEvaluation, now: string, deadline: string) {
+function assertEvaluationCurrent(store: RunStore, item: WorkItem, frozen: FrozenEvaluation, now: string, deadline: string,
+  requireCurrentDisposition = false) {
   const { decision, evaluation } = frozen;
   if (!workItemAllowsDeliberation(item, decision.subject)) {
     throw new HttpError(409, "resume_blocked", "The Work Item is held. Resume the applicable stage before continuing deliberation.");
@@ -253,9 +373,9 @@ function assertEvaluationCurrent(store: RunStore, item: WorkItem, frozen: Frozen
   if (deadline <= now) throw stale("The deliberation deadline expired.");
   const basis = readDecisionBasis(store, item, decision);
   const latest = latestEvaluation(store, item.id, evaluation.decisionId);
-  if (evaluation.policyRevision !== policyRevision
-    || latest?.evaluation.decisionRevision !== evaluation.decisionRevision
-    || latest.evaluation.outcome !== evaluation.outcome || basis.digest !== frozen.basisDigest) {
+  if (latest?.evaluation.decisionRevision !== evaluation.decisionRevision || basis.digest !== frozen.basisDigest
+    || requireCurrentDisposition && (latest.evaluation.outcome !== evaluation.outcome
+      || latest.evaluation.policyRevision !== evaluation.policyRevision)) {
     throw stale("The decision basis or applicable evaluation changed.");
   }
   return basis;

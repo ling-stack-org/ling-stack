@@ -12,6 +12,8 @@ import { resolveVerificationRecipes, type AppServerVerificationRecipeConfig } fr
 import { resolveAppServerGitHubSources, type AppServerGitHubSourceConfig } from "./server/app-server-github-sources.js";
 import { resolveNativeWorkIntakePolicies, type NativeWorkIntakeConfig, type NativeWorkIntakePolicy } from "./server/app-server-native-intake-config.js";
 import { resolveAppServerWssConfig, type AppServerWssConfig } from "./server/app-server-wss-config.js";
+import { resolveAppServerDeliberationPolicies, type AppServerDeliberationPolicy,
+  type AppServerDeliberationPolicyConfig } from "./server/app-server-deliberation-config.js";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -30,6 +32,7 @@ export interface DaemonConfig {
   readonly appServerVerificationRecipes?: readonly AppServerVerificationRecipeConfig[];
   readonly appServerGitHubSources?: readonly AppServerGitHubSourceConfig[];
   readonly appServerNativeIntake?: readonly NativeWorkIntakeConfig[];
+  readonly appServerDeliberationPolicies?: readonly AppServerDeliberationPolicyConfig[];
   /** Private Host storage retained independently of the workspace SQLite backup. */
   readonly appServerRecoveryDirectory?: string;
   readonly appServerWss?: AppServerWssConfig;
@@ -201,6 +204,7 @@ export interface ResolvedDaemonConfig {
   readonly appServerVerificationRecipes: readonly AppServerVerificationRecipeConfig[];
   readonly appServerGitHubSources: readonly AppServerGitHubSourceConfig[];
   readonly appServerNativeIntake: readonly NativeWorkIntakePolicy[];
+  readonly appServerDeliberationPolicies: readonly AppServerDeliberationPolicy[];
   readonly appServerRecoveryDirectory?: string;
   readonly appServerWss?: AppServerWssConfig;
   readonly channels: ChannelFeatureConfig;
@@ -272,6 +276,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     appServerVerificationRecipes: resolveVerificationRecipes(config.appServerVerificationRecipes),
     appServerGitHubSources: resolveAppServerGitHubSources(config.appServerGitHubSources),
     appServerNativeIntake: resolveNativeWorkIntakePolicies(config.appServerNativeIntake),
+    appServerDeliberationPolicies: resolveAppServerDeliberationPolicies(config.appServerDeliberationPolicies),
     appServerRecoveryDirectory,
     appServerWss: resolveAppServerWssConfig(config.appServerWss),
     transports: {

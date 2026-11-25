@@ -454,7 +454,8 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         }, ["workItemId", "expectedWorkItemRevision", "idempotencyKey", "decisionKey", "subject", "checkpoint", "checkpointRef",
           "decisionKind", "materiality", "question", "participantIds", "optionRefs", "evidenceRefs"]),
         result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,
-          evaluation: objectWith({ ...deliberationEvaluationFields, candidateDigest: stringSchema, decisionStepId: stringSchema },
+          evaluation: objectWith({ ...deliberationEvaluationFields, candidateDigest: stringSchema, decisionStepId: stringSchema,
+            existingRoundId: stringSchema },
             Object.keys(deliberationEvaluationFields)),
         }, ["cwd", "workItemRevision", "replayed", "evaluation"]),
       };
