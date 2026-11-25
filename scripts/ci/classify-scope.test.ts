@@ -204,6 +204,7 @@ test("a verified lockfile closure selects affected workspace validation without 
     lockfileScope: {
       mode: "affected",
       directories: ["packages/core"],
+      runtimeDirectories: [],
       reason: "verified lockfile dependency closure",
     },
   });
@@ -212,6 +213,21 @@ test("a verified lockfile closure selects affected workspace validation without 
   assert.ok(scope.packages.includes("@ling-stack/core"));
   assert.ok(scope.packages.includes("@ling-stack/daemon"));
   assert.equal(scope.assurance, false);
+});
+
+test("lockfile runtime changes also validate downstream workspace consumers", () => {
+  const scope = classify(["pnpm-lock.yaml"], {
+    lockfileScope: {
+      mode: "affected",
+      directories: ["packages/core"],
+      runtimeDirectories: ["packages/core"],
+      reason: "verified lockfile dependency closure",
+    },
+  });
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.testPackages, ["@ling-stack/cli", "@ling-stack/core", "@ling-stack/daemon"]);
+  assert.equal(scope.assurance, true);
+  assert.equal(scope.dependencyPolicy, true);
 });
 
 test("development-only manifest changes keep validation local to the workspace", () => {

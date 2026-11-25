@@ -227,11 +227,14 @@ export function classifyChangedFiles(input) {
     }
   }
 
-  for (const directory of input.lockfileScope?.directories ?? []) {
-    const entry = packages.find(candidate => candidate.directory === directory);
-    if (!entry) return buildScope("full", files, packages, `lockfile scope references unknown workspace: ${directory}`);
-    changedEntries.add(entry.name);
-    changedTestEntries.add(entry.name);
+  if (input.lockfileScope?.mode === "affected") {
+    const runtimeDirectories = new Set(input.lockfileScope.runtimeDirectories);
+    for (const directory of input.lockfileScope.directories) {
+      const entry = packages.find(candidate => candidate.directory === directory);
+      if (!entry) return buildScope("full", files, packages, `lockfile scope references unknown workspace: ${directory}`);
+      changedEntries.add(entry.name);
+      if (runtimeDirectories.has(directory)) changedSourceEntries.add(entry.name);
+    }
   }
 
   // The root release number is embedded in the production Web build.
@@ -265,8 +268,7 @@ export function classifyChangedFiles(input) {
     ...(input.basePackageEntries?.find((previous) => previous.name === entry.name)?.dependencies ?? []),
   ])] }));
   for (const name of sourceEntries) collectDependents(name, dependencyGraph, affectedNames);
-  // These are test inputs, not production edges. Rechecking an importer does
-  // not change its shipped output or select all of its production consumers.
+  // Some validation consumers read source outside their declared package graph.
   for (const name of sourceEntries) {
     for (const consumer of VALIDATION_CONSUMERS.get(name) ?? []) {
       if (packages.some((entry) => entry.name === consumer)) affectedNames.add(consumer);
@@ -347,7 +349,7 @@ export function classifyChangedFiles(input) {
   };
 }
 
-/** @typedef {{mode: "affected"|"full", directories: string[], reason: string}} LockfileScope */
+/** @typedef {ReturnType<typeof analyzeLockfileChange>} LockfileScope */
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
 /** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device"|"terminal-report", testFiles?: Record<string, string[]>, documentationOnly?: boolean, reason: string}} CiScope */
 
@@ -766,8 +768,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         lockfileScope = analyzeLockfileChange({
           before: git(["show", `${base}:${LOCKFILE}`]),
           after: git(["show", `${args.head}:${LOCKFILE}`]),
-          changedDirectories: files.filter(file => /^(?:packages|apps)\/[^/]+\/package\.json$/u.test(file))
-            .map(dirname),
         });
       }
       const directories = files.filter(file => /^packages\/[a-z0-9-]+\/package\.json$/u.test(file))
