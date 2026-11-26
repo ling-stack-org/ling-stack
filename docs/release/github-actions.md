@@ -54,6 +54,8 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
 
    瘦包验收选择 `on-demand` 和 `create_draft=false`，用同一个源码 SHA 另建兼容包，
    按 [独立插件打包与分发](../design/plugin-independent-packaging.md#瘦包对照和切换) 记录对照数据。
+   `on-demand` 跳过 Excel helper、Chrome Native Host 和扩展 ZIP 的构建。Windows 瘦包因此无需
+   为 Excel helper 配置 .NET SDK。分发清单按打包模式收集实际随包的原生源码和许可，归档验证会核对该模式。
 
 4. 下载并检查本次生成的安装包、每平台验证 JSON、分发材料压缩包和 `checksums.txt`。
    Mac 输出 arm64 DMG/ZIP；Windows 输出 x64 Setup EXE。没有 Intel Mac、Windows ARM64 或自动升级产物。

@@ -5,6 +5,12 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateRawSync } from "node:zlib";
 
+const storeBootstrap = process.argv.includes("--store-bootstrap") || process.env.LING_CHROME_STORE_BOOTSTRAP === "1";
+if (process.env.LING_PLUGIN_EXTERNAL_ONLY === "1" && !storeBootstrap) {
+  process.stdout.write("Skipping the Ling for Chrome archive for the on-demand Desktop build.\n");
+  process.exit(0);
+}
+
 const crcTable = Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
@@ -12,7 +18,6 @@ const crcTable = Array.from({ length: 256 }, (_, index) => {
 });
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const storeBootstrap = process.argv.includes("--store-bootstrap") || process.env.LING_CHROME_STORE_BOOTSTRAP === "1";
 const dist = join(packageRoot, storeBootstrap ? "dist-store-bootstrap" : "dist");
 const zipPath = join(packageRoot, storeBootstrap ? "ling-for-chrome-store-bootstrap.zip" : "ling-for-chrome.zip");
 

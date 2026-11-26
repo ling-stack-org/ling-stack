@@ -168,7 +168,7 @@ jobs:
           node-version: 22.22.1
           cache: pnpm
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.LING_PLUGIN_EXTERNAL_ONLY != '1'
         with:
           dotnet-version: 8.0.x
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756

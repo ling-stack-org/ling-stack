@@ -13,6 +13,7 @@ import { verifyPackagedBrowser } from "../../../../packages/core/src/bundled-ski
 
 export const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 export const platformTargets = Object.freeze({ "darwin-arm64": "aarch64-apple-darwin", "win32-x64": "x86_64-pc-windows-msvc" });
+const pluginModes = new Set(["bundled", "on-demand"]);
 export const noticePattern = /^(?:licen[cs]es?|copying|copyright|notices?|third[-_ ]?party[-_ ]?(?:notices?|licenses?))(?:[._-]|$)/iu;
 const binaryPattern = /\.(?:node|dll|exe|dylib|so|a|woff2?|ttf|otf)$/iu;
 const posix = value => value.split(sep).join("/");
@@ -25,11 +26,12 @@ export function parseArguments(values) {
   if (!["inspect", "prepare", "verify"].includes(command)) throw new Error("distribution_command_required:inspect|prepare|verify");
   const result = { command };
   for (let index = 0; index < rest.length; index += 2) {
-    const key = { "--platform": "platform", "--gstack-workspace": "gstackWorkspace", "--resources": "resources", "--output": "output", "--source-sha": "sourceSha", "--root": "root" }[rest[index]];
+    const key = { "--platform": "platform", "--plugin-mode": "pluginMode", "--gstack-workspace": "gstackWorkspace", "--resources": "resources", "--output": "output", "--source-sha": "sourceSha", "--root": "root" }[rest[index]];
     if (!key || !rest[index + 1] || rest[index + 1].startsWith("--") || Object.hasOwn(result, key)) throw new Error(`distribution_argument_invalid:${rest[index]}`);
     result[key] = rest[index + 1];
   }
   if (!Object.hasOwn(platformTargets, result.platform)) throw new Error("distribution_platform_invalid");
+  if (result.pluginMode !== undefined && !pluginModes.has(result.pluginMode)) throw new Error("distribution_plugin_mode_invalid");
   if (command === "verify" && !result.resources) throw new Error("distribution_resources_required");
   return result;
 }
@@ -68,9 +70,10 @@ export function resolveInstalledPackage(from, name) {
   }
 }
 
-export function collectInstalledClosure(root, platform) {
+export function collectInstalledClosure(root, platform, pluginMode = "bundled") {
   const wanted = { os: platform.split("-")[0], cpu: platform.split("-")[1] };
-  const queue = ["apps/desktop", "apps/web", "apps/chrome-extension", "packages/daemon"].map(path => join(root, path));
+  const queue = ["apps/desktop", "apps/web", ...(pluginMode === "bundled" ? ["apps/chrome-extension"] : []),
+    "packages/daemon"].map(path => join(root, path));
   const font = resolveInstalledPackage(join(root, "apps/desktop"), "@fontsource-variable/inter");
   if (!font) throw new Error("distribution_inter_font_missing");
   queue.push(font);
@@ -134,6 +137,9 @@ function run(command, args, root) {
 
 export function collectMaterials(options) {
   const root = realpathSync(options.root ?? repositoryRoot);
+  const pluginMode = options.pluginMode ?? "bundled";
+  if (!pluginModes.has(pluginMode)) throw new Error("distribution_plugin_mode_invalid");
+  const bundledPlugins = pluginMode === "bundled";
   const sourceSha = options.sourceSha ?? process.env.DESKTOP_SOURCE_SHA ?? run("git", ["rev-parse", "HEAD"], root);
   if (!/^[a-f0-9]{40}$/u.test(sourceSha) || run("git", ["rev-parse", "HEAD"], root) !== sourceSha) throw new Error("distribution_source_sha_mismatch");
   const lockBytes = readFileSync(join(root, "pnpm-lock.yaml"));
@@ -170,7 +176,7 @@ export function collectMaterials(options) {
   copy(join(root, "docs/maintenance/asset-provenance.md"), "inputs/asset-provenance.md");
   const restorationPath = new URL("./notice-sources.json", import.meta.url);
   const restorations = existsSync(restorationPath) ? JSON.parse(readFileSync(restorationPath)) : { entries: [] };
-  const closure = collectInstalledClosure(root, options.platform);
+  const closure = collectInstalledClosure(root, options.platform, pluginMode);
   gaps.push(...closure.gaps);
   for (const { path, metadata } of closure.packages) {
     if (metadata.name.startsWith("@ling-stack/")) continue;
@@ -222,7 +228,13 @@ export function collectMaterials(options) {
     }
   }
   // Keep current copied vendor/protocol attribution independently from npm pruning.
-  for (const path of ["packages/daemon/src/runtime/adapters/codex/protocol", "packages/daemon/native/image-sanitizer", "packages/browser-host/native", options.platform === "win32-x64" ? "packages/daemon/native/engine-supervisor" : "native/sandbox"]) {
+  const cargoAndProtocolSources = [
+    "packages/daemon/src/runtime/adapters/codex/protocol",
+    "packages/daemon/native/image-sanitizer",
+    ...(bundledPlugins ? ["packages/browser-host/native"] : []),
+    options.platform === "win32-x64" ? "packages/daemon/native/engine-supervisor" : "native/sandbox",
+  ];
+  for (const path of cargoAndProtocolSources) {
     const directory = join(root, path);
     copySource(directory, `sources/repository/${path}`);
     if (existsSync(join(directory, "Cargo.toml"))) {
@@ -247,7 +259,13 @@ export function collectMaterials(options) {
       }
     }
   }
-  for (const path of ["apps/desktop/scripts/native/office-driver", "apps/desktop/scripts/native/locked-control", "apps/desktop/scripts/native/human-evaluation", ...(options.platform === "darwin-arm64" ? ["native/office-local"] : [])]) {
+  const nativeSources = [
+    ...(bundledPlugins ? ["apps/desktop/scripts/native/office-driver"] : []),
+    "apps/desktop/scripts/native/locked-control",
+    "apps/desktop/scripts/native/human-evaluation",
+    ...(options.platform === "darwin-arm64" ? ["native/office-local"] : []),
+  ];
+  for (const path of nativeSources) {
     if (existsSync(join(root, path))) copySource(join(root, path), `sources/repository/${path}`);
   }
   const electron = resolveInstalledPackage(join(root, "apps/desktop"), "electron");
@@ -266,7 +284,7 @@ export function collectMaterials(options) {
     add("inputs/installer-template-audit.json", json(audit));
     gaps.push(...audit.gaps);
     collectInstallerMaterials(root, add, components, gaps);
-    collectDotnetRuntimeMaterials(root, add, components, gaps);
+    if (bundledPlugins) collectDotnetRuntimeMaterials(root, add, components, gaps);
   }
   collectGstack(options.gstackWorkspace, add, components, gaps, root, options.platform);
   components.sort((a, b) => a.identifier.localeCompare(b.identifier, "en"));
@@ -274,7 +292,7 @@ export function collectMaterials(options) {
     entries.splice(0, entries.length, ...new Map(entries.map(entry => [JSON.stringify(entry), entry])).values());
     entries.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b), "en"));
   }
-  const base = { schemaVersion: 1, kind: "desktop-distribution-materials", platform: options.platform, sourceSha, lockfileSha256: sha256(lockBytes), created, status: gaps.length ? "blocked" : "collected", releaseEligible: false,
+  const base = { schemaVersion: 1, kind: "desktop-distribution-materials", platform: options.platform, pluginMode, sourceSha, lockfileSha256: sha256(lockBytes), created, status: gaps.length ? "blocked" : "collected", releaseEligible: false,
     scope: "Technical collection from current installed production/peer inputs, native source graph and supplied gstack resources. No exhaustive legal approval or application acceptance claim.", components, gaps, limitations };
   add("THIRD_PARTY_NOTICES.md", createThirdPartyNotices(base));
   add("distribution.spdx.json", json(createSpdx(base, material)));
@@ -547,7 +565,7 @@ export function createThirdPartyNotices(manifest) {
 }
 
 export function createSpdx(manifest, material) {
-  const documentName = `ling-stack-${manifest.platform}-${manifest.sourceSha}`;
+  const documentName = ["ling-stack", manifest.platform, manifest.pluginMode, manifest.sourceSha].filter(Boolean).join("-");
   const packages = manifest.components.map(component => ({ SPDXID: `SPDXRef-${safeName(component.identifier)}`, name: component.name, ...(component.version ? { versionInfo: component.version } : {}), downloadLocation: "NOASSERTION", filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION", comment: `Input scope: ${component.scope ?? component.kind}; license texts: ${(component.licenseFiles ?? []).join(", ")}` }));
   const files = [...material].map(([path, bytes]) => ({ SPDXID: `SPDXRef-File-${sha256(path).slice(0, 24)}`, fileName: `./${path}`, checksums: [{ algorithm: "SHA256", checksumValue: sha256(bytes) }], licenseConcluded: "NOASSERTION", copyrightText: "NOASSERTION" }));
   return { spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT", name: documentName, documentNamespace: `https://github.com/ling-stack-org/ling-stack/spdx/${documentName}-${manifest.lockfileSha256}`, creationInfo: { created: manifest.created, creators: ["Tool: ling-stack-desktop-distribution-1"] }, documentComment: manifest.scope, packages, files,
@@ -560,11 +578,13 @@ export function writeMaterials(result, output) {
   return result.manifest;
 }
 
-export function verifyMaterials({ resources, output, platform, sourceSha }) {
+export function verifyMaterials({ resources, output, platform, sourceSha, pluginMode }) {
   const directory = resolve(resources, "distribution");
   if (!existsSync(directory) || lstatSync(directory).isSymbolicLink()) throw new Error("distribution_packaged_materials_missing");
   const manifest = JSON.parse(readFileSync(join(directory, "distribution-manifest.json"), "utf8"));
   if (manifest.schemaVersion !== 1 || manifest.kind !== "desktop-distribution-materials" || manifest.platform !== platform || !/^[a-f0-9]{40}$/u.test(manifest.sourceSha ?? "") || (sourceSha && manifest.sourceSha !== sourceSha)) throw new Error("distribution_packaged_identity_mismatch");
+  if ((manifest.pluginMode !== undefined && !pluginModes.has(manifest.pluginMode))
+    || (pluginMode !== undefined && manifest.pluginMode !== pluginMode)) throw new Error("distribution_packaged_plugin_mode_mismatch");
   if (manifest.status !== "collected" || !Array.isArray(manifest.gaps) || manifest.gaps.length) throw new Error("distribution_packaged_materials_blocked");
   const limitations = manifest.limitations ?? [];
   if (!Array.isArray(limitations) || limitations.some(item => !item || ["component", "reason", "details"].some(key => typeof item[key] !== "string" || !item[key]))) throw new Error("distribution_packaged_limitations_invalid");
@@ -598,7 +618,9 @@ export function runCli(values = process.argv.slice(2)) {
     process.stdout.write(json(result));
     return result;
   }
-  const result = collectMaterials(options);
+  const result = collectMaterials({ ...options,
+    pluginMode: options.pluginMode ?? (process.env.LING_PLUGIN_EXTERNAL_ONLY === "1" ? "on-demand" : "bundled"),
+  });
   if (options.command === "prepare") writeMaterials(result, output);
   process.stdout.write(json({ ...result.manifest, files: undefined, components: undefined, componentCount: result.manifest.components.length, materialFileCount: result.material.size }));
   if (options.command === "prepare" && result.manifest.gaps.length) process.exitCode = 1;
