@@ -14,7 +14,8 @@ Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 | Public source snapshot | Review and source-based development | Allowed after the open-source readiness checklist passes |
 | Alpha GitHub tag | Named historical prerelease source baseline | `v0.1.2-alpha.1` has been published; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status |
 | Local Desktop development candidate | Engineering checks on a platform host | See the [Mac and Windows packaging checklist](development-packages.md); macOS currently requires an independent Office source review record |
-| Public Desktop binary | End-user installation | Blocked by signing, platform, notice, and clean-machine gates |
+| Public Desktop development prerelease | Voluntary testing on supported platforms | Explicit maintainer approval, verified build and distribution materials, and documented installation checks and signing status |
+| Production Desktop binary | End-user installation | Blocked by signing, platform, notice, and clean-machine gates |
 | Numeric product version | Source and potential GitHub Release identity | Candidate version follows [VERSION](../../VERSION), with tag `v<product-version>`; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status, subject to applicable gates |
 
 Making the repository public is not permission to publish an unsigned Desktop artifact.
@@ -34,7 +35,7 @@ changes may occur in minor releases but must still be documented.
   The already-published `v0.1.2-alpha.1` remains historical and immutable. Tags and Releases
   are created explicitly after maintainer review and applicable release gates.
 - Release tags must point to reviewed commits on `main`.
-- `VERSION`, root, and Desktop package versions must match the approved tag.
+- `VERSION`, root and Desktop package versions, and the [shared product version](../../packages/contracts/src/product-version.ts) must match the approved tag.
 - Internal workspace packages still using `0.0.0` have a development sentinel, not the
   product release number.
 - Integration components such as the Chrome Extension and Browser Host have independent
@@ -80,8 +81,8 @@ changes may occur in minor releases but must still be documented.
 8. After applicable gates pass, create the reviewed tag and GitHub Release with verified assets; a Draft alone is not publication.
 9. Verify the published tag and source archive checksums from a clean checkout.
 
-The tag-triggered `Desktop release candidate` workflow builds both platform candidates
-and creates a new Draft Release after version and source checks. Publishing a GitHub
+The `Desktop release candidate` workflow builds both platform candidates
+and creates a new Draft Release for numeric tags after version and source checks. Publishing a GitHub
 Release remains an explicit maintainer action. A product Release eligible for GitHub's
 `/repos/ling-stack-org/ling-stack/releases/latest` requires publication in that repository
 with `draft=false` and `prerelease=false` after the applicable gates; numeric naming and
@@ -104,7 +105,7 @@ required tools, fixed source ref, commands, and evidence to return.
 
 ## Desktop Release Gates
 
-Desktop binaries additionally require every applicable gate in
+Production Desktop binaries additionally require every applicable gate in
 [Desktop Release And Acceptance](desktop.md), including:
 
 - Developer ID signing, notarization, and Gatekeeper verification on macOS;
@@ -121,7 +122,9 @@ authorize a public release.
 ## Native Release Boundary
 
 The public repository hosts [Desktop development candidate builds](github-actions.md)
-and can create a Draft Release containing unsigned development artifacts. Official
+and can create a Draft Release containing unsigned development artifacts. Maintainers
+may publish an approved development candidate as a Pre-release with its exact build
+and installation evidence. Official
 Desktop signing, notarization, and platform acceptance use reviewed platform hosts
 and protected credentials where required. Production publication is an explicit
 maintainer action after the [Desktop release gates](desktop.md) pass.

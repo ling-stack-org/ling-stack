@@ -36,8 +36,9 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
 在 `ling-stack-org/ling-stack` 运行工作流、创建 Draft 并发布获批版本。Desktop 的更新检查查询
 该仓库。触发工作流前，核对目标仓库、源码 SHA 和 tag。保留已发布 tag 指向的原始提交。
 
-1. 在发布 PR 中将根 `VERSION`、根 `package.json`、Desktop `package.json` 的版本改为相同的
-   SemVer 产品版本，完成审查和测试后合入主分支。
+1. 在发布 PR 中将根 `VERSION`、根 `package.json`、Desktop `package.json` 和
+   [共享产品版本](../../packages/contracts/src/product-version.ts) 改为相同的 SemVer 产品版本，
+   完成审查和测试后合入主分支。
 2. 选取已审查的完整 40 位 commit SHA；按 `v<版本>` 命名新 tag。
    不使用移动分支作为源码输入，不复用已有 tag 或 Release。
 3. 在 `ling-stack-org/ling-stack` 的 GitHub **Actions → Desktop candidate → Run workflow** 中选择：
@@ -47,7 +48,7 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
    | Workflow ref | `main` |
    | `operation` | 先 `inspect`，解决阻断后再 `build` |
    | `source_sha` | 已合入 main 的完整源码 SHA |
-   | `release_tag` | 与上述三个版本文件一致的 `v<版本>` tag |
+   | `release_tag` | 与产品版本一致的 `v<版本>` tag |
    | `plugin_mode` | `bundled` 构建兼容包，`on-demand` 构建瘦包验收候选 |
    | `create_draft` | `false` 仅保留候选 artifact；`true` 在两平台成功后创建 Draft |
 
@@ -72,6 +73,14 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
    只有发布在 `ling-stack-org/ling-stack`、`draft=false` 且 `prerelease=false` 的合格 Release，
    才有机会被 GitHub `/repos/ling-stack-org/ling-stack/releases/latest` 返回；Draft 或 prerelease 均不会出现。
    本工作流的 unsigned 开发候选和 Draft 本身不证明具备正式发布资格。
+
+## 开发预发布
+
+维护者授权公开试用时，选择带 SemVer 预发布后缀的新版本，例如 `v0.6.2-alpha.1`，从已审查的
+`main` 提交构建。瘦包用 `plugin_mode=on-demand` 和 `create_draft=false` 运行 Desktop candidate。
+下载同一轮的两个候选 artifact，用 `scripts/release/desktop-release.mjs assemble` 校验并汇总资产。
+核对归档、安装启动、分发材料和校验值后，在同一条 GitHub Pre-release 提供两个平台的包。
+在说明中记录源码提交、签名状态、实际验收和平台限制。Desktop 的正式更新检查使用 GitHub Latest。
 
 命令行也可以触发，示例中的 SHA 和版本必须替换为本次真实输入：
 
