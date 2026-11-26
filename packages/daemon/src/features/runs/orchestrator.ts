@@ -2613,11 +2613,16 @@ async function executeAdmittedRunRequest(
     && Boolean(run.contextViewId) && runnerResolution.runner.adapter instanceof PiRunnerAdapter;
   let gracefullySuspended = false;
   let shutdownSuspensionCause: "daemon_restart" | "desktop_quit" | "process_signal" | undefined;
+  let localApprovalWaitId: string | undefined;
+  let drainingDeniedApproval = false;
   let approvalSuspensionBlocked: unknown;
   const suspensionOrder = runSuspensionOrderFor(activeRuns);
   const suspensionSource = suspensionOrder.capture(store, { runId: run.id, ...runnerCallbackFence });
   const assertCurrentRunAdmission = (): void => {
     abortController.signal.throwIfAborted();
+    if (drainingDeniedApproval) {
+      throw new HttpError(409, "approval_denied", "The tool approval was denied before shutdown.");
+    }
     if (queuedClaim) {
       assertQueuedRunParticipantCurrent(store, run.teammateId);
       const entry = store.getRuntimeRunQueueEntry(run.id);
@@ -2679,7 +2684,7 @@ async function executeAdmittedRunRequest(
       && active.runtimeInstanceId === runnerCallbackFence.runtimeInstanceId
       && active.fencingToken === runnerCallbackFence.fencingToken;
   };
-  const readApprovalWaitSuspension = () => {
+  const readApprovalWait = () => {
     const currentRun = store.getRun(run.id);
     const currentUnit = store.getWorkUnit(workUnit.id);
     const currentAttempt = store.getWorkUnitAttempt(attempt.id);
@@ -2702,12 +2707,14 @@ async function executeAdmittedRunRequest(
     if (descendants.steps.length || descendants.issues.length || gracefulSuspensionController?.hasPendingRequest()) {
       throw new RunGracefulSuspensionBlocked("suspension.boundary_unavailable");
     }
-    const approval = store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]
+    const approval = localApprovalWaitId ? store.getApprovalRequest(localApprovalWaitId)
+      : store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]
       ?? store.listApprovalRequests({ runId: run.id, status: "approved", limit: 1 })[0];
     const checkpoint = approval && store.getApprovalCheckpointForApproval(approval.id);
     const basis = checkpoint?.resumeBasis;
     if (!approval || !checkpoint || !isApprovalResumeBasisV1(basis)
-      || (checkpoint.status !== "pending" && checkpoint.status !== "approved")
+      || (checkpoint.status !== "pending" && checkpoint.status !== "approved"
+        && !(localApprovalWaitId && checkpoint.status === "denied"))
       || checkpoint.status !== approval.status || checkpoint.runId !== run.id || approval.runId !== run.id
       || basis.runId !== run.id || basis.workUnitId !== workUnit.id || basis.priorAttemptId !== attempt.id
       || basis.workflowStepId !== currentRun.workflowStepId || checkpoint.workflowStepId !== currentRun.workflowStepId
@@ -2804,6 +2811,17 @@ async function executeAdmittedRunRequest(
     fencingToken: attempt.fencingToken,
     runtimeShutdownPolicy: hostCompactionEnabled ? "checkpoint" : "stop_without_resume",
     ...(delegatedExecution ? { terminalHandoff: delegatedExecution.terminalHandoff } : {}),
+    drainDeniedApproval: source => {
+      if (!localApprovalWaitId || store.getApprovalRequest(localApprovalWaitId)?.status !== "denied") return false;
+      if (!isDeepStrictEqual(source, { runId: run.id, ...runnerCallbackFence })) {
+        throw new RunGracefulSuspensionBlocked("suspension.source_stale");
+      }
+      const { checkpointStatus } = readApprovalWait();
+      if (checkpointStatus !== "denied") return false;
+      // Keep the original waiter alive while fencing the next provider or tool admission.
+      drainingDeniedApproval = true;
+      return true;
+    },
     requestGracefulSuspension: request => {
       try {
         if (!isDeepStrictEqual(request.source, { runId: run.id, ...runnerCallbackFence })) {
@@ -2820,7 +2838,7 @@ async function executeAdmittedRunRequest(
         }
         if (store.getRun(run.id)?.status === "waiting_for_approval"
           || store.getWorkUnit(workUnit.id)?.status === "waiting_for_approval") {
-          try { readApprovalWaitSuspension(); }
+          try { readApprovalWait(); }
           catch (error) {
             approvalSuspensionBlocked = error;
             // End only the exact original polling callback. The blocked
@@ -2992,7 +3010,10 @@ async function executeAdmittedRunRequest(
   };
   const requestRuntimeAbort = supervision.requestAbort;
   const beginApprovalHardTimeoutPause = (): void => supervision.approvalWaitChanged(true);
-  const endApprovalHardTimeoutPause = (): void => supervision.approvalWaitChanged(false);
+  const endApprovalHardTimeoutPause = (): void => {
+    localApprovalWaitId = undefined;
+    supervision.approvalWaitChanged(false);
+  };
   let userInputReceiverAccepted = userInputBinding === undefined && delegatedExecution === undefined && rootSuspensionActivation === undefined;
   const pendingUserInputRunnerEvents: PiRunnerEvent[] = [];
   let flushPendingUserInputRunnerEvents = (): void => undefined;
@@ -3234,6 +3255,7 @@ async function executeAdmittedRunRequest(
       if (type === "approval_requested"
         && approvalEventReflectsRunState(store, envelope)
         && !isNativeApprovalEvent(store, envelope)) {
+        localApprovalWaitId = (envelope.data as RunEventDataByType["approval_requested"]).approvalId;
         // The approval handler starts this pause before persistence. Keep the
         // event-side update idempotent for paths that append the event first.
         beginApprovalHardTimeoutPause();
@@ -4388,7 +4410,9 @@ async function executeAdmittedRunRequest(
       if (observedRun?.status === "waiting_for_approval"
         || observedWorkUnit?.status === "waiting_for_approval") {
         try {
-          const capturedApproval = readApprovalWaitSuspension();
+          const capturedApproval = readApprovalWait();
+          const { checkpointStatus: expectedCheckpointStatus } = capturedApproval;
+          if (expectedCheckpointStatus === "denied") throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
           if (!localWriters) throw new RunGracefulSuspensionBlocked("suspension.stop_unverified");
           const capturedWriters = localWriters;
           const cause = stopIntent.cause;
@@ -4400,17 +4424,17 @@ async function executeAdmittedRunRequest(
             }
             // A drain is not fresh authorization. Revalidate the same original
             // checkpoint, including its revision, before the atomic Core CAS.
-            const { approval, checkpoint, checkpointStatus, workUnit: approvalUnit } = readApprovalWaitSuspension();
+            const { approval, checkpoint, checkpointStatus, workUnit: approvalUnit } = readApprovalWait();
             if (approval.id !== capturedApproval.approval.id || checkpoint.id !== capturedApproval.checkpoint.id
               || checkpoint.revision !== capturedApproval.checkpoint.revision
-              || checkpointStatus !== capturedApproval.checkpointStatus
+              || checkpointStatus !== expectedCheckpointStatus
               || checkpoint.resumeBasis?.fingerprint !== capturedApproval.checkpoint.resumeBasis?.fingerprint) {
               throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
             }
             const suspension = store.commitApprovalResumeSuspension({
               kind: "approval_wait",
               checkpointId: checkpoint.id,
-              expectedCheckpointStatus: checkpointStatus,
+              expectedCheckpointStatus,
               expectedCheckpointRevision: checkpoint.revision,
               approvalId: approval.id,
               runId: run.id,

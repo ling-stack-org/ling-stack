@@ -88,6 +88,8 @@ Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI std
 
 Ubuntu 24.04 ARM64 虚拟机的 Node 22.22.1 SDK 通过 TLS 1.3 连接同一物理机上的 macOS Daemon 候选 `0.6.2-alpha.1`。实测证书校验、在途用户答复、原游标与回执重读、独立审批凭据拒绝工具执行、撤权关闭 `1008` 和重连 `401`。Pi 使用受控 Provider。回归另验证答复派发后继 Run 后，重启并重发 `turn/start` 仍返回原 Run 和原回执，两个 Run 的归属及两次模型调用保持可核对。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
+工具审批的拒绝已提交而原 Run 仍在等待时，Daemon 关闭会等待原回调结算，并阻断该 Run 的后续调用。回归即刻重启，确认拒绝决定只记一次，原命令留下 `known_no_start` 回执，资源租约已释放，Provider 请求保持一次。另有回归验证尚待用户决定的审批可原样保留。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts) · [待决审批回归](../../packages/daemon/test/approval-policy-run.test.mjs)
+
 G1 源码回退使用已具备独立恢复日志的 `1fcf920b3` 构建创建 SQLite 快照，切换到基于 `main@95ecee6fc` 的候选后记录交付和撤权，再恢复原构建和快照。对账前禁止新派发，撤销凭据和旧游标失效。GitHub 对账恢复原回执后，新的 Run 可以派发。此场景使用受控 GitHub 响应。通过 `LING_APP_SERVER_ROLLBACK_BUILD` 指向旧构建目录可复跑。 [跨构建回退测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
 ### 受保护 GitHub 合并队列

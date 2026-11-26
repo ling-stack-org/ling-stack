@@ -6146,6 +6146,42 @@ test("an authenticated connection can decide its Run approval and rejects a diff
   await assert.rejects(client.call("approval/respond", params), { code: "request_already_resolved" });
 });
 
+test("a durable approval denial settles its original Run during Daemon restart", { timeout: 20_000 }, async t => {
+  const provider = await startLoopbackPiProvider((_: unknown, count: number) => count === 1
+    ? { tool: "bash", input: { command: "printf approval-fixture" } }
+    : { text: "The tool was denied." });
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t, { harness: { toolBroker: { mode: "enforce" } } });
+  const client = await fixture.connect();
+  const store = fixture.getStore();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Deny a tool before restart" });
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const { run } = await client.call<{ run: { id: string } }>("turn/start", {
+    threadId: thread.id, providerPresetId: preset.id, message: "Request a tool.", idempotencyKey: "approval-restart",
+  });
+  const approval = await waitFor(() => store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]);
+  assert.equal(store.getRun(run.id)?.status, "waiting_for_approval");
+  assert.equal(store.denyApprovalRequest(approval.id, { resolvedBy: "local-user" }, new Date().toISOString())?.status, "denied");
+  assert.equal(store.getApprovalCheckpointForApproval(approval.id)?.status, "denied");
+  await fixture.restart();
+  await fixture.connect();
+
+  const restored = fixture.getStore();
+  const restoredRun = restored.getRun(run.id);
+  assert.equal(restoredRun?.status, "failed");
+  const workUnit = restored.getWorkUnit(restoredRun.workUnitId!);
+  assert.equal(workUnit?.status, "failed");
+  const [attempt] = restored.listWorkUnitAttempts(workUnit.id);
+  const source = { runId: run.id, workUnitId: workUnit.id, attemptId: attempt!.id,
+    runtimeInstanceId: attempt!.runtimeInstanceId, fencingToken: attempt!.fencingToken };
+  assert.deepEqual(restored.listHostOperations(source).map(operation => operation.settlementKind), ["known_no_start"]);
+  assert.equal(restored.listResourceLeases({ ownerType: "run", ownerId: run.id, status: "active" }).length, 0);
+  assert.equal(restored.getApprovalRequest(approval.id)?.status, "denied");
+  assert.equal(restored.getApprovalCheckpointForApproval(approval.id)?.status, "denied");
+  assert.equal(restored.listEvents(run.id, { limit: 100 }).filter(event => event.type === "approval_denied").length, 1);
+  assert.equal(provider.requests.length, 1);
+});
+
 test("App Server grants restrict observers, controllers and approvers to their subject and revoke live access", { timeout: 30_000 }, async t => {
   const fixture = await releaseFixture(t);
   const operator = await fixture.connect();

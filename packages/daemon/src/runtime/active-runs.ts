@@ -32,6 +32,8 @@ export interface ActiveRun {
   readonly runtimeShutdownPolicy?: "checkpoint" | "stop_without_resume";
   /** Original Host request callback. Fulfilment acknowledges persistence only, never physical stop. */
   readonly requestGracefulSuspension?: (request: ActiveRunSuspensionRequest) => void | Promise<void>;
+  /** Let the original waiter finish a committed denial before the normal shutdown drain. */
+  readonly drainDeniedApproval?: (source: AttemptExecutionSource) => boolean;
   readonly terminalHandoff?: DelegatedTerminalHandoff;
 }
 
@@ -327,6 +329,7 @@ export class ActiveRunRegistry {
         this.terminalHandoffs.push({ source, reference: run.terminalHandoff! });
         return;
       }
+      if (!run.abortController.signal.aborted && run.drainDeniedApproval?.(source)) return;
       if (run.runtimeShutdownPolicy === "stop_without_resume") {
         // The original entry still owns its terminal/drain path. This is not
         // checkpoint acceptance, a stopped receipt or permission to replay.
