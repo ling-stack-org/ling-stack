@@ -86,6 +86,8 @@ Schema 导出覆盖 143 个已登记方法，包含已实现方法的请求与�
 
 Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI stdio 和受控 Daemon，在回环 WebSocket 上发起一个 Turn，用 stdio 接收终态，再重启 Daemon 并从原游标恢复事件。macOS 和 Linux 还验证私有 Unix socket 的连接与清理。CLI 的 `app-server schema` 导出方法、通知及服务端请求的合同。TypeScript 客户端用握手实例区分重连和 Daemon 重启。 [Windows 传输验收](../../.github/workflows/app-server-windows.yml)
 
+已发布的 `v0.6.2-alpha.1@cf8f0b183` macOS arm64 开发包通过 DMG 摘要与 ad-hoc 签名校验。隔离安装后，Desktop 启动自有 Daemon、加载主窗口并正常退出。另一次包内 Daemon 与候选 `61c96ad9a` 的切换验证了 CLI 协商、原 Thread 与事件、旧游标续读，以及缺少 `workItem.device` 能力时拒绝新请求。同一发行的 Windows x64 报告记录了安装、同版本升级、启动、正常退出及卸载。正式签名候选的安装验收仍在发行矩阵。 [开发包](https://github.com/ling-stack-org/ling-stack/releases/tag/v0.6.2-alpha.1) · [Windows 安装报告](https://github.com/ling-stack-org/ling-stack/releases/download/v0.6.2-alpha.1/desktop-windows-x64-package-verification.json)
+
 Ubuntu 24.04 ARM64 虚拟机的 Node 22.22.1 SDK 通过 TLS 1.3 连接同一物理机上的 macOS Daemon 候选 `0.6.2-alpha.1`。实测证书校验、在途用户答复、原游标与回执重读、独立审批凭据拒绝工具执行、撤权关闭 `1008` 和重连 `401`。Pi 使用受控 Provider。回归另验证答复派发后继 Run 后，重启并重发 `turn/start` 仍返回原 Run 和原回执，两个 Run 的归属及两次模型调用保持可核对。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
 工具审批的拒绝已提交而原 Run 仍在等待时，Daemon 关闭会等待原回调结算，并阻断该 Run 的后续调用。回归即刻重启，确认拒绝决定只记一次，原命令留下 `known_no_start` 回执，资源租约已释放，Provider 请求保持一次。另有回归验证尚待用户决定的审批可原样保留。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts) · [待决审批回归](../../packages/daemon/test/approval-policy-run.test.mjs)

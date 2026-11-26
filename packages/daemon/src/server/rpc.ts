@@ -219,6 +219,7 @@ const operatorMethods = new Set([
   "server/recovery/read", "server/recovery/prepare", "server/recovery/reconcile",
   "github/subject/read", "github/delivery/reconcile", "github/delivery/enqueue", "github/delivery/queue/read",
   "workItem/delivery/read", "delivery/read",
+  "workItem/device/bind", "workItem/device/receipt",
   "workItem/intake/list", "workItem/intake/accept", "workItem/intake/retry",
   "github/intake/policy/list", "github/intake/poll", "github/intake/read",
   "workItem/accept",
