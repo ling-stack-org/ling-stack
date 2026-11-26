@@ -11,10 +11,12 @@
 Settings > Archived Items is the recovery and final-retention surface for archived
 product objects. P14 gives conversations, AI teammates, channels, and branches the same
 row grammar: Restore as the visible recovery action and an icon-only permanent Delete
-action.
+action. Recent normal conversations also expose a right-click permanent Delete action
+with the same confirmation and retention semantics.
 
-Sidebar archive remains non-destructive. Permanent deletion is available only after the
-object is archived and only from Settings.
+Sidebar archive remains non-destructive. The recent-conversation right-click delete flow
+confirms first, archives as the hard-delete precondition, and removes the conversation
+through the same permanent deletion path.
 
 ## Product Semantics
 
@@ -34,6 +36,8 @@ object is archived and only from Settings.
   accessible name.
 - Delete asks for confirmation before starting. The confirmation names the object and
   summarizes what is removed or retained.
+- Right-clicking a recent normal conversation opens a context menu with permanent Delete;
+  the confirmation dialog uses the same copy and deletion contract as Settings.
 - The row that initiated deletion shows the loading spinner. Other rows are disabled only
   while the controller mutation is active, matching the existing archive panel behavior.
 - Success refreshes archived lists and active shell projections. Failure remains visible
@@ -79,10 +83,14 @@ successful metadata cleanup.
 - Conversations, AI teammates, channels, and branches all expose Restore and Delete.
 - Conversation and teammate deletion require confirmation and disappear only after a
   successful response.
+- Recent normal conversation right-click deletion confirms, removes the conversation, and
+  returns an open deleted conversation to the new-conversation surface.
 - Conversation content is removed while historical runs remain readable and unlinked.
 - Teammate private data is removed while historical channel/run references remain.
-- Non-archived, active, protected, or automation-target objects cannot be deleted.
-- Sidebar archive never becomes a hard-delete action.
+- Active-work, protected, or automation-target objects cannot be deleted; a recent
+  conversation is archived as the hard-delete precondition after the user confirms.
+- Sidebar archive remains non-destructive; only the explicit recent-conversation context
+  menu action invokes permanent deletion.
 - English and Chinese confirmation/error copy have equivalent meaning.
 - Desktop light and dark Settings keep existing scroll boundaries and action alignment.
 

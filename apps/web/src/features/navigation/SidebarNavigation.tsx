@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type FormEvent,
+  type MouseEvent,
 } from "react";
 import {
   Archive,
@@ -34,6 +35,11 @@ import { channelAvatarMeta } from "./sidebar-channel-avatar.js";
 import { SidebarObjectPreview } from "./SidebarObjectPreview.js";
 import { SidebarObjectRow } from "./SidebarObjectRow.js";
 import { SidebarArchiveAllConversationsDialog } from "./SidebarArchiveAllConversationsDialog.js";
+import {
+  SidebarConversationContextMenu,
+  SidebarConversationDeleteDialog,
+  type SidebarConversationContextTarget,
+} from "./SidebarConversationContextMenu.js";
 import { SidebarSection, SidebarSectionSkeleton, type SidebarSectionId } from "./SidebarSection.js";
 import { SidebarTooltip } from "./SidebarTooltip.js";
 
@@ -87,6 +93,7 @@ export function SidebarNavigation({
   onArchiveTeammate,
   onArchiveRecentConversation,
   onArchiveAllRecentConversations,
+  onDeleteRecentConversation,
   onSelectChannel,
   onSelectChannelBranch,
   onSelectTeammate,
@@ -126,6 +133,7 @@ export function SidebarNavigation({
   readonly onArchiveTeammate?: (teammateId: string) => void | Promise<void>;
   readonly onArchiveRecentConversation?: (conversation: SidebarRecentConversation) => void | Promise<void>;
   readonly onArchiveAllRecentConversations?: () => void | Promise<void>;
+  readonly onDeleteRecentConversation?: (conversation: Pick<SidebarRecentConversation, "id" | "label">) => void | Promise<void>;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onSelectChannelBranch?: (channelId: string, branchId: string) => void;
   readonly onSelectTeammate: (teammateId: string) => void;
@@ -147,6 +155,10 @@ export function SidebarNavigation({
   const [branchDraftChannelId, setBranchDraftChannelId] = useState("");
   const [branchDraftName, setBranchDraftName] = useState("");
   const [archiveAllDialogOpen, setArchiveAllDialogOpen] = useState(false);
+  const [recentConversationContextTarget, setRecentConversationContextTarget] = useState<SidebarConversationContextTarget>();
+  const [deleteConversationTarget, setDeleteConversationTarget] = useState<SidebarConversationContextTarget["conversation"]>();
+  const [deleteConversationBusy, setDeleteConversationBusy] = useState(false);
+  const [deleteConversationError, setDeleteConversationError] = useState("");
   const recentActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [openSectionMenu, setOpenSectionMenu] = useState<SidebarSectionId | "">("");
   const [collapsedSections, setCollapsedSections] = useState<Record<SidebarSectionId, boolean>>({
@@ -163,6 +175,42 @@ export function SidebarNavigation({
   function openBranchDraft(channelId: string): void {
     setBranchDraftChannelId(channelId);
     setBranchDraftName("");
+  }
+
+  function openRecentConversationContextMenu(
+    event: MouseEvent<HTMLButtonElement>,
+    conversation: SidebarRecentConversation,
+  ): void {
+    if (!onDeleteRecentConversation) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDeleteConversationError("");
+    setRecentConversationContextTarget({
+      conversation,
+      x: event.clientX,
+      y: event.clientY,
+    });
+  }
+
+  async function confirmDeleteConversation(): Promise<void> {
+    const target = deleteConversationTarget;
+    if (!target || !onDeleteRecentConversation || deleteConversationBusy) return;
+    setDeleteConversationBusy(true);
+    setDeleteConversationError("");
+    try {
+      await onDeleteRecentConversation(target);
+      setDeleteConversationTarget(undefined);
+    } catch (caught) {
+      setDeleteConversationError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDeleteConversationBusy(false);
+    }
+  }
+
+  function closeDeleteConversationDialog(): void {
+    if (deleteConversationBusy) return;
+    setDeleteConversationTarget(undefined);
+    setDeleteConversationError("");
   }
 
   function toggleSection(sectionId: SidebarSectionId): void {
@@ -488,6 +536,7 @@ export function SidebarNavigation({
               ariaLabel={t("Open recent conversation {index}", { index: index + 1 })}
               buttonClassName="sidebar-recent-row"
               icon={<MessageSquare size={14} />}
+              onContextMenu={(event) => openRecentConversationContextMenu(event, conversation)}
               onSelect={() => onSelectRecentConversation(conversation)}
               selected={conversation.id === selectedRecentConversationId}
               shellClassName="sidebar-recent-row-shell"
@@ -559,6 +608,26 @@ export function SidebarNavigation({
           returnFocusRef={recentActionsTriggerRef}
           onConfirm={onArchiveAllRecentConversations}
           onOpenChange={setArchiveAllDialogOpen}
+        />
+      ) : null}
+      <SidebarConversationContextMenu
+        target={recentConversationContextTarget}
+        onClose={() => setRecentConversationContextTarget(undefined)}
+        onDelete={(conversation) => {
+          setRecentConversationContextTarget(undefined);
+          setDeleteConversationError("");
+          setDeleteConversationTarget(conversation);
+        }}
+      />
+      {onDeleteRecentConversation ? (
+        <SidebarConversationDeleteDialog
+          busy={deleteConversationBusy}
+          error={deleteConversationError}
+          fallbackFocusRef={recentActionsTriggerRef}
+          returnFocusRef={recentActionsTriggerRef}
+          target={deleteConversationTarget}
+          onClose={closeDeleteConversationDialog}
+          onConfirm={confirmDeleteConversation}
         />
       ) : null}
 

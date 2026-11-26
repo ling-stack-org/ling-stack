@@ -1,6 +1,7 @@
 import type { ExecutionBindingRequest } from "@ling-stack/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { archiveLingThread, getConversation, getConversationSubmission, listLingThreads, streamConversation } from "../../api.js";
+import { hardDeleteLingThread, unarchiveLingThread } from "../../api.js";
 import { LingDaemonError, LingDaemonTransportError } from "@ling-stack/api-client";
 import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, type DaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
 import { recoverSubmissionReceipt, submissionWasRejected } from "../../shared/conversation/conversation-submission-recovery.js";
@@ -105,6 +106,7 @@ export function useConversationDomain(input: {
     ) => Promise<boolean>;
     readonly archiveConversationThread: (threadId: string, cwd?: string) => Promise<void>;
     readonly archiveAllConversationThreads: (cwd?: string) => Promise<void>;
+    readonly deleteConversationThread: (threadId: string, cwd?: string) => Promise<void>;
     readonly sendConversationMessage: (message: ConversationSendInput, handlers?: ConversationStreamHandlers) => Promise<void>;
   };
 } {
@@ -452,6 +454,50 @@ export function useConversationDomain(input: {
       conversationErrors.report(operation, message);
     }
   }, [conversationErrors, conversationThreads, input.cwd, input.translate, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
+
+  const deleteConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !threadId) return;
+    const operation = conversationErrors.begin({
+      workspaceCwd,
+      surface: "sidebar",
+      identity: threadId,
+      scope: "action",
+    });
+    conversationErrors.clear(operation);
+    let archived = false;
+    try {
+      await archiveLingThread(workspaceCwd, threadId, {
+        reason: "sidebar_conversation_delete",
+        idempotencyKey: `sidebar-conversation-delete-archive:${threadId}`,
+      });
+      archived = true;
+      await hardDeleteLingThread(workspaceCwd, threadId, "sidebar_conversation_delete");
+      conversationErrors.clear(operation);
+      if (currentCwdRef.current === workspaceCwd) {
+        setConversationThreads((current) => current.filter((thread) => thread.id !== threadId));
+      }
+      if (selectedConversationThreadIdRef.current === threadId) {
+        openNewConversation();
+      }
+      await refreshConversationThreads(workspaceCwd);
+    } catch (error) {
+      if (archived) {
+        try {
+          await unarchiveLingThread(workspaceCwd, threadId, {
+            reason: "sidebar_conversation_delete_failed",
+            idempotencyKey: `sidebar-conversation-delete-restore:${threadId}`,
+          });
+        } catch {
+          // Keep the original delete failure as the user-facing result. A missing
+          // thread means the delete may have committed before the transport failed.
+        }
+      }
+      const message = formatConversationDeleteError(error, input.translate);
+      conversationErrors.report(operation, message);
+      throw new Error(message);
+    }
+  }, [conversationErrors, input.cwd, input.translate, openNewConversation, refreshConversationThreads]);
 
   const sendConversationMessage = useCallback(async (
     message: ConversationSendInput,
@@ -840,7 +886,7 @@ export function useConversationDomain(input: {
   const conversationSidebarError = selectConversationError(conversationErrors.entries, {
     workspaceCwd,
     surface: "sidebar",
-    scopes: ["load", "archive"],
+    scopes: ["load", "archive", "action"],
     excludeTransport: observationPaused,
   })?.message ?? "";
   const conversationSurfaceError = selectConversationError(conversationErrors.entries, {
@@ -881,6 +927,7 @@ export function useConversationDomain(input: {
       selectConversationThread,
       archiveConversationThread,
       archiveAllConversationThreads,
+      deleteConversationThread,
       sendConversationMessage,
     },
   };
@@ -919,6 +966,23 @@ function formatConversationArchiveError(
     return translate("This conversation no longer exists. Refresh and try again.");
   }
   return translate("Archive conversation failed: {message}", { message: rawMessage });
+}
+
+function formatConversationDeleteError(
+  error: unknown,
+  translate: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  if (rawMessage.includes("targeted by automation")) {
+    return translate("This conversation is still used by an automation. Update the automation before deleting it.");
+  }
+  if (rawMessage.includes("active_thread_archive_blocked") || rawMessage.includes("Cannot delete thread with active")) {
+    return translate("This conversation still has active work and cannot be deleted.");
+  }
+  if (rawMessage.includes("thread_not_found")) {
+    return translate("This conversation no longer exists. Refresh and try again.");
+  }
+  return translate("The archived item could not be deleted. Review details and try again.");
 }
 
 function mergeConversationMessages(

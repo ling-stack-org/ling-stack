@@ -4,14 +4,16 @@
 
 [Settings Archived Items Permanent Delete P14](settings-archived-items-permanent-delete.md)
 supersedes this document's Settings-only prohibition on conversation and teammate delete.
-Sidebar archive remains non-destructive, and every archive action described below keeps
-its original behavior.
+Sidebar archive remains non-destructive, and the recent-conversation context-menu delete
+is a separate confirmed action. Every archive action described below keeps its original
+behavior.
 
 ## Summary
 
 The left sidebar needs row-level archive actions for conversation threads and AI
 teammates. Archive means "hide from the active sidebar while preserving data"; it
-does not mean delete.
+does not mean delete. Recent normal conversation rows also provide an explicit
+right-click permanent delete action with confirmation.
 
 Ling already has two compatible persistence primitives:
 
@@ -31,6 +33,8 @@ paths.
   conversation threads.
 - Add archive actions to left-sidebar AI teammate rows.
 - Keep archived conversations and hidden teammates restorable from Settings.
+- Let users permanently delete a recent normal conversation from its right-click menu
+  after explicit confirmation.
 - Preserve all existing channel, branch, teammate, private chat, and conversation
   data.
 - Prevent archived conversation threads from receiving new turns.
@@ -39,7 +43,8 @@ paths.
 
 ## Non-goals
 
-- No hard delete from the sidebar.
+- No hard delete through the archive buttons or archive-all action. The separate recent
+  conversation context menu is the explicit permanent-delete entry.
 - No database schema migration.
 - No new backend endpoint.
 - No change to teammate direct-message thread semantics.
@@ -50,6 +55,7 @@ paths.
 
 - Sidebar:
   - Recent conversation rows get a hover/focus archive icon button.
+  - Recent conversation rows open a context menu on right-click with permanent Delete.
   - Recent conversations section gets a trailing overflow menu. The menu contains
     `Archive all conversations`, is disabled when there are no visible recent
     conversations, and asks for confirmation before archiving.
@@ -73,6 +79,7 @@ paths.
     conversations and archived teammates.
   - Conversation restore calls thread unarchive.
   - Teammate restore sets `hidden: false`.
+  - The right-click delete flow reuses the archived conversation hard-delete contract.
 - Daemon guard:
   - Conversation send/reuse rejects both legacy `status: "archived"` and modern
     `archivedAt` threads.
@@ -160,7 +167,9 @@ paths.
 - Do not call `hardDeleteAiTeammate` for sidebar archive.
 - Do not call teammate `DELETE` for sidebar archive; it disables the teammate and
   changes runtime semantics.
-- Do not delete Ling threads or turns.
+- Do not delete Ling threads or turns from archive controls. Permanent conversation
+  deletion is allowed only through the confirmed context-menu action and its existing
+  hard-delete route.
 - Do not restore disabled teammates as active sidebar archive items unless a
   separate product decision is made.
 - Do not allow archived conversation threads to receive new user messages.
@@ -175,6 +184,8 @@ paths.
 - Typecheck Web and daemon.
 - E2E/sidebar:
   - Archive a recent conversation; it disappears from Recent conversations.
+  - Right-click a recent conversation, cancel the permanent-delete confirmation, then
+    confirm it and verify the conversation disappears and the workspace returns home.
   - Open Recent conversations actions; `Archive all conversations` is disabled
     when there are no visible conversations.
   - Archive all recent conversations; archived rows disappear, Settings can
