@@ -80,6 +80,8 @@
 
 源码兼容用例由 `LING_APP_SERVER_PREVIOUS_BUILD` 指向已构建的上一版源码目录。`LING_APP_SERVER_CODEX_EXECUTABLE` 指向已安装的 Codex。两项均使用隔离状态和回环服务，配置 Pi Runner 使用脚本化 Provider。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
+同协议切换用例由 `LING_APP_SERVER_BASELINE_BUILD` 指向已构建的 `main@05cb86a41`，涵盖 #747 已合并的 `ling-app-server/1`。候选 SDK、CLI、MCP 和 Codex 宿主连接该 Daemon，核对支持的工具、缺少所需能力时的拒绝和活跃 Turn 入队。切换到候选 Daemon 后，原 SDK、CLI 和 MCP 连接同一隔离工作区，重读待处理审批和旧游标，按原键读取一次派发的后继 Run。用例把旧 Daemon 停在跟进已入队、派发尚未发生的位置。真实 Codex 宿主部分使用 `LING_APP_SERVER_CODEX_EXECUTABLE`。 [协议切换验收](../../packages/daemon/test/app-server-release-acceptance.test.ts)
+
 Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI stdio 和受控 Daemon，在回环 WebSocket 上发起一个 Turn，用 stdio 接收终态，再重启 Daemon 并从原游标恢复事件。macOS 和 Linux 还验证私有 Unix socket 的连接与清理。CLI 的 `app-server schema` 导出方法、通知及服务端请求的合同。TypeScript 客户端用握手实例区分重连和 Daemon 重启。 [Windows 传输验收](../../.github/workflows/app-server-windows.yml)
 
 ### 受保护 GitHub 合并队列

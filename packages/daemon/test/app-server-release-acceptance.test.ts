@@ -88,6 +88,7 @@ import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { createRunnerRegistry, type RunnerRegistrationInput } from "../dist/runtime/runners.js";
 import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-server.js";
 import { resolveAppServerGitHubSources, type AppServerGitHubSourceConfig } from "../dist/server/app-server-github-sources.js";
+import { runLingCodexHost } from "../dist/server/app-server-codex-host.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
 import { verifyWorkItemStageToolRequest } from "../../core/dist/storage/sqlite/work-item-stage-tool-settlement.js";
@@ -7017,6 +7018,130 @@ test("candidate App Server recovers v0.6.1 Thread state and preserves legacy cli
   assert.deepEqual(operation.checks.map((check: { status: string }) => check.status), ["blocked"]);
 });
 
+const baselineBuild = process.env.LING_APP_SERVER_BASELINE_BUILD;
+test("App Server protocol 1 clients, CLI, MCP and Codex host interoperate across the main-to-candidate cutover", {
+  skip: !baselineBuild, timeout: 45_000,
+}, async t => {
+  const built = (path: string) => pathToFileURL(join(baselineBuild!, "packages", path)).href;
+  const [daemon, core, sdk] = await Promise.all([
+    import(built("daemon/dist/index.js")) as Promise<Pick<ReleaseRuntime, "createDaemonServer"> & { runLingAppServerMcp: typeof runLingAppServerMcp }>,
+    import(built("core/dist/index.js")) as Promise<Omit<ReleaseRuntime, "createDaemonServer">>,
+    import(built("api-client/dist/index.js")) as Promise<{ LingAppServerClient: typeof LingAppServerClient }>,
+  ]);
+  let releaseFirst: () => void = () => undefined;
+  const first = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, index: number) => {
+    if (index === 1) await first;
+    return { text: index === 1 ? "Baseline Turn complete" : "Candidate follow-up complete" };
+  });
+  t.after(async () => { releaseFirst(); await provider.close(); });
+  const fixture = await releaseFixture(t, { initialRuntime: { ...core, ...daemon } });
+  const connect = (Client = LingAppServerClient, requiredCapabilities?: ["workItem.device"]) => {
+    const { daemonUrl, authToken, cwd } = fixture.transportOptions();
+    const url = new URL("/app-server/rpc", daemonUrl);
+    url.protocol = "ws:";
+    url.searchParams.set("cwd", cwd);
+    const client = new Client({ url: url.href, clientInfo: { name: "cutover-fixture", version: "1" }, requiredCapabilities, autoReconnect: false,
+      requestTimeoutMs: 3_000,
+      createSocket: address => new WebSocket(address, { headers: { Authorization: `Bearer ${authToken}` } }) as unknown as LingAppServerSocket });
+    t.after(() => client.close());
+    return client;
+  };
+  const probe = async (entry: string) => {
+    const { daemonUrl, authToken, cwd } = fixture.transportOptions();
+    const { stdout } = await promisify(execFile)(process.execPath, [entry, "--cwd", cwd, "--daemon-url", daemonUrl, "app-server", "probe"],
+      { env: { ...process.env, LING_STACK_AUTH_TOKEN: authToken }, timeout: 8_000 });
+    assert.equal(JSON.parse(stdout).ok, true);
+  };
+  const current = connect();
+  const currentCli = fileURLToPath(new URL("../../cli/dist/index.js", import.meta.url));
+  await probe(currentCli);
+  const baselineCapabilities = await current.getCapabilities();
+  assert.ok(baselineCapabilities.capabilities.includes("turn.control"));
+  assert.ok(!baselineCapabilities.capabilities.includes("workItem.device"));
+  await assert.rejects(connect(LingAppServerClient, ["workItem.device"]).startThread({ threadId: "requires-device", title: "Requires device" }),
+    { code: "required_capability_unavailable" });
+  const store = fixture.getStore();
+  assert.equal(store.getLingThread("requires-device"), undefined);
+  const { thread } = await current.startThread({ title: "Protocol cutover" }) as ThreadRead;
+  const mcp = await connectReleaseMcp(t, fixture.transportOptions());
+  const { tools } = await mcp.host.call<{ tools: { name: string }[] }>("tools/list");
+  assert.ok(tools.some(tool => tool.name === "ling_turn_start"));
+  assert.ok(!tools.some(tool => tool.name === "ling_work_item_device_read"));
+  let host: ReturnType<typeof jsonLines> | undefined;
+  let closeHost: (() => Promise<void>) | undefined;
+  if (codexExecutable) {
+    const input = new PassThrough(), output = new PassThrough();
+    host = jsonLines(input, output);
+    const controller = new AbortController();
+    const running = runLingCodexHost({ ...fixture.transportOptions(), codexExecutable, threadId: thread.id,
+      statePath: join(fixture.root, "baseline-codex-host.sqlite"),
+    }, controller.signal, input, output);
+    closeHost = async () => { controller.abort(); await running; };
+    t.after(closeHost);
+    const ready = await Promise.race([running.then(() => assert.fail("Codex host exited before ready")),
+      waitFor(() => host!.notices.find(notice => notice.method === "ready"))]);
+    assert.match(ready.params?.codexUserAgent ?? "", /codex/iu);
+  }
+
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const { run } = await mcp.callTool<{ run: { id: string } }>("ling_turn_start", { threadId: thread.id,
+    providerPresetId: preset.id, message: "Start the baseline Turn.", idempotencyKey: "cutover-source" });
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const original = await current.readThreadSnapshot({ threadId: thread.id });
+  assert.ok(original.turn);
+  const followUp = { threadId: thread.id, expectedTurnId: original.turn.id, expectedTurnRevision: original.turn.updatedAt,
+    message: "Continue after cutover.", idempotencyKey: "cutover-followup" };
+  type QueueReceipt = { intervention: RunIntervention; replayed: boolean };
+  const { threadId: _threadId, ...hostFollowUp } = followUp;
+  const { intervention } = host ? await host.call<QueueReceipt>("ling/queue", hostFollowUp) : await current.queueTurn(followUp) as QueueReceipt;
+  assert.equal(intervention.status, "queued");
+  if (host) await waitFor(() => host!.notices.find(notice => notice.method === "turn/started" && notice.params?.subject?.turnId === original.turn?.id));
+
+  const now = new Date().toISOString();
+  const approvalThread = store.createLingThread({ kind: "conversation", title: "Pending approval", objective: "Preserve approval ownership" }, now);
+  const approvalRun = store.createRun({ id: "cutover-approval-run", threadId: approvalThread.id, cwd: fixture.cwd, taskId: "cutover-approval-task",
+    providerName: "fixture", providerModel: "fixture", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+  store.createLingTurn({ threadId: approvalThread.id, kind: "initial_request", title: "Pending tool", userInstruction: "Check the fixture", lastRunId: approvalRun.id }, now);
+  store.markRunStarted(approvalRun.id, now);
+  const approval = store.createApprovalRequest({ runId: approvalRun.id, taskId: approvalRun.taskId, toolCallId: "cutover-tool",
+    actionType: "bash", risk: "high", title: "Fixture approval", description: "Verify approval recovery across protocol 1 builds",
+    payload: { type: "bash", cwd: fixture.cwd, command: "true", riskFlags: [] } }, now);
+  store.claimNextRunIntervention = () => undefined;
+  releaseFirst();
+  await waitFor(() => store.getRun(run.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(store.getRunIntervention(intervention.id)?.status, "queued");
+  current.close();
+  await mcp.close();
+  await closeHost?.();
+  await fixture.restart();
+
+  const previous = connect(sdk.LingAppServerClient);
+  await probe(join(baselineBuild!, "packages/cli/dist/index.js"));
+  const previousMcp = await connectReleaseMcp(t, fixture.transportOptions(), daemon.runLingAppServerMcp);
+  const observed = await previousMcp.callTool<{ run: { id: string }; cursor: string }>("ling_thread_snapshot", { threadId: approvalThread.id });
+  assert.equal(observed.run.id, approvalRun.id);
+  assert.ok(observed.cursor);
+  const pending = await previous.readThreadSnapshot({ threadId: approvalThread.id });
+  assert.ok(pending.pendingApprovals.some(item => item.id === approval.id));
+  await previous.respondApproval({ approvalId: approval.id, runId: approvalRun.id, decision: "deny" });
+  const currentStore = fixture.getStore();
+  assert.equal(currentStore.getApprovalRequest(approval.id)?.status, "denied");
+  const after = await waitFor(async () => {
+    const snapshot = await previous.readThreadSnapshot({ threadId: thread.id });
+    return snapshot.turn?.id !== original.turn!.id && snapshot.run?.status === "succeeded"
+      && currentStore.getRunIntervention(intervention.id)?.completedAt ? snapshot : undefined;
+  });
+  assert.ok(after.run);
+  assert.equal((await previous.queueTurn(followUp) as QueueReceipt).intervention.id, intervention.id);
+  assert.equal(currentStore.getRunIntervention(intervention.id)?.continuationRunId, after.run.id);
+  const replay = await previous.readThreadEvents({ threadId: thread.id, cursor: original.cursor, limit: 100 });
+  assert.equal(replay.window.disposition, "complete");
+  assert.ok(replay.events.every(event => event.seq > replay.window.requestedAfterSeq));
+  assert.equal(replay.events.filter(event => event.entityId === after.run!.id && event.action === "run.completed").length, 1);
+  assert.equal(provider.requests.length, 2);
+});
+
 type JsonLine = {
   id?: number;
   method?: string;
@@ -7054,9 +7179,9 @@ function jsonLines(input: Writable, output: Readable) {
   } };
 }
 
-async function connectReleaseMcp(t: TestContext, options: Parameters<typeof runLingAppServerMcp>[0]) {
+async function connectReleaseMcp(t: TestContext, options: Parameters<typeof runLingAppServerMcp>[0], runMcp = runLingAppServerMcp) {
   const input = new PassThrough(), output = new PassThrough();
-  const running = runLingAppServerMcp(options, input, output);
+  const running = runMcp(options, input, output);
   const close = async () => {
     if (!input.writableEnded) input.end();
     await running;
