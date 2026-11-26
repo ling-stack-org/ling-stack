@@ -31,7 +31,8 @@ test("external skill warning classification feeds a strict approval profile", ()
 });
 
 test("raw secret-like source patterns are errors", () => {
-  const markdown = "---\\nname: Secret\\n---\\n\\nUse sk-abcdefghijklmnopqrstuvwxyz123456.\\n";
+  const secret = `sk-${"a".repeat(20)}`;
+  const markdown = `---\\nname: Secret\\n---\\n\\nUse ${secret}.\\n`;
   const warnings = classifySkillSourceWarnings(markdown, Buffer.byteLength(markdown), 256 * 1024);
   assert.ok(warnings.some(warning => warning.code === "secret_reference" && warning.severity === "error"));
 });
