@@ -197,7 +197,7 @@ export function bindPackagedSkillContext(context: SkillSourceRuntimeContext): Sk
   const runtime = loadedGeneration(context);
   if (runtime) return runtime.bind(context);
   if (!activeRuntime) {
-    if (context.resourceBinding || contextManifestChecksum(context)) throw new Error("packaged_skill_resource_version_unavailable");
+    if (context.resourceBinding) throw new Error("packaged_skill_resource_version_unavailable");
     return context;
   }
   return activeRuntime.bind(context);
