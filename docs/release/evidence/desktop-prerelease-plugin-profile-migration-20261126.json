@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "release": "v0.6.2-alpha.1",
+  "migration": {
+    "macosArm64": {
+      "status": "passed",
+      "environment": "isolated Apple Silicon test profile",
+      "signingTier": "unsigned_dev",
+      "installation": "verified DMG copied to a temporary Applications directory",
+      "installedBuilds": [
+        {
+          "pluginMode": "bundled",
+          "sourceSha": "14be1bdebd3d295a4f822981ae8cc18a32b9dd51",
+          "version": "0.6.1",
+          "gstackGeneration": "4aff92f42e8b639eef278d399ec9c2578700f64041045178b6ca8f5ad6976fd1",
+          "workflowRun": 45187207804,
+          "archiveSha256": "4e5d3b9a3b6dc0623899f2873d97f7af6a35eee95d092a79b80d3862a2fce91f"
+        },
+        {
+          "pluginMode": "on-demand",
+          "sourceSha": "b60f0c396c6f1dad3023018a1f14f8e793d2d406",
+          "version": "0.6.1",
+          "gstackGeneration": "8be8757dfe9171c1ae1988252581bf09a2ae6491e77bbb5ab77bb366d98a8e83",
+          "workflowRun": 45293564788,
+          "archiveSha256": "ae79242fe8c69615be408c6b127d1e61190f2e776570b0f034bf050703de5597"
+        },
+        {
+          "pluginMode": "on-demand",
+          "sourceSha": "cf8f0b183349f5a34e66bafade0e0a6f37d56767",
+          "version": "0.6.2-alpha.1",
+          "gstackGeneration": "c8b970d38d9e737a9537763fac03d53f0783e81959b1b76d8d6f0efc34ce27d2",
+          "workflowRun": 45796383293,
+          "archiveSha256": "14d8c1f8f764cb0fa80bb53d87f4e382696a9c062892da8df72001f9da5616b9"
+        }
+      ],
+      "desktopOwnedDaemonStartupAndExit": true,
+      "pluginStates": {
+        "office": "enabled",
+        "chrome": "enabled",
+        "otherOffice": "disabled"
+      },
+      "workspaceWriteApprovals": {
+        "firstWorkspace": "deny",
+        "secondWorkspace": "ask"
+      },
+      "pluginEventIdentitiesRetained": true,
+      "linkedResourcesRetained": true,
+      "teammateMcpBindingsRetained": true,
+      "retainedGstackGenerations": [
+        "4aff92f42e8b639eef278d399ec9c2578700f64041045178b6ca8f5ad6976fd1",
+        "8be8757dfe9171c1ae1988252581bf09a2ae6491e77bbb5ab77bb366d98a8e83"
+      ],
+      "workspaceSnapshotCounts": [
+        114,
+        114
+      ],
+      "snapshotLineagePreserved": true,
+      "gstackPublication": "deferred"
+    },
+    "windowsX64": {
+      "status": "passed",
+      "environment": "GitHub-hosted Windows x64",
+      "signingTier": "unsigned_dev",
+      "verificationRun": 45845999418,
+      "installedBuilds": [
+        {
+          "pluginMode": "bundled",
+          "version": "0.6.1",
+          "sourceSha": "14be1bdebd3d295a4f822981ae8cc18a32b9dd51",
+          "workflowRun": 45187207804,
+          "archiveSha256": "246318c9b999c82b448144a35a26963228bc2f3aaa39dfb602662074674feee8"
+        },
+        {
+          "pluginMode": "on-demand",
+          "version": "0.6.1",
+          "sourceSha": "b60f0c396c6f1dad3023018a1f14f8e793d2d406",
+          "workflowRun": 45293564788,
+          "archiveSha256": "167d3f090e4556b0561b5ced253b634d8a326a1e6b45b9a5999cc9a1695d73d4"
+        },
+        {
+          "pluginMode": "on-demand",
+          "version": "0.6.2-alpha.1",
+          "sourceSha": "cf8f0b183349f5a34e66bafade0e0a6f37d56767",
+          "workflowRun": 45796383293,
+          "archiveSha256": "7b147db88fb67e0ba068b8b0a20c909a5267edda81fa8681d4d2fc893bef7221",
+          "gstackGeneration": "0c61080a1633d7392013196ba373e332fbede3cce481b52493d70dff47e1cd02"
+        }
+      ],
+      "customPathInstall": "passed",
+      "registeredPathUpgrade": "passed",
+      "installedPayloadsMatch": true,
+      "desktopOwnedDaemonStartupAndExit": true,
+      "uninstall": "passed",
+      "pluginStates": {
+        "office": "enabled",
+        "chrome": "enabled",
+        "otherOffice": "disabled"
+      },
+      "workspaceWriteApprovals": {
+        "primary": "deny",
+        "secondary": "ask"
+      },
+      "pluginEventIdentitiesRetained": true,
+      "teammateMcpBindingsRetained": true,
+      "retainedGstackGenerations": [
+        "2b491e3d74e7944629091f3b97121d0f7accfff79120e565e59c520791aa29b9",
+        "9b0d323e9d913ff1bea9387e63e4dc948ba7cf53287b867f175932073d51fec2"
+      ],
+      "snapshotLineagePreserved": true,
+      "gstackPublication": "deferred"
+    }
+  },
+  "officialNativeRuntimeAcceptance": "not_run"
+}

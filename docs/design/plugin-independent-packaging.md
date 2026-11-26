@@ -111,6 +111,8 @@ macOS arm64 使用同一隔离用户目录，从 `14be1bdeb` 的兼容开发包�
 
 macOS arm64 使用同一隔离配置依次启动 `14be1bdeb` 兼容包、`b60f0c396` 瘦包和 `1e015ff2` 瘦包。三份应用均从校验过的 DMG 复制安装。两代 GStack 占满缓存后，第三份应用连接自有 daemon、加载主窗口并正常退出。两个工作区各 114 条技能快照通过逐项对照，插件启停、审批、审计事件和 MCP 绑定均得到保留。第三代 GStack 快照延后发布。[第三代 DMG 构建](https://github.com/ling-stack-org/ling-stack/actions/runs/45705368169)
 
+`v0.6.2-alpha.1` DMG 通过了跨版本迁移。以 `14be1bde` 的 0.6.1 兼容包建立两个隔离工作区，依次切到 `b60f0c39` 的 0.6.1 瘦包和预发布瘦包。三次均从已校验的 DMG 安装，应用通过 ad-hoc 签名校验、连接 Desktop 自有 daemon、加载主窗口并正常退出。预发布版本保留了插件启停、工作区写入审批、审计事件、MCP 绑定和两个工作区各 114 条技能快照。两代 GStack 继续留存，第三代延后发布。[预发布迁移证据](../release/evidence/desktop-prerelease-plugin-profile-migration-20261126.json)
+
 ### Windows 已有配置切换
 
 Windows x64 在隔离 runner 上先把 `14be1bdeb` 的 0.6.1 兼容包安装到自定义路径，再用 `b60f0c396` 的 0.6.1 瘦包沿注册路径覆盖安装。两次安装后的文件均匹配对应候选包的完整校验清单，两版 Desktop 均连接各自启动的 daemon、加载主窗口并正常退出。
@@ -119,10 +121,12 @@ Windows x64 在隔离 runner 上先把 `14be1bdeb` 的 0.6.1 兼容包安装到�
 
 Windows x64 又用同一隔离配置依次安装了 `14be1bdeb` 兼容包、`b60f0c396` 瘦包和 `97ec6701` 瘦包。第三次启动时，两代 GStack 已占满缓存。Desktop 连接自有 daemon、加载主窗口并正常退出，两个工作区的已发布和归档技能快照及插件配置均通过前后对照。第三代快照延后发布，最后一次卸载清理了安装目录。[三代安装复验](https://github.com/ling-stack-org/ling-stack/actions/runs/45671212385)
 
+同一三阶段流程再用公开的 `v0.6.2-alpha.1` Setup 作为第三份安装包。0.6.1 兼容包以自定义路径安装，两次升级沿注册路径覆盖。三份安装的文件均匹配各自的包校验清单，Desktop 均连接自有 daemon、加载主窗口并正常退出。预发布版本保留了插件启停、工作区写入审批、审计事件、MCP 绑定和两代 GStack 的技能快照，卸载清理了测试安装目录。[Windows 预发布迁移验证](https://github.com/ling-stack-org/ling-stack/actions/runs/45845999418) · [两平台迁移证据](../release/evidence/desktop-prerelease-plugin-profile-migration-20261126.json)
+
 ## 瘦包对照和切换
 
 1. 在相同的已独立审核源码提交和工具链上，分别构建兼容基线和 `LING_PLUGIN_EXTERNAL_ONLY=1` 的瘦包。仍需通过平台原有的 Desktop 发布前置检查。
 2. Cua Driver 独立运行验证另设 `LING_CUA_DRIVER_CATALOG_MANAGED=1`。macOS 从发布环境读取 `LING_CUA_DARWIN_EXPECTED_TEAM_ID`。Windows 读取 `LING_CUA_PROVIDER_SIGNER_SUBJECT`、`LING_CUA_PROVIDER_SIGNER_SHA256`、`LING_CUA_CATALOG_SIGNER_SUBJECT` 和 `LING_CUA_CATALOG_SIGNER_SHA256`。这些信息属于 Desktop 的生产 provider 信任策略。
-3. 在 macOS arm64 和 Windows x64 安装版验证离线启动、首次下载、实际调用、更新、回滚和已有配置迁移。macOS 的 `office-local.node` 仍由 Desktop 的文件级 Office 能力使用，适用现有独立审查。
-4. 记录 DMG、EXE 和解包后常规文件的字节数、首次下载大小，以及启动和回滚后实际执行的版本与摘要。Desktop 包报告提供 `pluginMode` 与 `installedPayloadBytes`。平台签名及 Excel、Chrome、Computer Use 实测单独记录。
+3. 在 macOS arm64 和 Windows x64 安装版验证离线启动和已有配置迁移。每个平台从官方签名目录首次下载 Office、Chrome 和 Cua Driver，重启 Desktop 后分别执行 Excel 工作簿操作、Chrome Native Messaging 操作和 Computer Use 操作。macOS 的 `office-local.node` 由 Desktop 的文件级 Office 能力使用，适用同一套独立审查。
+4. 每个插件用第二个已签名版本验证更新，重启后检查实际运行的版本。断网回滚并重启，复验上一版本的实际调用及工作区配置。记录目录提交、平台签名、实际运行文件的版本和 SHA-256、首次下载大小、DMG 和 EXE 字节数。Desktop 包报告提供 `pluginMode` 与 `installedPayloadBytes`。
 5. 平台验收通过后切换默认打包，清理三个插件的重复原生构建、资源和源码，更新 Desktop 发布说明。
