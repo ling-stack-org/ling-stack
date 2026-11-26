@@ -40,7 +40,9 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 - `POST /plugins/:id/check-update` 返回当前版本和最新匹配版本。
 - `POST /plugins/:id/rollback` 复验并恢复缓存的上一版本。
 
-`scripts/plugins/package-plugin.mjs` 与 `generate-catalog.mjs` 提供本地开发工具。生产者仓库发布固定版本。主仓的 Official plugin catalog 工作流对照审核的资产摘要复核版本、来源、包内容和平台运行文件，再生成签名。工作流使用与客户端内置公钥匹配的 `LING_PLUGIN_ARTIFACT_PRIVATE_KEY` 和 `LING_PLUGIN_CATALOG_PRIVATE_KEY`。默认仅保留已签名的目录产物，发布时传入 `publish=true`，将目录及其签名写入同一分支提交。工作流的 `sources` 输入采用以下格式。[目录工作流](https://github.com/ling-stack-org/ling-stack/actions/workflows/plugin-release.yml)
+`scripts/plugins/package-plugin.mjs` 与 `generate-catalog.mjs` 提供本地开发工具。生产者仓库发布固定版本。主仓的 Official plugin catalog 工作流使用 `LING_PLUGIN_ARTIFACT_PRIVATE_KEY` 和 `LING_PLUGIN_CATALOG_PRIVATE_KEY`。在 `main` 选择 `verify-keys` 可预检这两把私钥与客户端内置公钥是否匹配。
+
+默认的 `assemble` 操作对照审核的资产摘要复核版本、来源、包内容和平台运行文件，再生成签名并上传目录产物。传入 `publish=true` 时，工作流将目录及其签名写入同一分支提交。`sources` 输入采用以下格式。[目录工作流](https://github.com/ling-stack-org/ling-stack/actions/workflows/plugin-release.yml)
 
 ```json
 {
