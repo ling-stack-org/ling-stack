@@ -15,6 +15,7 @@ import JSZip from "../../packages/daemon/node_modules/jszip/lib/index.js";
 import { cuaDriverArtifactLayoutFor, cuaDriverArtifactPlatformForRuntime } from "../../apps/desktop/shared/cua-driver-artifact-layout.mjs";
 import { validateCuaDriverProviderLockContract } from "../../apps/desktop/shared/cua-driver-provider-lock-contract.mjs";
 import { CUA_DRIVER_PACKAGE_REVISION } from "../../apps/desktop/scripts/cua-driver-package-staging-contract.mjs";
+import { verifyOfficialReleaseSidecar } from "./official-release-sidecar.mjs";
 import { requireOfficialSigningKey } from "./official-signing-key.mjs";
 
 const repositories = new Map([
@@ -57,7 +58,8 @@ try {
     for (const [platform, arch] of targets) {
       const name = `${slug}-${version}-${platform}-${arch}.ling-plugin.zip`;
       const path = join(root, name);
-      github(["release", "download", pin.tag, "--repo", repository, "--pattern", name, "--dir", root], false);
+      github(["release", "download", pin.tag, "--repo", repository,
+        "--pattern", name, "--pattern", `${name}.json`, "--dir", root], false);
       const info = await stat(path);
       if (info.size < 1 || info.size > 1024 ** 3) throw new Error(`Unexpected artifact size for ${name}.`);
       const bytes = await readFile(path);
@@ -74,18 +76,22 @@ try {
         || provenance.schemaVersion !== 1 || provenance.artifactId !== artifactId || provenance.sourceSha !== pin.sourceSha) {
         throw new Error(`Manifest or source identity does not match ${name}.`);
       }
-      await verifyRuntimeMembers(archive, JSON.parse(checksums.toString("utf8")), pluginId, platform);
-      artifacts.push({
+      const releaseArtifact = {
         artifactId, pluginId, version, platform, arch,
-        channel: "stable",
         url: `https://github.com/${repository}/releases/download/${pin.tag}/${name}`,
         sizeBytes: bytes.length,
         sha256: digest,
-        signature: signature(bytes),
-        runtimeChecksumSignature: signature(Buffer.concat([Buffer.from(OFFICIAL_PLUGIN_RUNTIME_SIGNATURE_CONTEXT), checksums])),
         minLingVersion: manifest.minLingVersion,
         maxLingVersion: manifest.maxLingVersion,
         rollbackAllowed: manifest.rollbackAllowed,
+      };
+      await verifyOfficialReleaseSidecar(`${path}.json`, releaseArtifact);
+      await verifyRuntimeMembers(archive, JSON.parse(checksums.toString("utf8")), pluginId, platform);
+      artifacts.push({
+        ...releaseArtifact,
+        channel: "stable",
+        signature: signature(bytes),
+        runtimeChecksumSignature: signature(Buffer.concat([Buffer.from(OFFICIAL_PLUGIN_RUNTIME_SIGNATURE_CONTEXT), checksums])),
       });
       metadata ??= manifest;
     }

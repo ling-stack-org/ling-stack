@@ -42,7 +42,7 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 
 `scripts/plugins/package-plugin.mjs` 与 `generate-catalog.mjs` 提供本地开发工具。生产者仓库发布固定版本。主仓的 Official plugin catalog 工作流使用 `LING_PLUGIN_ARTIFACT_PRIVATE_KEY` 和 `LING_PLUGIN_CATALOG_PRIVATE_KEY`。在 `main` 选择 `verify-keys` 可预检这两把私钥与客户端内置公钥是否匹配。
 
-默认的 `assemble` 操作对照审核的资产摘要复核版本、来源、包内容和平台运行文件，再生成签名并上传目录产物。传入 `publish=true` 时，工作流将目录及其签名写入同一分支提交。`sources` 输入采用以下格式。[目录工作流](https://github.com/ling-stack-org/ling-stack/actions/workflows/plugin-release.yml)
+默认的 `assemble` 操作从每个固定 Release 下载两个平台 ZIP 和同名的 `.zip.json` 清单。清单须声明 `stable` 渠道，且资产地址、大小、摘要和 Ling 版本约束须与审核输入和包内 manifest 一致。工作流复核包内容后生成签名并上传目录产物。传入 `publish=true` 时，工作流将目录及其签名写入同一分支提交。`sources` 输入采用以下格式。[目录工作流](https://github.com/ling-stack-org/ling-stack/actions/workflows/plugin-release.yml)
 
 ```json
 {
@@ -59,6 +59,7 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 - 使用隔离用户配置、本地开发目录和临时包签名，Office 候选在真实 daemon 中通过首次安装、更新、重新读取和离线回滚。macOS helper 在三个阶段均响应 `driver_status`。更新测试使用同一 helper 的另一归档版本。macOS 候选 helper 的预检识别到 Excel 16.91 正在运行，并返回 `permission_required`。签名版仍需经过系统 Automation 授权和实际工作簿操作验收。自动化回归覆盖空工作区安装、跨工作区显示和回滚、保留工作区启用状态，以及缓存篡改拒绝。
 - Ling for Chrome 的 macOS 候选包在真实 Chrome 的隔离配置中验证了 Native Messaging 自动连接、全部六项浏览器工具、暂停恢复以及禁用后重新启用。Chrome Web Store 发布的 0.1.2 与候选归档的可执行代码及弹窗文件逐项一致，差异在四个图标、更新地址和商店元数据。商店安装的扩展仍需和正式签名的 Native Host 一起验收。[Chrome 候选构建](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45081594739) · [Chrome Web Store](https://chromewebstore.google.com/detail/ling-for-chrome/mbmlnnfhebclljonhedpjghbhibfapei)
 - Cua Driver 的独立复核根据四个原始归档核对了源码提交、补丁、二进制摘要和两平台锁。新锁在四台独立 runner 上完成原生重建与 MCP 探针，macOS 的 7 个稳定文件和 Windows 的 8 个稳定文件分别逐项一致。Windows 探针覆盖 Medium 完整性、状态目录用户 ACL、链接拒绝和配置持久化。发布文档记录这批签名前产物的来源和后续平台签名步骤。[Cua Driver 发布文档](https://github.com/ling-stack-org/ling-plugin-cua-driver/blob/main/docs/RELEASE.md)
+- Cua Driver 的原生工作流可从两份已复验的构建生成签名前归档，随附锁和载荷的 SHA-256 回执。独立仓的 `seal:release` 从正式签名和已审核的锁生成 provider seal，打包时复验 seal 和平台签名。Windows 还验证完整性目录覆盖可执行文件和 seal。[签名前归档](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/8) · [Seal 生成](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/9)
 
 下表是独立仓库开发候选的 `.ling-plugin.zip` 字节数，已逐包核对随包 JSON 中的 SHA-256。Cua Driver 的下载体积待平台签名归档生成后记录。
 
