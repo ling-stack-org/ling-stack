@@ -6409,6 +6409,28 @@ export class SqliteRunStore implements RunStore {
     return this.appServerState.put(input, now, publication);
   }
 
+  writeWorkItemDeviceState<T>(write: (store: import("../work-item-device-bridge.js").WorkItemDeviceMutationStore) => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = withSqliteSnapshotParentTransaction(this.database, () => write({
+        getWorkItem: id => this.getWorkItem(id),
+        getAppServerState: (...args) => this.appServerState.get(...args),
+        findAppServerStateByIdempotencyKey: (...args) => this.appServerState.findByIdempotencyKey(...args),
+        listAppServerState: (...args) => this.appServerState.list(...args),
+        putAppServerState: (input, now, publication) => {
+          const result = this.appServerState.putWithinTransaction(input, now);
+          if (!result || result.status === "replayed" || !publication) return result;
+          return { ...result, event: this.controlPlane.appendControlPlaneEventWithinTransaction(publication, now) };
+        },
+      }));
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
+  }
+
   deleteAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean {
     return this.appServerState.delete(kind, recordId, workspaceId);
   }
@@ -6739,6 +6761,11 @@ export class SqliteRunStore implements RunStore {
 
   readScheduledCoordinationRound(recordId: string) {
     return this.scheduledCoordination.readRound(recordId);
+  }
+
+  getCurrentScheduledCoordinationAutomationDigest(recordId: string) {
+    const round = this.scheduledCoordination.readRound(recordId);
+    return round && this.scheduledCoordination.currentAutomationDigest(round);
   }
 
   findScheduledCoordinationRound(automationRunId: string) {

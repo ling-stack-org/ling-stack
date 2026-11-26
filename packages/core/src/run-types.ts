@@ -2749,6 +2749,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   getLatestVerificationState(threadId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   listPendingGitHubIntakeDispatches(updatedBefore: string, limit: number): import("./app-server-state-types.js").AppServerStateRecord[];
   putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
+  writeWorkItemDeviceState<T>(write: (store: import("./work-item-device-bridge.js").WorkItemDeviceMutationStore) => T): T;
   deleteAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean;
   transferAppServerHandoffGoal(handoffId: string, threadId: string, now: string): {
     readonly transfer: import("@ling-stack/contracts").LingAppServerHandoffGoalTransfer;
@@ -2813,6 +2814,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   configureAutomationCoordination(input: import("@ling-stack/contracts").LingAppServerCoordinationScheduleParams, now: string): import("@ling-stack/contracts").LingAppServerCoordinationSchedule;
   admitScheduledCoordination(input: import("./automation-types.js").AdmitScheduledCoordinationInput, now: string, cwd?: string): import("./automation-types.js").ScheduledCoordinationAdmission;
   readScheduledCoordinationRound(recordId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
+  getCurrentScheduledCoordinationAutomationDigest(recordId: string): string | undefined;
   findScheduledCoordinationRound(automationRunId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
   listOpenScheduledCoordinationRounds(): readonly import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound[];
   closeScheduledCoordination(input: import("./automation-types.js").CloseScheduledCoordinationInput, now: string, cwd?: string): import("./automation-types.js").ScheduledCoordinationClose | undefined;

@@ -283,7 +283,7 @@ export class RunStoreRegistry {
   }
 }
 
-function normalizeWorkspaceRoot(cwd: string): string {
+export function normalizeWorkspaceRoot(cwd: string): string {
   const resolved = resolvePath(cwd);
   try {
     return realpathSync(resolved);

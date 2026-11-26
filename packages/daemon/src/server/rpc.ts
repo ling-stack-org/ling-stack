@@ -2754,8 +2754,10 @@ class RpcConnection {
     const record = this.workspaceParams(params);
     const workItemId = readStringField(record, "workItemId");
     const store = this.context.storeRegistry.getStore(record.cwd);
-    if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", "The Work Item was not found.");
-    return { cwd: record.cwd, workItemId, bindings: readWorkItemDeviceBindings(store, workItemId) };
+    return store.readSnapshot(() => {
+      if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", "The Work Item was not found.");
+      return { cwd: record.cwd, workItemId, bindings: readWorkItemDeviceBindings(store, workItemId) };
+    });
   }
 
   private bindWorkItemDevice(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemDeviceBindResult {

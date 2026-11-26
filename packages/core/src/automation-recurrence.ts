@@ -26,7 +26,7 @@ export class AutomationRecurrenceError extends Error {
   }
 }
 
-/** A valid finite rule has no future occurrence; the scheduler disables it. */
+/** A valid finite rule has no future occurrence. */
 export class AutomationRecurrenceCompleteError extends AutomationRecurrenceError {}
 
 /** Reject unsupported fields instead of widening a finite or malformed rule. */

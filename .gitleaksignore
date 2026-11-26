@@ -769,3 +769,7 @@ f55acd1385a37b6db6d75c4caa53fef77cab4d95:native/office-local/reviewed-packaged-s
 # Idempotency literals in the O9 integration test.
 f5a7a2dde2feb8a5abb1754cf71e5514453ed9d6:packages/daemon/test/app-server-release-acceptance.test.ts:generic-api-key:6237
 f5a7a2dde2feb8a5abb1754cf71e5514453ed9d6:packages/daemon/test/app-server-release-acceptance.test.ts:generic-api-key:6275
+
+# Reviewed Office source digests introduced by the main merge.
+93a09ac5ea0727c70412680039f9a5aacdc2a50c:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:278
+93a09ac5ea0727c70412680039f9a5aacdc2a50c:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1160

@@ -18,7 +18,7 @@ import {
 import type { McpBroker } from "../../context.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
-import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { normalizeWorkspaceRoot, type RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { StartupStateRegistry } from "../../startup/state.js";
 import { trimOversizedEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
@@ -85,7 +85,8 @@ export class AutomationSchedulerRegistry {
   private readonly entriesByCwd = new Map<string, AutomationSchedulerEntry>();
   private readonly inFlightTasks = new Set<Promise<void>>();
   private readonly coordinationTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly activeCoordination = new Set<string>();
+  private readonly coordinationDecisionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly activeCoordinationDecisions = new Set<string>();
   private readonly stoppedWorkspaces = new Set<string>();
   private coordinationStopping = false;
 
@@ -140,9 +141,11 @@ export class AutomationSchedulerRegistry {
         this.scheduleAutomation(entry, automation, new Date());
       }
       this.refreshStateSummary(entry);
-      this.stoppedWorkspaces.delete(cwd);
+      const coordinationCwd = normalizeWorkspaceRoot(cwd);
+      this.stoppedWorkspaces.delete(coordinationCwd);
       this.coordinationStopping = false;
-      this.restoreCoordinationDeadlines(cwd);
+      this.restoreCoordinationDeadlines(coordinationCwd);
+      this.armCoordinationDecisions(coordinationCwd);
       this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
       return { scheduler: entry.state, duplicate: false };
     } catch (error) {
@@ -212,8 +215,12 @@ export class AutomationSchedulerRegistry {
 
   stop(cwd: string): AutomationSchedulerState | undefined {
     const entry = this.entriesByCwd.get(cwd);
-    this.stoppedWorkspaces.add(cwd);
-    this.clearCoordinationTimer(cwd);
+    const coordinationCwd = normalizeWorkspaceRoot(cwd);
+    this.stoppedWorkspaces.add(coordinationCwd);
+    this.clearCoordinationTimer(coordinationCwd);
+    const decisionTimer = this.coordinationDecisionTimers.get(coordinationCwd);
+    if (decisionTimer) clearTimeout(decisionTimer);
+    this.coordinationDecisionTimers.delete(coordinationCwd);
     if (!entry) {
       return undefined;
     }
@@ -232,38 +239,36 @@ export class AutomationSchedulerRegistry {
 
   stopAll(): void {
     this.coordinationStopping = true;
-    for (const cwd of new Set([...this.entriesByCwd.keys(), ...this.coordinationTimers.keys()])) {
+    for (const cwd of new Set([...this.entriesByCwd.keys(), ...this.coordinationTimers.keys(), ...this.coordinationDecisionTimers.keys()])) {
       this.stop(cwd);
     }
   }
 
   publishCoordinationRound(cwd: string, event: ControlPlaneEvent): void {
     this.controlPlaneEvents.publish(trimOversizedEvent(event));
-    this.restoreCoordinationDeadlines(cwd);
+    this.restoreCoordinationDeadlines(normalizeWorkspaceRoot(cwd));
   }
 
   closeCoordinationRound(cwd: string, input: CloseScheduledCoordinationInput, now: string) {
-    const store = this.storeRegistry.getStore(cwd);
+    const canonical = normalizeWorkspaceRoot(cwd);
+    const store = this.storeRegistry.getStore(canonical);
     const deliberation = this.coordinationDeliberation;
     const closed = store.closeScheduledCoordination({ ...input, readDecisionBasis: deliberation
-      && ((...args) => deliberation.sealDecision(store, cwd, ...args)) }, now, cwd);
+      && ((...args) => deliberation.sealDecision(store, canonical, ...args)) }, now, canonical);
     if (closed?.briefEvent) this.controlPlaneEvents.publish(trimOversizedEvent(closed.briefEvent));
     if (closed?.result.event) this.controlPlaneEvents.publish(trimOversizedEvent(closed.result.event));
-    if (closed) this.restoreCoordinationDeadlines(cwd);
+    if (closed) this.armCoordinationDecisions(canonical);
     return closed;
   }
 
-  restoreCoordinationDeadlines(cwd: string, pendingDelayMs = 1): void {
-    if (this.coordinationStopping || this.stoppedWorkspaces.has(cwd) || this.activeCoordination.has(cwd)) return;
+  restoreCoordinationDeadlines(cwd: string): void {
+    cwd = normalizeWorkspaceRoot(cwd);
+    if (!this.coordinationIsActive(cwd)) return;
     this.clearCoordinationTimer(cwd);
     const store = this.storeRegistry.getStore(cwd);
     const open = store.listOpenScheduledCoordinationRounds();
     const next = open.map(round => round.deadlineAt).sort()[0];
-    const deadlineDelay = next ? Math.max(1, Date.parse(next) - Date.now()) : Infinity;
-    const pendingDelay = this.coordinationDeliberation && store.listPendingScheduledCoordinationDecisionRounds(1).length
-      ? pendingDelayMs : Infinity;
-    const delay = Math.min(deadlineDelay, pendingDelay);
-    if (Number.isFinite(delay)) this.armCoordinationDeadline(cwd, delay);
+    if (next) this.armCoordinationDeadline(cwd, Math.max(1, Date.parse(next) - Date.now()));
   }
 
   private clearCoordinationTimer(cwd: string): void {
@@ -274,47 +279,67 @@ export class AutomationSchedulerRegistry {
 
   private armCoordinationDeadline(cwd: string, delayMs: number): void {
     const timer = setTimeout(() => {
-      if (this.coordinationStopping || this.coordinationTimers.get(cwd) !== timer) return;
+      if (!this.coordinationIsActive(cwd) || this.coordinationTimers.get(cwd) !== timer) return;
       this.coordinationTimers.delete(cwd);
-      const task = this.processCoordination(cwd);
-      this.inFlightTasks.add(task);
-      void task.then(() => this.inFlightTasks.delete(task), () => this.inFlightTasks.delete(task));
+      try {
+        const store = this.storeRegistry.getStore(cwd);
+        const now = new Date().toISOString();
+        for (const round of store.listOpenScheduledCoordinationRounds().filter(round => round.deadlineAt <= now)) {
+          this.closeCoordinationRound(cwd, {
+            workItemId: round.workItemId, recordId: round.recordId, actorId: LING_AGENT_ID, cause: "deadline",
+          }, now);
+        }
+        this.restoreCoordinationDeadlines(cwd);
+      } catch {
+        this.armCoordinationDeadline(cwd, 1000);
+      }
     }, Math.min(delayMs, MAX_TIMER_DELAY_MS));
     timer.unref?.();
     this.coordinationTimers.set(cwd, timer);
   }
 
-  private async processCoordination(cwd: string): Promise<void> {
-    const isActive = () => !this.coordinationStopping && !this.stoppedWorkspaces.has(cwd) && !this.activeRuns.isShuttingDown();
-    if (!isActive()) return;
-    this.activeCoordination.add(cwd);
-    let pendingDelay = 1;
+  private armCoordinationDecisions(cwd: string, delayMs = 1): void {
+    if (!this.coordinationDeliberation || !this.coordinationIsActive(cwd)
+      || this.coordinationDecisionTimers.has(cwd) || this.activeCoordinationDecisions.has(cwd)) return;
+    const timer = setTimeout(() => {
+      if (this.coordinationDecisionTimers.get(cwd) !== timer) return;
+      this.coordinationDecisionTimers.delete(cwd);
+      if (!this.coordinationIsActive(cwd)) return;
+      const task = this.processCoordinationDecisions(cwd, this.coordinationDeliberation!);
+      this.inFlightTasks.add(task);
+      void task.then(() => this.inFlightTasks.delete(task), () => this.inFlightTasks.delete(task));
+    }, delayMs);
+    timer.unref?.();
+    this.coordinationDecisionTimers.set(cwd, timer);
+  }
+
+  private async processCoordinationDecisions(cwd: string, deliberation: ScheduledCoordinationDeliberation): Promise<void> {
+    const isActive = () => this.coordinationIsActive(cwd);
+    this.activeCoordinationDecisions.add(cwd);
+    let retryDelay = 1000;
     try {
       const store = this.storeRegistry.getStore(cwd);
-      const now = new Date().toISOString();
-      for (const round of store.listOpenScheduledCoordinationRounds().filter(round => round.deadlineAt <= now)) {
-        this.closeCoordinationRound(cwd, {
-          workItemId: round.workItemId, recordId: round.recordId, actorId: LING_AGENT_ID, cause: "deadline",
-        }, now);
+      const pending = store.listPendingScheduledCoordinationDecisionRounds(8);
+      if (!pending.length) {
+        retryDelay = 0;
+        return;
       }
-      if (this.coordinationDeliberation) {
-        for (const roundId of store.listPendingScheduledCoordinationDecisionRounds(8)) {
-          if (!isActive()) return;
-          if (this.storeRegistry.recoveryBlocksDispatch(cwd)) {
-            pendingDelay = 1000;
-            break;
-          }
-          const decision = store.getPendingScheduledCoordinationDecision(roundId);
-          if (decision) await this.coordinationDeliberation.evaluate(store, cwd, decision, isActive);
-        }
+      for (const roundId of pending) {
+        if (!isActive() || this.storeRegistry.recoveryBlocksDispatch(cwd)) return;
+        const decision = store.getPendingScheduledCoordinationDecision(roundId);
+        if (decision) await deliberation.evaluate(store, cwd, decision, isActive);
       }
+      retryDelay = store.listPendingScheduledCoordinationDecisionRounds(1).length ? 1 : 0;
     } catch {
-      if (isActive()) this.armCoordinationDeadline(cwd, 1000);
-      return;
+      retryDelay = 1000;
     } finally {
-      this.activeCoordination.delete(cwd);
+      this.activeCoordinationDecisions.delete(cwd);
+      if (retryDelay) this.armCoordinationDecisions(cwd, retryDelay);
     }
-    if (isActive()) this.restoreCoordinationDeadlines(cwd, pendingDelay);
+  }
+
+  private coordinationIsActive(cwd: string): boolean {
+    return !this.coordinationStopping && !this.stoppedWorkspaces.has(cwd) && !this.activeRuns.isShuttingDown();
   }
 
   async waitForIdle(): Promise<void> {
@@ -353,8 +378,11 @@ export class AutomationSchedulerRegistry {
       nextRunAt = computeNextAutomationRunAt(automation, from);
     } catch (error) {
       if (error instanceof AutomationRecurrenceCompleteError) {
-        this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(automation.id,
-          { status: "disabled", nextRunAt: null, lastErrorMessage: null }, new Date().toISOString());
+        const store = this.storeRegistry.getStore(entry.state.cwd);
+        // An admitted round keeps its owner through close, including the final scheduled occurrence.
+        const coordination = store.getAutomationCoordinationSchedule(automation.id);
+        store.updateAutomationDefinition(automation.id,
+          { ...(coordination?.enabled ? {} : { status: "disabled" as const }), nextRunAt: null, lastErrorMessage: null }, new Date().toISOString());
         this.upsertItem(entry, { automationId: automation.id, title: automation.title });
         return;
       }

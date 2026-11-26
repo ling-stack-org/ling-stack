@@ -4620,20 +4620,37 @@ test("a scoped automatic policy opens exactly one checkpoint round and reserves 
 });
 
 async function openScheduledDecisionCheckpoint(fixture: Awaited<ReturnType<typeof releaseFixture>>,
-  client: Awaited<ReturnType<Awaited<ReturnType<typeof releaseFixture>>["connect"]>>, workItemId: string, durationMs = 60_000) {
+  client: Awaited<ReturnType<Awaited<ReturnType<typeof releaseFixture>>["connect"]>>, workItemId: string,
+  { durationMs = 60_000, finalScheduledSlotCwd }: { readonly durationMs?: number; readonly finalScheduledSlotCwd?: string } = {}) {
   const store = fixture.getStore();
   const now = new Date().toISOString();
   const home = store.createLingThread({ kind: "automation", title: "Coordination checkpoint", objective: "Review the current stage" }, now);
+  const due = new Date(Math.floor(Date.now() / 1000) * 1000 - 1000);
+  const firstAndLastSlot = [
+    "FREQ=DAILY", `BYHOUR=${due.getUTCHours()}`, `BYMINUTE=${due.getUTCMinutes()}`,
+    `BYSECOND=${due.getUTCSeconds()}`, "COUNT=1",
+  ].join(";");
   const automation = store.createAutomationDefinition({
     threadId: home.id, title: "Coordination checkpoint", kind: "custom_prompt",
-    trigger: { type: "schedule", timezone: "UTC", missedRunPolicy: "skip", schedule: { cadence: "daily", timeOfDay: "00:00" } },
+    trigger: { type: "schedule", timezone: "UTC", missedRunPolicy: finalScheduledSlotCwd ? "run_one" : "skip",
+      schedule: { cadence: "daily", timeOfDay: "00:00" } },
+    ...(finalScheduledSlotCwd ? { rrule: firstAndLastSlot, nextRunAt: due.toISOString() } : {}),
     target: { scope: "workspace", workspaceId: DEFAULT_WORKSPACE_ID }, executionPolicy: {},
     promptTemplate: { templateVersion: 1, promptMarkdown: "Review the stage evidence.", contextSelectors: [] },
     outputPolicy: { artifactFormat: "markdown", destinations: [{ type: "automation_thread" }] },
-  }, now);
+  }, finalScheduledSlotCwd ? new Date(due.getTime() - 5000).toISOString() : now);
   await client.call("workItem/coordination/schedule/set", {
     automationId: automation.id, workItemId, expectedRevision: 0, enabled: true, kind: "checkpoint", durationMs,
   });
+  if (finalScheduledSlotCwd) {
+    await controlCoordinationScheduler(fixture, "start", finalScheduledSlotCwd);
+    const roundId = await waitFor(() => {
+      const run = store.listAutomationRuns({ automationId: automation.id })[0];
+      return store.getAutomationDefinition(automation.id)?.nextRunAt === undefined ? run?.coordinationRoundId : undefined;
+    });
+    assert.equal(store.getAutomationDefinition(automation.id)?.status, "enabled");
+    return { automationId: automation.id, roundId, homeThreadId: home.id };
+  }
   const { daemonUrl, authToken, cwd } = fixture.transportOptions();
   const response = await fetch(`${daemonUrl}/automations/${automation.id}/run?cwd=${encodeURIComponent(cwd)}`, {
     method: "POST", body: JSON.stringify({ idempotencyKey: `${automation.id}:checkpoint` }),
@@ -4642,11 +4659,11 @@ async function openScheduledDecisionCheckpoint(fixture: Awaited<ReturnType<typeo
   assert.equal(response.status, 202, await response.clone().text());
   const { automationRun } = await response.json() as { automationRun: AutomationRun };
   assert.ok(automationRun.coordinationRoundId);
-  return { automationId: automation.id, roundId: automationRun.coordinationRoundId };
+  return { automationId: automation.id, roundId: automationRun.coordinationRoundId, homeThreadId: home.id };
 }
 
-async function controlCoordinationScheduler(fixture: Awaited<ReturnType<typeof releaseFixture>>, action: "start" | "stop") {
-  const { daemonUrl, cwd, authToken } = fixture.transportOptions();
+async function controlCoordinationScheduler(fixture: Awaited<ReturnType<typeof releaseFixture>>, action: "start" | "stop", cwd = fixture.cwd) {
+  const { daemonUrl, authToken } = fixture.transportOptions();
   const response = await fetch(`${daemonUrl}/automations/scheduler/${action}?cwd=${encodeURIComponent(cwd)}`, {
     method: "POST", headers: { Authorization: `Bearer ${authToken}` },
   });
@@ -4764,8 +4781,8 @@ test("scheduled checkpoint decisions reject late changes and stale closes while 
   const planRevision = workItem.planRevision!;
   const { optionRefs, evidenceRef } = await recordDeliberationEvidence(client.call, item.id, planRevision);
   const revision = () => fixture.getStore().getWorkItem(item.id)!.revision;
-  const open = async (durationMs?: number) => {
-    const checkpoint = await openScheduledDecisionCheckpoint(fixture, client, item.id, durationMs);
+  const open = async (options?: Parameters<typeof openScheduledDecisionCheckpoint>[3]) => {
+    const checkpoint = await openScheduledDecisionCheckpoint(fixture, client, item.id, options);
     const decision = {
       ...target, decisionKey: "compatibility", subject: { kind: "workflow_stage", workflowStepId: waiting.id, planRevision },
       decisionKind: "implementation_tradeoff", materiality: "high", question: "Which option preserves compatibility?",
@@ -4787,13 +4804,23 @@ test("scheduled checkpoint decisions reject late changes and stale closes while 
     };
   };
 
-  const scheduled = await open(1200);
-  await controlCoordinationScheduler(fixture, "start");
+  const { daemonUrl, authToken, cwd } = fixture.transportOptions();
+  const policyUrl = `${daemonUrl}/workspace-settings/deliberation?${new URLSearchParams({ cwd, channelId: channel.id })}`;
+  const setPolicy = (expectedRevision: number, mode: "suggest" | "manual") => fetch(policyUrl, {
+    method: "PATCH", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expectedRevision, policy: { mode } }),
+  });
+  const initial = await setPolicy(0, "suggest");
+  assert.equal(initial.status, 200, await initial.clone().text());
+  await controlCoordinationScheduler(fixture, "stop");
+  const alias = join(fixture.root, "workspace-alias");
+  await symlink(cwd, alias, "junction");
+  const scheduled = await open({ durationMs: 2000, finalScheduledSlotCwd: alias });
   const evaluated = await waitFor(async () => (await scheduled.read()).receipts.find(receipt => receipt.status === "evaluated"));
   assert.equal(evaluated.status, "evaluated");
   assert.equal(((await scheduled.close()).record.payload as { closeReason: string }).closeReason, "deadline");
+  await controlCoordinationScheduler(fixture, "stop", alias);
 
-  await controlCoordinationScheduler(fixture, "stop");
   const late = await open();
   await late.close();
   const additional = await client.call<{ entry: { id: string } }>("workItem/evidence/append", {
@@ -4809,11 +4836,7 @@ test("scheduled checkpoint decisions reject late changes and stale closes while 
   await controlCoordinationScheduler(fixture, "stop");
   const policy = await open();
   await policy.close();
-  const { daemonUrl, authToken, cwd } = fixture.transportOptions();
-  const response = await fetch(`${daemonUrl}/workspace-settings/deliberation?${new URLSearchParams({ cwd, channelId: channel.id })}`, {
-    method: "PATCH", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ expectedRevision: 0, policy: { mode: "manual" } }),
-  });
+  const response = await setPolicy(1, "manual");
   assert.equal(response.status, 200, await response.clone().text());
   await controlCoordinationScheduler(fixture, "start");
   assert.equal((await waitFor(async () => (await policy.read()).receipts.find(receipt => receipt.status === "stale"))).reasonCode,
@@ -4826,6 +4849,14 @@ test("scheduled checkpoint decisions reject late changes and stale closes while 
   assert.equal(((await stale.close()).record.payload as { status: string }).status, "stale");
   assert.equal((await stale.read()).receipts[0]?.status, "stale");
   await assert.rejects(stale.evaluate(), { code: "stale_revision" });
+
+  await controlCoordinationScheduler(fixture, "stop");
+  const archived = await open();
+  await archived.close();
+  await client.call("thread/archive", { threadId: archived.homeThreadId });
+  await controlCoordinationScheduler(fixture, "start");
+  assert.equal((await waitFor(async () => (await archived.read()).receipts.find(receipt => receipt.status === "stale"))).reasonCode,
+    "coordination_inputs_changed");
 
   const control = await open();
   await client.call("workItem/pause", { ...target, expectedWorkItemRevision: revision(), expectedControlGeneration: 0,

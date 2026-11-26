@@ -171,7 +171,7 @@ export class SqliteScheduledCoordinationStore {
         workItemId: workItem.id, kind: "coordination", action: "closed", actorId: input.actorId, parentRecordId: round.recordId,
         idempotencyKey: `coordination-close:${round.recordId}`,
         payload: { status: disposition, closeReason, deadlineAt: round.deadlineAt, throughEvidenceSequence: currentSequence,
-          planRevision: workItem.planRevision,
+          planRevision: workItem.planRevision ?? null,
           briefId: brief.record.id },
       }, now, cwd);
       if (!result) throw new Error("coordination_subject_unavailable");
@@ -289,10 +289,13 @@ export class SqliteScheduledCoordinationStore {
     return true;
   }
 
-  private currentAutomationDigest(round: LingAppServerScheduledCoordinationRound): string | undefined {
+  currentAutomationDigest(round: LingAppServerScheduledCoordinationRound): string | undefined {
     const policy = this.schedule(round.automationId);
     const automation = this.automations.getAutomationDefinition(round.automationId);
-    if (!policy?.enabled || policy.revision !== round.policyRevision || automation?.status !== "enabled") return undefined;
+    if (!policy?.enabled || policy.revision !== round.policyRevision || policy.workItemId !== round.workItemId
+      || automation?.status !== "enabled") return undefined;
+    const home = this.workspace.getLingThread(automation.threadId);
+    if (!home || home.status === "archived" || home.archivedAt) return undefined;
     const digest = automationEventDigest(automationDefinitionDigestInput(automation));
     return !round.automationDefinitionDigest || round.automationDefinitionDigest === digest ? digest : undefined;
   }
