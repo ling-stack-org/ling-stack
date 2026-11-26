@@ -679,8 +679,9 @@ When both stages are running, a question binds the respondent's current
 Run/Attempt and an applicable answer binds the asking Attempt. Pi admits
 each input to the targeted stage's next model request under the same delivery
 journal as directed messages. The question read returns the delivery receipt.
-Automatic tool registration is tracked in the implementation plan.
 [Stage authority](../../packages/daemon/src/features/work-items/stage-coordination-authority.ts) · [SDK](../../packages/api-client/src/app-server.ts)
+
+Pi stages with the native `work_item_coordination` tool can discover Verify and Review references shared on the evidence board for their accepted Plan. `read_evidence` resolves a selected reference against the Verify or Review owner's stored Work Item, Plan and candidate. The projection reports checks and findings with their source IDs and candidate. `read_output` reads a sealed output packet from an accepted stage dependency or an explicitly retained stage result. Each read rechecks the stage's Run and Attempt. The source owners authorize and execute Verify and Review. [Stage evidence](../../packages/daemon/src/features/work-items/stage-evidence.ts)
 
 ### 5.11 Scheduled Coordination Admission
 

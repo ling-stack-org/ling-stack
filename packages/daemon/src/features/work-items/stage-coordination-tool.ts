@@ -14,12 +14,16 @@ import {
   readStageCoordinationBinding, stageCoordinationDenied, stageCoordinationExecution, stageCoordinationRequestKey,
   type StageCoordinationActor,
 } from "./stage-coordination-authority.js";
+import { listStageDevelopmentEvidence, readStageDependencyOutput, readStageDevelopmentEvidence } from "./stage-evidence.js";
 import { readStageMessageReceiver } from "./stage-message-target.js";
 import { sendWorkItemStageMessage } from "./stage-messages.js";
 import { askWorkItemStageQuestion, readWorkItemStageQuestionInputs, replyToWorkItemStageQuestion } from "./stage-questions.js";
 import { readWorkItemWorkflowBinding, readWorkItemWorkflowStages } from "./workflow-stages.js";
 
-type Request = { readonly action: "read"; readonly stageOffset: number }
+type ReadRequest = { readonly action: "read"; readonly stageOffset: number; readonly afterEvidenceSequence: number }
+  | { readonly action: "read_evidence"; readonly evidenceId: string; readonly sourceId: string }
+  | { readonly action: "read_output"; readonly artifactId: string };
+type WriteRequest =
   | { readonly action: "send" | "ask"; readonly targetStepId: string; readonly text: string }
   | { readonly action: "reply"; readonly questionId: string; readonly text: string };
 
@@ -73,16 +77,19 @@ export function createWorkItemCoordinationToolHandler(input: {
     let committed: AppendWorkItemCollaborationResult;
     try {
       const request = parseRequest(safeInput);
-      if (request.action === "read") {
+      if (request.action === "read" || request.action === "read_evidence" || request.action === "read_output") {
         const response = store.readSnapshot(() => {
           actor.assertCurrent();
+          if (request.action === "read_evidence") return readStageDevelopmentEvidence(store, binding, request.evidenceId, request.sourceId);
+          if (request.action === "read_output") return readStageDependencyOutput(store, step, request.artifactId);
           const readItem = store.getWorkItem(item.id)!;
           const workflow = readWorkItemWorkflowStages(store, readItem, false, request.stageOffset);
           const questions = readWorkItemStageQuestionInputs(store, step, binding.participantId);
-          return redactSecrets({ workflow, questions: questions.slice(0, 16) }, input.extraSecrets);
+          const evidence = listStageDevelopmentEvidence(store, binding, request.afterEvidenceSequence);
+          return { workflow, questions: questions.slice(0, 16), evidence };
         });
         save({ status: "read" });
-        return toolResult(response);
+        return toolResult(redactSecrets(response, input.extraSecrets));
       }
       const existing = store.findWorkItemEvidenceByKey(item.id, stageCoordinationRequestKey(binding, idempotencyKey));
       if (existing) {
@@ -129,7 +136,7 @@ export function createWorkItemCoordinationToolHandler(input: {
   };
 }
 
-function sameRequest(record: WorkItemCollaborationRecord, request: Exclude<Request, { action: "read" }>): boolean {
+function sameRequest(record: WorkItemCollaborationRecord, request: WriteRequest): boolean {
   if (!isRecord(record.payload)) return false;
   const payload = record.payload;
   switch (request.action) {
@@ -141,28 +148,43 @@ function sameRequest(record: WorkItemCollaborationRecord, request: Exclude<Reque
   }
 }
 
-function parseRequest(value: unknown): Request {
+function parseRequest(value: unknown): ReadRequest | WriteRequest {
   if (!isRecord(value)) throw invalidRequest();
   if (value.action === "read") {
     const stageOffset = value.stageOffset ?? 0;
+    const afterEvidenceSequence = value.afterEvidenceSequence ?? 0;
     if (typeof stageOffset !== "number" || !Number.isSafeInteger(stageOffset) || stageOffset < 0
-      || Object.keys(value).some(key => key !== "action" && key !== "stageOffset")) throw invalidRequest();
-    return { action: "read", stageOffset };
+      || typeof afterEvidenceSequence !== "number" || !Number.isSafeInteger(afterEvidenceSequence) || afterEvidenceSequence < 0
+      || Object.keys(value).some(key => !["action", "stageOffset", "afterEvidenceSequence"].includes(key))) throw invalidRequest();
+    return { action: "read", stageOffset, afterEvidenceSequence };
+  }
+  if (value.action === "read_evidence") {
+    if (!validId(value.evidenceId) || !validId(value.sourceId)
+      || Object.keys(value).some(key => !["action", "evidenceId", "sourceId"].includes(key))) throw invalidRequest();
+    return { action: "read_evidence", evidenceId: value.evidenceId, sourceId: value.sourceId };
+  }
+  if (value.action === "read_output") {
+    if (!validId(value.artifactId) || Object.keys(value).some(key => key !== "action" && key !== "artifactId")) throw invalidRequest();
+    return { action: "read_output", artifactId: value.artifactId };
   }
   const text = value.text;
   if (typeof text !== "string" || !text.trim() || text.length > 1200) throw invalidRequest();
   const { action } = value;
   const field = action === "reply" ? "questionId" : "targetStepId";
   const id = value[field];
-  if (typeof id !== "string" || !id.trim() || id.length > 256
+  if (!validId(id)
     || Object.keys(value).some(key => key !== "action" && key !== field && key !== "text")) throw invalidRequest();
   if (action === "send" || action === "ask") return { action, targetStepId: id, text: text.trim() };
   if (action === "reply") return { action, questionId: id, text: text.trim() };
   throw invalidRequest();
 }
 
+function validId(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= 256;
+}
+
 function invalidRequest(): HttpError {
-  return new HttpError(400, "invalid_params", "Use read, send, ask or reply with the required target and bounded text.");
+  return new HttpError(400, "invalid_params", "Supply a supported action and its required references or bounded text.");
 }
 
 function toolResult(value: unknown): PiRunnerToolHandledResult {

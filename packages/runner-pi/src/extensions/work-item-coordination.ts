@@ -42,16 +42,20 @@ export function createWorkItemCoordinationExtension(options: PiRunnerRunOptions)
       label: "Work Item coordination",
       description: coordinator
         ? "Read open checkpoints, stages and evidence for the Work Items coordinated in this conversation. If a checkpoint has a concrete open decision, submit it with its current Plan, viable options, evidence and participants. A registered decision will be evaluated at close."
-        : "Read the accepted Plan's stages and questions assigned to you. Send a stage a message, ask a question, or reply to an assigned question. A queued receipt means the request was recorded. Continue any independent work while awaiting the next model input.",
+        : "Read the accepted Plan's stages, your questions, shared Verify and Review references, or sealed dependency output. Send a stage a message, ask a question, or reply to an assigned question. A queued receipt means the request was recorded. Continue any independent work while awaiting the next model input.",
       executionMode: "sequential",
       parameters: coordinator ? coordinatorParameters : {
         type: "object", additionalProperties: false, required: ["action"],
         properties: {
-          action: { enum: ["read", "send", "ask", "reply"], type: "string" },
+          action: { enum: ["read", "read_evidence", "read_output", "send", "ask", "reply"], type: "string" },
           targetStepId: { type: "string", minLength: 1, maxLength: 256, description: "Receiving step for send or ask." },
           questionId: { type: "string", minLength: 1, maxLength: 256, description: "Assigned question for reply." },
           text: { type: "string", minLength: 1, maxLength: 1200, description: "Message, question or answer." },
           stageOffset: { type: "integer", minimum: 0, description: "Next stage offset from a read result." },
+          afterEvidenceSequence: { type: "integer", minimum: 0, description: "Next shared evidence position from a read result." },
+          evidenceId: { type: "string", minLength: 1, maxLength: 256, description: "Shared evidence record for read_evidence." },
+          sourceId: { type: "string", minLength: 1, maxLength: 256, description: "Verify or Review source from that shared record." },
+          artifactId: { type: "string", minLength: 1, maxLength: 256, description: "Sealed output artifact of your accepted stage dependency." },
         },
       } as ToolDefinition["parameters"],
       async execute(toolCallId, input) {

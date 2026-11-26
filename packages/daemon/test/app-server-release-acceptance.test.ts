@@ -6617,6 +6617,25 @@ test("one Work Item retains independent verification, review, delivery and rollb
     snapshotDigest: reviewCandidateDigest, summary: "The candidate preserves the accepted contract.", findings: [],
   }) }));
   t.after(() => provider.close());
+  const qaToolInputs: object[] = [];
+  const qaToolResults: Record<string, unknown>[] = [];
+  const stageProvider = await startLoopbackPiProvider((raw: unknown) => {
+    const { messages, tools } = raw as {
+      tools?: { function: { name: string } }[];
+      messages: { role: string; content: string | readonly { text?: string }[] }[];
+    };
+    if (!JSON.stringify(messages).includes("Task: Consume independent evidence")) return { text: "The new contract is ready for QA." };
+    const tool = "work_item_coordination";
+    assert.ok(tools?.some(entry => entry.function.name === tool));
+    const results = messages.filter(message => message.role === "tool");
+    if (results.length > qaToolResults.length) {
+      const content = results.at(-1)!.content;
+      qaToolResults.push(JSON.parse(typeof content === "string" ? content : content.map(part => part.text ?? "").join("")));
+    }
+    const input = qaToolInputs[results.length];
+    return input ? { tool, input } : { text: "QA consulted the shared evidence." };
+  });
+  t.after(() => stageProvider.close());
 
   const base = "b".repeat(40);
   const mergedCommit = "d".repeat(40);
@@ -6626,6 +6645,7 @@ test("one Work Item retains independent verification, review, delivery and rollb
   let head = "";
   const fixture = await releaseFixture(t, {
     recoveryJournal: true,
+    channels: { terminalReports: false, teamObserverBus: false },
     verificationRecipes: async (root, cwd) => {
       const script = join(root, "o9-contract-check.cjs");
       const source = "if (require('node:fs').readFileSync('contract.txt', 'utf8') !== 'candidate\\n') process.exit(1);\n";
@@ -6675,7 +6695,8 @@ test("one Work Item retains independent verification, review, delivery and rollb
   const store = fixture.getStore();
   const now = new Date().toISOString();
   const preset = addLoopbackPreset(store, provider.baseUrl);
-  const channel = store.createChannel({ name: "O9 acceptance", boundPath: fixture.cwd, allowedTools: ["read"], defaultProviderPresetId: preset.id }, now);
+  const stagePreset = addLoopbackPreset(store, stageProvider.baseUrl);
+  const channel = store.createChannel({ name: "O9 acceptance", boundPath: fixture.cwd, allowedTools: ["read"], defaultProviderPresetId: stagePreset.id }, now);
   const thread = store.createLingThread({ channelId: channel.id, kind: "channel_discussion", title: "O9 acceptance", objective: "Retain one evidence chain." }, now);
   const plan = store.upsertProposedPlanArtifact({ id: "o9-plan", threadId: thread.id, channelId: channel.id,
     title: "Preserve the contract", bodyMarkdown: "Run the independent checks and deliver the accepted candidate.", status: "draft" }, now);
@@ -6683,8 +6704,14 @@ test("one Work Item retains independent verification, review, delivery and rollb
   const peer = await fixture.connect();
   const accepted = await client.call<ProposedPlanActionResponse>("plan/accept", {
     mode: "workflow", threadId: thread.id, planId: plan.id, expectedRevision: plan.revision,
-    workflowStepPreviews: [{ title: "Implement the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer", requiredTools: ["read"] }],
+    workflowStepPreviews: [
+      { title: "Implement the contract", stageId: "P01", ownerId: "teammate_builtin_engineer", ownerLabel: "Engineer", requiredTools: ["read"] },
+      { title: "Consume independent evidence", stageId: "QA", dependsOnStageIds: ["P01"], ownerId: "teammate_builtin_qa", ownerLabel: "QA", requiredTools: ["read"] },
+    ],
   });
+  assert.ok(accepted.workflowId);
+  const [implementation, qa] = store.listChannelWorkflowSteps({ workflowId: accepted.workflowId, complete: true });
+  assert.ok(implementation && qa);
   const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "o9-evidence-chain", title: "Preserve the contract",
     channelId: channel.id, initialStatus: "ready" }, now);
   const claimed = await client.call<LingAppServerWorkItemAcceptResult>("workItem/accept", {
@@ -6772,18 +6799,32 @@ test("one Work Item retains independent verification, review, delivery and rollb
   await appendProof("o9-delivery-evidence", "evidence_ref", { type: "github_delivery", id: delivered.deliveryId });
   await appendProof("o9-rollback-evidence", "evidence_ref", { type: "rollback", id: delivered.deliveryId });
 
-  const prepared = await client.call<LingAppServerRecoveryResult>("server/recovery/prepare", { expectedRevision: 0, idempotencyKey: "o9-rollback-journal" });
-  assert.ok(prepared.entries.some(entry => entry.kind === "github_delivery" && entry.workItemId === workItemId));
-  const journalEntry = prepared.entries.find(entry => entry.kind === "github_delivery" && entry.workItemId === workItemId);
-  assert.ok(journalEntry);
-  assert.equal(journalEntry?.id, delivered.deliveryId);
-
   const evidenceIds = proofs.map(entry => entry.id);
   assert.equal(new Set(evidenceIds).size, 4);
   assert.ok(proofs.every(entry => entry.workItemId === workItemId && entry.subjectRevision === planRevision));
   assert.deepEqual(proofs.map(entry => entry.sourceRefs[0]?.type), ["verification", "review", "github_delivery", "rollback"]);
   assert.equal(new Set(proofs.map(entry => `${entry.sourceRefs[0]?.type}:${entry.sourceRefs[0]?.id}`)).size, 4);
   assert.ok(proofs.every(entry => entry.sourceRefs[0]?.digest === candidate.candidateDigest));
+
+  const { entry: privateEvidence } = await client.call<EvidenceReceipt>("workItem/evidence/append", {
+    workItemId, actorId: "local-user", subjectRevision: planRevision, kind: "evidence_ref", visibility: "owner",
+    content: "Private reviewer material", sourceRefs: proofs[1]!.sourceRefs, idempotencyKey: "o9-owner-private",
+  });
+  const { entry: staleEvidence } = await client.call<EvidenceReceipt>("workItem/evidence/append", {
+    workItemId, actorId: "local-user", subjectRevision: `${planRevision}:old`, kind: "evidence_ref",
+    content: "Superseded Plan", sourceRefs: proofs[0]!.sourceRefs, idempotencyKey: "o9-old-plan-evidence",
+  });
+  const otherItem = store.upsertWorkItem({ sourceType: "manual", sourceId: "o9-other-item", channelId: channel.id,
+    title: "Unrelated Work Item" }, now);
+  const { entry: otherEvidence } = await client.call<EvidenceReceipt>("workItem/evidence/append", {
+    workItemId: otherItem.id, actorId: "local-user", subjectRevision: planRevision, kind: "evidence_ref",
+    content: "Evidence in another Work Item", sourceRefs: proofs[0]!.sourceRefs, idempotencyKey: "o9-other-item-evidence",
+  });
+
+  const prepared = await client.call<LingAppServerRecoveryResult>("server/recovery/prepare", { expectedRevision: 0, idempotencyKey: "o9-rollback-journal" });
+  const journalEntry = prepared.entries.find(entry => entry.kind === "github_delivery" && entry.workItemId === workItemId);
+  assert.ok(journalEntry);
+  assert.equal(journalEntry.id, delivered.deliveryId);
 
   await fixture.restart();
   const restored = await fixture.connect();
@@ -6794,6 +6835,44 @@ test("one Work Item retains independent verification, review, delivery and rollb
   assert.equal(reconciled.pendingCount, 0);
   const history = await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/collaboration/read", { workItemId });
   assert.equal(history.records.filter(record => record.kind === "deliberation").length, 1);
+
+  const startStage = async (stepId: string) => {
+    const { daemonUrl, authToken } = fixture.transportOptions();
+    const url = new URL(`/workflow-steps/${stepId}/start`, daemonUrl);
+    url.searchParams.set("cwd", fixture.cwd);
+    const response = await fetch(url, { method: "POST", body: JSON.stringify({ mode: "create_and_run_task" }),
+      headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" } });
+    assert.ok(response.ok, await response.text());
+  };
+  await startStage(implementation.id);
+  const finished = await waitFor(() => {
+    const step = fixture.getStore().getChannelWorkflowStep(implementation.id);
+    return step?.status === "succeeded" && step.metadata?.outputArtifactId ? step : undefined;
+  });
+  const readEvidence = (entry: EvidenceReceipt["entry"]) => ({ action: "read_evidence", evidenceId: entry.id, sourceId: entry.sourceRefs[0]!.id });
+  qaToolInputs.push({ action: "read" }, readEvidence(proofs[0]!), readEvidence(proofs[1]!),
+    readEvidence(privateEvidence), readEvidence(staleEvidence), readEvidence(otherEvidence),
+    { action: "read_output", artifactId: finished.metadata?.contextArtifactId },
+    { action: "read_output", artifactId: finished.metadata?.outputArtifactId });
+  assert.ok(finished.metadata?.contextArtifactId);
+  await startStage(qa.id);
+  await waitFor(() => fixture.getStore().getChannelWorkflowStep(qa.id)?.status === "succeeded" ? true : undefined);
+  const [discovered, verifyProof, reviewProof, privateResult, staleResult, otherResult, contextResult, output] = qaToolResults;
+  assert.deepEqual(discovered?.evidence, { records: proofs.slice(0, 2).map(entry => ({
+    evidenceId: entry.id, sources: entry.sourceRefs.map(({ type, id, digest }) => ({ type, id, digest })),
+  })) });
+  assert.equal(verifyProof?.candidateDigest, candidate.candidateDigest);
+  assert.equal(verifyProof?.status, "passed");
+  assert.equal(verifyProof?.operationId, verified.operationId);
+  assert.equal(reviewProof?.candidateDigest, candidate.candidateDigest);
+  assert.equal(reviewProof?.status, "completed");
+  assert.equal(reviewProof?.assessmentId, reviewed.assessmentId);
+  for (const denied of [privateResult, staleResult, otherResult, contextResult]) {
+    assert.equal(denied?.code, "capability_denied");
+  }
+  assert.equal(output?.artifactId, finished.metadata.outputArtifactId);
+  assert.equal(output?.runId, finished.runId);
+  assert.match(String(output?.resultSummary), /contract is ready for QA/u);
 });
 
 test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observed GitHub delivery and grant revocation", { timeout: 35_000 }, async t => {
