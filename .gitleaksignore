@@ -728,3 +728,7 @@ fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-s
 fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1668
 fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
 fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837
+
+# Squashed macOS packaging review with the same verified source digests.
+f55acd1385a37b6db6d75c4caa53fef77cab4d95:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:278
+f55acd1385a37b6db6d75c4caa53fef77cab4d95:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1160
