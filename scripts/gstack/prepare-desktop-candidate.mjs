@@ -28,6 +28,10 @@ export function parseDesktopCandidateArguments(args) {
       if (options.ciEphemeral) throw new Error("gstack_desktop_duplicate_argument");
       options.ciEphemeral = true; continue;
     }
+    if (flag === "--local-bounded") {
+      if (options.storageMode) throw new Error("gstack_desktop_duplicate_argument");
+      options.storageMode = "local-bounded"; continue;
+    }
     const key = flag.slice(2);
     if (!flag.startsWith("--") || !flags.has(key) || options[key] !== undefined || !args[index + 1] || args[index + 1].startsWith("--")) {
       throw new Error("gstack_desktop_arguments_invalid");
@@ -35,12 +39,14 @@ export function parseDesktopCandidateArguments(args) {
     options[key] = args[++index];
   }
   if (!options.workspace || !options.bun || !options.shell || !["source", "native", "resource", "complete"].includes(options["stop-after"] ?? "complete")) {
-    throw new Error("Usage: prepare-desktop-candidate.mjs --workspace <new-root> --bun <absolute-bun> --shell <absolute-bash> [--mount <external-volume>|--ci-ephemeral] [--source <pinned-checkout>] [--go <go>] [--selection <new-selection.json>] [--stop-after source|native|resource|complete]");
+    throw new Error("Usage: prepare-desktop-candidate.mjs --workspace <new-root> --bun <absolute-bun> --shell <absolute-bash> [--mount <external-volume>|--local-bounded|--ci-ephemeral] [--source <pinned-checkout>] [--go <go>] [--selection <new-selection.json>] [--stop-after source|native|resource|complete]");
   }
   for (const key of ["workspace", "bun", "shell", "mount", "source", "selection"]) {
     if (options[key] && !isAbsolute(options[key])) throw new Error(`gstack_desktop_absolute_path_required:${key}`);
   }
-  if (options.mount && options.ciEphemeral) throw new Error("gstack_desktop_storage_policy_conflict");
+  if (options.mount && options.ciEphemeral || options.storageMode && (options.mount || options.ciEphemeral)) {
+    throw new Error("gstack_desktop_storage_policy_conflict");
+  }
   return options;
 }
 
@@ -104,7 +110,7 @@ export async function prepareDesktopCandidate(options) {
   const root = resolve(options.workspace);
   if (await exists(root)) throw new Error("gstack_desktop_new_workspace_required");
   options = { ...options, bun: await realpath(options.bun), shell: await realpath(options.shell) };
-  await initResourceWorkspace({ root, mountPath: options.mount, ciEphemeral: options.ciEphemeral });
+  await initResourceWorkspace({ root, mountPath: options.mount, ciEphemeral: options.ciEphemeral, storageMode: options.storageMode });
   const stop = options["stop-after"] ?? "complete";
   for (const step of steps) {
     if (step === "model") continue; // Runtime acquires pinned weights into owned state on first use.

@@ -679,7 +679,7 @@ async function fileRef(skillDirectoryPath: string, filePath: string, kind: Skill
   };
 }
 
-function classifySkillSourceWarnings(markdown: string, sourceSizeBytes: number, maxSourceBytes: number): SkillSourceWarning[] {
+export function classifySkillSourceWarnings(markdown: string, sourceSizeBytes: number, maxSourceBytes: number): SkillSourceWarning[] {
   const warnings: SkillSourceWarning[] = [];
   if (sourceSizeBytes > maxSourceBytes) {
     warnings.push({

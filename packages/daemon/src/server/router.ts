@@ -210,6 +210,7 @@ import {
   handlePluginsImport,
 } from "../features/plugins/routes.js";
 import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
+import { handleOptionalSkillPackRoute } from "../features/skills/optional-pack-routes.js";
 import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
 import { handleDesktopBrowserRoute } from "../features/desktop-browser/routes.js";
 import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
@@ -980,6 +981,9 @@ export async function routeRequest(
     await handleAutomationRunItem(request, response, config, storeRegistry, activeRuns, automationRunRoute);
     return;
   }
+
+  if (await handleOptionalSkillPackRoute({ request, response, url, storeRegistry, controlPlaneEvents,
+    maxBodyBytes: config.maxBodyBytes, desktopBridgeToken: context.desktopBridgeToken })) return;
 
   if (url.pathname === "/plugins") {
     await handlePluginsCollection(

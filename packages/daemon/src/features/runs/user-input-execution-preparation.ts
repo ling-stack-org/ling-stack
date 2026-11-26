@@ -5,6 +5,8 @@ import { PiRunnerAdapter, type PiRunnerRunOptions } from "@ling-stack/runner-pi"
 import type { RunnerAdapter } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { restorePackagedSkillContext } from "../skills/packaged-runtime.js";
+import { preparePackagedSkillGeneration } from "../skills/packaged-resolution.js";
+import { assertOptionalSkillPackEnabledForRecovery } from "../skills/optional-pack-catalog.js";
 import { assertPreparedRunnerMemoryCurrent, capturePreparedRunnerInput, readPreparedRunnerInput,
   restorePreparedRunnerOptions, type PreparedRunnerInput } from "./prepared-runner-input.js";
 import { prepareUserInputContinuationRequest, readUserInputContinuationPreparedRequest } from "./user-input-prepared-request.js";
@@ -47,6 +49,7 @@ export async function prepareUserInputContinuationExecution(input: {
     if (!seed || !source) throw changedSource();
     return freeze({ request: request.request, source, sourceExecution: readUserInputSourceExecution(store, source, seed) });
   });
+  await preparePackagedSkillGeneration(facts.sourceExecution.skillSourceContext);
 
   const checkCurrent = (): PiRunnerRunOptions => {
     input.currentOptions.signal?.throwIfAborted();
@@ -63,6 +66,7 @@ export async function prepareUserInputContinuationExecution(input: {
     }
     const restored = restorePreparedRunnerOptions(facts.sourceExecution, input.currentOptions);
     assertPreparedRunnerMemoryCurrent(store, request.request, facts.sourceExecution);
+    assertOptionalSkillPackEnabledForRecovery(store, facts.sourceExecution.skillSourceContext);
     restorePackagedSkillContext(facts.sourceExecution.skillSourceContext, facts.source.selectedSkillId);
     const checked: unknown = input.assertCurrent(facts);
     if (checked && typeof (checked as { then?: unknown }).then === "function") {

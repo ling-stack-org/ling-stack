@@ -1,16 +1,22 @@
 # Bundled GStack Client Contract
 
-Status: approved source contract; implementation ready for independent review; package acceptance deferred
+Status: retained runtime contract; Desktop distribution is governed by the optional plugin design
 Owner: Skills and Desktop maintainers
 Last verified: 2026-10-17 against Ling `cd7d9d83` and GStack `1.91.101.0`
 Document type: product and architecture contract
-Code and test anchors: `packages/core/src/bundled-skill-source.ts`, `packages/daemon/src/features/skills/packaged-runtime.ts`, `scripts/gstack/`, `apps/desktop/tests/packaged-gstack-resources.test.mjs`
+Code and test anchors: `packages/core/src/bundled-skill-source.ts`, `packages/daemon/src/features/skills/packaged-runtime.ts`, `packages/daemon/src/features/skills/packaged-history.ts`, `scripts/gstack/`, `packages/daemon/test/packaged-gstack-runtime.test.mjs`
+
+The [gstack optional plugin design](gstack-optional-plugin.md) defines the current
+Desktop distribution and migration path. This document retains the authenticated
+runtime, source publication and frozen-task contracts used by an installed gstack
+pack. The [desktop prerelease evidence](plugin-independent-packaging.md#desktop-开发预发布)
+records the delivered resource and startup behavior.
 
 ## Scope
 
-Ling ships a reviewed, complete GStack resource set with the desktop client so
-the 57 upstream skills can be discovered and executed without a separate global
-GStack installation. The bundle also includes the upstream TestSavant prompt
+An installed gstack pack supplies a reviewed, complete GStack resource set so the
+57 upstream skills can be discovered and executed without a separate global
+GStack installation. The pack can include the upstream TestSavant prompt
 injection model, its packaged Node runtime, and the browser resources used by
 GStack workflows.
 

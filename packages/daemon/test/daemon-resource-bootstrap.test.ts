@@ -18,23 +18,20 @@ async function launchCli(t: TestContext, extraEnv: NodeJS.ProcessEnv = {}) {
   const source = new URL("../src/cli.ts", import.meta.url).href;
   const shutdownSource = new URL("../src/runtime/signal-shutdown.ts", import.meta.url).href;
   const hook = join(cwd, "hook.mjs");
+  const invalidNative = extraEnv.LING_TEST_NATIVE_RESOURCE_INVALID === "1";
   const boundary = `
     import assert from 'node:assert/strict';
     import { once } from 'node:events';
     export function readPackagedQaHarnessSelection() {}
     export function readPackagedRestrictedCommandConfig() {}
-    export function readPackagedOfficeLocalNativeArtifact() {}
-    export async function preparePackagedGstackStartup() {
+    export function readPackagedOfficeLocalNativeArtifact() {
       assert.equal(process.env.LING_STACK_RESOURCE_BOOTSTRAP_FD, undefined);
       assert.equal(process.env.LING_STACK_ENGINE_AUTHORITY_FD, undefined);
       assert.equal(process.env.LING_STACK_SHUTDOWN_REQUEST_FD, undefined);
-      process.send('preparing');
-      const [action] = await once(process, 'message');
-      if (action === 'fail') throw new Error('fixture_resource_authentication_failed');
-      return () => {};
+      if (${invalidNative}) throw new Error('fixture_resource_authentication_failed');
     }
     export async function startDaemon(config, hooks) {
-      assert.equal(typeof hooks.initializeBundledSkills, 'function');
+      assert.deepEqual(hooks, {});
       process.send('starting-service');
       const [action] = await once(process, 'message');
       assert.equal(action, 'service-ready');
@@ -52,8 +49,7 @@ async function launchCli(t: TestContext, extraEnv: NodeJS.ProcessEnv = {}) {
   // Both pipe writers and readers are production code over real child-process pipes.
   await writeFile(hook, `import { registerHooks } from 'node:module';
     const boundaries = new Set(${JSON.stringify(["./index.js", "./runtime/packaged-qa-harness-bootstrap.js",
-      "./runtime/sandbox/packaged-restricted-command-bootstrap.js", "./runtime/sandbox/packaged-office-native-bootstrap.js",
-      "./features/skills/packaged-startup.js"])});
+      "./runtime/sandbox/packaged-restricted-command-bootstrap.js", "./runtime/sandbox/packaged-office-native-bootstrap.js"])});
     registerHooks({resolve(specifier, context, next) {
       if (context.parentURL === ${JSON.stringify(source)} && specifier === './runtime/signal-shutdown.js') {
         return { shortCircuit: true, url: ${JSON.stringify(shutdownSource)} };
@@ -89,18 +85,13 @@ async function launchCli(t: TestContext, extraEnv: NodeJS.ProcessEnv = {}) {
   return { child, pid, exited, authorityChannel, resourceChannel, messages, output: () => output };
 }
 
-test("actual CLI authenticates resources before FD4 and service startup, with FD3 only after service readiness", { timeout: 5000 }, async t => {
+test("actual CLI starts without gstack and publishes FD3 only after service readiness", { timeout: 5000 }, async t => {
   const input = await launchCli(t);
-  assert.equal((await once(input.child, "message"))[0], "preparing");
-  let resourcesReady = false, authorityReady = false;
-  const resource = readDaemonResourceBootstrap({ channel: input.resourceChannel, pid: input.pid })
-    .then(() => { resourcesReady = true; });
+  const starting = once(input.child, "message");
+  let authorityReady = false;
+  const resource = readDaemonResourceBootstrap({ channel: input.resourceChannel, pid: input.pid });
   const authority = readExecutionEngineHostAuthority({ channel: input.authorityChannel, pid: input.pid,
     baseUrl: "http://127.0.0.1:17991" }).then(value => { authorityReady = true; return value; });
-  assert.equal(resourcesReady, false);
-  assert.deepEqual(input.messages, ["preparing"]);
-  const starting = once(input.child, "message");
-  input.child.send("admit");
   assert.equal((await starting)[0], "starting-service");
   await resource;
   assert.equal(authorityReady, false, "FD4 must not masquerade as completed service/engine readiness");
@@ -113,24 +104,20 @@ test("actual CLI authenticates resources before FD4 and service startup, with FD
 });
 
 test("actual CLI resource failure exits without a resource receipt, service or authority", { timeout: 5000 }, async t => {
-  const input = await launchCli(t);
-  assert.equal((await once(input.child, "message"))[0], "preparing");
+  const input = await launchCli(t, { LING_TEST_NATIVE_RESOURCE_INVALID: "1" });
   const resource = assert.rejects(readDaemonResourceBootstrap({ channel: input.resourceChannel, pid: input.pid }), /invalid|unavailable/);
-  input.child.send("fail");
   assert.deepEqual(await input.exited, [1, null]);
   await resource;
-  assert.deepEqual(input.messages, ["preparing"]);
+  assert.deepEqual(input.messages, []);
   assert.match(input.output(), /fixture_resource_authentication_failed/);
 });
 
 test("actual CLI drains and exits cleanly after a request on its inherited command pipe", { timeout: 5000 }, async t => {
   const input = await launchCli(t, { LING_STACK_SHUTDOWN_OBSERVER_FD: "5", LING_STACK_SHUTDOWN_REQUEST_FD: "6" });
-  assert.equal((await once(input.child, "message"))[0], "preparing");
+  const starting = once(input.child, "message");
   const resourcesReady = readDaemonResourceBootstrap({ channel: input.resourceChannel, pid: input.pid });
   const authorityReady = readExecutionEngineHostAuthority({ channel: input.authorityChannel, pid: input.pid,
     baseUrl: "http://127.0.0.1:17991" });
-  const starting = once(input.child, "message");
-  input.child.send("admit");
   assert.equal((await starting)[0], "starting-service");
   await resourcesReady;
   input.child.send("service-ready");

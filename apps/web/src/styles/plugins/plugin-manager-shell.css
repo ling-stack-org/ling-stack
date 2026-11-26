@@ -504,6 +504,31 @@
   padding: 0 var(--ling-space-2);
 }
 
+.plugin-skill-pack-row {
+  padding-block: var(--ling-space-3);
+}
+
+.plugin-skill-pack-row .plugin-marketplace-toggle {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.plugin-skill-pack-row a {
+  color: var(--ling-action-accent);
+  font-size: var(--ling-font-xs);
+}
+
+@media (max-width: 640px) {
+  .plugin-skill-pack-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .plugin-skill-pack-row .plugin-marketplace-toggle {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}
+
 .plugin-marketplace-icon {
   width: 36px;
   height: 36px;

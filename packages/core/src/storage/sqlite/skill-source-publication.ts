@@ -16,14 +16,15 @@ function content(snapshot: CreateSkillSourceSnapshotInput) {
 }
 
 export function publishSkillSourceBatch({ database }: SqliteStoreContext, store: SqliteSkillRegistryStore,
-  input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch {
+  input: PublishSkillSourceBatchInput, now: string, insideParentTransaction = false): PublishedSkillSourceBatch {
   const invalid = (message: string): never => { throw new SkillSourcePublicationError("skill_source_publication_invalid", message); };
   const conflict = (skillId: string): never => {
     throw new SkillSourcePublicationError("skill_source_publication_conflict", `Skill source changed during preparation: ${skillId}`);
   };
   const ids = input.records.map(record => record.snapshot.skillId);
   if (new Set(ids).size !== ids.length) invalid("Duplicate skill source selection");
-  database.exec("BEGIN IMMEDIATE");
+  const ownsTransaction = !insideParentTransaction && !database.isTransaction;
+  database.exec(ownsTransaction ? "BEGIN IMMEDIATE" : "SAVEPOINT skill_source_publication");
   try {
     // Validate the entire batch under one writer lock before changing any active pointer.
     const unchanged = new Map<string, SkillSourceSnapshot>();
@@ -79,10 +80,11 @@ export function publishSkillSourceBatch({ database }: SqliteStoreContext, store:
       snapshots.push(store.upsertSkillSourceSnapshot({ ...record.snapshot, reviewStatus: "published" }, now));
       for (const artifact of record.artifacts ?? []) artifacts.push(store.upsertSkillSourceArtifact(artifact, now));
     }
-    database.exec("COMMIT");
+    database.exec(ownsTransaction ? "COMMIT" : "RELEASE skill_source_publication");
     return { snapshots, artifacts };
   } catch (error) {
-    rollbackOwnedSqliteTransaction(database);
+    if (ownsTransaction) rollbackOwnedSqliteTransaction(database);
+    else database.exec("ROLLBACK TO skill_source_publication; RELEASE skill_source_publication");
     throw error;
   }
 }

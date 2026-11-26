@@ -1,4 +1,13 @@
 export const enUS = {
+  "Select a workspace to manage skill packs.": "Select a workspace to manage skill packs.",
+  "Skill packs could not be loaded.": "Skill packs could not be loaded.",
+  "Enabled in this workspace": "Enabled in this workspace",
+  "Disabled in this workspace": "Disabled in this workspace",
+  "Enable {name} in this workspace": "Enable {name} in this workspace",
+  "Use previous installation": "Use previous installation",
+  "Connect folder": "Connect folder",
+  "Runtime dependencies missing": "Runtime dependencies missing",
+  "Incompatible platform": "Incompatible platform",
   "Drawing board": "Drawing board",
   "Drawing canvas": "Drawing canvas",
   "Change shape": "Change shape",

@@ -139,6 +139,7 @@ retains the detailed implementation brief and historical checkpoint.
 - [Skill Source Sync](skill-source-sync-simplification-p15.md)
 - [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md)
 - [External Agent Skill Discovery Implementation Plan](external-agent-skill-discovery-implementation-plan.md)
+- [gstack 可选插件设计](gstack-optional-plugin.md)
 - [Bundled GStack Client Contract](gstack-bundled-client-upgrade.md)
 - [Bundled GStack Client Implementation Plan](gstack-bundled-client-upgrade-implementation-plan.md)
 - [Bundled GStack Acceptance Matrix](gstack-bundled-client-acceptance-matrix.md)

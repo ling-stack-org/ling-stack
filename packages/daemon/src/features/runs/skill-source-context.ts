@@ -1,8 +1,10 @@
 import { resolveSkillSourceRuntimeView, type RunStore, type SkillOptimizationMode } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { bindPackagedSkillContext } from "../skills/packaged-runtime.js";
+import { preparePackagedSkillGeneration } from "../skills/packaged-resolution.js";
+import { readInstructionSkillReferences } from "../skills/optional-pack-publication.js";
 
-export function prepareRunSkillSource(store: RunStore, skillId: string, optimizationMode: SkillOptimizationMode) {
+export async function prepareRunSkillSource(store: RunStore, skillId: string, optimizationMode: SkillOptimizationMode) {
   const snapshot = store.getSkillSourceSnapshot(skillId);
   const registry = store.getSkillRegistryEntry(skillId);
   const managed = !["implement", "checkpoint"].includes(skillId)
@@ -15,5 +17,9 @@ export function prepareRunSkillSource(store: RunStore, skillId: string, optimiza
   if (managed && (!result.context.loaded || result.context.truncated)) {
     throw new HttpError(409, "skill_source_not_ready", `Skill source is not executable: ${result.context.blockedReason ?? "source_truncated"}`);
   }
-  return { ...result, context: bindPackagedSkillContext(result.context) };
+  await preparePackagedSkillGeneration(result.context);
+  const references = await readInstructionSkillReferences(result.context);
+  return { ...result,
+    promptFragment: references ? [result.promptFragment, references].filter(Boolean).join("\n\n") : result.promptFragment,
+    context: bindPackagedSkillContext(result.context) };
 }

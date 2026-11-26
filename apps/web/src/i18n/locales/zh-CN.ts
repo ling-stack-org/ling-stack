@@ -1,4 +1,13 @@
 export const zhCN = {
+  "Select a workspace to manage skill packs.": "选择一个工作区以管理技能包。",
+  "Skill packs could not be loaded.": "无法加载技能包。",
+  "Enabled in this workspace": "已在此工作区启用",
+  "Disabled in this workspace": "已在此工作区停用",
+  "Enable {name} in this workspace": "在此工作区启用 {name}",
+  "Use previous installation": "复用已有安装",
+  "Connect folder": "连接目录",
+  "Runtime dependencies missing": "缺少运行依赖",
+  "Incompatible platform": "平台不兼容",
   "Drawing board": "绘图板",
   "Drawing canvas": "绘图画布",
   "Change shape": "切换形状",

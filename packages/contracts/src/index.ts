@@ -73,6 +73,7 @@ export * from "./cua-driver-bundled.js";
 export * from "./locked-computer-control.js";
 export type * from "./skills.js";
 export type * from "./official-skill-source.js";
+export type * from "./optional-skill-packs.js";
 export type * from "./governance-notifications.js";
 export type * from "./teammates.js";
 export type * from "./companions.js";

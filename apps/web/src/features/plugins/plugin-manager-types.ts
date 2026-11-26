@@ -167,6 +167,8 @@ export interface PluginActionHandlers {
 }
 
 export interface PluginManagerPageProps {
+  readonly workspaceCwd: string;
+  readonly onSkillPacksChanged: () => void;
   readonly plugins: readonly ManagedPluginView[];
   readonly catalog?: ManagedPluginCatalogResponse;
   readonly catalogLoading: boolean;

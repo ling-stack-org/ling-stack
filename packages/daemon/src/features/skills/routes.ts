@@ -1441,7 +1441,7 @@ async function buildGstackSkillSourceSyncPreview(
       });
   return previewGstackSkillSourceSync({
     roots,
-    registrySkills: listEffectiveSkillRegistryEntries(store),
+    registrySkills: listEffectiveSkillRegistryEntries(store, true),
     snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
     // Shared-folder snapshots belong to a separate contract and must never surface here.
     excludedSnapshotPackIds: [SHARED_AGENT_SKILL_PACK_ID],

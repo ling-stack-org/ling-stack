@@ -10,12 +10,13 @@ import type { PluginActionHandlers, PluginManagerPageProps } from "./plugin-mana
 import { PluginUninstallDialog } from "./PluginUninstallDialog.js";
 import { usePluginManagerController } from "./usePluginManagerController.js";
 import { ChromeBrowserConnectDrawer } from "./ChromeBrowserConnectDrawer.js";
+import { OptionalSkillPacks } from "./OptionalSkillPacks.js";
 
 export type { PluginManagerPageProps } from "./plugin-manager-types.js";
 
 export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Element {
   const { t } = useI18n();
-  const [activeTab, setActiveTab] = useState<"installed" | "available">("installed");
+  const [activeTab, setActiveTab] = useState<"installed" | "available" | "skill-packs">("installed");
   const [tabTouched, setTabTouched] = useState(false);
   const copy = useMemo(() => buildPluginManagerCopy(t), [t]);
   const controller = usePluginManagerController({
@@ -169,15 +170,16 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                 value={activeTab}
                 onValueChange={(value) => {
                   setTabTouched(true);
-                  setActiveTab(value as "installed" | "available");
+                  setActiveTab(value as typeof activeTab);
                 }}
               >
                 <TabsList aria-label={t("Plugin status")} className="plugin-marketplace-tabs" size="sm">
                   <TabsTrigger value="installed">{t("Installed")} <span>{installedEntries.length}</span></TabsTrigger>
                   <TabsTrigger value="available">{t("Not installed")} <span>{availableEntries.length}</span></TabsTrigger>
+                  <TabsTrigger value="skill-packs">{t("Skill packs")}</TabsTrigger>
                 </TabsList>
               </Tabs>
-              <Field className="plugin-marketplace-search" label={t("Search plugins")}>
+              {activeTab !== "skill-packs" ? <Field className="plugin-marketplace-search" label={t("Search plugins")}>
                 <Input
                   aria-label={t("Search plugins")}
                   onChange={(event) => controller.setQuery(event.target.value)}
@@ -186,8 +188,10 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                   size="sm"
                   value={controller.filters.query}
                 />
-              </Field>
+              </Field> : null}
             </div>
+            {activeTab === "skill-packs" ? <OptionalSkillPacks key={props.workspaceCwd} cwd={props.workspaceCwd}
+              onSkillPacksChanged={props.onSkillPacksChanged} /> : (
             <div className="plugin-marketplace-list" onScroll={handleCatalogScroll} ref={catalogListRef}>
               {visibleEntries.map((entry) => {
                 const installed = installedPlugins.get(entry.pluginId);
@@ -297,7 +301,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
                       <span>{t("Loading more plugins")}</span>
                     </div>
                   ) : null}
-            </div>
+            </div>)}
           </div>
         </section>
       </section>

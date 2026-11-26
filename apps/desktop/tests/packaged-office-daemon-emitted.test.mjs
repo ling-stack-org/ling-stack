@@ -16,7 +16,7 @@ const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 let fixtureNumber = 0;
 function newFile(path, bytes) { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); writeFileSync(path, bytes, { mode: 0o600 }); }
 
-/** Real esbuild/source projection; native/codesign origin, review and external gstack selection are explicitly synthetic. */
+/** Real esbuild/source projection; native/codesign origin and review are explicitly synthetic. */
 async function fixture(t, options = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-emitted-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -58,8 +58,20 @@ async function fixture(t, options = {}) {
     + 'export { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";\n');
   const sourceEntry = join(root, "packages/daemon/src/cli.ts");
   newFile(sourceEntry, readFileSync(entry));
-  const sourceFiles = [sourceEntry, codesignModule, officeModule, acpModule];
-  for (const name of ["api-client", "browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"]) {
+  const optionalSkillPackInputs = [
+    "packages/daemon/src/features/skills/optional-gstack-source.ts",
+    "packages/daemon/src/features/skills/optional-pack-catalog.ts",
+    "packages/daemon/src/features/skills/optional-pack-installation.ts",
+    "packages/daemon/src/features/skills/optional-pack-publication.ts",
+    "packages/daemon/src/features/skills/optional-pack-routes.ts",
+    "packages/daemon/src/features/skills/optional-pack-source.ts",
+    "packages/daemon/src/features/skills/packaged-resolution.ts",
+    "packages/contracts/src/optional-skill-packs.ts",
+  ];
+  for (const name of optionalSkillPackInputs) newFile(join(root, name), "export {};\\n");
+  const sourceFiles = [sourceEntry, codesignModule, officeModule, acpModule,
+    ...optionalSkillPackInputs.map(name => join(root, name))];
+  for (const name of ["api-client", "browser-host", "contracts", "conversation-ui-core", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"]) {
     const packagePath = join(root, "packages", name, "package.json"), configPath = join(root, "packages", name, "tsconfig.json");
     newFile(packagePath, JSON.stringify({ name: "@ling-stack/" + name, type: "module", main: "./dist/index.js" }));
     newFile(configPath, JSON.stringify({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022",
@@ -78,7 +90,6 @@ async function fixture(t, options = {}) {
   const state = { active: publication, original: publication, token, publication, codesignToken, codesign, sourceReview,
     mode: options.mode,
     nativeBuilds: 0, codesignBuilds: 0, buildCompleted: false, builds: [], outputs: [], afterBuild: undefined, afterOriginalRead: undefined,
-    gstackPreparations: [],
     readOriginal(receipt) {
       if (receipt !== token || !state.original) throw new Error("synthetic_original_token_invalid");
       state.afterOriginalRead?.(); return state.original;
@@ -118,12 +129,6 @@ async function fixture(t, options = {}) {
       }`],
     ["./packaged-office-native-review-inputs.mjs", bridge + `
       export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.keys(state.sourceReview.review.packagingSha256);`],
-    ["./packaged-gstack-resources.mjs", bridge + `
-      export async function preparePackagedGstackBuild(options) { state.gstackPreparations.push(options); return undefined; }
-      export function packagedGstackIdentityPlugin({ identity }) {
-        if (identity !== undefined) throw new Error("synthetic_gstack_identity_unexpected");
-        return { plugin: { name: "synthetic-gstack-identity", setup() {} }, assertIncluded() {} };
-      }`],
   ]);
   const loader = registerHooks({ resolve(specifier, context, nextResolve) {
     if ([url, pathToFileURL(join(dirname(modulePath), "packaged-office-daemon-source-inputs.mjs")).href].includes(context.parentURL)
@@ -175,7 +180,6 @@ test("Office emitted CLI pins: real esbuild, synthetic publication/signature, no
     assert.equal(pins.evidenceKind, "original_emitted_cli_byte_pins_only"); assert.equal(pins.path, f.cliPath);
     assert.equal(pins.sizeBytes, readFileSync(f.cliPath).length); assert.equal(pins.sha256, hash(readFileSync(f.cliPath)));
     assert.deepEqual(readFileSync(f.cliPath), f.state.outputs[0][0]); assert.equal(f.state.builds[0].write, false);
-    assert.deepEqual(f.state.gstackPreparations, [{ required: true }]);
     assert.doesNotMatch(readFileSync(f.cliPath, "utf8"), /NO_PACKAGED_(?:OFFICE_NATIVE|CODESIGN)_REVIEW/u);
     assert.equal("bytes" in pins, false); assert.equal("token" in pins, false); assert.equal("authority" in pins, false);
     assert.equal(f.api.readActiveOriginalPackagedOfficeDaemonBundle.length, 0);
@@ -305,7 +309,7 @@ test("Office emitted CLI pins: real esbuild, synthetic publication/signature, no
     assert.equal(f.state.nativeBuilds, 1); assert.equal(f.state.codesignBuilds, 1);
     assert.equal(f.api.readActiveOriginalPackagedOfficeDaemonBundle().sha256, hash(readFileSync(f.cliPath)));
   });
-  t.diagnostic("Real esbuild/source projection and disposable inputs only; synthetic source review, original native/codesign readers and external gstack selection/identity. These output custody contracts do not replace the real source-review integration, gstack resource/identity validation, real signatures, Electron, ZIP/DMG, or packaged acceptance.");
+  t.diagnostic("Real esbuild/source projection and disposable inputs only; synthetic source review, original native/codesign readers. These output custody contracts do not replace the real source-review integration, real signatures, Electron, ZIP/DMG, or packaged acceptance.");
 });
 
 function runVersion(modulePath, cwd, entryUrl) {
