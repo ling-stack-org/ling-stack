@@ -4,7 +4,7 @@ export type AppServerStateKind = "verify_plan" | "verify_operation" | "review_su
   | "simplify_submission" | "external_federation" | "work_item_creation" | "work_item_acceptance" | "work_item_control"
   | "replay_identity" | "handoff" | "handoff_goal_transfer" | "authorization_grant" | "work_item_target" | "work_item_source"
   | "github_delivery" | "github_delivery_current" | "github_queue_intent" | "work_item_thread"
-  | "automation_coordination" | "coordination_round" | "coordination_automation_run" | "project_instruction_update"
+  | "automation_coordination" | "coordination_round" | "coordination_automation_run" | "coordination_decisions" | "project_instruction_update"
   | "change_recovery_request" | "change_transfer_request" | "github_intake_pending" | "github_intake_receipt" | "github_intake_dispatch"
   | "work_item_workflow" | "work_item_plan_change" | "native_intake_receipt" | "work_item_stage_message_delivery"
   | "work_item_deliberation_workflow" | "work_item_deliberation_application" | "work_item_deliberation_ballot"

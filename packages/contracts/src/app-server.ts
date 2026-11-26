@@ -191,6 +191,8 @@ export const LING_APP_SERVER_METHODS = [
   "workItem/coordination/start",
   "workItem/coordination/read",
   "workItem/coordination/close",
+  "workItem/coordination/decision/submit",
+  "workItem/coordination/decisions/read",
   "workItem/coordination/schedule/read",
   "workItem/coordination/schedule/set",
   "workItem/message/send",
@@ -943,6 +945,7 @@ export interface LingAppServerCoordinationScheduleParams extends Omit<LingAppSer
 export interface LingAppServerScheduledCoordinationRound {
   readonly automationId: string;
   readonly automationRunId: string;
+  readonly automationDefinitionDigest?: string;
   readonly workItemId: string;
   readonly recordId: string;
   readonly policyRevision: number;
@@ -1331,6 +1334,33 @@ export interface LingAppServerDeliberationEvaluateParams {
   readonly unresolved?: "intent" | "fact" | "handoff";
   /** An operator request for an evaluation and explicit round admission. */
   readonly requestKind?: "manual_request";
+}
+
+export interface LingAppServerCoordinationDecisionParams extends Omit<LingAppServerDeliberationEvaluateParams,
+  "checkpoint" | "checkpointRef" | "requestKind" | "subject"> {
+  readonly roundId: string;
+  readonly subject: Extract<LingAppServerDeliberationSubject, { readonly kind: "workflow_stage" }>;
+}
+
+export type LingAppServerCoordinationDecisionReceipt = {
+  readonly id: string;
+  readonly decisionKey: string;
+  readonly roundId: string;
+} & (
+  | { readonly status: "registered" | "pending" }
+  | { readonly status: "evaluated"; readonly evaluationId: string }
+  | { readonly status: "stale"; readonly reasonCode: string }
+);
+
+export interface LingAppServerCoordinationDecisionSubmitResult {
+  readonly cwd: string;
+  readonly receipt: LingAppServerCoordinationDecisionReceipt;
+  readonly replayed: boolean;
+}
+
+export interface LingAppServerCoordinationDecisionsReadResult {
+  readonly cwd: string;
+  readonly receipts: readonly LingAppServerCoordinationDecisionReceipt[];
 }
 
 export interface LingAppServerDeliberationEvaluation {

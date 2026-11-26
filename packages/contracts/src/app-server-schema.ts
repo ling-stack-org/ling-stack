@@ -64,9 +64,24 @@ const pingResult = objectWith({ ok: { enum: [true] }, connectionId: stringSchema
 const threadTarget = { threadId: stringSchema };
 const workItemTarget = { workItemId: stringSchema };
 const deliberationCheckpoint = { enum: LING_APP_SERVER_DELIBERATION_CHECKPOINTS } as const;
+const workflowStageSubject = objectWith({ kind: { enum: ["workflow_stage"] }, workflowStepId: stringSchema, planRevision: stringSchema },
+  ["kind", "workflowStepId", "planRevision"]);
 const deliberationSubject = { oneOf: [
   objectWith({ kind: { enum: ["draft_plan"] }, planId: stringSchema, planRevision: integerSchema }, ["kind", "planId", "planRevision"]),
-  objectWith({ kind: { enum: ["workflow_stage"] }, workflowStepId: stringSchema, planRevision: stringSchema }, ["kind", "workflowStepId", "planRevision"]),
+  workflowStageSubject,
+] };
+const decisionInputRequired = {
+  ...workItemTarget, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema, decisionKey: stringSchema,
+  decisionKind: { enum: LING_APP_SERVER_DELIBERATION_DECISION_KINDS }, materiality: { enum: LING_APP_SERVER_DECISION_MATERIALITIES },
+  question: stringSchema, participantIds: stringArraySchema, optionRefs: stringArraySchema, evidenceRefs: stringArraySchema,
+};
+const decisionInput = { ...decisionInputRequired, candidateDigest: stringSchema, decisionStepId: stringSchema, unresolved: { enum: ["intent", "fact", "handoff"] } };
+const coordinationDecisionIdentity = { id: stringSchema, decisionKey: stringSchema, roundId: stringSchema };
+const coordinationDecisionKeys = [...Object.keys(coordinationDecisionIdentity), "status"];
+const coordinationDecisionReceipt = { oneOf: [
+  objectWith({ ...coordinationDecisionIdentity, status: { enum: ["registered", "pending"] } }, coordinationDecisionKeys),
+  objectWith({ ...coordinationDecisionIdentity, status: { enum: ["evaluated"] }, evaluationId: stringSchema }, [...coordinationDecisionKeys, "evaluationId"]),
+  objectWith({ ...coordinationDecisionIdentity, status: { enum: ["stale"] }, reasonCode: stringSchema }, [...coordinationDecisionKeys, "reasonCode"]),
 ] };
 const deliberationEvaluationFields = {
   evaluationId: stringSchema, decisionId: stringSchema, decisionRevision: stringSchema, subjectRevision: stringSchema,
@@ -461,19 +476,25 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ ...collaborationAppend, workflowStepId: stringSchema }, ["workItemId"]), result };
     case "workItem/deliberation/evaluate":
       return {
-        params: objectWith({ ...workItemTarget, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema,
-          decisionKey: stringSchema, subject: deliberationSubject, checkpoint: deliberationCheckpoint, checkpointRef: stringSchema,
-          decisionKind: { enum: LING_APP_SERVER_DELIBERATION_DECISION_KINDS }, materiality: { enum: LING_APP_SERVER_DECISION_MATERIALITIES },
-          question: stringSchema, participantIds: stringArraySchema, optionRefs: stringArraySchema, evidenceRefs: stringArraySchema,
-          candidateDigest: stringSchema, decisionStepId: stringSchema, unresolved: { enum: ["intent", "fact", "handoff"] },
+        params: objectWith({ ...decisionInput, subject: deliberationSubject, checkpoint: deliberationCheckpoint, checkpointRef: stringSchema,
           requestKind: { enum: ["manual_request"] },
-        }, ["workItemId", "expectedWorkItemRevision", "idempotencyKey", "decisionKey", "subject", "checkpoint", "checkpointRef",
-          "decisionKind", "materiality", "question", "participantIds", "optionRefs", "evidenceRefs"]),
+        }, [...Object.keys(decisionInputRequired), "subject", "checkpoint", "checkpointRef"]),
         result: objectWith({ cwd: stringSchema, workItemRevision: integerSchema, replayed: booleanSchema,
           evaluation: objectWith({ ...deliberationEvaluationFields, candidateDigest: stringSchema, decisionStepId: stringSchema,
             existingRoundId: stringSchema },
             Object.keys(deliberationEvaluationFields)),
         }, ["cwd", "workItemRevision", "replayed", "evaluation"]),
+      };
+    case "workItem/coordination/decision/submit":
+      return {
+        params: objectWith({ ...decisionInput, roundId: stringSchema, subject: workflowStageSubject },
+          [...Object.keys(decisionInputRequired), "roundId", "subject"]),
+        result: objectWith({ cwd: stringSchema, replayed: booleanSchema, receipt: coordinationDecisionReceipt }, ["cwd", "replayed", "receipt"]),
+      };
+    case "workItem/coordination/decisions/read":
+      return {
+        params: objectWith({ ...workItemTarget, roundId: stringSchema }, ["workItemId", "roundId"]),
+        result: objectWith({ cwd: stringSchema, receipts: { type: "array", items: coordinationDecisionReceipt } }, ["cwd", "receipts"]),
       };
     case "workItem/deliberation/open":
       return { params: objectWith({ ...workItemTarget, evaluationId: stringSchema, expectedWorkItemRevision: integerSchema,

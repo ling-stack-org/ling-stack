@@ -156,8 +156,8 @@ import {
   settleAppServerDeliberation,
   startAppServerStageDeliberation,
 } from "./app-server-collaboration.js";
-import { deliberationEvaluateInput, deliberationOpenInput, evaluateAppServerDeliberation,
-  isCheckpointDeliberationRecord, openAppServerEvaluatedDeliberation } from "./app-server-deliberation.js";
+import { coordinationDecisionInput, deliberationEvaluateInput, deliberationOpenInput, deliberationPolicyContext, evaluateAppServerDeliberation,
+  isCheckpointDeliberationRecord, openAppServerEvaluatedDeliberation, registerCoordinationDecision } from "./app-server-deliberation.js";
 import { planShapingRegistryKey, projectPlanShaping } from "../features/channels/plan-deliberation-shaping.js";
 import { readStageHandoffParams, settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
 import { recoverAppServerStage } from "./app-server-stage-recovery.js";
@@ -229,6 +229,7 @@ const operatorMethods = new Set([
   "workItem/deliberation/evaluate", "workItem/deliberation/open", "workItem/deliberation/decide", "workItem/deliberation/cancel",
   "artifact/read", "model/list", "skill/read",
   "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
+  "workItem/coordination/decision/submit", "workItem/coordination/decisions/read",
   "changes/read", "changes/apply/preview", "changes/apply",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
@@ -978,6 +979,9 @@ class RpcConnection {
         return this.appendCollaboration("coordination", "closed", params);
       case "workItem/coordination/read":
         return this.readCollaboration("coordination", params);
+      case "workItem/coordination/decision/submit":
+      case "workItem/coordination/decisions/read":
+        return this.coordinationDecision(method, params);
       case "workItem/coordination/schedule/read":
       case "workItem/coordination/schedule/set":
         return this.coordinationSchedule(method, params);
@@ -1378,6 +1382,17 @@ class RpcConnection {
     return { cwd: record.cwd, schedule };
   }
 
+  private coordinationDecision(method: "workItem/coordination/decision/submit" | "workItem/coordination/decisions/read", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    if (method === "workItem/coordination/decisions/read") {
+      return { cwd, receipts: store.readScheduledCoordinationDecisions(readStringField(record, "workItemId"), readStringField(record, "roundId")) };
+    }
+    const parsed = coordinationDecisionInput.safeParse(record);
+    if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an open checkpoint round and bounded decision inputs for a current stage.");
+    return registerCoordinationDecision(store, parsed.data, new Date().toISOString(), cwd, this.context.config.appServerDeliberationPolicies);
+  }
+
   private appendWorkItemEvidence(params: unknown): unknown {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
@@ -1507,12 +1522,7 @@ class RpcConnection {
     const { cwd, ...record } = this.workspaceParams(params, true);
     const store = this.context.storeRegistry.getStore(cwd);
     const now = new Date().toISOString();
-    const { appServerDeliberationPolicies: policies, harness } = this.context.config;
-    const policyContext = {
-      policies,
-      hostTokenBudget: harness.delegations.mode === "enforce" ? harness.delegations.rootBudget?.tokenBudget : undefined,
-      assertRecoveryReady: () => appServerRecoveryFor(this.context.config, store)?.assertReady(),
-    };
+    const policyContext = deliberationPolicyContext(this.context.config, store);
     if (method === "workItem/deliberation/evaluate") {
       const parsed = deliberationEvaluateInput.safeParse(record);
       if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply a current subject, checkpoint and bounded decision inputs.");
@@ -1704,15 +1714,13 @@ class RpcConnection {
       const parentRecordId = readOptionalStringField(record, "parentRecordId");
       if (kind === "coordination" && action === "closed" && parentRecordId && store.readScheduledCoordinationRound(parentRecordId)) {
         this.workspaceParams(params, true);
-        const closed = store.closeScheduledCoordination({
+        const closed = this.context.automationSchedulers.closeCoordinationRound(cwd, {
           workItemId, recordId: parentRecordId, actorId: readStringField(record, "actorId"), cause: "owner_closed",
           expectedWorkItemRevision: readOptionalIntegerField(record, "expectedWorkItemRevision"),
           expectedCollaborationRevision: readOptionalIntegerField(record, "expectedCollaborationRevision"),
-        }, new Date().toISOString(), cwd);
+        }, new Date().toISOString());
         if (!closed) throw rpcError(-32040, "coordination_subject_unavailable", "The coordination round is unavailable.");
         const { event, ...result } = closed.result;
-        if (closed.briefEvent) this.context.controlPlaneEvents.publish(trimOversizedEvent(closed.briefEvent));
-        if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
         return { cwd, ...result };
       }
       const { event, ...result } = appendAppServerWorkItemCollaboration(store, {
@@ -3707,6 +3715,15 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   }
   if (error instanceof Error && /^(?:coordination_schedule_stale|coordination_round_stale)$/u.test(error.message)) {
     return { jsonRpcCode: -32030, code: "stale_revision", message: "The coordination definition or Work Item revision changed." };
+  }
+  if (error instanceof Error && error.message === "coordination_decision_idempotency_conflict") {
+    return { jsonRpcCode: -32031, code: "idempotency_conflict", message: "The decision key was reused with different inputs." };
+  }
+  if (error instanceof Error && error.message === "coordination_decision_limit") {
+    return { jsonRpcCode: -32061, code: "coordination_decision_limit", message: "The coordination round has reached its decision limit." };
+  }
+  if (error instanceof Error && error.message === "coordination_subject_unavailable") {
+    return { jsonRpcCode: -32040, code: "coordination_subject_unavailable", message: "The coordination round is unavailable for this Work Item." };
   }
   if (error instanceof Error && /^goal_(acceptance|completion|supervision)_/u.test(error.message)) {
     return { jsonRpcCode: -32061, code: error.message, message: error.message };

@@ -6,7 +6,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { connectToAppServer, type AppServerLocalTransportOptions } from "./app-server-local-transport.js";
-import { deliberationEvaluateInput, deliberationOpenInput } from "./app-server-deliberation.js";
+import { coordinationDecisionInput, deliberationEvaluateInput, deliberationOpenInput } from "./app-server-deliberation.js";
 
 const objectId = z.string().min(1).max(256);
 const requestKey = z.string().min(1).max(128);
@@ -338,6 +338,16 @@ export async function runLingAppServerMcp(
         expectedWorkItemRevision: z.number().int().positive(), idempotencyKey: requestKey }),
       annotations: { idempotentHint: true, destructiveHint: false },
     }, async params => describe(await client.recoverWorkItemStage(params)));
+    if (methods.has("workItem/coordination/decision/submit")) server.registerTool("ling_coordination_decision_submit", {
+      description: "Register a decision for evaluation when an open scheduled checkpoint closes. Supply the current accepted stage and its evidence.",
+      inputSchema: coordinationDecisionInput,
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.submitCoordinationDecision(params)));
+    if (methods.has("workItem/coordination/decisions/read")) server.registerTool("ling_coordination_decisions_read", {
+      description: "Read the registered, pending or terminal decision receipts for a checkpoint round.",
+      inputSchema: z.strictObject({ workItemId: objectId, roundId: objectId }),
+      annotations: { readOnlyHint: true },
+    }, async params => describe(await client.readCoordinationDecisions(params)));
     if (methods.has("workItem/deliberation/evaluate")) server.registerTool("ling_deliberation_evaluate", {
       description: "Evaluate a Work Item decision using a current draft or stage checkpoint and its evidence. A suggestion waits for operator acceptance.",
       inputSchema: deliberationEvaluateInput,

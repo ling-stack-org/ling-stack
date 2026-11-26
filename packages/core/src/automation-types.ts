@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { SessionPermissionMode } from "./session-permissions.js";
 import type { SkillApprovalProfile } from "./skill-types.js";
-import type { LingAppServerScheduledCoordinationRound } from "@ling-stack/contracts";
+import type {
+  LingAppServerCoordinationDecisionParams,
+  LingAppServerScheduledCoordinationRound,
+} from "@ling-stack/contracts";
 import type { ControlPlaneEvent, LingThread } from "./run-types.js";
 import type { AppendWorkItemCollaborationResult } from "./work-item-collaboration.js";
 
@@ -43,11 +46,40 @@ export interface CloseScheduledCoordinationInput {
   readonly cause: "owner_closed" | "deadline";
   readonly expectedWorkItemRevision?: number;
   readonly expectedCollaborationRevision?: number;
+  readonly readDecisionBasis?: (request: ScheduledCoordinationDecisionRequest, channelId: string,
+    throughEvidenceSequence: number) => ScheduledCoordinationDecisionBasis | { readonly reasonCode: string };
 }
 
 export interface ScheduledCoordinationClose {
   readonly result: AppendWorkItemCollaborationResult;
   readonly briefEvent?: ControlPlaneEvent;
+}
+
+export type ScheduledCoordinationDecisionRequest = Omit<LingAppServerCoordinationDecisionParams, "cwd" | "expectedWorkItemRevision">;
+
+export interface ScheduledCoordinationDecisionBasis {
+  readonly digest: string;
+  readonly channelId: string;
+  readonly policyRevision: string;
+}
+
+export type ScheduledCoordinationDecisionPolicy = Omit<ScheduledCoordinationDecisionBasis, "digest">;
+
+export interface ScheduledCoordinationDecisionConsumption {
+  readonly roundId: string;
+  readonly receiptId: string;
+  readonly expectedWorkItemRevision: number;
+}
+
+export interface PendingScheduledCoordinationDecision extends ScheduledCoordinationDecisionConsumption {
+  readonly request: ScheduledCoordinationDecisionRequest;
+  readonly basis: ScheduledCoordinationDecisionBasis;
+  readonly closedRecordId: string;
+  readonly throughEvidenceSequence: number;
+  readonly closedAt: string;
+  readonly controlGeneration: number;
+  readonly scheduleRevision: number;
+  readonly automationDefinitionDigest: string;
 }
 
 export type AutomationRunTriggerType = AutomationTrigger["type"] | "event";

@@ -1,19 +1,46 @@
-import { LING_AGENT_ID } from "../../workspace-types.js";
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { DEFAULT_WORKSPACE_ID, LING_AGENT_ID } from "../../workspace-types.js";
 import type {
-  LingAppServerCoordinationSchedule, LingAppServerCoordinationScheduleParams, LingAppServerScheduledCoordinationRound,
+  LingAppServerCoordinationDecisionReceipt, LingAppServerCoordinationSchedule, LingAppServerCoordinationScheduleParams,
+  LingAppServerScheduledCoordinationRound,
 } from "@ling-stack/contracts";
 import type {
   AdmitScheduledCoordinationInput, AutomationDefinition, AutomationRun, CloseScheduledCoordinationInput,
-  ScheduledCoordinationAdmission, ScheduledCoordinationClose,
+  PendingScheduledCoordinationDecision, ScheduledCoordinationAdmission, ScheduledCoordinationClose,
+  ScheduledCoordinationDecisionBasis, ScheduledCoordinationDecisionConsumption, ScheduledCoordinationDecisionPolicy,
+  ScheduledCoordinationDecisionRequest,
 } from "../../automation-types.js";
+import { automationDefinitionDigestInput } from "../../automation-event-types.js";
+import { automationEventDigest } from "../../automation-event-source.js";
 import type { RunStore } from "../../run-types.js";
-import { appendWorkItemCollaboration, findWorkItemCollaborationById, type AppendWorkItemCollaborationResult } from "../../work-item-collaboration.js";
+import { appendWorkItemCollaboration, readWorkItemCollaborationRecord, type AppendWorkItemCollaborationInput,
+  type AppendWorkItemCollaborationResult } from "../../work-item-collaboration.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 import type { SqliteAutomationStore } from "./automation-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { SqliteWorkItemEvidenceStore } from "./work-item-evidence-store.js";
+
+interface DecisionSubmission {
+  readonly id: string;
+  readonly request: ScheduledCoordinationDecisionRequest;
+  readonly policy: ScheduledCoordinationDecisionPolicy;
+  readonly basis?: ScheduledCoordinationDecisionBasis;
+  readonly outcome?: { readonly evaluationId: string } | { readonly reasonCode: string };
+}
+
+interface DecisionBatch {
+  readonly submissions: readonly DecisionSubmission[];
+  readonly nextWorkItemRevision?: number;
+  readonly seal?: Pick<PendingScheduledCoordinationDecision,
+    "closedRecordId" | "throughEvidenceSequence" | "closedAt" | "controlGeneration" | "scheduleRevision" | "automationDefinitionDigest">;
+}
+
+const decisionState = "coordination_decisions";
+const maxDecisionsPerRound = 12;
 
 export class SqliteScheduledCoordinationStore {
   constructor(
@@ -100,6 +127,7 @@ export class SqliteScheduledCoordinationStore {
       if (!appended) throw new Error("coordination_subject_unavailable");
       const round: LingAppServerScheduledCoordinationRound = {
         automationId: automation.id, automationRunId: automationRun.id, workItemId: workItem.id, kind: policy.kind,
+        automationDefinitionDigest: automationEventDigest(automationDefinitionDigestInput(automation)),
         policyRevision: policy.revision, subjectRevision: workItem.revision, controlGeneration: workItem.control.generation,
         recordId: appended.record.id, deadlineAt, ...(input.scheduledFor ? { scheduledFor: input.scheduledFor } : {}),
       };
@@ -117,18 +145,19 @@ export class SqliteScheduledCoordinationStore {
       const workItem = this.workspace.getWorkItem(input.workItemId);
       if (!saved || !round || round.workItemId !== input.workItemId || !workItem) return undefined;
       if (round.closedRecordId) {
-        const record = findWorkItemCollaborationById(this.collaboration(), workItem.id, round.closedRecordId);
+        const record = readWorkItemCollaborationRecord(this.evidence, workItem.id, round.closedRecordId);
         return record ? { result: { status: "replayed", record, workItemRevision: workItem.revision } } : undefined;
       }
-      const currentSequence = this.context.database.prepare("SELECT COALESCE(MAX(sequence),0) AS revision FROM work_item_evidence WHERE work_item_id=?")
-        .get(workItem.id)?.revision;
+      const currentSequence = Number(this.context.database.prepare(
+        "SELECT COALESCE(MAX(sequence),0) AS revision FROM work_item_evidence WHERE workspace_id=? AND work_item_id=?",
+      ).get(workItem.workspaceId, workItem.id)?.revision ?? 0);
       if (input.expectedWorkItemRevision !== undefined && input.expectedWorkItemRevision !== workItem.revision
         || input.expectedCollaborationRevision !== undefined && input.expectedCollaborationRevision !== currentSequence) {
         throw new Error("coordination_round_stale");
       }
       if (input.cause === "deadline" && round.deadlineAt > now) return undefined;
-      const policy = this.schedule(round.automationId);
-      const inputsCurrent = workItem.control.generation === round.controlGeneration && policy?.enabled && policy.revision === round.policyRevision;
+      const automationDigest = this.currentAutomationDigest(round);
+      const inputsCurrent = workItem.control.generation === round.controlGeneration && automationDigest !== undefined;
       const disposition = inputsCurrent ? "closed" : "stale";
       const closeReason = inputsCurrent ? input.cause : "inputs_changed";
       const brief = this.append({
@@ -142,13 +171,147 @@ export class SqliteScheduledCoordinationStore {
         workItemId: workItem.id, kind: "coordination", action: "closed", actorId: input.actorId, parentRecordId: round.recordId,
         idempotencyKey: `coordination-close:${round.recordId}`,
         payload: { status: disposition, closeReason, deadlineAt: round.deadlineAt, throughEvidenceSequence: currentSequence,
+          planRevision: workItem.planRevision,
           briefId: brief.record.id },
       }, now, cwd);
       if (!result) throw new Error("coordination_subject_unavailable");
       this.state.putWithinTransaction({ kind: "coordination_round", recordId: round.recordId, expectedRevision: saved.revision,
         payload: { ...round, closedRecordId: result.record.id } }, now);
+      const stored = this.decisionBatch(round.recordId);
+      if (stored) {
+        const readBasis = input.readDecisionBasis;
+        if (inputsCurrent && !readBasis) throw new Error("coordination_decision_basis_unavailable");
+        const submissions = stored.batch.submissions.map(submission => {
+          if (!inputsCurrent || !readBasis) return { ...submission, outcome: { reasonCode: "coordination_inputs_changed" } };
+          if (workItem.planRevision !== submission.request.subject.planRevision) return { ...submission, outcome: { reasonCode: "accepted_plan_changed" } };
+          const basis = readSqliteWithinTransaction(this.context.database,
+            () => readBasis(submission.request, submission.policy.channelId, currentSequence));
+          if ("reasonCode" in basis) return { ...submission, outcome: basis };
+          if (basis.policyRevision !== submission.policy.policyRevision || basis.channelId !== submission.policy.channelId) {
+            return { ...submission, outcome: { reasonCode: "deliberation_policy_changed" } };
+          }
+          return { ...submission, basis };
+        });
+        const seal = inputsCurrent && automationDigest ? {
+          closedRecordId: result.record.id, throughEvidenceSequence: currentSequence, closedAt: now,
+          controlGeneration: round.controlGeneration, scheduleRevision: round.policyRevision, automationDefinitionDigest: automationDigest,
+        } : undefined;
+        this.writeDecisions(round.recordId, stored.revision, { ...stored.batch, submissions, seal,
+          nextWorkItemRevision: result.workItemRevision }, now);
+      }
       return { result, briefEvent: brief.event };
     });
+  }
+
+  registerDecision(request: ScheduledCoordinationDecisionRequest, expectedWorkItemRevision: number, now: string,
+    readPolicy: () => ScheduledCoordinationDecisionPolicy) {
+    return this.transaction(() => {
+      const round = this.readRound(request.roundId);
+      if (round?.workItemId !== request.workItemId || round.kind !== "checkpoint") throw new Error("coordination_subject_unavailable");
+      const stored = this.decisionBatch(round.recordId);
+      const batch = stored?.batch ?? { submissions: [] };
+      const previous = batch.submissions.find(submission => submission.request.idempotencyKey === request.idempotencyKey);
+      if (previous) {
+        if (!isDeepStrictEqual(previous.request, request)) throw new Error("coordination_decision_idempotency_conflict");
+        return { receipt: this.projectDecision(batch, previous), replayed: true };
+      }
+      const item = this.workspace.getWorkItem(request.workItemId);
+      if (round.closedRecordId || round.deadlineAt <= now || item?.revision !== expectedWorkItemRevision
+        || item.control.generation !== round.controlGeneration || !this.currentAutomationDigest(round)) {
+        throw new Error("coordination_round_stale");
+      }
+      if (batch.submissions.length >= maxDecisionsPerRound) throw new Error("coordination_decision_limit");
+      const policy = readSqliteWithinTransaction(this.context.database, readPolicy);
+      const id = `coordination_decision_${createHash("sha256").update(JSON.stringify([round.recordId, request.idempotencyKey])).digest("hex")}`;
+      const submission = { id, request, policy };
+      this.writeDecisions(round.recordId, stored?.revision ?? 0, { ...batch, submissions: [...batch.submissions, submission] }, now);
+      return { receipt: this.projectDecision(batch, submission), replayed: false };
+    });
+  }
+
+  readDecisions(workItemId: string, roundId: string): readonly LingAppServerCoordinationDecisionReceipt[] {
+    if (this.readRound(roundId)?.workItemId !== workItemId) throw new Error("coordination_subject_unavailable");
+    const batch = this.decisionBatch(roundId)?.batch;
+    return batch?.submissions.map(submission => this.projectDecision(batch, submission)) ?? [];
+  }
+
+  listPendingDecisionRounds(limit: number): string[] {
+    return this.context.database.prepare(`
+      SELECT record_id FROM app_server_state WHERE workspace_id=? AND kind=?
+        AND json_extract(payload_json, '$.seal') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(payload_json, '$.submissions') decision
+          WHERE json_extract(decision.value, '$.outcome') IS NULL)
+      ORDER BY updated_at, record_id LIMIT ?
+    `).all(DEFAULT_WORKSPACE_ID, decisionState, limit).map(row => String(row.record_id));
+  }
+
+  pendingDecision(roundId: string): PendingScheduledCoordinationDecision | undefined {
+    const batch = this.decisionBatch(roundId)?.batch;
+    if (!batch?.seal || batch.nextWorkItemRevision === undefined) return undefined;
+    const submission = batch.submissions.find(entry => !entry.outcome);
+    if (!submission?.basis) return undefined;
+    return { ...batch.seal, roundId, receiptId: submission.id, expectedWorkItemRevision: batch.nextWorkItemRevision,
+      request: submission.request, basis: submission.basis };
+  }
+
+  settleDecision(input: ScheduledCoordinationDecisionConsumption, outcome: NonNullable<DecisionSubmission["outcome"]>, now: string): boolean {
+    return this.transaction(() => this.settleWithinTransaction(input, outcome, input.expectedWorkItemRevision, now));
+  }
+
+  appendEvaluation(input: ScheduledCoordinationDecisionConsumption, evaluation: AppendWorkItemCollaborationInput,
+    now: string, cwd: string): AppendWorkItemCollaborationResult | undefined {
+    return this.transaction(() => {
+      const result = this.append(evaluation, now, cwd);
+      if (result) this.completeEvaluationWithinTransaction(input, result.record.id, result.workItemRevision, now);
+      return result;
+    });
+  }
+
+  completeEvaluationWithinTransaction(input: ScheduledCoordinationDecisionConsumption, evaluationId: string,
+    workItemRevision: number, now: string): void {
+    if (!this.settleWithinTransaction(input, { evaluationId }, workItemRevision, now)) throw new Error("coordination_decision_consumption_changed");
+  }
+
+  private settleWithinTransaction(input: ScheduledCoordinationDecisionConsumption, outcome: NonNullable<DecisionSubmission["outcome"]>,
+    workItemRevision: number, now: string): boolean {
+    const stored = this.decisionBatch(input.roundId);
+    const batch = stored?.batch;
+    const pendingIndex = batch?.submissions.findIndex(entry => !entry.outcome) ?? -1;
+    const submission = batch?.submissions[pendingIndex];
+    if (!stored || !batch?.seal || !submission || submission.id !== input.receiptId
+      || batch.nextWorkItemRevision !== input.expectedWorkItemRevision) return false;
+    if ("evaluationId" in outcome && this.workspace.getWorkItem(submission.request.workItemId)?.revision !== workItemRevision) {
+      return false;
+    }
+    const submissions = batch.submissions.slice();
+    submissions[pendingIndex] = { ...submission, outcome };
+    this.writeDecisions(input.roundId, stored.revision, { ...batch, submissions, nextWorkItemRevision: workItemRevision }, now);
+    return true;
+  }
+
+  private currentAutomationDigest(round: LingAppServerScheduledCoordinationRound): string | undefined {
+    const policy = this.schedule(round.automationId);
+    const automation = this.automations.getAutomationDefinition(round.automationId);
+    if (!policy?.enabled || policy.revision !== round.policyRevision || automation?.status !== "enabled") return undefined;
+    const digest = automationEventDigest(automationDefinitionDigestInput(automation));
+    return !round.automationDefinitionDigest || round.automationDefinitionDigest === digest ? digest : undefined;
+  }
+
+  private decisionBatch(roundId: string) {
+    const record = this.state.get(decisionState, roundId);
+    return record && { revision: record.revision, batch: record.payload as DecisionBatch };
+  }
+
+  private writeDecisions(roundId: string, expectedRevision: number, batch: DecisionBatch, now: string): void {
+    if (!this.state.putWithinTransaction({ kind: decisionState, recordId: roundId, expectedRevision, payload: batch }, now)) {
+      throw new Error("coordination_decisions_changed");
+    }
+  }
+
+  private projectDecision(batch: DecisionBatch, { id, request, outcome }: DecisionSubmission): LingAppServerCoordinationDecisionReceipt {
+    const identity = { id, decisionKey: request.decisionKey, roundId: request.roundId };
+    if (!outcome) return { ...identity, status: batch.seal ? "pending" : "registered" };
+    return "evaluationId" in outcome ? { ...identity, status: "evaluated", ...outcome } : { ...identity, status: "stale", ...outcome };
   }
 
   private recordOccurrence(automation: AutomationDefinition, input: AdmitScheduledCoordinationInput, now: string, skipReason?: string): AutomationRun {

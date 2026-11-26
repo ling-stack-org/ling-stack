@@ -194,3 +194,22 @@ test("restoring a prepared execution without a tool surface preserves its origin
   assert.deepEqual(reproduced.tools, preparedInput.tools);
   assert.equal(reproduced.fingerprint, preparedInput.fingerprint);
 });
+
+test("prepared isolated files accept explicitly disabled visualization and coordination tools", async t => {
+  const { cwd } = await fixture(t);
+  const runner = new PiRunnerAdapter();
+  const options: PiRunnerRunOptions = { cwd, task: { id: "isolated", title: "Read the contract", prompt: "Read only." }, tools: ["read"],
+    provider: { provider: "prepared-capabilities", model: "test", api: "openai-completions", baseUrl: "https://fixture.invalid/v1", reasoning: false },
+    isolatedToolsProfile: "host_isolated_files_v1", onToolBefore: () => ({ allowed: true }), onIsolatedToolCall: () => ({ content: [] }),
+    initialToolSurface: { mediaGeneration: false, toolHydration: false, conversationVisualization: false, workItemCoordination: false },
+  };
+  const preparedInput = await runner.prepareTaskInput(options);
+  const payload = capturePreparedRunnerInput({ runnerId: "pi", options, preparedInput });
+  const restored = restorePreparedRunnerOptions(payload, options);
+  assert.deepEqual(restored.initialToolSurface, options.initialToolSurface);
+  assert.deepEqual((await runner.prepareTaskInput(restored)).tools.map(tool => tool.name), ["read"]);
+  for (const capability of ["conversationVisualization", "workItemCoordination"] as const) {
+    const widened = { ...options, initialToolSurface: { ...options.initialToolSurface!, [capability]: true } };
+    assert.throws(() => restorePreparedRunnerOptions(payload, widened), { code: "workflow_safety_mismatch" });
+  }
+});

@@ -255,7 +255,7 @@ function isNarrowIsolatedSurface(input: unknown): boolean {
   if (["mcpTools", "hostCapabilityTools", "mediaGenerationTools"].some(key => input[key] !== undefined &&
     (!Array.isArray(input[key]) || input[key].length !== 0))) return false;
   for (const [key, allowed] of [
-    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode", "conversationVisualization"]],
+    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode", "conversationVisualization", "workItemCoordination"]],
     ["runtimeToolFeatures", ["requestPermissions", "unifiedExec", "shellSnapshot"]],
   ] as const) {
     const flags = input[key];

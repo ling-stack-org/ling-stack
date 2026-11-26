@@ -4,6 +4,8 @@ import {
   LING_APP_SERVER_DECISION_MATERIALITIES,
   LING_APP_SERVER_DELIBERATION_CHECKPOINTS,
   LING_APP_SERVER_DELIBERATION_DECISION_KINDS,
+  type LingAppServerCoordinationDecisionParams,
+  type LingAppServerCoordinationDecisionSubmitResult,
   type LingAppServerDeliberationEvaluateParams,
   type LingAppServerDeliberationEvaluateResult,
   type LingAppServerDeliberationEvaluation,
@@ -15,12 +17,16 @@ import {
 } from "@ling-stack/contracts";
 import {
   appendWorkItemCollaboration,
+  automationDefinitionDigestInput,
+  automationEventDigest,
   deliberationWorkflowStepDigest,
   readWorkItemCollaborationRecord,
   readWorkflowStageHandoff,
   type AppendWorkItemCollaborationInput,
   type ChannelWorkflowStep,
   type ControlPlaneEvent,
+  type PendingScheduledCoordinationDecision,
+  type ScheduledCoordinationDecisionRequest,
   type RunStore,
   type WorkItem,
   type WorkItemCollaborationRecord,
@@ -30,6 +36,7 @@ import {
   type WorkItemEvidenceEntry,
 } from "@ling-stack/core";
 import { z } from "zod";
+import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import { listEffectiveChannelAiTeammates } from "../features/channels/channel-teammate-availability.js";
 import { preparePlanShaping, type PlanShapingRuntime } from "../features/channels/plan-deliberation-shaping.js";
@@ -39,6 +46,7 @@ import { readCompleteHandoffCandidate } from "../features/work-items/stage-hando
 import { readWorkItemWorkflowBinding } from "../features/work-items/workflow-stages.js";
 import { defaultDeliberationPolicyRevision, readWorkspaceDeliberationPolicy,
   type AppServerDeliberationPolicy, type AutomaticDeliberationPolicy } from "./app-server-deliberation-config.js";
+import { appServerRecoveryFor } from "./app-server-recovery.js";
 
 const evaluationPrefix = "work_item_deliberation_evaluation_";
 const roundPrefix = "work_item_deliberation_round_";
@@ -52,15 +60,9 @@ const mutationFields = {
   idempotencyKey: boundedId,
 };
 
-export const deliberationEvaluateInput = z.object({
-  ...mutationFields,
+const workflowStageSubject = z.object({ kind: z.literal("workflow_stage"), workflowStepId: boundedId, planRevision: boundedId });
+const decisionFields = {
   decisionKey: boundedId,
-  subject: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("draft_plan"), planId: boundedId, planRevision: z.number().int().positive() }),
-    z.object({ kind: z.literal("workflow_stage"), workflowStepId: boundedId, planRevision: boundedId }),
-  ]),
-  checkpoint: z.enum(LING_APP_SERVER_DELIBERATION_CHECKPOINTS),
-  checkpointRef: boundedId,
   decisionKind: z.enum(LING_APP_SERVER_DELIBERATION_DECISION_KINDS),
   materiality: z.enum(LING_APP_SERVER_DECISION_MATERIALITIES),
   question: z.string().trim().min(1).max(1200),
@@ -70,7 +72,21 @@ export const deliberationEvaluateInput = z.object({
   decisionStepId: boundedId.optional(),
   candidateDigest: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   unresolved: z.enum(["intent", "fact", "handoff"]).optional(),
+};
+
+export const deliberationEvaluateInput = z.object({
+  ...mutationFields, ...decisionFields,
+  subject: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("draft_plan"), planId: boundedId, planRevision: z.number().int().positive() }),
+    workflowStageSubject,
+  ]),
+  checkpoint: z.enum(LING_APP_SERVER_DELIBERATION_CHECKPOINTS),
+  checkpointRef: boundedId,
   requestKind: z.literal("manual_request").optional(),
+});
+
+export const coordinationDecisionInput = z.strictObject({
+  ...mutationFields, ...decisionFields, roundId: boundedId, subject: workflowStageSubject,
 });
 
 export const deliberationOpenInput = z.object({
@@ -99,11 +115,55 @@ interface DeliberationPolicyContext {
   readonly assertRecoveryReady: () => void;
 }
 
+export function deliberationPolicyContext(config: DaemonContext["config"], store: RunStore): DeliberationPolicyContext {
+  const { appServerDeliberationPolicies: policies, harness } = config;
+  return {
+    policies,
+    hostTokenBudget: harness.delegations.mode === "enforce" ? harness.delegations.rootBudget?.tokenBudget : undefined,
+    assertRecoveryReady: () => appServerRecoveryFor(config, store)?.assertReady(),
+  };
+}
+
 type DeliberationDisposition = Pick<LingAppServerDeliberationEvaluation, "outcome" | "reasonCode">;
+
+export function registerCoordinationDecision(store: RunStore, input: LingAppServerCoordinationDecisionParams, now: string,
+  cwd: string, policies: readonly AppServerDeliberationPolicy[]): LingAppServerCoordinationDecisionSubmitResult {
+  const { cwd: _cwd, expectedWorkItemRevision, ...request } = input;
+  const normalized = { ...request, participantIds: sortedUnique(request.participantIds),
+    optionRefs: sortedUnique(request.optionRefs), evidenceRefs: sortedUnique(request.evidenceRefs) };
+  const result = store.registerScheduledCoordinationDecision(normalized, expectedWorkItemRevision, now, () => {
+    const { subject } = readScheduledDecisionInputs(store, normalized, { beforeScheduledClose: true });
+    const channelId = subject.channelId!;
+    return {
+      channelId, policyRevision: readWorkspaceDeliberationPolicy(store, cwd, channelId, policies).effectiveRevision,
+    };
+  });
+  return { cwd, ...result };
+}
+
+export function sealCoordinationDecision(store: RunStore, cwd: string, request: ScheduledCoordinationDecisionRequest,
+  channelId: string, throughEvidenceSequence: number, policies: readonly AppServerDeliberationPolicy[]) {
+  try {
+    const basis = readScheduledDecisionInputs(store, request, { throughEvidenceSequence });
+    if (basis.subject.channelId !== channelId) return { reasonCode: "decision_basis_changed" };
+    return { digest: basis.digest, channelId,
+      policyRevision: readWorkspaceDeliberationPolicy(store, cwd, channelId, policies).effectiveRevision };
+  } catch (error) {
+    if (!(error instanceof HttpError) || !["stale_revision", "resume_blocked"].includes(error.code)) throw error;
+    return { reasonCode: "decision_basis_changed" };
+  }
+}
+
+function readScheduledDecisionInputs(store: RunStore, request: ScheduledCoordinationDecisionRequest,
+  checkpointScope: Parameters<typeof readDecisionBasis>[3]) {
+  const { workItemId, roundId, idempotencyKey: _key, ...inputs } = request;
+  return readDecisionBasis(store, requireWorkItem(store, workItemId),
+    { ...inputs, checkpoint: "scheduled_checkpoint", checkpointRef: roundId }, checkpointScope);
+}
 
 export async function evaluateAppServerDeliberation(
   store: RunStore, input: LingAppServerDeliberationEvaluateParams, now: string, cwd: string,
-  policyContext: DeliberationPolicyContext,
+  policyContext: DeliberationPolicyContext, scheduled?: PendingScheduledCoordinationDecision,
 ): Promise<LingAppServerDeliberationEvaluateResult & {
   readonly event?: ControlPlaneEvent;
   readonly admissionEvent?: ControlPlaneEvent;
@@ -114,21 +174,33 @@ export async function evaluateAppServerDeliberation(
     ...requested, participantIds: sortedUnique(input.participantIds),
     optionRefs: sortedUnique(input.optionRefs), evidenceRefs: sortedUnique(input.evidenceRefs),
   };
+  const assertScheduledCurrent = (revision: number) => {
+    if (scheduled) assertScheduledDecisionCurrent(store, scheduled, revision, cwd, policyContext);
+  };
+  const completeScheduledReplay = (evaluation: LingAppServerDeliberationEvaluation) => {
+    if (scheduled && !store.settleScheduledCoordinationDecision(scheduled, { evaluationId: evaluation.evaluationId }, now)) {
+      throw stale("The scheduled decision changed before replay.");
+    }
+  };
   const readReplay = () => {
     const prior = readMutationReceipt(store, workItemId, idempotencyKey);
     if (!prior) return undefined;
     const frozen = readEvaluation(prior);
     if (!frozen || !isDeepStrictEqual(frozen.decision, decision)) throw keyConflict();
+    completeScheduledReplay(frozen.evaluation);
     return { cwd, evaluation: frozen.evaluation, workItemRevision: requireWorkItem(store, workItemId).revision, replayed: true };
   };
+  assertScheduledCurrent(expectedWorkItemRevision);
   const prior = readReplay();
   if (prior) return prior;
-  const basis = readDecisionBasis(store, item, decision);
+  const basis = readDecisionBasis(store, item, decision, scheduled);
+  if (scheduled && scheduled.basis.digest !== basis.digest) throw new ScheduledDecisionStale("decision_basis_changed");
   const decisionId = digest([item.id, decision.decisionKey, decision.subject.kind, basis.subject.decisionAnchor,
     ...(decision.decisionStepId ? [decision.decisionStepId] : [])]);
   const decisionRevision = digest([basis.digest, decision.decisionKind, decision.materiality, decision.question, decision.unresolved]);
   if (basis.candidate) {
     await assertCandidateCurrent(basis.candidate);
+    assertScheduledCurrent(expectedWorkItemRevision);
     const committed = readReplay();
     if (committed) return committed;
   }
@@ -157,7 +229,10 @@ export async function evaluateAppServerDeliberation(
     ...(policyRevision !== defaultDeliberationPolicyRevision ? [policyRevision, outcome, retainedRound && outcome.outcome !== "start" ? roundId : null] : []),
     ...(decision.requestKind ? [decision.requestKind] : [])])}`;
   const existing = readEvaluation(readWorkItemCollaborationRecord(store, workItemId, evaluationId));
-  if (existing) return { cwd, evaluation: existing.evaluation, workItemRevision: requireWorkItem(store, workItemId).revision, replayed: true };
+  if (existing) {
+    completeScheduledReplay(existing.evaluation);
+    return { cwd, evaluation: existing.evaluation, workItemRevision: requireWorkItem(store, workItemId).revision, replayed: true };
+  }
   if (item.revision !== expectedWorkItemRevision) throw stale("The Work Item revision changed before evaluation.");
   const evaluation: LingAppServerDeliberationEvaluation = {
     evaluationId, decisionId, decisionRevision, subjectRevision: basis.subject.subjectRevision, policyRevision,
@@ -178,7 +253,8 @@ export async function evaluateAppServerDeliberation(
     ...(predecessor ? { parentRecordId: predecessor.evaluation.evaluationId } : {}),
     sourceRefs: basis.sourceRefs,
     assertCurrent: () => {
-      const current = readDecisionBasis(store, requireWorkItem(store, workItemId), decision);
+      assertScheduledCurrent(expectedWorkItemRevision);
+      const current = readDecisionBasis(store, requireWorkItem(store, workItemId), decision, scheduled);
       const policy = policyForSubject(store, cwd, current.subject, policyContext.policies);
       if (current.digest !== basis.digest || (policy?.effectiveRevision ?? defaultDeliberationPolicyRevision) !== policyRevision) {
         throw stale("The decision basis changed before the evaluation committed.");
@@ -192,8 +268,9 @@ export async function evaluateAppServerDeliberation(
     const deadlineAt = new Date(Date.parse(now) + budget.maxDurationMs).toISOString();
     const round = checkpointRound(frozen, workItemId, roundId, expectedWorkItemRevision + 1, roundId, deadlineAt, basis);
     const result = store.admitWorkItemDeliberationWorkflow({
-      workItemId, expectedWorkItemRevision, roundId, evaluation: evidence,
+      workItemId, expectedWorkItemRevision, roundId, evaluation: evidence, scheduledDecision: scheduled,
       assertCurrent: () => {
+        assertScheduledCurrent(expectedWorkItemRevision + 1);
         const current = requireWorkItem(store, workItemId);
         const currentBasis = assertEvaluationCurrent(store, current, frozen, now, deadlineAt, { cwd, policies: policyContext.policies });
         const blocker = automaticDeliberationBlocker(store, current,
@@ -208,9 +285,54 @@ export async function evaluateAppServerDeliberation(
     return { cwd, evaluation, workItemRevision: result.workItemRevision, replayed: false,
       event: result.evaluationEvent, admissionEvent: result.event };
   }
-  const result = appendWorkItemCollaboration(store, evidence, now, cwd);
+  const result = scheduled ? store.appendScheduledCoordinationEvaluation(scheduled, evidence, now, cwd)
+    : appendWorkItemCollaboration(store, evidence, now, cwd);
   if (!result) throw stale("The Work Item revision changed before the evaluation committed.");
   return { cwd, evaluation, workItemRevision: result.workItemRevision, replayed: false, event: result.event };
+}
+
+export async function evaluateScheduledCoordinationDecision(store: RunStore, pending: PendingScheduledCoordinationDecision,
+  cwd: string, policyContext: DeliberationPolicyContext) {
+  const now = new Date().toISOString();
+  const { roundId, idempotencyKey: _key, ...inputs } = pending.request;
+  try {
+    return await evaluateAppServerDeliberation(store, {
+      ...inputs, checkpoint: "scheduled_checkpoint", checkpointRef: roundId,
+      expectedWorkItemRevision: pending.expectedWorkItemRevision, idempotencyKey: `coordination-evaluation:${pending.receiptId}`,
+    }, now, cwd, policyContext, pending);
+  } catch (error) {
+    const reasonCode = error instanceof ScheduledDecisionStale ? error.reasonCode
+      : error instanceof HttpError && error.code === "stale_revision" ? "decision_basis_changed"
+        : error instanceof HttpError && error.code === "idempotency_conflict" ? "evaluation_key_conflict" : undefined;
+    if (!reasonCode) throw error;
+    store.settleScheduledCoordinationDecision(pending, { reasonCode }, now);
+  }
+}
+
+class ScheduledDecisionStale extends Error {
+  constructor(readonly reasonCode: string) {
+    super(reasonCode);
+  }
+}
+
+function assertScheduledDecisionCurrent(store: RunStore, pending: PendingScheduledCoordinationDecision, expectedRevision: number,
+  cwd: string, context: DeliberationPolicyContext): void {
+  const item = store.getWorkItem(pending.request.workItemId);
+  if (item?.planRevision !== pending.request.subject.planRevision) throw new ScheduledDecisionStale("accepted_plan_changed");
+  if (item.control.generation !== pending.controlGeneration) throw new ScheduledDecisionStale("coordination_inputs_changed");
+  if (item.revision !== expectedRevision) throw new ScheduledDecisionStale("work_item_revision_changed");
+  const round = store.readScheduledCoordinationRound(pending.roundId);
+  const schedule = round && store.getAutomationCoordinationSchedule(round.automationId);
+  const definition = round && store.getAutomationDefinition(round.automationId);
+  if (round?.closedRecordId !== pending.closedRecordId || !schedule?.enabled || schedule.revision !== pending.scheduleRevision
+    || !definition || automationEventDigest(automationDefinitionDigestInput(definition)) !== pending.automationDefinitionDigest) {
+    throw new ScheduledDecisionStale("coordination_inputs_changed");
+  }
+  if (readWorkspaceDeliberationPolicy(store, cwd, pending.basis.channelId, context.policies).effectiveRevision !== pending.basis.policyRevision) {
+    throw new ScheduledDecisionStale("deliberation_policy_changed");
+  }
+  if (Date.now() >= Date.parse(pending.closedAt) + validityMs) throw new ScheduledDecisionStale("checkpoint_expired");
+  context.assertRecoveryReady();
 }
 
 function automaticDeliberationBlocker(store: RunStore, item: WorkItem, input: {
@@ -426,9 +548,11 @@ function policyForSubject(store: RunStore, cwd: string, subject: SubjectBasis, p
   return subject.channelId === undefined ? undefined : readWorkspaceDeliberationPolicy(store, cwd, subject.channelId, policies);
 }
 
-function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEvaluation["decision"]) {
+function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEvaluation["decision"],
+  checkpointScope?: { readonly beforeScheduledClose?: boolean; readonly throughEvidenceSequence?: number }) {
   const subject = readSubject(store, item, decision.subject);
-  const checkpoint = readCheckpoint(store, item, subject, decision);
+  const checkpoint = checkpointScope?.beforeScheduledClose ? { type: "coordination_round", id: decision.checkpointRef }
+    : readCheckpoint(store, item, subject, decision);
   const channel = subject.channelId && store.getChannel(subject.channelId);
   const eligible = channel ? listEffectiveChannelAiTeammates(store, channel) : [];
   const participants = decision.participantIds.map(id => {
@@ -439,6 +563,7 @@ function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEval
   const readEntry = (id: string, option: boolean) => {
     const entry = store.getWorkItemEvidence(id);
     if (entry?.workItemId !== item.id || entry.subjectRevision !== subject.subjectRevision
+      || checkpointScope?.throughEvidenceSequence !== undefined && entry.sequence > checkpointScope.throughEvidenceSequence
       || option && entry.kind !== "proposal") throw stale("A decision input is unavailable for the current subject.");
     return entry;
   };
@@ -569,8 +694,11 @@ function readCheckpoint(store: RunStore, item: WorkItem, subject: SubjectBasis, 
   }
   if (step && checkpoint === "scheduled_checkpoint") {
     const round = store.readScheduledCoordinationRound(id);
+    const closed = round?.closedRecordId && readWorkItemCollaborationRecord(store, item.id, round.closedRecordId);
     if (round?.workItemId === item.id && round.kind === "checkpoint" && round.closedRecordId
-      && round.controlGeneration === item.control.generation) {
+      && round.controlGeneration === item.control.generation && closed && closed.kind === "coordination" && closed.action === "closed"
+      && closed.parentRecordId === id && isRecord(closed.payload) && closed.payload.status === "closed"
+      && (closed.payload.planRevision === undefined || closed.payload.planRevision === subject.subjectRevision)) {
       return { type: "coordination_round", id, revision: round.closedRecordId };
     }
   }

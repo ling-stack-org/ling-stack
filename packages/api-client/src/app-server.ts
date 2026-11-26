@@ -51,6 +51,9 @@ import type {
   LingAppServerReconcileGitHubDeliveryParams,
   LingAppServerCoordinationSchedule,
   LingAppServerCoordinationScheduleParams,
+  LingAppServerCoordinationDecisionParams,
+  LingAppServerCoordinationDecisionSubmitResult,
+  LingAppServerCoordinationDecisionsReadResult,
   LingAppServerDeliberationEvaluateParams,
   LingAppServerDeliberationEvaluateResult,
   LingAppServerDeliberationOpenParams,
@@ -398,6 +401,16 @@ export class LingAppServerClient {
   async setCoordinationSchedule(params: LingAppServerCoordinationScheduleParams): Promise<{ readonly cwd: string; readonly schedule: LingAppServerCoordinationSchedule }> {
     await this.connect();
     return await this.request("workItem/coordination/schedule/set", params);
+  }
+
+  async submitCoordinationDecision(params: LingAppServerCoordinationDecisionParams): Promise<LingAppServerCoordinationDecisionSubmitResult> {
+    await this.connect();
+    return await this.request("workItem/coordination/decision/submit", params);
+  }
+
+  async readCoordinationDecisions(params: { readonly roundId: string; readonly workItemId: string }): Promise<LingAppServerCoordinationDecisionsReadResult> {
+    await this.connect();
+    return await this.request("workItem/coordination/decisions/read", params);
   }
 
   async acceptWorkItem(params: LingAppServerWorkItemAcceptParams): Promise<LingAppServerWorkItemAcceptResult> {

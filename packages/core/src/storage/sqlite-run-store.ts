@@ -6278,6 +6278,10 @@ export class SqliteRunStore implements RunStore {
             expectedRevision: prior?.revision ?? 0, payload: { roundId: binding.roundId, policyRevision } }, now);
           if (!admission) throw new Error("work_item_deliberation_admission_stale");
         }
+        if (input.scheduledDecision && evaluation) {
+          this.scheduledCoordination.completeEvaluationWithinTransaction(input.scheduledDecision, evaluation.record.id,
+            appended.workItemRevision, now);
+        }
         return { ...appended, ...(evaluation?.event ? { evaluationEvent: evaluation.event } : {}) };
       });
       this.database.exec("COMMIT");
@@ -6747,6 +6751,30 @@ export class SqliteRunStore implements RunStore {
 
   closeScheduledCoordination(input: Parameters<RunStore["closeScheduledCoordination"]>[0], now: string, cwd = this.paths.cwd) {
     return this.scheduledCoordination.close(input, now, cwd);
+  }
+
+  registerScheduledCoordinationDecision(...args: Parameters<RunStore["registerScheduledCoordinationDecision"]>) {
+    return this.scheduledCoordination.registerDecision(...args);
+  }
+
+  readScheduledCoordinationDecisions(workItemId: string, roundId: string) {
+    return this.scheduledCoordination.readDecisions(workItemId, roundId);
+  }
+
+  listPendingScheduledCoordinationDecisionRounds(limit: number) {
+    return this.scheduledCoordination.listPendingDecisionRounds(limit);
+  }
+
+  getPendingScheduledCoordinationDecision(roundId: string) {
+    return this.scheduledCoordination.pendingDecision(roundId);
+  }
+
+  settleScheduledCoordinationDecision(...args: Parameters<RunStore["settleScheduledCoordinationDecision"]>) {
+    return this.scheduledCoordination.settleDecision(...args);
+  }
+
+  appendScheduledCoordinationEvaluation(...args: Parameters<RunStore["appendScheduledCoordinationEvaluation"]>) {
+    return this.scheduledCoordination.appendEvaluation(...args);
   }
 
   getAutomationRun(automationRunId: string): AutomationRun | undefined {

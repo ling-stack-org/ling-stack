@@ -56,7 +56,7 @@ import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context
 import { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import { reconcileAutomationRunForTerminal } from "./features/automations/run.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
-import { appendControlPlaneEvent, ControlPlaneEventHub } from "./features/control-plane/events.js";
+import { appendControlPlaneEvent, ControlPlaneEventHub, trimOversizedEvent } from "./features/control-plane/events.js";
 import {
   configureTerminalReportStore,
   recoverTerminalReports,
@@ -178,6 +178,7 @@ import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-r
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 import { executeRunRequest, type RunExecutionSink } from "./features/runs/orchestrator.js";
 import { appServerRecoveryFor } from "./server/app-server-recovery.js";
+import { deliberationPolicyContext, evaluateScheduledCoordinationDecision, sealCoordinationDecision } from "./server/app-server-deliberation.js";
 import { CompanionReplyService } from "./features/companions/reply-service.js";
 import { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
 import { WorktreeMaintenanceRegistry } from "./features/workspaces/worktree-retention.js";
@@ -823,6 +824,25 @@ export function createDaemonServer(
     nativeRunDispatcher,
     notificationHub,
     nativeWorkIntake,
+    {
+      sealDecision: (store, cwd, input, channelId, throughEvidenceSequence) =>
+        sealCoordinationDecision(store, cwd, input, channelId, throughEvidenceSequence, resolvedConfig.appServerDeliberationPolicies),
+      evaluate: async (store, cwd, decision, isActive) => {
+        const policy = deliberationPolicyContext(resolvedConfig, store);
+        const result = await evaluateScheduledCoordinationDecision(store, decision, cwd, {
+          ...policy,
+          assertRecoveryReady: () => {
+            if (!isActive()) throw new HttpError(409, "resume_blocked", "The coordination scheduler is stopped.");
+            policy.assertRecoveryReady();
+          },
+        });
+        if (result?.event) controlPlaneEvents.publish(trimOversizedEvent(result.event));
+        if (result?.admissionEvent) {
+          controlPlaneEvents.publish(trimOversizedEvent(result.admissionEvent));
+          taskSupervisor?.poke(cwd);
+        }
+      },
+    },
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,

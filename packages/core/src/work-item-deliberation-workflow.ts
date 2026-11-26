@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ScheduledCoordinationDecisionConsumption } from "./automation-types.js";
 import type { AppendWorkItemCollaborationInput } from "./work-item-collaboration.js";
 import type { RunStore } from "./run-types.js";
 import type { ChannelWorkflow, ChannelWorkflowStep } from "./workspace-types.js";
@@ -56,6 +57,7 @@ export interface WorkItemDeliberationWorkflowAdmission {
   readonly expectedWorkItemRevision: number;
   readonly roundId: string;
   readonly evaluation?: AppendWorkItemCollaborationInput;
+  readonly scheduledDecision?: ScheduledCoordinationDecisionConsumption;
   readonly assertCurrent: () => void;
   readonly compile: () => {
     readonly workflow: ChannelWorkflow;
