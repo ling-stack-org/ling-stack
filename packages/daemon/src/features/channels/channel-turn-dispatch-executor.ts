@@ -20,6 +20,7 @@ import type { RuntimeHostCapacityAdmission } from "../../runtime/run-queue.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { createWorkflowParallelCapabilityResolver } from "../runs/workflow-safety.js";
 import type { ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
+import { readCoordinatorWorkItems } from "../work-items/checkpoint-coordinator-tool.js";
 import { createAiChannelReply } from "./ai-replies.js";
 import {
   findChannelAssistantReplyForSource,
@@ -70,8 +71,8 @@ export interface ChannelTurnDispatchExecutorOptions {
 export function createChannelTurnDispatchExecutor(
   options: ChannelTurnDispatchExecutorOptions,
 ): ExecuteClaimedChannelTurnDispatch {
-  const startRun = createStartRun(options);
   return async ({ store, channel, sourceMessage, request, observer }) => {
+    const startRun = createStartRun(options, store);
     if (request.unavailableRequestedParticipantIds?.length) {
       const blocker = blockUnavailableChannelParticipants(
         store,
@@ -249,14 +250,16 @@ function channelReplyMessageId(sourceTurnId: string, teammateId: string | undefi
   return `item_channel_reply_${sourceTurnId}_${teammateId ?? "ling_agent"}`;
 }
 
-function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
+function createStartRun(options: ChannelTurnDispatchExecutorOptions, store: RunStore) {
   return async (
     runRequest: RunRequest,
     sink: RunExecutionSink,
     onProviderInvocationFailure?: ProviderInvocationFailureSink,
-  ): Promise<string | undefined> =>
-    await executeRunRequest(
-      runRequest,
+  ): Promise<string | undefined> => {
+    const planRevisions = runRequest.createdByActor === "local-user"
+      ? readCoordinatorWorkItems(store, runRequest).map(item => item.planRevision) : [];
+    return await executeRunRequest(
+      planRevisions.length ? { ...runRequest, workItemCheckpointPlanRevisions: planRevisions } : runRequest,
       sink,
       options.runnerRegistry,
       options.storeRegistry,
@@ -276,6 +279,7 @@ function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
         workflowHostCapacityAdmission: options.hostCapacity,
       },
     );
+  };
 }
 
 async function confirmAndOrchestrateProposal(

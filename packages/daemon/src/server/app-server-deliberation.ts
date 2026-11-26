@@ -5,6 +5,7 @@ import {
   LING_APP_SERVER_DELIBERATION_CHECKPOINTS,
   LING_APP_SERVER_DELIBERATION_DECISION_KINDS,
   type LingAppServerCoordinationDecisionParams,
+  type LingAppServerCoordinationDecisionSource,
   type LingAppServerCoordinationDecisionSubmitResult,
   type LingAppServerDeliberationEvaluateParams,
   type LingAppServerDeliberationEvaluateResult,
@@ -28,6 +29,7 @@ import {
   type RunStore,
   type WorkItem,
   type WorkItemCollaborationRecord,
+  type WorkItemCheckpointCoordinatorSource,
   type WorkItemConversationBinding,
   type WorkItemDeliberationTarget,
   type WorkItemDeliberationWorkflowBinding,
@@ -38,6 +40,7 @@ import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import { listEffectiveChannelAiTeammates } from "../features/channels/channel-teammate-availability.js";
 import { preparePlanShaping, type PlanShapingRuntime } from "../features/channels/plan-deliberation-shaping.js";
+import { readCheckpointChannelEvidence } from "../features/work-items/checkpoint-channel-evidence.js";
 import { materializeDeliberationWorkflow, readDeliberationWorkflowInputs } from "../features/work-items/deliberation-workflow.js";
 import { isRecord } from "../shared/validation.js";
 import { readCompleteHandoffCandidate } from "../features/work-items/stage-handoff-candidates.js";
@@ -97,6 +100,7 @@ interface FrozenEvaluation {
   readonly evaluation: LingAppServerDeliberationEvaluation;
   readonly decision: Omit<LingAppServerDeliberationEvaluateParams, "cwd" | "workItemId" | "expectedWorkItemRevision" | "idempotencyKey">;
   readonly basisDigest: string;
+  readonly channelEvidenceOnly?: true;
 }
 
 interface SubjectBasis {
@@ -125,24 +129,25 @@ export function deliberationPolicyContext(config: DaemonContext["config"], store
 type DeliberationDisposition = Pick<LingAppServerDeliberationEvaluation, "outcome" | "reasonCode">;
 
 export function registerCoordinationDecision(store: RunStore, input: LingAppServerCoordinationDecisionParams, now: string,
-  cwd: string, policies: readonly AppServerDeliberationPolicy[]): LingAppServerCoordinationDecisionSubmitResult {
+  cwd: string, policies: readonly AppServerDeliberationPolicy[],
+  coordinator?: WorkItemCheckpointCoordinatorSource & { readonly assertCurrent: () => void }): LingAppServerCoordinationDecisionSubmitResult {
   const { cwd: _cwd, expectedWorkItemRevision, ...request } = input;
   const normalized = { ...request, participantIds: sortedUnique(request.participantIds),
     optionRefs: sortedUnique(request.optionRefs), evidenceRefs: sortedUnique(request.evidenceRefs) };
   const result = store.registerScheduledCoordinationDecision(normalized, expectedWorkItemRevision, now, () => {
-    const { subject } = readScheduledDecisionInputs(store, normalized, { beforeScheduledClose: true });
+    const { subject } = readScheduledDecisionInputs(store, normalized, { beforeScheduledClose: true }, Boolean(coordinator));
     const channelId = subject.channelId!;
     return {
       channelId, policyRevision: readWorkspaceDeliberationPolicy(store, cwd, channelId, policies).effectiveRevision,
     };
-  });
+  }, coordinator);
   return { cwd, ...result };
 }
 
 export function sealCoordinationDecision(store: RunStore, cwd: string, request: ScheduledCoordinationDecisionRequest,
-  channelId: string, throughEvidenceSequence: number, policies: readonly AppServerDeliberationPolicy[]) {
+  channelId: string, throughEvidenceSequence: number, policies: readonly AppServerDeliberationPolicy[], source?: LingAppServerCoordinationDecisionSource) {
   try {
-    const basis = readScheduledDecisionInputs(store, request, { throughEvidenceSequence });
+    const basis = readScheduledDecisionInputs(store, request, { throughEvidenceSequence }, Boolean(source));
     if (basis.subject.channelId !== channelId) return { reasonCode: "decision_basis_changed" };
     return { digest: basis.digest, channelId,
       policyRevision: readWorkspaceDeliberationPolicy(store, cwd, channelId, policies).effectiveRevision };
@@ -153,10 +158,10 @@ export function sealCoordinationDecision(store: RunStore, cwd: string, request: 
 }
 
 function readScheduledDecisionInputs(store: RunStore, request: ScheduledCoordinationDecisionRequest,
-  checkpointScope: Parameters<typeof readDecisionBasis>[3]) {
+  checkpointScope: Parameters<typeof readDecisionBasis>[3], channelEvidenceOnly: boolean) {
   const { workItemId, roundId, idempotencyKey: _key, ...inputs } = request;
   return readDecisionBasis(store, requireWorkItem(store, workItemId),
-    { ...inputs, checkpoint: "scheduled_checkpoint", checkpointRef: roundId }, checkpointScope);
+    { ...inputs, checkpoint: "scheduled_checkpoint", checkpointRef: roundId }, checkpointScope, channelEvidenceOnly);
 }
 
 export async function evaluateAppServerDeliberation(
@@ -191,7 +196,8 @@ export async function evaluateAppServerDeliberation(
   assertScheduledCurrent(expectedWorkItemRevision);
   const prior = readReplay();
   if (prior) return prior;
-  const basis = readDecisionBasis(store, item, decision, scheduled);
+  const coordinator = scheduled?.source;
+  const basis = readDecisionBasis(store, item, decision, scheduled, Boolean(coordinator));
   if (scheduled && scheduled.basis.digest !== basis.digest) throw new ScheduledDecisionStale("decision_basis_changed");
   const decisionId = digest([item.id, decision.decisionKey, decision.subject.kind, basis.subject.decisionAnchor,
     ...(decision.decisionStepId ? [decision.decisionStepId] : [])]);
@@ -244,16 +250,16 @@ export async function evaluateAppServerDeliberation(
     ...outcome,
   };
   const predecessor = latestEvaluation(store, item.id, decisionId);
-  const frozen = { evaluation, decision, basisDigest: basis.digest } satisfies FrozenEvaluation;
+  const frozen: FrozenEvaluation = { evaluation, decision, basisDigest: basis.digest, ...(coordinator ? { channelEvidenceOnly: true } : {}) };
   const evidence: AppendWorkItemCollaborationInput = {
     id: evaluationId, workItemId, expectedWorkItemRevision, idempotencyKey,
-    kind: "deliberation", action: "created", actorId: "local-user", visibility: "owner",
+    kind: "deliberation", action: "created", actorId: coordinator?.actorId ?? "local-user", visibility: "owner",
     payload: frozen,
     ...(predecessor ? { parentRecordId: predecessor.evaluation.evaluationId } : {}),
-    sourceRefs: basis.sourceRefs,
+    sourceRefs: coordinator ? [...basis.sourceRefs, { type: "run", id: coordinator.runId }, { type: "attempt", id: coordinator.attemptId }] : basis.sourceRefs,
     assertCurrent: () => {
       assertScheduledCurrent(expectedWorkItemRevision);
-      const current = readDecisionBasis(store, requireWorkItem(store, workItemId), decision, scheduled);
+      const current = readDecisionBasis(store, requireWorkItem(store, workItemId), decision, scheduled, Boolean(coordinator));
       const policy = policyForSubject(store, cwd, current.subject, policyContext.policies);
       if (current.digest !== basis.digest || (policy?.effectiveRevision ?? defaultDeliberationPolicyRevision) !== policyRevision) {
         throw stale("The decision basis changed before the evaluation committed.");
@@ -527,7 +533,7 @@ function assertEvaluationCurrent(store: RunStore, item: WorkItem, frozen: Frozen
     throw new HttpError(409, "resume_blocked", "The Work Item is held. Resume the applicable stage before continuing deliberation.");
   }
   if (deadline <= now) throw stale("The deliberation deadline expired.");
-  const basis = readDecisionBasis(store, item, decision);
+  const basis = readDecisionBasis(store, item, decision, undefined, frozen.channelEvidenceOnly);
   const latest = latestEvaluation(store, item.id, evaluation.decisionId);
   if (latest?.evaluation.decisionRevision !== evaluation.decisionRevision || basis.digest !== frozen.basisDigest) {
     throw stale("The decision basis or applicable evaluation changed.");
@@ -547,7 +553,7 @@ function policyForSubject(store: RunStore, cwd: string, subject: SubjectBasis, p
 }
 
 function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEvaluation["decision"],
-  checkpointScope?: { readonly beforeScheduledClose?: boolean; readonly throughEvidenceSequence?: number }) {
+  checkpointScope?: { readonly beforeScheduledClose?: boolean; readonly throughEvidenceSequence?: number }, channelEvidenceOnly = false) {
   const subject = readSubject(store, item, decision.subject);
   const checkpoint = checkpointScope?.beforeScheduledClose ? { type: "coordination_round", id: decision.checkpointRef }
     : readCheckpoint(store, item, subject, decision);
@@ -568,6 +574,18 @@ function readDecisionBasis(store: RunStore, item: WorkItem, decision: FrozenEval
   const optionEntries = decision.optionRefs.map(id => readEntry(id, true));
   const options = optionEntries.map(entry => evidenceRef(entry, "deliberation_option"));
   const evidence = decision.evidenceRefs.map(id => readEntry(id, false));
+  if (channelEvidenceOnly) {
+    const binding = subject.step && readWorkItemWorkflowBinding(store, subject.step.workflowId);
+    const plan = binding && store.getProposedPlanArtifact(binding.planId);
+    const successor = plan?.supersededByPlanId ? store.getProposedPlanArtifact(plan.supersededByPlanId) : undefined;
+    const thread = binding && store.getLingThread(binding.threadId);
+    const entries = [...optionEntries, ...evidence];
+    if (!thread?.channelId || thread.channelId !== subject.channelId || thread.status === "archived" || thread.archivedAt
+      || successor?.status === "accepted" && successor.acceptedWorkflowId
+      || readCheckpointChannelEvidence(store, thread.id, thread.channelId, entries).length !== entries.length) {
+      throw stale("The checkpoint decision requires current evidence from its coordinating channel conversation.");
+    }
+  }
   const evidenceRefs = evidence.map(entry => evidenceRef(entry, "work_item_evidence"));
   const candidate = decision.candidateDigest ? { digest: decision.candidateDigest, cwd: decisionCandidateCwd(store, subject) } : undefined;
   const decisionTarget = decision.decisionStepId

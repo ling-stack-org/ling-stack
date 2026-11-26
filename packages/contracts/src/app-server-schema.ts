@@ -76,8 +76,10 @@ const decisionInputRequired = {
   question: stringSchema, participantIds: stringArraySchema, optionRefs: stringArraySchema, evidenceRefs: stringArraySchema,
 };
 const decisionInput = { ...decisionInputRequired, candidateDigest: stringSchema, decisionStepId: stringSchema, unresolved: { enum: ["intent", "fact", "handoff"] } };
-const coordinationDecisionIdentity = { id: stringSchema, decisionKey: stringSchema, roundId: stringSchema };
-const coordinationDecisionKeys = [...Object.keys(coordinationDecisionIdentity), "status"];
+const coordinationDecisionSource = objectWith({ actorId: { enum: ["ling_agent"] }, runId: stringSchema, attemptId: stringSchema },
+  ["actorId", "runId", "attemptId"]);
+const coordinationDecisionIdentity = { id: stringSchema, decisionKey: stringSchema, roundId: stringSchema, source: coordinationDecisionSource };
+const coordinationDecisionKeys = ["id", "decisionKey", "roundId", "status"];
 const coordinationDecisionReceipt = { oneOf: [
   objectWith({ ...coordinationDecisionIdentity, status: { enum: ["registered", "pending"] } }, coordinationDecisionKeys),
   objectWith({ ...coordinationDecisionIdentity, status: { enum: ["evaluated"] }, evaluationId: stringSchema }, [...coordinationDecisionKeys, "evaluationId"]),

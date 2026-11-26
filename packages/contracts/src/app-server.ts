@@ -1342,10 +1342,17 @@ export interface LingAppServerCoordinationDecisionParams extends Omit<LingAppSer
   readonly subject: Extract<LingAppServerDeliberationSubject, { readonly kind: "workflow_stage" }>;
 }
 
+export interface LingAppServerCoordinationDecisionSource {
+  readonly actorId: "ling_agent";
+  readonly runId: string;
+  readonly attemptId: string;
+}
+
 export type LingAppServerCoordinationDecisionReceipt = {
   readonly id: string;
   readonly decisionKey: string;
   readonly roundId: string;
+  readonly source?: LingAppServerCoordinationDecisionSource;
 } & (
   | { readonly status: "registered" | "pending" }
   | { readonly status: "evaluated"; readonly evaluationId: string }

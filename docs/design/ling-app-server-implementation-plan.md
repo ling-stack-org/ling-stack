@@ -90,7 +90,11 @@ Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI std
 
 测试仓库未配置独立检查 App，Ling 主动入队返回 `github_queue_guard_unavailable`。第二个合成 PR 的两个 head 检查通过后，使用固定 head 调用直接合并，GitHub 返回 405 并要求经过合并队列。GitHub 原生入队后，该 PR 使用推进后的 base 生成合并组。运行器启动延迟导致队列以 `checks_timed_out` 移除该 PR，合并组检查随后通过。Daemon 重启后可读取历史队列回执，当前对账继续保留通过的 head 检查，将合并组证据标为 `merge_group_membership_unavailable`，并拒绝完成 Goal。 [直接合并校验 PR](https://github.com/ling-stack-org/ling-delivery-acceptance-20261123/pull/2) · [迟到的队列检查](https://github.com/ling-stack-org/ling-delivery-acceptance-20261123/actions/runs/45095947983)
 
+### 联合协作验收
+
 定时检查点支持在开放期间登记当前接受阶段的决定。关轮同时封存证据水位、工作项版本和策略。实际 Daemon 回归覆盖登记权限、关轮写入失败回滚、手动和到期关闭、恢复闸门、重启消费、同一决定只开一轮、Plan／控制／策略变更以及显式评估中采用迟到证据。 [定时协调准入](ling-agent-operating-model-detailed-design.md#511-scheduled-coordination-admission)
+
+本机频道的 Ling Agent 可以读取当前计划的阶段、开放检查点及与同一频道会话的当前消息一致的证据，并通过 Pi 工具登记决定。真实 Daemon 回归覆盖移动端只读回复的工具范围、其他工作项、过期 Plan、仅工作项可见的证据、脱敏、Run/Attempt 回执和重启后关轮评估。评估保留 Agent 来源，后续审议仍由已配置的裁决者负责。 [协调工具](../../packages/daemon/src/features/work-items/checkpoint-coordinator-tool.ts) · [频道联调](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
 O9 联合回归在同一 Work Item 确认双端订阅、阶段进度、暂停与恢复、Verify、Review、GitHub Delivery、审议提交和恢复日志的证据归属与重启回放。草案计划可在接受前运行有明确角色的只读塑形。工作区设置可从 Host 许可范围内管理审议策略。 [联合验收](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
@@ -101,7 +105,7 @@ O9 联合回归在同一 Work Item 确认双端订阅、阶段进度、暂停与
 | A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入。专用 TLS 监听器实测分离控制和答复权限，支持用户答复原回执与撤权。审批和答复仍需在其他宿主和实际远程部署验收。目标游标已绑定存储代次、授权代次和目标，本机兼容用例覆盖上一版源码与候选组合。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
 | F1、F2 | 普通会话 Handoff 的候选封存、Goal 预算承接与接手已接入。CLI `app-server codex-host --thread <id> --state <file> --view` 在回环地址提供双端会话视图。本机 Codex 0.171.0-alpha.13、实际 Ling Daemon 与受控 Provider 联调验证两端状态、Ling 在途排队、活跃 Codex Turn 指导、浏览器重连补齐、回执重放和审批提醒。故障回归覆盖原状态库升级、未写出的请求在重连后补投一次，以及已发出但缺少有效回执时保留待确认结果。Pi Host 预算路径的逐请求预留已使用受控 Provider 验证，仍需真实 Provider、隔离工作树和其他 Runner 的对应验收。 |
-| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛或仍在途的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端和支持协作工具的 Pi 阶段按 Run/Attempt 收发，Pi 在下一次模型输入接收消息和问答。Workflow 执行使用工作项重试上限，并可依据跨 Run 的结构化故障记录暂停单项阶段。可信 Verify 和已接受 Plan 指定的 Review 均可提供停滞恢复证据。决策检查点支持计划前和在途阶段的建议、接受与手工裁决。Device Work Item Bridge 的持久映射、receipt 账本和 App Server 入口已实现。已接受阶段可显式或按 Host 策略开启独立只读审议、按质疑结果投票，并将裁决应用到声明的候选依赖。定时检查点的登记和关轮自动评估已接入 App Server、SDK 和 MCP。原生 Ling Agent 对现场证据的主动收集与登记，以及跨主机 Device Fabric owner host 对接仍需补齐。 |
+| O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛或仍在途的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端和支持协作工具的 Pi 阶段按 Run/Attempt 收发，Pi 在下一次模型输入接收消息和问答。Workflow 执行使用工作项重试上限，并可依据跨 Run 的结构化故障记录暂停单项阶段。可信 Verify 和已接受 Plan 指定的 Review 均可提供停滞恢复证据。决策检查点支持计划前和在途阶段的建议、接受与手工裁决。Device Work Item Bridge 的持久映射、receipt 账本和 App Server 入口已实现。已接受阶段可显式或按 Host 策略开启独立只读审议、按质疑结果投票，并将裁决应用到声明的候选依赖。定时检查点的登记和关轮自动评估已接入 App Server、SDK、MCP 和频道 Ling Agent。原生 Agent 使用独立 Verify、Review 与阶段产物时仍需 Work Item 授权的执行路径。跨主机 Device Fabric owner host 对接仍待完成。 |
 | G | 独立恢复日志已验证 SQLite 快照恢复、撤权、旧游标失效和 GitHub 对账后派发。上一版源码通过同一套本地兼容验收。签名安装产物、实际远程 WSS、带独立检查 App 的 Ling 主动入队及三个真实 Provider 自研试点仍需对应环境的证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
 
 ## 目标与开工顺序

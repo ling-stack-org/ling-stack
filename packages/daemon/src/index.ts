@@ -825,8 +825,8 @@ export function createDaemonServer(
     notificationHub,
     nativeWorkIntake,
     {
-      sealDecision: (store, cwd, input, channelId, throughEvidenceSequence) =>
-        sealCoordinationDecision(store, cwd, input, channelId, throughEvidenceSequence, resolvedConfig.appServerDeliberationPolicies),
+      sealDecision: (store, cwd, input, channelId, throughEvidenceSequence, source) =>
+        sealCoordinationDecision(store, cwd, input, channelId, throughEvidenceSequence, resolvedConfig.appServerDeliberationPolicies, source),
       evaluate: async (store, cwd, decision, isActive) => {
         const policy = deliberationPolicyContext(resolvedConfig, store);
         const result = await evaluateScheduledCoordinationDecision(store, decision, cwd, {

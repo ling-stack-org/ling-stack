@@ -4,6 +4,7 @@ import type { SessionPermissionMode } from "./session-permissions.js";
 import type { SkillApprovalProfile } from "./skill-types.js";
 import type {
   LingAppServerCoordinationDecisionParams,
+  LingAppServerCoordinationDecisionSource,
   LingAppServerScheduledCoordinationRound,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent, LingThread } from "./run-types.js";
@@ -47,7 +48,7 @@ export interface CloseScheduledCoordinationInput {
   readonly expectedWorkItemRevision?: number;
   readonly expectedCollaborationRevision?: number;
   readonly readDecisionBasis?: (request: ScheduledCoordinationDecisionRequest, channelId: string,
-    throughEvidenceSequence: number) => ScheduledCoordinationDecisionBasis | { readonly reasonCode: string };
+    throughEvidenceSequence: number, source?: LingAppServerCoordinationDecisionSource) => ScheduledCoordinationDecisionBasis | { readonly reasonCode: string };
 }
 
 export interface ScheduledCoordinationClose {
@@ -73,6 +74,7 @@ export interface ScheduledCoordinationDecisionConsumption {
 
 export interface PendingScheduledCoordinationDecision extends ScheduledCoordinationDecisionConsumption {
   readonly request: ScheduledCoordinationDecisionRequest;
+  readonly source?: LingAppServerCoordinationDecisionSource;
   readonly basis: ScheduledCoordinationDecisionBasis;
   readonly closedRecordId: string;
   readonly throughEvidenceSequence: number;

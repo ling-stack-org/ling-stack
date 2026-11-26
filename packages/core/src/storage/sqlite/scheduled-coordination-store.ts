@@ -14,6 +14,8 @@ import type {
 import { automationDefinitionDigestInput } from "../../automation-event-types.js";
 import { automationEventDigest } from "../../automation-event-source.js";
 import type { RunStore } from "../../run-types.js";
+import { stageCoordinationToolReceiptId, type WorkItemCheckpointCoordinatorSource,
+  type WorkItemCheckpointToolReceipt } from "../../work-item-stage-coordination.js";
 import { appendWorkItemCollaboration, readWorkItemCollaborationRecord, type AppendWorkItemCollaborationInput,
   type AppendWorkItemCollaborationResult } from "../../work-item-collaboration.js";
 import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
@@ -28,6 +30,7 @@ interface DecisionSubmission {
   readonly id: string;
   readonly request: ScheduledCoordinationDecisionRequest;
   readonly policy: ScheduledCoordinationDecisionPolicy;
+  readonly source?: LingAppServerCoordinationDecisionReceipt["source"];
   readonly basis?: ScheduledCoordinationDecisionBasis;
   readonly outcome?: { readonly evaluationId: string } | { readonly reasonCode: string };
 }
@@ -185,7 +188,7 @@ export class SqliteScheduledCoordinationStore {
           if (!inputsCurrent || !readBasis) return { ...submission, outcome: { reasonCode: "coordination_inputs_changed" } };
           if (workItem.planRevision !== submission.request.subject.planRevision) return { ...submission, outcome: { reasonCode: "accepted_plan_changed" } };
           const basis = readSqliteWithinTransaction(this.context.database,
-            () => readBasis(submission.request, submission.policy.channelId, currentSequence));
+            () => readBasis(submission.request, submission.policy.channelId, currentSequence, submission.source));
           if ("reasonCode" in basis) return { ...submission, outcome: basis };
           if (basis.policyRevision !== submission.policy.policyRevision || basis.channelId !== submission.policy.channelId) {
             return { ...submission, outcome: { reasonCode: "deliberation_policy_changed" } };
@@ -204,15 +207,22 @@ export class SqliteScheduledCoordinationStore {
   }
 
   registerDecision(request: ScheduledCoordinationDecisionRequest, expectedWorkItemRevision: number, now: string,
-    readPolicy: () => ScheduledCoordinationDecisionPolicy) {
+    readPolicy: () => ScheduledCoordinationDecisionPolicy, coordinator?: WorkItemCheckpointCoordinatorSource & { readonly assertCurrent: () => void }) {
     return this.transaction(() => {
       const round = this.readRound(request.roundId);
       if (round?.workItemId !== request.workItemId || round.kind !== "checkpoint") throw new Error("coordination_subject_unavailable");
+      if (coordinator) readSqliteWithinTransaction(this.context.database, coordinator.assertCurrent);
       const stored = this.decisionBatch(round.recordId);
       const batch = stored?.batch ?? { submissions: [] };
+      const source: DecisionSubmission["source"] = coordinator && {
+        actorId: LING_AGENT_ID, runId: coordinator.source.runId, attemptId: coordinator.source.attemptId,
+      };
       const previous = batch.submissions.find(submission => submission.request.idempotencyKey === request.idempotencyKey);
       if (previous) {
-        if (!isDeepStrictEqual(previous.request, request)) throw new Error("coordination_decision_idempotency_conflict");
+        if (!isDeepStrictEqual(previous.request, request) || !isDeepStrictEqual(previous.source, source)) {
+          throw new Error("coordination_decision_idempotency_conflict");
+        }
+        if (coordinator) this.recordCoordinatorRegistration(coordinator, request, previous.id, now);
         return { receipt: this.projectDecision(batch, previous), replayed: true };
       }
       const item = this.workspace.getWorkItem(request.workItemId);
@@ -223,10 +233,27 @@ export class SqliteScheduledCoordinationStore {
       if (batch.submissions.length >= maxDecisionsPerRound) throw new Error("coordination_decision_limit");
       const policy = readSqliteWithinTransaction(this.context.database, readPolicy);
       const id = `coordination_decision_${createHash("sha256").update(JSON.stringify([round.recordId, request.idempotencyKey])).digest("hex")}`;
-      const submission = { id, request, policy };
+      const submission = { id, request, policy, ...(source ? { source } : {}) };
       this.writeDecisions(round.recordId, stored?.revision ?? 0, { ...batch, submissions: [...batch.submissions, submission] }, now);
+      if (coordinator) this.recordCoordinatorRegistration(coordinator, request, id, now);
       return { receipt: this.projectDecision(batch, submission), replayed: false };
     });
+  }
+
+  private recordCoordinatorRegistration(coordinator: WorkItemCheckpointCoordinatorSource,
+    request: ScheduledCoordinationDecisionRequest, receiptId: string, now: string): void {
+    const { source, toolCallId, threadId, requestDigest } = coordinator;
+    const recordId = stageCoordinationToolReceiptId(source.runId, source.attemptId, toolCallId);
+    const payload: WorkItemCheckpointToolReceipt = { source, toolCallId, threadId, requestDigest, scope: "coordinator",
+      outcome: { status: "registered", roundId: request.roundId, workItemId: request.workItemId, receiptId } };
+    const prior = this.state.get("work_item_stage_tool_receipt", recordId);
+    if (prior) {
+      if (!isDeepStrictEqual(prior.payload, payload)) throw new Error("coordination_decision_idempotency_conflict");
+      return;
+    }
+    if (!this.state.putWithinTransaction({ kind: "work_item_stage_tool_receipt", recordId, expectedRevision: 0, payload }, now)) {
+      throw new Error("coordination_tool_receipt_changed");
+    }
   }
 
   readDecisions(workItemId: string, roundId: string): readonly LingAppServerCoordinationDecisionReceipt[] {
@@ -251,7 +278,7 @@ export class SqliteScheduledCoordinationStore {
     const submission = batch.submissions.find(entry => !entry.outcome);
     if (!submission?.basis) return undefined;
     return { ...batch.seal, roundId, receiptId: submission.id, expectedWorkItemRevision: batch.nextWorkItemRevision,
-      request: submission.request, basis: submission.basis };
+      request: submission.request, basis: submission.basis, source: submission.source };
   }
 
   settleDecision(input: ScheduledCoordinationDecisionConsumption, outcome: NonNullable<DecisionSubmission["outcome"]>, now: string): boolean {
@@ -311,8 +338,8 @@ export class SqliteScheduledCoordinationStore {
     }
   }
 
-  private projectDecision(batch: DecisionBatch, { id, request, outcome }: DecisionSubmission): LingAppServerCoordinationDecisionReceipt {
-    const identity = { id, decisionKey: request.decisionKey, roundId: request.roundId };
+  private projectDecision(batch: DecisionBatch, { id, request, source, outcome }: DecisionSubmission): LingAppServerCoordinationDecisionReceipt {
+    const identity = { id, decisionKey: request.decisionKey, roundId: request.roundId, ...(source ? { source } : {}) };
     if (!outcome) return { ...identity, status: batch.seal ? "pending" : "registered" };
     return "evaluationId" in outcome ? { ...identity, status: "evaluated", ...outcome } : { ...identity, status: "stale", ...outcome };
   }

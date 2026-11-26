@@ -90,6 +90,7 @@ import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-
 import { resolveAppServerGitHubSources, type AppServerGitHubSourceConfig } from "../dist/server/app-server-github-sources.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
+import { verifyWorkItemStageToolRequest } from "../../core/dist/storage/sqlite/work-item-stage-tool-settlement.js";
 
 test("App Server deduplicates verification starts and restores completed checks, cancellation and Work Item events", { timeout: 30_000 }, async t => {
   const fixture = await releaseFixture(t);
@@ -3781,12 +3782,12 @@ test("a paused Work Item replaces its accepted Workflow after the old Run settle
 async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, parallelReadOnly = false, retryBudget?: number,
   options?: { readonly harness?: DaemonConfig["harness"]; readonly secretResolver?: SecretResolver; readonly apiKeyRef?: string;
     readonly channelId?: string; readonly deliberationPolicies?: (cwd: string) => DaemonConfig["appServerDeliberationPolicies"];
-    readonly recoveryJournal?: boolean;
+    readonly recoveryJournal?: boolean; readonly mobileReplies?: boolean;
     readonly decision?: import("@ling-stack/contracts").ProposedPlanStageDecision;
     readonly verificationRecipes?: (root: string, cwd: string) => Promise<DaemonConfig["appServerVerificationRecipes"]> }) {
   const fixture = await releaseFixture(t, { channels: { terminalReports: false, teamObserverBus: false },
     harness: options?.harness, secretResolver: options?.secretResolver, verificationRecipes: options?.verificationRecipes,
-    deliberationPolicies: options?.deliberationPolicies, recoveryJournal: options?.recoveryJournal });
+    deliberationPolicies: options?.deliberationPolicies, recoveryJournal: options?.recoveryJournal, mobileReplies: options?.mobileReplies });
   const store = fixture.getStore();
   const now = new Date().toISOString();
   const preset = providerBaseUrl ? addLoopbackPreset(store, providerBaseUrl, options?.apiKeyRef ? {
@@ -3801,8 +3802,11 @@ async function stageQuestionWorkflow(t: TestContext, providerBaseUrl?: string, p
       store.replaceTeammateChannelMemberships(teammateId, [{ channelId: channel.id }], now);
     }
   }
-  const thread = store.createLingThread({ channelId: channel.id, kind: "channel_discussion",
-    title: "Review plan", objective: "Review the compatibility contract." }, now);
+  const thread = options?.mobileReplies
+    ? store.resolveOrCreateConversationThread({ channelId: channel.id, surfaceKind: "channel_root",
+      title: "Review plan", objective: "Review the compatibility contract." }, now).thread
+    : store.createLingThread({ channelId: channel.id, kind: "channel_discussion",
+      title: "Review plan", objective: "Review the compatibility contract." }, now);
   const plan = store.upsertProposedPlanArtifact({
     id: "plan-question-deadline", threadId: thread.id, channelId: channel.id,
     title: "Review", bodyMarkdown: "Review the compatibility contract.", status: "draft",
@@ -4892,6 +4896,159 @@ test("scheduled checkpoint decisions reject late changes and stale closes while 
   await controlCoordinationScheduler(fixture, "start");
   assert.equal((await waitFor(async () => (await replanned.read()).receipts.find(receipt => receipt.status === "stale"))).reasonCode,
     "accepted_plan_changed");
+});
+
+test("Ling Agent reads its open checkpoint and registers a decision through the conversation's Pi tool", { timeout: 30_000 }, async t => {
+  type ToolInput = { action: "read_checkpoints"; workItemId: string } |
+    { action: "submit_decision"; workItemId: string; decision: Omit<LingAppServerCoordinationDecisionParams, "workItemId" | "idempotencyKey" | "cwd"> };
+  const requested: ToolInput[] = [];
+  let workItemId: string;
+  let otherWorkItemId: string;
+  let workItemOnlyEvidenceId: string;
+  let expectMobileReply = true;
+  const provider = await startLoopbackPiProvider((raw: unknown) => {
+    const body = raw as { tools?: { function: { name: string } }[];
+      messages: { role: string; content: string | readonly { text?: string }[] }[] };
+    if (body.messages.some(message => message.role === "system" && typeof message.content === "string"
+      && message.content.includes("channel intent selector"))) {
+      return { text: JSON.stringify({ action: "reply", reason: "Discuss the current checkpoint." }) };
+    }
+    const usage = { prompt_tokens: 26, completion_tokens: 4, total_tokens: 30 };
+    if (expectMobileReply) {
+      assert.ok(!body.tools?.some(tool => tool.function.name === "work_item_coordination"));
+      return { text: "Open the checkpoint from the local channel.", usage };
+    }
+    const tool = "work_item_coordination";
+    assert.ok(body.tools?.some(entry => entry.function.name === tool));
+    const messages = body.messages.filter(message => message.role === "tool");
+    if (messages.length === 0) {
+      const input = { action: "read_checkpoints", workItemId: otherWorkItemId } as const;
+      requested.push(input);
+      return { tool, input, usage };
+    }
+    const content = messages.at(-1)!.content;
+    const result = JSON.parse(typeof content === "string" ? content : content.map(item => item.text ?? "").join(""));
+    if (messages.length === 1) {
+      assert.deepEqual(result.workItems.map((item: { workItemId: string }) => item.workItemId), [workItemId]);
+      const input = { action: "read_checkpoints", workItemId } as const;
+      requested.push(input);
+      return { tool, input, usage };
+    }
+    if (messages.length === 2) {
+      assert.ok(result.evidence.some((entry: { summary: string }) => entry.summary.endsWith("[REDACTED]")));
+      assert.doesNotMatch(JSON.stringify(result), /Private checkpoint material|Work Item only|loopback-fix/u);
+      const input = { action: "submit_decision", workItemId, decision: {
+        roundId: result.checkpoints[0].roundId, expectedWorkItemRevision: result.workItemRevision,
+        subject: { kind: "workflow_stage", workflowStepId: result.stages.steps[0].stepId, planRevision: result.planRevision },
+        decisionKey: "coordinator-compatibility", decisionKind: "implementation_tradeoff", materiality: "high",
+        question: "Which option preserves compatibility?", participantIds: result.participants.map((entry: { id: string }) => entry.id),
+        optionRefs: result.evidence.filter((entry: { kind: string }) => entry.kind === "proposal").map((entry: { id: string }) => entry.id),
+        evidenceRefs: result.evidence.filter((entry: { kind: string }) => entry.kind === "observation").map((entry: { id: string }) => entry.id),
+      } } as const satisfies ToolInput;
+      assert.equal(input.decision.optionRefs.length, 2);
+      assert.equal(input.decision.evidenceRefs.length, 2);
+      const stale = { ...input, decision: { ...input.decision, subject: { ...input.decision.subject, planRevision: "superseded:1" } } };
+      requested.push(stale, { ...input, decision: { ...input.decision, evidenceRefs: [workItemOnlyEvidenceId] } }, input);
+      return { tool, input: stale, usage };
+    }
+    if (messages.length === 3 || messages.length === 4) {
+      assert.deepEqual(result, { status: "rejected", code: "stale_revision" });
+      return { tool, input: requested[messages.length], usage };
+    }
+    assert.equal(result.status, "registered");
+    return { text: "I registered the compatibility decision for the checkpoint.", usage };
+  });
+  t.after(() => provider.close());
+  const { fixture, client, store, item, workItem, thread, channel } =
+    await stageQuestionWorkflow(t, provider.baseUrl, false, undefined, { ...workflowProviderBudgetFixture, mobileReplies: true });
+  workItemId = item.id;
+  const outsider = store.upsertWorkItem({ sourceType: "manual", sourceId: "other-item", channelId: channel.id, title: "Another project" },
+    new Date().toISOString());
+  otherWorkItemId = outsider.id;
+  const baseEvidence = { workItemId, actorId: "local-user", subjectRevision: workItem.planRevision };
+  const now = new Date().toISOString();
+  const appendChannelEvidence = async (key: string, kind: "observation" | "proposal", body: string) => {
+    const message = store.appendConversationUserTurn({ channelId: channel.id, threadId: thread.id, turnKind: "manual_followup",
+      title: key, actorId: "local-user", userInstruction: body, idempotencyKey: key,
+      payload: { format: "plain_text", body, mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+    }, now);
+    store.transitionLingTurnStatus({ turnId: message.turnId, expectedStatus: "open", event: "succeed", actor: "system", now });
+    const sourceRefs = [{ type: "conversation_item", id: message.item.id, revision: String(message.item.revision) }];
+    await client.call("workItem/evidence/append", { ...baseEvidence, idempotencyKey: key, kind, content: body, sourceRefs });
+    return sourceRefs;
+  };
+  await appendChannelEvidence("adapter", "proposal", "Keep the adapter compatible with existing callers.");
+  await appendChannelEvidence("migration", "proposal", "Move callers atomically to the replacement interface.");
+  const sourceRefs = await appendChannelEvidence("callers", "observation", "The public interface has existing clients.");
+  await appendChannelEvidence("redacted-review-material", "observation", `${"a".repeat(490)}loopback-fixture-key`);
+  await client.call("workItem/evidence/append", {
+    ...baseEvidence, kind: "observation", content: "Private checkpoint material", visibility: "owner", idempotencyKey: "private-review-material",
+  });
+  const { entry } = await client.call<{ entry: { id: string } }>("workItem/evidence/append", {
+    ...baseEvidence, kind: "observation", content: "Work Item only content", idempotencyKey: "work-item-only", sourceRefs,
+  });
+  workItemOnlyEvidenceId = entry.id;
+  const { roundId } = await openScheduledDecisionCheckpoint(fixture, client, workItemId);
+  const read = (connection = client) => connection.call<LingAppServerCoordinationDecisionsReadResult>("workItem/coordination/decisions/read", { workItemId, roundId });
+  await fixture.enableMobileReplies();
+  const issuedAt = new Date().toISOString();
+  const mobile = store.commitRemoteConversationSend({ workspaceId: DEFAULT_WORKSPACE_ID, deviceId: "mobile-fixture", commandId: "mobile-checkpoint-reply",
+    conversationKind: "channel", conversationId: channel.id, body: "Compare the current checkpoint.", bodyHash: "mobile-body-hash",
+    issuedAt, retryUntil: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
+  }, issuedAt);
+  const mobileTurnId = store.getConversationItem(mobile.messageId)?.turnId;
+  assert.ok(mobileTurnId);
+  assert.equal(store.getLingTurn(mobileTurnId)?.threadId, thread.id);
+  const findSucceeded = (turnId: string) => waitFor(() => {
+    const runId = store.getLingTurn(turnId)?.lastRunId;
+    const run = runId ? store.getRun(runId) : undefined;
+    if (!run || !run.endedAt) return undefined;
+    assert.equal(run.status, "succeeded", run.errorMessage ?? "Checkpoint reply failed.");
+    return run;
+  });
+  await findSucceeded(mobileTurnId);
+  assert.deepEqual((await read()).receipts, []);
+  expectMobileReply = false;
+  const { daemonUrl, authToken, cwd } = fixture.transportOptions();
+  const result = await fetch(`${daemonUrl}/channels/${channel.id}/turns?cwd=${encodeURIComponent(cwd)}`, {
+    method: "POST", headers: { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ body: "Compare the two supported options at the current checkpoint.", surface: { kind: "thread", threadId: thread.id },
+      requestAiReply: true, teammateId: "ling_agent", idempotencyKey: "coordinator-turn" }),
+  });
+  assert.equal(result.status, 201, await result.clone().text());
+  const response = await result.json() as ChannelConversationTurnResponse;
+  assert.equal(response.thread.id, thread.id);
+  const run = await findSucceeded(response.turn.id);
+  const receipt = await waitFor(async () => (await read()).receipts[0]);
+  assert.equal(receipt.status, "registered");
+  assert.equal(requested.length, 5);
+  const attempt = store.listWorkUnitAttempts(run.workUnitId!).at(-1)!;
+  assert.deepEqual(receipt.source, { actorId: "ling_agent", runId: run.id, attemptId: attempt.id });
+  const recorded = store.listAppServerState("work_item_stage_tool_receipt").filter(record => record.recordId.startsWith(run.id + ":"));
+  assert.equal(recorded.length, 5);
+  const db = new DatabaseSync(store.paths.databasePath, { readOnly: true });
+  try {
+    const submitted = recorded.find(record => (record.payload as { outcome: { status: string } }).outcome.status === "registered");
+    assert.ok(submitted);
+    const { toolCallId } = submitted.payload as { toolCallId: string };
+    assert.equal(verifyWorkItemStageToolRequest(db, { runId: run.id, ...toRuntimeAttemptFence(attempt) },
+      toolCallId, requested[4], new Date().toISOString()), true);
+    assert.equal(verifyWorkItemStageToolRequest(db, { runId: run.id, ...toRuntimeAttemptFence(attempt) },
+      toolCallId, requested[2], new Date().toISOString()), false);
+  } finally {
+    db.close();
+  }
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.deepEqual((await read(restored)).receipts, [receipt]);
+  await restored.call("workItem/coordination/close", { workItemId, parentRecordId: roundId, actorId: "local-user" });
+  const finished = await waitFor(async () => (await read(restored)).receipts.find(entry => entry.status === "evaluated"));
+  assert.equal(finished.id, receipt.id);
+  assert.deepEqual(finished.source, receipt.source);
+  const evaluated = fixture.getStore().getWorkItemEvidence(finished.evaluationId);
+  assert.equal(evaluated?.actorId, "ling_agent");
+  assert.ok(evaluated.sourceRefs.some(ref => ref.type === "run" && ref.id === run.id));
+  assert.ok(evaluated.sourceRefs.some(ref => ref.type === "attempt" && ref.id === attempt.id));
 });
 
 test("parallel Work Item stages reserve their shared Goal budget before sending Pi requests", { timeout: 30_000 }, async t => {
@@ -6924,7 +7081,7 @@ const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunSt
 
 async function releaseFixture(t: TestContext, {
   runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, secretResolver, wssConfig,
-  recoveryJournal = false, channels, deliberationPolicies,
+  recoveryJournal = false, channels, deliberationPolicies, mobileReplies = false,
 }: {
   runner?: RunnerRegistrationInput;
   initialRuntime?: ReleaseRuntime;
@@ -6938,6 +7095,7 @@ async function releaseFixture(t: TestContext, {
   recoveryJournal?: boolean;
   channels?: DaemonConfig["channels"];
   deliberationPolicies?: (cwd: string) => DaemonConfig["appServerDeliberationPolicies"];
+  mobileReplies?: boolean;
 } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
@@ -6950,16 +7108,29 @@ async function releaseFixture(t: TestContext, {
   const stores = new Map<string, SqliteRunStore>();
   const usesOriginalStore = harness?.delegations?.mode === "enforce" || harness?.delegations?.mode === "shadow";
   const clients = new Set<WebSocket>();
+  const mobileManagementOrigin = "http://127.0.0.1:17891";
+  let mobilePort: number | undefined;
+  if (mobileReplies) {
+    const temporary = createServer();
+    temporary.listen(0, "127.0.0.1");
+    await once(temporary, "listening");
+    const address = temporary.address();
+    assert.ok(address && typeof address === "object");
+    mobilePort = address.port;
+    await promisify(temporary.close.bind(temporary))();
+  }
   const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
     host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: requireAuth ? authToken : undefined, harness, channels,
     appServerVerificationRecipes, appServerGitHubSources: githubSources?.(cwd), appServerWss, appServerDeliberationPolicies: deliberationPolicies?.(cwd),
+    ...(mobileReplies ? { remoteAccess: { listenerPort: mobilePort, managementAllowedOrigins: [mobileManagementOrigin] } } : {}),
     ...(recoveryJournal ? { appServerRecoveryDirectory: join(root, "recovery-journal") } : {}),
   }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,
     externalWorkFetch,
     secretResolver,
-    remoteReplyDispatcher: null,
+    ...(mobileReplies ? {} : { remoteReplyDispatcher: null }),
+    remoteAccessStateDir: join(root, "remote-access"),
     ...(usesOriginalStore ? { onStoreInitialized: (workspace: string, store: import("@ling-stack/core").RunStore) =>
       stores.set(workspace, store as SqliteRunStore) } : { storeFactory(workspace: string) {
       const store = runtime.createSqliteRunStore(workspace, runtime.resolveStoragePaths(workspace, {
@@ -6990,6 +7161,17 @@ async function releaseFixture(t: TestContext, {
       const address = daemon.server.address();
       assert.ok(address && typeof address === "object");
       return { daemonUrl: `http://127.0.0.1:${address.port}`, cwd, authToken };
+    },
+    async enableMobileReplies() {
+      assert.ok(mobileReplies);
+      const { daemonUrl } = this.transportOptions();
+      const response = await fetch(`${daemonUrl}/v1/mobile-access/enable`, {
+        method: "POST", headers: { Origin: mobileManagementOrigin, "Content-Type": "application/json",
+          "X-Ling-Mobile-Management-Capability": daemon.remoteAccessManagement.capability,
+          "X-Ling-CSRF-Token": daemon.remoteAccessManagement.csrfToken },
+        body: JSON.stringify({ gatewayOrigin: "https://ling-pc.example.ts.net" }),
+      });
+      assert.equal(response.status, 200, await response.text());
     },
     wssUrl() {
       const address = daemon.appServerWss?.address();

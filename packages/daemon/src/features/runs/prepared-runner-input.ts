@@ -98,6 +98,7 @@ export function restorePreparedRunnerOptions(
     frozenSurface?.codeIntelligence === true && currentSurface?.codeIntelligence !== true ||
     frozenSurface?.codeMode === true && currentSurface?.codeMode !== true ||
     frozenSurface?.workItemCoordination === true && currentSurface?.workItemCoordination !== true ||
+    frozenSurface?.workItemCoordination === true && frozenSurface.workItemCoordinator !== currentSurface?.workItemCoordinator ||
     frozenSurface?.nativeFileCreate !== undefined && currentSurface?.nativeFileCreate !== frozenSurface.nativeFileCreate ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
@@ -192,13 +193,14 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
       ? surfaceRecord?.nativeFileCreate === true
       : surfaceRecord?.nativeFileCreate === undefined || surfaceRecord?.nativeFileCreate === false;
     const delegationSurfaceRequired = delegationSelected.length > 0 && surfaceRecord?.delegation !== true;
-    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation', 'codeIntelligence', 'codeMode', 'conversationVisualization', 'workItemCoordination'].includes(key)) ||
+    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation', 'codeIntelligence', 'codeMode', 'conversationVisualization', 'workItemCoordination', 'workItemCoordinator'].includes(key)) ||
       Object.values(surfaceRecord).some(selected => typeof selected !== "boolean") ||
       prepared.tools.some(tool => tool.name === CONVERSATION_VISUALIZATION_TOOL) !== (surfaceRecord.conversationVisualization === true) ||
       surfaceRecord.codeIntelligence !== undefined && prepared.tools.some(tool => tool.name === "code_intelligence") !== surfaceRecord.codeIntelligence ||
       surfaceRecord.codeMode !== undefined && prepared.tools.some(tool => tool.name === "code_mode") !== surfaceRecord.codeMode ||
       surfaceRecord.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surfaceRecord.userInput ||
       coordinationSelected !== (surfaceRecord.workItemCoordination === true) ||
+      surfaceRecord.workItemCoordinator === true && (!coordinationSelected || value.input.readonlyToolsProfile !== undefined) ||
       !delegationSurfaceMatches || delegationSurfaceRequired || !nativeSurfaceMatches) {
       throw new Error("Invalid prepared user-input tool surface");
     }
@@ -255,7 +257,7 @@ function isNarrowIsolatedSurface(input: unknown): boolean {
   if (["mcpTools", "hostCapabilityTools", "mediaGenerationTools"].some(key => input[key] !== undefined &&
     (!Array.isArray(input[key]) || input[key].length !== 0))) return false;
   for (const [key, allowed] of [
-    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode", "conversationVisualization", "workItemCoordination"]],
+    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode", "conversationVisualization", "workItemCoordination", "workItemCoordinator"]],
     ["runtimeToolFeatures", ["requestPermissions", "unifiedExec", "shellSnapshot"]],
   ] as const) {
     const flags = input[key];

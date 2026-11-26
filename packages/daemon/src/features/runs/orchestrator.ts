@@ -91,6 +91,7 @@ import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolati
 import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
 import { createStageMessageReceiver } from "../work-items/stage-message-receiver.js";
 import { createWorkItemCoordinationToolHandler } from "../work-items/stage-coordination-tool.js";
+import { createCheckpointCoordinatorTool } from "../work-items/checkpoint-coordinator-tool.js";
 import { persistWorkflowStageBallot } from "../work-items/stage-ballot.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
   failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
@@ -1084,6 +1085,12 @@ async function executeAdmittedRunRequest(
       && runnerResolution.runner.adapter instanceof PiRunnerAdapter
       && Boolean(selectedWorkflowStep?.metadata?.planStageId && !selectedWorkflowStep.metadata.planBallotKey
         && store.getAppServerState("work_item_workflow", selectedWorkflowStep.workflowId));
+    const workItemCoordinatorEnabled = !!runRequest.workItemCheckpointPlanRevisions?.length
+      && runRequest.createdByActor === "local-user" && workUnitOwner.kind === "channel_ai_reply"
+      && !runRequest.workflowStepId && !workflowSafetyPlan && !delegatedExecution && !runRequest.codeAssessment
+      && runnerResolution.runner.adapter instanceof PiRunnerAdapter;
+    const coordinationSurface = workItemCoordinatorEnabled ? { workItemCoordination: true, workItemCoordinator: true }
+      : workItemCoordinationSurfaceEnabled ? { workItemCoordination: true } : {};
     const visualizationEligible = frozenExecution
       ? frozenExecution.input.initialToolSurface?.conversationVisualization === true
       : isConversationMediaGenerationEligible({ createdByActor: runRequest.createdByActor, workUnitKind: workUnitOwner.kind });
@@ -1103,7 +1110,7 @@ async function executeAdmittedRunRequest(
         userInput: userInputAvailable(),
         nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
         delegation: delegationToolSurfaceEnabled,
-        ...(workItemCoordinationSurfaceEnabled ? { workItemCoordination: true } : {}) } };
+        ...coordinationSurface } };
     runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
     if (workflowSafetyPlan?.profile === "pi_host_readonly_v1") {
       // SDK preparation may inspect schemas, but it has no execution authority.
@@ -1194,7 +1201,7 @@ async function executeAdmittedRunRequest(
           userInput: userInputAvailable(),
           nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
           delegation: currentDelegationToolSurfaceEnabled,
-          ...(workItemCoordinationSurfaceEnabled ? { workItemCoordination: true } : {}) },
+          ...coordinationSurface },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
           ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] }, workflowSafetyPlan));
       runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
@@ -3060,7 +3067,18 @@ async function executeAdmittedRunRequest(
       }
     : undefined;
   const workItemCoordinationToolHandler = runnerRequest.initialToolSurface?.workItemCoordination === true
-    ? createWorkItemCoordinationToolHandler({ store, run, attemptId: attempt.id, activeRuns, assertCurrent: assertCurrentRunAdmission,
+    ? runnerRequest.initialToolSurface.workItemCoordinator
+      ? createCheckpointCoordinatorTool({ store, run, source: { runId: run.id, ...runnerCallbackFence }, extraSecrets: resolvedSecretValues,
+          planRevisions: runRequest.workItemCheckpointPlanRevisions ?? [],
+          policies: runtimeSupervisor.getAppServerDeliberationPolicies(), assertCurrent: () => {
+            assertCurrentRunAdmission();
+            if (storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
+            if (!runRequest.workItemCheckpointPlanRevisions?.length || workUnit.kind !== "channel_ai_reply"
+              || !isCapturedActiveAttempt() || !store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence)) {
+              throw new HttpError(409, "stale_revision", "The coordinator no longer owns this Run attempt.");
+            }
+          } })
+      : createWorkItemCoordinationToolHandler({ store, run, attemptId: attempt.id, activeRuns, assertCurrent: assertCurrentRunAdmission,
         extraSecrets: resolvedSecretValues, events: options.controlPlaneEvents })
     : undefined;
   const delegationProgressBinding = delegatedExecution ? Object.freeze({

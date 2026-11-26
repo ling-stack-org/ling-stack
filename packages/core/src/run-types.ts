@@ -2819,7 +2819,8 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   listOpenScheduledCoordinationRounds(): readonly import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound[];
   closeScheduledCoordination(input: import("./automation-types.js").CloseScheduledCoordinationInput, now: string, cwd?: string): import("./automation-types.js").ScheduledCoordinationClose | undefined;
   registerScheduledCoordinationDecision(request: import("./automation-types.js").ScheduledCoordinationDecisionRequest,
-    expectedWorkItemRevision: number, now: string, readPolicy: () => import("./automation-types.js").ScheduledCoordinationDecisionPolicy):
+    expectedWorkItemRevision: number, now: string, readPolicy: () => import("./automation-types.js").ScheduledCoordinationDecisionPolicy,
+    coordinator?: import("./work-item-stage-coordination.js").WorkItemCheckpointCoordinatorSource & { readonly assertCurrent: () => void }):
     Omit<import("@ling-stack/contracts").LingAppServerCoordinationDecisionSubmitResult, "cwd">;
   readScheduledCoordinationDecisions(workItemId: string, roundId: string): readonly import("@ling-stack/contracts").LingAppServerCoordinationDecisionReceipt[];
   listPendingScheduledCoordinationDecisionRounds(limit: number): readonly string[];
