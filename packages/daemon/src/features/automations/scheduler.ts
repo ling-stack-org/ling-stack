@@ -245,8 +245,10 @@ export class AutomationSchedulerRegistry {
   }
 
   publishCoordinationRound(cwd: string, event: ControlPlaneEvent): void {
+    const canonical = normalizeWorkspaceRoot(cwd);
     this.controlPlaneEvents.publish(trimOversizedEvent(event));
-    this.restoreCoordinationDeadlines(normalizeWorkspaceRoot(cwd));
+    this.restoreCoordinationDeadlines(canonical);
+    this.armCoordinationDecisions(canonical);
   }
 
   closeCoordinationRound(cwd: string, input: CloseScheduledCoordinationInput, now: string) {
