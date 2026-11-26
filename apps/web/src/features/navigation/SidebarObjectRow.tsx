@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEventHandler, type ReactNode } from "react";
 import { Button } from "../../shared/ui/index.js";
 import { SidebarTooltip } from "./SidebarTooltip.js";
 
@@ -9,6 +9,7 @@ export function SidebarObjectRow({
   buttonClassName,
   children,
   icon,
+  onContextMenu,
   onSelect,
   selected = false,
   shellClassName,
@@ -23,6 +24,7 @@ export function SidebarObjectRow({
   readonly buttonClassName?: string;
   readonly children: ReactNode;
   readonly icon: ReactNode;
+  readonly onContextMenu?: MouseEventHandler<HTMLButtonElement>;
   readonly onSelect: () => void;
   readonly selected?: boolean;
   readonly shellClassName?: string;
@@ -75,6 +77,7 @@ export function SidebarObjectRow({
           aria-label={ariaLabel}
           className={buttonClasses}
           leadingIcon={icon}
+          onContextMenu={onContextMenu}
           onClick={onSelect}
           variant="ghost"
         >

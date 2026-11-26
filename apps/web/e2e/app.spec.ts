@@ -358,6 +358,42 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toBeVisible();
 });
 
+test("recent conversation context menu permanently deletes after confirmation", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
+  const home = page.getByLabel("Conversation home");
+  await home.getByRole("textbox", { name: "Conversation message" }).fill("Delete me");
+  await home.getByRole("button", { name: "Send" }).click();
+
+  const row = navigation.locator(".sidebar-recent-row-shell").filter({ hasText: "Delete me" }).first();
+  await expect(row).toBeVisible();
+  await row.locator(".sidebar-recent-row").click({ button: "right" });
+  await expect(page.getByRole("menuitem", { name: "Delete conversation", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Delete conversation", exact: true }).click();
+
+  const deleteDialog = page.getByRole("dialog", { name: "Delete conversation Delete me?" });
+  await expect(deleteDialog).toContainText("Historical runs remain but will no longer be linked");
+  await deleteDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(deleteDialog).toHaveCount(0);
+  await expect(row).toBeVisible();
+
+  await row.locator(".sidebar-recent-row").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Delete conversation", exact: true }).click();
+  await page.getByRole("dialog", { name: "Delete conversation Delete me?" })
+    .getByRole("button", { name: "Delete conversation", exact: true })
+    .click();
+
+  await expect(row).toHaveCount(0);
+  await expect.poll(() => state.threads.some((thread) => thread.kind === "conversation" && thread.title === "Delete me")).toBe(false);
+  await expect(page.getByLabel("Conversation home")).toBeVisible();
+});
+
 test("recent conversations only show records created from the conversation home", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 1600, height: 900 });

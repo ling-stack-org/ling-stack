@@ -520,6 +520,7 @@ export function AppShell(): React.JSX.Element {
     selectConversationThread,
     archiveConversationThread,
     archiveAllConversationThreads,
+    deleteConversationThread,
     sendConversationMessage,
   } = conversationDomain.actions;
   useDesktopNavigationIntents(Boolean(form.cwd.trim()), openConversationThread);
@@ -2710,6 +2711,7 @@ export function AppShell(): React.JSX.Element {
         onArchiveTeammate={(teammateId) => void archiveAiTeammate(teammateId).catch(() => undefined)}
         onArchiveRecentConversation={(conversation) => void archiveConversationThread(conversation.id)}
         onArchiveAllRecentConversations={archiveAllConversationThreads}
+        onDeleteRecentConversation={(conversation) => deleteConversationThread(conversation.id)}
         onSelectChannel={(channelId) => {
           clearSettingsWorkspaceToolView();
           selectWorkspaceChannel(channelId);
