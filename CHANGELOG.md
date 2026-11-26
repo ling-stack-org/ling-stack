@@ -8,6 +8,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+## [0.6.2-alpha.1] - 2026-11-26
+
 ### Added
 
 - **Automation monitoring shows durable status and evidence**, including changed snapshots, triggered runs, output artifacts, notification history, scheduler outcomes, and a Web summary that can be inspected after restart.
@@ -21,6 +23,7 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Changed
 
+- **Desktop has a smaller development installer for Apple Silicon and Windows x64**. The Office Documents, Ling for Chrome, and Cua Driver resources are distributed separately from this candidate.
 - **Conversation summaries separate current work from the project overview**, with expandable worktree groups, one set of changes per shared worktree, and linked pull request status.
 
 - **Automation scheduling and run persistence are idempotent and recoverable**, preserving monitor history, poll-slot deduplication, and durable Run and artifact links.
