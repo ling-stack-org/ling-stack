@@ -2,7 +2,7 @@ name: Windows plugin profile migration evidence
 
 on:
   push:
-    branches: [codex/windows-plugin-profile-migration]
+    branches: [codex/windows-prerelease-profile-migration]
     paths:
       - .github/workflows/windows-plugin-profile-migration.yml
       - scripts/release/windows-plugin-profile-migration.mjs
@@ -39,13 +39,16 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/slim-candidate
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          run-id: '45617274952'
-          artifact-ids: '15032600995'
-          merge-multiple: true
-          path: ${{ runner.temp }}/upgrade-candidate
-          github-token: ${{ github.token }}
+      - name: Download the published Windows development prerelease
+        shell: pwsh
+        run: |
+          $destination = Join-Path $env:RUNNER_TEMP 'upgrade-candidate'
+          New-Item -ItemType Directory -Path $destination | Out-Null
+          $release = 'https://github.com/ling-stack-org/ling-stack/releases/download/v0.6.2-alpha.1'
+          foreach ($name in @('Ling-Stack-0.6.2-alpha.1-windows-x64-setup.exe', 'desktop-windows-x64-package-verification.json')) {
+            curl.exe --fail --location --silent --show-error --retry 3 --max-time 600 --output (Join-Path $destination $name) "$release/$name"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to download $name." }
+          }
       - name: Install and migrate an isolated Windows profile
         shell: pwsh
         run: |

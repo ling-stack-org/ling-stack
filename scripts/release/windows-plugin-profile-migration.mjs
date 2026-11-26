@@ -16,16 +16,17 @@ assert(process.platform === "win32" && process.arch === "x64"
 assert(bundledDirectory && slimDirectory && upgradeDirectory && outputPath, "Three candidate directories and an output path are required.");
 
 const bundledPin = {
-  mode: "bundled", source: "14be1bdebd3d295a4f822981ae8cc18a32b9dd51",
+  mode: "bundled", version: "0.6.1", source: "14be1bdebd3d295a4f822981ae8cc18a32b9dd51",
   digest: "246318c9b999c82b448144a35a26963228bc2f3aaa39dfb602662074674feee8",
 };
 const slimPin = {
-  mode: "on-demand", source: "b60f0c396c6f1dad3023018a1f14f8e793d2d406",
+  mode: "on-demand", version: "0.6.1", source: "b60f0c396c6f1dad3023018a1f14f8e793d2d406",
   digest: "167d3f090e4556b0561b5ced253b634d8a326a1e6b45b9a5999cc9a1695d73d4",
 };
 const upgradePin = {
-  mode: "on-demand", source: "97ec6701d9147afbd22b222bc7d285c1e3ece45d",
-  digest: "f326ec39e94f62095bc667a1b5577658a9caf700607c54b40e80826dc7956d72",
+  mode: "on-demand", version: "0.6.2-alpha.1", source: "cf8f0b183349f5a34e66bafade0e0a6f37d56767",
+  digest: "7b147db88fb67e0ba068b8b0a20c909a5267edda81fa8681d4d2fc893bef7221",
+  reportDigest: "150177a027d097a58cb36a6f4c2b9f972ae43b09492f50450f8bb52a59297ceb",
 };
 const [bundled, slim, upgrade] = await Promise.all([
   readCandidate(bundledDirectory, bundledPin),
@@ -98,7 +99,7 @@ const evidence = {
   bundledSourceSha: bundled.source, slimSourceSha: slim.source,
   bundledInstallerSha256: bundled.digest, slimInstallerSha256: slim.digest,
   thirdInstaller: {
-    sourceSha: upgrade.source, installerSha256: upgrade.digest,
+    version: upgrade.version, sourceSha: upgrade.source, installerSha256: upgrade.digest,
     installedStartup: "passed", pluginProfilePreserved: true,
     incomingGstack: upgrade.gstack, retainedGstack: retained, snapshotLineagePreserved: true,
     gstackPublication: "deferred",
@@ -112,15 +113,17 @@ await writeFile(resolve(outputPath), JSON.stringify(evidence, null, 2) + "\n", {
 console.log(JSON.stringify(evidence));
 
 async function readCandidate(directory, pin) {
-  const report = JSON.parse(await readFile(join(directory, "desktop-windows-x64-package-verification.json"), "utf8"));
+  const reportPath = join(directory, "desktop-windows-x64-package-verification.json");
+  if (pin.reportDigest) assert.equal((await fileRecord(reportPath)).sha256, pin.reportDigest);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
   assert.equal(report.sourceSha, pin.source);
   assert.equal(report.pluginMode, pin.mode);
   assert.equal(report.target, "windows-x64");
   assert.equal(report.signingTier, "unsigned_dev");
   assert.equal(report.status, "passed");
-  assert.equal(report.version, "0.6.1");
+  assert.equal(report.version, pin.version);
   assert(Array.isArray(report.payload) && report.payload.length > 0);
-  const archive = report.archives.find(record => record.name === "Ling-Stack-0.6.1-windows-x64-setup.exe");
+  const archive = report.archives.find(record => record.name === `Ling-Stack-${pin.version}-windows-x64-setup.exe`);
   assert.equal(archive?.sha256, pin.digest);
   const installer = resolve(directory, archive.name);
   assert.deepEqual(await fileRecord(installer), archive);
