@@ -82,15 +82,20 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
 核对归档、安装启动、分发材料和校验值后，在同一条 GitHub Pre-release 提供两个平台的包。
 在说明中记录源码提交、签名状态、实际验收和平台限制。Desktop 的正式更新检查使用 GitHub Latest。
 
-命令行也可以触发，示例中的 SHA 和版本必须替换为本次真实输入：
+用以下命令触发双平台构建，将 SHA 和版本替换为本次审核通过的输入。
 
 ```bash
 gh workflow run desktop-prerelease.yml --repo ling-stack-org/ling-stack --ref main \
-  -f operation=inspect \
+  -f operation=build \
   -f source_sha=REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA \
   -f release_tag=REPLACE_WITH_APPROVED_RELEASE_TAG \
+  -f plugin_mode=on-demand \
   -F create_draft=false
 ```
+
+在 GitHub Releases 手动下载双平台瘦包及 SHA-256 校验文件。[Desktop v0.6.2-alpha.1](https://github.com/ling-stack-org/ling-stack/releases/tag/v0.6.2-alpha.1)
+
+构建来源、实测范围和体积记录见 [独立插件打包与分发](../design/plugin-independent-packaging.md#desktop-开发预发布)。
 
 ## 合入前的云端验证
 

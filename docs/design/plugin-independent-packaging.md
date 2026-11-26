@@ -2,7 +2,7 @@
 
 ## 状态
 
-三个独立仓库维护各自的源码、构建流程和发布文档。Office 和 Chrome 已生成 macOS arm64、Windows x64 开发候选，Cua Driver 已完成双平台锁定构建。Desktop 的兼容包和瘦包均已通过两平台开发安装启动验证。正式插件发布待接入 macOS Developer ID 和公证、Windows Authenticode 及 Cua Driver 完整性目录签名。Desktop 默认使用兼容打包，正式签名资产、官方目录和安装版验收完成后再切换。[Cua Driver 平台锁](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/5)
+三个独立仓库维护各自的源码、构建流程和发布文档，均提供 macOS arm64 和 Windows x64 的公开开发预发布。Desktop 也提供两平台瘦包供手动试用。官方插件目录待发布，所需的 macOS Developer ID 签名和公证、Windows Authenticode 签名及 Cua Driver 完整性目录签名尚未就绪。Desktop 默认使用兼容打包，待正式签名资产和官方目录通过安装版验收后切换。
 
 | 插件 | 独立仓库职责 | Ling 主仓职责 |
 | --- | --- | --- |
@@ -61,12 +61,17 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 - Cua Driver 的独立复核根据四个原始归档核对了源码提交、补丁、二进制摘要和两平台锁。新锁在四台独立 runner 上完成原生重建与 MCP 探针，macOS 的 7 个稳定文件和 Windows 的 8 个稳定文件分别逐项一致。Windows 探针覆盖 Medium 完整性、状态目录用户 ACL、链接拒绝和配置持久化。发布文档记录这批签名前产物的来源和后续平台签名步骤。[Cua Driver 发布文档](https://github.com/ling-stack-org/ling-plugin-cua-driver/blob/main/docs/RELEASE.md)
 - Cua Driver 的原生工作流可从两份已复验的构建生成签名前归档，随附锁和载荷的 SHA-256 回执。独立仓的 `seal:release` 从正式签名和已审核的锁生成 provider seal，打包时复验 seal 和平台签名。Windows 还验证完整性目录覆盖可执行文件和 seal。[签名前归档](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/8) · [Seal 生成](https://github.com/ling-stack-org/ling-plugin-cua-driver/pull/9)
 
-下表是独立仓库开发候选的 `.ling-plugin.zip` 字节数，已逐包核对随包 JSON 中的 SHA-256。Cua Driver 的下载体积待平台签名归档生成后记录。
+### 独立插件开发预发布
 
-| 开发候选 | macOS arm64 | Windows x64 |
-| --- | ---: | ---: |
-| [Office Documents 0.1.0](https://github.com/ling-stack-org/ling-plugin-office-documents/actions/runs/45093987051) | 61,262 | 29,514,899 |
-| [Ling for Chrome 0.1.1](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45096848377) | 290,624 | 189,875 |
+下载前可在各 Release 查看源码提交、平台签名状态和校验文件。下表记录发布归档的字节数，GitHub 资产大小和 SHA-256 均与本地发布归档一致。
+
+| 预发布 | 归档 | macOS arm64（字节） | Windows x64（字节） |
+| --- | --- | ---: | ---: |
+| [Office Documents v0.1.0-dev.1](https://github.com/ling-stack-org/ling-plugin-office-documents/releases/tag/v0.1.0-dev.1) | `.ling-plugin.zip` | 61,262 | 29,514,899 |
+| [Ling for Chrome v0.1.1-dev.1](https://github.com/ling-stack-org/ling-plugin-chrome-browser/releases/tag/v0.1.1-dev.1) | `.ling-plugin.zip` | 290,624 | 189,875 |
+| [Cua Driver v0.2.0-dev.1](https://github.com/ling-stack-org/ling-plugin-cua-driver/releases/tag/v0.2.0-dev.1) | 签名前 `.tar.gz` | 6,690,425 | 7,140,210 |
+
+Office 和 Chrome 的开发包供源码环境试用。Cua Driver 提供双平台签名前归档，供构建复现和签名准备。正式目录使用带平台签名的稳定版资产。
 
 ### Desktop 安装包对照
 
@@ -88,7 +93,13 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 
 瘦包插件索引修复提交 `b60f0c396` 的 macOS arm64 和 Windows x64 开发包均通过归档校验与安装启动。Windows 还通过同版本覆盖安装及卸载。[候选构建复验](https://github.com/ling-stack-org/ling-stack/actions/runs/45293564788/attempts/2)
 
-提交 `fb48a9142201cd991a5e7a5e1848088199ca8aea` 的 0.6.1 瘦包通过归档核对和隔离启动。macOS arm64 从 DMG 复制应用后连接自有 daemon、加载主窗口并正常退出。Windows x64 同时通过安装、同版本升级和卸载。该提交的 DMG 为 794,456,589 字节，EXE 为 743,606,765 字节。上表的体积差值取自同一提交的配对构建。[0.6.1 开发候选](https://github.com/ling-stack-org/ling-stack/actions/runs/45677797080)
+提交 `fb48a9142201cd991a5e7a5e1848088199ca8aea` 的 0.6.1 瘦包通过归档核对和隔离启动。macOS arm64 从 DMG 复制应用后连接自有 daemon、加载主窗口并正常退出。Windows x64 同时通过安装、同版本升级和卸载。该候选的 DMG 为 794,456,589 字节，EXE 为 743,606,765 字节。[0.6.1 开发候选](https://github.com/ling-stack-org/ling-stack/actions/runs/45677797080)
+
+### Desktop 开发预发布
+
+`v0.6.2-alpha.1` 的双平台瘦包由 GitHub Actions 从 `cf8f0b183349f5a34e66bafade0e0a6f37d56767` 构建。macOS arm64 DMG 为 794,517,399 字节，ZIP 为 787,671,659 字节，Windows x64 Setup 为 743,682,530 字节。两个平台的下载及 SHA-256 校验文件在同一条 Release 提供。[Desktop 预发布](https://github.com/ling-stack-org/ling-stack/releases/tag/v0.6.2-alpha.1) · [双平台构建](https://github.com/ling-stack-org/ling-stack/actions/runs/45796383293)
+
+macOS 使用 ad-hoc 签名，已验证从 DMG 复制应用、启动并连接 Desktop 自有 daemon，以及正常退出。Windows Setup 未签名，已验证安装、启动、同版本覆盖安装和卸载。两平台均验证了 GStack 浏览器组件的首次下载和缓存复用。人工界面交互、模型、Excel、Computer Use 及正式插件目录的下载、启动、更新和回滚仍待验收。
 
 ### macOS 已有配置切换
 
