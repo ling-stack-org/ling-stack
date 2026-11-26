@@ -612,15 +612,14 @@ export function verifyMaterials({ resources, output, platform, sourceSha, plugin
 
 export function runCli(values = process.argv.slice(2)) {
   const options = parseArguments(values);
+  const pluginMode = options.pluginMode ?? (process.env.LING_PLUGIN_EXTERNAL_ONLY === "1" ? "on-demand" : "bundled");
   const output = resolve(options.output ?? join(options.root ?? repositoryRoot, "apps/desktop/dist/distribution"));
   if (options.command === "verify") {
-    const result = verifyMaterials({ ...options, output, sourceSha: options.sourceSha ?? process.env.DESKTOP_SOURCE_SHA });
+    const result = verifyMaterials({ ...options, output, pluginMode, sourceSha: options.sourceSha ?? process.env.DESKTOP_SOURCE_SHA });
     process.stdout.write(json(result));
     return result;
   }
-  const result = collectMaterials({ ...options,
-    pluginMode: options.pluginMode ?? (process.env.LING_PLUGIN_EXTERNAL_ONLY === "1" ? "on-demand" : "bundled"),
-  });
+  const result = collectMaterials({ ...options, pluginMode });
   if (options.command === "prepare") writeMaterials(result, output);
   process.stdout.write(json({ ...result.manifest, files: undefined, components: undefined, componentCount: result.manifest.components.length, materialFileCount: result.material.size }));
   if (options.command === "prepare" && result.manifest.gaps.length) process.exitCode = 1;
