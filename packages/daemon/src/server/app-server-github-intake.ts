@@ -297,7 +297,8 @@ export async function dispatchGitHubIntake(
         automaticIntakeReceiptId: receipt.receiptId, imageVisionSummarizer: context.imageVisionSummarizer, now: new Date().toISOString() });
       assertCurrent();
       publishPreparedConversationTurn(store, context.controlPlaneEvents, prepared.turn);
-      const runId = prepared.turn.activeRunId ?? prepared.turn.lastRunId ?? await startRun(prepared.runRequest, { receiptId: receipt.receiptId, assertCurrent });
+      const runId = prepared.replayRunId ?? prepared.turn.activeRunId ?? prepared.turn.lastRunId
+        ?? await startRun(prepared.runRequest, { receiptId: receipt.receiptId, assertCurrent });
       if (runId) complete("admitted", undefined, runId);
       else complete("pending", "work_item_admission_pending");
     } catch (error) {

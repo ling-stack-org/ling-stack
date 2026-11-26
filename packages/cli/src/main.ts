@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants, type Stats } from "node:fs";
 import { access, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve, win32 } from "node:path";
 import process from "node:process";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
@@ -274,13 +274,13 @@ async function handleAppServer(args: readonly string[], options: GlobalOptions):
   }
   const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
   if (mode === "codex-host") {
-    const parsed = parseCommandArgs(args.slice(1), { stringFlags: new Set(["thread", "state", "codex", "codex-thread"]),
+    const parsed = parseCommandArgs(args.slice(1), { stringFlags: new Set(["thread", "state", "codex", "codex-thread", "codex-cwd"]),
       booleanFlags: new Set(["view"]) });
     assertNoPositionals(parsed.positionals, "app-server codex-host --thread <id> --state <file>");
     const threadId = getFlag(parsed, "thread"), statePath = getFlag(parsed, "state");
-    if (!threadId || !statePath) throw new CliError(2, "bad_usage", "Usage: ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--view]");
+    if (!threadId || !statePath) throw new CliError(2, "bad_usage", "Usage: ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--codex-cwd <directory>] [--view]");
     const host = { ...transportOptions, threadId, statePath, codexExecutable: getFlag(parsed, "codex") ?? "codex",
-      codexThreadId: getFlag(parsed, "codex-thread") };
+      codexThreadId: getFlag(parsed, "codex-thread"), codexCwd: getFlag(parsed, "codex-cwd") };
     const controller = new AbortController();
     const stop = () => controller.abort();
     process.on("SIGINT", stop);
@@ -6311,7 +6311,7 @@ function assertAllowed(key: string, value: string, allowed: ReadonlySet<string>)
 function parseGlobalArgs(rawArgs: readonly string[]): ParsedGlobalArgs {
   const defaultOptions = defaultGlobalOptions(false);
   let daemonUrl = defaultOptions.daemonUrl;
-  let cwd = defaultOptions.cwd;
+  let cwd: string | undefined;
   let json = false;
   let verbose = false;
   let color = true;
@@ -6334,12 +6334,12 @@ function parseGlobalArgs(rawArgs: readonly string[]): ParsedGlobalArgs {
       continue;
     }
     if (arg === "--cwd") {
-      cwd = resolve(requireNext(rawArgs, index, "--cwd"));
+      cwd = requireNext(rawArgs, index, "--cwd");
       index += 1;
       continue;
     }
     if (arg.startsWith("--cwd=")) {
-      cwd = resolve(arg.slice("--cwd=".length));
+      cwd = arg.slice("--cwd=".length);
       continue;
     }
     if (arg === "--json") {
@@ -6361,11 +6361,14 @@ function parseGlobalArgs(rawArgs: readonly string[]): ParsedGlobalArgs {
     args.push(arg);
   }
 
+  const workspacePath = cwd ?? defaultOptions.cwd;
+  const remoteWorkspace = args[0] === "app-server" && /^(https|wss):\/\//iu.test(daemonUrl)
+    && (posix.isAbsolute(workspacePath) || win32.isAbsolute(workspacePath));
   return {
     args,
     options: {
       daemonUrl: normalizeDaemonUrl(daemonUrl),
-      cwd,
+      cwd: remoteWorkspace ? workspacePath : resolve(workspacePath),
       json,
       verbose,
       color,
@@ -7839,7 +7842,7 @@ function printCommandHelp(command: string, subcommand?: string): void {
   if (command === "app-server") {
     console.log("Usage: ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]");
     console.log("       ling-stack app-server schema [method]");
-    console.log("       ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--view]");
+    console.log("       ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--codex-cwd <directory>] [--view]");
     console.log("       Host JSONL methods: ling/snapshot, ling/queue, ling/interrupt, codex/thread/start, codex/snapshot, codex/turn/start, codex/steer");
     console.log("       ling-stack [global options] app-server instructions-init [--path <directory>] [--apply <workspace-revision>]");
     console.log("       ling-stack [global options] app-server verify [--plan] [--check <id>] [--thread <id>] [--work-item <id>]");

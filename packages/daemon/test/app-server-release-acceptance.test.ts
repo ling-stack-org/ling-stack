@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { chmod, copyFile, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
@@ -6057,9 +6058,11 @@ test("a Pi question is pushed live, accepts the current Host authority once and 
   const { cursor } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
   await client.call("thread/subscribe", { threadId: thread.id, cursor });
   const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
-  const { run, turn } = await client.call<{ run: { id: string }; turn: { id: string } }>("turn/start", {
+  const originalInput = {
     threadId: thread.id, message: "Ask which contract applies.", idempotencyKey: "question-turn", providerPresetId: preset.id,
-  });
+  };
+  type SubmittedTurn = { run: { id: string }; turn: { id: string }; receipt: unknown; replayed: boolean };
+  const { run, turn, receipt } = await client.call<SubmittedTurn>("turn/start", originalInput);
   const request = await waitFor(() => client.notices.find(notice => notice.method === "input/requestAnswer"));
   assert.match(JSON.stringify(request), /Which contract should I use\?/u);
   assert.doesNotMatch(JSON.stringify(request), /answerAuthority/u);
@@ -6104,6 +6107,18 @@ test("a Pi question is pushed live, accepts the current Host authority once and 
   assert.equal(observer.notices.some(notice => notice.method === "input/requestAnswer"), false);
   assert.deepEqual(observer.notices.filter(notice => notice.method === "serverRequest/resolved"
     && notice.params?.event?.entityId === authority.requestId).map(notice => notice.params?.eventId), [resolution.params?.eventId]);
+
+  const runLinks = fixture.getStore().listLingTurnRuns(turn.id);
+  assert.deepEqual(runLinks.map(link => link.role), ["primary", "resume"]);
+  await fixture.restart();
+  const reconnected = await fixture.connect();
+  const retried = await reconnected.call<SubmittedTurn>("turn/start", originalInput);
+  assert.equal(retried.replayed, true);
+  assert.equal(retried.run.id, run.id);
+  assert.equal(retried.turn.id, turn.id);
+  assert.deepEqual(retried.receipt, receipt);
+  assert.deepEqual(fixture.getStore().listLingTurnRuns(turn.id), runLinks);
+  assert.equal(provider.requests.length, 2);
 });
 
 test("an authenticated connection can decide its Run approval and rejects a different workspace binding", { timeout: 20_000 }, async t => {
@@ -6280,6 +6295,77 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
   assert.equal(probe.protocolVersion, "ling-app-server/1");
   assert.ok(probe.methods.includes("turn/start"));
   assert.ok(!probe.methods.includes("server/grants/revoke"));
+  const foreignWorkspace = process.platform === "win32" ? "/srv/ling/worktree" : "D:\\Ling worktrees\\candidate";
+  const remote = createHttpsServer({ cert: ca, key: await readFile(join(fixture.root, "private-key.pem")) });
+  remote.listen(0, "127.0.0.1");
+  await once(remote, "listening");
+  const remoteClosed = once(remote, "close");
+  t.after(async () => { remote.close(); await remoteClosed; });
+  const remoteAddress = remote.address();
+  assert.ok(remoteAddress && typeof remoteAddress === "object");
+  let receivedWorkspace: string | null = null;
+  remote.once("upgrade", (request, socket) => {
+    receivedWorkspace = new URL(request.url!, "https://127.0.0.1").searchParams.get("cwd");
+    socket.destroy();
+  });
+  const probeForeign = promisify(execFile)(process.execPath, [
+    cli, `--cwd=${foreignWorkspace}`, "--daemon-url", `wss://127.0.0.1:${remoteAddress.port}`, "app-server", "probe",
+  ], { env: { ...process.env, NODE_EXTRA_CA_CERTS: certificateFile, LING_STACK_AUTH_TOKEN: credential }, timeout: 8_000 });
+  await assert.rejects(probeForeign);
+  assert.equal(receivedWorkspace, foreignWorkspace);
+  if (process.platform !== "win32") {
+    const localCwd = join(fixture.root, "codex-workspace");
+    await mkdir(localCwd);
+    const codexPeer = join(fixture.root, "codex-wss-peer.cjs");
+    await writeFile(codexPeer, [
+      "#!/usr/bin/env node",
+      "if (process.env.LING_STACK_AUTH_TOKEN) process.exit(2);",
+      "require('node:readline').createInterface({ input: process.stdin }).on('line', line => {",
+      "  const { id, method, params } = JSON.parse(line);",
+      "  if (id === undefined) return;",
+      "  if (params?.cwd && params.cwd !== process.cwd()) process.exit(3);",
+      "  const result = method === 'initialize' ? { userAgent: 'codex-wss-peer' } : { thread: { id: 'bound-thread', cwd: process.cwd() } };",
+      "  process.stdout.write(JSON.stringify({ id, result }) + '\\n');",
+      "});",
+    ].join("\n"), { mode: 0o700 });
+    const statePath = join(fixture.root, "codex-wss.sqlite");
+    const env = { ...process.env, NODE_EXTRA_CA_CERTS: certificateFile, LING_STACK_AUTH_TOKEN: credential };
+    const startHost = (cwd: string) => spawn(process.execPath, [
+      cli, "--cwd", fixture.cwd, "--daemon-url", fixture.wssUrl(), "app-server", "codex-host", "--thread", thread.id,
+      "--codex-cwd", cwd, "--state", statePath, "--codex", codexPeer,
+    ], { env, stdio: "pipe" });
+    let codexThreadId: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const host = startHost(localCwd);
+      let diagnostics = "";
+      host.stderr.setEncoding("utf8").on("data", chunk => { diagnostics = (diagnostics + chunk).slice(-4000); });
+      const closed = once(host, "close");
+      t.after(async () => { if (host.exitCode === null && host.signalCode === null) host.kill(); await closed; });
+      const peer = jsonLines(host.stdin, host.stdout);
+      await Promise.race([waitFor(() => peer.notices.find(notice => notice.method === "ready")),
+        closed.then(() => { throw new Error(diagnostics.replaceAll(credential, "[redacted]")); })]);
+      assert.equal((await peer.call<LingAppServerThreadSnapshotResult>("ling/snapshot")).thread.id, thread.id);
+      const bound = await peer.call<{ threadId: string }>("codex/thread/start");
+      const local = await peer.call<{ thread: { id: string; cwd: string } }>("codex/snapshot");
+      assert.equal(local.thread.cwd, localCwd);
+      assert.equal(local.thread.id, bound.threadId);
+      if (codexThreadId) assert.equal(local.thread.id, codexThreadId);
+      codexThreadId = local.thread.id;
+      host.stdin.end();
+      assert.equal((await closed)[0], 0, diagnostics.replaceAll(credential, "[redacted]"));
+    }
+    const wrongDirectory = startHost(fixture.root);
+    wrongDirectory.stdin.end();
+    const [diagnostic, [exitCode]] = await Promise.all([
+      new Promise<string>(resolve => {
+        let stderr = "";
+        wrongDirectory.stderr.setEncoding("utf8").on("data", chunk => { stderr += chunk; }).once("end", () => resolve(stderr));
+      }),
+      once(wrongDirectory, "close"),
+    ]);
+    assert.notEqual(exitCode, 0);
+    assert.match(diagnostic, /control host state belongs to a different Ling workspace, Ling Thread or Codex directory/u);
+  }
   const open = (credential: string | undefined, options: { host?: string; origin?: string; trust?: boolean } = {}) => once(new WebSocket(url, {
     ca: options.trust === false ? undefined : ca,
     headers: { ...(credential ? { Authorization: `Bearer ${credential}` } : {}),
@@ -6309,8 +6395,8 @@ test("the dedicated TLS App Server accepts scoped controllers and revokes access
   client.onNotification(notification => notifications.push(notification.method));
   const states: string[] = [];
   client.onConnectionState(status => states.push(status.state));
-  const remote = await client.connect();
-  assert.deepEqual(remote.effectiveScopes, ["control", "observe"]);
+  const initialized = await client.connect();
+  assert.deepEqual(initialized.effectiveScopes, ["control", "observe"]);
   await client.subscribe({ threadId: thread.id });
   await assert.rejects(client.readThread(other.id), { code: "capability_denied" });
   const action = await client.startTurn({ threadId: thread.id, providerPresetId: preset.id,
@@ -6876,6 +6962,8 @@ test("one Work Item retains independent verification, review, delivery and rollb
 });
 
 test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observed GitHub delivery and grant revocation", { timeout: 35_000 }, async t => {
+  const rollbackBuild = process.env.LING_APP_SERVER_ROLLBACK_BUILD;
+  const rollbackRuntime = rollbackBuild ? await readReleaseRuntime(rollbackBuild) : undefined;
   const base = "b".repeat(40), mergedCommit = "c".repeat(40);
   const workflowPath = ".github/workflows/verify.yml";
   const workflow = "name: Trusted verification\n";
@@ -6887,6 +6975,7 @@ test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observ
   t.after(() => provider.close());
   const fixture = await releaseFixture(t, {
     recoveryJournal: true,
+    initialRuntime: rollbackRuntime,
     githubSources: cwd => [{ workspaceRoot: cwd, repository: "example/ling", repositoryId: "73",
       deliveryPolicies: [{ baseRef: "main", requiredChecks: [
         { name: "unit", appId: 19, workflowId: 5, workflowPath, workflowSha256, basis: "head", coverageRefs: ["unit"] },
@@ -6926,7 +7015,8 @@ test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observ
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Candidate");
   head = git("rev-parse", "HEAD");
 
-  const client = await fixture.connect();
+  let client = await fixture.connect();
+  const originalDaemon = client.initialization;
   const { thread } = await client.call<ThreadRead>("thread/start", { title: "Record a delivery" });
   const { thread: newWork } = await client.call<ThreadRead>("thread/start", { title: "Next task" });
   const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
@@ -6950,7 +7040,7 @@ test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observ
   };
   const previous = await makeGrant("Already issued");
   const revocable = await makeGrant("Revoke during cutover");
-  const observer = await fixture.connect("/app-server/rpc", fixture.cwd, previous.token);
+  let observer = await fixture.connect("/app-server/rpc", fixture.cwd, previous.token);
   await assert.rejects(observer.call("server/recovery/prepare", { expectedRevision: 0, idempotencyKey: "forbidden" }), { code: "capability_denied" });
   const { cursor } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
   await observer.call("thread/subscribe", { threadId: newWork.id });
@@ -6958,6 +7048,14 @@ test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observ
   const databasePath = fixture.getStore().paths.databasePath;
   const backup = join(fixture.root, "before-cutover.sqlite");
   backupSqlite(databasePath, backup);
+  if (rollbackRuntime) {
+    await fixture.restart();
+    client = await fixture.connect();
+    assert.notEqual(client.initialization?.serverInstanceId, originalDaemon?.serverInstanceId);
+    assert.equal((await client.call<LingAppServerThreadEventsResult>("thread/events/read", { threadId: thread.id, cursor })).window.disposition, "complete");
+    observer = await fixture.connect("/app-server/rpc", fixture.cwd, previous.token);
+    await observer.call("thread/subscribe", { threadId: newWork.id });
+  }
 
   const observed = await reconcileDelivery(client);
   assert.equal(observed.status, "delivered");
@@ -6970,8 +7068,13 @@ test("restoring a pre-cutover SQLite snapshot retains the recovery fence, observ
 
   const premature = await fixture.connect();
   await assert.rejects(premature.call("server/recovery/reconcile", { expectedRevision: prepared.revision }), { code: "resume_blocked" });
-  await fixture.restart({ beforeStart: () => restoreSqlite(databasePath, backup) });
+  await fixture.restart({ runtime: rollbackRuntime, beforeStart: () => restoreSqlite(databasePath, backup) });
   const restored = await fixture.connect();
+  if (rollbackRuntime) {
+    assert.equal(restored.initialization?.serverInfo.version, originalDaemon?.serverInfo.version);
+    assert.notEqual(restored.initialization?.serverInstanceId, client.initialization?.serverInstanceId);
+    t.diagnostic(`Daemon cutover ${originalDaemon?.serverInfo.version} → ${client.initialization?.serverInfo.version} → ${restored.initialization?.serverInfo.version}`);
+  }
   assert.notEqual(restored.initialization?.storeIncarnation, client.initialization?.storeIncarnation);
   assert.notEqual(restored.initialization?.authorizationEpoch, client.initialization?.authorizationEpoch);
   assert.equal((await restored.call<LingAppServerThreadEventsResult>("thread/events/read", { threadId: thread.id, cursor })).window.disposition, "snapshot_required");
@@ -7325,6 +7428,15 @@ type ReleaseRuntime = {
 };
 const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunStore, resolveStoragePaths };
 
+async function readReleaseRuntime(root: string): Promise<ReleaseRuntime> {
+  const built = (path: string) => pathToFileURL(join(root, "packages", path)).href;
+  const [daemon, core] = await Promise.all([
+    import(built("daemon/dist/index.js")) as Promise<Pick<ReleaseRuntime, "createDaemonServer">>,
+    import(built("core/dist/index.js")) as Promise<Omit<ReleaseRuntime, "createDaemonServer">>,
+  ]);
+  return { ...core, ...daemon };
+}
+
 async function releaseFixture(t: TestContext, {
   runner, initialRuntime = candidateRuntime, harness, requireAuth = true, verificationRecipes, githubSources, externalWorkFetch, secretResolver, wssConfig,
   recoveryJournal = false, channels, deliberationPolicies, mobileReplies = false,
@@ -7429,12 +7541,14 @@ async function releaseFixture(t: TestContext, {
       assert.ok(store);
       return store;
     },
-    async restart({ rotateAuthToken = false, beforeStart }: { rotateAuthToken?: boolean; beforeStart?: () => Promise<void> } = {}) {
+    async restart({ rotateAuthToken = false, beforeStart, runtime = candidateRuntime }: {
+      rotateAuthToken?: boolean; beforeStart?: () => Promise<void>; runtime?: ReleaseRuntime;
+    } = {}) {
       await stop();
       stores.clear();
       await beforeStart?.();
       if (rotateAuthToken) authToken = randomUUID();
-      daemon = makeDaemon(candidateRuntime);
+      daemon = makeDaemon(runtime);
       await daemon.start();
     },
     async connect(path: "/app-server/rpc" | "/rpc/stream" = "/app-server/rpc", workspaceCwd = cwd, credential?: string) {

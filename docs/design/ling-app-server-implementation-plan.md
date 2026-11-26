@@ -2,7 +2,7 @@
 
 - **状态** App Server 本机传输、Turn 控制与恢复、Verify 和 Federation 已通过定向验收。Agent Operating Model 已接入工作项接单、控制和协作记录。下文列出完整实施与发行仍需完成的工作包。
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** `origin/main@00966e865`
+- **核对基线** `origin/main@95ecee6fc`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
@@ -60,7 +60,7 @@
 | --- | --- |
 | A2/B1 会话恢复和事件 | `thread/resume` 从读快照取得当前 Turn 和事件游标。两个连接同时恢复已准备的 Turn 只启动一个 Run，并使用原来封存的项目规则。停止的 Turn 以原 Run 效果收敛和请求键为前提续接。订阅者可以接收普通 Pi Turn 的实时增量、结束通知和最终 Item 引用。App Server 的 Thread/Work Item 游标由持久存储代次、授权代次和目标签名，跨重启可复用，主体、工作区、目标或凭据变化返回 `snapshot_required`。SDK 在订阅确认时登记连接内的订阅 ID，紧接确认到达的回放也会推进下次重连的游标。 |
 | C1 工作区绑定 | App Server 握手校验 Daemon 已授权的工作区，并固定解析后的路径。端到端回归验证越界握手返回 403，目录别名变化后连接继续使用原绑定。 |
-| C2 认证 WSS | Host 可配置独立 TLS 监听器，只接受 App Server 上的 scoped grant。实际 TLS 回归覆盖证书校验、Host/Origin 范围、控制和推送、旧 RPC 路径隔离、另一个监听器撤销现有连接。CLI 使用受信证书和 Thread grant 完成 WSS 探测，返回该 grant 允许的方法。远程部署与多平台安装仍需实测。 |
+| C2 认证 WSS | Host 可配置独立 TLS 监听器，只接受 App Server 上的 scoped grant。实际 TLS 回归覆盖证书校验、Host/Origin 范围、控制和推送、旧 RPC 路径隔离、另一个监听器撤销现有连接。CLI 使用受信证书和 Thread grant 完成 WSS 探测，并可按原样传入远端工作区路径。Codex 宿主持久绑定本地 checkout 和远端 Thread，重开时复用原 Codex Thread。 |
 | O2 外部 Runner | 真实 Daemon 使用配置的 Codex Runner Adapter 调用回环模拟后端，核对协商、任务身份、工作区和只读工具范围。完成状态与 Adapter 事件在重启后可重放。未确认的取消保留 `unknown`，存储写入失败时从最后提交状态恢复。 |
 | B2 在途输入 | `turn/queue` 将输入交给持久 Run intervention。前驱已记录执行结束及副作用收敛时，Daemon 可在重启后用同一收据启动后继 Turn。用配置 Pi Runner 核对实际投递一次、重连事件及新旧 Turn 的关联。`turn/interrupt` 可携带明确的重定向输入。`turn/steer` 在当前 Runner 无同 Turn 安全注入能力时返回 `steer_unsupported`。已安装的 Codex 通过 MCP 验证了快照、追加消息、Turn 恢复入口和事件读取。 |
 | C2/F2 版本兼容 | 用 `v0.6.1@3fe77440e` 源码构建在 macOS 上创建 Thread、Turn、待决审批和游标，候选 Daemon 接手原 SQLite，旧 SDK 可读取 Thread 和处置后的审批。候选 SDK 向旧 `/rpc/stream` 尝试提交时，在协商阶段返回 `protocol_version_unsupported`。候选 Daemon 的 `/rpc/stream` 仅提供原有方法。测试覆盖 App Server 专属方法拒绝、旧客户端的 Run 启动和取消。候选 CLI probe 和本机 Codex MCP 已通过。v0.6.1 未提供 App Server 协议。发布安装包、远程连接及回退对账另行验收。 |
@@ -86,6 +86,10 @@ Schema 导出覆盖 143 个已登记方法，包含已实现方法的请求与�
 
 Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI stdio 和受控 Daemon，在回环 WebSocket 上发起一个 Turn，用 stdio 接收终态，再重启 Daemon 并从原游标恢复事件。macOS 和 Linux 还验证私有 Unix socket 的连接与清理。CLI 的 `app-server schema` 导出方法、通知及服务端请求的合同。TypeScript 客户端用握手实例区分重连和 Daemon 重启。 [Windows 传输验收](../../.github/workflows/app-server-windows.yml)
 
+Ubuntu 24.04 ARM64 虚拟机的 Node 22.22.1 SDK 通过 TLS 1.3 连接同一物理机上的 macOS Daemon 候选 `0.6.2-alpha.1`。实测证书校验、在途用户答复、原游标与回执重读、独立审批凭据拒绝工具执行、撤权关闭 `1008` 和重连 `401`。Pi 使用受控 Provider。回归另验证答复派发后继 Run 后，重启并重发 `turn/start` 仍返回原 Run 和原回执，两个 Run 的归属及两次模型调用保持可核对。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
+
+G1 源码回退使用已具备独立恢复日志的 `1fcf920b3` 构建创建 SQLite 快照，切换到基于 `main@95ecee6fc` 的候选后记录交付和撤权，再恢复原构建和快照。对账前禁止新派发，撤销凭据和旧游标失效。GitHub 对账恢复原回执后，新的 Run 可以派发。此场景使用受控 GitHub 响应。通过 `LING_APP_SERVER_ROLLBACK_BUILD` 指向旧构建目录可复跑。 [跨构建回退测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
+
 ### 受保护 GitHub 合并队列
 
 源码验收覆盖 GitHub 返回 401 和 429 时用原键显式重试。恢复到入队前的 SQLite 快照后，Host 用独立日志确认拒绝并重建原回执。重试重新核对队列规则和干净候选。两个客户端并发提交只触发一次新 mutation。服务接受后丢失响应时，重复请求只对账，等原队列项出现后复用回执。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
@@ -108,11 +112,11 @@ O9 联合回归在同一 Work Item 确认双端订阅、阶段进度、暂停与
 
 | 工作包 | 代码或验收差距 |
 | --- | --- |
-| A1、B1、C1、C2 | workspace、Thread、Work Item 的 grant 和 WSS 已接入。专用 TLS 监听器实测分离控制和答复权限，支持用户答复原回执与撤权。目标游标已绑定存储代次、授权代次和目标。审批和答复仍需在其他宿主和实际远程部署验收。 |
+| A1、B1、C1、C2 | workspace、Thread、Work Item 的 grant 和 WSS 已接入。专用 TLS 监听器实测分离控制和答复权限，支持用户答复原回执与撤权。目标游标已绑定存储代次、授权代次和目标。macOS Daemon 和 Linux SDK 已通过跨 OS 联调，独立物理主机网络及安装产物仍待验收。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
 | F1、F2 | 普通会话 Handoff 的候选封存、Goal 预算承接与接手已接入。CLI `app-server codex-host --thread <id> --state <file> --view` 在回环地址提供双端会话视图。本机 Codex 0.171.0-alpha.13、实际 Ling Daemon 与受控 Provider 联调验证两端状态、Ling 在途排队、活跃 Codex Turn 指导、浏览器重连补齐、回执重放和审批提醒。故障回归覆盖原状态库升级、未写出的请求在重连后补投一次，以及已发出但缺少有效回执时保留待确认结果。Pi Host 预算路径的逐请求预留已使用受控 Provider 验证，仍需真实 Provider、隔离工作树和其他 Runner 的对应验收。 |
 | O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛或仍在途的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端和支持协作工具的 Pi 阶段按 Run/Attempt 收发，Pi 在下一次模型输入接收消息和问答。Workflow 执行使用工作项重试上限，并可依据跨 Run 的结构化故障记录暂停单项阶段。可信 Verify 和已接受 Plan 指定的 Review 均可提供停滞恢复证据。决策检查点支持计划前和在途阶段的建议、接受与手工裁决。Device Work Item Bridge 的持久映射、receipt 账本和 App Server 入口已实现。已接受阶段可显式或按 Host 策略开启独立只读审议、按质疑结果投票，并将裁决应用到声明的候选依赖。定时检查点的登记和关轮自动评估已接入 App Server、SDK、MCP 和频道 Ling Agent。Pi 阶段已可限域读取共享的 Verify、Review 和依赖结果，启动检查由各证据所有者受理。跨主机 Device Fabric owner host 对接仍待完成。 |
-| G | 独立恢复日志已验证 SQLite 快照恢复、撤权、旧游标失效和 GitHub 对账后派发。上一版源码通过同一套本地兼容验收。签名安装产物、实际远程 WSS、带独立检查 App 的 Ling 主动入队及三个真实 Provider 自研试点仍需对应环境的证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
+| G | 已通过跨构建 SQLite 回退、撤权、旧游标失效和 GitHub 对账后派发，也已通过上一版源码兼容。签名安装产物、独立物理主机的远程 WSS、带独立检查 App 的 Ling 主动入队及三个真实 Provider 自研试点仍需对应证据。macOS 打包预检需要当前打包输入的 Office 审查、对应 Electron/OS 的受限运行时审查和 gstack 平台资源。T01 离线预检可进入评审，真实试点仍需按 Framework Assurance 准入。 |
 
 ## 目标与开工顺序
 

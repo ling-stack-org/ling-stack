@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createLingTurnId, normalConversationSubmissionKey, type AppendConversationAcceptedInput, type ConversationAttachment, type LingThread, type LingTurn, type LingTurnKind, type RunStore } from "@ling-stack/core";
 import type { ChannelMessageFileRef } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
+import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { readNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 import { readNormalConversationPreparedExecution } from "./normal-conversation-prepared-execution.js";
@@ -14,6 +15,7 @@ export interface PreparedNormalConversationInput {
   readonly acceptedSnapshotId?: string;
   readonly idempotencyKey: string;
   readonly replayRequest?: RunRequest;
+  readonly replayRunId?: string;
 }
 
 /** Atomically anchor, bind attachments, and persist frozen history before any await. */
@@ -68,16 +70,17 @@ export function prepareNormalConversationInput(input: {
     domainRefs: [{ type: "turn", id: turnId }],
     idempotencyKey,
   };
-  const legacyReplay = previousTurn && existing ? readReplay(store, thread.id, previousTurn.id, existing.id) : undefined;
   const stored = existing ? store.getConversationAcceptedInputSnapshot(existing.id) : undefined;
-  if (legacyReplay && !stored) {
-    if (legacyReplay.normalConversationAcceptedSnapshotId !== undefined || legacyReplay.normalConversationPreparedRequestRef !== undefined) {
+  const legacyReplay = !stored && previousTurn && existing ? readReplay(store, thread.id, previousTurn.id, existing.id, idempotencyKey) : undefined;
+  if (legacyReplay) {
+    const { request, runId } = legacyReplay;
+    if (request.normalConversationAcceptedSnapshotId !== undefined || request.normalConversationPreparedRequestRef !== undefined) {
       throw new Error("Accepted input snapshot required by Run is missing");
     }
     // Upgrade compatibility: preserve an existing Run, never manufacture past acceptance evidence.
     store.appendConversationUserTurn(appendInput, input.now);
-    assertReplayKey(legacyReplay, idempotencyKey);
-    return { turn: previousTurn!, attachments, context: legacyReplay.normalConversationContext!, idempotencyKey, replayRequest: legacyReplay };
+    return { turn: previousTurn!, attachments, context: request.normalConversationContext!, idempotencyKey,
+      replayRequest: request, replayRunId: runId };
   }
   const result = store.appendConversationUserTurnWithAcceptedSnapshot(appendInput, (source) => {
     const payload = collectNormalConversationContextWithinSnapshot({ store, threadId: thread.id, sourceItemId: source.item.id });
@@ -89,34 +92,39 @@ export function prepareNormalConversationInput(input: {
     throw new Error("Accepted input snapshot payload source mismatch");
   }
   const turn = store.getLingTurn(result.turnId)!;
-  const runReplay = readReplay(store, thread.id, turn.id, result.item.id);
-  if (runReplay) {
-    assertReplayKey(runReplay, idempotencyKey);
-    if (runReplay.normalConversationContext?.fingerprint !== context.fingerprint ||
-      (runReplay.normalConversationAcceptedSnapshotId !== undefined && runReplay.normalConversationAcceptedSnapshotId !== accepted.id)) {
+  const runReplay = readReplay(store, thread.id, turn.id, result.item.id, idempotencyKey);
+  const originalRequest = runReplay?.request;
+  if (originalRequest) {
+    if (originalRequest.normalConversationContext?.fingerprint !== context.fingerprint ||
+      (originalRequest.normalConversationAcceptedSnapshotId !== undefined && originalRequest.normalConversationAcceptedSnapshotId !== accepted.id)) {
       throw new Error("Accepted input snapshot and Run context mismatch");
     }
   }
-  const requestReplay = readNormalConversationPreparedRequest(store, result.item.id, runReplay);
-  if (runReplay) {
-    if (store.getConversationPreparedInput(result.item.id, "execution") && !runReplay.normalConversationPreparedExecutionRef) {
+  const requestReplay = readNormalConversationPreparedRequest(store, result.item.id, originalRequest);
+  if (originalRequest) {
+    if (store.getConversationPreparedInput(result.item.id, "execution") && !originalRequest.normalConversationPreparedExecutionRef) {
       throw new Error("Prepared execution marker required by Run is missing");
     }
-    if (runReplay.normalConversationPreparedExecutionRef) readNormalConversationPreparedExecution(store, runReplay);
+    if (originalRequest.normalConversationPreparedExecutionRef) readNormalConversationPreparedExecution(store, originalRequest);
   }
-  const replayRequest = requestReplay ?? runReplay;
+  const replayRequest = requestReplay ?? originalRequest;
   if (replayRequest) assertReplayKey(replayRequest, idempotencyKey);
-  return { turn, context, acceptedSnapshotId: accepted.id, idempotencyKey, replayRequest,
+  return { turn, context, acceptedSnapshotId: accepted.id, idempotencyKey, replayRequest, replayRunId: runReplay?.runId,
     attachments: attachments.map((attachment) => store.getConversationAttachment(attachment.id)!) };
 }
 
-function readReplay(store: RunStore, threadId: string, turnId: string, itemId: string): RunRequest | undefined {
+function readReplay(store: RunStore, threadId: string, turnId: string, itemId: string, key: string) {
   const links = store.listLingTurnRuns(turnId).filter((link) => link.role !== "validation");
-  if (links.length > 1) throw new Error("Normal input replay has ambiguous Run ownership");
-  if (!links[0]) return undefined;
-  const run = store.getRun(links[0].runId);
-  if (!run) throw new Error("Normal input replay Run is missing");
-  return readNormalConversationRunRequest(run, { threadId, turnId, itemId });
+  if (!links.length) return undefined;
+  const owners = links.map((link) => {
+    const run = store.getRun(link.runId);
+    if (!run) throw new Error("Normal input replay Run is missing");
+    return run;
+  }).filter(({ requestSnapshot }) => isRecord(requestSnapshot) && requestSnapshot.idempotencyKey === key);
+  if (owners.length > 1) throw new Error("Normal input replay has ambiguous Run ownership");
+  const [run] = owners;
+  if (!run) throw new Error("Normal input replay Run idempotency mismatch");
+  return { runId: run.id, request: readNormalConversationRunRequest(run, { threadId, turnId, itemId }) };
 }
 
 function assertReplayKey(request: RunRequest, key: string): void {

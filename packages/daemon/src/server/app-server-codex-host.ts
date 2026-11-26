@@ -12,6 +12,7 @@ import { connectToAppServer, type AppServerLocalTransportOptions } from "./app-s
 export interface LingCodexHostOptions extends AppServerLocalTransportOptions {
   readonly threadId: string;
   readonly codexThreadId?: string;
+  readonly codexCwd?: string;
   readonly codexExecutable: string;
   readonly statePath: string;
 }
@@ -31,9 +32,12 @@ export async function runLingCodexHost(
 ): Promise<void> {
   const url = new URL(options.daemonUrl);
   if (url.username || url.password) throw new Error("Use the App Server bearer header for credentials.");
-  const cwd = realpathSync(options.cwd);
+  const cwd = realpathSync(options.codexCwd ?? options.cwd);
+  const tls = url.protocol === "https:" || url.protocol === "wss:";
+  const workspaceCwd = options.codexCwd === undefined ? cwd : tls ? options.cwd : realpathSync(options.cwd);
   const ling = connectToAppServer(options, "ling-codex-host", true);
-  const state = openHostState(options.statePath, JSON.stringify([url.origin, cwd, options.threadId]));
+  const binding = [url.origin, workspaceCwd, options.threadId, ...(cwd === workspaceCwd ? [] : [cwd])];
+  const state = openHostState(options.statePath, JSON.stringify(binding));
   const controller = new AbortController();
   const stop = () => controller.abort();
   signal.addEventListener("abort", stop, { once: true });
@@ -275,7 +279,7 @@ function openHostState(path: string, binding: string) {
       CREATE TABLE IF NOT EXISTS deliveries (id TEXT PRIMARY KEY, status TEXT NOT NULL, remote_code INTEGER, failure_code TEXT);`);
     db.prepare("INSERT OR IGNORE INTO host_state(key,value) VALUES ('binding', ?)").run(binding);
     const read = (key: string) => db.prepare("SELECT value FROM host_state WHERE key=?").get(key)?.value as string | undefined;
-    if (read("binding") !== binding) throw new Error("The control host state belongs to a different Ling workspace or Thread.");
+    if (read("binding") !== binding) throw new Error("The control host state belongs to a different Ling workspace, Ling Thread or Codex directory.");
     if (!db.prepare("PRAGMA table_info(deliveries)").all().some(column => column.name === "failure_code")) {
       db.exec("ALTER TABLE deliveries ADD COLUMN failure_code TEXT");
     }

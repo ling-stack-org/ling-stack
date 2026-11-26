@@ -44,6 +44,13 @@ CLI 的 `app-server probe` 通过 `LING_STACK_AUTH_TOKEN` 接收 App Server gran
 ling-stack --cwd /srv/ling/workspace --daemon-url wss://ling.example.test:7443 app-server probe
 ```
 
+Codex 运行在另一台主机时，用 `--cwd` 传入 Ling Daemon 注册的绝对路径，用 `--codex-cwd` 指定 Codex 客户端所在的本地 checkout。CLI 按服务端原路径发送 `--cwd`。宿主状态库绑定两端目录、Ling 服务和 Thread，重连时复用所绑定的 Codex Thread。省略 `--codex-cwd` 时，Codex 使用同一个本机目录。
+
+```bash
+ling-stack --cwd /srv/ling/workspace --daemon-url wss://ling.example.test:7443 \
+  app-server codex-host --thread "$LING_THREAD_ID" --codex-cwd ./local-checkout --state ./ling-codex-host.sqlite
+```
+
 [Ling Device Fabric](ling-device-fabric.md#5-cross-device-task-graph) 的项目节点继续引用其执行主机的 WorkUnit 与证据。App Server 的游标与权限绑定本 Daemon 的工作区。远端设备动作及其状态由对应主机的日志、授权与配对投影管理。
 
 绑定以 Daemon 解析的规范化仓库、worktree 和当前授权版本为准。请求 ID 及客户端展示名用于关联与审计，可信 Actor 来自连接凭据。按操作取连接、工作区、目标 Work Item 或 Thread 和运行政策的交集。进入关联 Thread 的上下文还要核对它的访问授权。在受理、执行和提交决策前分别核对当前权属。撤销关闭对应订阅和新动作入口，已受理工作交由 Daemon 按其取消和恢复策略处置。

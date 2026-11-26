@@ -2552,7 +2552,7 @@ class RpcConnection {
       turnKind: record.kind === undefined ? undefined : readLingTurnKind(readStringField(record, "kind")),
       imageVisionSummarizer: this.context.imageVisionSummarizer,
     });
-    const { turn, runRequest, replayed } = prepared;
+    const { turn, runRequest, replayed, replayRunId } = prepared;
     if (input.providerPresetId && input.providerPresetId !== runRequest.providerPresetId
       || input.executionBinding && JSON.stringify(input.executionBinding) !== JSON.stringify(runRequest.executionBinding)) {
       throw rpcError(-32031, "idempotency_conflict", "The original submission used a different execution configuration.");
@@ -2560,7 +2560,7 @@ class RpcConnection {
     if (!this.grantIsCurrent()) throw rpcError(-32020, "authorization_required", "The App Server grant expired or was revoked before dispatch.");
     publishPreparedConversationTurn(store, this.context.controlPlaneEvents, turn);
     const receipt = readConversationSubmission(store, { surface: "normal", threadId: thread.id, idempotencyKey: input.idempotencyKey! });
-    const runId = turn.activeRunId ?? turn.lastRunId ?? await this.executeConversationRun(runRequest);
+    const runId = replayRunId ?? turn.activeRunId ?? turn.lastRunId ?? await this.executeConversationRun(runRequest);
     const currentThread = store.getLingThread(thread.id) ?? thread;
     return {
       cwd, thread: projectPublicLingThread(currentThread), turn: projectPublicLingTurn(store.getLingTurn(turn.id) ?? turn, currentThread),

@@ -43,7 +43,8 @@ export async function prepareConversationSubmission(options: {
     turnKind: options.turnKind, now,
   });
   const { turn, attachments } = prepared;
-  if (prepared.replayRequest) return { thread, turn, attachments, runRequest: prepared.replayRequest, replayed: true };
+  if (prepared.replayRequest) return { thread, turn, attachments, runRequest: prepared.replayRequest, replayed: true,
+    replayRunId: prepared.replayRunId };
 
   const attachmentMaterializations = await materializeInlineConversationAttachments({
     store, attachments, now, imageVisionSummarizer: options.imageVisionSummarizer,
