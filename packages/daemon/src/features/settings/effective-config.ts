@@ -1,4 +1,4 @@
-import { parseDesktopBrowserPolicy } from "@ling-stack/contracts";
+import { parseClaudeProjectRules, parseDesktopBrowserPolicy } from "@ling-stack/contracts";
 import { readFile } from "node:fs/promises";
 import { parseWorktreePolicy } from "../workspaces/worktree-policy.js";
 import { redactWorktreePolicy } from "../workspaces/worktree-policy.js";
@@ -202,6 +202,8 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
     skillGovernancePolicy: readNullableSkillGovernancePolicy(record.skillGovernancePolicy),
     worktreePolicy: parseWorktreePolicy(record.worktreePolicy),
+    claudeProjectRules: record.claudeProjectRules === undefined || record.claudeProjectRules === null
+      ? record.claudeProjectRules : parseClaudeProjectRules(record.claudeProjectRules),
   };
 }
 

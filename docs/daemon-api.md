@@ -449,7 +449,9 @@ Content-Type: application/json
 }
 ```
 
-The referenced channel must exist.
+The referenced channel must exist. The optional `idempotencyKey` lets a client
+retry creation for the same channel and Task input. An opted-in intake source
+returns `intakeReceipt` for the original Task.
 
 ### Get, Update, Delete Task
 
@@ -1664,6 +1666,22 @@ SSE events:
 Hidden `<ling_task_proposal>` blocks are not streamed as visible deltas. The daemon
 continues to extract and persist proposals through the channel proposal pipeline.
 
+### Channel Work Item inputs
+
+A Channel Turn may include `workItemTarget: { workItemId, expectedRevision }`
+to attach its user message to an item owned by the same channel or its
+bound Workflow. The response includes `workItemInput` with the source Item
+ID, evidence ID and accepted Work Item revision. For a streaming request the
+`ready` and `done` events carry the same receipt. The message, owner-only
+evidence reference and event commit together. An exact retry by the same
+channel and request key returns the original receipt. A new input with an
+outdated Work Item revision returns 409.
+
+This operation records a completed input Turn and leaves execution with the
+existing Work Item owner. Submit a follow-up addressed to the Work Item
+to correct committed input. Stage delivery and accepted Plan changes use
+their respective coordination operations.
+
 ### Review Annotations
 
 Channel Turn requests and `POST /conversations/stream` accept up to 12 `fileRefs`.
@@ -1950,7 +1968,33 @@ automation runs. `DELETE` archives the definition and refreshes scheduler
 registration. `preview` builds context without starting a Run. `run` accepts an
 optional idempotency key, trigger type and scheduled time, returns `202`, and
 projects the linked public Run session. Monitor snapshots are scheduler-owned and
-cannot be supplied by HTTP callers.
+cannot be supplied by HTTP callers. Trigger occurrences for a configured intake
+source are owned by the scheduler or signed event worker. Send an empty Run now
+request for a direct manual execution. Send `{"intakeReceiptId":"intake_…"}`
+to accept a previously suggested occurrence and read its original AutomationRun.
+
+### Work Item intake receipts
+
+The Daemon Host can configure `LING_STACK_APP_SERVER_NATIVE_INTAKE_FILE` with
+a JSON array of policies. Each policy has an absolute `workspaceRoot`, a
+`sourceKind` of `channel_task` or `automation_run`, and a `sourceScope`
+containing the channel or Automation definition ID. Optional fields include
+`mode` (`manual`, `suggest`, or `auto_start`), `enabled`, `priority` and
+`quietHours` with an IANA time zone and two `HH:mm` boundaries. Set
+`budget.maxConcurrent`, `budget.maxStartsPerWindow` and `budget.windowMs`
+for `auto_start`. Daemon startup computes the policy revision from the
+registered scope and settings.
+
+```text
+GET  /work-items/intake?cwd=/path/to/project&sourceKind=channel_task&sourceScope=channel_...
+POST /work-items/intake?cwd=/path/to/project
+```
+
+The GET response lists evaluations and their current dispatch receipts. The
+POST accepts `receiptId` and `idempotencyKey` to re-evaluate a paused,
+suppressed or held occurrence against current policy. A successful
+re-evaluation keeps the underlying Task or AutomationRun ID, records the
+previous receipt ID and returns a replayable receipt.
 
 ### Automation Drafts
 

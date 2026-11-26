@@ -60,6 +60,7 @@ interface ChannelActivityToolsPanelProps {
   readonly onOpenTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApproval: (approvalId: string) => void;
+  readonly onInspectWorkItem?: (workItemId: string) => void;
   readonly onClaimWorkItem: (workItemId: string) => void;
   readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
   readonly onReleaseWorkItem: (workItemId: string, claimToken: string) => void;
@@ -107,6 +108,7 @@ export function ChannelActivityToolsPanel({
   onOpenTask,
   onOpenRun,
   onOpenApproval,
+  onInspectWorkItem,
   onClaimWorkItem,
   onHeartbeatWorkItem,
   onReleaseWorkItem,
@@ -253,6 +255,7 @@ export function ChannelActivityToolsPanel({
           onOpenTask={onOpenTask}
           onOpenRun={onOpenRun}
           onOpenApproval={onOpenApproval}
+          onInspectWorkItem={onInspectWorkItem}
           onClaimWorkItem={onClaimWorkItem}
           onHeartbeatWorkItem={onHeartbeatWorkItem}
           onReleaseWorkItem={onReleaseWorkItem}

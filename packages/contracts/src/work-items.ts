@@ -13,10 +13,12 @@ export type WorkItemStatus =
 export type WorkItemSourceType =
   | "channel_task"
   | "channel_workflow_step"
+  | "automation_run"
   | "external_work"
   | "external_work_action"
   | "approval"
   | "run"
+  | "device_task_graph_node"
   | "manual";
 
 export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resource" | "user" | "scheduler" | "provider";
@@ -37,6 +39,7 @@ export interface WorkItem {
   readonly channelId?: string;
   readonly sourceType: WorkItemSourceType;
   readonly sourceId: string;
+  readonly linkedExecution?: WorkItemLinkedExecution;
   readonly title: string;
   readonly description?: string;
   readonly status: WorkItemStatus;
@@ -48,6 +51,7 @@ export interface WorkItem {
   readonly runId?: string;
   readonly workflowId?: string;
   readonly workflowStepId?: string;
+  readonly planRevision?: string;
   readonly externalWorkId?: string;
   readonly externalWorkActionId?: string;
   readonly approvalId?: string;
@@ -62,6 +66,70 @@ export interface WorkItem {
   readonly completedAt?: string;
   readonly failedAt?: string;
   readonly failureReason?: string;
+}
+
+export interface WorkItemLinkedExecution {
+  readonly kind: "channel_task" | "automation_run";
+  readonly id: string;
+  readonly status: string;
+  readonly runId?: string;
+}
+
+export type NativeWorkIntakeSourceKind = WorkItemLinkedExecution["kind"];
+
+export interface WorkIntakeBudget {
+  readonly maxConcurrent: number;
+  readonly maxStartsPerWindow: number;
+  readonly windowMs: number;
+}
+
+export interface WorkIntakeQuietHours {
+  readonly timeZone: string;
+  readonly start: string;
+  readonly end: string;
+}
+
+export interface NativeWorkIntakeReceipt {
+  readonly receiptId: string;
+  readonly workspaceId: string;
+  readonly policyId: string;
+  readonly policyRevision: string;
+  readonly sourceKind: NativeWorkIntakeSourceKind;
+  readonly sourceScope: string;
+  readonly sourceEventId: string;
+  readonly sourceRevision: string;
+  readonly executionId: string;
+  readonly outcome: "manual" | "suggested" | "accepted" | "suppressed" | "paused" | "deduplicated";
+  readonly reasonCode: string;
+  readonly workItemId?: string;
+  readonly evaluatedAt: string;
+  readonly previousReceiptId?: string;
+  readonly dispatch?: {
+    readonly status: "pending" | "admitted" | "held";
+    readonly runId?: string;
+    readonly reasonCode?: string;
+  };
+}
+
+export interface ListNativeWorkIntakeRequest {
+  readonly sourceKind: NativeWorkIntakeSourceKind;
+  readonly sourceScope?: string;
+  readonly limit?: number;
+}
+
+export interface RetryNativeWorkIntakeRequest {
+  readonly receiptId: string;
+  readonly idempotencyKey: string;
+}
+
+export interface NativeWorkIntakeMutationResponse {
+  readonly cwd: string;
+  readonly receipt: NativeWorkIntakeReceipt;
+}
+
+export interface ListNativeWorkIntakeResponse {
+  readonly cwd: string;
+  readonly receipts: readonly NativeWorkIntakeReceipt[];
 }
 
 export type WorkItemView = WorkItem;
@@ -91,7 +159,7 @@ export interface WorkItemHeartbeatRequest {
 }
 
 export interface WorkItemClaimBlocker {
-  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal";
+  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal" | "control_blocked";
   readonly message: string;
   readonly dependencyIds?: readonly string[];
   readonly claimedBy?: string;
@@ -106,6 +174,7 @@ export interface WorkItemListResponse {
 export interface WorkItemDetailResponse {
   readonly cwd: string;
   readonly workItem: WorkItemView;
+  readonly workflow?: import("./app-server.js").LingAppServerWorkItemWorkflowStages;
 }
 
 export interface WorkItemMutationResponse {

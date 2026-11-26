@@ -140,6 +140,8 @@ export interface RunRequest extends Omit<
   readonly continuationReason?: RunContinuationReason;
   readonly sourceMessageId?: string;
   readonly linkedMessageId?: string;
+  /** Accepted Plan revisions captured by the local channel reply dispatcher. */
+  readonly workItemCheckpointPlanRevisions?: readonly string[];
   /** Internal ceiling for text-only Remote Access replies. */
   readonly disableConversationVisualization?: true;
   readonly createdByActor?: LingTurnCreatedByActor;

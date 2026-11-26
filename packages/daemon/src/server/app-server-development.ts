@@ -19,8 +19,6 @@ import type {
   LingAppServerSimplifyStartResult,
   LingAppServerSimplifyStatusParams,
   LingAppServerSimplifyStatusResult,
-  LingAppServerVerificationCheckPlan,
-  LingAppServerVerificationCheckStatus,
   LingAppServerVerifyCancelParams,
   LingAppServerVerifyCancelResult,
   LingAppServerVerifyPlanParams,
@@ -29,22 +27,26 @@ import type {
   LingAppServerVerifyStatusParams,
   LingAppServerVerifyStatusResult,
   LingAppServerVerifyOperation,
+  StartWorkspaceVerificationRequest,
+  WorkspaceVerificationReport,
   CreateCodeAssessmentRequest,
   CodeAssessmentDetail,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import type { ActiveRunRegistry } from "../runtime/active-runs.js";
-import { DEFAULT_WORKSPACE_ID, type AppServerStateRecord, type PutAppServerStateResult, type RunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, type AppServerStateRecord, type PutAppServerStateResult, type RunStore, type WorkItemConversationBinding } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
 import { reconcileCodeAssessments, startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
 import { parseReviewRuleRefs } from "../features/code-assessments/review-rules.js";
-import { verificationRecipes } from "./app-server-verification-recipes.js";
+import { executeAppServerVerificationCheck, verificationRecipePlan, verificationRecipes, type AppServerVerificationCheckResult } from "./app-server-verification-recipes.js";
+import type { AppServerVerificationRecipeConfig } from "./app-server-verification-config.js";
 import { collectProjectInstructions } from "../features/conversations/project-instructions.js";
 import { initializeProjectInstructions } from "../features/conversations/project-instructions-draft.js";
 import { trimOversizedEvent } from "../features/control-plane/events.js";
 import { isRecord } from "../shared/validation.js";
+import { captureAppServerChanges } from "./app-server-changes.js";
 
 const DEFAULT_PROVIDER_PRESET = "default";
 type VerifyRecord = {
@@ -62,10 +64,11 @@ export interface AppServerDevelopmentOptions {
   /** Host-owned verification execution. It must use the normal daemon authority. */
   readonly executeVerificationCheck?: (input: {
     readonly cwd: string;
-    readonly check: LingAppServerVerificationCheckPlan;
+    readonly check: LingAppServerVerifyPlanResult["checks"][number];
     readonly candidate: LingAppServerCandidateReference;
+    readonly recipes?: readonly AppServerVerificationRecipeConfig[];
     readonly signal: AbortSignal;
-  }) => Promise<LingAppServerVerificationCheckStatus>;
+  }) => Promise<AppServerVerificationCheckResult | AppServerVerificationCheckResult["status"]>;
 }
 
 /** Coordinates durable verification state and delegates code assessment to its Run owner. */
@@ -96,17 +99,19 @@ export class AppServerDevelopmentService {
       throw Object.assign(new Error("The accepted Work Item plan changed."), { jsonRpcCode: -32030, code: "stale_revision" });
     }
     const acceptedPlanRevision = workItem?.planRevision ?? input.planRevision;
-    const candidate = { ...input.candidate, workspaceId: store.paths.cwd };
-    const checks = verificationRecipes(input.requestedChecks).map(({ id, kind, label, argv, required }) => {
-      return {
-        checkId: id,
-        kind,
-        label,
-        ...(argv.length ? { command: argv.join(" ") } : {}),
-        recipeDigest: digest(JSON.stringify({ id, kind, argv, candidateDigest: candidate.candidateDigest })),
-        required,
-      } satisfies LingAppServerVerificationCheckPlan;
-    });
+    const candidateWorkspace = store.paths.cwd;
+    const configured = this.verificationRecipes(cwd);
+    let paths: readonly string[] | undefined;
+    if (configured.length && !input.requestedChecks?.length) {
+      const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+      if (snapshot.coverage !== "complete" || snapshot.digest !== input.candidate.candidateDigest) {
+        throw new HttpError(409, "candidate_stale", "Verification planning requires a current candidate with complete coverage.");
+      }
+      paths = snapshot.files.flatMap(file => file.originalPath ? [file.path, file.originalPath] : [file.path]);
+    }
+    const candidate = { ...input.candidate, workspaceId: candidateWorkspace, ...(paths ? { filePaths: [...new Set(paths)] } : {}) };
+    const checks = verificationRecipes(input.requestedChecks, configured, paths)
+      .map(recipe => verificationRecipePlan(recipe, candidate.candidateDigest));
     const plan: LingAppServerVerifyPlanResult = {
       planId: `verify_plan_${randomUUID()}`,
       planRevision: digest(JSON.stringify({ candidate, checks, acceptedPlanRevision, threadId: input.threadId, workItemId: input.workItemId })),
@@ -115,7 +120,7 @@ export class AppServerDevelopmentService {
       ...(acceptedPlanRevision ? { acceptedPlanRevision } : {}),
       candidate,
       checks,
-      rationale: ["Selected deterministic workspace checks for the candidate."],
+      rationale: [paths ? "Selected Host-registered checks using the captured diff." : "Selected registered checks for the candidate."],
       environmentRequirements: ["workspace_store", "authorized_host_execution"],
     };
     const result = store.putAppServerState({
@@ -200,6 +205,50 @@ export class AppServerDevelopmentService {
     return { operation: this.readVerification(store, record).operation };
   }
 
+  async readWorkspaceVerification(cwd: string, filters: { readonly operationId?: string; readonly threadId?: string }): Promise<WorkspaceVerificationReport> {
+    const store = this.workspaceStore(cwd);
+    const record = filters.operationId ? store.getAppServerState("verify_operation", filters.operationId) : store.getLatestVerificationState(filters.threadId);
+    if (!record && filters.operationId) throw new HttpError(404, "verification_not_found", "The verification operation was not found.");
+    if (!record) return { cwd, operation: null, plan: null };
+    const { operation, plan } = this.readVerification(store, record);
+    if (filters.threadId && operation.threadId !== filters.threadId) {
+      throw new HttpError(404, "verification_not_found", "The verification operation was not found in this Thread.");
+    }
+    if (!operation.completedAt) return { cwd, operation, plan };
+    const current = await captureAppServerChanges(cwd).catch(() => undefined);
+    const candidateState = current?.coverage === "complete"
+      ? current.candidate.candidateDigest === operation.candidateDigest ? "current" : "changed"
+      : "unavailable";
+    return { cwd, operation, plan, candidateState };
+  }
+
+  async startWorkspaceVerification(cwd: string, input: StartWorkspaceVerificationRequest): Promise<WorkspaceVerificationReport> {
+    assertVerificationKey(input.idempotencyKey);
+    const store = this.workspaceStore(cwd);
+    const keyDigest = digest(input.idempotencyKey);
+    const planKey = `workspace_verify_plan:${keyDigest}`;
+    const operationKey = `workspace_verify:${keyDigest}`;
+    const retained = store.findAppServerStateByIdempotencyKey("verify_plan", planKey);
+    let plan: LingAppServerVerifyPlanResult;
+    if (retained) {
+      plan = retained.payload as LingAppServerVerifyPlanResult;
+      if (plan.threadId !== input.threadId) throw verificationConflict();
+    } else {
+      const candidate = await captureAppServerChanges(cwd);
+      if (candidate.coverage !== "complete") {
+        throw new HttpError(409, "candidate_incomplete", "Verification requires a candidate with complete coverage.");
+      }
+      const binding = input.threadId ? store.getAppServerState("work_item_thread", input.threadId)?.payload as WorkItemConversationBinding | undefined : undefined;
+      plan = await this.planVerification({ cwd, candidate: candidate.candidate, threadId: input.threadId,
+        workItemId: binding?.workItemId, idempotencyKey: planKey });
+    }
+    const operation = await this.startVerification({ cwd, planId: plan.planId, planRevision: plan.planRevision,
+      candidateDigest: plan.candidate.candidateDigest, idempotencyKey: operationKey });
+    return operation.completedAt
+      ? this.readWorkspaceVerification(cwd, { operationId: operation.operationId, threadId: input.threadId })
+      : { cwd, operation, plan };
+  }
+
   cancelVerification(input: LingAppServerVerifyCancelParams): LingAppServerVerifyCancelResult {
     assertVerificationKey(input.idempotencyKey);
     const store = this.workspaceStore(input.cwd);
@@ -248,6 +297,11 @@ export class AppServerDevelopmentService {
     if (typeof key !== "string" || !key.trim() || key.length > 200) {
       throw new HttpError(400, "invalid_params", "A review idempotency key of up to 200 characters is required.");
     }
+    if ([input.workItemId, input.planRevision].some(value => value !== undefined
+      && (typeof value !== "string" || !value.trim() || value.length > 256))
+      || input.planRevision !== undefined && input.workItemId === undefined) {
+      throw new HttpError(400, "invalid_params", "Supply a valid Work Item and its accepted Plan revision.");
+    }
     const rulesRefs = parseReviewRuleRefs(input.reviewRulesRefs);
     let request: CreateCodeAssessmentRequest;
     try {
@@ -262,7 +316,8 @@ export class AppServerDevelopmentService {
     }
     const kind = reviewFocus === "simplification" ? "simplify_submission" : "review_submission";
     const assessmentId = `assessment_app_${reviewFocus === "simplification" ? "simplify_" : ""}${digest(key)}`;
-    const fingerprint = digest(JSON.stringify([input.workItemId, input.candidate.candidateDigest, request, rulesRefs]));
+    const fingerprint = digest(JSON.stringify([input.workItemId, input.candidate.candidateDigest, request, rulesRefs,
+      ...(input.planRevision !== undefined ? [input.planRevision] : [])]));
     const prior = store.getAppServerState(kind, assessmentId);
     if (prior) {
       assertReviewFingerprint(prior.payload, fingerprint);
@@ -275,9 +330,27 @@ export class AppServerDevelopmentService {
       assertReviewFingerprint(pending.fingerprint, fingerprint);
       return await pending.result;
     }
+    const item = input.workItemId ? store.getWorkItem(input.workItemId) : undefined;
+    if (input.workItemId && !item) throw new HttpError(404, "review_scope_not_found", "The Work Item is unavailable.");
+    const workItem = item ? { workItemId: item.id, acceptedPlanRevision: item.planRevision,
+      controlGeneration: item.control.generation } : undefined;
+    if (input.planRevision !== undefined && input.planRevision !== workItem?.acceptedPlanRevision) {
+      throw new HttpError(409, "stale_revision", "The accepted Work Item Plan changed.");
+    }
+    const assertCurrent = workItem && (() => {
+      const current = store.getWorkItem(workItem.workItemId);
+      if (!current || current.planRevision !== workItem.acceptedPlanRevision || current.control.generation !== workItem.controlGeneration) {
+        throw new HttpError(409, "stale_revision", "The Work Item or its accepted Plan changed.");
+      }
+      if (current.control.state !== "active" || current.holds.some(hold => hold.blocksNewAdmission)
+        || ["done", "cancelled", "archived", "superseded"].includes(current.status)) {
+        throw new HttpError(409, "resume_blocked", "The Work Item is not admitting a new review.");
+      }
+    });
+    assertCurrent?.();
     if (!this.options.startCodeAssessmentRun) throw new Error("Code assessment runner is unavailable.");
     const result = startCodeAssessment(store, request, this.options.startCodeAssessmentRun, {
-      assessmentId, candidateDigest: input.candidate.candidateDigest, idempotencyKey: key, fingerprint, rulesRefs, reviewFocus,
+      assessmentId, candidateDigest: input.candidate.candidateDigest, idempotencyKey: key, fingerprint, rulesRefs, reviewFocus, workItem, assertCurrent,
     });
     this.pendingReviews.set(pendingKey, { fingerprint, result });
     try {
@@ -422,7 +495,8 @@ export class AppServerDevelopmentService {
     }
     checks.push({ id: "feature_flags", category: "config", status: "ok", summary: "Feature configuration loaded", details: `channels.autoRoute: ${this.options.context.config.channels.autoRoute === true}` });
     if (input.scope === "project") {
-      const { manifest } = await collectProjectInstructions(cwd);
+      const { claudeProjectRules } = this.storeRegistry().getStore(cwd).getWorkspaceSettings();
+      const { manifest } = await collectProjectInstructions(cwd, [], { claudeProjectRules });
       checks.push({ id: "project_instructions", category: "instructions", status: manifest.omitted.length ? "warning" : "ok",
         summary: manifest.sources.length ? "Project instruction sources discovered" : "No project instruction files found",
         details: JSON.stringify(manifest) });
@@ -495,16 +569,19 @@ export class AppServerDevelopmentService {
     stored = this.updateVerification(store, stored, record);
     for (const check of record.plan.checks) {
       if (record.cancelRequested || signal.aborted) break;
-      stored = this.updateVerification(store, stored, setCheckStatus(record, check.checkId, "running"));
-      let status: LingAppServerVerificationCheckStatus;
+      stored = this.updateVerification(store, stored, setCheckResult(record, check.checkId, { status: "running" }));
+      let result: AppServerVerificationCheckResult;
       try {
-        status = await executeCheck({ cwd: store.paths.cwd, check, candidate: record.plan.candidate, signal });
+        const checked = await executeCheck({
+          cwd: store.paths.cwd, check, candidate: record.plan.candidate, recipes: this.verificationRecipes(store.paths.cwd), signal,
+        });
+        result = typeof checked === "string" ? { status: checked } : checked;
       } catch {
-        status = "unknown";
+        result = { status: "unknown" };
       }
       stored = store.getAppServerState("verify_operation", operationId)!;
       record = stored.payload as VerifyRecord;
-      record = setCheckStatus(record, check.checkId, status);
+      record = setCheckResult(record, check.checkId, result);
       stored = this.updateVerification(store, stored, record);
       if (record.cancelRequested || signal.aborted) break;
     }
@@ -518,6 +595,25 @@ export class AppServerDevelopmentService {
     const blocker = status === "unknown" && stopRequested ? "verification_cancellation_unconfirmed" : undefined;
     this.updateVerification(store, stored, finishVerification(record, status, blocker));
   }
+
+  private verificationRecipes(cwd: string): readonly AppServerVerificationRecipeConfig[] {
+    return (this.options.context.config.appServerVerificationRecipes ?? []).filter(recipe => recipe.workspaceRoot === cwd);
+  }
+}
+
+const developmentByContext = new WeakMap<DaemonContext, AppServerDevelopmentService>();
+
+export function getAppServerDevelopmentService(context: DaemonContext): AppServerDevelopmentService {
+  const existing = developmentByContext.get(context);
+  if (existing) return existing;
+  const service = new AppServerDevelopmentService({
+    context,
+    activeRuns: context.activeRuns,
+    startCodeAssessmentRun: context.startCodeAssessmentRun,
+    executeVerificationCheck: executeAppServerVerificationCheck,
+  });
+  developmentByContext.set(context, service);
+  return service;
 }
 
 function assertVerificationPlan(stored: AppServerStateRecord, plan: LingAppServerVerifyPlanResult): VerifyRecord {
@@ -540,8 +636,9 @@ function verificationInFlight(record: VerifyRecord): boolean {
   return record.operation.status === "queued" || record.operation.status === "running";
 }
 
-function setCheckStatus(record: VerifyRecord, checkId: string, status: LingAppServerVerificationCheckStatus): VerifyRecord {
-  const checks = record.operation.checks.map(check => check.checkId === checkId ? { ...check, status } : check);
+function setCheckResult(record: VerifyRecord, checkId: string, result: AppServerVerificationCheckResult): VerifyRecord {
+  const { verifier, ...outcome } = result;
+  const checks = record.operation.checks.map(check => check.checkId === checkId ? { ...check, ...outcome, ...verifier } : check);
   return { ...record, operation: { ...record.operation, checks } };
 }
 
@@ -584,6 +681,7 @@ function reviewStartResult(detail: CodeAssessmentDetail): LingAppServerReviewSta
     assessmentId: detail.assessment.id,
     candidateDigest: detail.snapshot.digest,
     status: assessmentStatus(detail),
+    ...(detail.assessment.workItem ? { workItem: detail.assessment.workItem } : {}),
   };
 }
 
@@ -638,4 +736,8 @@ export function asDiagnosticsCheck(check: LingAppServerDoctorRunResult["checks"]
     ...(check.details ? { details: check.details } : {}),
     ...(check.remediation ? { remediation: check.remediation } : {}),
   };
+}
+
+export function abortAppServerVerifications(context: DaemonContext): void {
+  developmentByContext.get(context)?.abortVerifications();
 }

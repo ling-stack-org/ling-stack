@@ -188,6 +188,10 @@ export class RuntimeSupervisor {
     return this.config.channels;
   }
 
+  getAppServerDeliberationPolicies(): ResolvedDaemonConfig["appServerDeliberationPolicies"] {
+    return this.config.appServerDeliberationPolicies;
+  }
+
   getConcurrencyPolicy(): ResolvedRuntimeConcurrencyPolicy {
     return this.concurrency;
   }

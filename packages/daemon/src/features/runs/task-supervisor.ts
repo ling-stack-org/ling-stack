@@ -41,6 +41,10 @@ export class TaskSupervisor {
       }
       try { await this.advanceWorkflow(store, submission.successorWorkflowId); } catch { /* Normal workflow admission retains its durable blockers. */ }
     }
+    for (const workflowId of store.listActiveWorkItemWorkflowIds(8)) {
+      if (state.stopped) return;
+      this.advanceSource(cwd, workflowId, async () => { await this.advanceWorkflow(store, workflowId); });
+    }
     const advanceInterventions = this.advanceRunInterventions;
     if (advanceInterventions) {
       for (const sourceRunId of store.listPendingConversationInterventionSources()) {

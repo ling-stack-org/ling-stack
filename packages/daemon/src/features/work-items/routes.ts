@@ -14,6 +14,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { readWorkItemWorkflowStages } from "./workflow-stages.js";
 import {
   isRecord,
   readOptionalBoolean,
@@ -42,10 +43,12 @@ const workItemStatuses = [
 const workItemSourceTypes = [
   "channel_task",
   "channel_workflow_step",
+  "automation_run",
   "external_work",
   "external_work_action",
   "approval",
   "run",
+  "device_task_graph_node",
   "manual",
 ] as const satisfies readonly WorkItemSourceType[];
 
@@ -114,7 +117,16 @@ export async function handleWorkItemRoute(
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for work item detail` });
         return;
       }
-      writeJson(response, 200, { cwd, workItem: existing });
+      const stageOffset = readOptionalIntegerQuery(url, "stageOffset", 0);
+      const detail = store.readSnapshot(() => {
+        const workItem = store.getWorkItem(workItemId);
+        return workItem && { cwd, workItem, workflow: readWorkItemWorkflowStages(store, workItem, true, stageOffset) };
+      });
+      if (!detail) {
+        writeJson(response, 404, { error: "work_item_not_found", message: `Work item not found: ${workItemId}` });
+        return;
+      }
+      writeJson(response, 200, detail);
       return;
     }
 

@@ -25,6 +25,7 @@ export const conversationDomainRefTypes = [
   "user_input_answer",
   "external_work",
   "automation",
+  "work_item",
 ] as const;
 
 export type ConversationDomainRefType = (typeof conversationDomainRefTypes)[number];

@@ -17,6 +17,8 @@
     "e2e/app.spec.ts",
     "e2e/channel-environment-summary.spec.ts",
     "e2e/code-assessments.spec.ts",
+    "e2e/workspace-verification.spec.ts",
+    "e2e/github-intake.spec.ts",
     "e2e/review-annotations.spec.ts",
     "e2e/review-annotation-recovery.spec.ts",
     "e2e/image-review-tools.spec.ts",

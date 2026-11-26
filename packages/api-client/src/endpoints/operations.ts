@@ -1,4 +1,6 @@
 import type {
+  LingAppServerStageHandoffParams,
+  LingAppServerWorkItemCollaborationAppendResult,
   ListResourceLeasesRequest,
   ListStateTransitionsRequest,
   PreviewContentResponse,
@@ -42,6 +44,21 @@ import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transpor
 export const operationEndpoints = {
   async getCodeAssessmentOverview(this: LingDaemonEndpointContext, cwd: string, assessmentId: string): Promise<import("@ling-stack/contracts").CodeAssessmentOverview> {
     return this._get(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}`, { cwd, view: "overview" });
+  },
+  async getWorkspaceVerification(this: LingDaemonEndpointContext, cwd: string, threadId?: string, operationId?: string): Promise<import("@ling-stack/contracts").WorkspaceVerificationReport> {
+    return this._get("/workspace/verification", { cwd, threadId, operationId });
+  },
+  async startWorkspaceVerification(this: LingDaemonEndpointContext, cwd: string, input: import("@ling-stack/contracts").StartWorkspaceVerificationRequest): Promise<import("@ling-stack/contracts").WorkspaceVerificationReport> {
+    return this._post("/workspace/verification", { cwd }, input);
+  },
+  async cancelWorkspaceVerification(this: LingDaemonEndpointContext, cwd: string, input: Omit<import("@ling-stack/contracts").LingAppServerVerifyCancelParams, "cwd">): Promise<import("@ling-stack/contracts").LingAppServerVerifyCancelResult> {
+    return this._post("/workspace/verification/cancel", { cwd }, input);
+  },
+  async listGitHubIntakePolicies(this: LingDaemonEndpointContext, cwd: string): Promise<import("@ling-stack/contracts").LingAppServerGitHubIntakePolicyList> {
+    return this._get("/workspace/github-intake", { cwd });
+  },
+  async pollGitHubIntake(this: LingDaemonEndpointContext, cwd: string, input: Omit<import("@ling-stack/contracts").LingAppServerGitHubIntakePollParams, "cwd">): Promise<import("@ling-stack/contracts").LingAppServerGitHubIntakePollResult> {
+    return this._post("/workspace/github-intake", { cwd }, input);
   },
   async createCodeAssessmentOverview(this: LingDaemonEndpointContext, cwd: string, input: CreateCodeAssessmentRequest): Promise<import("@ling-stack/contracts").CodeAssessmentOverview> {
     return this._post("/workspace/code-assessments", { cwd, view: "overview" }, input);
@@ -105,9 +122,24 @@ export const operationEndpoints = {
       });
     },
 
-  async getWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string): Promise<WorkItemDetailResponse> {
-      return this._get(`/work-items/${encodeURIComponent(workItemId)}`, { cwd });
+  async listNativeWorkIntake(this: LingDaemonEndpointContext, cwd: string,
+    options: import("@ling-stack/contracts").ListNativeWorkIntakeRequest): Promise<import("@ling-stack/contracts").ListNativeWorkIntakeResponse> {
+    return this._get("/work-items/intake", { cwd, ...options });
+  },
+
+  async retryNativeWorkIntake(this: LingDaemonEndpointContext, cwd: string,
+    input: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest): Promise<import("@ling-stack/contracts").NativeWorkIntakeMutationResponse> {
+    return this._post("/work-items/intake", { cwd }, input);
+  },
+
+  async getWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string, stageOffset?: number): Promise<WorkItemDetailResponse> {
+      return this._get(`/work-items/${encodeURIComponent(workItemId)}`, { cwd, stageOffset });
     },
+
+  async settleWorkItemStageHandoff(this: LingDaemonEndpointContext, cwd: string, workItemId: string,
+    action: "accepted" | "returned", input: Omit<LingAppServerStageHandoffParams, "cwd" | "workItemId">): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    return this._post(`/work-items/${encodeURIComponent(workItemId)}/handoff`, { cwd }, { ...input, action });
+  },
 
   async routeWorkItem(this: LingDaemonEndpointContext, cwd: string, workItemId: string, input: WorkItemRouteRequest): Promise<WorkItemMutationResponse> {
       return this._post(`/work-items/${encodeURIComponent(workItemId)}/route`, { cwd }, input);

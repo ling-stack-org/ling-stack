@@ -25,7 +25,7 @@ function appServerUrl(options: AppServerLocalTransportOptions): string {
   if (url.protocol === "ws:" && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
     throw new Error("A remote App Server requires WSS.");
   }
-  if (url.protocol === "wss:" && !options.authToken) throw new Error("WSS requires a Daemon bearer credential.");
+  if (url.protocol === "wss:" && !options.authToken) throw new Error("WSS requires an App Server grant credential.");
   if (url.protocol !== "ws:" && url.protocol !== "wss:") throw new Error("Invalid App Server transport URL.");
   url.searchParams.set("cwd", options.cwd);
   return url.href;
@@ -39,12 +39,12 @@ function createAppServerSocket(url: string, authToken: string | undefined): WebS
   });
 }
 
-export function connectToAppServer(options: AppServerLocalTransportOptions, clientName: string): LingAppServerClient {
+export function connectToAppServer(options: AppServerLocalTransportOptions, clientName: string, autoReconnect = false): LingAppServerClient {
   return new LingAppServerClient({
     url: appServerUrl(options),
     createSocket: url => createAppServerSocket(url, options.authToken) as unknown as LingAppServerSocket,
     clientInfo: { name: clientName, version: LING_PRODUCT_VERSION },
-    autoReconnect: false,
+    autoReconnect,
     requestTimeoutMs: handshakeTimeout,
   });
 }

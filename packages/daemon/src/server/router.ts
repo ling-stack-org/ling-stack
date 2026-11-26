@@ -213,6 +213,7 @@ import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-
 import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
 import { handleDesktopBrowserRoute } from "../features/desktop-browser/routes.js";
 import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
+import { handleNativeWorkIntakeCollection } from "../features/work-items/native-intake-routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import { handleRegisteredWorkspaces, handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
 import {
@@ -273,6 +274,7 @@ import { handleGetNodeRerunTargetReadiness } from "../features/runs/node-rerun-r
 import { handlePostRunAssuranceEvaluationAssociation } from "../features/harness/evaluations/assurance-association-route.js";
 import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
+import { reconcileGitHubDelivery } from "./app-server-github-delivery.js";
 import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
@@ -280,6 +282,10 @@ import { resolveProviderForRun } from "../features/runs/providers.js";
 import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import { handleCodeAssessmentRoutes } from "../features/code-assessments/routes.js";
+import { handleWorkspaceVerificationRoute } from "./workspace-verification-routes.js";
+import { handleWorkItemStageHandoff } from "./app-server-stage-handoff.js";
+import { handleWorkspaceGitHubIntake } from "./workspace-github-intake-routes.js";
+import { publishWorkItemWorkflowStep } from "../features/work-items/workflow-stages.js";
 import {
   handleGetWorkspaceFileContent,
   handleGetWorkspaceFileOpenIcon,
@@ -299,7 +305,7 @@ import {
   handleMutateTurnWorkspaceChanges,
 } from "../features/runs/workspace-change-recovery.js";
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
-import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
+import { handleEffectiveConfig, handleWorkspaceDeliberationPolicy, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleDeviceStorageScans } from "../features/settings/device-storage/routes.js";
 import { handleManagedWorktrees } from "../features/workspaces/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
@@ -814,6 +820,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/workspace-settings/deliberation") {
+    await handleWorkspaceDeliberationPolicy(request, response, url, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/device-storage/scans" || url.pathname.startsWith("/device-storage/scans/")) {
     await handleDeviceStorageScans(request, response, url, config, storeRegistry);
     return;
@@ -867,7 +878,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/tasks") {
-    await handleTasksCollection(request, response, config, storeRegistry);
+    await handleTasksCollection(request, response, config, storeRegistry, context.nativeWorkIntake);
     return;
   }
 
@@ -949,6 +960,7 @@ export async function routeRequest(
             secretResolver,
             mcpBroker,
             {
+              assertNativeIntakeCurrent: hooks.assertNativeIntakeCurrent,
               onRunReady: (runId, info) => {
                 hooks.onRunReady?.(runId, info);
                 onRunReady(runId);
@@ -965,6 +977,7 @@ export async function routeRequest(
           )),
       automationSchedulers,
       notificationHub,
+      context.nativeWorkIntake,
     );
     return;
   }
@@ -1306,6 +1319,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/work-items/intake") {
+    await handleNativeWorkIntakeCollection(request, response, url, storeRegistry, context.nativeWorkIntake, config.maxBodyBytes);
+    return;
+  }
+
   if (url.pathname === "/work-items") {
     await handleWorkItemsCollection(request, response, config, storeRegistry);
     return;
@@ -1313,13 +1331,18 @@ export async function routeRequest(
 
   const workItemRoute = parseWorkItemRoute(url.pathname);
   if (workItemRoute) {
+    const action = "action" in workItemRoute ? workItemRoute.action : undefined;
+    if (action === "handoff") {
+      await handleWorkItemStageHandoff(request, response, url, context, workItemRoute.workItemId);
+      return;
+    }
     await handleWorkItemRoute(
       request,
       response,
       config,
       storeRegistry,
       workItemRoute.workItemId,
-      "action" in workItemRoute ? workItemRoute.action : undefined,
+      action,
     );
     return;
   }
@@ -1437,6 +1460,7 @@ export async function routeRequest(
   if (lingThreadRoute) {
     await handleLingThreadItem(request, response, url, storeRegistry, lingThreadRoute, {
       maxBodyBytes: config.maxBodyBytes,
+      reconcileGitHubDelivery: params => reconcileGitHubDelivery(context, params, "clean_checkout"),
       startResumeRun: async (runRequest) =>
         await startDetachedRunAndResolveReady((onRunReady) =>
           executeRunRequest(
@@ -1714,6 +1738,14 @@ export async function routeRequest(
           nativeRunDispatcher,
         },
       ));
+    return;
+  }
+  if (url.pathname === "/workspace/verification" || url.pathname === "/workspace/verification/cancel") {
+    await handleWorkspaceVerificationRoute(request, response, url, context);
+    return;
+  }
+  if (url.pathname === "/workspace/github-intake") {
+    await handleWorkspaceGitHubIntake(request, response, url, context);
     return;
   }
   if (url.pathname.startsWith("/workspace/code-assessments")) {
@@ -2142,10 +2174,12 @@ export async function routeRequest(
             onRunReady: (runId) => {
               const now = new Date().toISOString();
               attachWorkflowStepContextArtifact(store, workflowStep.id, runId, runRequest);
+              publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowStep.id);
               resolveOnce(runId);
             },
             afterRunTerminal: async (terminalRun) => {
               finalizeOrchestratedWorkflowStepRun(store, workflowStep.id, taskId, terminalRun);
+              publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowStep.id);
               await maybeContinueRunInterventions(terminalRun);
               if (terminalRun.status === "succeeded") {
                 await orchestrateChannelWorkflow({
@@ -2406,6 +2440,7 @@ export async function routeRequest(
             isolationHost: workflowIsolationHost,
             cwd,
             workflowId: workflowRoute.workflowId,
+            onDeliberationEvent: event => controlPlaneEvents.publish(event),
             validateRunRequest: (candidateRunRequest) => {
               resolveProviderForRun(store, candidateRunRequest, secretResolver);
             },
@@ -2536,6 +2571,7 @@ export async function routeRequest(
               onRunReady: (runId) => {
                 const store = storeRegistry.getStore(runRequest.workspaceCwd);
                 attachWorkflowStepContextArtifact(store, workflowRoute.workflowStepId, runId, runRequest);
+                publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowRoute.workflowStepId);
               },
               afterRunTerminal: async (terminalRun) => {
                 const store = storeRegistry.getStore(runRequest.workspaceCwd);
@@ -2545,6 +2581,7 @@ export async function routeRequest(
                   terminalRun.taskId,
                   terminalRun,
                 );
+                publishWorkItemWorkflowStep(store, controlPlaneEvents, workflowRoute.workflowStepId);
                 await maybeContinueRunInterventions(terminalRun);
               },
               controlPlaneEvents,
@@ -2661,6 +2698,7 @@ export async function routeRequest(
         channelRoute.channelId,
         channelReplyDispatchCoordinator,
         channelTurnDispatchWorker,
+        controlPlaneEvents,
       );
       return;
     }
@@ -2673,6 +2711,7 @@ export async function routeRequest(
         channelRoute.channelId,
         channelReplyDispatchCoordinator,
         channelTurnDispatchWorker,
+        controlPlaneEvents,
       );
       return;
     }

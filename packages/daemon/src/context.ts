@@ -247,6 +247,7 @@ export interface DaemonContext {
   readonly backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry;
   readonly automationSchedulers: AutomationSchedulerRegistry;
   readonly automationEvents: AutomationEventWorker;
+  readonly nativeWorkIntake?: import("./features/work-items/native-intake.js").NativeWorkIntake;
   readonly taskSupervisor: TaskSupervisor;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly notificationHub: NotificationHub;

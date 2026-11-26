@@ -29,10 +29,12 @@ export type WorkItemStatus =
 export type WorkItemSourceType =
   | "channel_task"
   | "channel_workflow_step"
+  | "automation_run"
   | "external_work"
   | "external_work_action"
   | "approval"
   | "run"
+  | "device_task_graph_node"
   | "manual";
 
 export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resource" | "user" | "scheduler" | "provider";
@@ -56,6 +58,7 @@ export interface WorkItemView {
   readonly runId?: string;
   readonly workflowId?: string;
   readonly workflowStepId?: string;
+  readonly planRevision?: string;
   readonly externalWorkId?: string;
   readonly externalWorkActionId?: string;
   readonly approvalId?: string;
@@ -300,7 +303,7 @@ export function isActionableWorkItem(item: WorkItemView): boolean {
     item.status === "review" ||
     Boolean(item.approvalId) ||
     Boolean(item.claim) ||
-    Boolean(item.durable && !item.claim) ||
+    Boolean(item.durable && !item.claim && !item.planRevision) ||
     Boolean(!item.channelId && !item.assigneeTeammateId && !item.claim);
 }
 
@@ -341,6 +344,9 @@ export function workItemNextActionLabel(item: WorkItemView): string {
   }
   if (item.status === "blocked") {
     return item.runId ? "View failure" : "Review blocker";
+  }
+  if (item.durable && item.workflowId && item.planRevision) {
+    return "Open workflow";
   }
   if (item.durable && !item.claim && !isTerminalWorkItemView(item)) {
     return "Claim to handle";
@@ -536,6 +542,7 @@ function durableToWorkItemView(item: DurableWorkItemView): WorkItemView {
     runId: item.runId,
     workflowId: item.workflowId,
     workflowStepId: item.workflowStepId,
+    planRevision: item.planRevision,
     externalWorkId: item.externalWorkId,
     externalWorkActionId: item.externalWorkActionId,
     approvalId: item.approvalId,

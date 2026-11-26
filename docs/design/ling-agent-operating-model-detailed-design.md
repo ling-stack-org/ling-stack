@@ -1,8 +1,8 @@
 # Ling Agent Operating Model 详细设计
 
-- **Status** 主线已接入工作项接单、控制、证据与协作记录。 [实施计划](ling-app-server-implementation-plan.md#尚待完成的发布条件)记录剩余发布条件。
+- **Status** 主线已接入工作项接单、控制、证据与协作记录。其余运行时能力见 [实施计划](ling-app-server-implementation-plan.md#当前实现证据)。
 - **Owner** Conversation、Core、Daemon、External Agent、GitHub Automation 与开发工具维护者
-- **Implementation status verified** 2026-11-22 against `origin/main@469a557ee`
+- **Implementation status verified** 2026-11-25 against `origin/main@7b47c21ab` plus the App Server completion branch
 - **Document type** 跨域状态、授权、事件与恢复详细设计
 - **Contract** [Ling Agent Operating Model](ling-agent-operating-model.md)
 - **Related contracts** [Ling Agent Session](ling-agent-session.md) · [Channel Team Operating System](channel-team-operating-system.md) · [Ling App Server Detailed Design](ling-app-server-detailed-design.md) · [GitHub Automation](github-automation.md) · [Ling Device Fabric](ling-device-fabric.md)
@@ -127,7 +127,7 @@ Source normalization rules:
 - GitHub sources preserve provider delivery IDs and source revisions. Repository ID, subject kind and number identify the stable subject. Base and head SHA describe the PR revision and its evidence basis.
 - Automations use definition id, scheduled occurrence or monitor fingerprint and source revision. One occurrence or fingerprint can create at most one Work Item.
 - External Agents use caller id, caller task id, submission key and context digest. The same caller submission can be observed through more than one transport without duplication.
-- Device Fabric nodes use graph id, node id, graph revision and owner-host execution id. The project Work Item references the owner journal instead of owning device effects.
+- Device Fabric nodes use graph id, node id, graph revision and owner-host execution id. The project Work Item references the owner journal. The App Server Device Work Item Bridge persists this mapping and its receipts under the Work Item scope. An App Server grant with `observe` can call `workItem/device/read` within its subject. A Daemon operator supplies the mapping with `workItem/device/bind` after the current Work Item control check and records the owner result with `workItem/device/receipt`. The bridge checks the receipt against the bound owner host, route generation, WorkUnit and Attempt. An `unknown` receipt adds the binding to the Work Item's unresolved effects and holds new admission. Reconciliation clears that binding's effect. Resume requires zero unresolved effects and keeps existing Plan holds. A cancelling Work Item settles when its last unresolved device effect clears. The receipt, Work Item projection and event commit together.
 
 Normalization preserves untrusted content as bounded source data. It does not execute commands, parse source prose as policy, or grant tools.
 
@@ -166,7 +166,45 @@ An evaluation freezes the policy revision, source scope and occurrence identity.
 
 Qualification and dispatch recheck the source policy and revision. Paused sources keep their history and pending suggestions. Direct user requests and existing automation dispatch keep their existing entry paths. Where an enabled source already started a Task or AutomationRun, link that dispatch to the inbox item.
 
+The Daemon Host can register a versioned policy for a concrete channel Task
+source or Automation definition with `LING_STACK_APP_SERVER_NATIVE_INTAKE_FILE`.
+The source scope is the channel ID for `channel_task` and the definition ID
+for `automation_run`. Channel Task creation, scheduled occurrences, changed
+monitor observations and signed event dispatches use their native owners.
+An opted-in source commits its evaluation and any Work Item binding with the
+original Task or AutomationRun. Channel Task creation accepts a request key
+for delivery retries. Automation uses the scheduler or event owner's original
+occurrence key.
+
+An automatic channel Task uses the ordinary Pi Task entry with read-only
+workspace access and the channel's current provider and allowed read tools.
+An accepted Automation occurrence uses its existing execution policy. A
+suggested Task can start through its regular Task action. An operator can
+accept a suggested Automation by submitting its intake receipt to Run now.
+`workItem/intake/accept` can also confirm either suggestion with the original
+receipt. The Daemon recovers pending dispatch through the same execution
+owner, checking the source revision, policy, Work Item admission and any
+applicable quiet hours or signed event authority before Run admission.
+The HTTP intake collection and `workItem/intake/list` read outcomes by source.
+HTTP and `workItem/intake/retry` can re-evaluate eligible suppressed, paused or
+held occurrences. Each retry links the receipts and retains the native
+execution identity. `workItem/intake/updated` lets Work Item subscribers
+observe subsequent dispatch milestones.
+
+A matching monitor observation held by automatic intake keeps its original
+AutomationRun and frozen snapshot. Subsequent polls can re-evaluate the same
+occurrence when quiet hours, concurrency or the start allowance permit it.
+The next accepted evaluation links to the suppressed receipt and uses the
+original Run dispatch owner. A new policy and source revision are checked
+before admission.
+
 ### 3.2 Work Item Target Identity
+
+A registered App Server GitHub repository can set an `intake` policy with `mode`, `enabled`, optional `requiredLabel` and `priority`, and a signed Automation `webhookSourceId`. The local operator can poll a page of open subjects using `github/intake/poll`. Without an explicit mode the poll records a manual evaluation. A suggested subject uses the existing intake Work Item and waits for acceptance.
+
+Automatic intake requires a label, an enabled Pi provider preset and a bounded start budget. The Work Item store counts automatic reservations against the rolling budget and counts queued reservations and active Runs against concurrency. The Automation worker recovers a reservation through the normal conversation submission receipt. Its initial conversation reads the project and can propose a plan or ask for clarification. It rechecks the policy revision, quiet hours and webhook authority before Run admission. Operators can inspect registered policies in Automations and explicitly re-evaluate a receipt suppressed by a temporary limit.
+
+The signed webhook route validates the immutable repository ID and commits its inbox event with the pending intake target. The Automation event worker rechecks its source revision and registered repository, reads the current subject from GitHub, and records the evaluation. Suggestions bind the Work Item, source occurrence and evaluation in one transaction. `github/intake/read` can recover the occurrence receipt by ID. Poll and webhook receipts have separate occurrence IDs and share the verified target identity.
 
 Each workspace has one default Work Item binding for an exact target. The target is either a resolved Work Item ID or a GitHub subject identified by the verified GitHub instance, immutable repository ID, subject kind and number. An existing Work Item ID addresses that item directly. For GitHub, the adapter resolves an authorized repository-qualified URL, structured submission or an explicit Issue/PR number in a conversation with a single repository binding. An unresolved or ambiguous target uses clarification or an authorization outcome before implementation dispatch. Titles, matching descriptions, labels, branches and references copied from issue bodies are context for a proposal. Automatic binding requires an explicit target from authorized input or a verified source event.
 
@@ -202,6 +240,14 @@ Source receipts remain distinct for webhook, poll, chat and client submissions. 
 Check source authority, credentials and the requested action grant before binding or dispatch. Apply current Work Item and Thread grants before returning an existing target or receipt. A denied or unavailable explicit target uses the same bounded target-unavailable projection. Thread, assignee, history and receipt references require their own grants. Access to one source authorizes only that source's projection. A repository transfer, redirected issue or cross-workspace reference is resolved and authorized by its provider owner before an existing binding can apply.
 
 Use the existing source-key Work Item upsert for source-local observations. Add the unique workspace target binding and its accepted owner in the Work Item store. In one workspace-store transaction, check current source policy and target revision, resolve or create the default binding, attach the occurrence and commit any first accepted dispatch intent. Readiness and actual dispatch follow section 4.2. [Current source-key store](../../packages/core/src/storage/sqlite/work-item-store.ts) · [Automation event intake](../../packages/daemon/src/features/automations/event-worker.ts) · [External Work admission](../../packages/core/src/external-work-scheduler.ts)
+
+A normal channel input can address a Work Item explicitly using
+`workItemTarget`. The current channel or the item's bound Workflow supplies
+the ownership check. The canonical input Item, the owner-only evidence
+reference and its Work Item event share a transaction and an idempotent
+receipt. Corrections use a new addressed input with the current revision.
+The coordinator uses the existing stage delivery and Plan change operations
+for decisions based on the input. [Channel input contract](../daemon-api.md#channel-work-item-inputs)
 
 ## 4. Assignment and Dispatch Claim
 
@@ -267,6 +313,28 @@ Use the existing Attempt execution loop detector for repetitive tool activity an
 Resolve observations against a stable Work Item, affected stage or dependency, and canonical blocker cause. The owning Verify assertion, Review finding or reconciliation reason supplies the structured identity and basis. Link equivalent reports to the same blocker only when the owner confirms that they describe the same unresolved condition. Keep their source revisions and timestamps on the evidence board. A changed candidate or a renamed finding is insufficient by itself to create another decision or reset a continuation counter. When relevant evidence changes the blocking condition or option set, the owner records the new revision under its original lineage.
 
 Evaluate newly committed outcomes and eligible continuation checkpoints under the existing Goal and Workflow limits. Charge elapsed and model/tool usage to the accepted Work Item/Goal and its policy. An automatic continuation is counted once at owner admission and reconciled once with its resulting evidence delta. Re-observing it, restarting the daemon, or switching an Attempt, participant or adapter retains the relevant counters, spend and deadline. For Goals, apply the configured `maxContinuations` and `maxNoEvidenceContinuations` and their existing budget rules. Work Items without a Goal use the accepted Workflow retry bounds and Work Item budget. An unbounded or unspecified retry policy requires explicit follow-up.
+
+The Workflow start owner uses the Work Item retry budget and any stricter
+stage policy when admitting a new stage start. It groups starts by the stable
+stage ID across the Work Item's bound Workflows and counts each owned Task
+once. A preparing start reserves a slot before its Run is committed. A
+stage's first start leaves the shared retry allowance available. The stage
+read exposes starts and remaining stage and Work Item retry allowances.
+
+When a stage declares a recovery verification requirement in its accepted Plan,
+the coordinator can recover a stalled stage through `workItem/stage/recover`.
+The request names the current Work Item, stable stage, blocker and failure
+event, plus a completed Verify operation. The host accepts it only when the
+operation belongs to the Work Item and accepted Plan, passed after the failed
+Run, matches the current candidate and required verifier basis, coverage and
+producer references, and the failed Run has settled its execution and effects.
+The recovery receipt is an owner-visible Work Item evidence entry committed with
+the candidate digest and failure identity. Its idempotency key and evidence
+identity make concurrent retries and restart replay return one receipt. The
+stage progress projection removes only that blocker, preserves the consumed
+retry count, and the next start checks that the candidate is still the verified
+one. Candidate drift or a different failure requires a new verification or an
+accepted Plan change.
 
 When the next automatic step exceeds the allowance, or the blocker needs a user decision, policy repair or effect reconciliation, park that automatic path with a typed reason, affected criteria, last verified delta, remaining budget and recovery owner. Keep independent eligible work under its own gates. Resume through a current evidence delta or an authorized continuation or Plan change, within the owner's current authority and remaining limits. Pausing automation preserves open questions, write leases and effect receipts for their owning lifecycles.
 
@@ -411,6 +479,8 @@ Decision materiality measures the consequences of choosing between viable option
 
 Suggestions and automatic admission require at least two viable options and at least two distinct eligible participants. The effective policy also checks required roles and the accepted template. The default permits one challenge pass. Automatic admission requires explicit checkpoint and decision kind allowlists, an authorized decision owner, a finite budget and a declared cooldown for another revision of the same decision. The effective budget is bounded by the project, accepted Workflow and remaining Work Item limits. Runtime admission reserves capacity for each step from that budget. Voting requires the `when_unresolved` policy and the accepted roster and ballot rules.
 
+The Daemon accepts Host policy entries through `appServerDeliberationPolicies` or the JSON array at `LING_STACK_APP_SERVER_DELIBERATION_POLICY_FILE`. Each entry selects a canonical `workspaceRoot` and `channelId`. For `auto_start` on an accepted stage, an authorized `workItem/deliberation/evaluate` call checks the scope, option count, roles, evidence age, decision cooldown and available Provider reservation. A successful evaluation returns `outcome: "start"` and `existingRoundId`. The evaluation, round, Workflow and cooldown receipt commit together. The admitted Workflow records the policy revision, effective participant scope, user decision owner, deadline and aggregate token ceiling. The Pi provider admission transaction counts measured and reserved tokens for the whole round and blocks further requests when usage is unresolved. [Host policy configuration](../../packages/daemon/src/server/app-server-deliberation-config.ts)
+
 Apply the current accepted subject, candidate, source visibility and required evidence at each admission, ballot freeze and decision. An optional maximum age adds a time limit measured from the source owner's evidence timestamp. At a plan checkpoint, viability is evaluated against the available plan evidence and constraints for that checkpoint. Implementation and delivery use their own required checks when a candidate exists.
 
 Store the evaluation with its checkpoint receipt and Work Item decision revision. The stable decision ID names the question and its affected dependency. A materially changed relevant option or evidence snapshot, a changed accepted subject, or an accepted follow-up can create a linked successor revision. The tuple of Work Item, decision ID and decision revision admits at most one round. Bind its receipt to the subject digest and policy revision. Replayed notifications and concurrent callers resolve to the same record. A deferred admission can retry within its deadline and policy when capacity becomes available. Cooldown, insufficient scope, evidence, budget or options produce a reason visible to the coordinator.
@@ -470,6 +540,7 @@ The Workflow validates any wait against a required dependency of the affected st
 The Workflow prepares a handoff for the downstream dependency using the accepted source brief, required inputs and expected output, source candidate and evidence, source and target stage revisions, and the assigned receiving participant. It records the material on its existing handoff intent. Daemon derives the receiver from the authenticated grant or the bound Workflow step and current Attempt. A declared automated handoff can use the same Workflow acceptance path when its checks pass. [Existing handoff acceptance](../../packages/daemon/src/features/channels/workflow-handoffs.ts)
 
 - Acceptance compares the expected intent revision and the current stage, candidate and evidence contract. One accepted receipt binds the source outcome, target stage, dependency, recipient and applicable revisions. Concurrent valid acceptance of the same revision resolves to that receipt. The original Workflow rechecks readiness and dispatches through the existing step claim and deduplication key.
+- A successor Plan may retain an independent source execution before it settles. The binding records the original Workflow, stage, Run and source revision. The source Attempt keeps its original tools, owner and effect ledger. The successor dependency remains pending until the source produces a current sealed result packet, then receives that packet through the same retained-result path. A stale or unavailable source blocks the successor with a typed reason. Reassignment cannot create a second Run for the retained source.
 - Return compares the expected intent revision and the current downstream dependency. It can record that the offered source material is stale. The receipt identifies the missing condition and repair owner. Typed reasons include `missing_artifact`, `required_check_incomplete`, `candidate_stale`, `scope_unavailable` and `upstream_effect_unknown`. The affected edge waits. A correction links the previous intent to an updated source revision and uses normal validation for a fresh acceptance.
 - A live write lease, a pending approval or an unknown external effect uses the original owner's recovery path before transfer or retry. If the subject drifts after acceptance, the receipt remains visible as history. The Workflow revalidates against the current dependency before admitting any further step.
 
@@ -578,6 +649,40 @@ Each recipient's delivery is identified by message ID and recipient ID and binds
 
 Message acceptance commits the message and makes its recipient delivery `queued`. `delivered` requires a durable receiver receipt for inclusion in the actual input accepted by the target Runner, tied to the Run/Attempt and prepared input basis. With a verified in-turn steering path, use its equivalent input receipt. Work Item observation or successful publication is a separate fact. If an adapter cannot establish delivery after an ambiguous call, report `delivery_unconfirmed` and reconcile with that adapter. Retry the same queued delivery only with current authorization and proof it is safe to do so. Pending delivery can close as `expired`, `superseded` or `scope_revoked`; a completed delivery remains a historical fact. A reply is a separate question-owner receipt. [Prepared input receiver](../../packages/daemon/src/features/runs/user-input-continuation-receiver.ts)
 
+For a running Pi Workflow stage, `workItem/stage/read` exposes the current
+`messageReceiver` to authorized operators. Send that Run and Attempt as
+`expectedExecution` together with the accepted Plan and current stage revisions.
+The next Pi task model-input boundary can include the message as scoped user
+data. `workItem/message/read` projects `queued`, `input_admitted` or
+`superseded`. The admitted receipt retains the Run, Attempt, prepared-input
+fingerprint and scoped message digest. Its meaning is local model-input
+admission. The message remains tied to that Attempt and the original Plan.
+
+A supervising App Server client can issue a stage coordination grant through
+`createStageCoordinationGrant()` for an active Pi stage of a bound Work Item.
+The Daemon resolves the stage and participant from its accepted Plan and live
+Run/Attempt. The grant exposes the stage receivers and lets its holder send
+targeted messages, ask questions from its own stage, and reply as the assigned
+respondent. `workItem/question/read` and `workItem/message/list` return the
+question, answer, and message receipts visible to that stage. A running stage
+uses its own question receipt to track a reply while it continues executing.
+The existing pre-admission questions continue to govern queued stages.
+
+Stage writes record the assigned participant and source Run/Attempt references.
+The same Attempt can retry a request with its original key. The Daemon checks
+the grant, accepted Plan, assignment, and live execution fence before receipt
+disclosure and again in the SQLite write transaction. The stage binding supplies
+the grant's methods. The legacy `scopes` list is empty, which makes older Daemons
+reject issuance.
+The supervising client provides the short-lived bearer to the Agent's client.
+When both stages are running, a question binds the respondent's current
+Run/Attempt and an applicable answer binds the asking Attempt. Pi admits
+each input to the targeted stage's next model request under the same delivery
+journal as directed messages. The question read returns the delivery receipt.
+[Stage authority](../../packages/daemon/src/features/work-items/stage-coordination-authority.ts) · [SDK](../../packages/api-client/src/app-server.ts)
+
+Pi stages with the native `work_item_coordination` tool can discover Verify and Review references shared on the evidence board for their accepted Plan. `read_evidence` resolves a selected reference against the Verify or Review owner's stored Work Item, Plan and candidate. The projection reports checks and findings with their source IDs and candidate. `read_output` reads a sealed output packet from an accepted stage dependency or an explicitly retained stage result. Each read rechecks the stage's Run and Attempt. The source owners authorize and execute Verify and Review. [Stage evidence](../../packages/daemon/src/features/work-items/stage-evidence.ts)
+
 ### 5.11 Scheduled Coordination Admission
 
 An Automation with the `coordination_round` action configures a checkpoint or retrospective for one explicit Work Item in the same workspace store. A Workflow or Goal selection resolves to that Work Item when configuring the schedule. Keep the Automation's real, authorized Thread as the home for managing its definition and occurrence log. The target Work Item uses its own scope and can be observed before it has a linked Thread. The home Thread grants neither Work Item access nor execution authority. Check both bindings at admission and expose each projection under its own grants.
@@ -590,6 +695,14 @@ Reuse the existing recurrence, time zone and missed-run calculation. The occurre
 4. If the enabled tick reaches a target or policy that cannot currently admit a round, write a terminal `skipped` AutomationRun with a typed reason such as `coordination_target_unavailable`, `coordination_policy_denied` or `coordination_subject_unavailable`. Skip reason visibility follows the owner grant. A pause or edit that superseded the dispatched timer is handled by the current scheduler generation.
 
 This action writes a terminal occurrence directly. Agent participation, when authorized, is admitted independently through the existing Workflow and Runtime paths. A user-triggered Run now uses the same atomic action and the existing manual Automation receipt key. Schedule advancement follows the committed scheduled occurrence. If the process stops before commit, any remaining due slot follows the existing `skip` or `run_one` policy for unadmitted occurrences. If it stops after commit, a repeat tick sees the original terminal receipt and startup reopens the existing round projection and restores its deadline. An already expired open round uses the ordinary close or invalidation path. Transport replay consumes the committed event and its existing identity. [Automation scheduler](../../packages/daemon/src/features/automations/scheduler.ts) · [AutomationRun store](../../packages/core/src/storage/sqlite/automation-store.ts) · [Transactional Control Plane append](../../packages/core/src/storage/sqlite/control-plane-store.ts)
+
+The implementation stores the schedule binding, occurrence receipt, open round and close brief in the same workspace SQLite store. A timer restart reads the round deadline rather than generating a new Run. A paused Work Item commits a typed `skipped` occurrence. Closing a round appends a brief and terminal coordination record atomically, and a changed Work Item control generation produces an `inputs_changed` close reason.
+
+An authenticated workspace operator can register a concrete decision on an open scheduled checkpoint through `workItem/coordination/decision/submit`. The request identifies the accepted stage, decision, options, evidence and participants. Registration checks the Work Item revision and binds the channel's effective deliberation policy. A repeat with the same inputs returns its receipt. Coordinator clients can read their pending and terminal receipts through `workItem/coordination/decisions/read`.
+
+In a locally dispatched channel reply, Ling Agent can call `work_item_coordination` to read open checkpoints, stage status and participant roles. The dispatcher binds the tool to the accepted Plans in that conversation. The tool reads evidence whose body matches a current channel-visible message in the same conversation at its referenced revision. `submit_decision` rechecks source visibility, the current Plan, Work Item revision and Run Attempt in the registration transaction. The decision and tool receipt commit together. The authorized decision receipt identifies the Agent and its source Run and Attempt. The configured decision owner resolves the deliberation. [Dispatcher](../../packages/daemon/src/features/channels/channel-turn-dispatch-executor.ts) · [Checkpoint tool](../../packages/daemon/src/features/work-items/checkpoint-coordinator-tool.ts)
+
+Manual and deadline closes seal the submitted decisions with the current accepted Plan and stage, the schedule and policy versions, the Work Item revision after close, and the evidence sequence before the brief. The scheduler consumes those decisions after close or restart through the ordinary deliberation evaluator. Evaluation and receipt consumption commit together. If an evaluated decision opens a Workflow, its admission commits in the same transaction. Each decision uses the revision left by the preceding decision in that batch. A concurrent Work Item edit, changed Plan, policy or close basis makes the queued decision stale. If recovery is held, the scheduler waits within the checkpoint's evaluation window. An operator explicitly evaluating a valid closed checkpoint can select relevant evidence that arrived later. [Scheduled store](../../packages/core/src/storage/sqlite/scheduled-coordination-store.ts) · [App Server evaluator](../../packages/daemon/src/server/app-server-deliberation.ts)
 
 ## 6. External Agent Federation Protocol
 
@@ -737,6 +850,8 @@ For a policy that explicitly accepts current, up-to-date head evidence, strict u
 
 Keep request acceptance, enqueue and actual merge as separate provider facts. Discover queue API support for the configured host and API version. Where GitHub exposes `merge-async`, select explicit `merge_queue`, pin the expected head and disable rules bypass. Repositories can also use their authorized queue entry and report that provider receipt. Record available request or queue identifiers, and after a timeout use the original intent and provider state to reconcile the result before another request can be admitted. An actual merge receipt binds the PR and applicable provider evidence to the committed result. If the repository reports a merge with insufficient evidence for the applicable guard or tested basis, keep the merge fact and the separate CI or Goal blocker visible. [Asynchronous merge lifecycle](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request-asynchronously)
 
+An HTTP 401 or 429 response to the queue mutation records a `rejected` receipt with `rejectedHttpStatus`. The caller can explicitly submit the same request again after restoring authorization or waiting for the rate limit. The Host reconciles existing membership first, then checks the accepted Work Item, clean candidate, delivery evidence and effective queue rules before reserving one new attempt under the original receipt ID. The recovery journal retains the attempt across workspace snapshot restores. Transport loss, server errors and an unconfirmed mutation response leave the receipt `unknown` and require reconciliation.
+
 ## 8. Memory, Skills and Experience Candidates
 
 The Work Item context builder returns source refs, instruction manifest, Skill snapshot, relevant Memory entries and current evidence. Each item is loaded according to its own scope and policy.
@@ -801,15 +916,21 @@ Mutations carry `expectedWorkItemRevision` and `idempotencyKey`, plus the applic
 | --- | --- |
 | `workItem/evidence/read` | Work Item ID and optional page cursor. Returns visible entries, board revision and a resume cursor for the authorized view. |
 | `workItem/evidence/append` | Subject digest and bounded contribution. Corrections include target ID and expected entry revision. Requires a contribution grant. |
-| `workItem/deliberation/start` | Authorized template revision, subject digest and question, proposal or stage reference. An accepted suggestion supplies its decision ID and expected decision revision. The coordinator returns the round and the admitted shaping or Workflow receipt. |
+| `workItem/deliberation/start` | Authorized template revision, subject digest and question, proposal or stage reference. The coordinator returns the round and the admitted shaping or Workflow receipt. |
+| `workItem/deliberation/open` | Accept a checkpoint evaluation for its decision revision. With `execution: "read_only_workflow"`, atomically admit a linked participant Workflow for the accepted stage. `ballotMode: "when_unresolved"` enables ballots when the sealed challenges leave a material tradeoff. |
+| `workItem/deliberation/evaluate` | Provide the checkpoint and its applicable evidence. A caller binding a candidate to a stage with `requiredDecision.receiptSource: "checkpoint"` supplies `decisionStepId` and maps each proposal's `optionId` to an eligible Plan option. |
 | `workItem/deliberation/read` | Decision or round ID and optional page cursor. Returns the visible trigger evaluation, phase, budget state, sealed outcome and decision as available. |
 | `workItem/deliberation/cancel` | Round ID and expected round revision. The shaping or Workflow owner returns its stop request receipt. |
 | `workItem/deliberation/decide` | Round ID, expected sealed outcome revision and the decision with its reason when required. The decision owner checks the current subject and commits the accepted receipt. |
 | `workItem/stage/read` | Stage ID and optional revision. Returns the accepted stage contract, owner, dependencies, status and applicable admission hold or continuation blocker. |
 | `workItem/stage/brief/read` | Stage ID and optional brief ID. Returns the currently visible projection of that brief, or the latest brief, with source revisions and applicability. |
+| `workItem/plan/change/request` | Current accepted Plan revision, Work Item revision, affected stage IDs and reason. Records the admission hold over the requested stages and their downstream dependencies. |
+| `workItem/plan/change/withdraw` | Current accepted Plan revision, Work Item revision and change ID. Releases that pending change's hold. When binding an accepted successor, `workItem/workflow/bind` can release the explicitly resolved change IDs. |
 | `workItem/coordination/start` | Kind, subject revision, stage if applicable, requested participant roles, agenda and deadline within the accepted policy. The coordinator receives the round receipt. Scheduled starts enter through the atomic Automation admission in section 5.9. |
 | `workItem/coordination/read` | Round ID. Returns the visible roster, status and revision, sealed brief and action items when published. Messages are available by round. |
 | `workItem/coordination/close` | Round ID, expected round revision and subject, plus publish or cancel disposition. Requires the coordinator grant. Publish returns the committed brief ID. Cancel takes a reason and commits the terminal receipt. |
+| `workItem/coordination/decision/submit` | Register bounded decision inputs for an open scheduled checkpoint and accepted Work Item stage. The same request key replays its current receipt. |
+| `workItem/coordination/decisions/read` | Read the authenticated operator's registered, pending, evaluated and stale receipts for one checkpoint. Evaluated receipts link to the existing deliberation record. |
 | `workItem/message/send` | Recipient IDs or authorized role selectors, stage when applicable, subject revision, kind (`note`, `status`, `blocker`, `decision_candidate` or `action_update`), bounded summary and source refs. Include the round ID and expected open round revision for a contribution. Returns the message receipt and delivery references within scope. |
 | `workItem/message/read` | Message ID. Returns the visible message and per-recipient delivery status with its admitted input reference, unconfirmed state or terminal reason where present. Question answers use the separate question receipt. |
 | `workItem/message/list` | Optional round or stage ID and page cursor. Returns ordered messages in the caller's scope. |
@@ -834,6 +955,7 @@ workItem/feedback/received
 workItem/evidence/updated
 workItem/deliberation/updated
 workItem/stage/updated
+workItem/plan/change/updated
 workItem/brief/updated
 workItem/coordination/updated
 workItem/message/updated

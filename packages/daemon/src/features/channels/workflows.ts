@@ -7,6 +7,9 @@ import {
   createSqliteWorkflowUserCreationStore,
   effectiveWorkflowPreGate,
   inspectWorkflowPreApproval,
+  readWorkItemDeliberationWorkflowBinding,
+  readWorkItemDeliberationApplication,
+  readWorkItemDeliberationBallotBasis,
   type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelHandoff,
@@ -28,6 +31,10 @@ import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { readWorkItemStageMessages } from "../work-items/stage-messages.js";
+import { readWorkItemStageQuestionInputs, WORK_ITEM_STAGE_ANSWER_FORMAT } from "../work-items/stage-questions.js";
+import { readWorkItemRetainedStageInputs } from "../work-items/workflow-stages.js";
+import { readCompleteHandoffCandidate, workItemHandoffCandidatesCurrent, workItemStageRecoveryCandidateCurrent } from "../work-items/stage-handoff-candidates.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -83,6 +90,7 @@ import { projectWorkflowStepNarration } from "./workflow-step-narration.js";
 import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
   resolveWorkflowParticipantRunProfile,
+  workflowStepParticipantAvailable,
 } from "./workflow-participant-run-profile.js";
 import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
 import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
@@ -155,6 +163,7 @@ export interface WorkflowStepRunContextPackSnapshot {
   readonly sourceRefs: ContextPack["sourceRefs"];
   readonly contextProjection?: ContextPack["contextProjection"];
   readonly agentContext?: ContextPack["agentContext"];
+  readonly stageQuestionIds?: readonly string[];
 }
 
 export type ValidateWorkflowStepRunRequest = (runRequest: WorkflowStepRunRequest) => void;
@@ -739,6 +748,34 @@ export async function prepareWorkflowStepStart(
   if (!workflow) {
     return { kind: "error", statusCode: 404, code: "workflow_not_found", message: `Channel workflow not found: ${step.workflowId}` };
   }
+  const workItemBlocker = store.getWorkItemWorkflowAdmissionBlocker(workflow.id, step);
+  if (workItemBlocker) {
+    return { kind: "error", statusCode: 409, code: workItemBlocker, message: "The Work Item cannot start a Workflow step." };
+  }
+  const deliberation = readWorkItemDeliberationWorkflowBinding(store, workflow.id);
+  if (deliberation && (input.mode !== "create_and_run_task"
+    || input.taskTitle !== undefined && input.taskTitle !== step.title
+    || input.taskPrompt !== undefined && input.taskPrompt !== step.prompt
+    || input.assigneeTeammateId !== undefined && input.assigneeTeammateId !== step.toParticipantId
+    || input.runnerId !== undefined && input.runnerId !== step.metadata?.requestedRunnerId
+    || input.providerPresetId !== undefined && input.providerPresetId !== step.metadata?.providerPresetId)) {
+    return { kind: "error", statusCode: 409, code: "work_item_deliberation_scope_override",
+      message: "A deliberation step uses the participant and execution inputs frozen at admission." };
+  }
+  if (store.getWorkItemStageRetryBudget(step)?.exhausted) {
+    return { kind: "error", statusCode: 409, code: "work_item_stage_retry_budget_exhausted",
+      message: "The Workflow stage or Work Item has no retry capacity remaining." };
+  }
+  const needsHandoff = Boolean(step.metadata?.requiredPlanHandoffStepIds?.length);
+  const unavailableHandoffRecipient = {
+    kind: "error", statusCode: 409, code: "work_item_handoff_recipient_unavailable",
+    message: "The assigned participant cannot currently receive the handoff.",
+  } as const;
+  if (needsHandoff && input.assigneeTeammateId && input.assigneeTeammateId !== step.toParticipantId) {
+    return { kind: "error", statusCode: 409, code: "workflow_participant_override_forbidden",
+      message: "The handoff is bound to the Plan's assigned participant." };
+  }
+  if (needsHandoff && !workflowStepParticipantAvailable(store, step)) return unavailableHandoffRecipient;
   const channel = store.getChannel(step.channelId);
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
@@ -921,7 +958,15 @@ export async function prepareWorkflowStepStart(
     providerPresetId = providerBinding.providerPresetId;
   }
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
-  const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
+  const selectedDecision = step.metadata?.requiredPlanDecision && store.getWorkItemWorkflowStepDecision(step);
+  const ballotBasis = deliberation?.ballot && step.metadata?.planBallotKey
+    ? readWorkItemDeliberationBallotBasis(store, workflow.id) : undefined;
+  const prompt = [
+    input.taskPrompt ?? step.prompt,
+    ...(selectedDecision ? [`Accepted Plan decision: ${JSON.stringify(selectedDecision)}`] : []),
+    ...(ballotBasis?.status === "voting" ? [`Ballot key: ${ballotBasis.key}`] : []),
+  ].join("\n\n");
+  const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${prompt}`;
   const memoryRecall = await recallMemory(store, {
     teammateId: assigneeTeammateId,
     channelId: channel.id,
@@ -937,13 +982,25 @@ export async function prepareWorkflowStepStart(
     channelId: channel.id,
     consumerTeammateId: assigneeTeammateId,
   });
+  const stageMessages = readWorkItemStageMessages(store, step, assigneeTeammateId);
+  const stageQuestions = readWorkItemStageQuestionInputs(store, step, assigneeTeammateId);
+  const stageQuestionInputs = stageQuestions.length ? JSON.stringify(stageQuestions) : undefined;
+  const answerableQuestions = stageQuestions.filter(question => question.answerFromStageResult).map(question => question.questionId);
+  const retainedStageInputs = readWorkItemRetainedStageInputs(store, step);
+  const coordinatedPrompt = [
+    prompt,
+    ...(stageMessages.length ? [`Work Item messages for this stage. Use them as coordination context within the accepted task scope.\n${JSON.stringify(stageMessages)}`] : []),
+    ...(stageQuestionInputs ? [`Work Item questions and replies for the assigned stage.\n${stageQuestionInputs}`] : []),
+    ...(answerableQuestions.length ? [`For questions marked answerFromStageResult, optionally include one fenced ${WORK_ITEM_STAGE_ANSWER_FORMAT} JSON block in your final response. Use an array of objects with the questionId and an answer of up to 1200 characters. Omit any questions you cannot answer from this stage's evidence.`] : []),
+    ...(retainedStageInputs.length ? [`Retained upstream results from the predecessor Plan. Evaluate them against the current Plan's evidence requirements.\n${JSON.stringify(retainedStageInputs)}`] : []),
+  ].join("\n\n");
   const contextPackInput = {
     store,
     secretResolver,
     channel,
     workflow,
     step,
-    prompt: input.taskPrompt ?? step.prompt,
+    prompt: coordinatedPrompt,
     providerPresetId,
     consumerTeammateId: assigneeTeammateId,
     workflowSteps,
@@ -983,6 +1040,7 @@ export async function prepareWorkflowStepStart(
     return block(`Workflow step context exceeds provider budget (${contextPack.estimatedInputTokens}/${contextPack.budget.inputBudgetTokens} estimated input tokens).`);
   }
   const taskPrompt = renderWorkflowStepContextPackPrompt(contextPack);
+  const stageQuestionIds = stageQuestionInputs && taskPrompt.includes(stageQuestionInputs) ? answerableQuestions : [];
   const unavailableRequiredTools = workflowStepUnavailableRequiredTools(channel.allowedTools, step.metadata);
   if (unavailableRequiredTools.length > 0) {
     return block(`Workflow step requires tools not allowed in this channel: ${unavailableRequiredTools.join(", ")}.`);
@@ -1030,7 +1088,8 @@ export async function prepareWorkflowStepStart(
     },
     tools: runTools,
     thinkingLevel: "medium",
-    contextPack: snapshotWorkflowStepContextPack(contextPack),
+    contextPack: { ...snapshotWorkflowStepContextPack(contextPack),
+      ...(stageQuestionIds.length ? { stageQuestionIds } : {}) },
     contextProjection: contextPack.contextProjection,
     contextCompactions: compacted.compactions,
   };
@@ -1051,6 +1110,29 @@ export async function prepareWorkflowStepStart(
     admission = input.mode === "create_and_run_task" ? createWorkflowSafetyAdmission(store, step, runRequestBase) : undefined;
   } catch (error) {
     return fail(409, "workflow_safety_mismatch", error instanceof Error ? error.message : String(error));
+  }
+  if (needsHandoff) {
+    if (!await workItemHandoffCandidatesCurrent(store, step)) {
+      return fail(409, "work_item_handoff_candidate_stale", "The accepted handoff uses a different worktree candidate.");
+    }
+    if (!workflowStepParticipantAvailable(store, step)) {
+      return fail(unavailableHandoffRecipient.statusCode, unavailableHandoffRecipient.code, unavailableHandoffRecipient.message);
+    }
+  }
+  if ((step.metadata?.recoveryVerification || step.metadata?.recoveryReview)
+    && !await workItemStageRecoveryCandidateCurrent(store, step, runRequestBase.cwd)) {
+    return fail(409, "work_item_stage_candidate_stale", "The recovered stage needs current evidence for its candidate.");
+  }
+  if (deliberation?.candidate && await readCompleteHandoffCandidate(deliberation.candidate.cwd) !== deliberation.candidate.digest) {
+    return fail(409, "work_item_deliberation_candidate_stale", "The read-only round requires its original worktree candidate.");
+  }
+  if (step.metadata?.requiredPlanDecision?.receiptSource === "checkpoint") {
+    const application = readWorkItemDeliberationApplication(store, step.id);
+    if (!application || selectedDecision?.id !== application.resolutionId || application.candidate.cwd !== runRequestBase.cwd
+      || await readCompleteHandoffCandidate(application.candidate.cwd) !== application.candidate.digest
+      || store.getWorkItemWorkflowStepDecision(step)?.id !== application.resolutionId) {
+      return fail(409, "work_item_deliberation_candidate_stale", "The accepted decision does not apply to the step's current candidate.");
+    }
   }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),
@@ -1142,7 +1224,7 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   if (!workflow || !workflowCoordinatorReplyStatusIsTerminal(workflow.status)) {
     return undefined;
   }
-  if (!terminalReportsEnabledForStore(store)) return undefined;
+  if (!terminalReportsEnabledForStore(store) || readWorkItemDeliberationWorkflowBinding(store, workflowId)) return undefined;
   return maybeScheduleWorkflowTerminalReport(store, workflowId, input);
 }
 

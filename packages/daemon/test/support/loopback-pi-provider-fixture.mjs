@@ -17,7 +17,15 @@ export async function startLoopbackPiProvider(respond) {
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       requests.push(body);
-      const answer = await respond(body, requests.length);
+      const connection = new AbortController();
+      response.once("close", () => { if (!response.writableFinished) connection.abort(); });
+      const answer = await respond(body, requests.length, connection.signal);
+      if (connection.signal.aborted) return;
+      if (answer.errorStatus) {
+        response.writeHead(answer.errorStatus, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "Scripted provider error", code: answer.errorCode } }));
+        return;
+      }
       const delta = answer.tool ? { role: "assistant", tool_calls: [{ index: 0, id: `static-tool-${requests.length}`,
         type: "function", function: { name: answer.tool, arguments: JSON.stringify(answer.input) } }] }
         : { role: "assistant", content: answer.text };
@@ -27,6 +35,7 @@ export async function startLoopbackPiProvider(respond) {
         response.writeHead(200, { "content-type": "text/event-stream" });
         response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason: null }] })}\n\n`);
         response.write(`data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })}\n\n`);
+        if (answer.usage) response.write(`data: ${JSON.stringify({ ...base, choices: [], usage: answer.usage })}\n\n`);
         response.end("data: [DONE]\n\n");
       } else {
         response.writeHead(200, { "content-type": "application/json" });

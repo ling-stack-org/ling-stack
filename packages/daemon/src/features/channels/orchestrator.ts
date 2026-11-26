@@ -3,6 +3,7 @@ import {
   type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
+  type ControlPlaneEvent,
   type RunSession,
   type RunStore,
   type SecretResolver,
@@ -19,6 +20,8 @@ import {
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
+import { readAdmittedStageQuestionIds, stripStageAnswerBlocks } from "../work-items/stage-questions.js";
+import { reconcileDeliberationBallot } from "../work-items/deliberation-ballot.js";
 import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 import {
@@ -68,6 +71,7 @@ export interface OrchestrateWorkflowInput {
   readonly startRun: StartOrchestratedWorkflowStepRun;
   readonly resolveParallelCapability?: ResolveWorkflowParallelCapability;
   readonly isolationHost?: WorkflowIsolationHost;
+  readonly onDeliberationEvent?: (event: ControlPlaneEvent) => void;
 }
 
 export type StartOrchestratedWorkflowStepRun = (input: {
@@ -153,6 +157,11 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
   if (createSqliteNodeRerunStore(input.store).getBySource(workflow.id)) return { status: "blocked", workflow, blocker: "node_rerun_source_retired" };
+  const workItemBlocker = input.store.getWorkItemWorkflowAdmissionBlocker(workflow.id);
+  if (workItemBlocker) {
+    reconcileWorkflowStepRuns(input.store, workflow.id);
+    return { status: "blocked", workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow, blocker: workItemBlocker };
+  }
   assertWorkflowIsolationSelectionIntegrity(input.store, workflow.id, input.isolationHost);
   syncWorkflowSourceTurnProgress(input.store, workflow, new Date().toISOString());
   const planModeBlocker = getWorkflowPlanModeBlocker(input.store, workflow);
@@ -170,6 +179,8 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   const beforeFailure = integrationFailure();
   if (beforeFailure) return beforeFailure;
   const reconciled = reconcileWorkflowStepRuns(input.store, workflow.id);
+  const ballotEvent = await reconcileDeliberationBallot(input.store, workflow.id, new Date().toISOString());
+  if (ballotEvent) input.onDeliberationEvent?.(ballotEvent);
   if (integrations.some(result => result.status === "waiting")) {
     integrations = await reconcileWorkflowIntegrations(input.store, workflow.id);
     const afterFailure = integrationFailure();
@@ -288,6 +299,14 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       // already progressing the workflow; treat the collision as a benign
       // no-op instead of turning a successful run into a shutdown failure.
       if (started.code === "resource_conflict") {
+        continue;
+      }
+      if (started.code === "work_item_handoff_candidate_stale" || started.code === "work_item_handoff_recipient_unavailable"
+        || started.code === "work_item_retained_stage_pending" || started.code === "work_item_retained_stage_unavailable"
+        || started.code === "work_item_stage_retry_budget_exhausted" || started.code === "work_item_stage_same_blocker_threshold"
+        || started.code === "work_item_goal_token_budget_exhausted" || started.code === "work_item_goal_time_budget_exhausted"
+        || started.code === "work_item_goal_usage_unconfirmed") {
+        blockedResults.push({ status: "blocked", workflow: currentWorkflow, workflowStep: latestCandidate, blocker: started.code });
         continue;
       }
       throw new HttpError(started.statusCode, started.code, started.message);
@@ -1025,18 +1044,19 @@ function blockWorkflowStepForContextReason(
 }
 
 function workflowStepRunResultSummary(store: RunStore, run: RunSession): string {
-  return readRunAssistantTextSummary(store, run.id) ??
+  if (run.workflowStepId && store.getChannelWorkflowStep(run.workflowStepId)?.metadata?.planBallotKey) return "Ballot received.";
+  return readRunAssistantTextSummary(store, run) ??
     readRunArtifactResultSummary(store, run.id) ??
     "Run succeeded.";
 }
 
-function readRunAssistantTextSummary(store: RunStore, runId: string): string | undefined {
+function readRunAssistantTextSummary(store: RunStore, run: RunSession): string | undefined {
   const text = store
-    .listEvents(runId, { limit: 1000 })
+    .listEvents(run.id, { limit: 1000 })
     .filter((event) => event.type === "assistant_text_delta")
     .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
     .join("");
-  const normalizedText = preserveMarkdownLayout(text);
+  const normalizedText = preserveMarkdownLayout(readAdmittedStageQuestionIds(run)?.length ? stripStageAnswerBlocks(text) : text);
   return normalizedText || undefined;
 }
 
@@ -1781,6 +1801,7 @@ function isWorkflowStepEligible(step: ChannelWorkflowStep, steps: readonly Chann
 function eligibleWorkflowSteps(store: RunStore, steps: readonly ChannelWorkflowStep[]): ChannelWorkflowStep[] {
   return steps.filter(step => step.metadata?.autoStart !== false
     && (step.status === "queued" || isApprovedPreStartStep(store, step))
+    && !store.getWorkItemWorkflowAdmissionBlocker(step.workflowId, step)
     && isWorkflowStepEligible(step, steps)).sort(compareWorkflowStepForScheduling);
 }
 

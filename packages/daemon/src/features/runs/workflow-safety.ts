@@ -9,7 +9,7 @@ import {
   type WorkflowStepAdmissionPlan, type WorkflowIntegrationRoundInputsV1,
 } from "@ling-stack/core";
 import { parseWorkflowStepExecutionSafety } from "@ling-stack/contracts";
-import { PiRunnerAdapter, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { PiRunnerAdapter, WORK_ITEM_COORDINATION_TOOL, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import { resolveCurrentRunSkill } from "./skill-selection.js";
@@ -208,7 +208,8 @@ export function workflowSafetyEffectRejection(input: {
     if (!persisted || !raw || !isDeepStrictEqual(raw.workflowSafetySnapshot, requested?.workflowSafetySnapshot)) throw mismatch("Safety snapshot was removed or changed.");
     const plan = assertWorkflowSafetyRequest(input.store, raw as unknown as RunRequest);
     if (!plan || persisted.cwd !== plan.executionRoot || input.request.cwd !== persisted.cwd) throw mismatch("Actual tool execution root differs from the approved scope.");
-    if (plan.profile === "pi_host_readonly_v1" && !readTools.has(input.request.toolName) && input.request.toolName !== "request_user_input") {
+    if (plan.profile === "pi_host_readonly_v1" && !readTools.has(input.request.toolName)
+      && input.request.toolName !== "request_user_input" && input.request.toolName !== WORK_ITEM_COORDINATION_TOOL) {
       return { status: "blocked", code: "workflow_safety_effect_denied", reason: "The approved read-only profile does not allow this effect: " + input.request.toolName };
     }
     if (plan.profile === "pi_host_isolated_files_v1" && !isolatedTools.has(input.request.toolName)) {

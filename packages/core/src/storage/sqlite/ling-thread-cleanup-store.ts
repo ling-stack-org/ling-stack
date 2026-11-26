@@ -63,6 +63,12 @@ export class SqliteLingThreadCleanupStore {
 
     this.context.database.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      const current = this.ports.getLingThread(threadId);
+      if (!current || current.updatedAt !== thread.updatedAt
+        || input.expectedThreadRevision !== undefined && current.updatedAt !== input.expectedThreadRevision) {
+        throw new Error("thread_delete_preview_stale");
+      }
+      if (this.listWorkItemDependencies(threadId, thread.workspaceId).length) throw new Error("thread_work_item_dependency");
       prepareNormalForkRetentionForThreadDelete(this.context, threadId);
       this.context.database
         .prepare(`
@@ -85,6 +91,10 @@ export class SqliteLingThreadCleanupStore {
           stringifyJson(tombstone.deletedCounts),
           tombstone.createdAt,
         );
+      this.context.database.prepare(`DELETE FROM app_server_state WHERE workspace_id = ?
+        AND kind = 'project_instruction_update' AND record_id IN (
+          SELECT id FROM run_sessions WHERE thread_id = ?
+        )`).run(thread.workspaceId, threadId);
       this.context.database.prepare("UPDATE run_sessions SET thread_id = NULL, updated_at = ? WHERE thread_id = ?").run(now, threadId);
       this.context.database.prepare("DELETE FROM ling_thread_proposed_plans WHERE workspace_id = ? AND thread_id = ?").run(DEFAULT_WORKSPACE_ID, threadId);
       this.context.database.prepare("DELETE FROM ling_thread_goals WHERE workspace_id = ? AND thread_id = ?").run(DEFAULT_WORKSPACE_ID, threadId);
@@ -96,6 +106,17 @@ export class SqliteLingThreadCleanupStore {
     }
 
     return { tombstone, deletedAttachmentPaths };
+  }
+
+  listWorkItemDependencies(threadId: string, workspaceId: string): readonly string[] {
+    return this.context.database.prepare(`SELECT DISTINCT w.id FROM app_server_state s JOIN work_items w
+      ON w.workspace_id=s.workspace_id AND w.id=coalesce(
+        json_extract(s.payload_json, '$.workItemId'), json_extract(s.payload_json, '$.binding.workItemId'))
+      WHERE s.workspace_id=? AND w.status!='archived' AND (
+        s.kind='work_item_thread' AND s.record_id=? OR
+        s.kind='github_delivery_current' AND json_extract(s.payload_json, '$.threadId')=? OR
+        s.kind='work_item_workflow' AND json_extract(s.payload_json, '$.binding.threadId')=?
+      ) ORDER BY w.id`).all(workspaceId, threadId, threadId, threadId).map(row => readString(row, "id"));
   }
 }
 

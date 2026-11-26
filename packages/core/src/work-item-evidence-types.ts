@@ -8,7 +8,8 @@ export type WorkItemEvidenceKind =
   | "evidence_ref"
   | "correction"
   | "recommendation"
-  | "decision_ref";
+  | "decision_ref"
+  | "stage_recovery_ref";
 
 export type WorkItemEvidenceVisibility = "work_item" | "participants" | "owner";
 
@@ -50,6 +51,8 @@ export interface AppendWorkItemEvidenceInput {
   readonly optionId?: string;
   readonly sourceRefs?: readonly WorkItemEvidenceSourceRef[];
   readonly visibility?: WorkItemEvidenceVisibility;
+  /** Host-owned authorization check while the evidence write transaction is held. */
+  readonly assertCurrent?: () => void;
 }
 
 export interface AppendWorkItemEvidenceResult {
@@ -66,8 +69,10 @@ export interface WorkItemEvidenceEventOptions {
 
 export interface ListWorkItemEvidenceOptions {
   readonly workItemId: string;
+  readonly recordIdPrefix?: string;
   readonly afterSequence?: number;
   readonly limit?: number;
+  readonly newestFirst?: boolean;
 }
 
 export function createWorkItemEvidenceId(): string {

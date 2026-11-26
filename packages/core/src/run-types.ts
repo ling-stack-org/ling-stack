@@ -847,12 +847,7 @@ export interface ConversationModeState {
   readonly updatedAt?: string;
 }
 
-export type GoalEvidenceRef =
-  | { readonly kind: "run"; readonly id: string }
-  | { readonly kind: "turn"; readonly id: string }
-  | { readonly kind: "artifact"; readonly id: string }
-  | { readonly kind: "approval"; readonly id: string }
-  | { readonly kind: "workflow"; readonly id: string };
+export type GoalEvidenceRef = import("@ling-stack/contracts").GoalEvidenceRef;
 
 export interface GoalContinuationEvidenceDelta {
   readonly newEvidenceRefs: number;
@@ -926,6 +921,11 @@ export interface CreateLingThreadGoalInput {
 export interface UpdateLingThreadGoalInput {
   readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
   readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
+  /** Captured by the Host when settling verification-based acceptance. */
+  readonly verificationCandidateDigest?: string;
+  readonly verificationGoalRevision?: string;
+  /** Receipt IDs reconciled against GitHub by the Host during completion. */
+  readonly reconciledGitHubDeliveryIds?: readonly string[];
   readonly supervisionPolicy?: GoalSupervisionPolicy;
   readonly objective?: string;
   readonly status?: LingThreadGoalStatus;
@@ -1326,6 +1326,7 @@ export type RunEventEnvelope = ContractRunEventEnvelope;
 
 export interface CreateRunInput {
   readonly id: string;
+  readonly automaticIntakeReceiptId?: string;
   readonly cwd: string;
   readonly taskId: string;
   readonly channelId?: string;
@@ -1485,6 +1486,7 @@ export interface ListRunsOptions {
   readonly threadId?: string;
   readonly providerPresetId?: string;
   readonly limit?: number;
+  readonly complete?: boolean;
 }
 
 export interface RunSummary {
@@ -1749,6 +1751,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   ): ResolveOrCreateConversationThreadResult;
   getLingThread(threadId: string): LingThread | undefined;
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
+  listLingThreadWorkItemDependencies(threadId: string): readonly string[];
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly surfaceKind?: LingThread["surfaceKind"];
@@ -2692,11 +2695,45 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
     now: string,
   ): ExternalWorkSchedulerState | undefined;
   upsertWorkItem(input: UpsertWorkItemInput, now: string): WorkItem;
+  createTaskWithIntake(input: CreateTaskInput, intake: Omit<import("./native-work-intake-types.js").NativeWorkIntakeInput, "sourceEventId" | "sourceRevision">,
+    now: string, cwd: string): import("./native-work-intake-types.js").NativeWorkIntakeResult<Task>;
+  createAutomationRunWithIntake(input: CreateAutomationRunInput, intake: import("./native-work-intake-types.js").NativeWorkIntakeInput,
+    title: string, now: string, cwd: string): import("./native-work-intake-types.js").NativeWorkIntakeResult<AutomationRun>;
+  retryNativeWorkIntake(request: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest,
+    intake: import("./native-work-intake-types.js").NativeWorkIntakeInput, now: string, cwd: string, onlyIfAccepted?: boolean):
+    import("./native-work-intake-types.js").NativeWorkIntakeResult<Task | AutomationRun>;
+  listNativeWorkIntakeReceipts(kind: import("@ling-stack/contracts").NativeWorkIntakeSourceKind, sourceScope: string | undefined,
+    limit: number, pendingBefore?: string): import("@ling-stack/contracts").NativeWorkIntakeReceipt[];
   createWorkItem(input: import("./work-item-types.js").CreateWorkItemInput, now: string, eventCwd?: string): import("./work-item-types.js").CreateWorkItemResult;
+  commitWorkItemGitHubDelivery(input: import("./work-item-types.js").CommitWorkItemGitHubDeliveryInput, eventCwd?: string,
+    retainReceipt?: (delivery: import("@ling-stack/contracts").LingAppServerGitHubDelivery) => void): import("./work-item-types.js").CommitWorkItemGitHubDeliveryResult;
   getWorkItem(id: string): WorkItem | undefined;
   listWorkItems(options?: ListWorkItemsOptions, now?: string): WorkItem[];
   routeWorkItem(id: string, input: WorkItemRouteRequest, now: string): WorkItem | undefined;
   acceptWorkItem(id: string, input: import("./work-item-types.js").WorkItemAcceptanceRequest, now: string, eventCwd?: string): import("./work-item-types.js").WorkItemAcceptanceResult | undefined;
+  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string,
+    previousWorkflowSettled?: (workflowId: string, retainedRunIds: ReadonlySet<string>) => boolean): {
+    readonly binding: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBinding;
+    readonly workItem: WorkItem;
+    readonly replayed: boolean;
+    readonly event?: ControlPlaneEvent;
+  };
+  admitWorkItemDeliberationWorkflow(input: import("./work-item-deliberation-workflow.js").WorkItemDeliberationWorkflowAdmission,
+    now: string): (import("./work-item-collaboration.js").AppendWorkItemCollaborationResult & {
+      readonly evaluationEvent?: ControlPlaneEvent;
+    }) | undefined;
+  applyWorkItemDeliberationDecision(input: import("./work-item-evidence-types.js").AppendWorkItemEvidenceInput,
+    application: import("./work-item-deliberation-workflow.js").WorkItemDeliberationApplication, now: string,
+    event: import("./work-item-evidence-types.js").WorkItemEvidenceEventOptions): import("./work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined;
+  getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined;
+  getWorkItemStageRetryBudget(step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkItemStageRetryBudget | undefined;
+  getWorkItemWorkflowUsage(item: WorkItem, now: string): import("./work-item-types.js").WorkItemWorkflowUsage | undefined;
+  getWorkItemStageProgress(item: WorkItem, step: ChannelWorkflowStep): import("@ling-stack/contracts").LingAppServerWorkflowStageProgress | undefined;
+  getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep): { readonly id: string; readonly option: string } | undefined;
+  listActiveWorkItemWorkflowIds(limit: number): readonly string[];
+  applyWorkItemPlanChange(input: import("./work-item-types.js").WorkItemPlanChangeInput, now: string,
+    cwd?: string): import("./work-item-types.js").WorkItemPlanChangeResult;
+  checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown, automaticIntakeReceiptId?: string): WorkItem | undefined;
   claimWorkItem(id: string, input: WorkItemClaimRequest, now: string): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined;
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined;
   releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined;
@@ -2704,12 +2741,20 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
   appendWorkItemEvidence(input: import("./work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string, event?: import("./work-item-evidence-types.js").WorkItemEvidenceEventOptions): import("./work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined;
   getWorkItemEvidence(id: string): import("./work-item-evidence-types.js").WorkItemEvidenceEntry | undefined;
+  findWorkItemEvidenceByKey(workItemId: string, idempotencyKey: string): import("./work-item-evidence-types.js").WorkItemEvidenceEntry | undefined;
   listWorkItemEvidence(options: import("./work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("./work-item-evidence-types.js").WorkItemEvidenceEntry[];
   getAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   findAppServerStateByIdempotencyKey(kind: import("./app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   listAppServerState(kind?: import("./app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord[];
+  getLatestVerificationState(threadId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
+  listPendingGitHubIntakeDispatches(updatedBefore: string, limit: number): import("./app-server-state-types.js").AppServerStateRecord[];
   putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
+  writeWorkItemDeviceState<T>(write: (store: import("./work-item-device-bridge.js").WorkItemDeviceMutationStore) => T): T;
   deleteAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean;
+  transferAppServerHandoffGoal(handoffId: string, threadId: string, now: string): {
+    readonly transfer: import("@ling-stack/contracts").LingAppServerHandoffGoalTransfer;
+    readonly events: readonly ControlPlaneEvent[];
+  } | undefined;
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
@@ -2765,6 +2810,26 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined;
   confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult;
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun;
+  getAutomationCoordinationSchedule(automationId: string): import("@ling-stack/contracts").LingAppServerCoordinationSchedule | undefined;
+  configureAutomationCoordination(input: import("@ling-stack/contracts").LingAppServerCoordinationScheduleParams, now: string): import("@ling-stack/contracts").LingAppServerCoordinationSchedule;
+  admitScheduledCoordination(input: import("./automation-types.js").AdmitScheduledCoordinationInput, now: string, cwd?: string): import("./automation-types.js").ScheduledCoordinationAdmission;
+  readScheduledCoordinationRound(recordId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
+  getCurrentScheduledCoordinationAutomationDigest(recordId: string): string | undefined;
+  findScheduledCoordinationRound(automationRunId: string): import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound | undefined;
+  listOpenScheduledCoordinationRounds(): readonly import("@ling-stack/contracts").LingAppServerScheduledCoordinationRound[];
+  closeScheduledCoordination(input: import("./automation-types.js").CloseScheduledCoordinationInput, now: string, cwd?: string): import("./automation-types.js").ScheduledCoordinationClose | undefined;
+  registerScheduledCoordinationDecision(request: import("./automation-types.js").ScheduledCoordinationDecisionRequest,
+    expectedWorkItemRevision: number, now: string, readPolicy: () => import("./automation-types.js").ScheduledCoordinationDecisionPolicy,
+    coordinator?: import("./work-item-stage-coordination.js").WorkItemCheckpointCoordinatorSource & { readonly assertCurrent: () => void }):
+    Omit<import("@ling-stack/contracts").LingAppServerCoordinationDecisionSubmitResult, "cwd">;
+  readScheduledCoordinationDecisions(workItemId: string, roundId: string): readonly import("@ling-stack/contracts").LingAppServerCoordinationDecisionReceipt[];
+  listPendingScheduledCoordinationDecisionRounds(limit: number): readonly string[];
+  getPendingScheduledCoordinationDecision(roundId: string): import("./automation-types.js").PendingScheduledCoordinationDecision | undefined;
+  settleScheduledCoordinationDecision(input: import("./automation-types.js").ScheduledCoordinationDecisionConsumption,
+    outcome: { readonly evaluationId: string } | { readonly reasonCode: string }, now: string): boolean;
+  appendScheduledCoordinationEvaluation(input: import("./automation-types.js").ScheduledCoordinationDecisionConsumption,
+    evaluation: import("./work-item-collaboration.js").AppendWorkItemCollaborationInput, now: string, cwd: string):
+    import("./work-item-collaboration.js").AppendWorkItemCollaborationResult | undefined;
   getAutomationRun(automationRunId: string): AutomationRun | undefined;
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
   listAutomationRuns(options?: ListAutomationRunsOptions): AutomationRun[];
@@ -3302,6 +3367,9 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "listWorkItems"
   | "routeWorkItem"
   | "claimWorkItem"
+  | "commitWorkItemGitHubDelivery"
+  | "admitWorkItemDeliberationWorkflow"
+  | "applyWorkItemDeliberationDecision"
   | "heartbeatWorkItem"
   | "releaseWorkItem"
   | "completeWorkItem"

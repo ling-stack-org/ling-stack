@@ -11,6 +11,7 @@ export interface RunStoreRegistryOptions {
   readonly onStoreInitialized?: (cwd: string, store: RunStore) => void | Promise<void>;
   readonly trustedWorkspaceRoots?: readonly string[];
   readonly recoverOnOpen?: boolean;
+  readonly recoveryBlocksDispatch?: (store: RunStore) => boolean;
 }
 
 export class RunStoreRegistry {
@@ -67,6 +68,10 @@ export class RunStoreRegistry {
   getInitializedStore(cwd: string): RunStore | undefined {
     if (this.closed) throw new Error("Run Store registry is closed; observation is unavailable.");
     return this.storesByCwd.get(normalizeWorkspaceRoot(cwd));
+  }
+
+  recoveryBlocksDispatch(cwd: string): boolean {
+    return this.options.recoveryBlocksDispatch?.(this.getStore(cwd)) === true;
   }
 
   rememberRun(runId: string, store: RunStore): void {
@@ -278,7 +283,7 @@ export class RunStoreRegistry {
   }
 }
 
-function normalizeWorkspaceRoot(cwd: string): string {
+export function normalizeWorkspaceRoot(cwd: string): string {
   const resolved = resolvePath(cwd);
   try {
     return realpathSync(resolved);

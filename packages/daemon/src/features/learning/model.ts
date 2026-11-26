@@ -5,7 +5,8 @@ import { isRecord } from "../../shared/validation.js";
 import { LEARNING_SYSTEM_PROMPT, parseLearningDraft, type LearningDraft } from "./extractor.js";
 
 export function prepareLearningModelRequest(evidence: LearningEvidenceBundle): { readonly prompt: string; readonly inputTokens: number } {
-  const prompt = JSON.stringify(evidence);
+  const { workItem, ...source } = evidence;
+  const prompt = JSON.stringify({ ...source, ...(workItem ? { workItem: { id: workItem.id, revision: workItem.revision } } : {}) });
   // UTF-8 bytes upper-bound ordinary tokenizer input. Reserve the full system+evidence request before dispatch.
   const inputTokens = Buffer.byteLength(LEARNING_SYSTEM_PROMPT) + Buffer.byteLength(prompt) + 256;
   if (inputTokens > 16_000) throw new Error("learning_input_over_budget");

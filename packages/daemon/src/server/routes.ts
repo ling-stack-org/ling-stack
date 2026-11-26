@@ -386,7 +386,7 @@ export type WorkUnitRoute =
 
 export type WorkItemRoute =
   | { readonly workItemId: string }
-  | { readonly workItemId: string; readonly action: "route" | "claim" | "heartbeat" | "release" | "complete" | "fail" };
+  | { readonly workItemId: string; readonly action: "route" | "claim" | "heartbeat" | "release" | "complete" | "fail" | "handoff" };
 
 export function parseWorkUnitRoute(pathname: string): WorkUnitRoute | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
@@ -415,6 +415,7 @@ export function parseWorkItemRoute(pathname: string): WorkItemRoute | undefined 
       segments[2] === "heartbeat" ||
       segments[2] === "release" ||
       segments[2] === "complete" ||
+      segments[2] === "handoff" ||
       segments[2] === "fail"
     )
   ) {

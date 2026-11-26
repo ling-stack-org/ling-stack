@@ -41,12 +41,20 @@ export function authenticateAutomationEvent(input: { source: AutomationEventSour
   let normalizedType = type;
   let occurredAt = timestamp!;
   if (github) {
-    const issue = record(payload.issue), comment = record(payload.comment), repository = record(payload.repository);
-    if (!["issues", "issue_comment"].includes(type) || repository.full_name !== source.repository
-      || !Number.isSafeInteger(issue.number) || typeof payload.action !== "string" || !/^[a-z_]{1,40}$/.test(payload.action)
-      || type === "issue_comment" && !Number.isSafeInteger(comment.id)) throw new HttpError(400, "automation_event_github_scope_invalid", "GitHub event does not match the configured repository/issue adapter.");
-    normalizedType = `github.${type}.${payload.action}`;
-    occurredAt = String((type === "issue_comment" ? comment : issue).updated_at ?? "");
+    const issue = record(payload.issue), pullRequest = record(payload.pull_request), comment = record(payload.comment), repository = record(payload.repository);
+    const subject = type === "pull_request" || type === "pull_request_review" || type === "pull_request_review_comment" ? pullRequest : issue;
+    const supported = ["issues", "issue_comment", "pull_request", "pull_request_review", "pull_request_review_comment"].includes(type);
+    if (!supported || repository.full_name !== source.repository
+      || !Number.isSafeInteger(subject.number) || typeof payload.action !== "string" || !/^[a-z_]{1,40}$/.test(payload.action)
+      || type === "issue_comment" && !Number.isSafeInteger(comment.id)
+      || type === "pull_request_review" && !Number.isSafeInteger(record(payload.review).id)
+      || type === "pull_request_review_comment" && !Number.isSafeInteger(comment.id)) {
+      throw new HttpError(400, "automation_event_github_scope_invalid", "GitHub event does not match the configured repository subject adapter.");
+    }
+    normalizedType = "github." + type + "." + payload.action;
+    const timestampRecord = type === "issue_comment" || type === "pull_request_review_comment" ? comment
+      : type === "pull_request_review" ? record(payload.review) : subject;
+    occurredAt = String(timestampRecord.updated_at ?? timestampRecord.submitted_at ?? "");
   }
   const when = Date.parse(occurredAt), now = Date.parse(input.now);
   if (!Number.isFinite(when) || Math.abs(now - when) > 5 * 60_000) throw new HttpError(401, "automation_event_timestamp_invalid", "Event timestamp is outside the five-minute acceptance window.");

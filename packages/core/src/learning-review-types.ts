@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { LearningEvidenceBundle, LearningReviewJob, LearningReviewPolicy, LearningReviewPolicyUpdateRequest,
   RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 export type { LearningEvidenceBundle, LearningEvidenceItem, LearningReviewJob, LearningReviewPolicy } from "@ling-stack/contracts";
@@ -11,10 +12,17 @@ export interface LearningReviewStore {
   updateLearningReviewPolicy(input: LearningReviewPolicyUpdateRequest, now: string): LearningReviewPolicy;
   enqueueLearningReview(input: EnqueueLearningReviewInput, now: string): LearningReviewJob;
   getLearningReviewJob(id: string): LearningReviewJob | undefined;
-  listLearningReviewJobs(status?: LearningReviewJob["status"], limit?: number, runId?: string, decisionId?: string): LearningReviewJob[];
+  listLearningReviewJobs(status?: LearningReviewJob["status"], limit?: number, runId?: string, decisionId?: string, workItemId?: string): LearningReviewJob[];
   claimLearningReviewJob(id: string, fence: RuntimeAttemptFenceV1, now: string): LearningReviewJob | undefined;
   reserveLearningReviewModelRequest(id: string, fence: RuntimeAttemptFenceV1, inputTokens: number, now: string): LearningReviewJob;
   finishLearningReviewJob(id: string, fence: RuntimeAttemptFenceV1, status: "succeeded" | "failed" | "cancelled",
     candidateIds: readonly string[], reason: string | undefined, now: string): LearningReviewJob;
   cancelLearningReviewJob(id: string, reason: string, now: string): LearningReviewJob | undefined;
+}
+export function workItemLearningReviewSourceKey(workspaceId: string, workItemId: string, requestKey: string): string {
+  return createHash("sha256").update(JSON.stringify([workspaceId, "work_item", workItemId, requestKey])).digest("hex");
+}
+
+export function learningReviewJobId(sourceKey: string): string {
+  return `learning_review_${sourceKey.slice(0, 32)}`;
 }

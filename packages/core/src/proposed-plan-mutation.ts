@@ -1,15 +1,10 @@
+import { createHash } from "node:crypto";
+import type { ProposedPlanStageDecision, ProposedPlanWorkflowStepPreview, StageRecoveryReviewRequirement } from "@ling-stack/contracts";
 import type { CreateProposedPlanArtifactInput, ProposedPlanArtifact, UpdateProposedPlanArtifactInput } from "./run-types.js";
 
 export type ProposedPlanArtifactAction = "accept" | "refine" | "save" | "archive" | "convert-workflow";
 
-export interface ProposedPlanWorkflowStepPreviewInput {
-  readonly title: string;
-  readonly ownerId?: string;
-  readonly ownerLabel?: string;
-  readonly ownerConfidence?: "high" | "medium" | "low" | "none";
-  readonly ownerReason?: string;
-  readonly sourceSignals?: readonly string[];
-}
+export type ProposedPlanWorkflowStepPreviewInput = ProposedPlanWorkflowStepPreview;
 
 export interface ApplyProposedPlanArtifactActionInput {
   readonly threadId: string;
@@ -22,6 +17,7 @@ export interface ApplyProposedPlanArtifactActionInput {
   readonly workflowTitle?: string;
   readonly workflowSteps?: readonly string[];
   readonly workflowStepPreviews?: readonly ProposedPlanWorkflowStepPreviewInput[];
+  readonly refinedDraft?: Pick<CreateProposedPlanArtifactInput, "title" | "bodyMarkdown">;
 }
 
 export interface ProposedPlanArtifactActionResult {
@@ -37,6 +33,46 @@ export class ProposedPlanMutationError extends Error {
     super(message);
     this.name = "ProposedPlanMutationError";
   }
+}
+
+export function parseProposedPlanStageDecision(value: unknown): ProposedPlanStageDecision {
+  const decision = value as Partial<ProposedPlanStageDecision> | null;
+  if (decision && typeof decision.question === "string" && decision.question.trim() && decision.question.length <= 500
+    && Array.isArray(decision.options) && decision.options.length >= 2 && decision.options.length <= 12
+    && decision.options.every(option => typeof option === "string" && option.trim() === option && option.length > 0 && option.length <= 200)
+    && new Set(decision.options).size === decision.options.length) {
+    const ballot = decision.ballot;
+    if (ballot !== undefined && (!ballot || !Array.isArray(ballot.voterStageIds)
+      || ballot.voterStageIds.length < 2 || ballot.voterStageIds.length > 12
+      || !ballot.voterStageIds.every(id => typeof id === "string" && id.length > 0 && id.length <= 64)
+      || new Set(ballot.voterStageIds).size !== ballot.voterStageIds.length
+      || !Number.isInteger(ballot.quorum) || ballot.quorum < 2 || ballot.quorum > ballot.voterStageIds.length)) {
+      throw new ProposedPlanMutationError("bad_workflow_stage_ballot", "A ballot needs distinct voter stages and a quorum within the voter roster.", 400);
+    }
+    if (decision.trigger !== undefined && decision.trigger !== "when_ready") {
+      throw new ProposedPlanMutationError("bad_workflow_stage_decision", "Choose when_ready for automatic opening of the decision round.", 400);
+    }
+    if (decision.receiptSource !== undefined && (decision.receiptSource !== "checkpoint" || ballot || decision.trigger)) {
+      throw new ProposedPlanMutationError("bad_workflow_stage_decision", "A checkpoint decision uses the linked deliberation receipt.", 400);
+    }
+    return { question: decision.question, options: decision.options, ...(ballot ? { ballot } : {}),
+      ...(decision.trigger ? { trigger: decision.trigger } : {}), ...(decision.receiptSource ? { receiptSource: decision.receiptSource } : {}) };
+  }
+  throw new ProposedPlanMutationError("bad_workflow_stage_decision", "A required decision needs a question and 2–12 distinct options.", 400);
+}
+
+export function planStageBallotKey(planId: string, stageId: string, decision: ProposedPlanStageDecision): string {
+  return createHash("sha256").update(JSON.stringify([planId, stageId, decision.question, decision.options,
+    decision.ballot?.voterStageIds, decision.ballot?.quorum])).digest("hex");
+}
+
+export function parseStageRecoveryReviewRequirement(value: unknown): StageRecoveryReviewRequirement {
+  const review = value as Partial<StageRecoveryReviewRequirement> | null;
+  if (!review || typeof review.providerPresetId !== "string" || !review.providerPresetId.trim()
+    || review.providerPresetId.length > 200 || /[\r\n\0]/u.test(review.providerPresetId)) {
+    throw new ProposedPlanMutationError("bad_workflow_recovery_review", "Supply the stage's recovery Review provider preset.", 400);
+  }
+  return { providerPresetId: review.providerPresetId.trim() };
 }
 
 export const proposedPlanContentFields = ["channelId", "goalId", "sourceAgentId", "ownerAgentId", "sourceTurnId",

@@ -507,6 +507,7 @@ export function createChannelWorkspaceSnapshot(channel: Channel, workspaceCwd: s
 
 export interface WorkspaceSettings {
   readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy;
+  readonly claudeProjectRules?: readonly string[];
   readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
@@ -529,6 +530,7 @@ export interface WorkspaceSettings {
 
 export interface UpdateWorkspaceSettingsInput {
   readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy | null;
+  readonly claudeProjectRules?: readonly string[] | null;
   readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy | null;
   readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
@@ -1273,6 +1275,7 @@ export interface HardDeleteAiTeammateResult {
 
 export interface HardDeleteLingThreadInput {
   readonly reason?: string;
+  readonly expectedThreadRevision?: string;
 }
 
 export interface HardDeleteLingThreadResult {
@@ -2420,6 +2423,12 @@ export interface ChannelWorkflowStepMetadata {
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
+  readonly planStageId?: string;
+  readonly requiredPlanDecision?: import("@ling-stack/contracts").ProposedPlanStageDecision;
+  readonly recoveryVerification?: import("@ling-stack/contracts").GoalVerificationRequirement;
+  readonly recoveryReview?: import("@ling-stack/contracts").StageRecoveryReviewRequirement;
+  readonly planBallotKey?: string;
+  readonly requiredPlanHandoffStepIds?: readonly string[];
   readonly dependsOnStepIds?: readonly string[];
   readonly branchGroupId?: string;
   readonly joinGroupId?: string;
@@ -2462,6 +2471,7 @@ export interface ChannelWorkflowStepMetadata {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly sourceProposedPlanId?: string;
   readonly templateCompilation?: import("@ling-stack/contracts").WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;
@@ -2605,6 +2615,7 @@ export interface ListChannelWorkflowStepsOptions {
   readonly workflowId: string;
   readonly status?: ChannelWorkflowStepStatus;
   readonly limit?: number;
+  readonly offset?: number;
   /** Read the complete durable workflow-step history for canonical evidence paths. */
   readonly complete?: boolean;
 }

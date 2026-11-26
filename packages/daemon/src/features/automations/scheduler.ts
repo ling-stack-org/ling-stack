@@ -1,26 +1,33 @@
 import { randomUUID } from "node:crypto";
 import type {
   AutomationDefinition,
+  CloseScheduledCoordinationInput,
+  ControlPlaneEvent,
+  PendingScheduledCoordinationDecision,
+  RunStore,
   RunSession,
   SecretResolver,
 } from "@ling-stack/core";
 import {
+  automationDefinitionDigestInput,
+  automationEventDigest,
   automationMonitorFingerprint,
+  LING_AGENT_ID,
   matchesAutomationMonitorCondition,
 } from "@ling-stack/core";
 import type { McpBroker } from "../../context.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
-import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { normalizeWorkspaceRoot, type RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { StartupStateRegistry } from "../../startup/state.js";
-import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { trimOversizedEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import type { NotificationHub } from "../notifications/hub.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
-import { runAutomation } from "./run.js";
+import { emitAutomationMonitorFinding, runAutomation } from "./run.js";
 import { readAutomationMonitorSnapshot } from "./monitor.js";
 import { AutomationRecurrenceCompleteError, AutomationRecurrenceError, computeNextAutomationRunAt } from "./recurrence.js";
 export { computeNextAutomationRunAt, computeNextRunAt, computeNextRunAtFromRRule } from "./recurrence.js";
@@ -31,6 +38,8 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 // callback has likely crossed a sleep/wake or wall-clock jump and must use the
 // persisted missed-run policy instead of dispatching a stale skip slot.
 const LATE_TIMER_GRACE_MS = 60_000;
+
+import type { NativeWorkIntake } from "../work-items/native-intake.js";
 
 export type AutomationSchedulerStatus = "running" | "stopped" | "error";
 
@@ -66,9 +75,20 @@ interface AutomationSchedulerEntry {
   runningAutomationIds: Set<string>;
 }
 
+interface ScheduledCoordinationDeliberation {
+  sealDecision(store: RunStore, cwd: string, ...args: Parameters<NonNullable<CloseScheduledCoordinationInput["readDecisionBasis"]>>):
+    ReturnType<NonNullable<CloseScheduledCoordinationInput["readDecisionBasis"]>>;
+  evaluate(store: RunStore, cwd: string, decision: PendingScheduledCoordinationDecision, isActive: () => boolean): Promise<void>;
+}
+
 export class AutomationSchedulerRegistry {
   private readonly entriesByCwd = new Map<string, AutomationSchedulerEntry>();
   private readonly inFlightTasks = new Set<Promise<void>>();
+  private readonly coordinationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly coordinationDecisionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly activeCoordinationDecisions = new Set<string>();
+  private readonly stoppedWorkspaces = new Set<string>();
+  private coordinationStopping = false;
 
   constructor(
     private readonly runnerRegistry: RunnerRegistry,
@@ -82,6 +102,8 @@ export class AutomationSchedulerRegistry {
     private readonly startupState?: StartupStateRegistry,
     private readonly nativeRunDispatcher?: NativeRunDispatcher,
     private readonly notificationHub?: NotificationHub,
+    private readonly nativeIntake?: NativeWorkIntake,
+    private readonly coordinationDeliberation?: ScheduledCoordinationDeliberation,
   ) {}
 
   start(cwd: string): { readonly scheduler: AutomationSchedulerState; readonly duplicate: boolean } {
@@ -119,6 +141,11 @@ export class AutomationSchedulerRegistry {
         this.scheduleAutomation(entry, automation, new Date());
       }
       this.refreshStateSummary(entry);
+      const coordinationCwd = normalizeWorkspaceRoot(cwd);
+      this.stoppedWorkspaces.delete(coordinationCwd);
+      this.coordinationStopping = false;
+      this.restoreCoordinationDeadlines(coordinationCwd);
+      this.armCoordinationDecisions(coordinationCwd);
       this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
       return { scheduler: entry.state, duplicate: false };
     } catch (error) {
@@ -188,6 +215,12 @@ export class AutomationSchedulerRegistry {
 
   stop(cwd: string): AutomationSchedulerState | undefined {
     const entry = this.entriesByCwd.get(cwd);
+    const coordinationCwd = normalizeWorkspaceRoot(cwd);
+    this.stoppedWorkspaces.add(coordinationCwd);
+    this.clearCoordinationTimer(coordinationCwd);
+    const decisionTimer = this.coordinationDecisionTimers.get(coordinationCwd);
+    if (decisionTimer) clearTimeout(decisionTimer);
+    this.coordinationDecisionTimers.delete(coordinationCwd);
     if (!entry) {
       return undefined;
     }
@@ -205,9 +238,110 @@ export class AutomationSchedulerRegistry {
   }
 
   stopAll(): void {
-    for (const cwd of [...this.entriesByCwd.keys()]) {
+    this.coordinationStopping = true;
+    for (const cwd of new Set([...this.entriesByCwd.keys(), ...this.coordinationTimers.keys(), ...this.coordinationDecisionTimers.keys()])) {
       this.stop(cwd);
     }
+  }
+
+  publishCoordinationRound(cwd: string, event: ControlPlaneEvent): void {
+    const canonical = normalizeWorkspaceRoot(cwd);
+    this.controlPlaneEvents.publish(trimOversizedEvent(event));
+    this.restoreCoordinationDeadlines(canonical);
+    this.armCoordinationDecisions(canonical);
+  }
+
+  closeCoordinationRound(cwd: string, input: CloseScheduledCoordinationInput, now: string) {
+    const canonical = normalizeWorkspaceRoot(cwd);
+    const store = this.storeRegistry.getStore(canonical);
+    const deliberation = this.coordinationDeliberation;
+    const closed = store.closeScheduledCoordination({ ...input, readDecisionBasis: deliberation
+      && ((...args) => deliberation.sealDecision(store, canonical, ...args)) }, now, canonical);
+    if (closed?.briefEvent) this.controlPlaneEvents.publish(trimOversizedEvent(closed.briefEvent));
+    if (closed?.result.event) this.controlPlaneEvents.publish(trimOversizedEvent(closed.result.event));
+    if (closed) this.armCoordinationDecisions(canonical);
+    return closed;
+  }
+
+  restoreCoordinationDeadlines(cwd: string): void {
+    cwd = normalizeWorkspaceRoot(cwd);
+    if (!this.coordinationIsActive(cwd)) return;
+    this.clearCoordinationTimer(cwd);
+    const store = this.storeRegistry.getStore(cwd);
+    const open = store.listOpenScheduledCoordinationRounds();
+    const next = open.map(round => round.deadlineAt).sort()[0];
+    if (next) this.armCoordinationDeadline(cwd, Math.max(1, Date.parse(next) - Date.now()));
+  }
+
+  private clearCoordinationTimer(cwd: string): void {
+    const timer = this.coordinationTimers.get(cwd);
+    if (timer) clearTimeout(timer);
+    this.coordinationTimers.delete(cwd);
+  }
+
+  private armCoordinationDeadline(cwd: string, delayMs: number): void {
+    const timer = setTimeout(() => {
+      if (!this.coordinationIsActive(cwd) || this.coordinationTimers.get(cwd) !== timer) return;
+      this.coordinationTimers.delete(cwd);
+      try {
+        const store = this.storeRegistry.getStore(cwd);
+        const now = new Date().toISOString();
+        for (const round of store.listOpenScheduledCoordinationRounds().filter(round => round.deadlineAt <= now)) {
+          this.closeCoordinationRound(cwd, {
+            workItemId: round.workItemId, recordId: round.recordId, actorId: LING_AGENT_ID, cause: "deadline",
+          }, now);
+        }
+        this.restoreCoordinationDeadlines(cwd);
+      } catch {
+        this.armCoordinationDeadline(cwd, 1000);
+      }
+    }, Math.min(delayMs, MAX_TIMER_DELAY_MS));
+    timer.unref?.();
+    this.coordinationTimers.set(cwd, timer);
+  }
+
+  private armCoordinationDecisions(cwd: string, delayMs = 1): void {
+    if (!this.coordinationDeliberation || !this.coordinationIsActive(cwd)
+      || this.coordinationDecisionTimers.has(cwd) || this.activeCoordinationDecisions.has(cwd)) return;
+    const timer = setTimeout(() => {
+      if (this.coordinationDecisionTimers.get(cwd) !== timer) return;
+      this.coordinationDecisionTimers.delete(cwd);
+      if (!this.coordinationIsActive(cwd)) return;
+      const task = this.processCoordinationDecisions(cwd, this.coordinationDeliberation!);
+      this.inFlightTasks.add(task);
+      void task.then(() => this.inFlightTasks.delete(task), () => this.inFlightTasks.delete(task));
+    }, delayMs);
+    timer.unref?.();
+    this.coordinationDecisionTimers.set(cwd, timer);
+  }
+
+  private async processCoordinationDecisions(cwd: string, deliberation: ScheduledCoordinationDeliberation): Promise<void> {
+    const isActive = () => this.coordinationIsActive(cwd);
+    this.activeCoordinationDecisions.add(cwd);
+    let retryDelay = 1000;
+    try {
+      const store = this.storeRegistry.getStore(cwd);
+      const pending = store.listPendingScheduledCoordinationDecisionRounds(8);
+      if (!pending.length) {
+        retryDelay = 0;
+        return;
+      }
+      for (const roundId of pending) {
+        if (!isActive() || this.storeRegistry.recoveryBlocksDispatch(cwd)) return;
+        const decision = store.getPendingScheduledCoordinationDecision(roundId);
+        if (decision) await deliberation.evaluate(store, cwd, decision, isActive);
+      }
+      retryDelay = store.listPendingScheduledCoordinationDecisionRounds(1).length ? 1 : 0;
+    } catch {
+      retryDelay = 1000;
+    } finally {
+      this.activeCoordinationDecisions.delete(cwd);
+      if (retryDelay) this.armCoordinationDecisions(cwd, retryDelay);
+    }
+  }
+
+  private coordinationIsActive(cwd: string): boolean {
+    return !this.coordinationStopping && !this.stoppedWorkspaces.has(cwd) && !this.activeRuns.isShuttingDown();
   }
 
   async waitForIdle(): Promise<void> {
@@ -246,8 +380,11 @@ export class AutomationSchedulerRegistry {
       nextRunAt = computeNextAutomationRunAt(automation, from);
     } catch (error) {
       if (error instanceof AutomationRecurrenceCompleteError) {
-        this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(automation.id,
-          { status: "disabled", nextRunAt: null, lastErrorMessage: null }, new Date().toISOString());
+        const store = this.storeRegistry.getStore(entry.state.cwd);
+        // An admitted round keeps its owner through close, including the final scheduled occurrence.
+        const coordination = store.getAutomationCoordinationSchedule(automation.id);
+        store.updateAutomationDefinition(automation.id,
+          { ...(coordination?.enabled ? {} : { status: "disabled" as const }), nextRunAt: null, lastErrorMessage: null }, new Date().toISOString());
         this.upsertItem(entry, { automationId: automation.id, title: automation.title });
         return;
       }
@@ -308,11 +445,12 @@ export class AutomationSchedulerRegistry {
     automation: AutomationDefinition,
     scheduledFor: string,
     generation: number,
+    retryDelayMs = 0,
   ): void {
     if (!this.isCurrentEntry(entry, generation)) {
       return;
     }
-    const delayMs = Math.min(Math.max(Date.parse(scheduledFor) - Date.now(), 1), MAX_TIMER_DELAY_MS);
+    const delayMs = Math.min(Math.max(Date.parse(scheduledFor) - Date.now(), 1, retryDelayMs), MAX_TIMER_DELAY_MS);
     const existingTimer = entry.timers.get(automation.id);
     if (existingTimer) {
       clearTimeout(existingTimer);
@@ -352,6 +490,8 @@ export class AutomationSchedulerRegistry {
     entry.runningAutomationIds.add(automationId);
     const firedAt = new Date().toISOString();
     let executionEntered = false;
+    let coordination: AutomationDefinition | undefined;
+    let retryCoordination = false;
     try {
       const store = this.storeRegistry.getStore(entry.state.cwd);
       const automation = store.getAutomationDefinition(automationId);
@@ -378,6 +518,10 @@ export class AutomationSchedulerRegistry {
         this.armAutomationTimer(entry, automation, scheduledFor, generation);
         return;
       }
+      if (this.storeRegistry.recoveryBlocksDispatch(entry.state.cwd)) {
+        this.armAutomationTimer(entry, automation, scheduledFor, generation, 2000);
+        return;
+      }
       if (automation.trigger.missedRunPolicy === "skip"
         && Date.now() - Date.parse(scheduledFor) > LATE_TIMER_GRACE_MS) {
         // The process woke materially after the due wall-clock. Advance from
@@ -387,6 +531,7 @@ export class AutomationSchedulerRegistry {
         return;
       }
       executionEntered = true;
+      if (store.getAutomationCoordinationSchedule(automation.id)) coordination = automation;
       const result = await this.executeAutomationRun(entry.state.cwd, automationId, {
         triggerType: "schedule",
         scheduledFor,
@@ -419,6 +564,24 @@ export class AutomationSchedulerRegistry {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
+      if (coordination) {
+        if (message === "coordination_schedule_stale") {
+          // A policy or definition revision changed after this timer was armed.
+          // Refresh the durable schedule without consuming an occurrence that
+          // never reached the coordination store.
+          executionEntered = false;
+          const current = this.storeRegistry.getStore(entry.state.cwd).getAutomationDefinition(automationId);
+          if (current && current.status === "enabled" && current.trigger.type === "schedule") {
+            this.scheduleAutomation(entry, current, new Date());
+          } else {
+            this.removeTimer(entry, automationId);
+          }
+          return;
+        }
+        retryCoordination = true;
+        this.upsertItem(entry, { automationId, title: coordination.title, lastErrorMessage: message });
+        return;
+      }
       entry.state = {
         ...entry.state,
         status: "running",
@@ -436,6 +599,10 @@ export class AutomationSchedulerRegistry {
       store.updateAutomationDefinition(automationId, { status: "error", lastErrorMessage: message }, new Date().toISOString());
     } finally {
       entry.runningAutomationIds.delete(automationId);
+      if (retryCoordination && coordination) {
+        this.armAutomationTimer(entry, coordination, scheduledFor, generation, 1000);
+        return;
+      }
       if (executionEntered) {
         // Mark the admitted slot consumed before rearming. Otherwise a
         // run_one restart could mistake the just-fired persisted due for a
@@ -488,31 +655,40 @@ export class AutomationSchedulerRegistry {
         this.armMonitorTimer(entry, automation, scheduledFor, generation);
         return;
       }
+      if (this.storeRegistry.recoveryBlocksDispatch(entry.state.cwd)) return;
       const snapshotBody = readAutomationMonitorSnapshot({ store, automation, now: firedAt });
       const fingerprint = automationMonitorFingerprint(automation.trigger.source, snapshotBody);
       const observation = { automationId: automation.id, fingerprint, snapshot: snapshotBody };
-      const changed = store.getAutomationMonitorSnapshot(automation.id)?.fingerprint !== fingerprint;
+      const previous = store.getAutomationMonitorSnapshot(automation.id);
+      const changed = previous?.fingerprint !== fingerprint;
       let lastAutomationRunId: string | undefined;
       let outcome: AutomationSchedulerItem["lastMonitorOutcome"];
       if (changed && matchesAutomationMonitorCondition(automation.trigger.condition, snapshotBody)) {
-        const idempotencyKey = monitorObservationId(automation.id, scheduledFor, fingerprint);
-        const { automationRun } = await this.executeAutomationRun(entry.state.cwd, automation.id, {
+        const policy = this.nativeIntake?.policy(store, "automation_run", automation.id);
+        const occurrence = policy && policy.mode !== "manual"
+          ? automationEventDigest([previous?.fingerprint ?? null, previous?.updatedAt ?? null, automationDefinitionDigestInput(automation)])
+          : scheduledFor;
+        const idempotencyKey = monitorObservationId(automation.id, occurrence, fingerprint);
+        const { automationRun, intakeReceipt } = await this.executeAutomationRun(entry.state.cwd, automation.id, {
           triggerType: "monitor",
           scheduledFor,
           idempotencyKey,
           monitorSnapshot: snapshotBody,
         });
-        // Another active execution can occupy this definition's only Run slot.
-        // Leave the observation pending until its own Run is durably linked.
         if (automationRun.idempotencyKey === idempotencyKey) {
-          if (!automationRun.runId) {
+          if (!automationRun.runId && !intakeReceipt) {
             throw new Error(automationRun.errorMessage ?? "Automation monitor run could not start.");
           }
-          const recorded = store.recordAutomationMonitorSnapshot(observation, firedAt);
-          lastAutomationRunId = automationRun.id;
-          outcome = "changed";
-          if (recorded.changed) {
-            await this.emitMonitorFindingNotification(entry.state.cwd, automation, automationRun.runId);
+          const deferred = policy?.mode === "auto_start" && intakeReceipt?.outcome === "suppressed" && !automationRun.runId;
+          const currentIntake = deferred && this.nativeIntake
+            ? this.nativeIntake.reconsiderMonitor(store, automation, intakeReceipt, firedAt) : intakeReceipt;
+          if (!deferred || currentIntake?.outcome !== "suppressed") {
+            const recorded = store.recordAutomationMonitorSnapshot(observation, firedAt);
+            lastAutomationRunId = automationRun.id;
+            outcome = "changed";
+            if (recorded.changed && automationRun.runId) {
+              await emitAutomationMonitorFinding(this.notificationHub, entry.state.cwd, automation, automationRun.runId);
+            }
           }
         }
       } else {
@@ -569,27 +745,6 @@ export class AutomationSchedulerRegistry {
     }
   }
 
-  private async emitMonitorFindingNotification(
-    cwd: string,
-    automation: AutomationDefinition,
-    runId?: string,
-  ): Promise<void> {
-    if (!this.notificationHub) return;
-    try {
-      await this.notificationHub.emit({
-        kind: "automation_monitor_finding",
-        title: "Automation monitor finding",
-        body: `${automation.title} detected a matching ${automation.trigger.type === "monitor" ? automation.trigger.source.kind : "monitor"} condition.`,
-        automationId: automation.id,
-        automationLabel: automation.title,
-        runId,
-        cwd,
-      });
-    } catch {
-      // Notification delivery is auxiliary to the durable monitor/run result.
-    }
-  }
-
   private createMonitorNoopRun(
     store: ReturnType<RunStoreRegistry["getStore"]>,
     automation: AutomationDefinition,
@@ -622,7 +777,10 @@ export class AutomationSchedulerRegistry {
       automationId,
       storeRegistry: this.storeRegistry,
       request,
+      scheduledSource: true,
       notificationHub: this.notificationHub,
+      nativeIntake: this.nativeIntake,
+      onCoordinationRound: (cwd, event) => this.publishCoordinationRound(cwd, event),
       startRun: async (runRequest, hooks) =>
         await executeRunRequest(
           runRequest,
@@ -635,6 +793,7 @@ export class AutomationSchedulerRegistry {
           this.mcpBroker,
           {
             onRunReady: hooks.onRunReady,
+            assertNativeIntakeCurrent: hooks.assertNativeIntakeCurrent,
             afterRunTerminal: async (terminalRun) => {
               await hooks.afterRunTerminal?.(terminalRun);
               await this.maybeContinueRunInterventions(terminalRun);
@@ -783,6 +942,6 @@ function automationScheduleIdentity(automation: AutomationDefinition): string {
  * from an earlier transition, while a retry of the same slot must remain
  * idempotent.
  */
-function monitorObservationId(automationId: string, scheduledFor: string, fingerprint: string): string {
-  return `automation:${automationId}:monitor:${scheduledFor}:${fingerprint}`;
+function monitorObservationId(automationId: string, occurrence: string, fingerprint: string): string {
+  return `automation:${automationId}:monitor:${occurrence}:${fingerprint}`;
 }

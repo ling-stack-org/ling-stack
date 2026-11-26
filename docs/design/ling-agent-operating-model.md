@@ -1,8 +1,8 @@
 # Ling Agent Operating Model
 
-- **Status** 主线已接入工作项接单、控制、证据与协作记录。 [实施计划](ling-app-server-implementation-plan.md#尚待完成的发布条件)记录剩余发布条件。
+- **Status** 主线已接入工作项接单、控制、证据与协作记录。其余运行时能力见 [实施计划](ling-app-server-implementation-plan.md#当前实现证据)。
 - **Owner** Conversation、Teammate、Workflow、External Agent、GitHub Automation 与开发工具维护者
-- **Implementation status verified** 2026-11-22 against `origin/main@469a557ee`
+- **Implementation status verified** 2026-11-22 against `origin/main@e6007992a`
 - **Document type** 产品整合合同
 - **Detailed design** [Ling Agent Operating Model Detailed Design](ling-agent-operating-model-detailed-design.md)
 - **Related contracts** [Channel Team Operating System](channel-team-operating-system.md) · [Ling Agent Session](ling-agent-session.md) · [Ling 多 Agent 完整目标设计](ling-multi-agent-complete-target.md) · [Automations](automations.md) · [GitHub Automation](github-automation.md) · [Ling App Server](ling-app-server.md)

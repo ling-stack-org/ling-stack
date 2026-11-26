@@ -1,4 +1,6 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { parseProposedPlanStageDecision, parseStageRecoveryReviewRequirement } from "../../proposed-plan-mutation.js";
+import { parseGoalVerificationRequirement } from "../../goal-supervision.js";
 import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
 import { isWorkflowStepSafetyPlanV1 } from "../../workflow-safety-plan.js";
 import { workflowIsolationIdentity } from "../../workflow-isolation.js";
@@ -269,6 +271,12 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     templateStepId: readOptionalStringValue(record.templateStepId),
     graphId: readOptionalStringValue(record.graphId),
     graphNodeId: readOptionalStringValue(record.graphNodeId),
+    planStageId: readOptionalStringValue(record.planStageId),
+    requiredPlanDecision: record.requiredPlanDecision === undefined ? undefined : parseProposedPlanStageDecision(record.requiredPlanDecision),
+    recoveryVerification: record.recoveryVerification === undefined ? undefined : parseGoalVerificationRequirement(record.recoveryVerification),
+    recoveryReview: record.recoveryReview === undefined ? undefined : parseStageRecoveryReviewRequirement(record.recoveryReview),
+    planBallotKey: readOptionalStringValue(record.planBallotKey),
+    requiredPlanHandoffStepIds: readOptionalStringListValue(record.requiredPlanHandoffStepIds),
     dependsOnStepIds: readOptionalStringListValue(record.dependsOnStepIds),
     branchGroupId: readOptionalStringValue(record.branchGroupId),
     joinGroupId: readOptionalStringValue(record.joinGroupId),
@@ -379,6 +387,7 @@ function parseOptionalChannelWorkflowMetadata(value: string | undefined): Channe
   const record = parsed as Record<string, unknown>;
   return omitUndefined({
     templateCompilation: record.templateCompilation === undefined ? undefined : parseWorkflowTemplateCompilation(record.templateCompilation),
+    sourceProposedPlanId: readOptionalStringValue(record.sourceProposedPlanId),
     workflowGraphId: readOptionalStringValue(record.workflowGraphId),
     workflowGraphSchemaVersion: readOptionalPositiveIntegerValue(record.workflowGraphSchemaVersion),
     workflowGraphArtifactId: readOptionalStringValue(record.workflowGraphArtifactId),

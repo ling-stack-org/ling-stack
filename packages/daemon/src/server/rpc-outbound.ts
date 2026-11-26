@@ -20,6 +20,7 @@ export interface RpcOutboundWriterOptions {
   readonly sendTimeoutMs?: number;
   readonly closeGraceMs?: number;
   readonly onClose?: () => void;
+  readonly canSend?: () => boolean;
 }
 
 interface PendingFrame {
@@ -31,7 +32,7 @@ interface PendingFrame {
 export class RpcOutboundWriter {
   private readonly pending: PendingFrame[] = [];
   private readonly reservations = new Map<string, { readonly bytes: number; readonly count: number }>();
-  private readonly limits: Required<Omit<RpcOutboundWriterOptions, "onClose">>;
+  private readonly limits: Required<Omit<RpcOutboundWriterOptions, "onClose" | "canSend">>;
   private pendingBytes = 0;
   private upstreamBytes = 0;
   private upstreamCount = 0;
@@ -196,6 +197,10 @@ export class RpcOutboundWriter {
     this.pumping = true;
     try {
       while (!this.closed && !this.inFlight && this.pending.length > 0) {
+        if (this.options.canSend && !this.options.canSend()) {
+          this.close(1008, "authorization_changed");
+          return;
+        }
         if (this.ws.readyState !== WebSocket.OPEN) {
           this.close(1000, "transport_not_open");
           return;

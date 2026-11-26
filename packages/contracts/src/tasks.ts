@@ -22,9 +22,11 @@ export interface TaskListResponse {
 
 export interface TaskMutationResponse {
   readonly task: Task;
+  readonly intakeReceipt?: import("./work-items.js").NativeWorkIntakeReceipt;
 }
 
 export interface CreateTaskRequest {
+  readonly idempotencyKey?: string;
   readonly channelId: string;
   readonly title: string;
   readonly prompt: string;

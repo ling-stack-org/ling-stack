@@ -5,6 +5,7 @@ import type { ExecutionAction } from "./execution-actions.js";
 import type { RetentionTombstone } from "./retention.js";
 import type { StateTransitionEvent } from "./workflows.js";
 import type { LingTurn } from "./turns.js";
+import type { RunTool } from "./shared.js";
 
 export const lingThreadKinds = [
   "task",
@@ -26,6 +27,8 @@ export type LingThreadGoalCompletionActor = "local-user" | "ling-agent";
 export type GoalUsageSource = "provider" | "estimated" | "mixed";
 export type GoalContinuationStopReason =
   | "max_depth"
+  | "time_budget"
+  | "supervision_disabled"
   | "no_evidence_threshold"
   | "same_blocker_threshold"
   | "plan_mode_active"
@@ -75,7 +78,35 @@ export type GoalEvidenceRef =
   | { readonly kind: "turn"; readonly id: string }
   | { readonly kind: "artifact"; readonly id: string }
   | { readonly kind: "approval"; readonly id: string }
-  | { readonly kind: "workflow"; readonly id: string };
+  | { readonly kind: "workflow"; readonly id: string }
+  | { readonly kind: "verification"; readonly id: string }
+  | { readonly kind: "github_delivery"; readonly id: string };
+
+export interface GoalVerificationRequirement {
+  readonly checkId: string;
+  readonly verifierBasisRef: string;
+  readonly coverageDigest: string;
+}
+
+export interface GoalGitHubDeliveryRequirement {
+  readonly workItemId: string;
+  readonly policyRevision: string;
+}
+
+export interface GoalAcceptanceCriterion {
+  readonly id: string;
+  readonly description: string;
+  readonly kind: "run_succeeded" | "workflow_succeeded" | "artifact" | "verification_passed" | "github_delivered";
+  readonly contentSha256?: string;
+  readonly evidenceId?: string;
+  readonly verification?: GoalVerificationRequirement;
+  readonly githubDelivery?: GoalGitHubDeliveryRequirement;
+}
+
+export interface GoalAcceptanceEvidence {
+  readonly criterionId: string;
+  readonly evidence: GoalEvidenceRef;
+}
 
 export interface GoalContinuationEvidenceDelta {
   readonly newEvidenceRefs: number;
@@ -118,6 +149,8 @@ export interface LingThreadGoal {
   readonly lastRunId?: string;
   readonly blockedReason?: string;
   readonly completionEvidenceRefs: readonly GoalEvidenceRef[];
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
   readonly completedBy?: LingThreadGoalCompletionActor;
   readonly completedReason?: string;
   readonly completionVerificationSummary?: string;
@@ -136,6 +169,7 @@ export interface LingThreadGoalPutRequest {
   readonly objective: string;
   readonly tokenBudget?: number | null;
   readonly replaceExisting?: boolean;
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
 }
 
 export interface LingThreadGoalPatchRequest {
@@ -154,6 +188,7 @@ export interface LingThreadGoalCompleteRequest {
   readonly reason?: string;
   readonly evidenceRefs?: readonly GoalEvidenceRef[];
   readonly completionVerificationSummary?: string;
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
 }
 
 export interface ProposedPlanArtifact {
@@ -249,11 +284,30 @@ export interface ProposedPlanActionRequest {
 
 export interface ProposedPlanWorkflowStepPreview {
   readonly title: string;
+  readonly stageId?: string;
+  readonly dependsOnStageIds?: readonly string[];
+  readonly handoffFromStageIds?: readonly string[];
+  readonly requiredDecision?: ProposedPlanStageDecision;
+  readonly recoveryVerification?: GoalVerificationRequirement;
+  readonly recoveryReview?: StageRecoveryReviewRequirement;
+  readonly requiredTools?: readonly RunTool[];
   readonly ownerId?: string;
   readonly ownerLabel?: string;
   readonly ownerConfidence?: "high" | "medium" | "low" | "none";
   readonly ownerReason?: string;
   readonly sourceSignals?: readonly string[];
+}
+
+export interface StageRecoveryReviewRequirement {
+  readonly providerPresetId: string;
+}
+
+export interface ProposedPlanStageDecision {
+  readonly question: string;
+  readonly options: readonly string[];
+  readonly ballot?: { readonly voterStageIds: readonly string[]; readonly quorum: number };
+  readonly trigger?: "when_ready";
+  readonly receiptSource?: "checkpoint";
 }
 
 export interface LingThread {

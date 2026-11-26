@@ -6,6 +6,7 @@ import { DEFAULT_TOOLS } from "./constants.js";
 import { TOOL_HYDRATION_CALL_TOOL_NAME, TOOL_HYDRATION_LOAD_TOOL_NAME } from "./extensions/tool-hydration.js";
 import { isUserInputToolSurfaceEnabled } from "./extensions/user-input.js";
 import { DELEGATION_TOOL_NAMES, isDelegationToolSurfaceEnabled } from "./extensions/delegation.js";
+import { WORK_ITEM_COORDINATION_TOOL } from "./extensions/work-item-coordination.js";
 import { createLingStackResourceLoader } from "./resource-loader.js";
 import type { PiRunnerRunOptions } from "./types.js";
 import { throwIfAborted } from "./utils.js";
@@ -62,6 +63,7 @@ export async function createInitializedPiSession(options: PiRunnerRunOptions, bi
     ...(isConversationVisualizationEnabled(options) ? [CONVERSATION_VISUALIZATION_TOOL] : []),
     ...(isUserInputToolSurfaceEnabled(options) ? ["request_user_input"] : []),
     ...(isDelegationToolSurfaceEnabled(options) ? DELEGATION_TOOL_NAMES : []),
+    ...(options.initialToolSurface?.workItemCoordination ? [WORK_ITEM_COORDINATION_TOOL] : []),
     ...(options.runtimeToolFeatures?.requestPermissions ? ["request_permission"] : []),
     ...((options.initialToolSurface?.mediaGeneration ?? Boolean(options.onMediaGenerationToolCall))
       ? (options.mediaGenerationTools ?? []).filter((tool) => tool.targets.length > 0).map((tool) => tool.name) : []),

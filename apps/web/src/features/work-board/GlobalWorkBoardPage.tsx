@@ -151,6 +151,7 @@ export function GlobalWorkBoardPage(props: GlobalWorkBoardPageProps): React.JSX.
         />
         <WorkBoardInspector
           item={selected} selectedHidden={controller.selectedHidden} selectedMissing={controller.selectedMissing} channels={props.channels}
+          workspaceCwd={projectionCwd}
           channelName={selected?.channelId ? channelNames.get(selected.channelId) : undefined} busy={selectedBusy}
           failure={selectedFailure} blocker={selected ? props.blockerByWorkItemId?.get(selected.id) : undefined}
           evidence={evidence.read(selected)} onClearFilters={controller.clearFilters} onClearSelection={() => controller.setSelectedItemId("")} onRefresh={refresh}

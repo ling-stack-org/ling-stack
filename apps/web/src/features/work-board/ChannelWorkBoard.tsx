@@ -20,6 +20,7 @@ interface ChannelWorkBoardProps {
   readonly onOpenTask: (taskId: string) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApproval: (approvalId: string) => void;
+  readonly onInspectWorkItem?: (workItemId: string) => void;
   readonly onClaimWorkItem?: (workItemId: string) => void;
   readonly onHeartbeatWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly onReleaseWorkItem?: (workItemId: string, claimToken: string) => void;
@@ -45,7 +46,9 @@ export function ChannelWorkBoard(props: ChannelWorkBoardProps): React.JSX.Elemen
         <div className="work-board-groups channel-work-board-groups" role="listbox" aria-label={t("Channel work items")}>
           {workItemActionGroupOrder.map((groupKey) => {
             const group = items.filter((item) => workItemActionGroup(item) === groupKey);
-            return group.length > 0 ? <section className="work-board-group" key={groupKey}><div className="work-board-group-head"><strong>{t(workItemActionGroupLabel(groupKey))}</strong><span>{group.length}</span></div><div className="work-board-list">{group.map((item) => <WorkItemRow key={item.id} compact item={item} channelName={props.channel?.name} busy={props.busyWorkItemId === item.id ? "claim" : undefined} onOpenTask={props.onOpenTask} onOpenRun={props.onOpenRun} onOpenApproval={props.onOpenApproval} onClaimWorkItem={props.onClaimWorkItem} onHeartbeatWorkItem={props.onHeartbeatWorkItem} />)}</div></section> : null;
+            return group.length > 0 ? <section className="work-board-group" key={groupKey}><div className="work-board-group-head"><strong>{t(workItemActionGroupLabel(groupKey))}</strong><span>{group.length}</span></div><div className="work-board-list">{group.map((item) => <WorkItemRow key={item.id} compact item={item} channelName={props.channel?.name} busy={props.busyWorkItemId === item.id ? "claim" : undefined}
+              onSelect={item.durable && item.workflowId && item.planRevision ? props.onInspectWorkItem : undefined}
+              onOpenTask={props.onOpenTask} onOpenRun={props.onOpenRun} onOpenApproval={props.onOpenApproval} onClaimWorkItem={props.onClaimWorkItem} onHeartbeatWorkItem={props.onHeartbeatWorkItem} />)}</div></section> : null;
           })}
         </div>
       )}

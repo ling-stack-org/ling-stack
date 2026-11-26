@@ -206,7 +206,7 @@ export function createRunApprovalHandler(options: {
     request: PiRunnerApprovalRequest,
     approvalWait: ReturnType<typeof createCallbackApprovalWait>,
     fileAdmission?: FileMutationAdmission,
-    commandAdmission?: { readonly operation: HostCommandOperation; dispatched: boolean },
+    commandAdmission?: { readonly operation: HostCommandOperation; ownsSettlement: boolean },
   ) => {
     const signal = request.signal ? AbortSignal.any([request.signal, ...(options.signal ? [options.signal] : [])]) : options.signal;
     // A Run has one durable approval-wait state. Parallel tool calls must not
@@ -374,7 +374,7 @@ export function createRunApprovalHandler(options: {
       const executionRejection = rejectUnboundEffect();
       if (executionRejection) return executionRejection;
       if (unifiedExecBash) {
-        if (commandAdmission) commandAdmission.dispatched = true;
+        if (commandAdmission) commandAdmission.ownsSettlement = true;
         return {
           approved: true,
           reason: policyDecision.reason,
@@ -713,6 +713,14 @@ export function createRunApprovalHandler(options: {
         }),
       });
     }
+    if (resolvedApproval.status !== "approved") {
+      // Record no-start while the original tool callback still owns the waiting Run.
+      fileAdmission?.settle();
+      if (commandAdmission) {
+        commandAdmission.operation.settleNoStart();
+        commandAdmission.ownsSettlement = true;
+      }
+    }
     if (resolvedApproval.status === "approved") {
       transitionRunStatus({
         runId: options.run.id,
@@ -862,7 +870,7 @@ export function createRunApprovalHandler(options: {
       // Host execution has its own executor and receipt; never run file/Bash effects here.
       if (isHost) return { approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason };
       if (unifiedExecBash) {
-        if (commandAdmission) commandAdmission.dispatched = true;
+        if (commandAdmission) commandAdmission.ownsSettlement = true;
         handledResult = await executeHarnessedBashTool({
           mode: toolBrokerMode,
           restrictedCommandRuntime: options.restrictedCommandRuntime,
@@ -940,13 +948,13 @@ export function createRunApprovalHandler(options: {
     const fileAdmission = tracker && (request.toolName === "write" || request.toolName === "edit")
       ? reserveFileMutationAdmission(tracker, request.toolCallId) : undefined;
     const commandAdmission = tracker && request.toolName === "bash"
-      ? { operation: tracker.commandOperation(tracker.beginHostCall("command", request.toolCallId)), dispatched: false }
+      ? { operation: tracker.commandOperation(tracker.beginHostCall("command", request.toolCallId)), ownsSettlement: false }
       : undefined;
     const settleAdmissions = (): void => {
       fileAdmission?.settle();
       // Once handed to the Broker/Unified executor it alone decides whether
       // spawn was entered; an SDK return is never a command no-start receipt.
-      if (commandAdmission && !commandAdmission.dispatched) {
+      if (commandAdmission && !commandAdmission.ownsSettlement) {
         try { commandAdmission.operation.settleNoStart(); }
         catch (error) {
           try { commandAdmission.operation.markUnknown("command_execution_unconfirmed"); } catch { /* fail closed */ }

@@ -41,6 +41,7 @@ function fixture(cwd = "/workspace", operations = [operation()]) {
   let storedRun = structuredClone(run);
   const store = { getRun: (id) => id === storedRun?.id ? storedRun : undefined,
     listHostCommandWriteBlockers: () => [],
+    getWorkItemWorkflowAdmissionBlocker: () => undefined,
     getChannelWorkflow: (id) => id === "workflow" ? { id } : undefined,
     getChannelWorkflowStep: (id) => id === step?.id ? step : undefined,
     listChannelWorkflowSteps: () => [step] };

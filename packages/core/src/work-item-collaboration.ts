@@ -9,6 +9,7 @@ import type {
   LingAppServerWorkItemCollaborationRecord,
 } from "@ling-stack/contracts";
 import type { ControlPlaneEvent, RunStore } from "./run-types.js";
+import type { WorkItemEvidenceVisibility } from "./work-item-evidence-types.js";
 
 export const WORK_ITEM_COLLABORATION_CONTENT_PREFIX = "ling.collaboration.v1:";
 
@@ -23,6 +24,7 @@ export interface WorkItemCollaborationRecord extends Omit<LingAppServerWorkItemC
 }
 
 export interface AppendWorkItemCollaborationInput {
+  readonly id?: string;
   readonly workItemId: string;
   readonly expectedWorkItemRevision?: number;
   readonly expectedCollaborationRevision?: number;
@@ -32,7 +34,9 @@ export interface AppendWorkItemCollaborationInput {
   readonly payload: unknown;
   readonly parentRecordId?: string;
   readonly sourceRefs?: readonly WorkItemCollaborationSourceRef[];
+  readonly visibility?: WorkItemEvidenceVisibility;
   readonly idempotencyKey: string;
+  readonly assertCurrent?: () => void;
 }
 
 export interface AppendWorkItemCollaborationResult {
@@ -56,6 +60,7 @@ export function appendWorkItemCollaboration(
   const content = encodeCollaborationContent(input);
   const expectedEvidenceRevision = input.expectedCollaborationRevision;
   const result = store.appendWorkItemEvidence({
+    id: input.id,
     workItemId: input.workItemId,
     expectedWorkItemRevision: input.expectedWorkItemRevision,
     expectedEvidenceRevision,
@@ -67,11 +72,14 @@ export function appendWorkItemCollaboration(
     kind: evidenceKind(input.kind, input.action),
     content,
     sourceRefs: input.sourceRefs ?? [],
+    visibility: input.visibility,
+    assertCurrent: input.assertCurrent,
   }, now, eventCwd ? {
     cwd: eventCwd,
     project: (entry, workItemRevision) => ({
       action: `work_item.collaboration.${input.kind}.${input.action}`,
-      data: { workItemId: entry.workItemId, collaborationId: entry.id, collaborationRevision: entry.sequence, workItemRevision },
+      data: { workItemId: entry.workItemId, collaborationId: entry.id, collaborationRevision: entry.sequence, workItemRevision,
+        ...(input.visibility ? { visibility: input.visibility } : {}) },
     }),
   } : undefined);
   if (!result) return undefined;
@@ -79,12 +87,28 @@ export function appendWorkItemCollaboration(
   return { status: result.status, record, workItemRevision: result.workItemRevision, ...(result.event ? { event: result.event } : {}) };
 }
 
+export function readWorkItemCollaborationRecord(
+  store: Pick<RunStore, "getWorkItemEvidence">,
+  workItemId: string,
+  recordId: string,
+): WorkItemCollaborationRecord | undefined {
+  const entry = store.getWorkItemEvidence(recordId);
+  if (!entry || entry.workItemId !== workItemId || entry.subjectRevision !== `work-item-collaboration:${entry.idempotencyKey}`) return undefined;
+  try {
+    return decodeCollaborationRecord(entry.content, entry);
+  } catch {
+    return undefined;
+  }
+}
+
 export function listWorkItemCollaboration(
-  store: CollaborationStore,
-  input: { readonly workItemId: string; readonly kind?: LingAppServerCollaborationKind; readonly afterRevision?: number; readonly limit?: number },
+  store: Pick<RunStore, "listWorkItemEvidence">,
+  input: { readonly workItemId: string; readonly kind?: LingAppServerCollaborationKind; readonly afterRevision?: number;
+    readonly limit?: number; readonly recordIdPrefix?: string },
 ): { readonly records: readonly WorkItemCollaborationRecord[]; readonly nextAfterRevision: number } {
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
-  const entries = store.listWorkItemEvidence({ workItemId: input.workItemId, afterSequence: input.afterRevision ?? 0, limit });
+  const entries = store.listWorkItemEvidence({ workItemId: input.workItemId, afterSequence: input.afterRevision ?? 0, limit,
+    recordIdPrefix: input.recordIdPrefix });
   const records = entries.flatMap((entry) => {
     if (!entry.content.startsWith(WORK_ITEM_COLLABORATION_CONTENT_PREFIX)) return [];
     try {

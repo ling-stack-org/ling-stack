@@ -19,6 +19,7 @@ import { usesSideEffectTools } from "./approvals.js";
 import type { RunRequest } from "./schemas.js";
 import { createWorkflowSafetyAdmission } from "./workflow-safety.js";
 import { assertWorkflowRepositoryRunAllowed } from "../workspaces/workflow-repository-fence.js";
+import { assertWorkItemConversationAdmission } from "../work-items/conversation-admission.js";
 
 const RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -39,9 +40,12 @@ export function prepareRunConcurrency(input: {
   readonly attempt: WorkUnitAttempt;
   /** Host-only identity of an already activated same-Run continuation, never a request flag. */
   readonly existingContinuationId?: string;
+  readonly automaticIntakeReceiptId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
   assertWorkflowRepositoryRunAllowed(input.store, input.runRequest);
+  if (input.runRequest.threadId) assertWorkItemConversationAdmission(input.store, input.runRequest.threadId,
+    input.runRequest.idempotencyKey, input.automaticIntakeReceiptId);
   input.store.expireResourceLeases(input.now);
 
   const taskId = input.runRequest.task.id;

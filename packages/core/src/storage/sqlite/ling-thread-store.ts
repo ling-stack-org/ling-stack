@@ -492,6 +492,12 @@ export class SqliteLingThreadStore {
     }
     const criteria = parseGoalAcceptanceCriteria(input.acceptanceCriteria ?? existing.acceptanceCriteria ?? []);
     const evidence = parseGoalAcceptanceEvidence(input.acceptanceEvidence ?? existing.acceptanceEvidence ?? []);
+    const previousCriteria = existing.acceptanceCriteria ?? [];
+    if (JSON.stringify(criteria) !== JSON.stringify(previousCriteria)
+      && (previousCriteria.some(criterion => criterion.kind === "verification_passed")
+        || input.status === "complete" && criteria.some(criterion => criterion.kind === "verification_passed"))) {
+      throw new Error("goal_verification_acceptance_revision_required");
+    }
     if (input.status === "complete" && existing.status !== "complete") {
       assertGoalCompletion(this.context.database, { ...existing, acceptanceCriteria: criteria }, input);
     }

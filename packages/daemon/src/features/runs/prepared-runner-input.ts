@@ -3,7 +3,8 @@ import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
 import { isDeepStrictEqual } from "node:util";
 import { isHostCapabilityToolDefinitionV1 } from "@ling-stack/contracts";
 import { redactSecrets, type RunStore, type SkillDefinition, type SkillSourceRuntimeContext } from "@ling-stack/core";
-import { CONVERSATION_VISUALIZATION_TOOL, assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, readPreparedPiInput, readHookSet, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { CONVERSATION_VISUALIZATION_TOOL, assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, WORK_ITEM_COORDINATION_TOOL,
+  readPreparedPiInput, readHookSet, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
@@ -96,6 +97,8 @@ export function restorePreparedRunnerOptions(
     frozenSurface?.delegation === true && currentSurface?.delegation !== true ||
     frozenSurface?.codeIntelligence === true && currentSurface?.codeIntelligence !== true ||
     frozenSurface?.codeMode === true && currentSurface?.codeMode !== true ||
+    frozenSurface?.workItemCoordination === true && currentSurface?.workItemCoordination !== true ||
+    frozenSurface?.workItemCoordination === true && frozenSurface.workItemCoordinator !== currentSurface?.workItemCoordinator ||
     frozenSurface?.nativeFileCreate !== undefined && currentSurface?.nativeFileCreate !== frozenSurface.nativeFileCreate ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
@@ -147,7 +150,7 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
     throw new Error("Invalid prepared Host read profile");
   }
   if (value.input.readonlyToolsProfile === "host_readonly_v1" && (value.runnerId !== "pi"
-    || prepared.tools.some(tool => !["read", "grep", "find", "ls", "request_user_input"].includes(tool.name))
+    || prepared.tools.some(tool => !["read", "grep", "find", "ls", "request_user_input", WORK_ITEM_COORDINATION_TOOL].includes(tool.name))
     || value.toolHydrationEnabled)) throw new Error("Invalid prepared Host read tool surface");
   if (value.skillDefinitionSnapshot !== undefined) {
     const snapshot = value.skillDefinitionSnapshot;
@@ -176,7 +179,8 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
     }
   }
   const preparedNativeCreateSelected = prepared.tools.some(tool => tool.name === "write" && isNativeCreateWriteTool(tool));
-  if (value.input.initialToolSurface !== undefined || preparedNativeCreateSelected) {
+  const coordinationSelected = prepared.tools.some(tool => tool.name === WORK_ITEM_COORDINATION_TOOL);
+  if (value.input.initialToolSurface !== undefined || preparedNativeCreateSelected || coordinationSelected) {
     const surface = value.input.initialToolSurface;
     const surfaceRecord = isRecord(surface) ? surface : undefined;
     const delegationSelected = prepared.tools.filter(tool => (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.name)).map(tool => tool.name);
@@ -189,12 +193,14 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
       ? surfaceRecord?.nativeFileCreate === true
       : surfaceRecord?.nativeFileCreate === undefined || surfaceRecord?.nativeFileCreate === false;
     const delegationSurfaceRequired = delegationSelected.length > 0 && surfaceRecord?.delegation !== true;
-    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation', 'codeIntelligence', 'codeMode', 'conversationVisualization'].includes(key)) ||
+    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation', 'codeIntelligence', 'codeMode', 'conversationVisualization', 'workItemCoordination', 'workItemCoordinator'].includes(key)) ||
       Object.values(surfaceRecord).some(selected => typeof selected !== "boolean") ||
       prepared.tools.some(tool => tool.name === CONVERSATION_VISUALIZATION_TOOL) !== (surfaceRecord.conversationVisualization === true) ||
       surfaceRecord.codeIntelligence !== undefined && prepared.tools.some(tool => tool.name === "code_intelligence") !== surfaceRecord.codeIntelligence ||
       surfaceRecord.codeMode !== undefined && prepared.tools.some(tool => tool.name === "code_mode") !== surfaceRecord.codeMode ||
       surfaceRecord.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surfaceRecord.userInput ||
+      coordinationSelected !== (surfaceRecord.workItemCoordination === true) ||
+      surfaceRecord.workItemCoordinator === true && (!coordinationSelected || value.input.readonlyToolsProfile !== undefined) ||
       !delegationSurfaceMatches || delegationSurfaceRequired || !nativeSurfaceMatches) {
       throw new Error("Invalid prepared user-input tool surface");
     }
@@ -251,7 +257,7 @@ function isNarrowIsolatedSurface(input: unknown): boolean {
   if (["mcpTools", "hostCapabilityTools", "mediaGenerationTools"].some(key => input[key] !== undefined &&
     (!Array.isArray(input[key]) || input[key].length !== 0))) return false;
   for (const [key, allowed] of [
-    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode", "conversationVisualization"]],
+    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode", "conversationVisualization", "workItemCoordination", "workItemCoordinator"]],
     ["runtimeToolFeatures", ["requestPermissions", "unifiedExec", "shellSnapshot"]],
   ] as const) {
     const flags = input[key];
@@ -260,7 +266,7 @@ function isNarrowIsolatedSurface(input: unknown): boolean {
   }
   // Approval stays live in the Host handler; these other producers may not enter this profile.
   return ["onMcpToolCall", "onHostCapabilityCall", "onMediaGenerationToolCall", "onConversationVisualization", "onToolHydrationRequest",
-    "onDelegationToolCall", "onUserInputRequest", "onPermissionRequired"].every(key => input[key] === undefined);
+    "onDelegationToolCall", "onUserInputRequest", "onPermissionRequired", "onWorkItemCoordinationCall"].every(key => input[key] === undefined);
 }
 
 function sameToolSelection(left: unknown, right: readonly string[]): boolean {

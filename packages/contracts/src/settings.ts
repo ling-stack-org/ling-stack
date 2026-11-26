@@ -1,5 +1,7 @@
 import type { AuthorizationMode, PermissionPreset, ReasoningSummaryMode, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { WorkspaceMediaGenerationDefaults } from "./media-generation-routing.js";
+import type { LingAppServerDecisionMateriality, LingAppServerDeliberationCheckpoint, LingAppServerDeliberationDecisionKind } from "./app-server.js";
+import type { AiTeammateRoleKey } from "./teammates.js";
 import type {
   ExplicitResponseLanguage,
   InterfaceLocale,
@@ -26,6 +28,7 @@ export interface SkillGovernancePolicy {
 
 export interface WorkspaceSettings {
   readonly worktreePolicy?: import("./worktrees.js").WorktreePolicy;
+  readonly claudeProjectRules?: readonly string[];
   readonly desktopBrowserPolicy?: import("./desktop-browser-policy.js").DesktopBrowserPolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
@@ -48,6 +51,7 @@ export interface WorkspaceSettings {
 
 export interface UpdateWorkspaceSettingsRequest {
   readonly worktreePolicy?: import("./worktrees.js").WorktreePolicy | null;
+  readonly claudeProjectRules?: readonly string[] | null;
   readonly desktopBrowserPolicy?: import("./desktop-browser-policy.js").DesktopBrowserPolicy | null;
   /** v2 writes only accept the independent authorization/access axes. */
   readonly schemaVersion?: 2;
@@ -68,9 +72,54 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly skillGovernancePolicy?: SkillGovernancePolicy | null;
 }
 
+export function parseClaudeProjectRules(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || value.length > 16 || value.some(path => typeof path !== "string"
+    || path.length > 250 || path !== "CLAUDE.md" && (
+      !/^\.claude\/rules\/(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.md$/u.test(path)
+      || path.split("/").some(part => part === "." || part === "..")))) {
+    throw new Error("claudeProjectRules accepts up to 16 repository-relative CLAUDE.md or .claude/rules Markdown files.");
+  }
+  return [...new Set(value as string[])];
+}
+
 export interface WorkspaceSettingsResponse {
   readonly cwd: string;
   readonly settings: WorkspaceSettings;
+}
+
+export type WorkspaceDeliberationPolicy =
+  | { readonly mode: "manual" }
+  | { readonly mode: "suggest" }
+  | {
+    readonly mode: "auto_start";
+    readonly allowedTriggers: readonly LingAppServerDeliberationCheckpoint[];
+    readonly allowedDecisionKinds: readonly LingAppServerDeliberationDecisionKind[];
+    readonly minimumViableOptions: number;
+    readonly minimumParticipants: number;
+    readonly requiredRoleIds: readonly AiTeammateRoleKey[];
+    readonly minDecisionMateriality: LingAppServerDecisionMateriality;
+    readonly maxEvidenceAgeMs?: number;
+    readonly cooldownMs: number;
+    readonly ballotMode: "disabled" | "when_unresolved";
+    readonly decisionOwner: { readonly kind: "user" };
+    readonly budget: { readonly maxTokens: number; readonly maxDurationMs: number };
+  };
+
+export interface WorkspaceDeliberationPolicyResponse {
+  readonly cwd: string;
+  readonly channelId: string;
+  readonly revision: number;
+  readonly configured: WorkspaceDeliberationPolicy | null;
+  readonly hostPolicy: WorkspaceDeliberationPolicy | null;
+  readonly effective: WorkspaceDeliberationPolicy;
+  readonly effectiveRevision: string;
+  readonly restriction?: "host_policy";
+}
+
+export interface UpdateWorkspaceDeliberationPolicyRequest {
+  readonly expectedRevision: number;
+  /** Null restores the Host policy or the default suggestion mode. */
+  readonly policy: WorkspaceDeliberationPolicy | null;
 }
 
 export type EffectiveConfigSource = "workspace" | "user" | "built_in";

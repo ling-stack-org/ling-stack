@@ -504,6 +504,8 @@ export interface PiRunnerRunOptions {
     readonly userInput?: boolean;
     /** Original Host registry selection; callback presence alone never enables schema preparation. */
     readonly delegation?: boolean;
+    readonly workItemCoordination?: boolean;
+    readonly workItemCoordinator?: boolean;
     /** Typed workflow writes use path/content and Host exclusive-create, never the patch writer. Schema only, not authority. */
     readonly nativeFileCreate?: boolean;
   };
@@ -552,6 +554,14 @@ export interface PiRunnerRunOptions {
   readonly reasoningSummary?: PiRunnerReasoningSummaryMode;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
+  /** Host-owned scoped rules for a task model request, with a receipt at local payload admission. */
+  readonly projectInstructionContext?: () => { readonly prompt: string; readonly onAdmitted: () => void } | undefined;
+  /** Scoped data for this execution, captured at the next task model-input boundary. */
+  readonly stageMessageContext?: () => {
+    readonly prompt: string;
+    readonly onAdmitted: (preparedInputFingerprint: string) => void;
+  } | undefined;
+  readonly onWorkItemCoordinationCall?: (request: { readonly toolCallId: string; readonly input: unknown }) => PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
   readonly agentDir?: string;
   readonly runtimePaths?: PiRunnerRuntimePaths;
   readonly runtimeToolFeatures?: PiRunnerRuntimeToolFeatures;

@@ -21,6 +21,8 @@ import {
   hostCompactionResourceBoundaryArtifactId,
   getEffectiveTeammateSkill,
   getRunSummaryPath,
+  readWorkItemDeliberationBallotBasis,
+  readWorkItemDeliberationWorkflowBinding,
   redactSecrets,
   type EffectiveRunPolicySnapshot,
   type LingThread,
@@ -66,7 +68,7 @@ import type {
   PiRunnerTaskContinuationDirective,
 } from "@ling-stack/runner-pi";
 import type { RunCompactionCheckpointBlockerCode } from "@ling-stack/contracts";
-import { DELEGATION_TOOL_NAMES, PiRunnerAdapter, PiRunnerYielded, PiRunnerSuspended, isPiToolFreeCompletion, readPiCompletedTools, readPiCompletedBuiltinReads,
+import { DELEGATION_TOOL_NAMES, WORK_ITEM_COORDINATION_TOOL, PiRunnerAdapter, PiRunnerYielded, PiRunnerSuspended, isPiToolFreeCompletion, readPiCompletedTools, readPiCompletedBuiltinReads,
   type PiToolBoundaryObservation } from "@ling-stack/runner-pi";
 import {
   hostCapabilityToolsV1,
@@ -87,11 +89,16 @@ import { reconcileWorkflowParallelParentFences } from "../channels/workflow-isol
 import { assertWorkflowRepositoryRunAllowed } from "../workspaces/workflow-repository-fence.js";
 import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolation-planning.js";
 import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
+import { createStageMessageReceiver } from "../work-items/stage-message-receiver.js";
+import { createWorkItemCoordinationToolHandler } from "../work-items/stage-coordination-tool.js";
+import { createCheckpointCoordinatorTool } from "../work-items/checkpoint-coordinator-tool.js";
+import { persistWorkflowStageBallot } from "../work-items/stage-ballot.js";
 import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
   failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
+import { recoveryBlocked } from "../../server/app-server-recovery.js";
 import { appendConversationResponseStyle } from "../../shared/conversation-response-style.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { runSuspensionOrderFor } from "../../runtime/run-suspension-order.js";
@@ -115,7 +122,8 @@ import {
   transitionWorkUnitTerminal,
 } from "../../runtime/work-units.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
-import { appendControlPlaneEvent } from "../control-plane/events.js";
+import { appendControlPlaneEvent, trimOversizedEvent } from "../control-plane/events.js";
+import type { WorkItemConversationBinding } from "@ling-stack/core";
 import { CuaDriverComputerUseProjectionProducer } from "../computer-use/cua-driver-producer.js";
 import { resolveEligibleCuaDriverProjectionServerIds } from "../computer-use/provider-eligibility.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
@@ -193,6 +201,7 @@ import type { RunExecutionSink } from "./run-execution-sink.js";
 export { createDetachedRunExecutionSink, createSseRunExecutionSink, type RunExecutionSink } from "./run-execution-sink.js";
 import { prepareNormalConversationExecution, readNormalConversationPreparedExecution,
   restoreNormalConversationExecutionOptions, assertPreparedExecutionMemoryCurrent } from "../conversations/normal-conversation-prepared-execution.js";
+import { createRuntimeProjectInstructions } from "../conversations/runtime-project-instructions.js";
 import {
   assertPreparedRunnerMemoryCurrent,
   capturePreparedRunnerInput,
@@ -295,6 +304,8 @@ export interface ExecuteRunRequestOptions {
   readonly onProviderInvocationFailure?: ProviderInvocationFailureSink;
   readonly providerInvocationOrigin?: ProviderInvocationOrigin;
   readonly onRunReady?: (runId: string, info?: RunReadyInfo) => void;
+  readonly assertNativeIntakeCurrent?: () => void;
+  readonly automaticIntakeAdmission?: { readonly receiptId: string; readonly assertCurrent: () => void };
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   /** Runs after a durable user-input yield, never for ordinary terminal completion. */
   readonly afterRunYielded?: (run: RunSession, wait: CommitUserInputYieldResult["wait"]) => void | Promise<void>;
@@ -345,12 +356,12 @@ export function executeRunRequest(
       writeRunPreparationFailure(sink, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
       return undefined;
     }
-    const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
-    if (!effectiveRequest.executionBinding && isExternalExecutionEngineId(effectiveRequest.runnerId)) {
+    if (!request.executionBinding && isExternalExecutionEngineId(request.runnerId)) {
       writeRunPreparationFailure(sink, 409, { error: "legacy_runner_migration_required",
         message: "Endpoint execution is retired. Select a native profile before starting this engine." });
       return undefined;
     }
+    const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
     if (effectiveRequest.executionBinding?.kind === "native_profile") {
       if (options.delegatedExecution) {
         writeRunPreparationFailure(sink, 409, { error: "delegation.native_execution_unsupported",
@@ -706,6 +717,7 @@ async function executeAdmittedRunRequest(
       throw new HttpError(409, "continuation_identity_conflict", "A Run cannot use two continuation owners.");
     }
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
+    if (storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
     await ensureWorkspaceStateWritableForRun(workspaceCwd);
     await ensureStartupReadyForRun({
       cwd: workspaceCwd,
@@ -1069,6 +1081,16 @@ async function executeAdmittedRunRequest(
     const delegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
       && dynamicDelegationRegistry?.isSelectedWorkflow({ store, workflowStepId: runRequest.workflowStepId,
         channelId: runRequest.task.channelId }) === true;
+    const workItemCoordinationSurfaceEnabled = !isolatedFiles && !delegatedExecution
+      && runnerResolution.runner.adapter instanceof PiRunnerAdapter
+      && Boolean(selectedWorkflowStep?.metadata?.planStageId && !selectedWorkflowStep.metadata.planBallotKey
+        && store.getAppServerState("work_item_workflow", selectedWorkflowStep.workflowId));
+    const workItemCoordinatorEnabled = !!runRequest.workItemCheckpointPlanRevisions?.length
+      && runRequest.createdByActor === "local-user" && workUnitOwner.kind === "channel_ai_reply"
+      && !runRequest.workflowStepId && !workflowSafetyPlan && !delegatedExecution && !runRequest.codeAssessment
+      && runnerResolution.runner.adapter instanceof PiRunnerAdapter;
+    const coordinationSurface = workItemCoordinatorEnabled ? { workItemCoordination: true, workItemCoordinator: true }
+      : workItemCoordinationSurfaceEnabled ? { workItemCoordination: true } : {};
     const visualizationEligible = frozenExecution
       ? frozenExecution.input.initialToolSurface?.conversationVisualization === true
       : isConversationMediaGenerationEligible({ createdByActor: runRequest.createdByActor, workUnitKind: workUnitOwner.kind });
@@ -1087,7 +1109,8 @@ async function executeAdmittedRunRequest(
         ...currentAgentCapabilitySurface(),
         userInput: userInputAvailable(),
         nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
-        delegation: delegationToolSurfaceEnabled } };
+        delegation: delegationToolSurfaceEnabled,
+        ...coordinationSurface } };
     runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
     if (workflowSafetyPlan?.profile === "pi_host_readonly_v1") {
       // SDK preparation may inspect schemas, but it has no execution authority.
@@ -1114,6 +1137,9 @@ async function executeAdmittedRunRequest(
           } : undefined);
     const assertPreparationCurrent = (): void => {
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
+      if (!run && storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
+      options.automaticIntakeAdmission?.assertCurrent();
+      options.assertNativeIntakeCurrent?.();
       assertHostCapabilitiesCurrent();
       assertWorkflowSafetyRequest(runStore, runRequest);
       if (!frozenExecution) assertPreselectedMemoryCurrent(runStore, runRequest);
@@ -1174,7 +1200,8 @@ async function executeAdmittedRunRequest(
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
           userInput: userInputAvailable(),
           nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
-          delegation: currentDelegationToolSurfaceEnabled },
+          delegation: currentDelegationToolSurfaceEnabled,
+          ...coordinationSurface },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
           ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] }, workflowSafetyPlan));
       runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
@@ -1443,9 +1470,13 @@ async function executeAdmittedRunRequest(
       });
     };
     const persistRun = (context?: RunnerContinuationContextIdentity): RunSession => {
+      if (storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
+      options.automaticIntakeAdmission?.assertCurrent();
+      options.assertNativeIntakeCurrent?.();
       prepareManagedRuntime();
       const persisted = persistenceStore.createRun({
         id: runId,
+        ...(options.automaticIntakeAdmission ? { automaticIntakeReceiptId: options.automaticIntakeAdmission.receiptId } : {}),
         cwd: runRequest.cwd,
         taskId: runRequest.task.id,
         channelId: preparedConcurrency.channel?.id ?? runRequest.task.channelId,
@@ -1695,7 +1726,7 @@ async function executeAdmittedRunRequest(
     }
     const providerConcurrencyKey = runRequest.providerPresetId
       ?? `${resolvedProvider.provider}:${resolvedProvider.model}`;
-    const queueEligible = !delegatedExecution && !existingContinuation && !userInputContinuation && !nodeRerunTarget && !continuationEnforced
+    const queueEligible = !options.assertNativeIntakeCurrent && !delegatedExecution && !existingContinuation && !userInputContinuation && !nodeRerunTarget && !continuationEnforced
       && !runRequest.workflowStepId && !runRequest.parentRunId && !runRequest.interventionId && !runRequest.continuationReason
       && ["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
       && runnerResolution.runner.adapter instanceof PiRunnerAdapter && Array.isArray(executionInput?.input.tools)
@@ -1838,6 +1869,7 @@ async function executeAdmittedRunRequest(
       });
     } else {
       preparedConcurrency = prepareRunConcurrency({
+        automaticIntakeReceiptId: options.automaticIntakeAdmission?.receiptId,
         store,
         runRequest: { ...runRequest, tools: runtimeTools },
         runId,
@@ -1981,7 +2013,8 @@ async function executeAdmittedRunRequest(
         originalProvider: resolvedProvider, effectivePolicySnapshot, runtimeTools: runnerRequest.tools,
         request: policyRequest, approvalProfile: runtimeApprovalProfile,
         hasAdditionalToolSurfaces: Boolean(runnerRequest.mcpTools?.length || runnerRequest.hostCapabilityTools?.length
-          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput), now: createdAt });
+          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput
+          || runnerRequest.initialToolSurface?.workItemCoordination), now: createdAt });
       delegationDeadlineAt = admission.reservation.deadlineAt < admission.root.deadlineAt
         ? admission.reservation.deadlineAt : admission.root.deadlineAt;
       if (!executionInput) throw new HttpError(409, "delegation.preparation_unavailable", "Delegated SDK preparation is unavailable.");
@@ -2001,7 +2034,8 @@ async function executeAdmittedRunRequest(
           effectivePolicySnapshot, runtimeTools: runnerRequest.tools, request: policyRequest,
           approvalProfile: runtimeApprovalProfile,
           hasAdditionalToolSurfaces: Boolean(runnerRequest.mcpTools?.length || runnerRequest.hostCapabilityTools?.length
-            || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput), now: createdAt });
+            || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput
+            || runnerRequest.initialToolSurface?.workItemCoordination), now: createdAt });
         delegationDeadlineAt = delegationRoot?.deadlineAt;
       }
     }
@@ -2150,7 +2184,8 @@ async function executeAdmittedRunRequest(
         originalProvider: resolvedProvider, effectivePolicySnapshot, runtimeTools: runnerRequest.tools,
         request: policyRequest, approvalProfile: runtimeApprovalProfile,
         hasAdditionalToolSurfaces: Boolean(runnerRequest.mcpTools?.length || runnerRequest.hostCapabilityTools?.length
-          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput), now: createdAt });
+          || runnerRequest.mediaGenerationTools?.length || runnerRequest.initialToolSurface?.userInput
+          || runnerRequest.initialToolSurface?.workItemCoordination), now: createdAt });
       delegationDeadlineAt = delegationRoot?.deadlineAt;
       workflowDelegationRootAdmissionPending = false;
     }
@@ -2578,11 +2613,16 @@ async function executeAdmittedRunRequest(
     && Boolean(run.contextViewId) && runnerResolution.runner.adapter instanceof PiRunnerAdapter;
   let gracefullySuspended = false;
   let shutdownSuspensionCause: "daemon_restart" | "desktop_quit" | "process_signal" | undefined;
+  let localApprovalWaitId: string | undefined;
+  let drainingDeniedApproval = false;
   let approvalSuspensionBlocked: unknown;
   const suspensionOrder = runSuspensionOrderFor(activeRuns);
   const suspensionSource = suspensionOrder.capture(store, { runId: run.id, ...runnerCallbackFence });
   const assertCurrentRunAdmission = (): void => {
     abortController.signal.throwIfAborted();
+    if (drainingDeniedApproval) {
+      throw new HttpError(409, "approval_denied", "The tool approval was denied before shutdown.");
+    }
     if (queuedClaim) {
       assertQueuedRunParticipantCurrent(store, run.teammateId);
       const entry = store.getRuntimeRunQueueEntry(run.id);
@@ -2644,7 +2684,7 @@ async function executeAdmittedRunRequest(
       && active.runtimeInstanceId === runnerCallbackFence.runtimeInstanceId
       && active.fencingToken === runnerCallbackFence.fencingToken;
   };
-  const readApprovalWaitSuspension = () => {
+  const readApprovalWait = () => {
     const currentRun = store.getRun(run.id);
     const currentUnit = store.getWorkUnit(workUnit.id);
     const currentAttempt = store.getWorkUnitAttempt(attempt.id);
@@ -2667,12 +2707,14 @@ async function executeAdmittedRunRequest(
     if (descendants.steps.length || descendants.issues.length || gracefulSuspensionController?.hasPendingRequest()) {
       throw new RunGracefulSuspensionBlocked("suspension.boundary_unavailable");
     }
-    const approval = store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]
+    const approval = localApprovalWaitId ? store.getApprovalRequest(localApprovalWaitId)
+      : store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]
       ?? store.listApprovalRequests({ runId: run.id, status: "approved", limit: 1 })[0];
     const checkpoint = approval && store.getApprovalCheckpointForApproval(approval.id);
     const basis = checkpoint?.resumeBasis;
     if (!approval || !checkpoint || !isApprovalResumeBasisV1(basis)
-      || (checkpoint.status !== "pending" && checkpoint.status !== "approved")
+      || (checkpoint.status !== "pending" && checkpoint.status !== "approved"
+        && !(localApprovalWaitId && checkpoint.status === "denied"))
       || checkpoint.status !== approval.status || checkpoint.runId !== run.id || approval.runId !== run.id
       || basis.runId !== run.id || basis.workUnitId !== workUnit.id || basis.priorAttemptId !== attempt.id
       || basis.workflowStepId !== currentRun.workflowStepId || checkpoint.workflowStepId !== currentRun.workflowStepId
@@ -2751,9 +2793,17 @@ async function executeAdmittedRunRequest(
     }
   };
 
+  const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const ballotMarker = workflowStep?.metadata?.planBallotKey;
+  const linkedBallot = workflowStep && ballotMarker ? readWorkItemDeliberationBallotBasis(store, workflowStep.workflowId) : undefined;
+  const ballotKey = linkedBallot?.status === "voting" ? linkedBallot.key : ballotMarker;
+  const executingStep = runnerResolution.runner.adapter instanceof PiRunnerAdapter && !delegatedExecution ? workflowStep : undefined;
+  const acceptsStageMessages = Boolean(executingStep?.metadata?.planStageId && !executingStep.metadata.planBallotKey
+    && store.getAppServerState("work_item_workflow", executingStep.workflowId));
   activeRuns.add(run.id, {
     abortController,
     streamEnvelope,
+    acceptsStageMessages,
     completion: runCompletion,
     runtimeInstanceId: attempt.runtimeInstanceId,
     workUnitId: workUnit.id,
@@ -2761,6 +2811,17 @@ async function executeAdmittedRunRequest(
     fencingToken: attempt.fencingToken,
     runtimeShutdownPolicy: hostCompactionEnabled ? "checkpoint" : "stop_without_resume",
     ...(delegatedExecution ? { terminalHandoff: delegatedExecution.terminalHandoff } : {}),
+    drainDeniedApproval: source => {
+      if (!localApprovalWaitId || store.getApprovalRequest(localApprovalWaitId)?.status !== "denied") return false;
+      if (!isDeepStrictEqual(source, { runId: run.id, ...runnerCallbackFence })) {
+        throw new RunGracefulSuspensionBlocked("suspension.source_stale");
+      }
+      const { checkpointStatus } = readApprovalWait();
+      if (checkpointStatus !== "denied") return false;
+      // Keep the original waiter alive while fencing the next provider or tool admission.
+      drainingDeniedApproval = true;
+      return true;
+    },
     requestGracefulSuspension: request => {
       try {
         if (!isDeepStrictEqual(request.source, { runId: run.id, ...runnerCallbackFence })) {
@@ -2777,7 +2838,7 @@ async function executeAdmittedRunRequest(
         }
         if (store.getRun(run.id)?.status === "waiting_for_approval"
           || store.getWorkUnit(workUnit.id)?.status === "waiting_for_approval") {
-          try { readApprovalWaitSuspension(); }
+          try { readApprovalWait(); }
           catch (error) {
             approvalSuspensionBlocked = error;
             // End only the exact original polling callback. The blocked
@@ -2949,7 +3010,10 @@ async function executeAdmittedRunRequest(
   };
   const requestRuntimeAbort = supervision.requestAbort;
   const beginApprovalHardTimeoutPause = (): void => supervision.approvalWaitChanged(true);
-  const endApprovalHardTimeoutPause = (): void => supervision.approvalWaitChanged(false);
+  const endApprovalHardTimeoutPause = (): void => {
+    localApprovalWaitId = undefined;
+    supervision.approvalWaitChanged(false);
+  };
   let userInputReceiverAccepted = userInputBinding === undefined && delegatedExecution === undefined && rootSuspensionActivation === undefined;
   const pendingUserInputRunnerEvents: PiRunnerEvent[] = [];
   let flushPendingUserInputRunnerEvents = (): void => undefined;
@@ -3022,6 +3086,21 @@ async function executeAdmittedRunRequest(
         return createDelegationRunnerToolHandler({ tools: delegationParentTools,
           signal: abortController.signal })(request);
       }
+    : undefined;
+  const workItemCoordinationToolHandler = runnerRequest.initialToolSurface?.workItemCoordination === true
+    ? runnerRequest.initialToolSurface.workItemCoordinator
+      ? createCheckpointCoordinatorTool({ store, run, source: { runId: run.id, ...runnerCallbackFence }, extraSecrets: resolvedSecretValues,
+          planRevisions: runRequest.workItemCheckpointPlanRevisions ?? [],
+          policies: runtimeSupervisor.getAppServerDeliberationPolicies(), assertCurrent: () => {
+            assertCurrentRunAdmission();
+            if (storeRegistry.recoveryBlocksDispatch(workspaceCwd)) throw recoveryBlocked();
+            if (!runRequest.workItemCheckpointPlanRevisions?.length || workUnit.kind !== "channel_ai_reply"
+              || !isCapturedActiveAttempt() || !store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence)) {
+              throw new HttpError(409, "stale_revision", "The coordinator no longer owns this Run attempt.");
+            }
+          } })
+      : createWorkItemCoordinationToolHandler({ store, run, attemptId: attempt.id, activeRuns, assertCurrent: assertCurrentRunAdmission,
+        extraSecrets: resolvedSecretValues, events: options.controlPlaneEvents })
     : undefined;
   const delegationProgressBinding = delegatedExecution ? Object.freeze({
     reservationId: delegatedExecution.claimed.reservation.id,
@@ -3152,14 +3231,19 @@ async function executeAdmittedRunRequest(
     }
 
     try {
+      if (ballotKey && (type === "assistant_text_delta" || type === "assistant_thinking_delta" || type === "assistant_reasoning_summary")) {
+        supervision.activity();
+        return undefined;
+      }
+      const publicData = ballotKey && type === "message_end" ? { ...data, text: undefined } : data;
       const attributedData = type === "assistant_reasoning_summary"
         || type === "run_start" || type === "turn_start"
         || type === "message_end" || type === "turn_end"
         || type === "provider_retry"
         || type === "context_compaction_start"
         || type === "context_compaction_end"
-        ? { ...data, attemptId: runnerCallbackFence.attemptId } as RunEventDataByType[K]
-        : data;
+        ? { ...publicData, attemptId: runnerCallbackFence.attemptId } as RunEventDataByType[K]
+        : publicData;
       const envelope = store.appendExecutionEvent(
         run.id,
         runnerCallbackFence,
@@ -3171,6 +3255,7 @@ async function executeAdmittedRunRequest(
       if (type === "approval_requested"
         && approvalEventReflectsRunState(store, envelope)
         && !isNativeApprovalEvent(store, envelope)) {
+        localApprovalWaitId = (envelope.data as RunEventDataByType["approval_requested"]).approvalId;
         // The approval handler starts this pause before persistence. Keep the
         // event-side update idempotent for paths that append the event first.
         beginApprovalHardTimeoutPause();
@@ -3357,8 +3442,9 @@ async function executeAdmittedRunRequest(
             .map(tool => ({ toolCallId: tool.toolCallId,
               toolName: tool.toolName as (typeof DELEGATION_TOOL_NAMES)[number] }));
           const delegationIds = new Set(settledDelegationCalls.map(call => call.toolCallId));
+          const coordinationIds = new Set(sdkTools.filter(tool => tool.toolName === WORK_ITEM_COORDINATION_TOOL).map(tool => tool.toolCallId));
           if (!hostOperationTracker && toolCallIds.some(id => !delegationIds.has(id)
-            && !notDispatched.has(id) && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
+            && !coordinationIds.has(id) && !notDispatched.has(id) && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
           return { schemaVersion: 1, toolCallIds, settledBuiltinReads,
             ...(settledDelegationCalls.length ? { settledDelegationCalls } : {}),
             ...(undispatchedIsolatedCalls.length ? { undispatchedIsolatedCalls } : {}) };
@@ -3501,11 +3587,33 @@ async function executeAdmittedRunRequest(
           signal: abortController.signal,
         })
       : undefined;
+    const projectInstructions = runRequest.normalConversationContext && thread.kind === "conversation" && !delegatedExecution
+      && runnerResolution.runner.adapter instanceof PiRunnerAdapter ? createRuntimeProjectInstructions({
+        store, run, cwd: workspaceCwd, threadId: thread.id, turnId: turn.id, prepared: runRequest.projectInstructionManifest,
+        events: options.controlPlaneEvents, extraSecrets: resolvedSecretValues,
+        assertCurrent() {
+          assertCurrentRunAdmission();
+          if (!store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence)) {
+            throw new Error("The project instruction discovery no longer owns the Run.");
+          }
+        },
+      }) : undefined;
+    const delegationMode = runtimeSupervisor.getHarnessFeatures().delegations.mode;
+    const providerBudget = !isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter
+      && delegationMode !== "off" && (!run.parentRunId || delegatedExecution)
+      ? bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) : undefined;
+    if (workflowStep && readWorkItemDeliberationWorkflowBinding(store, workflowStep.workflowId)?.automatic
+      && (delegationMode !== "enforce" || !providerBudget?.requiresTokenUpperBound)) {
+      throw new HttpError(409, "work_item_deliberation_budget_unavailable", "Automatic deliberation requires enforced Provider reservations.");
+    }
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
-      ...(!isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
-        && (!run.parentRunId || delegatedExecution) ? { providerBudget: bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) } : {}),
+      ...(projectInstructions ? { projectInstructionContext: projectInstructions.projectContext } : {}),
+      ...(acceptsStageMessages ? { stageMessageContext: createStageMessageReceiver({ store, run, attemptId: attempt.id,
+        assertCurrent: assertCurrentRunAdmission, events: options.controlPlaneEvents, extraSecrets: resolvedSecretValues }) } : {}),
+      ...(providerBudget ? { providerBudget } : {}),
       ...(delegationRunnerToolHandler ? { onDelegationToolCall: delegationRunnerToolHandler } : {}),
+      ...(workItemCoordinationToolHandler ? { onWorkItemCoordinationCall: workItemCoordinationToolHandler } : {}),
       ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
         ? createProviderInvocationObserver({
             store, provider: activeProvider, taskId: runnerRequest.task.id,
@@ -3562,7 +3670,7 @@ async function executeAdmittedRunRequest(
           const hostRejection = hostCapabilityAuthority?.check({ ...request, task: runnerRequest.task });
           if (hostRejection) return { allowed: false, code: hostRejection.code, reason: hostRejection.reason };
         }
-        return { allowed: true };
+        return projectInstructions?.checkTool(request) ?? { allowed: true };
       },
       onApprovalRequired: async (request) => {
         const definition = mcpTools.find((tool) => tool.registeredName === request.toolName);
@@ -3916,6 +4024,7 @@ async function executeAdmittedRunRequest(
     // admission can change the read set after the asynchronous observation.
     assertCurrentRunAdmission();
     const endedAt = executionNow();
+    if (ballotKey) persistWorkflowStageBallot(store, run, attempt, ballotKey, result.events, resolvedSecretValues, endedAt);
     const summaryPath = getRunSummaryPath(store.paths, run.id);
     if (existingContinuation?.origin === "approval_resume") {
       const terminal = commitApprovalContinuationTerminal({
@@ -4301,7 +4410,9 @@ async function executeAdmittedRunRequest(
       if (observedRun?.status === "waiting_for_approval"
         || observedWorkUnit?.status === "waiting_for_approval") {
         try {
-          const capturedApproval = readApprovalWaitSuspension();
+          const capturedApproval = readApprovalWait();
+          const { checkpointStatus: expectedCheckpointStatus } = capturedApproval;
+          if (expectedCheckpointStatus === "denied") throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
           if (!localWriters) throw new RunGracefulSuspensionBlocked("suspension.stop_unverified");
           const capturedWriters = localWriters;
           const cause = stopIntent.cause;
@@ -4313,17 +4424,17 @@ async function executeAdmittedRunRequest(
             }
             // A drain is not fresh authorization. Revalidate the same original
             // checkpoint, including its revision, before the atomic Core CAS.
-            const { approval, checkpoint, checkpointStatus, workUnit: approvalUnit } = readApprovalWaitSuspension();
+            const { approval, checkpoint, checkpointStatus, workUnit: approvalUnit } = readApprovalWait();
             if (approval.id !== capturedApproval.approval.id || checkpoint.id !== capturedApproval.checkpoint.id
               || checkpoint.revision !== capturedApproval.checkpoint.revision
-              || checkpointStatus !== capturedApproval.checkpointStatus
+              || checkpointStatus !== expectedCheckpointStatus
               || checkpoint.resumeBasis?.fingerprint !== capturedApproval.checkpoint.resumeBasis?.fingerprint) {
               throw new RunGracefulSuspensionBlocked("suspension.witness_mismatch");
             }
             const suspension = store.commitApprovalResumeSuspension({
               kind: "approval_wait",
               checkpointId: checkpoint.id,
-              expectedCheckpointStatus: checkpointStatus,
+              expectedCheckpointStatus,
               expectedCheckpointRevision: checkpoint.revision,
               approvalId: approval.id,
               runId: run.id,
@@ -4831,6 +4942,12 @@ export function appendRunCreatedControlPlaneEvent(
 ): void {
   if (!hub) {
     return;
+  }
+  const binding = run.threadId
+    ? store.getAppServerState("work_item_thread", run.threadId)?.payload as WorkItemConversationBinding | undefined : undefined;
+  if (binding && store.getWorkItem(binding.workItemId)?.runId === run.id) {
+    const event = store.getControlPlaneEventByIdempotency(DEFAULT_WORKSPACE_ID, `work-item-dispatch:${binding.workItemId}`);
+    if (event) hub.publish(trimOversizedEvent(event));
   }
   appendControlPlaneEvent(store, hub, {
     workspaceId: DEFAULT_WORKSPACE_ID,

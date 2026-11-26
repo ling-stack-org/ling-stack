@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { automationDefinitionDigestInput, type AutomationEventStore, type AutomationEventPorts, type AutomationEventSource,
-  type AutomationEventEnvelope, type AutomationEventDispatch, type AutomationDelivery, type PutAutomationEventSource } from "../../automation-event-types.js";
+  type AutomationEventEnvelope, type AutomationEventDispatch, type AutomationDelivery, type PutAutomationEventSource,
+  type AutomationGitHubIntakeTarget, type AutomationGitHubIntakePending } from "../../automation-event-types.js";
 import { automationEventDigest, automationEventMatches, parseAutomationEventSource } from "../../automation-event-source.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { SqliteAppServerStateStore } from "./app-server-state-store.js";
 
 type Row = Record<string, unknown>;
 const parse = <T>(value: unknown): T => JSON.parse(String(value)) as T;
@@ -52,7 +54,8 @@ export class SqliteAutomationEventStore implements AutomationEventStore {
   listAutomationEventSources(): AutomationEventSource[] {
     return this.context.database.prepare("SELECT source_json FROM automation_event_sources ORDER BY id LIMIT 64").all().map(row => parse(row.source_json));
   }
-  acceptAutomationEvent(input: Omit<AutomationEventEnvelope, "id" | "receivedAt">, sourceRevision: number, now: string) {
+  acceptAutomationEvent(input: Omit<AutomationEventEnvelope, "id" | "receivedAt">, sourceRevision: number, now: string,
+    gitHubIntake?: AutomationGitHubIntakeTarget) {
     if (!/^[a-f0-9]{64}$/.test(input.payloadDigest) || input.externalId.length > 160 || !input.externalId
       || !/^[a-zA-Z0-9_.:-]{1,160}$/.test(input.type) || Buffer.byteLength(JSON.stringify(input.payload)) > 64 * 1024
       || !Number.isFinite(Date.parse(input.occurredAt))) throw new Error("automation_event_envelope_invalid");
@@ -79,6 +82,15 @@ export class SqliteAutomationEventStore implements AutomationEventStore {
       if (Number(pending?.count) + eligibleRules.length > 5000) throw new Error("automation_event_inbox_capacity");
       const event: AutomationEventEnvelope = { ...input, id: `ae_${randomUUID()}`, receivedAt: now };
       db.prepare("INSERT INTO automation_events VALUES(?,?,?,?,?,?)").run(event.id, source.id, event.externalId, event.payloadDigest, now, JSON.stringify(event));
+      if (gitHubIntake) {
+        const backlog = db.prepare("SELECT COUNT(*) AS count FROM app_server_state WHERE kind = 'github_intake_pending'").get();
+        if (Number(backlog?.count) >= 1000) throw new Error("automation_event_inbox_capacity");
+        const payload: AutomationGitHubIntakePending = { ...gitHubIntake, sourceId: source.id, sourceRevision, sourceEventId: event.id };
+        const pending = new SqliteAppServerStateStore(this.context).putWithinTransaction({
+          kind: "github_intake_pending", recordId: event.id, expectedRevision: 0, payload,
+        }, now);
+        if (!pending) throw new Error("automation_event_intake_conflict");
+      }
       for (const { rule, definition } of eligibleRules) {
         db.prepare(`INSERT INTO automation_event_dispatches(id,event_id,source_id,source_revision,automation_id,definition_digest,destinations_json,status)
           VALUES(?,?,?,?,?,?,?,'queued')`).run(`aed_${randomUUID()}`, event.id, source.id, source.revision, definition.id,

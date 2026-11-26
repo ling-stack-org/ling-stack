@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
-import { redactSecrets, DEFAULT_WORKSPACE_ID, type RunStore, type LearningEvidenceBundle, type LearningEvidenceItem } from "@ling-stack/core";
+import {
+  redactSecrets, DEFAULT_WORKSPACE_ID, workflowStepStartAuthorityBasis,
+  type RunStore, type RunSession, type LearningEvidenceBundle, type LearningEvidenceItem, type MemoryRecallRequest,
+} from "@ling-stack/core";
+import { resolveWorkflowParticipantRunProfile } from "../channels/workflow-participant-run-profile.js";
 import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
 import { isRecord } from "../../shared/validation.js";
+import { HttpError } from "../../errors.js";
+
+type LearningSourceScope = Pick<MemoryRecallRequest, "workspaceId" | "taskId" | "channelId" | "teammateId">;
 
 /** Only selected durable lineage is read. A bounded window is explicit, never a claim of complete evidence. */
 export function captureLearningEvidence(store: RunStore, runId: string, correction?: string): LearningEvidenceBundle {
@@ -9,6 +16,10 @@ export function captureLearningEvidence(store: RunStore, runId: string, correcti
   if (!run || !["succeeded", "failed", "cancelled"].includes(run.status)) throw new Error("learning_source_not_terminal");
   const scope = resolveAutomaticMemoryRecallScope(store, { runId, query: "", intent: "task-run" });
   if (!scope) throw new Error("learning_source_scope_unavailable");
+  return captureScopedRunEvidence(store, run, scope, correction);
+}
+
+function captureScopedRunEvidence(store: RunStore, run: RunSession, scope: LearningSourceScope, correction?: string): LearningEvidenceBundle {
   const task = scope.taskId ? store.getTask(scope.taskId) : undefined;
   const turn = task ? undefined : store.getLingTurnForRun(run.id);
   if (!task && (!turn || !["succeeded", "failed", "cancelled"].includes(turn.status))) throw new Error("learning_source_turn_unavailable");
@@ -61,6 +72,52 @@ export function captureDecisionLearningEvidence(store: RunStore, decisionId: str
   return { ...basis, digest: createHash("sha256").update(JSON.stringify(basis)).digest("hex") };
 }
 
+export function captureWorkItemLearningEvidence(
+  store: RunStore, runId: string, workItem: NonNullable<LearningEvidenceBundle["workItem"]>,
+): LearningEvidenceBundle {
+  const item = store.getWorkItem(workItem.id);
+  if (!item || item.revision !== workItem.revision) {
+    throw new HttpError(409, "stale_revision", "The Work Item changed before its experience could be collected.");
+  }
+  const run = store.getRun(runId);
+  const step = run?.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const workflow = item.workflowId && item.planRevision ? store.getChannelWorkflow(item.workflowId) : undefined;
+  const finishedStage = workflow?.status === "succeeded" && step?.workflowId === workflow.id
+    && step.runId === runId && step.status === "succeeded";
+  if (run?.status !== "succeeded" || item.control.state !== "active" || ["cancelled", "archived", "superseded"].includes(item.status)
+    || item.control.unresolvedEffectIds.length
+    || item.holds.some(hold => hold.blocksNewAdmission) || !(finishedStage || item.status === "done" && item.runId === runId)) {
+    throw new HttpError(409, "learning_work_item_source_unavailable", "Select a successful Run owned by this completed Work Item.");
+  }
+  const scope = resolveAutomaticMemoryRecallScope(store, { runId, query: "", intent: "task-run" });
+  if (scope && scope.workspaceId === item.workspaceId) {
+    return bindWorkItemEvidence(captureScopedRunEvidence(store, run, scope), workItem);
+  }
+  const channel = run.channelId ? store.getChannel(run.channelId) : undefined;
+  const task = store.getTask(run.taskId);
+  if (!finishedStage || !channel || channel.status === "archived" || channel.workspaceId !== item.workspaceId
+    || step.workspaceId !== item.workspaceId || workflow.workspaceId !== item.workspaceId
+    || workflow.channelId !== channel.id || step.channelId !== channel.id || step.taskId !== task?.id
+    || task?.workspaceId !== item.workspaceId || task.channelId !== channel.id || task.currentRunId !== run.id
+    || !run.teammateId || step.toParticipantId !== run.teammateId || task.assigneeTeammateId !== run.teammateId
+    || step.metadata?.startOwner?.authorityBasis !== workflowStepStartAuthorityBasis(store, step)) {
+    throw new HttpError(409, "learning_source_scope_unavailable", "The completed Run does not have current evidence scope.");
+  }
+  const profile = resolveWorkflowParticipantRunProfile({ store, channel, step, requiredTools: step.metadata?.requiredTools ?? [] });
+  if (profile.kind !== "ready" || profile.teammateId !== run.teammateId) {
+    throw new HttpError(409, "learning_source_scope_unavailable", "The completed Run does not have current participant authority.");
+  }
+  return bindWorkItemEvidence(captureScopedRunEvidence(store, run, {
+    taskId: task.id, workspaceId: item.workspaceId, channelId: channel.id, teammateId: profile.teammateId,
+  }), workItem);
+}
+
+function bindWorkItemEvidence(
+  { digest, ...runEvidence }: LearningEvidenceBundle, workItem: NonNullable<LearningEvidenceBundle["workItem"]>,
+): LearningEvidenceBundle {
+  return { ...runEvidence, workItem, digest: createHash("sha256").update(JSON.stringify([digest, workItem])).digest("hex") };
+}
+
 export function learningEvidenceCurrent(store: RunStore, evidence: LearningEvidenceBundle): boolean {
   try {
     // Keep the Run's revision immutable while invalidating work whose target definition has since changed.
@@ -68,7 +125,8 @@ export function learningEvidenceCurrent(store: RunStore, evidence: LearningEvide
       store.getSkillDefinitionRevision(evidence.selectedSkillId)?.id !== evidence.selectedSkillRevisionId)) return false;
     const correction = evidence.items.find(item => item.kind === "correction");
     const text = correction?.text;
-    return (evidence.decisionId ? captureDecisionLearningEvidence(store, evidence.decisionId) :
+    return (evidence.workItem && evidence.runId ? captureWorkItemLearningEvidence(store, evidence.runId, evidence.workItem) :
+      evidence.decisionId ? captureDecisionLearningEvidence(store, evidence.decisionId) :
       evidence.runId ? captureLearningEvidence(store, evidence.runId, text) : undefined)?.digest === evidence.digest;
   } catch { return false; }
 }

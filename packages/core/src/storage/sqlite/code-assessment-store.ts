@@ -12,6 +12,7 @@ import type { CodeAssessmentStore } from "../../code-assessment-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { SqliteAppServerStateStore } from "./app-server-state-store.js";
+import { readSqliteWithinTransaction } from "./read-snapshot.js";
 
 const maxSnapshotBytes = 1024 * 1024;
 const maxDiffBytes = 256 * 1024;
@@ -60,6 +61,7 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
       ...(input.instructions ? { instructions: input.instructions } : {}),
       ...(input.reviewFocus ? { reviewFocus: input.reviewFocus } : {}),
       ...(input.reviewRules ? { reviewRules: input.reviewRules } : {}),
+      ...(input.submission?.workItem ? { workItem: input.submission.workItem } : {}),
       phase: "collecting_diff", phaseHistory: [{ phase: "preparing", enteredAt: input.preparedAt ?? input.now }, { phase: "collecting_diff", enteredAt: input.captureStartedAt ?? input.now }],
       metrics: mergeMetrics({ snapshotBytes: Buffer.byteLength(JSON.stringify(input.snapshot), "utf8"), diffBytes: input.snapshot.files.reduce((size, file) => size + Buffer.byteLength(file.diff, "utf8"), 0) }, input.metrics),
       validation: { state: "not_run", reason: "Tool-free Diff assessment does not execute tests or reproduce exploits." },
@@ -70,6 +72,7 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
     const db = this.context.database;
     begin(db);
     try {
+      if (input.submission?.assertCurrent) readSqliteWithinTransaction(db, input.submission.assertCurrent);
       if (db.prepare("SELECT id FROM code_assessments WHERE status IN ('queued','analyzing') LIMIT 1").get()) throw new Error("An assessment is already running in this workspace.");
       db.prepare("INSERT INTO code_assessment_snapshots(id,digest,body_json) VALUES (?,?,?)").run(input.snapshot.id, input.snapshot.digest, JSON.stringify(input.snapshot));
       db.prepare("INSERT INTO code_assessments(id,kind,status,snapshot_id,created_at,body_json) VALUES (?,?,?,?,?,?)").run(assessment.id, assessment.kind, assessment.status, assessment.snapshotId, assessment.createdAt, JSON.stringify(assessment));

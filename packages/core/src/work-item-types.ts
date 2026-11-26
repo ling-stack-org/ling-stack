@@ -1,4 +1,11 @@
 import { randomUUID } from "node:crypto";
+import type {
+  LingAppServerGitHubDelivery, LingAppServerGitHubIntakeBudget, LingAppServerGitHubIntakeReceipt, LingAppServerWorkItemAcceptance,
+  LingAppServerWorkItemConversationDispatch, LingAppServerWorkItemSourceReceipt,
+  LingAppServerWorkItemPlanChangeReceipt, LingAppServerWorkItemPlanChangeRequestParams, LingAppServerWorkItemPlanChangeWithdrawParams,
+  LingAppServerWorkflowGoalBudget, LingAppServerWorkflowUsage,
+  WorkItemLinkedExecution, WorkItemSourceType,
+} from "@ling-stack/contracts";
 import type { ControlPlaneEvent } from "./run-types.js";
 
 export type WorkItemStatus =
@@ -15,14 +22,7 @@ export type WorkItemStatus =
   | "superseded"
   | "archived";
 
-export type WorkItemSourceType =
-  | "channel_task"
-  | "channel_workflow_step"
-  | "external_work"
-  | "external_work_action"
-  | "approval"
-  | "run"
-  | "manual";
+export type { WorkItemSourceType } from "@ling-stack/contracts";
 
 export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resource" | "user" | "scheduler" | "provider";
 
@@ -48,6 +48,18 @@ export interface WorkItemHold {
   readonly ownerRef: string;
   readonly reason: string;
   readonly blocksNewAdmission: boolean;
+  readonly workflowStepIds?: readonly string[];
+}
+
+export type WorkItemPlanChangeInput =
+  | ({ readonly action: "request" } & LingAppServerWorkItemPlanChangeRequestParams)
+  | ({ readonly action: "withdraw" } & LingAppServerWorkItemPlanChangeWithdrawParams);
+
+export interface WorkItemPlanChangeResult {
+  readonly workItem: WorkItem;
+  readonly receipt: LingAppServerWorkItemPlanChangeReceipt;
+  readonly replayed: boolean;
+  readonly event?: ControlPlaneEvent;
 }
 
 export interface WorkItemControlProjection {
@@ -72,6 +84,7 @@ export interface WorkItem {
   readonly channelId?: string;
   readonly sourceType: WorkItemSourceType;
   readonly sourceId: string;
+  readonly linkedExecution?: WorkItemLinkedExecution;
   readonly revision: number;
   readonly title: string;
   readonly description?: string;
@@ -105,6 +118,13 @@ export interface WorkItem {
 
 export type WorkItemView = WorkItem;
 
+export interface WorkItemWorkflowUsage {
+  readonly total: LingAppServerWorkflowUsage;
+  readonly byStage: ReadonlyMap<string, LingAppServerWorkflowUsage>;
+  readonly byStep: ReadonlyMap<string, LingAppServerWorkflowUsage>;
+  readonly goalBudget?: LingAppServerWorkflowGoalBudget;
+}
+
 export interface UpsertWorkItemInput {
   readonly id?: string;
   readonly channelId?: string;
@@ -135,10 +155,48 @@ export interface CreateWorkItemInput extends Pick<UpsertWorkItemInput,
   "id" | "sourceType" | "sourceId" | "title" | "description" | "initialStatus" | "priority" | "labels"
 > {
   readonly idempotencyKey?: string;
+  /** Host-resolved target identity shared by the source occurrences. */
+  readonly verifiedTargetKey?: string;
+  readonly gitHubIntake?: GitHubIntakeOccurrence;
+  readonly linkExistingExecution?: boolean;
+}
+
+export interface GitHubIntakeOccurrence extends Omit<LingAppServerGitHubIntakeReceipt, "outcome" | "reasonCode" | "workItemId"> {
+  readonly automatic?: {
+    readonly repositoryId: string;
+    readonly budget: LingAppServerGitHubIntakeBudget;
+    readonly webhook?: { readonly sourceId: string; readonly sourceRevision: number };
+  };
+}
+
+export interface GitHubIntakeDispatchIntent {
+  readonly workItemId: string;
+  readonly receiptId: string;
+  readonly repositoryId: string;
+  readonly repository: string;
+  readonly policyRevision: string;
+  readonly webhook?: NonNullable<GitHubIntakeOccurrence["automatic"]>["webhook"];
+  readonly status: "pending" | "held" | "admitted";
+  readonly reasonCode?: string;
+  readonly runId?: string;
 }
 
 export interface CreateWorkItemResult {
   readonly workItem: WorkItem;
+  readonly event?: ControlPlaneEvent;
+  readonly sourceReceipt?: LingAppServerWorkItemSourceReceipt;
+  readonly gitHubIntakeReceipt?: LingAppServerGitHubIntakeReceipt;
+}
+
+export interface CommitWorkItemGitHubDeliveryInput {
+  readonly delivery: LingAppServerGitHubDelivery;
+  readonly targetKey: string;
+  readonly expectedWorkItemRevision: number;
+  readonly expectedDeliveryRevision: number;
+}
+
+export interface CommitWorkItemGitHubDeliveryResult {
+  readonly delivery: LingAppServerGitHubDelivery;
   readonly event?: ControlPlaneEvent;
 }
 
@@ -160,16 +218,17 @@ export interface WorkItemAcceptanceRequest {
   readonly expectedRevision: number;
   readonly actorId: string;
   readonly idempotencyKey: string;
+  readonly dispatch?: LingAppServerWorkItemConversationDispatch;
 }
 
-export interface WorkItemAcceptanceReceipt {
-  readonly id: string;
+export interface WorkItemConversationBinding {
   readonly workItemId: string;
-  readonly acceptedRevision: number;
-  readonly workItemRevision: number;
-  readonly actorId: string;
-  readonly idempotencyKey: string;
-  readonly acceptedAt: string;
+  readonly acceptanceId: string;
+  readonly submissionKey: string;
+}
+
+export interface WorkItemAcceptanceReceipt extends LingAppServerWorkItemAcceptance {
+  readonly dispatch?: LingAppServerWorkItemConversationDispatch & { readonly submissionKey: string };
 }
 
 export interface WorkItemAcceptanceResult {

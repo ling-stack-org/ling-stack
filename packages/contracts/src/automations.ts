@@ -152,6 +152,7 @@ export interface AutomationRun {
   readonly channelId?: string;
   readonly threadId: string;
   readonly runId?: string;
+  readonly coordinationRoundId?: string;
   readonly triggerType: AutomationTrigger["type"];
   readonly scheduledFor?: string;
   readonly firedAt: string;
@@ -293,6 +294,7 @@ export interface UpdateAutomationDraftRequest {
 }
 
 export interface AutomationRunRequest {
+  readonly intakeReceiptId?: string;
   readonly idempotencyKey?: string;
   readonly triggerType?: AutomationTrigger["type"];
   readonly scheduledFor?: string;
@@ -397,6 +399,7 @@ export interface AutomationRunDetailResponse {
 }
 
 export interface AutomationRunMutationResponse {
+  readonly intakeReceipt?: import("./work-items.js").NativeWorkIntakeReceipt;
   readonly cwd: string;
   readonly automation?: AutomationDefinition;
   readonly automationRun: AutomationRun;

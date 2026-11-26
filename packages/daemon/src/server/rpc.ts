@@ -1,11 +1,20 @@
-import type { Server } from "node:http";
+import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import {
   DEFAULT_WORKSPACE_ID,
+  WORK_ITEM_COLLABORATION_CONTENT_PREFIX,
+  WORKFLOW_STAGE_HANDOFF_ID_PREFIX,
+  WORKFLOW_STAGE_QUESTION_ID_PREFIX,
+  WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX,
   UserInputStoreError,
   evaluateDeliberationTrigger,
+  bindWorkItemDevice,
+  recordWorkItemDeviceReceipt,
+  readWorkItemDeviceBindings,
+  WorkItemDeviceBridgeError,
+  readWorkItemStageQuestion,
   type ControlPlaneDomain,
   type ControlPlaneEvent,
   type LingThreadGoal,
@@ -15,42 +24,60 @@ import {
   type RunSession,
   type RunStore,
   type WorkItem,
+  type WorkItemCollaborationRecord,
   type WorkItemControlReceipt,
+  type WorkItemPlanChangeInput,
   type WorkItemSourceType,
   type WorkItemStatus,
 } from "@ling-stack/core";
 import {
   LING_APP_SERVER_IMPLEMENTED_CAPABILITIES,
   LING_APP_SERVER_METHODS,
+  LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT,
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
   LING_PRODUCT_VERSION,
+  isLingAppServerMethod,
   parseUserInputAnswerCommandV1,
+  validateLingAppServerParams,
+  validateLingAppServerResult,
   type ControlPlaneSubscribeResult,
   type LingAppServerContextInspectResult,
+  type LingAppServerDeliberationDecideParams,
   type LingAppServerInputRespondResult,
+  type LingAppServerGitHubDeliveryResult,
   type LingAppServerJsonRpcId,
   type LingAppServerThreadEventsResult,
   type LingAppServerThreadSnapshotResult,
   type LingAppServerTurnResumeResult,
   type LingAppServerWorkItemControlResult,
+  type LingAppServerWorkItemAcceptResult,
+  type LingAppServerWorkItemConversationDispatch,
+  type LingAppServerWorkItemPlanChangeResult,
   type LingAppServerWorkItemReadResult,
   type LingAppServerWorkItemResult,
+  type LingAppServerWorkflowStageExecutionSource,
+  type LingAppServerWorkflowStageResultSource,
+  type LingAppServerWorkItemDeviceBindParams,
+  type LingAppServerWorkItemDeviceReceiptParams,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { loadAppServerReplayIdentity, unavailableAppServerReplayWindow, type AppServerReplayScope } from "./app-server-replay.js";
+import { appServerRecoveryFor, type AppServerRecoveryJournal } from "./app-server-recovery.js";
 import { isAllowedLocalOrigin, isDirectLoopbackRequest } from "../shared/local-workspace-access.js";
+import { isRecord } from "../shared/validation.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { expireStaleApproval } from "../features/runs/approvals.js";
 import { reconcileApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import { HttpError } from "../errors.js";
-import { prepareConversationSubmission } from "../features/conversations/conversation-submission.js";
+import { prepareConversationSubmission, publishPreparedConversationTurn } from "../features/conversations/conversation-submission.js";
 import { parseConversationStreamRequest } from "../features/conversations/routes.js";
 import { readConversationSubmission } from "../features/conversations/submission-receipts.js";
 import { readNormalConversationPreparedRequest } from "../features/conversations/normal-conversation-prepared-request.js";
+import { readRuntimeProjectInstructions } from "../features/conversations/runtime-project-instructions.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
   CONTROL_PLANE_POLL_MAX_LIMIT,
@@ -71,7 +98,9 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
-import { buildLingThreadResumeContext, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { bindGoalAcceptanceEvidence, buildLingThreadResumeContext, createLingThreadFork, parseCompleteLingThreadGoalBody,
+  parseProposedPlanActionBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { ProposedPlanMutationError } from "@ling-stack/core";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention, requestRunInterventionRedirect } from "../features/runs/interventions.js";
@@ -79,10 +108,39 @@ import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancell
 import { submitAuthorizedUserInputAnswer } from "../features/runs/user-input-answer.js";
 import { publishUserInputAnswerAcceptance } from "../features/runs/user-input-events.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
-import { AppServerDevelopmentService } from "./app-server-development.js";
-import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
-import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
-import { listManagedWorktrees } from "../features/workspaces/worktree-management.js";
+import { abortAppServerVerifications, getAppServerDevelopmentService, type AppServerDevelopmentService } from "./app-server-development.js";
+import {
+  applyAppServerChanges, captureAppServerChanges, captureAppServerWorktreeChanges, previewAppServerChangeRecovery, readAppServerChanges,
+} from "./app-server-changes.js";
+import { applyAppServerChangeTransfer, previewAppServerChangeTransfer } from "./app-server-change-transfer.js";
+import { RunWorkspaceRecoveryError } from "../features/runs/workspace-change-recovery.js";
+import { listManagedWorktrees, WorktreeActionError } from "../features/workspaces/worktree-management.js";
+import { cleanupAppServerWorktree, createAppServerWorktree, previewAppServerWorktreeCleanup, refreshAppServerWorktree } from "./app-server-worktrees.js";
+import { checkAppServerHandoff, createAppServerHandoff, handoffInstruction, readAppServerHandoff, readAppServerHandoffGoalTransfer } from "./app-server-handoff.js";
+import { normalConversationForkId } from "../features/conversations/normal-conversation-fork.js";
+import {
+  appServerGrantBearerPrefix, appServerGrantStillActive, authenticateAppServerGrant, createAppServerGrant,
+  grantAllowsMethod, grantAllowsRequest, listAppServerGrants, revokeAppServerGrant,
+  type AuthorizedAppServerGrant,
+} from "./app-server-authorization.js";
+import { gitHubReadClient, gitHubWorkItemTargetKey, parseGitHubSubjectParams, readAppServerGitHubSubject } from "./app-server-github-subject.js";
+import { listGitHubIntakePolicies, pollGitHubIntake, readGitHubIntake } from "./app-server-github-intake.js";
+import { readGitHubDelivery, reconcileGitHubDelivery } from "./app-server-github-delivery.js";
+import { enqueueGitHubDelivery, gitHubQueueReceiptConfirmed, readGitHubQueue } from "./app-server-github-enqueue.js";
+import { assertWorkItemConversationAdmission } from "../features/work-items/conversation-admission.js";
+import { listNativeWorkIntake, mutateNativeWorkIntake, readNativeWorkIntakeListRequest,
+  readNativeWorkIntakeMutation } from "../features/work-items/native-intake-requests.js";
+import { projectStageMessageDelivery } from "../features/work-items/stage-message-receiver.js";
+import { matchesStageCoordinationExecution, stageCoordinationDenied,
+  type StageCoordinationActor, type StageCoordinationBinding } from "../features/work-items/stage-coordination-authority.js";
+import { sendWorkItemStageMessage, WORKFLOW_STAGE_MESSAGE_ID_PREFIX } from "../features/work-items/stage-messages.js";
+import { askWorkItemStageQuestion, replyToWorkItemStageQuestion } from "../features/work-items/stage-questions.js";
+import { readWorkItemRetainedStageResults, readWorkItemWorkflowBinding, readWorkItemWorkflowStages, workItemWorkflowSettled } from "../features/work-items/workflow-stages.js";
+import { enqueueWorkItemFeedback } from "../features/learning/work-item-feedback.js";
+import { readArtifactContentRange, resolveArtifactContentPath } from "../features/runs/artifacts.js";
+import { isPrivateHostRecoveryArtifact, toPublicArtifactMetadata } from "../features/runs/public-artifacts.js";
+import { listEffectiveSkillRegistryEntries } from "../features/skills/registry.js";
+import { LING_APP_SERVER_ARTIFACT_RANGE_BYTES, type LingAppServerModelListResult, type LingAppServerPermissionProfileListResult, type LingAppServerSkillReadResult } from "@ling-stack/contracts";
 import {
   ExternalAgentFederationService,
   externalAgentRpcError,
@@ -95,7 +153,14 @@ import {
   AppServerCollaborationError,
   appendAppServerWorkItemCollaboration,
   readAppServerWorkItemCollaboration,
+  settleAppServerDeliberation,
+  startAppServerStageDeliberation,
 } from "./app-server-collaboration.js";
+import { coordinationDecisionInput, deliberationEvaluateInput, deliberationOpenInput, deliberationPolicyContext, evaluateAppServerDeliberation,
+  isCheckpointDeliberationRecord, openAppServerEvaluatedDeliberation, registerCoordinationDecision } from "./app-server-deliberation.js";
+import { planShapingRegistryKey, projectPlanShaping } from "../features/channels/plan-deliberation-shaping.js";
+import { readStageHandoffParams, settleAppServerStageHandoff } from "./app-server-stage-handoff.js";
+import { recoverAppServerStage } from "./app-server-stage-recovery.js";
 
 type JsonRpcId = string | number | null;
 
@@ -137,29 +202,70 @@ const legacyRpcMethods = new Set([
   "controlPlane.subscribe", "controlPlane.unsubscribe", "runs.start", "runs.cancel",
 ]);
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
-  "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
-  "turn/retry", "turn/steer", "thread/fork", "thread/compact/start", "thread/revert",
-  "handoff/create", "handoff/read", "handoff/resume", "changes/read",
-  "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
-  "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
+  "turn/retry", "turn/steer", "thread/compact/start", "thread/revert",
 ]);
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
+const activePlanShapingByContext = new WeakMap<DaemonContext, Map<string, AbortController>>();
+const appServerConnectionsByContext = new WeakMap<DaemonContext, Set<RpcConnection>>();
+const appServerInstanceIds = new WeakMap<DaemonContext, string>();
 const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
   "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
   "thread/delete", "thread/goal/set", "thread/goal/pause", "thread/goal/resume",
-  "thread/goal/clear", "thread/goal/complete", "plan/accept",
+  "thread/goal/clear", "thread/goal/complete", "plan/accept", "plan/refine",
+  "worktree/create", "worktree/cleanup",
+  "thread/fork", "handoff/create", "handoff/resume",
+  "server/grants/create", "server/grants/list", "server/grants/revoke",
+  "server/recovery/read", "server/recovery/prepare", "server/recovery/reconcile",
+  "github/subject/read", "github/delivery/reconcile", "github/delivery/enqueue", "github/delivery/queue/read",
+  "workItem/delivery/read", "delivery/read",
+  "workItem/device/bind", "workItem/device/receipt",
+  "workItem/intake/list", "workItem/intake/accept", "workItem/intake/retry",
+  "github/intake/policy/list", "github/intake/poll", "github/intake/read",
+  "workItem/accept",
+  "workItem/workflow/bind",
+  "workItem/plan/change/request", "workItem/plan/change/withdraw",
+  "workItem/stage/recover",
+  "workItem/feedback/add",
+  "workItem/deliberation/evaluate", "workItem/deliberation/open", "workItem/deliberation/decide", "workItem/deliberation/cancel",
+  "artifact/read", "model/list", "skill/read",
+  "workItem/coordination/schedule/read", "workItem/coordination/schedule/set",
+  "workItem/coordination/decision/submit", "workItem/coordination/decisions/read",
+  "changes/read", "changes/apply/preview", "changes/apply",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
-export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
+const recoveryGuardedMethods = new Set([
+  "github/delivery/enqueue",
+  "runs.start", "turn/start", "turn/queue", "turn/resume", "handoff/resume", "approval/respond", "input/respond",
+  "plan/accept", "plan/refine", "workItem/create", "workItem/accept", "workItem/workflow/bind", "workItem/resume", "github/intake/poll",
+  "workItem/coordination/start", "workItem/coordination/schedule/set", "workItem/deliberation/start", "workItem/deliberation/decide", "workItem/handoff/accept",
+  "workItem/deliberation/open",
+  "workItem/plan/change/withdraw", "workItem/stage/recover",
+  "externalAgent/task/start", "verify/start", "review/start", "simplify/start", "changes/apply", "worktree/create", "worktree/cleanup",
+  "workItem/feedback/add", "workItem/intake/accept", "workItem/intake/retry",
+]);
+export function attachRpcWebSocketServer(
+  server: Pick<Server, "on" | "off" | "once">, context: DaemonContext,
+  options: { readonly permitsRemoteUpgrade?: (request: IncomingMessage) => boolean } = {},
+): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const appServerConnections = new Set<RpcConnection>();
+  const daemonConnections = appServerConnectionsByContext.get(context) ?? new Set<RpcConnection>();
+  appServerConnectionsByContext.set(context, daemonConnections);
+  if (!appServerInstanceIds.has(context)) appServerInstanceIds.set(context, randomUUID());
+  const remote = Boolean(options.permitsRemoteUpgrade);
   let closed = false;
   let draining = false;
   const handleUpgrade: Parameters<Server["on"]>[1] = (request, socket, head) => {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
+    let url: URL;
+    try { url = new URL(request.url ?? "/", "http://localhost"); }
+    catch { rejectUpgrade(socket, 400, "Invalid WebSocket request path."); return; }
     const appServer = url.pathname === APP_SERVER_RPC_PATH;
+    if (remote && !appServer) {
+      rejectUpgrade(socket, 404, "The remote listener exposes only App Server RPC.");
+      return;
+    }
     if (url.pathname !== "/rpc/stream" && !appServer) {
       return;
     }
@@ -167,16 +273,25 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
       rejectUpgrade(socket, 503, "App Server is draining.");
       return;
     }
-    if (!context.config.transports.localWebSocketRpc) {
+    if (!remote && !context.config.transports.localWebSocketRpc) {
       rejectUpgrade(socket, 404, "WebSocket RPC transport is disabled");
       return;
     }
-    if (!daemonRequestIsAuthorized(context.config.authToken, request.headers.authorization)) {
-      rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
+    const authorization = request.headers.authorization;
+    const daemonAuthorized = daemonRequestIsAuthorized(context.config.authToken, authorization);
+    const scopedBearer = appServer && typeof authorization === "string" && authorization.startsWith(appServerGrantBearerPrefix)
+      && !(context.config.authToken && daemonAuthorized);
+    if (remote && !options.permitsRemoteUpgrade?.(request)
+      || appServer && !remote && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
+      rejectUpgrade(socket, 403, "The App Server listener does not permit this host or origin.");
       return;
     }
-    if (appServer && !context.config.authToken && (!isDirectLoopbackRequest(request) || !isAllowedLocalOrigin(request.headers.origin))) {
-      rejectUpgrade(socket, 403, "WebSocket RPC access requires a direct loopback Ling page or bearer token.");
+    if (remote && !scopedBearer) {
+      rejectUpgrade(socket, 401, "Remote App Server access requires a scoped grant.");
+      return;
+    }
+    if (!daemonAuthorized && !scopedBearer) {
+      rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
       return;
     }
     const cwd = url.searchParams.get("cwd");
@@ -197,11 +312,30 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
         return;
       }
     }
+    let grant: AuthorizedAppServerGrant | undefined;
+    if (scopedBearer) {
+      try {
+        const store = context.storeRegistry.getStore(workspaceCwd);
+        grant = authenticateAppServerGrant(store, authorization, appServerRecoveryFor(context.config, store), context.activeRuns);
+      }
+      catch { /* A grant cannot authenticate while its workspace store is unavailable. */ }
+      if (!grant) {
+        rejectUpgrade(socket, 401, "The App Server grant is unavailable.");
+        return;
+      }
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      const connection = new RpcConnection(ws, workspaceCwd, context, appServer, Boolean(context.config.authToken), () => draining);
+      const connection = new RpcConnection(ws, workspaceCwd, context, appServer, Boolean(context.config.authToken && daemonAuthorized),
+        () => draining, grant, (cwd, id) => {
+          for (const peer of daemonConnections) if (peer !== connection) peer.invalidateAuthorization(cwd, id);
+        });
       if (appServer) {
         appServerConnections.add(connection);
-        ws.once("close", () => appServerConnections.delete(connection));
+        daemonConnections.add(connection);
+        ws.once("close", () => {
+          appServerConnections.delete(connection);
+          daemonConnections.delete(connection);
+        });
       }
       connection.start();
     });
@@ -213,8 +347,9 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     const drainId = randomUUID();
     const startedAt = new Date().toISOString();
     for (const connection of appServerConnections) connection.notifyDraining(drainId, startedAt);
-    developmentByContext.get(context)?.abortVerifications();
+    abortAppServerVerifications(context);
     for (const controller of activeExternalDispatches.get(context)?.values() ?? []) controller.abort();
+    for (const controller of activePlanShapingByContext.get(context)?.values() ?? []) controller.abort();
   };
   const closeAll = (): void => {
     if (closed) {
@@ -257,8 +392,13 @@ class RpcConnection {
     private readonly appServer: boolean,
     private readonly authenticated: boolean,
     private readonly draining: () => boolean,
+    private readonly grant: AuthorizedAppServerGrant | undefined,
+    private readonly invalidatePeerAuthorization: (cwd: string, grantId?: string) => void,
   ) {
-    this.outbound = new RpcOutboundWriter(ws, { onClose: () => this.close() });
+    this.outbound = new RpcOutboundWriter(ws, {
+      onClose: () => this.close(),
+      ...(grant ? { canSend: () => this.grantIsCurrent() } : {}),
+    });
     this.development = getAppServerDevelopmentService(context);
   }
 
@@ -266,6 +406,10 @@ class RpcConnection {
     this.ws.on("message", this.onMessage);
     this.ws.on("close", this.onConnectionClose);
     this.ws.on("error", this.onConnectionError);
+  }
+
+  invalidateAuthorization(cwd: string, grantId?: string): void {
+    if (this.defaultCwd === cwd && (!grantId || this.grant?.grantId === grantId)) this.outbound.close(1008, "authorization_changed");
   }
 
   notifyDraining(drainId: string, startedAt: string): void {
@@ -319,7 +463,22 @@ class RpcConnection {
         throw rpcError(-32601, "method_not_found", `Unsupported App Server method: ${request.method}`);
       }
       const params = this.appServer ? this.workspaceParams(request.params, operatorMethods.has(request.method)) : request.params;
+      if (this.grant && (!this.grantIsCurrent()
+        || !grantAllowsRequest(this.context.storeRegistry.getStore(this.defaultCwd), this.grant, request.method, readParamsRecord(params)))) {
+        throw rpcError(-32021, "capability_denied", "The App Server grant does not authorize this method or subject.");
+      }
+      if (this.appServer && isLingAppServerMethod(request.method)) {
+        const validation = validateLingAppServerParams(request.method, params);
+        if (!validation.ok) throw rpcError(-32602, "invalid_params", `${validation.path} ${validation.message}.`);
+      }
+      if (this.context.config.appServerRecoveryDirectory && recoveryAdmissionRequest(request.method, params)) {
+        const store = this.context.storeRegistry.getStore(readRpcCwd(readParamsRecord(params), this.defaultCwd));
+        appServerRecoveryFor(this.context.config, store)?.assertReady();
+      }
       if (request.method === "controlPlane.subscribe") {
+        if (this.appServer) {
+          throw rpcError(-32601, "method_not_found", "Use thread/subscribe or workItem/subscribe on the App Server.");
+        }
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
         }
@@ -334,8 +493,9 @@ class RpcConnection {
         const record = this.workspaceParams(params);
         const workItemId = readStringField(record, "workItemId");
         const prepared = this.prepareControlPlaneSubscription({ ...record, domains: ["work_items"] }, {
-          filterEvent: (event) => event.entityType === "work_item" && event.entityId === workItemId
-            || event.entityType === "verify_operation" && event.data.workItemId === workItemId,
+          filterEvent: (event) => this.deliberationWorkflowEventVisible(event)
+            && (event.entityType === "work_item" && event.entityId === workItemId
+              || event.entityType === "verify_operation" && event.data.workItemId === workItemId),
           replayReadyMethod: "workItem/replay/ready",
           replayScope: this.replayIdentity(record.cwd).scope("workItem", workItemId),
         });
@@ -354,7 +514,7 @@ class RpcConnection {
           ...record,
           domains: ["runs", "approvals", "work_items", "work_units"],
         }, {
-          ...(threadId ? { filterEvent: (event: ControlPlaneEvent) => threadEventMatches(event, threadId, store) } : {}),
+          filterEvent: (event) => this.deliberationWorkflowEventVisible(event) && (!threadId || threadEventMatches(event, threadId, store)),
           replayReadyMethod: "thread/replay/ready",
           replayScope: this.replayIdentity(record.cwd, store).scope("thread", threadId),
           threadId,
@@ -363,8 +523,12 @@ class RpcConnection {
         return;
       }
       const result = await this.dispatch(request.method, params);
+      if (this.appServer && isLingAppServerMethod(request.method)) {
+        const validation = validateLingAppServerResult(request.method, result);
+        if (!validation.ok) throw rpcError(-32603, "invalid_result", `Invalid result for ${request.method}: ${validation.path} ${validation.message}.`);
+      }
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
-        if (this.appServer && this.authenticated && (request.method === "thread/snapshot" || request.method === "thread/resume")) {
+        if (this.appServer && this.canRespondToInput() && (request.method === "thread/snapshot" || request.method === "thread/resume")) {
           this.outbound.sendThreadSnapshot(id as LingAppServerJsonRpcId, result as LingAppServerThreadSnapshotResult);
         } else {
           this.send({ jsonrpc: "2.0", id, result });
@@ -398,8 +562,9 @@ class RpcConnection {
         return this.appServer ? {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
+          serverInstanceId: appServerInstanceIds.get(this.context),
           connectionId: this.connectionId,
-          effectiveScopes: ["controlPlane.read",
+          effectiveScopes: this.grant?.stageCoordination ? ["workItem.coordination"] : this.grant?.scopes ?? ["controlPlane.read",
             ...(this.authenticated ? ["runs.control", "approval.decide", "input.respond", "verification.execute"] : [])],
           capabilities: this.availableCapabilities(),
           ...(identity ? { storeIncarnation: identity.storeIncarnation, authorizationEpoch: identity.authorizationEpoch } : {}),
@@ -425,9 +590,59 @@ class RpcConnection {
         return {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           capabilities: this.availableCapabilities(),
-          methods: IMPLEMENTED_APP_SERVER_METHODS.filter(method => this.authenticated || !operatorMethods.has(method)),
+          methods: IMPLEMENTED_APP_SERVER_METHODS.filter(method => (!method.startsWith("server/recovery/") || this.context.config.appServerRecoveryDirectory)
+            && (this.grant ? grantAllowsMethod(this.grant, method) : this.authenticated || !operatorMethods.has(method))),
           notifications: LING_APP_SERVER_NOTIFICATION_METHODS,
         };
+      case "server/grants/create":
+      case "server/grants/list":
+      case "server/grants/revoke": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        const recovery = appServerRecoveryFor(this.context.config, store);
+        if (method === "server/grants/create") return { cwd: record.cwd, grant: createAppServerGrant(store, record, recovery, this.context.activeRuns) };
+        if (method === "server/grants/list") return { cwd: record.cwd, grants: listAppServerGrants(store) };
+        const grant = revokeAppServerGrant(store, readStringField(record, "grantId"), readIntegerField(record, "expectedRevision", "revision"), recovery);
+        this.invalidatePeerAuthorization(record.cwd, grant.grantId);
+        return { cwd: record.cwd, grant };
+      }
+      case "server/recovery/read":
+      case "server/recovery/prepare":
+      case "server/recovery/reconcile": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        const recovery = appServerRecoveryFor(this.context.config, store);
+        if (!recovery) throw rpcError(-32601, "method_not_found", "App Server recovery is not configured on this Host.");
+        if (method === "server/recovery/read") return recovery.read();
+        const revision = readIntegerField(record, "expectedRevision", "revision");
+        if (method === "server/recovery/prepare") {
+          const key = readStringField(record, "idempotencyKey");
+          if (!key.trim() || key.length > 200 || /[\r\n\0]/u.test(key)) {
+            throw rpcError(-32602, "invalid_params", "A recovery key of up to 200 characters is required.");
+          }
+          const priorEpoch = recovery.epoch();
+          const result = recovery.prepare(revision, key);
+          if (priorEpoch !== recovery.epoch()) {
+            this.invalidatePeerAuthorization(record.cwd);
+            for (const subscription of this.subscriptions.values()) this.closeSubscription(subscription);
+            this.initialized = false;
+          }
+          return result;
+        }
+        const federation = getExternalAgentFederation(this.context, record.cwd);
+        return recovery.reconcile(revision, fact => {
+          if (fact.kind === "external_agent_dispatch") {
+            const task = federation.getTask(fact.taskId)?.task;
+            return task?.submissionId === fact.submissionId && task.workItemId === fact.workItemId
+              && (task.status === "completed" || task.status === "cancelled");
+          }
+          if (fact.kind === "github_queue_enqueue") return gitHubQueueReceiptConfirmed(store, fact);
+          const observed = readGitHubDelivery(store, fact.workItemId);
+          return observed?.status === "delivered" && observed.mergedCommit === fact.mergedCommit
+            && observed.subject.repositoryId === fact.repositoryId && observed.subject.number === fact.number
+            && observed.subject.headSha === fact.headSha && observed.acceptanceId === fact.acceptanceId;
+        });
+      }
       case "workspace/list":
         return { workspaces: [{ workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.defaultCwd }] };
       case "workspace/read":
@@ -439,14 +654,41 @@ class RpcConnection {
         }
         return listManagedWorktrees(this.context.storeRegistry.getStore(cwd), cwd);
       }
+      case "worktree/create":
+      case "worktree/refresh":
+      case "worktree/cleanup/preview":
+      case "worktree/cleanup": {
+        const record = this.workspaceParams(params);
+        const ownerKind = readStringField(record, "ownerKind");
+        if (ownerKind !== "channel" && ownerKind !== "teammate") {
+          throw rpcError(-32602, "invalid_params", "ownerKind must be channel or teammate.");
+        }
+        const target = { ownerKind, ownerId: readStringField(record, "ownerId") } as const;
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        if (method === "worktree/create") return createAppServerWorktree(store, { ...target, baseBranch: readOptionalStringField(record, "baseBranch") });
+        if (method === "worktree/refresh") return refreshAppServerWorktree(store, target);
+        if (method === "worktree/cleanup/preview") return previewAppServerWorktreeCleanup(store, target);
+        if (record.confirmed !== true) {
+          throw rpcError(-32602, "worktree_confirmation_required", "Confirm the worktree cleanup preview.");
+        }
+        return cleanupAppServerWorktree(store, { ...target, expectedRevision: readStringField(record, "expectedRevision"), confirmed: true });
+      }
       case "provider/list":
         return this.readControlPlaneDomain(params, "providers");
+      case "model/list":
+        return this.listModels(params);
       case "skill/list":
         return this.readControlPlaneDomain(params, "skills");
+      case "skill/read":
+        return this.readSkill(params);
+      case "permissionProfile/list":
+        return this.listPermissionProfiles(params);
       case "thread/start":
         return this.startThread(params);
       case "thread/read":
         return this.readThread(params);
+      case "thread/fork":
+        return this.forkThread(params);
       case "thread/resume":
         return this.readThreadSnapshot(params);
       case "thread/snapshot":
@@ -487,6 +729,8 @@ class RpcConnection {
         if (!item || item.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", "The item does not belong to this Thread.");
         return { cwd: record.cwd, item };
       }
+      case "artifact/read":
+        return this.readArtifact(params);
       case "thread/mode/get":
         return this.getThreadMode(params);
       case "thread/mode/set":
@@ -506,20 +750,33 @@ class RpcConnection {
       case "plan/read":
         return this.readPlan(params);
       case "plan/accept":
-        return this.acceptPlan(params);
+      case "plan/refine":
+        return this.applyPlanAction(method, params);
       case "thread/unsubscribe":
         return this.unsubscribeControlPlane(params);
       case "verify/plan":
         return await this.development.planVerification(this.workspaceParams(params) as never);
       case "changes/capture": {
-        const { cwd } = this.workspaceParams(params);
-        const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
-        return {
-          cwd,
-          candidate: { workspaceId: cwd, candidateDigest: snapshot.digest, filePaths: snapshot.files.map(file => file.path) },
-          coverage: snapshot.coverage,
-          headCommit: snapshot.headSha,
-        };
+        const record = this.workspaceParams(params);
+        const scope = record.scope === "head" ? "head" : "working_tree";
+        if (record.sourceWorktree === undefined) return await captureAppServerChanges(record.cwd, scope);
+        const { cwd } = this.workspaceParams(params, true);
+        return await captureAppServerWorktreeChanges(this.context.storeRegistry.getStore(cwd), record.sourceWorktree, scope);
+      }
+      case "changes/read": {
+        const record = this.workspaceParams(params, true);
+        return await readAppServerChanges(this.context.storeRegistry.getStore(record.cwd), record);
+      }
+      case "changes/apply/preview":
+      case "changes/apply": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        if (record.action === "apply") return method === "changes/apply/preview"
+          ? await previewAppServerChangeTransfer(store, record)
+          : await applyAppServerChangeTransfer(store, record);
+        return method === "changes/apply/preview"
+          ? await previewAppServerChangeRecovery(store, record)
+          : await applyAppServerChanges(store, record);
       }
       case "verify/start":
         return await this.development.startVerification(params as never);
@@ -543,6 +800,22 @@ class RpcConnection {
         return await this.development.initInstructions(this.workspaceParams(params, readParamsRecord(params).mode === "apply") as never);
       case "context/inspect":
         return this.inspectTurnContext(params);
+      case "handoff/create": {
+        const record = this.workspaceParams(params, true);
+        const store = this.context.storeRegistry.getStore(record.cwd);
+        const handoff = await createAppServerHandoff(this.context, store, {
+          threadId: readStringField(record, "threadId"), turnId: readStringField(record, "turnId"),
+          idempotencyKey: readStringField(record, "idempotencyKey"), nextInstruction: readStringField(record, "nextInstruction"),
+        });
+        return { cwd: record.cwd, handoff };
+      }
+      case "handoff/read": {
+        const record = this.workspaceParams(params);
+        const handoff = readAppServerHandoff(this.context.storeRegistry.getStore(record.cwd), readStringField(record, "handoffId"));
+        return { cwd: record.cwd, handoff };
+      }
+      case "handoff/resume":
+        return this.resumeHandoff(params);
       case "turn/start":
         return this.startTurn(params);
       case "approval/respond":
@@ -586,8 +859,81 @@ class RpcConnection {
         return this.listWorkItems(params);
       case "workItem/create":
         return this.createWorkItem(params);
+      case "github/subject/read": {
+        const record = this.workspaceParams(params, true);
+        const subjectParams = parseGitHubSubjectParams(record);
+        const subject = await readAppServerGitHubSubject(gitHubReadClient(this.context, record.cwd, subjectParams.repository), subjectParams);
+        return { cwd: record.cwd, subject };
+      }
+      case "github/intake/poll": {
+        const record = this.workspaceParams(params, true);
+        const result = await pollGitHubIntake(this.context, this.context.storeRegistry.getStore(record.cwd), record);
+        if (result.receipts.some(receipt => receipt.outcome === "accepted")) this.context.automationEvents.poke(record.cwd);
+        return result;
+      }
+      case "github/intake/policy/list": {
+        const record = this.workspaceParams(params, true);
+        return listGitHubIntakePolicies(this.context, this.context.storeRegistry.getStore(record.cwd));
+      }
+      case "github/intake/read": {
+        const record = this.workspaceParams(params, true);
+        const receipt = readGitHubIntake(this.context.storeRegistry.getStore(record.cwd), record.receiptId);
+        return { cwd: record.cwd, receipt };
+      }
+      case "github/delivery/reconcile": {
+        const record = this.workspaceParams(params, true);
+        const subject = parseGitHubSubjectParams({ repository: record.repository, kind: "pull_request", number: record.pullRequestNumber });
+        const delivery = await reconcileGitHubDelivery(this.context, {
+          cwd: record.cwd, repository: subject.repository, pullRequestNumber: subject.number,
+          workItemId: readStringField(record, "workItemId"), threadId: readStringField(record, "threadId"),
+          candidateDigest: readStringField(record, "candidateDigest"),
+          expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
+        });
+        return { cwd: record.cwd, delivery } satisfies LingAppServerGitHubDeliveryResult;
+      }
+      case "github/delivery/enqueue": {
+        const record = this.workspaceParams(params, true);
+        if (record.confirmed !== true) throw rpcError(-32602, "invalid_params", "Confirm queue admission with a request key.");
+        return enqueueGitHubDelivery(this.context, this.context.storeRegistry.getStore(record.cwd), {
+          workItemId: readStringField(record, "workItemId"), deliveryId: readStringField(record, "deliveryId"),
+          expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
+          idempotencyKey: readStringField(record, "idempotencyKey"), confirmed: true,
+        });
+      }
+      case "github/delivery/queue/read": {
+        const record = this.workspaceParams(params, true);
+        return readGitHubQueue(this.context, this.context.storeRegistry.getStore(record.cwd),
+          readStringField(record, "workItemId"), readStringField(record, "queueReceiptId"));
+      }
+      case "workItem/delivery/read":
+      case "delivery/read": {
+        const record = this.workspaceParams(params, true);
+        const workItemId = readStringField(record, "workItemId");
+        const deliveryId = method === "delivery/read" ? readStringField(record, "deliveryId") : undefined;
+        const delivery = readGitHubDelivery(this.context.storeRegistry.getStore(record.cwd), workItemId, deliveryId);
+        if (!delivery) throw rpcError(-32040, "github_delivery_binding_unavailable", "Delivery was not found for this Work Item.");
+        return { cwd: record.cwd, delivery } satisfies LingAppServerGitHubDeliveryResult;
+      }
       case "workItem/accept":
         return this.acceptWorkItem(params);
+      case "workItem/intake/list": {
+        const { cwd, ...record } = this.workspaceParams(params, true);
+        const input = readNativeWorkIntakeListRequest(record, LING_APP_SERVER_NATIVE_INTAKE_PAGE_LIMIT);
+        return listNativeWorkIntake(this.context.storeRegistry.getStore(cwd), input);
+      }
+      case "workItem/intake/accept":
+      case "workItem/intake/retry": {
+        const { cwd, ...record } = this.workspaceParams(params, true);
+        const intake = this.context.nativeWorkIntake;
+        if (!intake) throw new HttpError(404, "native_intake_unavailable", "Native intake is unavailable.");
+        const input = readNativeWorkIntakeMutation(method === "workItem/intake/accept" ? "accept" : "retry", record);
+        return mutateNativeWorkIntake(this.context.storeRegistry.getStore(cwd), intake, input);
+      }
+      case "workItem/workflow/bind":
+        return this.bindWorkItemWorkflow(params);
+      case "workItem/plan/change/request":
+      case "workItem/plan/change/withdraw":
+        return this.changeWorkItemPlanScope(method === "workItem/plan/change/request" ? "request" : "withdraw", params);
       case "workItem/clarify":
         return this.clarifyWorkItem(params);
       case "workItem/evidence/read":
@@ -600,6 +946,12 @@ class RpcConnection {
         return this.appendCollaborationFromParams(params);
       case "workItem/read":
         return this.readWorkItem(params);
+      case "workItem/device/read":
+        return this.readWorkItemDevice(params);
+      case "workItem/device/bind":
+        return this.bindWorkItemDevice(params);
+      case "workItem/device/receipt":
+        return this.recordWorkItemDeviceReceipt(params);
       case "workItem/pause":
         return this.controlWorkItem("pause", params);
       case "workItem/resume":
@@ -607,42 +959,54 @@ class RpcConnection {
       case "workItem/cancel":
         return this.controlWorkItem("cancel", params);
       case "workItem/deliberation/start":
-        return this.appendCollaboration("deliberation", "started", params);
+        return this.startWorkItemDeliberation(params);
+      case "workItem/deliberation/evaluate":
+      case "workItem/deliberation/open":
+        return this.checkpointDeliberation(method, params);
       case "workItem/deliberation/decide":
-        return this.appendCollaboration("deliberation", "decided", params);
+        return this.settleWorkItemDeliberation("decided", params);
       case "workItem/deliberation/cancel":
-        return this.appendCollaboration("deliberation", "cancelled", params);
+        return this.settleWorkItemDeliberation("cancelled", params);
       case "workItem/deliberation/read":
         return this.readCollaboration("deliberation", params);
       case "workItem/stage/read":
-        return this.readCollaboration("stage", params);
       case "workItem/stage/brief/read":
-        return this.readCollaboration("brief", params);
+        return this.readWorkItemStages(method === "workItem/stage/read" ? "stage" : "brief", params);
+      case "workItem/stage/recover":
+        return this.recoverWorkItemStage(params);
       case "workItem/coordination/start":
         return this.appendCollaboration("coordination", "started", params);
       case "workItem/coordination/close":
         return this.appendCollaboration("coordination", "closed", params);
       case "workItem/coordination/read":
         return this.readCollaboration("coordination", params);
+      case "workItem/coordination/decision/submit":
+      case "workItem/coordination/decisions/read":
+        return this.coordinationDecision(method, params);
+      case "workItem/coordination/schedule/read":
+      case "workItem/coordination/schedule/set":
+        return this.coordinationSchedule(method, params);
       case "workItem/message/send":
-        return this.appendCollaboration("message", "created", params);
+        return readParamsRecord(params).targetStepId === undefined
+          ? this.appendCollaboration("message", "created", params) : this.sendStageMessage(params);
       case "workItem/message/read":
       case "workItem/message/list":
         return this.readCollaboration("message", params);
       case "workItem/question/ask":
-        return this.appendCollaboration("question", "created", params);
+        return readParamsRecord(params).waitingStepId === undefined
+          ? this.appendCollaboration("question", "created", params) : this.settleStageQuestion("ask", params);
       case "workItem/question/reply":
-        return this.appendCollaboration("question", "replied", params);
+        return readParamsRecord(params).questionId === undefined
+          ? this.appendCollaboration("question", "replied", params) : this.settleStageQuestion("reply", params);
       case "workItem/question/read":
         return this.readCollaboration("question", params);
       case "workItem/handoff/accept":
-        return this.appendCollaboration("handoff", "accepted", params);
       case "workItem/handoff/return":
-        return this.appendCollaboration("handoff", "returned", params);
+        return this.settleWorkItemStageHandoff(method === "workItem/handoff/accept" ? "accepted" : "returned", params);
       case "workItem/handoff/read":
         return this.readCollaboration("handoff", params);
       case "workItem/feedback/add":
-        return this.appendCollaboration("message", "updated", params);
+        return this.addWorkItemFeedback(params);
       case "externalAgent/register":
         return this.registerExternalAgent(params);
       case "externalAgent/capabilities/read":
@@ -664,17 +1028,54 @@ class RpcConnection {
   }
 
   private availableCapabilities(): readonly string[] {
+    if (this.grant) {
+      if (this.grant.stageCoordination) return ["server/ping", "workItem.coordination"];
+      const capabilities = ["server/ping"];
+      if (grantAllowsMethod(this.grant, "thread/subscribe")) capabilities.push("thread.events");
+      if (grantAllowsMethod(this.grant, "turn/start")) capabilities.push("turn.control");
+      if (grantAllowsMethod(this.grant, "approval/respond")) capabilities.push("approval.respond");
+      if (grantAllowsMethod(this.grant, "input/respond")) capabilities.push("input.respond");
+      if (grantAllowsMethod(this.grant, "workItem/read")) capabilities.push("workItem.read", "workItem.evidence");
+      if (grantAllowsMethod(this.grant, "workItem/device/read")) capabilities.push("workItem.device");
+      if (grantAllowsMethod(this.grant, "workItem/pause")) capabilities.push("workItem.control");
+      return capabilities;
+    }
     return LING_APP_SERVER_IMPLEMENTED_CAPABILITIES.filter(capability =>
       this.authenticated || (capability !== "turn.control" && capability !== "approval.respond"
-        && capability !== "input.respond" && capability !== "development.simplify"));
+        && capability !== "input.respond" && capability !== "development.simplify" && capability !== "development.changes"
+        && capability !== "development.changeTransfer"));
   }
 
   private replayIdentity(cwd: string, store = this.context.storeRegistry.getStore(cwd)) {
-    return loadAppServerReplayIdentity(store, cwd, this.context.config.authToken);
+    const key = this.grant
+      ? JSON.stringify([this.context.config.authToken, this.grant.grantId, this.grant.revision])
+      : this.context.config.authToken;
+    return loadAppServerReplayIdentity(store, cwd, key, appServerRecoveryFor(this.context.config, store)?.epoch());
+  }
+
+  private grantIsCurrent(): boolean {
+    if (!this.grant) return true;
+    try {
+      const store = this.context.storeRegistry.getStore(this.defaultCwd);
+      return appServerGrantStillActive(store, this.grant, appServerRecoveryFor(this.context.config, store), this.context.activeRuns);
+    } catch {
+      return false;
+    }
+  }
+
+  private stageCoordinationActor(): StageCoordinationActor | undefined {
+    const binding = this.grant?.stageCoordination;
+    return binding && { binding, assertCurrent: () => {
+      if (!this.grantIsCurrent()) throw stageCoordinationDenied();
+    } };
+  }
+
+  private canRespondToInput(): boolean {
+    return this.authenticated || Boolean(this.grant?.scopes.includes("respond"));
   }
 
   private workspaceParams(params: unknown, operator = false): Record<string, unknown> & { readonly cwd: string } {
-    if (operator && (!this.appServer || !this.authenticated)) {
+    if (operator && (!this.appServer || !this.authenticated && !this.grant)) {
       throw rpcError(-32020, "authorization_required", "This App Server method requires the daemon operator bearer credential.");
     }
     const record = readParamsRecord(params);
@@ -738,17 +1139,34 @@ class RpcConnection {
     return { cwd, workspaceId: snapshot.workspaceId, domain, snapshot: snapshot.domains[domain] };
   }
 
-  private createWorkItem(params: unknown): LingAppServerWorkItemResult {
+  private async createWorkItem(params: unknown): Promise<LingAppServerWorkItemResult> {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const sourceType = readOptionalWorkItemSourceType(record.sourceType) ?? "manual";
     const sourceId = readStringField(record, "sourceId");
     const title = readStringField(record, "title");
+    const linkExistingExecution = record.linkExistingExecution === true;
+    if (record.linkExistingExecution !== undefined && typeof record.linkExistingExecution !== "boolean") {
+      throw rpcError(-32602, "invalid_params", "linkExistingExecution must be a boolean.");
+    }
+    if (linkExistingExecution) {
+      this.workspaceParams(params, true);
+      if (sourceType !== "channel_task" && sourceType !== "automation_run" || record.gitHubSubject !== undefined) {
+        throw rpcError(-32602, "invalid_params", "Link either an existing channel Task or AutomationRun by source ID.");
+      }
+    }
     const idempotencyKey = readOptionalStringField(record, "idempotencyKey");
     if (idempotencyKey !== undefined && (!idempotencyKey.trim() || idempotencyKey.length > 200)) {
       throw rpcError(-32602, "invalid_params", "idempotencyKey must be a non-empty string of up to 200 characters.");
     }
     const store = this.context.storeRegistry.getStore(cwd);
+    let verifiedTargetKey: string | undefined;
+    if (record.gitHubSubject !== undefined) {
+      this.workspaceParams(params, true);
+      const subjectParams = parseGitHubSubjectParams(record.gitHubSubject);
+      const subject = await readAppServerGitHubSubject(gitHubReadClient(this.context, cwd, subjectParams.repository), subjectParams);
+      verifiedTargetKey = gitHubWorkItemTargetKey(subject);
+    }
     const input = {
       id: readOptionalStringField(record, "workItemId"),
       sourceType,
@@ -759,11 +1177,13 @@ class RpcConnection {
       priority: readOptionalWorkItemPriority(record.priority),
       labels: Array.isArray(record.labels) && record.labels.every((value) => typeof value === "string") ? record.labels as string[] : undefined,
       idempotencyKey,
+      verifiedTargetKey,
+      linkExistingExecution,
     };
     try {
-      const { workItem, event } = store.createWorkItem(input, new Date().toISOString(), cwd);
+      const { workItem, event, sourceReceipt } = store.createWorkItem(input, new Date().toISOString(), cwd);
       if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
-      return { cwd, workItem: projectWorkItemSnapshot(workItem) };
+      return { cwd, workItem: projectWorkItemSnapshot(workItem), ...(sourceReceipt ? { sourceReceipt } : {}) };
     } catch (error) {
       if (error instanceof Error && error.message === "work_item_creation_idempotency_conflict") {
         throw rpcError(-32031, "idempotency_conflict", "The creation key was reused with different input.");
@@ -771,11 +1191,14 @@ class RpcConnection {
       if (error instanceof Error && error.message === "work_item_creation_source_conflict") {
         throw rpcError(-32040, "workspace_binding_invalid", "The Work Item ID does not match the supplied source.");
       }
+      if (error instanceof Error && error.message === "work_item_source_owner_unavailable") {
+        throw rpcError(-32040, "workspace_binding_invalid", "The original execution is unavailable.");
+      }
       throw error;
     }
   }
 
-  private acceptWorkItem(params: unknown): unknown {
+  private async acceptWorkItem(params: unknown): Promise<LingAppServerWorkItemAcceptResult> {
     const record = this.workspaceParams(params);
     const { cwd } = record;
     const workItemId = readStringField(record, "workItemId");
@@ -785,6 +1208,7 @@ class RpcConnection {
       expectedRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedRevision"),
       actorId: readOptionalStringField(record, "actorId") ?? "local-user",
       idempotencyKey: readStringField(record, "idempotencyKey"),
+      dispatch: readOptionalWorkItemConversationDispatch(record.dispatch),
     };
     let result;
     try {
@@ -796,12 +1220,117 @@ class RpcConnection {
       if (error instanceof Error && error.message === "work_item_acceptance_already_committed") {
         throw rpcError(-32030, "stale_revision", "The Work Item already has an accepted dispatch.");
       }
+      if (error instanceof Error && error.message === "work_item_dispatch_thread_unavailable") {
+        throw rpcError(-32040, "workspace_binding_invalid", "The selected conversation is unavailable for first dispatch.");
+      }
       throw error;
     }
     if (!result) throw rpcError(-32030, "stale_revision", "The Work Item is no longer eligible for acceptance at this revision.");
     const { workItem, receipt, replayed, event } = result;
     if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
-    return { cwd, accepted: true, workItem: projectWorkItemSnapshot(workItem), acceptance: receipt, replayed };
+    const { dispatch, ...acceptance } = receipt;
+    const started = dispatch ? await this.dispatchAcceptedWorkItem(store, cwd, workItem, dispatch) : undefined;
+    return {
+      cwd, accepted: true, workItem: projectWorkItemSnapshot(store.getWorkItem(workItemId) ?? workItem), acceptance, replayed,
+      ...(started ? { dispatch: started } : {}),
+    };
+  }
+
+  private bindWorkItemWorkflow(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindResult {
+    const record = this.workspaceParams(params, true);
+    const { cwd } = record;
+    const input = {
+      workItemId: readStringField(record, "workItemId"),
+      planId: readStringField(record, "planId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      expectedPlanRevision: readIntegerField(record, "expectedPlanRevision", "expectedPlanRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+      previousWorkflowId: readOptionalStringField(record, "previousWorkflowId"),
+      resolvedPlanChangeIds: record.resolvedPlanChangeIds === undefined ? undefined : readPlanScopeIds(record.resolvedPlanChangeIds, 0),
+      retainStageResults: readRetainedWorkflowStageSources(record.retainStageResults, "result"),
+      retainStageExecutions: readRetainedWorkflowStageSources(record.retainStageExecutions, "execution"),
+    };
+    if (input.idempotencyKey.length > 200 || /[\r\n\0]/u.test(input.idempotencyKey)) {
+      throw rpcError(-32602, "invalid_params", "Supply a Work Item binding key of up to 200 characters.");
+    }
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { binding, workItem, replayed, event } = store.bindWorkItemWorkflow(input, new Date().toISOString(),
+        (workflowId, retainedRunIds) => workItemWorkflowSettled(store, this.context.activeRuns, workflowId, retainedRunIds));
+      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      return { cwd, binding, workItem: projectWorkItemSnapshot(workItem), replayed };
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      if (code === "work_item_workflow_idempotency_conflict") throw rpcError(-32031, "idempotency_conflict", "The binding key was reused with different input.");
+      if (code === "work_item_workflow_stale") throw rpcError(-32030, "stale_revision", "The Work Item or accepted Plan revision changed.");
+      if (code === "work_item_workflow_held") throw rpcError(-32061, "resume_blocked", "The Work Item or Workflow cannot accept a new binding.");
+      if (code === "work_item_workflow_predecessor_unsettled") {
+        throw rpcError(-32061, "resume_blocked", "The predecessor Workflow has unsettled Runs or effects.");
+      }
+      if (code === "work_item_workflow_retained_result_stale") {
+        throw rpcError(-32030, "stale_revision", "A retained stage source no longer matches the current predecessor or successor.");
+      }
+      if (code === "work_item_workflow_not_found") throw rpcError(-32040, "workspace_binding_invalid", "An accepted Work Item and converted Plan in this workspace are required.");
+      throw error;
+    }
+  }
+
+  private changeWorkItemPlanScope(action: "request" | "withdraw", params: unknown): LingAppServerWorkItemPlanChangeResult {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const basis = {
+      workItemId: readStringField(record, "workItemId"),
+      planRevision: readStringField(record, "planRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    if (!basis.idempotencyKey.trim() || basis.idempotencyKey.length > 200 || /[\r\n\0]/u.test(basis.idempotencyKey)
+      || basis.expectedWorkItemRevision < 1) {
+      throw rpcError(-32602, "invalid_params", "Supply the current Work Item revision and a bounded request key.");
+    }
+    const intent: WorkItemPlanChangeInput = action === "request" ? {
+      ...basis, action, affectedStageIds: readPlanScopeIds(record.affectedStageIds),
+      reason: readStringField(record, "reason").trim(),
+    } : { ...basis, action, changeId: readStringField(record, "changeId") };
+    if (intent.action === "request" && (!intent.reason || intent.reason.length > 2000)) {
+      throw rpcError(-32602, "invalid_params", "Describe the requested requirement change in up to 2,000 characters.");
+    }
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { workItem, receipt, replayed, event } = store.applyWorkItemPlanChange(intent, new Date().toISOString(), cwd);
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        if (action === "withdraw") this.context.taskSupervisor.poke(cwd);
+      }
+      return { cwd, workItem: projectWorkItemSnapshot(workItem), receipt, replayed };
+    } catch (error) {
+      const code = error instanceof Error ? error.message : undefined;
+      if (code === "work_item_plan_change_stage_invalid") throw rpcError(-32602, "invalid_params", "Choose affected stages from the current accepted Plan.");
+      if (code === "work_item_plan_change_stale") throw rpcError(-32030, "stale_revision", "The Plan change basis is stale.");
+      if (code === "work_item_plan_change_unavailable") throw rpcError(-32061, "resume_blocked", "The Work Item cannot accept this Plan change.");
+      if (code === "work_item_plan_change_conflict") throw rpcError(-32031, "idempotency_conflict", "The Plan change key was reused with different input.");
+      throw error;
+    }
+  }
+
+  private async dispatchAcceptedWorkItem(
+    store: RunStore, cwd: string, workItem: WorkItem,
+    intent: LingAppServerWorkItemConversationDispatch & { readonly submissionKey: string },
+  ): Promise<NonNullable<LingAppServerWorkItemAcceptResult["dispatch"]>> {
+    const { threadId, submissionKey, providerPresetId, message } = intent;
+    const identity = { threadId, submissionKey };
+    const thread = store.getLingThread(threadId);
+    if (workItem.runId) return { ...identity, status: "admitted", runId: workItem.runId };
+    if (!thread) return { ...identity, status: "held", blocker: "work_item_dispatch_thread_unavailable" };
+    try {
+      await this.startConversationTurn({ threadId, providerPresetId, idempotencyKey: submissionKey }, thread, cwd, message);
+    } catch (error) {
+      const blocker = normalizeRpcError(error).code;
+      const runId = store.getWorkItem(workItem.id)?.runId;
+      if (runId) return { ...identity, status: "admitted", runId };
+      return { ...identity, status: blocker === "work_item_dispatch_held" ? "held" : "pending", blocker };
+    }
+    const runId = store.getWorkItem(workItem.id)?.runId;
+    return runId ? { ...identity, status: "admitted", runId } : { ...identity, status: "pending" };
   }
 
   private clarifyWorkItem(params: unknown): unknown {
@@ -829,7 +1358,40 @@ class RpcConnection {
     if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
     const afterSequence = readOptionalIntegerField(record, "afterSequence") ?? 0;
     const evidence = store.listWorkItemEvidence({ workItemId, afterSequence, limit: readOptionalIntegerField(record, "limit") });
-    return { cwd, workItemId, evidence, nextAfterSequence: evidence.at(-1)?.sequence ?? afterSequence };
+    return { cwd, workItemId, evidence: this.grant ? evidence.filter(entry => entry.visibility === "work_item") : evidence,
+      nextAfterSequence: evidence.at(-1)?.sequence ?? afterSequence };
+  }
+
+  private coordinationSchedule(method: "workItem/coordination/schedule/read" | "workItem/coordination/schedule/set", params: unknown): unknown {
+    const record = this.workspaceParams(params, true);
+    const automationId = readStringField(record, "automationId");
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    if (method === "workItem/coordination/schedule/read") {
+      const schedule = store.getAutomationCoordinationSchedule(automationId);
+      return { cwd: record.cwd, schedule: schedule?.workItemId === workItemId ? schedule : null };
+    }
+    const { enabled, kind } = record;
+    const expectedRevision = readOptionalIntegerField(record, "expectedRevision");
+    const durationMs = readOptionalIntegerField(record, "durationMs");
+    if (typeof enabled !== "boolean" || kind !== "checkpoint" && kind !== "retrospective"
+      || expectedRevision === undefined || expectedRevision < 0 || durationMs === undefined || durationMs < 1000 || durationMs > 24 * 60 * 60_000) {
+      throw rpcError(-32602, "invalid_params", "Supply the schedule kind, enabled state, revision and a duration between one second and one day.");
+    }
+    const schedule = store.configureAutomationCoordination({ automationId, workItemId, enabled, kind, expectedRevision, durationMs },
+      new Date().toISOString());
+    return { cwd: record.cwd, schedule };
+  }
+
+  private coordinationDecision(method: "workItem/coordination/decision/submit" | "workItem/coordination/decisions/read", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    if (method === "workItem/coordination/decisions/read") {
+      return { cwd, receipts: store.readScheduledCoordinationDecisions(readStringField(record, "workItemId"), readStringField(record, "roundId")) };
+    }
+    const parsed = coordinationDecisionInput.safeParse(record);
+    if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an open checkpoint round and bounded decision inputs for a current stage.");
+    return registerCoordinationDecision(store, parsed.data, new Date().toISOString(), cwd, this.context.config.appServerDeliberationPolicies);
   }
 
   private appendWorkItemEvidence(params: unknown): unknown {
@@ -842,7 +1404,17 @@ class RpcConnection {
     const subjectRevision = readStringField(record, "subjectRevision");
     const kind = readStringField(record, "kind") as import("@ling-stack/core").WorkItemEvidenceKind;
     const content = readStringField(record, "content");
+    if (kind === "stage_recovery_ref" || idempotencyKey.startsWith("stage-recovery:")) {
+      throw rpcError(-32602, "invalid_params", "Stage recovery evidence uses workItem/stage/recover.");
+    }
+    if (content.startsWith(WORK_ITEM_COLLABORATION_CONTENT_PREFIX)) {
+      throw rpcError(-32602, "invalid_params", "Collaboration records use the collaboration methods.");
+    }
     const sourceRefs = Array.isArray(record.sourceRefs) ? record.sourceRefs : [];
+    const optionId = readOptionalStringField(record, "optionId");
+    if (optionId !== undefined && (kind !== "proposal" || !optionId.trim() || optionId !== optionId.trim() || optionId.length > 200)) {
+      throw rpcError(-32602, "invalid_params", "A decision option identifier must be a bounded proposal option.");
+    }
     const result = store.appendWorkItemEvidence({
       workItemId,
       expectedWorkItemRevision: readOptionalIntegerField(record, "expectedWorkItemRevision"),
@@ -852,6 +1424,7 @@ class RpcConnection {
       subjectRevision,
       kind,
       content,
+      optionId,
       sourceRefs: sourceRefs as import("@ling-stack/core").WorkItemEvidenceSourceRef[],
       visibility: readOptionalStringField(record, "visibility") as import("@ling-stack/core").WorkItemEvidenceVisibility | undefined,
     }, new Date().toISOString(), { cwd });
@@ -865,23 +1438,261 @@ class RpcConnection {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     try {
-      const result = readAppServerWorkItemCollaboration(this.context.storeRegistry.getStore(cwd), {
-        workItemId: readStringField(record, "workItemId"),
-        ...(kind ? { kind } : {}),
-        afterRevision: readOptionalIntegerField(record, "afterRevision"),
-        limit: readOptionalIntegerField(record, "limit"),
+      const store = this.context.storeRegistry.getStore(cwd);
+      const result = store.readSnapshot(() => {
+        const collaboration = readAppServerWorkItemCollaboration(store, {
+          workItemId: readStringField(record, "workItemId"),
+          ...(kind ? { kind } : {}),
+          afterRevision: readOptionalIntegerField(record, "afterRevision"),
+          limit: readOptionalIntegerField(record, "limit"),
+        }, !this.grant);
+        const stage = this.grant?.stageCoordination;
+        if (stage) return { ...collaboration, records: collaboration.records
+          .filter(entry => stageCoordinationRecordVisible(store, stage, entry))
+          .map(entry => projectStageMessageDelivery(store, entry)) };
+        return this.grant ? collaboration : { ...collaboration,
+          records: collaboration.records.map(entry => projectStageMessageDelivery(store, entry)) };
       });
-      return { cwd, ...result };
+      if (!this.grant || this.grant.stageCoordination) return { cwd, ...result };
+      const privatePrefixes = [WORKFLOW_STAGE_MESSAGE_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ID_PREFIX, WORKFLOW_STAGE_QUESTION_ANSWER_ID_PREFIX];
+      const records = result.records.filter(entry => !isCheckpointDeliberationRecord(entry)
+        && !privatePrefixes.some(prefix => entry.id.startsWith(prefix))).map(entry => {
+        if (this.grant?.subject.kind !== "workItem") return entry;
+        if (entry.kind !== "handoff" || !entry.id.startsWith(WORKFLOW_STAGE_HANDOFF_ID_PREFIX)) return entry;
+        const payload = isRecord(entry.payload) && typeof entry.payload.reason === "string"
+          ? { reason: entry.payload.reason } : {};
+        return { ...entry, payload, sourceRefs: [] };
+      });
+      return { cwd, ...result, records };
     } catch (error) {
       throw collaborationRpcError(error);
     }
+  }
+
+  private readWorkItemStages(kind: "stage" | "brief", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const workItemId = readStringField(record, "workItemId");
+    const offset = readOptionalIntegerField(record, "stageOffset") ?? 0;
+    if (offset < 0) throw rpcError(-32602, "invalid_params", "stageOffset must be non-negative.");
+    const store = this.context.storeRegistry.getStore(cwd);
+    return store.readSnapshot(() => {
+      const workItem = store.getWorkItem(workItemId);
+      if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", "The Work Item is unavailable.");
+      const collaboration = readAppServerWorkItemCollaboration(store, { workItemId, kind,
+        afterRevision: readOptionalIntegerField(record, "afterRevision"), limit: readOptionalIntegerField(record, "limit") });
+      const includeEvidence = this.grant?.subject.kind !== "workItem";
+      const stage = this.grant?.stageCoordination;
+      const workflow = readWorkItemWorkflowStages(store, workItem, includeEvidence, offset, stage ? this.context.activeRuns : undefined);
+      return { cwd, ...collaboration, ...(stage ? { records: [] } : {}), workflow };
+    });
   }
 
   private appendCollaborationFromParams(params: unknown): unknown {
     const record = readParamsRecord(params);
     const kind = readStringField(record, "kind") as import("@ling-stack/contracts").LingAppServerCollaborationKind;
     const action = readStringField(record, "action") as import("@ling-stack/contracts").LingAppServerCollaborationAction;
+    if (kind === "deliberation" && (action === "decided" || action === "cancelled")) {
+      return this.settleWorkItemDeliberation(action, params);
+    }
     return this.appendCollaboration(kind, action, params);
+  }
+
+  private startWorkItemDeliberation(params: unknown): unknown {
+    if (readParamsRecord(params).workflowStepId === undefined) return this.appendCollaboration("deliberation", "started", params);
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const input = {
+      workItemId: readStringField(record, "workItemId"),
+      workflowStepId: readStringField(record, "workflowStepId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { event, ...result } = startAppServerStageDeliberation(store, input, new Date().toISOString(), cwd);
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        this.context.taskSupervisor.poke(cwd);
+      }
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
+  }
+
+  private async checkpointDeliberation(method: "workItem/deliberation/evaluate" | "workItem/deliberation/open", params: unknown): Promise<unknown> {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const now = new Date().toISOString();
+    const policyContext = deliberationPolicyContext(this.context.config, store);
+    if (method === "workItem/deliberation/evaluate") {
+      const parsed = deliberationEvaluateInput.safeParse(record);
+      if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply a current subject, checkpoint and bounded decision inputs.");
+      const { event, admissionEvent, ...result } = await evaluateAppServerDeliberation(store, parsed.data, now, cwd, policyContext);
+      if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (admissionEvent) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(admissionEvent));
+        this.context.taskSupervisor.poke(cwd);
+      }
+      return result;
+    }
+    const parsed = deliberationOpenInput.safeParse(record);
+    if (!parsed.success) throw rpcError(-32602, "invalid_params", "Supply an evaluation, Work Item revision and bounded request key.");
+    const { event, collectShaping, ...result } = await openAppServerEvaluatedDeliberation(store, parsed.data, now, cwd, {
+      ...policyContext,
+      runners: this.context.runnerRegistry, secrets: this.context.secretResolver,
+      publish: event => this.context.controlPlaneEvents.publish(trimOversizedEvent(event)),
+    });
+    if (event) {
+      this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (parsed.data.execution === "read_only_workflow") this.context.taskSupervisor.poke(cwd);
+    }
+    if (collectShaping) {
+      const controller = new AbortController();
+      let active = activePlanShapingByContext.get(this.context);
+      if (!active) activePlanShapingByContext.set(this.context, active = new Map());
+      const key = planShapingRegistryKey(cwd, result.record.id);
+      active.set(key, controller);
+      if (this.context.activeRuns.isShuttingDown()) controller.abort();
+      const collection = collectShaping(controller.signal).finally(() => active.delete(key));
+      this.context.activeRuns.trackCompletion(collection);
+    }
+    return { cwd, ...result };
+  }
+
+  private addWorkItemFeedback(params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    if (record.sourceRunId === undefined) return this.appendCollaboration("message", "updated", params);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const result = enqueueWorkItemFeedback(store, {
+      workItemId: readStringField(record, "workItemId"),
+      sourceRunId: readStringField(record, "sourceRunId"),
+      providerPresetId: readStringField(record, "providerPresetId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    }, cwd);
+    this.context.learningReviewCoordinator?.wake(store);
+    return result;
+  }
+
+  private async settleWorkItemStageHandoff(action: "accepted" | "returned", params: unknown): Promise<unknown> {
+    const raw = readParamsRecord(params);
+    if (raw.sourceStepId === undefined && raw.targetStepId === undefined) return this.appendCollaboration("handoff", action, params);
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { event, ...result } = await settleAppServerStageHandoff(
+        store, readStageHandoffParams(record, action), action, this.context.activeRuns, new Date().toISOString(),
+      );
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        if (action === "accepted") this.context.taskSupervisor.poke(cwd);
+      }
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
+  }
+
+  private async recoverWorkItemStage(params: unknown): Promise<import("@ling-stack/contracts").LingAppServerStageRecoverResult> {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const input = {
+      workItemId: readStringField(record, "workItemId"), workflowStepId: readStringField(record, "workflowStepId"),
+      planRevision: readStringField(record, "planRevision"), blockerId: readStringField(record, "blockerId"),
+      failureEventId: readStringField(record, "failureEventId"), operationId: readStringField(record, "operationId"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    const expectedWorkItemRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision");
+    const evidenceKind = readOptionalStringField(record, "evidenceKind");
+    if (evidenceKind !== undefined && evidenceKind !== "verification" && evidenceKind !== "review") {
+      throw rpcError(-32602, "invalid_params", "Choose verification or review as the recovery evidence kind.");
+    }
+    if (expectedWorkItemRevision < 1 || input.idempotencyKey.length > 200
+      || Object.values(input).some(value => value.length > 256 || !value.trim() || /[\r\n\0]/u.test(value))) {
+      throw rpcError(-32602, "invalid_params", "Supply the current stage, blocker and a bounded request key.");
+    }
+    try {
+      const { event, ...result } = await recoverAppServerStage(this.context.storeRegistry.getStore(cwd),
+        { ...input, expectedWorkItemRevision, evidenceKind }, this.context.activeRuns);
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        this.context.taskSupervisor.poke(cwd);
+      }
+      return result;
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
+  }
+
+  private async settleWorkItemDeliberation(action: "decided" | "cancelled", params: unknown): Promise<unknown> {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const input = {
+      workItemId: readStringField(record, "workItemId"),
+      roundId: readStringField(record, "roundId"),
+      expectedRoundRevision: readIntegerField(record, "expectedRoundRevision", "expectedRoundRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+      reason: readStringField(record, "reason").trim(),
+    };
+    if (!input.expectedRoundRevision || !input.expectedWorkItemRevision || !input.idempotencyKey.trim()
+      || input.idempotencyKey.length > 200 || !input.reason || input.reason.length > 2000) {
+      throw rpcError(-32602, "invalid_params", "Supply positive revisions, a bounded request key and a reason.");
+    }
+    const decision = action === "decided" ? readDeliberationDecision(record.decision) : undefined;
+    try {
+      const store = this.context.storeRegistry.getStore(cwd);
+      const { event, ...result } = await settleAppServerDeliberation(store, input, decision, new Date().toISOString(), cwd);
+      if (action === "cancelled") activePlanShapingByContext.get(this.context)?.get(planShapingRegistryKey(cwd, input.roundId))?.abort();
+      if (event) {
+        this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+        this.context.taskSupervisor.poke(cwd);
+      }
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
+  }
+
+  private sendStageMessage(params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const execution = record.expectedExecution === undefined ? undefined : readParamsRecord(record.expectedExecution);
+    const { event, ...receipt } = sendWorkItemStageMessage(store, {
+      workItemId: readStringField(record, "workItemId"), planRevision: readStringField(record, "planRevision"),
+      targetStepId: readStringField(record, "targetStepId"), expectedTargetRevision: readStringField(record, "expectedTargetRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      body: readStringField(record, "body"), idempotencyKey: readStringField(record, "idempotencyKey"),
+      ...(execution ? { expectedExecution: { runId: readStringField(execution, "runId"), attemptId: readStringField(execution, "attemptId") } } : {}),
+    }, new Date().toISOString(), this.context.activeRuns, this.stageCoordinationActor());
+    if (event) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+    return { cwd, ...receipt, record: projectStageMessageDelivery(store, receipt.record) };
+  }
+
+  private settleStageQuestion(action: "ask" | "reply", params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const basis = {
+      workItemId: readStringField(record, "workItemId"), idempotencyKey: readStringField(record, "idempotencyKey"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+    };
+    const now = new Date().toISOString();
+    const actor = this.stageCoordinationActor();
+    const predecessor = record.predecessorQuestion === undefined ? undefined : readParamsRecord(record.predecessorQuestion);
+    if (action === "reply") appServerRecoveryFor(this.context.config, store)?.assertReady();
+    const { event, ...receipt } = action === "ask" ? askWorkItemStageQuestion(store, {
+      ...basis, planRevision: readStringField(record, "planRevision"), waitingStepId: readStringField(record, "waitingStepId"),
+      respondentStepId: readStringField(record, "respondentStepId"), question: readStringField(record, "question"),
+      deadlineAt: readStringField(record, "deadlineAt"), answerFromStageResult: record.answerFromStageResult === true,
+      ...(predecessor ? { predecessorQuestion: { id: readStringField(predecessor, "id"),
+        revision: readIntegerField(predecessor, "revision", "revision") } } : {}),
+    }, now, this.context.activeRuns, actor) : replyToWorkItemStageQuestion(store, {
+      ...basis, questionId: readStringField(record, "questionId"), answer: readStringField(record, "answer"),
+      expectedQuestionRevision: readIntegerField(record, "expectedQuestionRevision", "expectedQuestionRevision"),
+    }, now, undefined, actor);
+    if (event) {
+      this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      if (action === "reply") this.context.taskSupervisor.poke(cwd);
+    }
+    return { cwd, ...receipt };
   }
 
   private appendCollaboration(
@@ -901,6 +1712,18 @@ class RpcConnection {
       }
       const store = this.context.storeRegistry.getStore(cwd);
       const scope = this.replayIdentity(cwd, store).scope("workItem", workItemId);
+      const parentRecordId = readOptionalStringField(record, "parentRecordId");
+      if (kind === "coordination" && action === "closed" && parentRecordId && store.readScheduledCoordinationRound(parentRecordId)) {
+        this.workspaceParams(params, true);
+        const closed = this.context.automationSchedulers.closeCoordinationRound(cwd, {
+          workItemId, recordId: parentRecordId, actorId: readStringField(record, "actorId"), cause: "owner_closed",
+          expectedWorkItemRevision: readOptionalIntegerField(record, "expectedWorkItemRevision"),
+          expectedCollaborationRevision: readOptionalIntegerField(record, "expectedCollaborationRevision"),
+        }, new Date().toISOString());
+        if (!closed) throw rpcError(-32040, "coordination_subject_unavailable", "The coordination round is unavailable.");
+        const { event, ...result } = closed.result;
+        return { cwd, ...result };
+      }
       const { event, ...result } = appendAppServerWorkItemCollaboration(store, {
         ...record,
         cwd,
@@ -969,7 +1792,20 @@ class RpcConnection {
     };
     try {
       const hostDispatch = this.appServer && this.authenticated;
-      const result = federation.startTask(record as never, assertAdmission, hostDispatch);
+      const recovery = hostDispatch ? appServerRecoveryFor(this.context.config, store) : undefined;
+      let recoveryDispatch: { readonly journal: AppServerRecoveryJournal; readonly id: string } | undefined;
+      const result = federation.startTask(record as never, () => {
+        assertAdmission();
+        if (!recovery) return;
+        const { registration } = federation.getRegistration(registrationId)!;
+        const id = "external_dispatch_" + createHash("sha256").update(JSON.stringify([
+          registration.adapterKind, registration.agentId, workItemId, submission.idempotencyKey,
+        ])).digest("hex");
+        if (recovery.hasExternalDispatch(id)) {
+          throw rpcError(-32060, "unknown_outcome", "The original dispatch is retained in the recovery journal. Read its receipt before retrying.");
+        }
+        recoveryDispatch = { journal: recovery, id };
+      }, hostDispatch);
       const task = result.task;
       this.externalTaskIds.add(task.taskId);
       if (!result.replayed) {
@@ -978,7 +1814,7 @@ class RpcConnection {
           entityId: task.taskId, action: "external_agent.task.started", idempotencyKey: task.submissionId,
           data: { registrationId, workItemId, status: task.status, dispatchDepth: task.dispatchDepth },
         });
-        if (hostDispatch) this.dispatchExternalAgentTask(cwd, federation, registrationId, task.taskId, submission, assertAdmission);
+        if (hostDispatch) this.dispatchExternalAgentTask(cwd, federation, registrationId, task.taskId, submission, assertAdmission, recoveryDispatch);
       }
       const response = { ...result, task: federation.getTask(task.taskId)!.task };
       if (this.appServer && !result.replayed) this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: response });
@@ -996,6 +1832,7 @@ class RpcConnection {
     taskId: string,
     submission: Record<string, unknown>,
     assertAdmission: () => void,
+    recoveryDispatch?: { readonly journal: AppServerRecoveryJournal; readonly id: string },
   ): void {
     if (!this.context.storeRegistry.isTrustedWorkspaceRoot(cwd)) {
       federation.markUnknown(taskId, "dispatch_workspace_untrusted");
@@ -1024,8 +1861,15 @@ class RpcConnection {
     }
     const objective = readStringField(submission, "objective");
     const controller = new AbortController();
+    const task = federation.getTask(taskId)!.task;
     const dispatch = {
-      federation, taskId, runner, assertAdmission,
+      federation, taskId, runner, assertAdmission: () => {
+        assertAdmission();
+        if (recoveryDispatch && !recoveryDispatch.journal.reserveExternalDispatch({ id: recoveryDispatch.id, taskId,
+          submissionId: task.submissionId, workItemId: task.workItemId })) {
+          throw new HttpError(409, "unknown_outcome", "This dispatch was already recorded in the App Server recovery journal.");
+        }
+      },
       options: {
         cwd,
         task: { id: taskId, title: objective.slice(0, 120), prompt: objective },
@@ -1046,7 +1890,9 @@ class RpcConnection {
       activeExternalDispatches.set(this.context, active);
     }
     active.set(taskId, controller);
-    const settled = dispatchExternalAgentTask(dispatch).catch(error => {
+    const settled = dispatchExternalAgentTask(dispatch).then(result => {
+      if (result.outcome === "completed") recoveryDispatch?.journal.confirmExternalDispatch(recoveryDispatch.id);
+    }).catch(error => {
       try {
         federation.markUnknown(taskId, error instanceof ExternalAgentDispatchError ? error.code : undefined);
       } catch { /* The retained dispatch receipt is available for recovery. */ }
@@ -1129,6 +1975,73 @@ class RpcConnection {
     };
   }
 
+  private forkThread(params: unknown): unknown {
+    const record = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    const sourceThread = store.getLingThread(readStringField(record, "threadId"));
+    if (!sourceThread) throw rpcError(-32040, "workspace_binding_invalid", "The source Thread was not found.");
+    const fork = createLingThreadFork({ store, sourceThread, body: record, now: new Date().toISOString() });
+    this.publishForkedThread(store, record.cwd, fork.childThread, sourceThread.id);
+    return {
+      cwd: record.cwd, sourceThreadId: sourceThread.id, sourceTurnId: fork.sourceTurn?.id, sourceRunId: fork.sourceRun?.id,
+      thread: projectPublicLingThread(fork.childThread), replayed: !fork.created,
+    };
+  }
+
+  private async resumeHandoff(params: unknown) {
+    const record = this.workspaceParams(params, true);
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    const handoff = readAppServerHandoff(store, readStringField(record, "handoffId"));
+    const providerPresetId = readStringField(record, "providerPresetId");
+    if (!store.getProviderPreset(providerPresetId)) {
+      throw rpcError(-32602, "invalid_params", "The Handoff requires an available provider preset.");
+    }
+    const idempotencyKey = `app-server-handoff:${handoff.handoffId}`;
+    const childId = normalConversationForkId(handoff.sourceThreadId, idempotencyKey);
+    let child = store.getLingThread(childId);
+    const receipt = readConversationSubmission(store, { surface: "normal", threadId: childId, idempotencyKey });
+    const acceptedTurn = receipt.status === "accepted" && receipt.turnId ? store.getLingTurn(receipt.turnId) : undefined;
+    let goalTransfer = readAppServerHandoffGoalTransfer(store, handoff.handoffId);
+    if (child && store.getNormalConversationForkSeed(child.id)?.threadId !== handoff.sourceThreadId) {
+      throw rpcError(-32031, "idempotency_conflict", "The Handoff child Thread has a different origin.");
+    }
+    if (!acceptedTurn || !acceptedTurn.activeRunId && !acceptedTurn.lastRunId) {
+      const sourceThread = await checkAppServerHandoff(this.context, store, handoff);
+      child = createLingThreadFork({
+        store, sourceThread, now: new Date().toISOString(),
+        body: { turnId: handoff.sourceTurnId, sourceRunId: handoff.sourceRunId, idempotencyKey,
+          title: `Handoff: ${sourceThread.title}`, objective: handoff.goal?.objective ?? sourceThread.objective },
+      }).childThread;
+      try {
+        const ownership = store.transferAppServerHandoffGoal(handoff.handoffId, child.id, new Date().toISOString());
+        goalTransfer = ownership?.transfer;
+        for (const event of ownership?.events ?? []) this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+      } catch (error) {
+        if (error instanceof Error && error.message === "handoff_goal_stale") {
+          throw rpcError(-32030, "handoff_stale", "The Goal or its source execution changed before the handoff.");
+        }
+        if (error instanceof Error && error.message === "handoff_goal_busy") {
+          throw rpcError(-32061, "resume_blocked", "The source has a pending Run continuation.");
+        }
+        throw error;
+      }
+    }
+    if (!child) throw rpcError(-32061, "resume_blocked", "The Handoff receipt has no available child Thread.");
+    this.publishForkedThread(store, record.cwd, child, handoff.sourceThreadId);
+    const result = await this.startConversationTurn({ idempotencyKey, providerPresetId }, child, record.cwd, handoffInstruction(handoff));
+    return { ...result, handoffId: handoff.handoffId, ...(goalTransfer ? { goalTransfer } : {}) };
+  }
+
+  private publishForkedThread(store: RunStore, cwd: string, thread: LingThread, sourceThreadId: string): void {
+    const idempotencyKey = `app-server-fork:${thread.id}`;
+    if (store.getControlPlaneEventByIdempotency(thread.workspaceId, idempotencyKey)) return;
+    const event = store.appendControlPlaneEvent({
+      workspaceId: thread.workspaceId, cwd, domain: "runs", entityType: "thread", entityId: thread.id,
+      action: "thread.started", idempotencyKey, data: { threadId: thread.id, sourceThreadId, status: thread.status },
+    }, new Date().toISOString());
+    this.context.controlPlaneEvents.publish(trimOversizedEvent(event));
+  }
+
   private readThreadSnapshot(params: unknown): LingAppServerThreadSnapshotResult {
     const { cwd, ...record } = this.workspaceParams(params);
     const threadId = readStringField(record, "threadId");
@@ -1142,12 +2055,13 @@ class RpcConnection {
       const runId = turn?.activeRunId ?? turn?.lastRunId;
       const run = runId ? store.getRun(runId) : undefined;
       const goal = store.getLingThreadGoal(threadId);
-      const pendingApprovals = run ? store.listApprovalRequests({ runId: run.id, status: "pending" }).map(toApprovalSummary) : [];
+      const pendingApprovals = run ? store.listApprovalRequests({ runId: run.id, status: "pending" })
+        .filter(canPresentPendingApproval).map(approval => ({ ...toApprovalSummary(approval), revision: appServerApprovalRevision(approval) })) : [];
       const itemIds = turn ? store.listConversationItemsForTurn({ turnId: turn.id })
         .filter(item => item.kind === "user_input_request").map(item => item.id) : [];
       const pendingInputs = itemIds.length ? store.readUserInputTranscript({ threadId, itemIds }).flatMap(item => {
         if (item.availability !== "available" || item.kind !== "user_input_request" || item.status !== "pending") return [];
-        return [this.authenticated ? item : { ...item, answerAuthority: undefined }];
+        return [this.canRespondToInput() ? item : { ...item, answerAuthority: undefined }];
       }) : [];
       return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) ?? null,
         goal: goal ? { id: goal.id, objective: goal.objective, status: goal.status,
@@ -1166,7 +2080,9 @@ class RpcConnection {
     const turn = store.getLingTurn(turnId);
     if (!turn || turn.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", "Turn is outside the supplied Thread.");
     const request = turn.sourceItemId ? readNormalConversationPreparedRequest(store, turn.sourceItemId) : undefined;
+    const projectInstructionUpdates = readRuntimeProjectInstructions(store, turnId);
     return { cwd, threadId, turnId, projectInstructions: request?.projectInstructionManifest ?? null,
+      ...(projectInstructionUpdates.length ? { projectInstructionUpdates } : {}),
       context: request?.normalConversationContext?.projection ?? null };
   }
 
@@ -1241,6 +2157,8 @@ class RpcConnection {
     const turns = store.listLingTurns({ threadId, limit: 500 });
     const goal = store.getLingThreadGoal(threadId);
     const plans = store.listProposedPlanArtifacts({ threadId, limit: 200 });
+    const workItemIds = store.listLingThreadWorkItemDependencies(threadId);
+    if (workItemIds.length) blockers.push("current Work Item depends on thread");
     if (goal && ["active", "paused", "blocked", "usage_limited", "budget_limited"].includes(goal.status)) blockers.push("active goal depends on thread");
     if (plans.some((plan) => plan.status === "accepted")) blockers.push("accepted plan depends on thread");
     return {
@@ -1249,7 +2167,7 @@ class RpcConnection {
       revision: thread.updatedAt,
       allowed: blockers.length === 0,
       blockers,
-      dependencies: { turnCount: turns.length, goalId: goal?.id, planIds: plans.filter((plan) => plan.status === "accepted").map((plan) => plan.id) },
+      dependencies: { turnCount: turns.length, goalId: goal?.id, planIds: plans.filter((plan) => plan.status === "accepted").map((plan) => plan.id), workItemIds },
     };
   }
 
@@ -1263,7 +2181,10 @@ class RpcConnection {
       readonly blockers: readonly string[];
     };
     if (!preview.allowed) throw rpcError(-32061, "resume_blocked", `Thread deletion is blocked: ${preview.blockers.join("; ")}`);
-    const result = store.hardDeleteLingThread(threadId, { reason: readOptionalStringField(record, "reason") }, new Date().toISOString());
+    const result = store.hardDeleteLingThread(threadId, {
+      reason: readOptionalStringField(record, "reason"),
+      expectedThreadRevision: readOptionalStringField(record, "expectedRevision"),
+    }, new Date().toISOString());
     if (!result) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
     appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -1376,7 +2297,7 @@ class RpcConnection {
     return { cwd, threadId, goal };
   }
 
-  private completeThreadGoal(params: unknown): unknown {
+  private async completeThreadGoal(params: unknown): Promise<unknown> {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const threadId = readStringField(record, "threadId");
@@ -1389,7 +2310,8 @@ class RpcConnection {
       evidenceRefs: record.evidenceRefs ?? record.completionEvidenceRefs,
       completionVerificationSummary: record.completionVerificationSummary ?? record.verificationSummary,
     });
-    const updated = store.updateLingThreadGoal(goal.id, input, new Date().toISOString());
+    const prepared = await bindGoalAcceptanceEvidence(store, goal, input, params => reconcileGitHubDelivery(this.context, params, "clean_checkout"));
+    const updated = store.updateLingThreadGoal(goal.id, prepared, new Date().toISOString());
     if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
     this.publishThreadGoal(store, cwd, updated);
     return { cwd, threadId, goal: updated };
@@ -1414,36 +2336,48 @@ class RpcConnection {
     const planId = readOptionalStringField(record, "planId");
     const threadId = readOptionalStringField(record, "threadId");
     if (!planId && !threadId) throw rpcError(-32602, "invalid_params", "planId or threadId is required.");
-    if (planId) {
+    if (planId) return store.readSnapshot(() => {
       const plan = store.getProposedPlanArtifact(planId);
-      if (!plan) throw rpcError(-32040, "workspace_binding_invalid", `Plan was not found: ${planId}`);
-      return { cwd, plan };
-    }
+      if (!plan || threadId && plan.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", `Plan was not found: ${planId}`);
+      const binding = this.authenticated && !this.grant ? store.getAppServerState("work_item_thread", plan.threadId)?.payload as
+        import("@ling-stack/core").WorkItemConversationBinding | undefined : undefined;
+      const deliberations = binding && plan.status === "draft" ? projectPlanShaping(store, plan, binding.workItemId) : [];
+      return { cwd, threadId: plan.threadId, plan, ...(deliberations.length ? { deliberations } : {}) };
+    });
     return { cwd, threadId, plans: store.listProposedPlanArtifacts({ threadId, limit: readOptionalIntegerField(record, "limit") }) };
   }
 
-  private acceptPlan(params: unknown): unknown {
+  private applyPlanAction(method: "plan/refine" | "plan/accept", params: unknown): import("@ling-stack/contracts").ProposedPlanActionResponse {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const planId = readStringField(record, "planId");
     const threadId = readStringField(record, "threadId");
+    const expectedRevision = readOptionalIntegerField(record, "expectedRevision");
+    const action = method === "plan/refine" ? "refine" : record.mode === "workflow" ? "convert-workflow" : "accept";
+    const workflow = action === "convert-workflow" ? parseProposedPlanActionBody({
+      workflowTitle: record.workflowTitle, workflowStepPreviews: record.workflowStepPreviews,
+    }, threadId) : undefined;
+    if (action !== "accept" && expectedRevision === undefined) throw rpcError(-32602, "invalid_params", "Supply the current Plan revision.");
+    if (workflow && !workflow.workflowStepPreviews?.length) throw rpcError(-32602, "invalid_params", "Supply at least one Workflow stage.");
+    const draft = action === "refine" && record.draft !== undefined ? readParamsRecord(record.draft) : undefined;
+    const refinedDraft = draft && { title: readStringField(draft, "title"), bodyMarkdown: readStringField(draft, "bodyMarkdown") };
     const store = this.context.storeRegistry.getStore(cwd);
     const result = store.applyProposedPlanArtifactAction(planId, {
-      threadId,
-      action: "accept",
-      expectedRevision: readOptionalIntegerField(record, "expectedRevision"),
+      ...workflow, threadId, action, expectedRevision, refinedDraft,
       createdBy: readOptionalStringField(record, "createdBy") ?? "local-user",
     }, new Date().toISOString());
+    const eventAction = action === "refine" ? "plan.refined" : "plan.accepted";
     appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
+      workspaceId: result.plan.workspaceId,
       cwd,
       domain: "runs",
       entityType: "plan",
-      entityId: planId,
-      action: "plan.accepted",
-      data: { planId, threadId, revision: result.plan.revision },
+      entityId: result.plan.id,
+      action: eventAction,
+      data: { planId: result.plan.id, threadId, revision: result.plan.revision, parentPlanId: result.plan.parentPlanId },
+      idempotencyKey: `app-server:${eventAction}:${result.plan.id}:${result.plan.revision}`,
     });
-    return { cwd, ...result };
+    return { cwd, threadId, ...result };
   }
 
   private listThreadTurns(params: unknown): unknown {
@@ -1500,7 +2434,7 @@ class RpcConnection {
       if (!prepared || prepared.threadId !== thread.id || prepared.turnId !== turn.id || prepared.workspaceCwd !== cwd) {
         throw rpcError(-32061, "resume_blocked", "The Turn has no saved execution preparation.");
       }
-      this.publishConversationTurnStarted(store, cwd, turn);
+      publishPreparedConversationTurn(store, this.context.controlPlaneEvents, turn);
       const recovered = await this.executeConversationRun(prepared);
       return projectTurnResume(store, cwd, thread, turn, store.getRun(recovered), "recovered");
     }
@@ -1523,7 +2457,7 @@ class RpcConnection {
       if (!prepared || prepared.parentRunId !== run.id || latestTurnId !== successor.id || thread.activeRunId) {
         throw rpcError(-32061, "resume_blocked", "The recovery has no current prepared request.");
       }
-      this.publishConversationTurnStarted(store, cwd, successor);
+      publishPreparedConversationTurn(store, this.context.controlPlaneEvents, successor);
       const recovered = await this.executeConversationRun(prepared);
       return projectTurnResume(store, cwd, thread, successor, store.getRun(recovered), "continued", turn.id);
     }
@@ -1540,7 +2474,7 @@ class RpcConnection {
     });
     const successor = resume.runRequest.turnId && store.getLingTurn(resume.runRequest.turnId);
     if (!successor) throw rpcError(-32061, "resume_blocked", "The recovery has no accepted successor Turn.");
-    this.publishConversationTurnStarted(store, cwd, successor);
+    publishPreparedConversationTurn(store, this.context.controlPlaneEvents, successor);
     const recovered = await this.executeConversationRun(resume.runRequest);
     return projectTurnResume(store, cwd, thread, successor, store.getRun(recovered), "continued", turn.id);
   }
@@ -1569,6 +2503,7 @@ class RpcConnection {
       }
       return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(prior, thread), replayed: true };
     }
+    assertWorkItemConversationAdmission(store, threadId, undefined);
     const turn = store.createLingTurn({
       id: turnId,
       threadId,
@@ -1590,7 +2525,7 @@ class RpcConnection {
   }
 
   private async startConversationTurn(record: Record<string, unknown>, thread: import("@ling-stack/core").LingThread, cwd: string,
-    instruction: string | undefined): Promise<unknown> {
+    instruction: string | undefined) {
     if (thread.kind !== "conversation" || thread.channelId || thread.archivedAt || thread.status === "archived") {
       throw rpcError(-32040, "workspace_binding_invalid", "This Thread cannot accept a normal conversation Turn.");
     }
@@ -1618,29 +2553,20 @@ class RpcConnection {
       turnKind: record.kind === undefined ? undefined : readLingTurnKind(readStringField(record, "kind")),
       imageVisionSummarizer: this.context.imageVisionSummarizer,
     });
-    const { turn, runRequest, replayed } = prepared;
+    const { turn, runRequest, replayed, replayRunId } = prepared;
     if (input.providerPresetId && input.providerPresetId !== runRequest.providerPresetId
       || input.executionBinding && JSON.stringify(input.executionBinding) !== JSON.stringify(runRequest.executionBinding)) {
       throw rpcError(-32031, "idempotency_conflict", "The original submission used a different execution configuration.");
     }
-    this.publishConversationTurnStarted(store, cwd, turn);
+    if (!this.grantIsCurrent()) throw rpcError(-32020, "authorization_required", "The App Server grant expired or was revoked before dispatch.");
+    publishPreparedConversationTurn(store, this.context.controlPlaneEvents, turn);
     const receipt = readConversationSubmission(store, { surface: "normal", threadId: thread.id, idempotencyKey: input.idempotencyKey! });
-    const runId = turn.activeRunId ?? turn.lastRunId ?? await this.executeConversationRun(runRequest);
+    const runId = replayRunId ?? turn.activeRunId ?? turn.lastRunId ?? await this.executeConversationRun(runRequest);
     const currentThread = store.getLingThread(thread.id) ?? thread;
     return {
       cwd, thread: projectPublicLingThread(currentThread), turn: projectPublicLingTurn(store.getLingTurn(turn.id) ?? turn, currentThread),
       run: projectPublicRunSession(store.getRun(runId), store), receipt, replayed,
     };
-  }
-
-  private publishConversationTurnStarted(store: RunStore, cwd: string, turn: LingTurn): void {
-    const idempotencyKey = `app-server-turn:${turn.id}`;
-    if (store.getControlPlaneEventByIdempotency(turn.workspaceId, idempotencyKey)) return;
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: turn.workspaceId, cwd, domain: "runs", entityType: "turn", entityId: turn.id,
-      action: "turn.started", idempotencyKey,
-      data: { threadId: turn.threadId, turnId: turn.id, status: "queued" },
-    });
   }
 
   private executeConversationRun(runRequest: RunRequest): Promise<string> {
@@ -1680,7 +2606,12 @@ class RpcConnection {
       || record.turnId !== undefined && readStringField(record, "turnId") !== turn?.id) {
       throw rpcError(-32040, "workspace_binding_invalid", "The approval does not belong to the supplied Thread or Turn.");
     }
+    if (approval.status === "expired") throw rpcError(-32050, "request_expired", "The approval has expired.");
     if (approval.status !== "pending") throw rpcError(-32051, "request_already_resolved", "The approval is no longer pending.");
+    const expectedRevision = readOptionalStringField(record, "expectedRevision");
+    if (expectedRevision !== undefined && expectedRevision !== appServerApprovalRevision(approval)) {
+      throw rpcError(-32030, "stale_revision", "The observed approval revision does not match the pending decision.");
+    }
     const now = new Date().toISOString();
     const input = {
       reason: readOptionalStringField(record, "reason"),
@@ -1811,15 +2742,151 @@ class RpcConnection {
       if (!workItem) {
         throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
       }
-      return { cwd, workItem: projectWorkItemSnapshot(workItem), cursor: scope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
+      const includeExecutionRefs = this.grant?.subject.kind !== "workItem";
+      const dispatch = store.getAppServerState("github_intake_dispatch", workItemId)?.payload as import("@ling-stack/core").GitHubIntakeDispatchIntent | undefined;
+      return { cwd, workItem: projectWorkItemSnapshot(workItem, includeExecutionRefs),
+        ...(dispatch ? { intakeDispatch: { receiptId: dispatch.receiptId, status: dispatch.status,
+          reasonCode: dispatch.reasonCode, ...(includeExecutionRefs ? { runId: dispatch.runId } : {}) } } : {}),
+        cursor: scope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
     });
+  }
+
+  private readWorkItemDevice(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemDeviceReadResult {
+    const record = this.workspaceParams(params);
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    return store.readSnapshot(() => {
+      if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", "The Work Item was not found.");
+      return { cwd: record.cwd, workItemId, bindings: readWorkItemDeviceBindings(store, workItemId) };
+    });
+  }
+
+  private bindWorkItemDevice(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemDeviceBindResult {
+    const record = this.workspaceParams(params, true);
+    const input: LingAppServerWorkItemDeviceBindParams = {
+      cwd: record.cwd, workItemId: readStringField(record, "workItemId"), graphId: readStringField(record, "graphId"),
+      graphNodeId: readStringField(record, "graphNodeId"), graphRevision: readIntegerField(record, "graphRevision", "graphRevision"),
+      ownerHostId: readStringField(record, "ownerHostId"), ownerRouteGeneration: readIntegerField(record, "ownerRouteGeneration", "ownerRouteGeneration"),
+      workUnitId: readStringField(record, "workUnitId"), attemptId: readOptionalStringField(record, "attemptId"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    try {
+      const result = bindWorkItemDevice(this.context.storeRegistry.getStore(record.cwd), input, new Date().toISOString(), record.cwd);
+      if (result.event) this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
+      return { cwd: record.cwd, binding: result.binding, replayed: result.replayed };
+    } catch (error) {
+      throw deviceBridgeRpcError(error);
+    }
+  }
+
+  private recordWorkItemDeviceReceipt(params: unknown): import("@ling-stack/contracts").LingAppServerWorkItemDeviceReceiptResult {
+    const record = this.workspaceParams(params, true);
+    const input: LingAppServerWorkItemDeviceReceiptParams = {
+      cwd: record.cwd, workItemId: readStringField(record, "workItemId"), bindingId: readStringField(record, "bindingId"),
+      expectedBindingRevision: readIntegerField(record, "expectedBindingRevision", "expectedBindingRevision"),
+      expectedWorkItemRevision: readIntegerField(record, "expectedWorkItemRevision", "expectedWorkItemRevision"),
+      ownerHostId: readStringField(record, "ownerHostId"), ownerRouteGeneration: readIntegerField(record, "ownerRouteGeneration", "ownerRouteGeneration"),
+      workUnitId: readStringField(record, "workUnitId"), attemptId: readOptionalStringField(record, "attemptId"),
+      status: readStringField(record, "status") as LingAppServerWorkItemDeviceReceiptParams["status"],
+      resultRef: readStringField(record, "resultRef"), reconciled: record.reconciled === true,
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+    };
+    try {
+      const result = recordWorkItemDeviceReceipt(this.context.storeRegistry.getStore(record.cwd), input, new Date().toISOString(), record.cwd);
+      if (result.event) this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
+      return { cwd: record.cwd, binding: result.binding, replayed: result.replayed };
+    } catch (error) {
+      throw deviceBridgeRpcError(error);
+    }
+  }
+
+  private readArtifact(params: unknown): import("@ling-stack/contracts").LingAppServerArtifactReadResult {
+    const record = this.workspaceParams(params);
+    const artifactId = readStringField(record, "artifactId");
+    const offset = readOptionalIntegerField(record, "offset");
+    const limit = readOptionalIntegerField(record, "limit");
+    if ((offset ?? 0) < 0 || limit !== undefined && (limit < 1 || limit > LING_APP_SERVER_ARTIFACT_RANGE_BYTES)) {
+      throw rpcError(-32602, "invalid_params", `Artifact ranges must use a non-negative offset and a limit up to ${LING_APP_SERVER_ARTIFACT_RANGE_BYTES}.`);
+    }
+    const store = this.context.storeRegistry.getStore(record.cwd);
+    const artifact = store.getArtifact(artifactId);
+    if (!artifact || isPrivateHostRecoveryArtifact(artifact)) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact is unavailable in this workspace.");
+    }
+    const requestedRunId = readOptionalStringField(record, "runId");
+    if (requestedRunId && artifact.runId !== requestedRunId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Run.");
+    }
+    const run = artifact.runId ? store.getRun(artifact.runId) : undefined;
+    const requestedThreadId = readOptionalStringField(record, "threadId");
+    const requestedWorkItemId = readOptionalStringField(record, "workItemId");
+    if (requestedThreadId && run?.threadId !== requestedThreadId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Thread.");
+    }
+    const itemForRequest = requestedWorkItemId ? store.getWorkItem(requestedWorkItemId) : undefined;
+    const currentWorkflow = itemForRequest?.workflowId ? readWorkItemWorkflowBinding(store, itemForRequest.workflowId) : undefined;
+    const retainedArtifact = readWorkItemRetainedStageResults(store, currentWorkflow)
+      .some(result => result.sourceArtifactId === artifact.id && result.sourceRunId === run?.id);
+    if (requestedWorkItemId && (!itemForRequest || !(artifact.runId && itemForRequest.runId === artifact.runId)
+      && !(run?.workflowStepId && itemForRequest.workflowId && store.getChannelWorkflowStep(run.workflowStepId)?.workflowId === itemForRequest.workflowId)
+      && !retainedArtifact && !itemForRequest.artifactIds.includes(artifact.id) && !itemForRequest.proofArtifactIds.includes(artifact.id))) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact does not belong to the requested Work Item.");
+    }
+    if (this.grant?.subject.kind === "thread" && run?.threadId !== this.grant.subject.id) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The artifact is outside the granted Thread.");
+    }
+    const { path: _path, ...metadata } = toPublicArtifactMetadata(artifact);
+    if (offset === undefined && limit === undefined) return { cwd: record.cwd, artifact: metadata };
+    try {
+      const range = readArtifactContentRange(resolveArtifactContentPath(store, artifact), offset ?? 0, limit ?? LING_APP_SERVER_ARTIFACT_RANGE_BYTES);
+      return { cwd: record.cwd, artifact: metadata, contentBase64: range.content.toString("base64"),
+        offset: range.offset, endExclusive: range.endExclusive, sizeBytes: range.sizeBytes, partial: range.partial };
+    } catch {
+      throw rpcError(-32040, "workspace_binding_invalid", "The requested artifact range is unavailable.");
+    }
+  }
+
+  private listModels(params: unknown): LingAppServerModelListResult {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const offset = readOptionalIntegerField(record, "offset") ?? 0;
+    if (offset < 0) throw rpcError(-32602, "invalid_params", "offset must be non-negative.");
+    const presets = this.context.storeRegistry.getStore(cwd).listProviderPresets();
+    const end = offset + 20;
+    const models = presets.slice(offset, end).map(({ id, displayName, providerId, model, enabled, capabilities, input }) =>
+      ({ id, displayName, providerId, model, enabled, capabilities, input }));
+    return { cwd, models, ...(end < presets.length ? { nextOffset: end } : {}) };
+  }
+
+  private readSkill(params: unknown): LingAppServerSkillReadResult {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const id = readStringField(record, "skillId");
+    const entry = listEffectiveSkillRegistryEntries(this.context.storeRegistry.getStore(cwd)).find(skill => skill.id === id);
+    if (!entry?.visibility.workspaceVisible || !["builtin", "published"].includes(entry.reviewStatus)) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The requested Skill is unavailable.");
+    }
+    const { packId, source, version, reviewStatus, definition: { name, summary, requiredTools, requiredProviderCapabilities } } = entry;
+    return { cwd, skill: { id, packId, source, version, reviewStatus, definition: { name, summary, requiredTools, requiredProviderCapabilities } } };
+  }
+
+  private listPermissionProfiles(params: unknown): LingAppServerPermissionProfileListResult {
+    const { cwd } = this.workspaceParams(params);
+    return {
+      cwd,
+      profiles: [{
+        id: "ling-default",
+        authorizationModes: ["ask", "smart", "always"],
+        workspaceAccessModes: ["read_only", "workspace_write", "full_access"],
+        sessionPermissionModes: ["ask_everything", "balanced", "workspace_write", "full_access", "custom"],
+      }],
+    };
   }
 
   private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): LingAppServerWorkItemControlResult {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const workItemId = readStringField(record, "workItemId");
-    const actorId = readStringField(record, "actorId");
+    const actorId = this.grant ? `app-server-grant:${this.grant.grantId}` : readStringField(record, "actorId");
     const idempotencyKey = readStringField(record, "idempotencyKey");
     const expectedRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedRevision");
     const expectedControlGeneration = readIntegerField(record, "expectedControlGeneration", "controlGeneration");
@@ -1840,7 +2907,7 @@ class RpcConnection {
         throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${result.workItem.control.state}.`);
       case "applied":
       case "replayed": {
-        const workItem = projectWorkItemSnapshot(result.workItem);
+        const workItem = projectWorkItemSnapshot(result.workItem, this.grant?.subject.kind !== "workItem");
         if (result.event) {
           this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
           this.send({ jsonrpc: "2.0", method: "workItem/control/updated", params: {
@@ -1848,6 +2915,7 @@ class RpcConnection {
             cursor: replayScope.issue(result.event.seq),
           } });
         }
+        if (result.status === "applied" && action === "resume") this.context.taskSupervisor.poke(cwd);
         return { cwd, workItem, controlReceipt: projectWorkItemControlReceipt(result.receipt), replayed: result.status === "replayed" };
       }
     }
@@ -1898,7 +2966,7 @@ class RpcConnection {
       // Leave room in the RPC response for the page envelope and cursor.
       let remaining = 120 * 1024;
       for (const event of rows) {
-        if (threadEventMatches(event, threadId, store)) {
+        if (this.deliberationWorkflowEventVisible(event) && threadEventMatches(event, threadId, store)) {
           const projected = trimOversizedEvent(event);
           const bytes = Buffer.byteLength(JSON.stringify(projected)) + 1;
           if (bytes > remaining) break;
@@ -2133,7 +3201,12 @@ class RpcConnection {
     });
   }
 
-  private enqueueControlPlaneEvent(subscription: RpcSubscription, event: ControlPlaneEvent): void {
+  private deliberationWorkflowEventVisible(event: ControlPlaneEvent): boolean {
+    return !this.grant || event.action !== "work_item.deliberation.workflow_progress";
+  }
+
+  private enqueueControlPlaneEvent(subscription: RpcSubscription, sourceEvent: ControlPlaneEvent): void {
+    const event = this.grant?.subject.kind === "workItem" ? projectWorkItemScopedEvent(sourceEvent) : sourceEvent;
     if (this.closed || subscription.closed || !subscriptionMatchesEvent(subscription, event)) {
       return;
     }
@@ -2316,14 +3389,15 @@ function parseJsonRpcRequest(data: RawData): JsonRpcRequest | undefined {
   }
 }
 
-function projectWorkItemSnapshot(workItem: WorkItem) {
-  const currentExecutionRefs = [
+function projectWorkItemSnapshot(workItem: WorkItem, includeExecutionRefs = true) {
+  const currentExecutionRefs = includeExecutionRefs ? [
     workItem.taskId,
     workItem.runId,
     workItem.workflowId,
     workItem.workflowStepId,
     workItem.approvalId,
-  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+    ...(workItem.linkedExecution?.kind === "automation_run" ? [workItem.linkedExecution.id] : []),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0) : [];
   return {
     workspaceId: workItem.workspaceId,
     workItemId: workItem.id,
@@ -2337,9 +3411,32 @@ function projectWorkItemSnapshot(workItem: WorkItem) {
       unresolvedEffectIds: workItem.control.unresolvedEffectIds,
       ...(workItem.control.recoveryOwner ? { recoveryOwner: workItem.control.recoveryOwner } : {}),
     },
-    holds: workItem.holds,
+    holds: workItem.linkedExecution && !includeExecutionRefs
+      ? workItem.holds.map(hold => hold.ownerRef === workItem.linkedExecution?.id ? { ...hold, ownerRef: workItem.id } : hold)
+      : workItem.holds,
     currentExecutionRefs,
+    ...(includeExecutionRefs && workItem.linkedExecution ? { linkedExecution: workItem.linkedExecution } : {}),
   };
+}
+
+function stageCoordinationRecordVisible(store: RunStore, stage: StageCoordinationBinding, record: WorkItemCollaborationRecord): boolean {
+  if (record.kind === "message" && record.id.startsWith(WORKFLOW_STAGE_MESSAGE_ID_PREFIX)) {
+    const payload = record.payload;
+    return isRecord(payload) && payload.planRevision === stage.planRevision && (
+      payload.targetStepId === stage.stepId && payload.participantId === stage.participantId
+        && (payload.receivingExecution === undefined || matchesStageCoordinationExecution(payload.receivingExecution, stage))
+      || payload.sendingStepId === stage.stepId && matchesStageCoordinationExecution(payload.sendingExecution, stage)
+    );
+  }
+  if (record.kind !== "question") return false;
+  const questionId = record.action === "created" ? record.id : record.parentRecordId;
+  const result = questionId ? readWorkItemStageQuestion(store, stage.workItemId, questionId) : undefined;
+  const question = result?.question;
+  return !!question && (record.id === result.record.id || record.id === result.reply?.record.id || record.id === result.historicalReply?.record.id)
+    && question.planRevision === stage.planRevision && (question.respondentStepId === stage.stepId
+      && (question.receivingExecution === undefined || matchesStageCoordinationExecution(question.receivingExecution, stage))
+      || question.waitingStepId === stage.stepId && (question.askingExecution === undefined
+        || matchesStageCoordinationExecution(question.askingExecution, stage)));
 }
 
 function projectWorkItemControlReceipt(receipt: WorkItemControlReceipt): LingAppServerWorkItemControlResult["controlReceipt"] {
@@ -2375,15 +3472,51 @@ function readOptionalWorkItemStatus(value: unknown): WorkItemStatus | undefined 
   return value as WorkItemStatus;
 }
 
+function readPlanScopeIds(value: unknown, minimum = 1): readonly string[] {
+  if (!Array.isArray(value) || value.length < minimum || value.length > 50
+    || value.some(id => typeof id !== "string" || !id.trim() || id.length > 256)
+    || new Set(value).size !== value.length) {
+    throw rpcError(-32602, "invalid_params", "Supply a bounded list of distinct Plan stage or change IDs.");
+  }
+  return value as string[];
+}
+
+function readRetainedWorkflowStageSources(value: unknown, kind: "result"): readonly LingAppServerWorkflowStageResultSource[] | undefined;
+function readRetainedWorkflowStageSources(value: unknown, kind: "execution"): readonly LingAppServerWorkflowStageExecutionSource[] | undefined;
+function readRetainedWorkflowStageSources(value: unknown, kind: "result" | "execution"): readonly LingAppServerWorkflowStageResultSource[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 20) throw rpcError(-32602, "invalid_params", "Supply at most 20 retained stage sources.");
+  const results = value.map(input => {
+    const record = readParamsRecord(input);
+    const source = { sourceStepId: readStringField(record, "sourceStepId"), expectedSourceRevision: readStringField(record, "expectedSourceRevision"),
+      targetStepId: readStringField(record, "targetStepId") };
+    return kind === "execution" ? { ...source, sourceRunId: readStringField(record, "sourceRunId") } : source;
+  });
+  if (results.some(result => Object.values(result).some(field => !field.trim() || field.length > 256))
+    || new Set(results.map(result => JSON.stringify([result.sourceStepId, result.targetStepId]))).size !== results.length) {
+    throw rpcError(-32602, "invalid_params", "Retained stage sources require distinct source and target pairs and bounded revisions.");
+  }
+  return results;
+}
+
 function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | undefined {
   if (value === undefined) return undefined;
   const sourceTypes: readonly WorkItemSourceType[] = [
-    "channel_task", "channel_workflow_step", "external_work", "external_work_action", "approval", "run", "manual",
+    "channel_task", "channel_workflow_step", "automation_run", "external_work", "external_work_action", "approval", "run", "device_task_graph_node", "manual",
   ];
   if (typeof value !== "string" || !sourceTypes.includes(value as WorkItemSourceType)) {
     throw rpcError(-32602, "invalid_params", "sourceType is not a supported Work Item source type.");
   }
   return value as WorkItemSourceType;
+}
+
+function deviceBridgeRpcError(error: unknown): never {
+  if (!(error instanceof WorkItemDeviceBridgeError)) throw error;
+  const status = error.code === "work_item_not_found" ? -32040
+    : error.code === "invalid_params" ? -32602
+      : error.code === "resume_blocked" ? -32061
+        : error.code === "stale_revision" ? -32030 : -32031;
+  throw rpcError(status, error.code, error.message);
 }
 
 function readOptionalWorkItemPriority(value: unknown): WorkItem["priority"] | undefined {
@@ -2413,6 +3546,15 @@ function readLingTurnKind(value: string): import("@ling-stack/core").LingTurnKin
 
 function jsonRpcIdKey(id: JsonRpcId): string {
   return `${typeof id}:${String(id)}`;
+}
+
+function recoveryAdmissionRequest(method: string, params: unknown): boolean {
+  if (recoveryGuardedMethods.has(method)) return true;
+  const record = readParamsRecord(params);
+  return method === "instructions/init" && record.mode === "apply"
+    || method === "workItem/collaboration/append" && (record.kind === "deliberation" && (record.action === "started" || record.action === "decided")
+      || record.kind === "coordination" && record.action === "started" || record.kind === "handoff" && record.action === "accepted")
+    || method === "turn/interrupt" && typeof record.message === "string";
 }
 
 function readParamsRecord(params: unknown): Record<string, unknown> {
@@ -2497,6 +3639,16 @@ function readOptionalStringField(record: Record<string, unknown>, key: string): 
   return value;
 }
 
+function readOptionalWorkItemConversationDispatch(value: unknown): LingAppServerWorkItemConversationDispatch | undefined {
+  if (value === undefined) return undefined;
+  const record = readParamsRecord(value);
+  const threadId = readStringField(record, "threadId");
+  const message = readStringField(record, "message");
+  if (!message.trim() || message.length > 16_384) throw rpcError(-32602, "invalid_params", "dispatch.message must be 1–16384 characters.");
+  const providerPresetId = readOptionalStringField(record, "providerPresetId");
+  return { threadId, message, ...(providerPresetId ? { providerPresetId } : {}) };
+}
+
 function rpcError(jsonRpcCode: number, code: string, message: string): Error & { readonly jsonRpcCode: number; readonly code: string } {
   return Object.assign(new Error(message), { jsonRpcCode, code });
 }
@@ -2522,7 +3674,25 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   if (error instanceof ControlPlaneBadRequestError) {
     return { jsonRpcCode: -32602, code: "bad_request", message: error.message };
   }
+  if (error instanceof ProposedPlanMutationError) {
+    if (error.code === "proposed_plan_revision_conflict") return { jsonRpcCode: -32030, code: "stale_revision", message: error.message };
+    const jsonRpcCode = error.statusCode === 404 ? -32040 : error.statusCode === 400 ? -32602 : -32061;
+    return { jsonRpcCode, code: error.code, message: error.message };
+  }
   if (error instanceof HttpError) {
+    const code = error.code;
+    const jsonRpcCode = code === "stale_revision" ? -32030 : code === "idempotency_conflict" ? -32031
+      : code === "capability_denied" ? -32021
+      : error.statusCode === 400 ? -32602 : -32061;
+    return { jsonRpcCode, code, message: error.message };
+  }
+  if (error instanceof WorktreeActionError) {
+    const jsonRpcCode = error.code === "stale_revision" ? -32030
+      : error.code === "workspace_binding_invalid" || error.code === "worktree_not_found" ? -32040
+      : error.code === "unknown_outcome" ? -32060 : -32041;
+    return { jsonRpcCode, code: error.code, message: error.message };
+  }
+  if (error instanceof RunWorkspaceRecoveryError) {
     return { jsonRpcCode: error.statusCode === 400 ? -32602 : -32061, code: error.code, message: error.message };
   }
   if (error instanceof UserInputStoreError) {
@@ -2539,6 +3709,24 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   }
   if (error instanceof Error && error.message === "work_item_evidence_idempotency_conflict") {
     return { jsonRpcCode: -32031, code: "idempotency_conflict", message: "The evidence key was reused with different input." };
+  }
+  if (error instanceof Error && error.message === "thread_delete_preview_stale") {
+    return { jsonRpcCode: -32030, code: "stale_revision", message: "The Thread changed after the deletion preview." };
+  }
+  if (error instanceof Error && error.message === "thread_work_item_dependency") {
+    return { jsonRpcCode: -32061, code: "resume_blocked", message: "The Thread has a current Work Item dependency." };
+  }
+  if (error instanceof Error && /^(?:coordination_schedule_stale|coordination_round_stale)$/u.test(error.message)) {
+    return { jsonRpcCode: -32030, code: "stale_revision", message: "The coordination definition or Work Item revision changed." };
+  }
+  if (error instanceof Error && error.message === "coordination_decision_idempotency_conflict") {
+    return { jsonRpcCode: -32031, code: "idempotency_conflict", message: "The decision key was reused with different inputs." };
+  }
+  if (error instanceof Error && error.message === "coordination_decision_limit") {
+    return { jsonRpcCode: -32061, code: "coordination_decision_limit", message: "The coordination round has reached its decision limit." };
+  }
+  if (error instanceof Error && error.message === "coordination_subject_unavailable") {
+    return { jsonRpcCode: -32040, code: "coordination_subject_unavailable", message: "The coordination round is unavailable for this Work Item." };
   }
   if (error instanceof Error && /^goal_(acceptance|completion|supervision)_/u.test(error.message)) {
     return { jsonRpcCode: -32061, code: error.message, message: error.message };
@@ -2564,6 +3752,17 @@ function collaborationRpcError(error: unknown): unknown {
   return error;
 }
 
+function readDeliberationDecision(value: unknown): LingAppServerDeliberationDecideParams["decision"] {
+  const record = readParamsRecord(value);
+  if ((record.disposition === "deferred" || record.disposition === "replan_required") && record.option === undefined) {
+    return { disposition: record.disposition };
+  }
+  if (record.disposition === "selected" && typeof record.option === "string" && record.option.trim() && record.option.length <= 200) {
+    return { disposition: "selected", option: record.option };
+  }
+  throw rpcError(-32602, "invalid_params", "Supply a selected option or a deferred or replan-required disposition.");
+}
+
 function collaborationNotificationMethod(kind: import("@ling-stack/contracts").LingAppServerCollaborationKind): string {
   switch (kind) {
     case "deliberation": return "workItem/deliberation/updated";
@@ -2574,22 +3773,6 @@ function collaborationNotificationMethod(kind: import("@ling-stack/contracts").L
     case "question": return "workItem/question/updated";
     case "handoff": return "workItem/handoff/updated";
   }
-}
-
-const developmentByContext = new WeakMap<DaemonContext, AppServerDevelopmentService>();
-
-function getAppServerDevelopmentService(context: DaemonContext): AppServerDevelopmentService {
-  const existing = developmentByContext.get(context);
-  if (existing) return existing;
-  const created = new AppServerDevelopmentService({
-    context,
-    storeRegistry: context.storeRegistry,
-    activeRuns: context.activeRuns,
-    startCodeAssessmentRun: context.startCodeAssessmentRun,
-    executeVerificationCheck: executeAppServerVerificationCheck,
-  });
-  developmentByContext.set(context, created);
-  return created;
 }
 
 function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEvent, cursor?: string): unknown {
@@ -2627,11 +3810,17 @@ function appServerEventNotification(subscription: RpcSubscription, event: Contro
 
 function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () => RunStore): unknown | undefined {
   if (event.action === "approval.created") {
+    const store = readStore();
+    const approval = store.getApprovalRequest(event.entityId);
+    if (!approval || !canPresentPendingApproval(approval)) return undefined;
+    const run = approval.runId ? store.getRun(approval.runId) : undefined;
+    const turn = run ? store.getLingTurnForRun(run.id) : undefined;
     return {
       jsonrpc: "2.0",
       id: `approval:${event.entityId}:${event.seq}`,
       method: "approval/requestDecision",
-      params: { approvalId: event.entityId, ...event.data },
+      params: { ...event.data, approvalId: approval.id, pendingId: approval.id, revision: appServerApprovalRevision(approval),
+        ...(run ? { runId: run.id, threadId: run.threadId, turnId: turn?.id } : {}) },
     };
   }
   if (event.entityType !== "user_input_request" || event.action !== "pending") return undefined;
@@ -2649,10 +3838,23 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () 
   };
 }
 
+function canPresentPendingApproval(approval: import("@ling-stack/core").ApprovalRequest): boolean {
+  return approval.status === "pending" && (!approval.expiresAt || Date.parse(approval.expiresAt) > Date.now());
+}
+
+function appServerApprovalRevision(approval: import("@ling-stack/core").ApprovalRequest): string {
+  // A pending approval is immutable. Its owner resolves it with a pending-state CAS.
+  return createHash("sha256").update(JSON.stringify([
+    approval.id, approval.createdAt, approval.expiresAt, approval.runId, approval.toolCallId, approval.actionType,
+  ])).digest("hex");
+}
+
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   if (event.entityType === "verify_operation") return "verification/updated";
+  if (event.entityType === "handoff" && event.action === "handoff.created") return "handoff/created";
   if (event.entityType === "conversation_item" && event.action === "conversation_narration.published") return "item/completed";
   if (event.action === "thread.goal.updated") return "thread/goal/updated";
+  if (event.entityType === "plan" && (event.action === "plan.accepted" || event.action === "plan.refined")) return "turn/plan/updated";
   if (event.entityType === "run" && typeof event.data.turnId === "string") {
     if (event.action === "run.created") return typeof event.data.interventionId === "string" ? "turn/started" : "turn/status/changed";
     if (event.action === "run.completed" || event.action === "run.cancelled") return "turn/completed";
@@ -2666,14 +3868,24 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   if (event.entityType === "turn") {
     if (event.action === "turn.started") return "turn/started";
     if (event.action === "turn.completed") return "turn/completed";
+    if (event.action.startsWith("turn.project_instructions.")) return "turn/projectInstructions/updated";
     if (event.action.includes("plan")) return "turn/plan/updated";
     if (event.action.includes("diff")) return "turn/diff/updated";
     if (event.action.startsWith("turn.")) return "turn/status/changed";
   }
   if (event.entityType === "work_item") {
+    if (event.action === "work_item.device.updated") return "workItem/device/updated";
+    if (event.action === "work_item.stage.updated") return "workItem/stage/updated";
+    if (event.action === "work_item.intake.dispatch.updated") return "workItem/intake/updated";
+    if (event.action.startsWith("work_item.plan_change.")) return "workItem/plan/change/updated";
+    if (event.action.startsWith("work_item.deliberation.")) return "workItem/deliberation/updated";
+    if (event.action.startsWith("work_item.collaboration.deliberation.")) return "workItem/deliberation/updated";
     if (event.action === "work_item.created") return "workItem/created";
+    if (event.action === "work_item.thread.linked") return "workItem/thread/linked";
     if (event.action.includes("evidence")) return "workItem/evidence/updated";
     if (event.action.includes("control")) return "workItem/control/updated";
+    if (event.action.startsWith("work_item.collaboration.message.") && event.data.visibility === "participants") return "workItem/message/updated";
+    if (event.action.startsWith("work_item.collaboration.question.") && event.data.visibility === "participants") return "workItem/question/updated";
     if (event.action.includes("collaboration")) return "workItem/collaboration/updated";
     if (event.action.includes("delivery")) return "workItem/delivery/updated";
     if (event.action.includes("feedback")) return "workItem/feedback/received";
@@ -2687,6 +3899,11 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   return undefined;
 }
 
+function projectWorkItemScopedEvent(event: ControlPlaneEvent): ControlPlaneEvent {
+  const { threadId: _threadId, runId: _runId, turnId: _turnId, ...data } = event.data;
+  return { ...event, data };
+}
+
 function subscriptionMatchesEvent(subscription: RpcSubscription, event: ControlPlaneEvent): boolean {
   if (subscription.entityType && event.entityType !== subscription.entityType) return false;
   if (subscription.entityId && event.entityId !== subscription.entityId) return false;
@@ -2696,6 +3913,13 @@ function subscriptionMatchesEvent(subscription: RpcSubscription, event: ControlP
 function threadEventMatches(event: ControlPlaneEvent, threadId: string, store: import("@ling-stack/core").RunStore): boolean {
   if (event.entityType === "thread") return event.entityId === threadId;
   if (typeof event.data.threadId === "string") return event.data.threadId === threadId;
+  if (event.entityType === "work_item") {
+    const query = { workspaceId: event.workspaceId, entityType: event.entityType, entityId: event.entityId, limit: 1 };
+    const [workflow] = store.listControlPlaneEvents({ ...query, action: "work_item.workflow.linked" });
+    if (workflow && workflow.seq <= event.seq) return workflow.data.threadId === threadId;
+    const [conversation] = store.listControlPlaneEvents({ ...query, action: "work_item.thread.linked" });
+    return Boolean(conversation && conversation.seq <= event.seq && conversation.data.threadId === threadId);
+  }
   const runId = event.entityType === "run" ? event.entityId
     : event.data.ownerType === "run" ? event.data.ownerId : event.data.runId;
   return typeof runId === "string" && store.getRun(runId)?.threadId === threadId;

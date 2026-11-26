@@ -412,6 +412,7 @@ test("sqlite backfills current template skill defaults for existing builtin team
         "scrape",
         "ios-qa",
         "ios-design-review",
+        "verify-current-changes",
       ]) {
         assert.ok(bySkill.has(skillId), `${skillId} should be present after template backfill`);
       }
@@ -420,14 +421,14 @@ test("sqlite backfills current template skill defaults for existing builtin team
       assert.equal(bySkill.get("health").source, "user", "custom user binding should stay present");
       assert.equal(bySkill.get("qa-only").source, "template");
       assert.equal(bySkill.get("qa-only").enabled, true);
-      assert.equal(bindings.length, 12);
+      assert.equal(bindings.length, 13);
     } finally {
       reopened.close();
     }
 
     const reopenedAgain = createSqliteRunStore(cwd);
     try {
-      assert.equal(reopenedAgain.listTeammateSkillBindings(qaId).length, 12, "backfill should be idempotent");
+      assert.equal(reopenedAgain.listTeammateSkillBindings(qaId).length, 13, "backfill should be idempotent");
     } finally {
       reopenedAgain.close();
     }
@@ -669,9 +670,11 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       ["design-html", "template", true],
       ["health", "template", true],
       ["implement", "template", false],
+      ["init-project-instructions", "template", true],
       ["investigate", "template", true],
       ["plan-eng-review", "user", true],
       ["review", "template", true],
+      ["verify-current-changes", "template", true],
     ]);
     const deletedUserSkillBindings = store.replaceTeammateSkillBindings(
       engineerId,
@@ -685,9 +688,11 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       ["design-html", "template", true],
       ["health", "template", true],
       ["implement", "template", false],
+      ["init-project-instructions", "template", true],
       ["investigate", "template", true],
       ["review", "template", true],
       ["triage-playbook", "user", true],
+      ["verify-current-changes", "template", true],
     ]);
 
     const memberships = store.replaceTeammateChannelMemberships(

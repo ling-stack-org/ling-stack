@@ -7,11 +7,13 @@ import { Button, EmptyState, InlineFeedback, InspectorSection, Select, Skeleton,
 import type { Channel, WorkItemClaimBlocker } from "../../types.js";
 import { WorkBoardGuide } from "./WorkBoardGuide.js";
 import { WorkBoardLinkedObjects } from "./WorkBoardLinkedObjects.js";
+import { WorkBoardWorkflow } from "./WorkBoardWorkflow.js";
 import { derivePrimaryWorkBoardAction, workItemStatusTone } from "./work-board-view-models.js";
 import type { WorkBoardActionFailure, WorkBoardEvidenceState, WorkBoardMutation } from "./work-board-types.js";
 
 export function WorkBoardInspector(props: {
   readonly item?: WorkItemView;
+  readonly workspaceCwd?: string;
   readonly selectedHidden: boolean;
   readonly selectedMissing: boolean;
   readonly channels: readonly Channel[];
@@ -66,6 +68,9 @@ export function WorkBoardInspector(props: {
       {action && action.target !== "route" ? <Button className="work-board-primary-action" disabled={action.disabled} loading={action.loading} loadingLabel={t(action.label)} onClick={invokePrimary}>{t(action.label)}</Button> : null}
       <div className="work-board-detail-meta"><DetailField label={t("Owner")} value={item.claim?.ownerId ?? item.assigneeTeammateId ?? t("Unassigned")} /><DetailField label={t("Channel")} value={props.channelName ?? "-"} /><DetailField label={t("Source")} value={t(item.sourceType)} /><DetailField label={t("Updated")} value={formatDateTime(item.updatedAt)} /></div>
       <InspectorSection title={t("Linked objects")} summary={linkedCount(item)}><WorkBoardLinkedObjects item={item} onOpenTask={props.onOpenTask} onOpenRun={props.onOpenRun} onOpenApproval={props.onOpenApproval} onOpenChannel={props.onOpenChannel} /></InspectorSection>
+      {item.durable && item.workflowId && item.planRevision && props.workspaceCwd
+        ? <WorkBoardWorkflow key={JSON.stringify([props.workspaceCwd, item.id, item.planRevision])}
+          cwd={props.workspaceCwd} workItemId={item.id} onOpenRun={props.onOpenRun} /> : null}
       <InspectorSection title={t("Evidence")} summary={evidenceSummary(item, props.evidence)} onToggle={(event) => { if (event.currentTarget.open) props.onLoadEvidence(item); }}>
         <EvidenceBody item={item} evidence={props.evidence} onOpenRun={props.onOpenRun} />
       </InspectorSection>

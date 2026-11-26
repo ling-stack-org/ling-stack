@@ -1,4 +1,4 @@
-import { resolve as resolvePath } from "node:path";
+import { isAbsolute, resolve as resolvePath } from "node:path";
 import { delegationBudget, resolveDelegationPriceForBudget,
   type LingSandboxPolicyProfileId, type DelegationTokenPriceSnapshot } from "@ling-stack/core";
 import type { DelegationBudgetV1 } from "@ling-stack/contracts";
@@ -8,6 +8,12 @@ import {
   type ResolvedRuntimeConcurrencyPolicy,
 } from "./runtime/concurrency-policy.js";
 import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
+import { resolveVerificationRecipes, type AppServerVerificationRecipeConfig } from "./server/app-server-verification-config.js";
+import { resolveAppServerGitHubSources, type AppServerGitHubSourceConfig } from "./server/app-server-github-sources.js";
+import { resolveNativeWorkIntakePolicies, type NativeWorkIntakeConfig, type NativeWorkIntakePolicy } from "./server/app-server-native-intake-config.js";
+import { resolveAppServerWssConfig, type AppServerWssConfig } from "./server/app-server-wss-config.js";
+import { resolveAppServerDeliberationPolicies, type AppServerDeliberationPolicy,
+  type AppServerDeliberationPolicyConfig } from "./server/app-server-deliberation-config.js";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -23,6 +29,13 @@ export interface DaemonConfig {
   /** Trusted Host startup limits; never read from workspace/runtime HTTP settings. */
   readonly concurrency?: RuntimeConcurrencyFeatureConfig;
   readonly transports?: TransportFeatureConfig;
+  readonly appServerVerificationRecipes?: readonly AppServerVerificationRecipeConfig[];
+  readonly appServerGitHubSources?: readonly AppServerGitHubSourceConfig[];
+  readonly appServerNativeIntake?: readonly NativeWorkIntakeConfig[];
+  readonly appServerDeliberationPolicies?: readonly AppServerDeliberationPolicyConfig[];
+  /** Private Host storage retained independently of the workspace SQLite backup. */
+  readonly appServerRecoveryDirectory?: string;
+  readonly appServerWss?: AppServerWssConfig;
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
   readonly remoteAccess?: RemoteAccessFeatureConfig;
@@ -188,6 +201,12 @@ export interface ResolvedDaemonConfig {
   readonly runtimeTools: RuntimeToolFeatureConfig;
   readonly concurrency: ResolvedRuntimeConcurrencyPolicy;
   readonly transports: Required<TransportFeatureConfig>;
+  readonly appServerVerificationRecipes: readonly AppServerVerificationRecipeConfig[];
+  readonly appServerGitHubSources: readonly AppServerGitHubSourceConfig[];
+  readonly appServerNativeIntake: readonly NativeWorkIntakePolicy[];
+  readonly appServerDeliberationPolicies: readonly AppServerDeliberationPolicy[];
+  readonly appServerRecoveryDirectory?: string;
+  readonly appServerWss?: AppServerWssConfig;
   readonly channels: ChannelFeatureConfig;
   readonly cuaDriver: {
     readonly catalogManaged: boolean;
@@ -232,6 +251,10 @@ export const defaultDaemonConfig: DaemonConfig = {
 
 export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
   const port = config.port ?? 17891;
+  const appServerRecoveryDirectory = config.appServerRecoveryDirectory ?? process.env.LING_STACK_APP_SERVER_RECOVERY_DIRECTORY;
+  if (appServerRecoveryDirectory !== undefined && !isAbsolute(appServerRecoveryDirectory)) {
+    throw new Error("The App Server recovery directory must be an absolute Host path.");
+  }
   return {
     host: config.host ?? "127.0.0.1",
     port,
@@ -250,6 +273,12 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
         readBooleanEnv(process.env.LING_STACK_RUNTIME_SHELL_SNAPSHOT, false),
     },
     concurrency: resolveRuntimeConcurrencyPolicy(config.concurrency),
+    appServerVerificationRecipes: resolveVerificationRecipes(config.appServerVerificationRecipes),
+    appServerGitHubSources: resolveAppServerGitHubSources(config.appServerGitHubSources),
+    appServerNativeIntake: resolveNativeWorkIntakePolicies(config.appServerNativeIntake),
+    appServerDeliberationPolicies: resolveAppServerDeliberationPolicies(config.appServerDeliberationPolicies),
+    appServerRecoveryDirectory,
+    appServerWss: resolveAppServerWssConfig(config.appServerWss),
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
         readBooleanEnv(process.env.LING_STACK_PROVIDER_WS_FALLBACK, true),

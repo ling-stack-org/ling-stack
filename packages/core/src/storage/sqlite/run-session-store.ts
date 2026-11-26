@@ -31,6 +31,7 @@ import { isCurrentRunExecutionOwner, runExecutionOwnerParameters, runExecutionOw
 import { assertDelegationCompletionSatisfied } from "../../delegation-completion-barrier.js";
 import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 import { parseNullableChannelWorkspaceBinding, parseNullableDirectWorkspaceBinding } from "./workspace-binding-parsers.js";
+import type { WorkItem } from "../../work-item-types.js";
 
 export interface SqliteRunSessionStorePorts {
   readonly insertLingTurnRun: (turnId: string, runId: string, role: LingTurnRunRole, createdAt: string) => LingTurnRun;
@@ -49,6 +50,8 @@ export interface SqliteRunSessionStorePorts {
   /** Reject new/promoted execution while an explicit workspace restore owns the fence. */
   readonly assertWorkspaceSnapshotFence?: (cwd: string) => void;
   readonly getDelegationCompletionEvidence: RunStore["getDelegationCompletionEvidence"];
+  readonly checkWorkItemAdmission?: (threadId: string, turnId: string | undefined, request: unknown, automaticIntakeReceiptId?: string) => WorkItem | undefined;
+  readonly linkWorkItemRun?: (workItem: WorkItem, runId: string, now: string) => void;
 }
 
 export class SqliteRunSessionStore {
@@ -104,7 +107,11 @@ export class SqliteRunSessionStore {
     if (sourceThreadId && sourceThread?.channel_id) {
       assertChannelSessionThreadWritable(this.context.database, sourceThreadId);
     }
-    this.assertManagedWorkspaceBinding(captured, prepared.requestJson, sourceThread);
+    const requestSnapshot: unknown = JSON.parse(prepared.requestJson);
+    const workItem = sourceThreadId
+      ? readSqliteWithinTransaction(this.context.database, () => this.ports.checkWorkItemAdmission?.(sourceThreadId, captured.turnId, requestSnapshot, captured.automaticIntakeReceiptId))
+      : undefined;
+    this.assertManagedWorkspaceBinding(captured, requestSnapshot, sourceThread);
     const eventLogPath = getRunEventLogPath(this.paths, captured.id);
     this.context.database
       .prepare(`
@@ -188,15 +195,15 @@ export class SqliteRunSessionStore {
     this.assertCreationTransactionActive();
     this.ports.recordRunSelection(session);
     this.assertCreationTransactionActive();
+    if (workItem) this.ports.linkWorkItemRun?.(workItem, session.id, session.createdAt);
     return session;
   }
 
   private assertManagedWorkspaceBinding(
     input: CreateRunInput,
-    requestJson: string,
+    request: unknown,
     sourceThread: Record<string, SQLOutputValue> | undefined,
   ): void {
-    const request: unknown = JSON.parse(requestJson);
     if (!isRecord(request)) return;
     const channelSnapshot = isRecord(request.channelWorkspaceBinding) ? request.channelWorkspaceBinding : undefined;
     const directSnapshot = isRecord(request.directWorkspaceSnapshot) ? request.directWorkspaceSnapshot : undefined;
@@ -254,7 +261,6 @@ export class SqliteRunSessionStore {
   }
 
   listRuns(options: ListRunsOptions = {}): RunSession[] {
-    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (options.status) {
@@ -278,9 +284,10 @@ export class SqliteRunSessionStore {
       params.push(options.providerPresetId);
     }
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    params.push(limit);
+    const complete = options.complete === true && Boolean(options.workflowStepId);
+    if (!complete) params.push(Math.min(Math.max(options.limit ?? 50, 1), 200));
     return this.context.database
-      .prepare(`${runSessionSelectSql(whereClause)} ORDER BY created_at DESC LIMIT ?`)
+      .prepare(`${runSessionSelectSql(whereClause)} ORDER BY created_at DESC${complete ? "" : " LIMIT ?"}`)
       .all(...params)
       .map((row) => mapRunSession(row as Record<string, SQLOutputValue>));
   }

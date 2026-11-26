@@ -23,6 +23,7 @@ export type WorkflowParticipantAuthorityOriginV1 =
   | "builtin_template"
   | "custom_template"
   | "workflow_graph"
+  | "work_item_deliberation"
   | "channel_handoff"
   | "external_work"
   | "proposed_plan"
@@ -76,6 +77,7 @@ export function isWorkflowParticipantAuthorityV1(value: unknown): value is Workf
     "builtin_template",
     "custom_template",
     "workflow_graph",
+    "work_item_deliberation",
     "channel_handoff",
     "external_work",
     "proposed_plan",
@@ -85,6 +87,7 @@ export function isWorkflowParticipantAuthorityV1(value: unknown): value is Workf
   if (!origins.includes(record.origin as WorkflowParticipantAuthorityOriginV1)) return false;
   const channelSelectionOrigins: readonly WorkflowParticipantAuthorityOriginV1[] = [
     "channel_intent_proposal",
+    "work_item_deliberation",
     "manual_channel_step",
     "legacy_migration",
   ];
@@ -873,6 +876,10 @@ export interface ChannelWorkflowStepMetadata {
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
+  readonly planStageId?: string;
+  readonly requiredPlanDecision?: import("./threads.js").ProposedPlanStageDecision;
+  readonly planBallotKey?: string;
+  readonly requiredPlanHandoffStepIds?: readonly string[];
   readonly dependsOnStepIds?: readonly string[];
   readonly branchGroupId?: string;
   readonly joinGroupId?: string;
@@ -978,6 +985,7 @@ export interface WorkflowGraph {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly sourceProposedPlanId?: string;
   readonly templateCompilation?: WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;

@@ -914,8 +914,11 @@ function currentPolicy(state: Composition, run: RunSession, fact: AdmissionFact)
   const skill = resolveCurrentRunSkill(store, { teammateId: run.teammateId, requestedSkillId: fact.requestedSkillId,
     providerPresetId: providerRuntimeScopeIdentity(fact.providerScope)?.providerPresetId, task: { channelId: run.channelId } });
   const profile = skill ? mergeApprovalProfiles(fact.approvalProfile, skill.skill.approvalProfile) : fact.approvalProfile;
+  const step = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
+  const workspaceAccessMode = step?.metadata?.safetyPlan?.profile === "pi_host_readonly_v1"
+    ? "read_only" : fact.policyIntent.workspaceAccessMode;
   return applyConversationModeToEffectiveRunPolicySnapshot(resolveSessionRunPolicy({ workspacePolicy: store.getApprovalPolicy(),
-    ...fact.policyIntent, channelBoundPath: channel?.boundPath || run.cwd,
+    ...fact.policyIntent, workspaceAccessMode, channelBoundPath: channel?.boundPath || run.cwd,
     approvalProfile: profile }).snapshot, thread.conversationMode.mode);
 }
 function currentAuthority(state: Composition, runId: string, fence: RuntimeAttemptFenceV1): DelegationExecutionAuthority {

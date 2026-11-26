@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { SessionPermissionMode } from "./session-permissions.js";
 import type { SkillApprovalProfile } from "./skill-types.js";
-import type { LingThread } from "./run-types.js";
+import type {
+  LingAppServerCoordinationDecisionParams,
+  LingAppServerCoordinationDecisionSource,
+  LingAppServerScheduledCoordinationRound,
+} from "@ling-stack/contracts";
+import type { ControlPlaneEvent, LingThread } from "./run-types.js";
+import type { AppendWorkItemCollaborationResult } from "./work-item-collaboration.js";
 
 export type AutomationStatus = "enabled" | "disabled" | "paused" | "archived" | "error";
 export type AutomationKind = "daily_brief" | "weekly_review" | "project_monitor" | "custom_prompt";
@@ -18,6 +24,65 @@ export type AutomationRunStatus =
   | "succeeded"
   | "failed"
   | "cancelled";
+
+export interface AdmitScheduledCoordinationInput {
+  readonly automationId: string;
+  readonly expectedDefinitionRevision: string;
+  readonly expectedPolicyRevision: number;
+  readonly triggerType: "manual" | "schedule";
+  readonly scheduledFor?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface ScheduledCoordinationAdmission {
+  readonly automationRun: AutomationRun;
+  readonly round?: LingAppServerScheduledCoordinationRound;
+  readonly event?: ControlPlaneEvent;
+}
+
+export interface CloseScheduledCoordinationInput {
+  readonly workItemId: string;
+  readonly recordId: string;
+  readonly actorId: string;
+  readonly cause: "owner_closed" | "deadline";
+  readonly expectedWorkItemRevision?: number;
+  readonly expectedCollaborationRevision?: number;
+  readonly readDecisionBasis?: (request: ScheduledCoordinationDecisionRequest, channelId: string,
+    throughEvidenceSequence: number, source?: LingAppServerCoordinationDecisionSource) => ScheduledCoordinationDecisionBasis | { readonly reasonCode: string };
+}
+
+export interface ScheduledCoordinationClose {
+  readonly result: AppendWorkItemCollaborationResult;
+  readonly briefEvent?: ControlPlaneEvent;
+}
+
+export type ScheduledCoordinationDecisionRequest = Omit<LingAppServerCoordinationDecisionParams, "cwd" | "expectedWorkItemRevision">;
+
+export interface ScheduledCoordinationDecisionBasis {
+  readonly digest: string;
+  readonly channelId: string;
+  readonly policyRevision: string;
+}
+
+export type ScheduledCoordinationDecisionPolicy = Omit<ScheduledCoordinationDecisionBasis, "digest">;
+
+export interface ScheduledCoordinationDecisionConsumption {
+  readonly roundId: string;
+  readonly receiptId: string;
+  readonly expectedWorkItemRevision: number;
+}
+
+export interface PendingScheduledCoordinationDecision extends ScheduledCoordinationDecisionConsumption {
+  readonly request: ScheduledCoordinationDecisionRequest;
+  readonly source?: LingAppServerCoordinationDecisionSource;
+  readonly basis: ScheduledCoordinationDecisionBasis;
+  readonly closedRecordId: string;
+  readonly throughEvidenceSequence: number;
+  readonly closedAt: string;
+  readonly controlGeneration: number;
+  readonly scheduleRevision: number;
+  readonly automationDefinitionDigest: string;
+}
 
 export type AutomationRunTriggerType = AutomationTrigger["type"] | "event";
 
@@ -298,6 +363,7 @@ export interface AutomationRun {
   readonly channelId?: string;
   readonly threadId: string;
   readonly runId?: string;
+  readonly coordinationRoundId?: string;
   readonly triggerType: AutomationRunTriggerType;
   readonly scheduledFor?: string;
   readonly firedAt: string;

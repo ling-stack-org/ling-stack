@@ -1,8 +1,27 @@
 import type {
+  LingAppServerApplyChangesParams,
+  LingAppServerApplyChangesResult,
+  LingAppServerApplyChangeTransferParams,
+  LingAppServerApplyChangeTransferResult,
+  LingAppServerChangeTransferPreview,
+  LingAppServerPreviewChangeTransferParams,
+  LingAppServerCaptureChangesParams,
+  LingAppServerApprovalRespondParams,
+  LingAppServerApprovalRespondResult,
+  LingAppServerChangeRecoveryPreview,
+  LingAppServerPreviewChangeRecoveryParams,
+  LingAppServerReadChangesParams,
+  LingAppServerReadChangesResult,
   LingAppServerDoctorRunParams,
   LingAppServerDoctorRunResult,
   LingAppServerCapability,
+  LingAppServerCaptureChangesResult,
   LingAppServerCapabilitiesResult,
+  LingAppServerArtifactReadParams,
+  LingAppServerArtifactReadResult,
+  LingAppServerModelListResult,
+  LingAppServerSkillReadResult,
+  LingAppServerPermissionProfileListResult,
   LingAppServerContextInspectParams,
   LingAppServerContextInspectResult,
   LingAppServerThreadSnapshotParams,
@@ -20,9 +39,37 @@ import type {
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartParams,
   LingAppServerExternalAgentTaskStartResult,
+  LingAppServerGitHubSubjectParams,
+  LingAppServerGitHubSubjectResult,
+  LingAppServerGitHubDeliveryResult,
+  LingAppServerGitHubEnqueueParams,
+  LingAppServerGitHubQueueResult,
+  LingAppServerGitHubIntakePollParams,
+  LingAppServerGitHubIntakePollResult,
+  LingAppServerGitHubIntakeReadParams,
+  LingAppServerGitHubIntakeReceipt,
+  LingAppServerReconcileGitHubDeliveryParams,
+  LingAppServerCoordinationSchedule,
+  LingAppServerCoordinationScheduleParams,
+  LingAppServerCoordinationDecisionParams,
+  LingAppServerCoordinationDecisionSubmitResult,
+  LingAppServerCoordinationDecisionsReadResult,
+  LingAppServerDeliberationEvaluateParams,
+  LingAppServerDeliberationEvaluateResult,
+  LingAppServerDeliberationOpenParams,
+  LingAppServerGrant,
+  LingAppServerGrantCreateParams,
+  LingAppServerHandoffCreateParams,
+  LingAppServerHandoffReadParams,
+  LingAppServerHandoffResumeParams,
+  LingAppServerHandoffResumeResult,
+  LingAppServerHandoffResult,
   LingAppServerInitializeParams,
   LingAppServerInitializeResult,
   LingAppServerInputRespondParams,
+  LingAppServerPlanRefineParams,
+  LingAppServerPlanWorkflowAcceptParams,
+  ProposedPlanActionResponse,
   LingAppServerInputRespondResult,
   LingAppServerJsonRpcId,
   LingAppServerNotificationMethod,
@@ -50,12 +97,44 @@ import type {
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemControlParams,
   LingAppServerWorkItemControlResult,
+  LingAppServerWorkItemCreateParams,
+  LingAppServerWorkItemAcceptParams,
+  LingAppServerWorkItemAcceptResult,
   LingAppServerWorkItemReadResult,
+  LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
   LingAppServerWorkItemCollaborationAppendParams,
   LingAppServerWorkItemCollaborationAppendResult,
   LingAppServerWorkItemCollaborationReadParams,
   LingAppServerWorkItemCollaborationReadResult,
+  LingAppServerWorkItemFeedbackParams,
+  LingAppServerWorkItemFeedbackResult,
+  LingAppServerDeliberationDecideParams,
+  LingAppServerDeliberationDecideResult,
+  LingAppServerDeliberationSettlementParams,
+  LingAppServerStageDeliberationStartParams,
+  LingAppServerStageRecoverParams,
+  LingAppServerStageRecoverResult,
+  LingAppServerStageHandoffParams,
+  LingAppServerStageMessageExecution,
+  LingAppServerStageMessageSendParams,
+  LingAppServerStageQuestionAskParams,
+  LingAppServerStageQuestionReplyParams,
+  LingAppServerWorkItemPlanChangeRequestParams,
+  LingAppServerWorkItemPlanChangeWithdrawParams,
+  LingAppServerWorkItemPlanChangeResult,
+  LingAppServerWorkItemDeviceBindParams,
+  LingAppServerWorkItemDeviceBindResult,
+  LingAppServerWorkItemDeviceReadResult,
+  LingAppServerWorkItemDeviceReceiptParams,
+  LingAppServerWorkItemDeviceReceiptResult,
+  LingAppServerWorktreeTarget,
+  LingAppServerWorktreeCreateParams,
+  LingAppServerWorktreeResult,
+  LingAppServerWorktreeCleanupParams,
+  LingAppServerWorktreeCleanupPreview,
+  LingAppServerWorktreeCleanupResult,
+  ManagedWorktreeListResponse,
 } from "@ling-stack/contracts";
 
 export interface LingAppServerSocket {
@@ -70,6 +149,11 @@ export interface LingAppServerSocket {
 
 export type LingAppServerSocketFactory = (url: string) => LingAppServerSocket;
 
+export interface LingAppServerStageCoordinationGrantParams extends Omit<LingAppServerGrantCreateParams, "subject" | "scopes"> {
+  readonly workItemId: string;
+  readonly stageExecution: LingAppServerStageMessageExecution;
+}
+
 export interface LingAppServerClientOptions {
   readonly url: string;
   readonly createSocket: LingAppServerSocketFactory;
@@ -81,6 +165,25 @@ export interface LingAppServerClientOptions {
   readonly reconnectDelayMs?: number;
   readonly maxReconnectDelayMs?: number;
   readonly requestTimeoutMs?: number;
+}
+
+export type LingAppServerConnectionState =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "authorization_required"
+  | "error"
+  | "closed";
+
+export interface LingAppServerConnectionStatus {
+  readonly state: LingAppServerConnectionState;
+  readonly code?: string;
+  readonly message?: string;
+  readonly closeCode?: number;
+  readonly closeReason?: string;
+  readonly authorizationEpoch?: string;
+  readonly storeIncarnation?: string;
 }
 
 export interface LingAppServerNotification {
@@ -118,12 +221,14 @@ export class LingAppServerClient {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly notificationListeners = new Set<(notification: LingAppServerNotification) => void>();
   private readonly serverRequestListeners = new Set<(request: LingAppServerServerRequest) => void>();
+  private readonly connectionStateListeners = new Set<(status: LingAppServerConnectionStatus) => void>();
   private socket?: LingAppServerSocket;
   private nextId = 1;
   private connectPromise?: Promise<LingAppServerInitializeResult>;
   private manuallyClosed = false;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private reconnectAttempt = 0;
+  private serverInstanceId?: string;
   private readonly subscriptions = new Map<string, TrackedSubscription>();
 
   constructor(options: LingAppServerClientOptions) {
@@ -133,11 +238,20 @@ export class LingAppServerClient {
   connect(): Promise<LingAppServerInitializeResult> {
     this.manuallyClosed = false;
     if (this.connectPromise) return this.connectPromise;
+    this.emitConnectionState({ state: this.reconnectAttempt > 0 ? "reconnecting" : "connecting" });
     const promise = this.openAndInitialize();
     this.connectPromise = promise;
-    promise.catch(() => {
-      if (this.connectPromise === promise) this.connectPromise = undefined;
-      this.scheduleReconnect();
+    promise.catch(error => {
+      if (this.manuallyClosed || this.connectPromise && this.connectPromise !== promise) return;
+      this.connectPromise = undefined;
+      const status = connectionStatusForError(error);
+      this.emitConnectionState(status);
+      if (status.state === "authorization_required" || status.code === "protocol_version_unsupported"
+        || status.code === "required_capability_unavailable") {
+        this.cancelReconnect();
+      } else {
+        this.scheduleReconnect();
+      }
     });
     return promise;
   }
@@ -152,9 +266,49 @@ export class LingAppServerClient {
     return await this.request("server/capabilities", {});
   }
 
+  async listModels(offset?: number): Promise<LingAppServerModelListResult> {
+    await this.connect();
+    return await this.request("model/list", { offset });
+  }
+
+  async readSkill(skillId: string): Promise<LingAppServerSkillReadResult> {
+    await this.connect();
+    return await this.request("skill/read", { skillId });
+  }
+
+  async listPermissionProfiles(): Promise<LingAppServerPermissionProfileListResult> {
+    await this.connect();
+    return await this.request("permissionProfile/list", {});
+  }
+
+  async readArtifact(params: LingAppServerArtifactReadParams): Promise<LingAppServerArtifactReadResult> {
+    await this.connect();
+    return await this.request("artifact/read", params);
+  }
+
   async readThread(threadId: string): Promise<unknown> {
     await this.connect();
     return await this.request("thread/read", { threadId });
+  }
+
+  async createGrant(params: LingAppServerGrantCreateParams): Promise<{ cwd: string; grant: LingAppServerGrant }> {
+    await this.connect();
+    return await this.request("server/grants/create", params);
+  }
+
+  async createStageCoordinationGrant(params: LingAppServerStageCoordinationGrantParams): Promise<{ cwd: string; grant: LingAppServerGrant }> {
+    const { workItemId, ...credential } = params;
+    return await this.createGrant({ ...credential, subject: { kind: "workItem", id: workItemId }, scopes: [] });
+  }
+
+  async listGrants(): Promise<{ cwd: string; grants: readonly LingAppServerGrant[] }> {
+    await this.connect();
+    return await this.request("server/grants/list", {});
+  }
+
+  async revokeGrant(grantId: string, expectedRevision: number): Promise<{ cwd: string; grant: LingAppServerGrant }> {
+    await this.connect();
+    return await this.request("server/grants/revoke", { grantId, expectedRevision });
   }
 
   async readThreadSnapshot(params: LingAppServerThreadSnapshotParams): Promise<LingAppServerThreadSnapshotResult> {
@@ -167,6 +321,21 @@ export class LingAppServerClient {
     return await this.request("context/inspect", params);
   }
 
+  async createHandoff(params: LingAppServerHandoffCreateParams): Promise<LingAppServerHandoffResult> {
+    await this.connect();
+    return await this.request("handoff/create", params);
+  }
+
+  async readHandoff(params: LingAppServerHandoffReadParams): Promise<LingAppServerHandoffResult> {
+    await this.connect();
+    return await this.request("handoff/read", params);
+  }
+
+  async resumeHandoff(params: LingAppServerHandoffResumeParams): Promise<LingAppServerHandoffResumeResult> {
+    await this.connect();
+    return await this.request("handoff/resume", params);
+  }
+
   async readThreadEvents(params: { readonly threadId: string; readonly cursor?: string; readonly limit?: number }): Promise<LingAppServerThreadEventsResult> {
     await this.connect();
     return await this.request("thread/events/read", params);
@@ -177,14 +346,91 @@ export class LingAppServerClient {
     return await this.request("workItem/list", params);
   }
 
-  async createWorkItem(params: Record<string, unknown>): Promise<unknown> {
+  async createWorkItem(params: LingAppServerWorkItemCreateParams): Promise<LingAppServerWorkItemResult> {
     await this.connect();
     return await this.request("workItem/create", params);
   }
 
-  async acceptWorkItem(params: Record<string, unknown>): Promise<unknown> {
+  async readGitHubSubject(params: LingAppServerGitHubSubjectParams): Promise<LingAppServerGitHubSubjectResult> {
+    await this.connect();
+    return await this.request("github/subject/read", params);
+  }
+
+  async listNativeWorkIntake(params: import("@ling-stack/contracts").ListNativeWorkIntakeRequest):
+    Promise<import("@ling-stack/contracts").ListNativeWorkIntakeResponse> {
+    await this.connect();
+    return await this.request("workItem/intake/list", params);
+  }
+
+  async acceptNativeWorkIntake(params: { readonly receiptId: string }): Promise<import("@ling-stack/contracts").NativeWorkIntakeMutationResponse> {
+    await this.connect();
+    return await this.request("workItem/intake/accept", params);
+  }
+
+  async retryNativeWorkIntake(params: import("@ling-stack/contracts").RetryNativeWorkIntakeRequest):
+    Promise<import("@ling-stack/contracts").NativeWorkIntakeMutationResponse> {
+    await this.connect();
+    return await this.request("workItem/intake/retry", params);
+  }
+
+  async reconcileGitHubDelivery(params: LingAppServerReconcileGitHubDeliveryParams): Promise<LingAppServerGitHubDeliveryResult> {
+    await this.connect();
+    return await this.request("github/delivery/reconcile", params);
+  }
+
+  async readGitHubDelivery(params: { readonly workItemId: string; readonly deliveryId?: string }): Promise<LingAppServerGitHubDeliveryResult> {
+    await this.connect();
+    return await this.request(params.deliveryId === undefined ? "workItem/delivery/read" : "delivery/read", params);
+  }
+
+  async enqueueGitHubDelivery(params: LingAppServerGitHubEnqueueParams): Promise<LingAppServerGitHubQueueResult> {
+    await this.connect();
+    return await this.request("github/delivery/enqueue", params);
+  }
+
+  async readGitHubQueue(params: { readonly workItemId: string; readonly queueReceiptId: string }): Promise<LingAppServerGitHubQueueResult> {
+    await this.connect();
+    return await this.request("github/delivery/queue/read", params);
+  }
+
+  async readCoordinationSchedule(params: { readonly automationId: string; readonly workItemId: string }): Promise<{ readonly cwd: string; readonly schedule: LingAppServerCoordinationSchedule | null }> {
+    await this.connect();
+    return await this.request("workItem/coordination/schedule/read", params);
+  }
+
+  async setCoordinationSchedule(params: LingAppServerCoordinationScheduleParams): Promise<{ readonly cwd: string; readonly schedule: LingAppServerCoordinationSchedule }> {
+    await this.connect();
+    return await this.request("workItem/coordination/schedule/set", params);
+  }
+
+  async submitCoordinationDecision(params: LingAppServerCoordinationDecisionParams): Promise<LingAppServerCoordinationDecisionSubmitResult> {
+    await this.connect();
+    return await this.request("workItem/coordination/decision/submit", params);
+  }
+
+  async readCoordinationDecisions(params: { readonly roundId: string; readonly workItemId: string }): Promise<LingAppServerCoordinationDecisionsReadResult> {
+    await this.connect();
+    return await this.request("workItem/coordination/decisions/read", params);
+  }
+
+  async acceptWorkItem(params: LingAppServerWorkItemAcceptParams): Promise<LingAppServerWorkItemAcceptResult> {
     await this.connect();
     return await this.request("workItem/accept", params);
+  }
+
+  async bindWorkItemWorkflow(params: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams): Promise<import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindResult> {
+    await this.connect();
+    return await this.request("workItem/workflow/bind", params);
+  }
+
+  async refinePlan(params: LingAppServerPlanRefineParams): Promise<ProposedPlanActionResponse> {
+    await this.connect();
+    return this.request("plan/refine", params);
+  }
+
+  async acceptPlanAsWorkflow(params: LingAppServerPlanWorkflowAcceptParams): Promise<ProposedPlanActionResponse> {
+    await this.connect();
+    return this.request("plan/accept", params);
   }
 
   async startThread(params: Record<string, unknown>): Promise<unknown> {
@@ -222,7 +468,7 @@ export class LingAppServerClient {
     return await this.request("turn/resume", params);
   }
 
-  async respondApproval(params: Record<string, unknown>): Promise<unknown> {
+  async respondApproval(params: LingAppServerApprovalRespondParams): Promise<LingAppServerApprovalRespondResult> {
     await this.connect();
     return await this.request("approval/respond", params);
   }
@@ -230,6 +476,85 @@ export class LingAppServerClient {
   async respondInput(params: LingAppServerInputRespondParams): Promise<LingAppServerInputRespondResult> {
     await this.connect();
     return await this.request("input/respond", params);
+  }
+
+  async captureChanges(params: LingAppServerCaptureChangesParams = {}): Promise<LingAppServerCaptureChangesResult> {
+    await this.connectForChanges(Boolean(params.sourceWorktree));
+    return await this.request("changes/capture", params);
+  }
+
+  async pollGitHubIntake(params: LingAppServerGitHubIntakePollParams): Promise<LingAppServerGitHubIntakePollResult> {
+    await this.connect();
+    return await this.request("github/intake/poll", params);
+  }
+
+  async listGitHubIntakePolicies(): Promise<import("@ling-stack/contracts").LingAppServerGitHubIntakePolicyList> {
+    await this.connect();
+    return await this.request("github/intake/policy/list", {});
+  }
+
+  async readGitHubIntake(params: LingAppServerGitHubIntakeReadParams): Promise<LingAppServerGitHubIntakeReceipt> {
+    await this.connect();
+    const result = await this.request<{ receipt: LingAppServerGitHubIntakeReceipt }>("github/intake/read", params);
+    return result.receipt;
+  }
+
+  async readChanges(params: LingAppServerReadChangesParams): Promise<LingAppServerReadChangesResult> {
+    await this.connectForChanges(Boolean(params.sourceWorktree));
+    return await this.request("changes/read", params);
+  }
+
+  async previewChangeRecovery(params: LingAppServerPreviewChangeRecoveryParams): Promise<LingAppServerChangeRecoveryPreview> {
+    await this.connect();
+    return await this.request("changes/apply/preview", params);
+  }
+
+  async applyChanges(params: LingAppServerApplyChangesParams): Promise<LingAppServerApplyChangesResult> {
+    await this.connect();
+    return await this.request("changes/apply", params);
+  }
+
+  async previewChangeTransfer(params: LingAppServerPreviewChangeTransferParams): Promise<LingAppServerChangeTransferPreview> {
+    await this.connectForChanges(true);
+    return await this.request("changes/apply/preview", params);
+  }
+
+  async applyChangeTransfer(params: LingAppServerApplyChangeTransferParams): Promise<LingAppServerApplyChangeTransferResult> {
+    await this.connectForChanges(true);
+    return await this.request("changes/apply", params);
+  }
+
+  private async connectForChanges(needsTransfer: boolean): Promise<void> {
+    const initialized = await this.connect();
+    if (needsTransfer && !initialized.capabilities.includes("development.changeTransfer")) {
+      throw Object.assign(new Error("This App Server connection does not support change transfer."),
+        { code: "required_capability_unavailable" });
+    }
+  }
+
+  async listWorktrees(): Promise<ManagedWorktreeListResponse> {
+    await this.connect();
+    return await this.request("worktree/list", {});
+  }
+
+  async createWorktree(params: LingAppServerWorktreeCreateParams): Promise<LingAppServerWorktreeResult> {
+    await this.connect();
+    return await this.request("worktree/create", params);
+  }
+
+  async refreshWorktree(params: LingAppServerWorktreeTarget): Promise<LingAppServerWorktreeResult> {
+    await this.connect();
+    return await this.request("worktree/refresh", params);
+  }
+
+  async previewWorktreeCleanup(params: LingAppServerWorktreeTarget): Promise<LingAppServerWorktreeCleanupPreview> {
+    await this.connect();
+    return await this.request("worktree/cleanup/preview", params);
+  }
+
+  async cleanupWorktree(params: LingAppServerWorktreeCleanupParams): Promise<LingAppServerWorktreeCleanupResult> {
+    await this.connect();
+    return await this.request("worktree/cleanup", params);
   }
 
   async planVerification(params: LingAppServerVerifyPlanParams): Promise<LingAppServerVerifyPlanResult> {
@@ -297,6 +622,21 @@ export class LingAppServerClient {
     return await this.request("workItem/read", { workspaceId, workItemId });
   }
 
+  async readWorkItemDevice(workItemId: string): Promise<LingAppServerWorkItemDeviceReadResult> {
+    await this.connect();
+    return await this.request("workItem/device/read", { workItemId });
+  }
+
+  async bindWorkItemDevice(params: LingAppServerWorkItemDeviceBindParams): Promise<LingAppServerWorkItemDeviceBindResult> {
+    await this.connect();
+    return await this.request("workItem/device/bind", params);
+  }
+
+  async recordWorkItemDeviceReceipt(params: LingAppServerWorkItemDeviceReceiptParams): Promise<LingAppServerWorkItemDeviceReceiptResult> {
+    await this.connect();
+    return await this.request("workItem/device/receipt", params);
+  }
+
   async controlWorkItem(
     action: "pause" | "resume" | "cancel",
     input: LingAppServerWorkItemControlParams,
@@ -318,17 +658,103 @@ export class LingAppServerClient {
     return await this.request("workItem/collaboration/read", params);
   }
 
+  async readWorkItemStages(workItemId: string, stageOffset = 0): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/stage/read", { workItemId, stageOffset });
+  }
+
+  async readWorkItemStageBriefs(workItemId: string, stageOffset = 0): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/stage/brief/read", { workItemId, stageOffset });
+  }
+
   async appendWorkItemCollaboration(params: LingAppServerWorkItemCollaborationAppendParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
     await this.connect();
     return await this.request("workItem/collaboration/append", params);
   }
 
   async readWorkItemDeliberation(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
-    return await this.readWorkItemCollaboration({ ...params, kind: "deliberation" });
+    await this.connect();
+    return await this.request("workItem/deliberation/read", params);
+  }
+
+  async startStageDeliberation(params: LingAppServerStageDeliberationStartParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/start", params);
+  }
+
+  async evaluateWorkItemDeliberation(params: LingAppServerDeliberationEvaluateParams): Promise<LingAppServerDeliberationEvaluateResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/evaluate", params);
+  }
+
+  async openWorkItemDeliberation(params: LingAppServerDeliberationOpenParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/open", params);
+  }
+
+  async recoverWorkItemStage(params: LingAppServerStageRecoverParams): Promise<LingAppServerStageRecoverResult> {
+    await this.connect();
+    return await this.request("workItem/stage/recover", params);
+  }
+
+  async decideWorkItemDeliberation(params: LingAppServerDeliberationDecideParams): Promise<LingAppServerDeliberationDecideResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/decide", params);
+  }
+
+  async cancelWorkItemDeliberation(params: LingAppServerDeliberationSettlementParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/deliberation/cancel", params);
+  }
+
+  async settleWorkItemStageHandoff(action: "accept" | "return", params: LingAppServerStageHandoffParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request(action === "accept" ? "workItem/handoff/accept" : "workItem/handoff/return", params);
+  }
+
+  async sendWorkItemStageMessage(params: LingAppServerStageMessageSendParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/message/send", params);
+  }
+
+  async listWorkItemStageMessages(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/message/list", params);
+  }
+
+  async askWorkItemStageQuestion(params: LingAppServerStageQuestionAskParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/question/ask", params);
+  }
+
+  async replyToWorkItemStageQuestion(params: LingAppServerStageQuestionReplyParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/question/reply", params);
+  }
+
+  async readWorkItemStageQuestions(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/question/read", params);
+  }
+
+  async requestWorkItemPlanChange(params: LingAppServerWorkItemPlanChangeRequestParams): Promise<LingAppServerWorkItemPlanChangeResult> {
+    await this.connect();
+    return await this.request("workItem/plan/change/request", params);
+  }
+
+  async withdrawWorkItemPlanChange(params: LingAppServerWorkItemPlanChangeWithdrawParams): Promise<LingAppServerWorkItemPlanChangeResult> {
+    await this.connect();
+    return await this.request("workItem/plan/change/withdraw", params);
   }
 
   async readWorkItemCoordination(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
     return await this.readWorkItemCollaboration({ ...params, kind: "coordination" });
+  }
+
+  async addWorkItemFeedback(params: LingAppServerWorkItemFeedbackParams): Promise<LingAppServerWorkItemFeedbackResult> {
+    await this.connect();
+    return await this.request("workItem/feedback/add", params);
   }
 
   async subscribe(params: LingAppServerSubscriptionParams): Promise<LingAppServerSubscriptionResult> {
@@ -378,10 +804,14 @@ export class LingAppServerClient {
     return () => this.serverRequestListeners.delete(listener);
   }
 
+  onConnectionState(listener: (status: LingAppServerConnectionStatus) => void): () => void {
+    this.connectionStateListeners.add(listener);
+    return () => this.connectionStateListeners.delete(listener);
+  }
+
   close(): void {
     this.manuallyClosed = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = undefined;
+    this.cancelReconnect();
     const socket = this.socket;
     this.socket = undefined;
     this.connectPromise = undefined;
@@ -389,6 +819,7 @@ export class LingAppServerClient {
     const error = new Error("Ling App Server connection closed.");
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+    this.emitConnectionState({ state: "closed", closeCode: 1000, closeReason: "client_closed" });
   }
 
   private async openAndInitialize(): Promise<LingAppServerInitializeResult> {
@@ -399,8 +830,8 @@ export class LingAppServerClient {
     attachSocketListener(socket, "message", (event) => {
       if (this.socket === socket) this.handleMessage(readSocketMessage(event));
     });
-    attachSocketListener(socket, "close", () => this.handleClose(socket));
-    attachSocketListener(socket, "error", () => this.handleClose(socket));
+    attachSocketListener(socket, "close", event => this.handleClose(socket, event));
+    attachSocketListener(socket, "error", event => this.handleClose(socket, event));
     try {
       await opened;
       if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
@@ -414,8 +845,22 @@ export class LingAppServerClient {
       if (initialized?.protocolVersion !== "ling-app-server/1") {
         throw Object.assign(new Error("The endpoint does not support Ling App Server protocol 1."), { code: "protocol_version_unsupported" });
       }
+      if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
       socket.send(JSON.stringify({ jsonrpc: "2.0", method: "initialized" }));
+      const previousServerInstanceId = this.serverInstanceId;
+      this.serverInstanceId = initialized.serverInstanceId;
       this.reconnectAttempt = 0;
+      this.emitConnectionState({ state: "connected", authorizationEpoch: initialized.authorizationEpoch, storeIncarnation: initialized.storeIncarnation });
+      if (this.socket === socket && previousServerInstanceId && initialized.serverInstanceId
+        && previousServerInstanceId !== initialized.serverInstanceId) {
+        for (const listener of this.notificationListeners) listener({
+          jsonrpc: "2.0", method: "server/restarted", params: {
+            previousServerInstanceId, serverInstanceId: initialized.serverInstanceId,
+            ...(initialized.storeIncarnation ? { storeIncarnation: initialized.storeIncarnation } : {}),
+            ...(initialized.authorizationEpoch ? { authorizationEpoch: initialized.authorizationEpoch } : {}),
+          },
+        });
+      }
       await this.replaySubscriptions(socket);
       if (this.socket !== socket) throw new Error("Ling App Server connection closed.");
       return initialized;
@@ -489,13 +934,24 @@ export class LingAppServerClient {
     }
   }
 
-  private handleClose(socket: LingAppServerSocket): void {
+  private handleClose(socket: LingAppServerSocket, event?: unknown): void {
     if (this.socket !== socket) return;
     this.socket = undefined;
-    const error = new Error("Ling App Server connection closed.");
+    const close = readCloseEvent(event);
+    const error = Object.assign(new Error(close.reason || "Ling App Server connection closed."), {
+      code: close.code === 1008 || /authorization_changed|unauthorized|forbidden|unexpected server response: (?:401|403)\b/iu.test(close.reason)
+        ? "authorization_required" : undefined,
+    });
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     this.connectPromise = undefined;
+    if (error.code === "authorization_required") {
+      this.cancelReconnect();
+      this.emitConnectionState({ state: "authorization_required", code: error.code, message: error.message,
+        closeCode: close.code, closeReason: close.reason });
+      return;
+    }
+    this.emitConnectionState({ state: "disconnected", message: error.message, closeCode: close.code, closeReason: close.reason });
     this.scheduleReconnect();
   }
 
@@ -523,10 +979,20 @@ export class LingAppServerClient {
     const max = Math.max(base, this.options.maxReconnectDelayMs ?? 10_000);
     const delay = Math.min(max, base * 2 ** Math.min(this.reconnectAttempt, 6));
     this.reconnectAttempt += 1;
+    this.emitConnectionState({ state: "reconnecting", message: `retrying in ${delay}ms` });
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;
       void this.connect().catch(() => undefined);
     }, delay);
+  }
+
+  private cancelReconnect(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+  }
+
+  private emitConnectionState(status: LingAppServerConnectionStatus): void {
+    for (const listener of this.connectionStateListeners) listener(status);
   }
 
   private async replaySubscriptions(socket: LingAppServerSocket): Promise<void> {
@@ -543,8 +1009,16 @@ export class LingAppServerClient {
             listener({ jsonrpc: "2.0", method, params: { ...result, threadId, workItemId, workspaceId } });
           }
         }
-      } catch {
-        // A failed replay remains tracked and will be retried on the next reconnect.
+      } catch (error) {
+        const status = connectionStatusForError(error);
+        if (status.state === "authorization_required") {
+          this.subscriptions.delete(key);
+          const method = subscription.method === "thread/subscribe" ? "thread/resync/required" : "workItem/resync/required";
+          const { threadId, workItemId, workspaceId } = subscription.params;
+          for (const listener of this.notificationListeners) {
+            listener({ jsonrpc: "2.0", method, params: { reason: "authorization_changed", threadId, workItemId, workspaceId } });
+          }
+        }
       }
     }
   }
@@ -568,6 +1042,25 @@ function subscriptionKey(method: TrackedSubscription["method"], params: LingAppS
   return `${method}:${params.workspaceId ?? ""}:${params.threadId ?? ""}:${params.workItemId ?? ""}`;
 }
 
+function connectionStatusForError(error: unknown): LingAppServerConnectionStatus {
+  const record = error && typeof error === "object" ? error as { readonly code?: unknown; readonly message?: unknown } : {};
+  const code = typeof record.code === "string" ? record.code : undefined;
+  const message = typeof record.message === "string" ? record.message : String(error);
+  if (code === "authorization_required" || code === "capability_denied" || /unexpected server response: (?:401|403)\b/iu.test(message)) {
+    return { state: "authorization_required", code: code ?? "authorization_required", message };
+  }
+  return { state: "error", ...(code ? { code } : {}), message };
+}
+
+function readCloseEvent(event: unknown): { readonly code: number; readonly reason: string } {
+  if (!event || typeof event !== "object") return { code: 1006, reason: "" };
+  const record = event as { readonly code?: unknown; readonly reason?: unknown; readonly message?: unknown };
+  return {
+    code: typeof record.code === "number" && Number.isSafeInteger(record.code) ? record.code : 1006,
+    reason: typeof record.reason === "string" ? record.reason : typeof record.message === "string" ? record.message : "",
+  };
+}
+
 function attachSocketListener(socket: LingAppServerSocket, type: "open" | "message" | "close" | "error", listener: (event: unknown) => void): void {
   if (socket.addEventListener) {
     socket.addEventListener(type, listener);
@@ -585,7 +1078,7 @@ function waitForSocketOpen(socket: LingAppServerSocket, timeoutMs: number): Prom
     };
     const onError = (event: unknown): void => {
       cleanup();
-      reject(event instanceof Error ? event : new Error("Ling App Server connection failed."));
+      reject(event instanceof Error ? event : new Error(readCloseEvent(event).reason || "Ling App Server connection failed."));
     };
     const cleanup = (): void => {
       clearTimeout(timer);

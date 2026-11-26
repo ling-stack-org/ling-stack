@@ -4,9 +4,12 @@ export { ExecutionEngineManagementClient, type ExecutionEngineManagementClientOp
 export {
   LingAppServerClient,
   type LingAppServerClientOptions,
+  type LingAppServerStageCoordinationGrantParams,
   type LingAppServerNotification,
   type LingAppServerServerRequest,
   type LingAppServerSocket,
   type LingAppServerSocketFactory,
+  type LingAppServerConnectionState,
+  type LingAppServerConnectionStatus,
 } from "./app-server.js";
 export type { ExecutionBindingRequest } from "@ling-stack/contracts";

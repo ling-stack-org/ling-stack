@@ -123,6 +123,8 @@ interface ReviewSubmission {
   readonly fingerprint: string;
   readonly rulesRefs: readonly string[];
   readonly reviewFocus?: CodeAssessmentDetail["assessment"]["reviewFocus"];
+  readonly workItem?: CodeAssessmentDetail["assessment"]["workItem"];
+  readonly assertCurrent?: () => void;
 }
 
 export async function startCodeAssessment(
@@ -157,7 +159,8 @@ export async function startCodeAssessment(
     detail = store.createCodeAssessment({
       id: submission?.assessmentId ?? `assessment_${randomUUID()}`, kind: input.kind,
       providerPresetId: input.providerPresetId, instructions: input.instructions, snapshot, reviewRules, reviewFocus: submission?.reviewFocus,
-      ...(submission ? { submission: { idempotencyKey: submission.idempotencyKey, fingerprint: submission.fingerprint } } : {}),
+      ...(submission ? { submission: { idempotencyKey: submission.idempotencyKey, fingerprint: submission.fingerprint,
+        workItem: submission.workItem, assertCurrent: submission.assertCurrent } } : {}),
       preparedAt, captureStartedAt, metrics: { captureDurationMs: Math.max(0, Date.now() - Date.parse(captureStartedAt)) }, now: now(),
     });
     let scanned = 0;
@@ -174,7 +177,7 @@ export async function startCodeAssessment(
       if (page.nextOffset === undefined) break;
     }
   } finally { capturing.delete(store); }
-  await launchStage(store, detail.assessment.id, input.kind === "security" ? "threat_model" : "reviewing_code", startRun);
+  await launchStage(store, detail.assessment.id, input.kind === "security" ? "threat_model" : "reviewing_code", startRun, submission?.assertCurrent);
   return store.getCodeAssessment(detail.assessment.id)!;
 }
 
@@ -196,7 +199,8 @@ function materializeThreatModel(store: RunStore, id: string, run: RunSession): b
   }
 }
 
-async function launchStage(store: RunStore, id: string, phase: CodeAssessmentRunPhase, startRun: StartCodeAssessmentRun): Promise<string | undefined> {
+async function launchStage(store: RunStore, id: string, phase: CodeAssessmentRunPhase, startRun: StartCodeAssessmentRun,
+  assertCurrent?: () => void): Promise<string | undefined> {
   const detail = store.getCodeAssessment(id);
   if (!detail || !isActiveCodeAssessment(detail.assessment.status)) return undefined;
   let threatModel: CodeAssessmentThreatModel | undefined;
@@ -214,6 +218,7 @@ async function launchStage(store: RunStore, id: string, phase: CodeAssessmentRun
   const releasePending = retainPending(store, id);
   const runId = await startDetachedRunAndResolveReady(onReady => Promise.resolve().then(() => {
     if (!isActiveCodeAssessment(store.getCodeAssessment(id)!.assessment.status)) return undefined;
+    assertCurrent?.();
     return startRun(codeAssessmentRunRequest(store.paths.cwd, detail, phase, threatModel), async run => {
       if (phase === "threat_model") {
         if (materializeThreatModel(store, id, run)) await launchStage(store, id, "reviewing_code", startRun);

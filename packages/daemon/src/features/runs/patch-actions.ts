@@ -403,7 +403,7 @@ function clonePatchPlan(plan: PatchPlan): PatchPlan {
   };
 }
 
-function readPatchText(toolName: string, input: unknown): string | undefined {
+export function readPatchText(toolName: string, input: unknown): string | undefined {
   if (toolName !== "edit" && toolName !== "write") {
     return undefined;
   }

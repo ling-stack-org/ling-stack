@@ -13,6 +13,7 @@ import { createLingStackToolHydrationExtension } from "./extensions/tool-hydrati
 import { createLingStackTaskContinuationExtension } from "./extensions/task-continuation.js";
 import { createLingStackUserInputExtension, isUserInputToolSurfaceEnabled } from "./extensions/user-input.js";
 import { createLingStackDelegationExtension, isDelegationToolSurfaceEnabled } from "./extensions/delegation.js";
+import { createWorkItemCoordinationExtension, WORK_ITEM_COORDINATION_TOOL } from "./extensions/work-item-coordination.js";
 import { createLingStackToolBeforeExtension } from "./extensions/tool-before.js";
 import { createLingStackCodeIntelligenceExtension } from "./extensions/code-intelligence.js";
 import { createLingStackCodeModeExtension } from "./extensions/code-mode.js";
@@ -29,7 +30,8 @@ export async function createLingStackResourceLoader(
   assertHostIsolatedFilesToolSurface(options);
   assertHostCapabilityToolSurface(options);
   assertHostReadonlyToolSurface(options);
-  if (options.mcpTools?.some(tool => ["code_mode", "code_intelligence", CONVERSATION_VISUALIZATION_TOOL].includes(tool.registeredName))) {
+  if (options.mcpTools?.some(tool => ["code_mode", "code_intelligence", CONVERSATION_VISUALIZATION_TOOL, WORK_ITEM_COORDINATION_TOOL]
+    .includes(tool.registeredName))) {
     throw new Error("Agent capability tool names are reserved.");
   }
   if ((options.isolatedToolsProfile || options.readonlyToolsProfile)
@@ -58,6 +60,7 @@ export async function createLingStackResourceLoader(
         ...(isConversationVisualizationEnabled(options) ? [createConversationVisualizationExtension(options)] : []),
         ...(isUserInputToolSurfaceEnabled(options) ? [createLingStackUserInputExtension(options)] : []),
         ...(isDelegationToolSurfaceEnabled(options) ? [createLingStackDelegationExtension(options)] : []),
+        ...(options.initialToolSurface?.workItemCoordination ? [createWorkItemCoordinationExtension(options)] : []),
         ...(options.onToolBefore ? [createLingStackToolBeforeExtension(options)] : []),
         ...(options.hooks?.hooks.length ? [createLingStackHooksExtension(options, "before")] : []),
         ...(options.initialToolSurface?.codeIntelligence ? [createLingStackCodeIntelligenceExtension(options)] : []),

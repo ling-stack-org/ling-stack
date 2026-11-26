@@ -2,6 +2,7 @@ import type { RunStore } from "@ling-stack/core";
 import { actOnManagedWorktreeLocked, listManagedWorktrees, WorktreeActionError } from "./worktree-management.js";
 import { coordinateWorktreeMutation } from "./worktree-mutation.js";
 import { recoverWorktreeOperations } from "./worktree-recovery.js";
+import { recoverWorktreePatch } from "./worktree-patch-recovery.js";
 
 export interface WorktreeCleanupResult { readonly checkedAt: string; readonly removed: number; readonly errorMessage?: string }
 const results = new Map<string, WorktreeCleanupResult>();
@@ -13,6 +14,7 @@ export async function maintainManagedWorktrees(store: RunStore, cwd: string): Pr
     let errorMessage: string | undefined;
     try {
       await recoverWorktreeOperations(store);
+      await recoverWorktreePatch(store);
       const policy = store.getWorkspaceSettings().worktreePolicy;
       if (policy?.autoCleanup) {
         const list = await listManagedWorktrees(store, cwd);

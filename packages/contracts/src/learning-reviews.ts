@@ -17,6 +17,11 @@ export interface LearningEvidenceBundle {
   readonly channelId?: string;
   readonly teammateId?: string;
   readonly sourceAttemptId?: string;
+  readonly workItem?: {
+    readonly id: string;
+    readonly revision: number;
+    readonly requestKey: string;
+  };
   readonly selectedSkillId?: string;
   readonly selectedSkillRevisionId?: string;
   readonly taskUpdatedAt?: string;

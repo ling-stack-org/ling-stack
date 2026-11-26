@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { constants as fsConstants, type Stats } from "node:fs";
 import { access, cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve, win32 } from "node:path";
 import process from "node:process";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import {
@@ -61,7 +61,8 @@ import {
   type LocalServiceStatus,
   type LocalStackStatus,
 } from "./local/services.js";
-import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
+import { getLingAppServerSchema, isLingAppServerMethod, isLingAppServerNotificationMethod, LING_APP_SERVER_SERVER_REQUEST_METHODS,
+  LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
@@ -258,11 +259,53 @@ export async function main(): Promise<void> {
 
 async function handleAppServer(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [mode = "stdio", socketPath, ...rest] = args;
-  if (!["stdio", "probe", "mcp", "listen"].includes(mode) || rest.length
-    || (mode === "listen" ? !socketPath : socketPath !== undefined)) {
-    throw new CliError(2, "bad_usage", "Use app-server [stdio|probe|mcp|listen <absolute-socket-path>].");
+  if (mode === "schema") {
+    const document = getLingAppServerSchema();
+    const serverRequest = LING_APP_SERVER_SERVER_REQUEST_METHODS.find(method => method === socketPath);
+    const schema = socketPath === undefined ? document
+      : isLingAppServerMethod(socketPath) ? document.methods[socketPath]
+        : isLingAppServerNotificationMethod(socketPath) ? document.notifications[socketPath]
+          : serverRequest ? document.serverRequests[serverRequest] : undefined;
+    if (rest.length || !schema) {
+      throw new CliError(2, "bad_usage", "Usage: ling-stack app-server schema [method]");
+    }
+    printJson(schema);
+    return 0;
   }
   const transportOptions = { daemonUrl: options.daemonUrl, cwd: options.cwd, authToken: process.env.LING_STACK_AUTH_TOKEN };
+  if (mode === "codex-host") {
+    const parsed = parseCommandArgs(args.slice(1), { stringFlags: new Set(["thread", "state", "codex", "codex-thread", "codex-cwd"]),
+      booleanFlags: new Set(["view"]) });
+    assertNoPositionals(parsed.positionals, "app-server codex-host --thread <id> --state <file>");
+    const threadId = getFlag(parsed, "thread"), statePath = getFlag(parsed, "state");
+    if (!threadId || !statePath) throw new CliError(2, "bad_usage", "Usage: ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--codex-cwd <directory>] [--view]");
+    const host = { ...transportOptions, threadId, statePath, codexExecutable: getFlag(parsed, "codex") ?? "codex",
+      codexThreadId: getFlag(parsed, "codex-thread"), codexCwd: getFlag(parsed, "codex-cwd") };
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    try {
+      if (parsed.booleans.has("view")) {
+        const { runLingCodexHostView } = await import("@ling-stack/daemon/dist/server/app-server-codex-host-view.js");
+        await runLingCodexHostView(host, controller.signal, url => console.log(url));
+      } else {
+        const { runLingCodexHost } = await import("@ling-stack/daemon/dist/server/app-server-codex-host.js");
+        await runLingCodexHost(host, controller.signal);
+      }
+    } finally {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+    }
+    return 0;
+  }
+  if (mode === "instructions-init" || mode === "verify" || mode === "verify-status") {
+    return handleAppServerDevelopment(mode, args.slice(1), transportOptions);
+  }
+  if (!["stdio", "probe", "mcp", "listen"].includes(mode) || rest.length
+    || (mode === "listen" ? !socketPath : socketPath !== undefined)) {
+    throw new CliError(2, "bad_usage", "Use app-server with stdio, probe, mcp, listen, schema, codex-host, instructions-init, verify, or verify-status.");
+  }
   if (mode === "mcp") {
     const { runLingAppServerMcp } = await import("@ling-stack/daemon/dist/server/app-server-mcp.js");
     await runLingAppServerMcp(transportOptions);
@@ -286,6 +329,64 @@ async function handleAppServer(args: readonly string[], options: GlobalOptions):
     await daemon.runLingAppServerStdio(transportOptions);
   }
   return 0;
+}
+
+async function handleAppServerDevelopment(
+  command: "instructions-init" | "verify" | "verify-status",
+  args: readonly string[],
+  transport: import("@ling-stack/daemon/dist/server/app-server-local-transport.js").AppServerLocalTransportOptions,
+): Promise<number> {
+  const { connectToAppServer } = await import("@ling-stack/daemon/dist/server/app-server-local-transport.js");
+  const client = connectToAppServer(transport, "ling-cli");
+  try {
+    if (command === "instructions-init") {
+      const parsed = parseCommandArgs(args, { stringFlags: new Set(["path", "apply"]) });
+      assertNoPositionals(parsed.positionals, "app-server instructions-init");
+      const expectedWorkspaceRevision = getFlag(parsed, "apply");
+      printJson(await client.initializeInstructions({
+        taskPath: getFlag(parsed, "path"),
+        mode: expectedWorkspaceRevision === undefined ? "preview" : "apply",
+        expectedWorkspaceRevision,
+        idempotencyKey: randomUUID(),
+      }));
+    } else if (command === "verify-status") {
+      const parsed = parseCommandArgs(args);
+      const operationId = singlePositional(parsed.positionals, "app-server verify-status <operation-id>");
+      printJson(await client.getVerificationStatus({ operationId }));
+    } else {
+      const parsed = parseCommandArgs(args, {
+        stringFlags: new Set(["thread", "work-item"]),
+        repeatableFlags: new Set(["check"]),
+        booleanFlags: new Set(["plan"]),
+      });
+      assertNoPositionals(parsed.positionals, "app-server verify");
+      const capture = await client.captureChanges();
+      if (capture.coverage !== "complete") {
+        throw new CliError(1, "candidate_incomplete", "Verification requires a candidate with complete coverage.");
+      }
+      const plan = await client.planVerification({
+        candidate: capture.candidate,
+        requestedChecks: getFlagValues(parsed, "check"),
+        threadId: getFlag(parsed, "thread"),
+        workItemId: getFlag(parsed, "work-item"),
+        idempotencyKey: randomUUID(),
+      });
+      if (parsed.booleans.has("plan")) {
+        printJson({ plan });
+      } else {
+        const operation = await client.startVerification({
+          planId: plan.planId,
+          planRevision: plan.planRevision,
+          candidateDigest: plan.candidate.candidateDigest,
+          idempotencyKey: randomUUID(),
+        });
+        printJson({ plan, operation });
+      }
+    }
+    return 0;
+  } finally {
+    client.close();
+  }
 }
 
 async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
@@ -6210,7 +6311,7 @@ function assertAllowed(key: string, value: string, allowed: ReadonlySet<string>)
 function parseGlobalArgs(rawArgs: readonly string[]): ParsedGlobalArgs {
   const defaultOptions = defaultGlobalOptions(false);
   let daemonUrl = defaultOptions.daemonUrl;
-  let cwd = defaultOptions.cwd;
+  let cwd: string | undefined;
   let json = false;
   let verbose = false;
   let color = true;
@@ -6233,12 +6334,12 @@ function parseGlobalArgs(rawArgs: readonly string[]): ParsedGlobalArgs {
       continue;
     }
     if (arg === "--cwd") {
-      cwd = resolve(requireNext(rawArgs, index, "--cwd"));
+      cwd = requireNext(rawArgs, index, "--cwd");
       index += 1;
       continue;
     }
     if (arg.startsWith("--cwd=")) {
-      cwd = resolve(arg.slice("--cwd=".length));
+      cwd = arg.slice("--cwd=".length);
       continue;
     }
     if (arg === "--json") {
@@ -6260,11 +6361,14 @@ function parseGlobalArgs(rawArgs: readonly string[]): ParsedGlobalArgs {
     args.push(arg);
   }
 
+  const workspacePath = cwd ?? defaultOptions.cwd;
+  const remoteWorkspace = args[0] === "app-server" && /^(https|wss):\/\//iu.test(daemonUrl)
+    && (posix.isAbsolute(workspacePath) || win32.isAbsolute(workspacePath));
   return {
     args,
     options: {
       daemonUrl: normalizeDaemonUrl(daemonUrl),
-      cwd,
+      cwd: remoteWorkspace ? workspacePath : resolve(workspacePath),
       json,
       verbose,
       color,
@@ -7737,6 +7841,12 @@ function shellQuote(value: string): string {
 function printCommandHelp(command: string, subcommand?: string): void {
   if (command === "app-server") {
     console.log("Usage: ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]");
+    console.log("       ling-stack app-server schema [method]");
+    console.log("       ling-stack app-server codex-host --thread <id> --state <file> [--codex <executable>] [--codex-thread <id>] [--codex-cwd <directory>] [--view]");
+    console.log("       Host JSONL methods: ling/snapshot, ling/queue, ling/interrupt, codex/thread/start, codex/snapshot, codex/turn/start, codex/steer");
+    console.log("       ling-stack [global options] app-server instructions-init [--path <directory>] [--apply <workspace-revision>]");
+    console.log("       ling-stack [global options] app-server verify [--plan] [--check <id>] [--thread <id>] [--work-item <id>]");
+    console.log("       ling-stack [global options] app-server verify-status <operation-id>");
     return;
   }
   if (command === "engine") {
@@ -7841,6 +7951,7 @@ Usage:
   ling-stack [global options] daemon restart
   ling-stack [global options] daemon logs
   ling-stack [global options] app-server [stdio|probe|mcp|listen <absolute-socket-path>]
+  ling-stack [global options] app-server [instructions-init|verify|verify-status]
   ling-stack [global options] engine authorize --origin <local-web-origin>
   ling-stack [global options] browser-host install
   ling-stack [global options] browser-host status

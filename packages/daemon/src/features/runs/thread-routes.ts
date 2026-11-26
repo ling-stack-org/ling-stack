@@ -1,4 +1,6 @@
 import { parseGoalAcceptanceCriteria, parseGoalAcceptanceEvidence, parseGoalSupervisionPolicy, type GoalAcceptanceCriterion, type GoalSupervisionPolicy } from "@ling-stack/core";
+import type { LingAppServerGitHubDelivery, LingAppServerReconcileGitHubDeliveryParams } from "@ling-stack/contracts";
+import { readGitHubDelivery } from "../../server/app-server-github-delivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -8,6 +10,7 @@ import {
   lingThreadKinds,
   normalizeRunnerId,
   permissionPresets,
+  parseProposedPlanStageDecision,
   ProposedPlanMutationError,
   redactSecrets,
   sessionPermissionModes,
@@ -19,6 +22,7 @@ import {
   type CreateProposedPlanArtifactInput,
   type LingApprovalCheckpoint,
   type LingThread,
+  type LingThreadGoal,
   type LingThreadSearchMatch,
   type LingThreadArchivedFilter,
   type LingThreadGoalStatus,
@@ -32,6 +36,9 @@ import {
   type PermissionPreset,
   type ProposedPlanArtifact,
   type ProposedPlanArtifactStatus,
+  type ProposedPlanWorkflowStepPreviewInput,
+  parseGoalVerificationRequirement,
+  parseStageRecoveryReviewRequirement,
   type RunEventEnvelope,
   type RunSession,
   type RunStore,
@@ -97,11 +104,13 @@ export type LingThreadRoute =
 
 export type StartLingThreadResumeRun = (runRequest: RunRequest) => Promise<string | undefined>;
 export type StartLingThreadForkRun = (runRequest: RunRequest) => Promise<string | undefined>;
+type ReconcileGoalGitHubDelivery = (params: LingAppServerReconcileGitHubDeliveryParams & { readonly cwd: string }) => Promise<LingAppServerGitHubDelivery>;
 
 export interface HandleLingThreadRouteOptions {
   readonly maxBodyBytes: number;
   readonly startResumeRun?: StartLingThreadResumeRun;
   readonly startForkRun?: StartLingThreadForkRun;
+  readonly reconcileGitHubDelivery?: ReconcileGoalGitHubDelivery;
 }
 
 export interface ResumeContextPreview {
@@ -272,10 +281,10 @@ export function handleLingThreadItem(
     return handleLingThreadMode(request, response, url, storeRegistry, route.threadId, options);
   }
   if (route.kind === "goal") {
-    return handleLingThreadGoal(request, response, url, storeRegistry, route.threadId);
+    return handleLingThreadGoal(request, response, url, storeRegistry, route.threadId, options?.reconcileGitHubDelivery);
   }
   if (route.kind === "goal-complete") {
-    return handleLingThreadGoalComplete(request, response, url, storeRegistry, route.threadId);
+    return handleLingThreadGoalComplete(request, response, url, storeRegistry, route.threadId, options?.reconcileGitHubDelivery);
   }
   if (route.kind === "proposed-plans") {
     return handleLingThreadProposedPlans(request, response, url, storeRegistry, route.threadId, route.planId, route.action, options);
@@ -355,6 +364,7 @@ async function handleLingThreadGoal(
   url: URL,
   storeRegistry: RunStoreRegistry,
   threadId: string,
+  reconcileDelivery?: ReconcileGoalGitHubDelivery,
 ): Promise<void> {
   const supportedMethods = new Set(["GET", "PUT", "PATCH", "DELETE"]);
   if (!request.method || !supportedMethods.has(request.method)) {
@@ -404,7 +414,8 @@ async function handleLingThreadGoal(
       }
       const body = await readOptionalJsonBody(request, 1024 * 1024);
       const patch = parsePatchLingThreadGoalBody(body);
-      const goal = store.updateLingThreadGoal(existing.id, patch, new Date().toISOString());
+      const input = await bindGoalAcceptanceEvidence(store, existing, patch, reconcileDelivery);
+      const goal = store.updateLingThreadGoal(existing.id, input, new Date().toISOString());
       writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
       return;
     }
@@ -421,6 +432,7 @@ async function handleLingThreadGoalComplete(
   url: URL,
   storeRegistry: RunStoreRegistry,
   threadId: string,
+  reconcileDelivery?: ReconcileGoalGitHubDelivery,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for goal completion` });
@@ -444,7 +456,8 @@ async function handleLingThreadGoalComplete(
       return;
     }
     const body = await readOptionalJsonBody(request, 1024 * 1024);
-    const goal = store.updateLingThreadGoal(existing.id, parseCompleteLingThreadGoalBody(body), new Date().toISOString());
+    const input = await bindGoalAcceptanceEvidence(store, existing, parseCompleteLingThreadGoalBody(body), reconcileDelivery);
+    const goal = store.updateLingThreadGoal(existing.id, input, new Date().toISOString());
     writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
   } catch (error) {
     writeLingThreadRouteError(response, error);
@@ -965,7 +978,7 @@ async function handleLingThreadResume(
   }
 }
 
-function createLingThreadFork(input: {
+export function createLingThreadFork(input: {
   readonly store: RunStore;
   readonly sourceThread: LingThread;
   readonly body: unknown;
@@ -2225,6 +2238,46 @@ export function parseCompleteLingThreadGoalBody(value: unknown): UpdateLingThrea
   };
 }
 
+export async function bindGoalAcceptanceEvidence(
+  store: RunStore, goal: LingThreadGoal, input: UpdateLingThreadGoalInput, reconcileDelivery?: ReconcileGoalGitHubDelivery,
+): Promise<UpdateLingThreadGoalInput> {
+  if (input.status !== "complete" || goal.status === "complete") return input;
+  const deliveryCriteria = goal.acceptanceCriteria?.filter(criterion => criterion.kind === "github_delivered") ?? [];
+  if (!deliveryCriteria.length && !goal.acceptanceCriteria?.some(criterion => criterion.kind === "verification_passed")) return input;
+  const cwd = store.paths.cwd;
+  const { captureCodeAssessmentSnapshot } = await import("../code-assessments/snapshot.js");
+  const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+  if (snapshot.coverage !== "complete") {
+    throw new HttpError(409, "goal_verification_candidate_incomplete", "Goal verification requires complete coverage of the current candidate.");
+  }
+  if (deliveryCriteria.length && snapshot.totalFileCount !== 0) {
+    throw new HttpError(409, "goal_completion_evidence_invalid", "Goal delivery evidence requires a clean, committed candidate.");
+  }
+  const reconciledGitHubDeliveryIds = new Set<string>();
+  for (const criterion of deliveryCriteria) {
+    const requirement = criterion.githubDelivery!;
+    const binding = input.acceptanceEvidence?.find(item => item.criterionId === criterion.id);
+    const workItem = store.getWorkItem(requirement.workItemId);
+    const observed = binding?.evidence.kind === "github_delivery"
+      ? readGitHubDelivery(store, requirement.workItemId, binding.evidence.id) : undefined;
+    if (!observed || !reconcileDelivery || !workItem || observed.threadId !== goal.threadId
+      || observed.policyRevision !== requirement.policyRevision) {
+      throw new HttpError(409, "goal_completion_evidence_invalid", "The Goal requires delivery evidence for its accepted Work Item and policy.");
+    }
+    if (reconciledGitHubDeliveryIds.has(observed.deliveryId)) continue;
+    const current = await reconcileDelivery({
+      cwd, workItemId: workItem.id, threadId: goal.threadId, expectedWorkItemRevision: workItem.revision,
+      candidateDigest: snapshot.digest, repository: observed.subject.repository, pullRequestNumber: observed.subject.number,
+    });
+    if (current.deliveryId !== observed.deliveryId || current.status !== "delivered") {
+      throw new HttpError(409, "goal_completion_evidence_invalid", "The observed merge or its applicable checks have changed.");
+    }
+    reconciledGitHubDeliveryIds.add(current.deliveryId);
+  }
+  return { ...input, verificationCandidateDigest: snapshot.digest, verificationGoalRevision: goal.updatedAt,
+    reconciledGitHubDeliveryIds: [...reconciledGitHubDeliveryIds] };
+}
+
 const lingThreadGoalStatuses = [
   "active",
   "paused",
@@ -2263,15 +2316,6 @@ interface ProposedPlanActionInput {
   readonly workflowTitle?: string;
   readonly workflowSteps?: readonly string[];
   readonly workflowStepPreviews?: readonly ProposedPlanWorkflowStepPreviewInput[];
-}
-
-interface ProposedPlanWorkflowStepPreviewInput {
-  readonly title: string;
-  readonly ownerId?: string;
-  readonly ownerLabel?: string;
-  readonly ownerConfidence?: "high" | "medium" | "low" | "none";
-  readonly ownerReason?: string;
-  readonly sourceSignals?: readonly string[];
 }
 
 function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): CreateProposedPlanArtifactInput {
@@ -2349,7 +2393,7 @@ function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanA
   };
 }
 
-function parseProposedPlanActionBody(value: unknown, threadId: string): ProposedPlanActionInput {
+export function parseProposedPlanActionBody(value: unknown, threadId: string): ProposedPlanActionInput {
   if (value === undefined || value === null) {
     return {};
   }
@@ -2479,8 +2523,29 @@ function readOptionalWorkflowStepPreviews(
       if (!title) {
         throw new HttpError(400, "bad_workflow_step_previews", "workflowStepPreviews items require title.");
       }
+      const requiredTools = item.requiredTools;
+      if (requiredTools !== undefined && (!Array.isArray(requiredTools) || !requiredTools.every(isRunTool)
+        || new Set(requiredTools).size !== requiredTools.length)) {
+        throw new HttpError(400, "bad_workflow_step_tools", "requiredTools must contain distinct Run tool names.");
+      }
+      let recoveryVerification;
+      if (item.recoveryVerification !== undefined) {
+        try {
+          recoveryVerification = parseGoalVerificationRequirement(item.recoveryVerification);
+        } catch (error) {
+          if (!(error instanceof Error) || !["goal_spec_invalid", "goal_acceptance_criteria_invalid"].includes(error.message)) throw error;
+          throw new HttpError(400, "bad_workflow_recovery_verification", "Supply the stage's check ID, verifier basis and coverage digest.");
+        }
+      }
       return {
         title,
+        requiredTools,
+        stageId: readOptionalString(item, "stageId"),
+        dependsOnStageIds: readOptionalWorkflowStageDependencies(item),
+        handoffFromStageIds: readOptionalWorkflowStageDependencies(item, "handoffFromStageIds"),
+        requiredDecision: item.requiredDecision === undefined ? undefined : parseProposedPlanStageDecision(item.requiredDecision),
+        recoveryVerification,
+        recoveryReview: item.recoveryReview === undefined ? undefined : parseStageRecoveryReviewRequirement(item.recoveryReview),
         ownerId: readOptionalString(item, "ownerId")?.trim() || undefined,
         ownerLabel: readOptionalString(item, "ownerLabel")?.trim() || undefined,
         ownerConfidence: readOptionalWorkflowOwnerConfidence(item, "ownerConfidence"),
@@ -2490,6 +2555,17 @@ function readOptionalWorkflowStepPreviews(
     })
     .slice(0, 50);
   return previews.length > 0 ? previews : undefined;
+}
+
+function readOptionalWorkflowStageDependencies(
+  record: Record<string, unknown>, key: "dependsOnStageIds" | "handoffFromStageIds" = "dependsOnStageIds",
+): readonly string[] | undefined {
+  const ids = record[key];
+  if (ids === undefined) return undefined;
+  if (!Array.isArray(ids) || !ids.every(id => typeof id === "string")) {
+    throw new HttpError(400, "bad_workflow_stage_dependencies", `${key} must be an array of stage identifiers.`);
+  }
+  return ids;
 }
 
 function readOptionalWorkflowOwnerConfidence(
@@ -2547,7 +2623,7 @@ function readOptionalPlanVersion(record: Record<string, unknown>, key: string): 
   return readOptionalGoalNumber(record, key, true);
 }
 
-const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow"] as const;
+const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow", "verification", "github_delivery"] as const;
 
 function findActiveChannelDiscussionRootThread(store: RunStore, channelId: string): LingThread | undefined {
   return store

@@ -1416,9 +1416,9 @@ export class SqliteChannelWorkflowStore {
         .map((row) => mapChannelWorkflowStep(row as Record<string, SQLOutputValue>));
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
+    params.push(limit, options.offset ?? 0);
     return this.context.database
-      .prepare(`${channelWorkflowStepSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY position ASC, created_at ASC LIMIT ?`)
+      .prepare(`${channelWorkflowStepSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY position ASC, created_at ASC, id ASC LIMIT ? OFFSET ?`)
       .all(...params)
       .map((row) => mapChannelWorkflowStep(row as Record<string, SQLOutputValue>));
   }
@@ -1471,6 +1471,16 @@ export class SqliteChannelWorkflowStore {
       throw new Error(`Workflow participant provider binding is immutable for workflow step ${id}`);
     }
     const metadata = input.metadata === null ? null : normalizeChannelWorkflowStepMetadata(input.metadata);
+    const planStage = existing.metadata?.planStageId ? {
+      planStageId: existing.metadata.planStageId,
+      dependsOnStepIds: existing.metadata.dependsOnStepIds,
+      requiredPlanDecision: existing.metadata.requiredPlanDecision,
+      recoveryVerification: existing.metadata.recoveryVerification,
+      recoveryReview: existing.metadata.recoveryReview,
+      planBallotKey: existing.metadata.planBallotKey,
+      requiredPlanHandoffStepIds: existing.metadata.requiredPlanHandoffStepIds,
+      requiredTools: existing.metadata.requiredTools,
+    } : undefined;
     const next: ChannelWorkflowStep = {
       ...existing,
       sourceHandoffId,
@@ -1492,6 +1502,7 @@ export class SqliteChannelWorkflowStore {
         : metadata
           ? {
               ...metadata,
+              ...planStage,
               participantAuthority: existing.participantAuthority,
               ...(existingProviderBinding ? { providerBinding: existingProviderBinding } : {}),
             }

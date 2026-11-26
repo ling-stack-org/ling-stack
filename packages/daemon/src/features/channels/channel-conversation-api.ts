@@ -134,11 +134,12 @@ export function buildChannelConversationTurnResponse(input: {
   readonly store: RunStore;
   readonly userItemId: string;
   readonly assistantItemIds?: readonly string[];
+  readonly workItemInput?: ChannelConversationTurnResponse["workItemInput"];
   readonly replyDispatch?: ChannelConversationTurnResponse["replyDispatch"];
   readonly autoStartedWorkflow?: ChannelConversationTurnResponse["autoStartedWorkflow"];
 }): ChannelConversationTurnResponse {
-  const userItem = requiredEffectiveItem(input.store, input.userItemId);
-  if (!userItem.channelId || !userItem.turnId || userItem.kind !== "user_message") {
+  const userItem = input.workItemInput ? input.store.getConversationItem(input.userItemId) : requiredEffectiveItem(input.store, input.userItemId);
+  if (!userItem?.channelId || !userItem.turnId || userItem.kind !== "user_message") {
     throw new Error(`Channel turn source is not a user conversation item: ${input.userItemId}`);
   }
   const turn = input.store.getLingTurn(userItem.turnId);
@@ -156,6 +157,7 @@ export function buildChannelConversationTurnResponse(input: {
     userItem,
     ...(assistantItems.length > 0 ? { assistantItems } : {}),
     decorations: decorationsForItems(input.store, items),
+    ...(input.workItemInput ? { workItemInput: input.workItemInput } : {}),
     ...(input.replyDispatch ? { replyDispatch: input.replyDispatch } : {}),
     ...(input.autoStartedWorkflow ? { autoStartedWorkflow: input.autoStartedWorkflow } : {}),
   };

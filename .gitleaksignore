@@ -699,6 +699,31 @@ c3b2c4c5b3b4eff9f67de3948aca6b1e036d65d1:packages/daemon/test/conversation-summa
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
 3efb4c6fdd945737c400d6a22f8110b5671e6f28:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837
 
+# Office packaging source digests verified in the authored manifest and its merge copy.
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1024
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1135
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1148
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1149
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1157
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1390
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1549
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1599
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1643
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1645
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1651
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1653
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1656
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1668
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:26
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:277
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:410
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:426
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:501
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:641
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:793
+68c1800c5ff9d6d03c9992c050fefa38e75a158d:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:924
 # Packaging inventory entries verified against the committed remote-access contract and pairing service.
 1e015ff246243d1ffd00f2306cf9c5aa6e2929e8:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:278
 1e015ff246243d1ffd00f2306cf9c5aa6e2929e8:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1160
@@ -728,7 +753,23 @@ fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-s
 fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1668
 fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1710
 fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1837
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:26
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:277
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:410
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:426
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:501
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:641
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:793
+fe08a3346c45e4d3f19fb51dc450bc46a64e8dd1:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:924
 
 # Squashed macOS packaging review with the same verified source digests.
 f55acd1385a37b6db6d75c4caa53fef77cab4d95:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:278
 f55acd1385a37b6db6d75c4caa53fef77cab4d95:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1160
+
+# Idempotency literals in the O9 integration test.
+f5a7a2dde2feb8a5abb1754cf71e5514453ed9d6:packages/daemon/test/app-server-release-acceptance.test.ts:generic-api-key:6237
+f5a7a2dde2feb8a5abb1754cf71e5514453ed9d6:packages/daemon/test/app-server-release-acceptance.test.ts:generic-api-key:6275
+
+# Reviewed Office source digests introduced by the main merge.
+93a09ac5ea0727c70412680039f9a5aacdc2a50c:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:278
+93a09ac5ea0727c70412680039f9a5aacdc2a50c:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1160

@@ -6,15 +6,17 @@ import type { LingAppServerInstructionSource, LingAppServerProjectInstructionMan
 import { redactSecrets } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { RunRequest } from "../runs/schemas.js";
+import { claudeRuleApplies, readClaudeRule, ruleTargetPaths } from "./claude-project-rules.js";
 
 const maxSourceBytes = 24 * 1024;
-const maxManifestBytes = 48 * 1024;
-const maxScopes = 32;
+export const maxProjectInstructionBytes = 48 * 1024;
+export const maxProjectInstructionScopes = 32;
 
-export async function withProjectInstructions(workspaceCwd: string, request: RunRequest): Promise<RunRequest> {
+export async function withProjectInstructions(workspaceCwd: string, request: RunRequest, claudeProjectRules?: readonly string[]): Promise<RunRequest> {
+  const referencedFiles = (request.conversationFileRefs ?? []).map(ref => ref.path);
   const rules = await collectProjectInstructions(workspaceCwd, [resolve(request.cwd),
-    ...(request.conversationFileRefs ?? []).map(ref => dirname(ref.path))]);
-  if (!rules.manifest.sources.length && !rules.manifest.omitted.length) return request;
+    ...referencedFiles.map(path => dirname(path))], { claudeProjectRules, targetPaths: [request.cwd, ...referencedFiles] });
+  if (!rules.manifest.sources.length && !rules.manifest.omitted.length && !claudeProjectRules?.length) return request;
   const { manifest, prompt } = rules;
   if (!prompt.length) return { ...request, projectInstructionManifest: manifest };
   if (request.nativeResponsePreferences) {
@@ -25,7 +27,14 @@ export async function withProjectInstructions(workspaceCwd: string, request: Run
     appendSystemPrompt: [...(request.appendSystemPrompt ?? []), ...prompt] };
 }
 
-export async function collectProjectInstructions(workspaceCwd: string, scopePaths: readonly string[] = []) {
+export async function collectProjectInstructions(workspaceCwd: string, scopePaths: readonly string[] = [], limits?: {
+  readonly frozenScopes?: ReadonlySet<string>;
+  readonly frozenPaths?: ReadonlySet<string>;
+  readonly remainingBytes?: number;
+  readonly remainingSources?: number;
+  readonly claudeProjectRules?: readonly string[];
+  readonly targetPaths?: readonly string[];
+}) {
   const root = await realpath(workspaceCwd);
   const openedPath = resolve(workspaceCwd);
   const scopes = new Set([root]);
@@ -38,7 +47,7 @@ export async function collectProjectInstructions(workspaceCwd: string, scopePath
     for (let directory = candidate; directory !== root; directory = dirname(directory)) lineage.push(directory);
     for (const directory of lineage.reverse()) {
       if (scopes.has(directory)) continue;
-      if (scopes.size >= maxScopes || await realpath(directory).catch(() => undefined) !== directory) {
+      if (scopes.size >= maxProjectInstructionScopes || await realpath(directory).catch(() => undefined) !== directory) {
         omitted.push(relative(root, directory));
         break;
       }
@@ -48,29 +57,57 @@ export async function collectProjectInstructions(workspaceCwd: string, scopePath
 
   const sources: LingAppServerInstructionSource[] = [];
   const prompt: string[] = [];
-  let availableBytes = maxManifestBytes;
+  let availableBytes = limits?.remainingBytes ?? maxProjectInstructionBytes;
   for (const scope of scopes) {
+    const relativeScope = relative(root, scope) || ".";
+    if (limits?.frozenScopes?.has(relativeScope)) continue;
     for (const basename of ["AGENTS.override.md", "AGENTS.md"]) {
       const path = relative(root, resolve(scope, basename));
       const source = await readProjectText(root, path);
       if (source === undefined) continue;
-      const applicable = typeof source === "string" && Buffer.byteLength(source, "utf8") <= availableBytes;
-      if (typeof source === "string") {
-        sources.push({ path, scope: relative(root, scope) || ".", digest: textDigest(source), applicable });
+      const textBytes = typeof source === "string" ? Buffer.byteLength(source, "utf8") : undefined;
+      const canRecord = sources.length < (limits?.remainingSources ?? maxProjectInstructionScopes);
+      const applicable = textBytes !== undefined && textBytes <= availableBytes && canRecord;
+      if (typeof source === "string" && canRecord) {
+        sources.push({ path, scope: relativeScope, digest: textDigest(source), applicable, textBytes });
         if (applicable) {
-          availableBytes -= Buffer.byteLength(source, "utf8");
-          prompt.push(`Project conventions from ${JSON.stringify(path)}, applicable within ${JSON.stringify(relative(root, scope) || ".")}. Follow the user's request and workspace policy.\n${redactSecrets(source)}`);
+          availableBytes -= textBytes;
+          prompt.push(`Project conventions from ${JSON.stringify(path)}, applicable within ${JSON.stringify(relativeScope)}. Follow the user's request and workspace policy.\n${redactSecrets(source)}`);
         }
       }
       if (!applicable) omitted.push(path);
       break;
     }
   }
-  const uniqueOmissions = [...new Set(omitted)];
-  const manifest: LingAppServerProjectInstructionManifest = {
-    version: 1, sources, omitted: uniqueOmissions, digest: textDigest(JSON.stringify([sources, uniqueOmissions])),
-  };
-  return { root, manifest, prompt };
+
+  const claudeProjectRules = limits?.claudeProjectRules;
+  const claudePrompt: string[] = [];
+  const targets = ruleTargetPaths(openedPath, limits?.targetPaths ?? scopePaths);
+  for (const path of claudeProjectRules ?? []) {
+    if (limits?.frozenPaths?.has(path)) continue;
+    const source = await readProjectText(root, path);
+    const rule = typeof source === "string" ? path === "CLAUDE.md" ? { text: source } : readClaudeRule(source) : undefined;
+    if (typeof source !== "string" || !rule) { omitted.push(path); continue; }
+    if (!claudeRuleApplies(rule.pathPatterns, targets)) continue;
+    const textBytes = Buffer.byteLength(source, "utf8");
+    const canRecord = sources.length < (limits?.remainingSources ?? maxProjectInstructionScopes);
+    const applicable = canRecord && textBytes <= availableBytes;
+    if (canRecord) sources.push({ path, scope: ".", digest: textDigest(source), origin: "claude", pathPatterns: rule.pathPatterns,
+      applicable, textBytes });
+    if (!applicable) { omitted.push(path); continue; }
+    availableBytes -= textBytes;
+    const scope = rule.pathPatterns ? `paths matching ${JSON.stringify(rule.pathPatterns)}` : "the workspace";
+    claudePrompt.push(`Adopted project conventions from ${JSON.stringify(path)}, applicable within ${scope}. Use applicable AGENTS.md instructions to resolve repository rule conflicts. Follow the user's request and workspace policy.\n${redactSecrets(rule.text)}`);
+  }
+  const manifest = projectInstructionManifest(sources, [...new Set(omitted)], claudeProjectRules);
+  return { root, manifest, prompt: [...claudePrompt, ...prompt] };
+}
+
+export function projectInstructionManifest(sources: readonly LingAppServerInstructionSource[],
+  omitted: readonly string[], claudeProjectRules?: readonly string[]): LingAppServerProjectInstructionManifest {
+  const adopted = claudeProjectRules?.length ? { claudeProjectRules } : {};
+  return { version: 1, sources, omitted, ...adopted,
+    digest: textDigest(JSON.stringify(claudeProjectRules?.length ? [sources, omitted, claudeProjectRules] : [sources, omitted])) };
 }
 
 export async function projectInstructionDirectory(workspaceCwd: string, taskPath?: string): Promise<string> {
@@ -116,7 +153,7 @@ export function textDigest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function isInside(root: string, path: string): boolean {
+export function isInside(root: string, path: string): boolean {
   const child = relative(root, path);
   return child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 }

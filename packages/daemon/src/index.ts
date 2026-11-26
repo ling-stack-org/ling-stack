@@ -1,8 +1,18 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
+import { dispatchGitHubIntake, processGitHubWebhookIntake } from "./server/app-server-github-intake.js";
+import { openReadyWorkItemStageDeliberations } from "./server/app-server-collaboration.js";
+import { reconcileWorkItemStageQuestionResults } from "./features/work-items/stage-question-results.js";
+import { publishWorkItemWorkflowStep } from "./features/work-items/workflow-stages.js";
+import { HttpError } from "./errors.js";
+import { isRecord } from "./shared/validation.js";
+import { NativeWorkIntake } from "./features/work-items/native-intake.js";
+import { dispatchNativeAutomationIntake } from "./features/automations/native-intake.js";
+import { runAutomation, type StartAutomationRunExecution } from "./features/automations/run.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
-import { orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
+import { cancelChannelWorkflow, orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
+import { ensureRunCancelled } from "./features/runs/cancellation.js";
 import { createWorkflowParallelCapabilityResolver } from "./features/runs/workflow-safety.js";
 import { MemorySemanticService } from "./features/memory/semantic-service.js";
 import { registerMemorySemanticService } from "./features/memory/semantic-registry.js";
@@ -17,6 +27,7 @@ import { createServer, type Server } from "node:http";
 import {
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
+  readWorkItemDeliberationWorkflowBinding,
   createCompositeSecretResolver,
   getRunSummaryPath,
   resolveStoragePaths,
@@ -45,7 +56,7 @@ import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context
 import { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import { reconcileAutomationRunForTerminal } from "./features/automations/run.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
-import { appendControlPlaneEvent, ControlPlaneEventHub } from "./features/control-plane/events.js";
+import { appendControlPlaneEvent, ControlPlaneEventHub, trimOversizedEvent } from "./features/control-plane/events.js";
 import {
   configureTerminalReportStore,
   recoverTerminalReports,
@@ -116,6 +127,7 @@ import {
 } from "./runtime/work-units.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
+import { createAppServerWssListener } from "./server/app-server-wss.js";
 import {
   CHROME_BROWSER_DEFAULT_EXTENSION_IDS,
   CHROME_BROWSER_PLUGIN_ID,
@@ -165,6 +177,8 @@ import { EngineManagementFeature } from "./features/execution-engines/feature.js
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 import { executeRunRequest, type RunExecutionSink } from "./features/runs/orchestrator.js";
+import { appServerRecoveryFor } from "./server/app-server-recovery.js";
+import { deliberationPolicyContext, evaluateScheduledCoordinationDecision, sealCoordinationDecision } from "./server/app-server-deliberation.js";
 import { CompanionReplyService } from "./features/companions/reply-service.js";
 import { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
 import { WorktreeMaintenanceRegistry } from "./features/workspaces/worktree-retention.js";
@@ -279,6 +293,7 @@ export {
 
 export interface DaemonServer {
   readonly server: Server;
+  readonly appServerWss?: Pick<Server, "address">;
   readonly config: ResolvedDaemonConfig;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly startupState: StartupStateRegistry;
@@ -364,6 +379,7 @@ export function createDaemonServer(
       ?? createLazyCuaDriverLeaseClientFactory(desktopBridgeToken),
   });
   const controlPlaneEvents = new ControlPlaneEventHub();
+  const nativeWorkIntake = new NativeWorkIntake(resolvedConfig, controlPlaneEvents);
   const notificationHub = new NotificationHub({
     journalPath: join(defaultStoragePaths.user.rootDir, "notifications", "journal.json"),
     preferencesPath: join(defaultStoragePaths.user.rootDir, "notifications", "preferences.json"),
@@ -565,7 +581,15 @@ export function createDaemonServer(
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     companionSchedulers?.start(cwd);
     worktreeMaintenance.registerStore(cwd, store);
-    if (store.listAutomationEventSources().some(source => source.enabled)) automationEvents?.start(cwd);
+    if (store.listAutomationEventSources().some(source => source.enabled)
+      || store.listAppServerState("github_intake_pending").length
+      || store.listPendingGitHubIntakeDispatches(new Date().toISOString(), 1).length
+      || resolvedConfig.appServerGitHubSources.some(source => source.workspaceRoot === cwd && source.intake?.mode === "auto_start")
+      || resolvedConfig.appServerNativeIntake.some(policy => policy.workspaceRoot === cwd)
+      || store.listNativeWorkIntakeReceipts("channel_task", undefined, 1, new Date().toISOString()).length
+      || store.listNativeWorkIntakeReceipts("automation_run", undefined, 1, new Date().toISOString()).length) {
+      automationEvents?.start(cwd);
+    }
     taskSupervisor?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
     if (!memorySemanticServices.has(store)) {
@@ -593,6 +617,9 @@ export function createDaemonServer(
       },
     }), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
+    ...(resolvedConfig.appServerRecoveryDirectory ? {
+      recoveryBlocksDispatch: (store: RunStore) => appServerRecoveryFor(resolvedConfig, store)?.blocksDispatch() === true,
+    } : {}),
     recoverOnOpen: false,
     beforeRecovery: (cwd, store) => {
       if (harnessShuttingDown) throw new Error("runtime_shutting_down");
@@ -743,12 +770,47 @@ export function createDaemonServer(
         target: nativeRunTargetDispatcher,
       })
     : undefined;
-  automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, (request, hooks) =>
-    startDetachedRunAndResolveReady(onReady => executeRunRequest(request, createDetachedRunExecutionSink(),
+  const startAutomationRun: StartAutomationRunExecution = async (request, hooks) => {
+    const sink = createDetachedRunExecutionSink();
+    let refusal: HttpError | undefined;
+    if (hooks.assertNativeIntakeCurrent) sink.writeError = (status, body) => {
+      if (isRecord(body) && typeof body.error === "string") {
+        refusal = new HttpError(status, body.error, "The native intake Run could not start.");
+      }
+    };
+    const runId = await startDetachedRunAndResolveReady(onReady => executeRunRequest(request, sink,
       runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
         onRunReady: (id, info) => { hooks.onRunReady?.(id, info); onReady(id); },
+        assertNativeIntakeCurrent: hooks.assertNativeIntakeCurrent,
         afterRunTerminal: hooks.afterRunTerminal, controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher,
-      })));
+      }));
+    if (!runId && refusal) throw refusal;
+    return runId;
+  };
+  automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, startAutomationRun, async (store, signal) => {
+      await nativeWorkIntake.dispatchTasks(store, signal, imageVisionSummarizer, (request, assertNativeIntakeCurrent) =>
+        startAutomationRun(request, { assertNativeIntakeCurrent, afterRunTerminal: afterChannelRunTerminal }));
+      await dispatchNativeAutomationIntake(store, storeRegistry, nativeWorkIntake, signal, input =>
+        runAutomation({ ...input, storeRegistry, startRun: startAutomationRun, notificationHub }));
+      const intakeContext = { config: resolvedConfig, secretResolver, externalWorkFetch, controlPlaneEvents, runnerRegistry, imageVisionSummarizer };
+      await processGitHubWebhookIntake(intakeContext, store, signal);
+      await dispatchGitHubIntake(intakeContext, store, signal, async (request, automaticIntakeAdmission) => {
+        let refusal: HttpError | undefined;
+        const sink = createDetachedRunExecutionSink();
+        sink.writeError = (status, body) => {
+          if (isRecord(body) && typeof body.error === "string") {
+            refusal = new HttpError(status, body.error, "The automatic intake Run could not start.");
+          }
+        };
+        const runId = await startDetachedRunAndResolveReady(onRunReady => executeRunRequest(request, sink,
+          runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
+            onRunReady, automaticIntakeAdmission, afterRunTerminal: afterChannelRunTerminal,
+            controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher, enableUserInputPause: true,
+          }));
+        if (!runId && refusal) throw refusal;
+        return runId;
+      });
+    }, nativeWorkIntake);
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -761,6 +823,26 @@ export function createDaemonServer(
     startupState,
     nativeRunDispatcher,
     notificationHub,
+    nativeWorkIntake,
+    {
+      sealDecision: (store, cwd, input, channelId, throughEvidenceSequence, source) =>
+        sealCoordinationDecision(store, cwd, input, channelId, throughEvidenceSequence, resolvedConfig.appServerDeliberationPolicies, source),
+      evaluate: async (store, cwd, decision, isActive) => {
+        const policy = deliberationPolicyContext(resolvedConfig, store);
+        const result = await evaluateScheduledCoordinationDecision(store, decision, cwd, {
+          ...policy,
+          assertRecoveryReady: () => {
+            if (!isActive()) throw new HttpError(409, "resume_blocked", "The coordination scheduler is stopped.");
+            policy.assertRecoveryReady();
+          },
+        });
+        if (result?.event) controlPlaneEvents.publish(trimOversizedEvent(result.event));
+        if (result?.admissionEvent) {
+          controlPlaneEvents.publish(trimOversizedEvent(result.admissionEvent));
+          taskSupervisor?.poke(cwd);
+        }
+      },
+    },
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,
@@ -880,17 +962,37 @@ export function createDaemonServer(
     webResolveHostAddresses,
     afterRunTerminal: afterChannelRunTerminal,
   };
-  taskSupervisor = new TaskSupervisor(storeRegistry, (store, workflowId) => orchestrateChannelWorkflow({
-    store, cwd: store.paths.cwd, workflowId, secretResolver, runnerRegistry,
-    resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
-      { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
-    isolationHost: { enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
-      toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
-      maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
-        ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
-    validateRunRequest: request => { resolveProviderForRun(store, request, secretResolver); },
-    startRun: createStartOrchestratedRun(channelTurnDispatchOptions, store, store.paths.cwd),
-  }), async (store, run) => {
+  taskSupervisor = new TaskSupervisor(storeRegistry, async (store, workflowId) => {
+    if (storeRegistry.recoveryBlocksDispatch(store.paths.cwd)) return;
+    if (readWorkItemDeliberationWorkflowBinding(store, workflowId)) {
+      const blocker = store.getWorkItemWorkflowAdmissionBlocker(workflowId);
+      if (blocker === "work_item_deliberation_closed" || blocker === "work_item_deliberation_deadline_expired"
+        || blocker === "work_item_deliberation_workflow_stale") {
+        const result = await cancelChannelWorkflow({ store, workflowId, reason: blocker, cancelRun: run => {
+          const active = activeRuns.get(run.id);
+          const cancelled = ensureRunCancelled({ store, runId: run.id, taskId: run.taskId, startedAt: run.startedAt,
+            reason: blocker, active: Boolean(active), streamEnvelope: active?.streamEnvelope, controlPlaneEvents });
+          if (!cancelled.inputWait) active?.abortController.abort();
+        } });
+        for (const step of result.workflowSteps) publishWorkItemWorkflowStep(store, controlPlaneEvents, step.id);
+        return result;
+      }
+    }
+    reconcileWorkItemStageQuestionResults(store, workflowId, controlPlaneEvents);
+    for (const event of openReadyWorkItemStageDeliberations(store, workflowId, new Date().toISOString())) controlPlaneEvents.publish(event);
+    return orchestrateChannelWorkflow({
+      store, cwd: store.paths.cwd, workflowId, secretResolver, runnerRegistry,
+      onDeliberationEvent: event => controlPlaneEvents.publish(event),
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+        { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+      isolationHost: { enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+        toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+        maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+          ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
+      validateRunRequest: request => { resolveProviderForRun(store, request, secretResolver); },
+      startRun: createStartOrchestratedRun(channelTurnDispatchOptions, store, store.paths.cwd),
+    });
+  }, async (store, run) => {
     const queued = maybeQueueGoalContinuation({ terminalRun: run, store, activeRuns });
     const pending = queued ?? store.listRunInterventions({ sourceRunId: run.id, status: "queued", limit: 100 })
       .find(item => item.requestedBy === "system" && item.idempotencyKey?.startsWith("goal_auto_continue:"));
@@ -1068,7 +1170,15 @@ export function createDaemonServer(
     getStore: () => storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
     events: controlPlaneEvents,
   });
-  learningReviewCoordinator = new LearningReviewCoordinator({ runtimeSupervisor, secretResolver, controlPlaneEvents });
+  learningReviewCoordinator = new LearningReviewCoordinator({
+    runtimeSupervisor, secretResolver, controlPlaneEvents,
+    ...(resolvedConfig.appServerRecoveryDirectory ? {
+      dispatchAllowed: store => {
+        try { return appServerRecoveryFor(resolvedConfig, store)?.blocksDispatch() !== true; }
+        catch { return false; }
+      },
+    } : {}),
+  });
   for (const store of approvalRecoveryStores) learningReviewCoordinator.registerStore(store);
   const context: DaemonContext = {
     learningReviewCoordinator,
@@ -1093,6 +1203,7 @@ export function createDaemonServer(
     backgroundSchedulers,
     automationSchedulers,
     automationEvents,
+    nativeWorkIntake,
     taskSupervisor,
     controlPlaneEvents,
     notificationHub,
@@ -1154,6 +1265,7 @@ export function createDaemonServer(
     activeRuns.trackCompletion(completion);
   });
   const rpcWebSocketServer = attachRpcWebSocketServer(server, context);
+  const appServerWss = resolvedConfig.appServerWss ? createAppServerWssListener(resolvedConfig.appServerWss, context) : undefined;
   const chromeBrowserWebSocketServer = attachChromeBrowserWebSocketServer({
     server,
     controller: chromeBrowserSessions,
@@ -1174,6 +1286,7 @@ export function createDaemonServer(
     : undefined;
 
   let networkShutdown: Promise<void> | undefined;
+  let appServerWssShutdown: Promise<void> | undefined;
   let remoteAccessShutdown: Promise<void> | undefined;
   let providerImportShutdown: Promise<void> | undefined;
   const runShutdown = createRunShutdownCoordinator({ activeRuns, delegations: delegationRuntimeRegistry,
@@ -1182,6 +1295,7 @@ export function createDaemonServer(
     stopExternalAdmission: () => {
       harnessShuttingDown = true;
       rpcWebSocketServer.beginShutdown();
+      appServerWssShutdown = appServerWss?.beginShutdown();
       learningReviewCoordinator?.beginShutdown();
       for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();
@@ -1244,6 +1358,7 @@ export function createDaemonServer(
       learningReviewCoordinator?.drain() ?? Promise.resolve(),
       Promise.all([...memorySemanticServices.values()].map(service => service.drain())),
       runShutdown.shutdown("daemon_restart").then(() => networkShutdown),
+      appServerWssShutdown ?? Promise.resolve(),
       remoteAccessShutdown ?? Promise.resolve(),
     ]),
   });
@@ -1263,7 +1378,7 @@ export function createDaemonServer(
         await runShutdown.shutdown("daemon_restart");
       } catch (error) {
         const failures = [error];
-        for (const close of [() => controlPlaneEvents.closeAll(), () => rpcWebSocketServer.close(),
+        for (const close of [() => controlPlaneEvents.closeAll(), () => rpcWebSocketServer.close(), () => appServerWss?.close(),
           () => server.closeAllConnections()]) {
           try { close(); } catch (closeError) { failures.push(closeError); }
         }
@@ -1281,6 +1396,7 @@ export function createDaemonServer(
         desktopBrowser.close();
         chromeBrowserWebSocketServer.close();
         rpcWebSocketServer.close();
+        appServerWss?.close();
         server.closeAllConnections();
       });
     },
@@ -1318,6 +1434,7 @@ export function createDaemonServer(
 
   const daemon: DaemonServer = {
     server,
+    ...(appServerWss ? { appServerWss: appServerWss.server } : {}),
     config: resolvedConfig,
     extensionRegistry,
     startupState,
@@ -1377,6 +1494,7 @@ export function createDaemonServer(
         if (resolvedConfig.port !== 0) {
           await remoteAccess.startIfEnabled();
         }
+        await appServerWss?.start();
         startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         companionSchedulers?.start(resolvedConfig.defaultWorkspaceCwd);
         taskSupervisor.start(resolvedConfig.defaultWorkspaceCwd);

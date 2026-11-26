@@ -3049,6 +3049,7 @@ export function AppShell(): React.JSX.Element {
               proposedRuleFingerprint,
             )}
             onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
+            onInspectWorkItem={id => openWorkBoard("global", id)}
             onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
             onReleaseWorkItem={(workItemId, claimToken) => void releaseDurableWorkItem(workItemId, claimToken)}
             onCompleteWorkItem={(workItemId, claimToken) => void completeDurableWorkItem(workItemId, claimToken)}

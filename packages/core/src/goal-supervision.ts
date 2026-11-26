@@ -1,16 +1,5 @@
-import type { GoalEvidenceRef } from "./run-types.js";
-
-export interface GoalAcceptanceCriterion {
-  readonly id: string;
-  readonly description: string;
-  readonly kind: "run_succeeded" | "workflow_succeeded" | "artifact";
-  readonly contentSha256?: string;
-  readonly evidenceId?: string;
-}
-export interface GoalAcceptanceEvidence {
-  readonly criterionId: string;
-  readonly evidence: GoalEvidenceRef;
-}
+import type { GoalAcceptanceCriterion, GoalAcceptanceEvidence, GoalEvidenceRef, GoalGitHubDeliveryRequirement, GoalVerificationRequirement } from "@ling-stack/contracts";
+export type { GoalAcceptanceCriterion, GoalAcceptanceEvidence } from "@ling-stack/contracts";
 export interface GoalSupervisionPolicy {
   readonly maxContinuations: number;
   readonly maxNoEvidenceContinuations: number;
@@ -41,19 +30,43 @@ export function parseGoalAcceptanceCriteria(value: unknown): GoalAcceptanceCrite
   const ids = new Set<string>();
   return value.map(item => {
     const criterion = record(item);
-    if (Object.keys(criterion).some(key => !["id", "description", "kind", "contentSha256", "evidenceId"].includes(key))
+    if (Object.keys(criterion).some(key => !["id", "description", "kind", "contentSha256", "evidenceId", "verification", "githubDelivery"].includes(key))
       || typeof criterion.id !== "string" || !/^[a-zA-Z0-9_.:-]{1,100}$/.test(criterion.id) || ids.has(criterion.id)
       || typeof criterion.description !== "string" || !criterion.description.trim() || criterion.description.length > 2000
-      || !["run_succeeded", "workflow_succeeded", "artifact"].includes(String(criterion.kind))
+      || !["run_succeeded", "workflow_succeeded", "artifact", "verification_passed", "github_delivered"].includes(String(criterion.kind))
+      || criterion.kind !== "verification_passed" && criterion.verification !== undefined
+      || criterion.kind !== "github_delivered" && criterion.githubDelivery !== undefined
       || criterion.evidenceId !== undefined && (typeof criterion.evidenceId !== "string" || !criterion.evidenceId.trim() || criterion.evidenceId.length > 200)
       || criterion.contentSha256 !== undefined && (criterion.kind !== "artifact" || typeof criterion.contentSha256 !== "string" || !/^[a-f0-9]{64}$/.test(criterion.contentSha256)))
       throw new Error("goal_acceptance_criteria_invalid");
     ids.add(criterion.id);
     return { id: criterion.id, description: criterion.description.trim(), kind: criterion.kind as GoalAcceptanceCriterion["kind"],
       ...(criterion.evidenceId === undefined ? {} : { evidenceId: criterion.evidenceId as string }),
-      ...(criterion.contentSha256 === undefined ? {} : { contentSha256: criterion.contentSha256 as string }) };
+      ...(criterion.contentSha256 === undefined ? {} : { contentSha256: criterion.contentSha256 as string }),
+      ...(criterion.kind === "verification_passed" ? { verification: parseGoalVerificationRequirement(criterion.verification) } : {}),
+      ...(criterion.kind === "github_delivered" ? { githubDelivery: parseGitHubDeliveryRequirement(criterion.githubDelivery) } : {}) };
   });
 }
+
+function parseGitHubDeliveryRequirement(value: unknown): GoalGitHubDeliveryRequirement {
+  const requirement = record(value);
+  const { workItemId, policyRevision } = requirement;
+  if (Object.keys(requirement).some(key => key !== "workItemId" && key !== "policyRevision")
+    || typeof workItemId !== "string" || !workItemId.trim() || workItemId.length > 200
+    || typeof policyRevision !== "string" || !/^[a-f0-9]{64}$/u.test(policyRevision)) throw new Error("goal_acceptance_criteria_invalid");
+  return { workItemId, policyRevision };
+}
+
+export function parseGoalVerificationRequirement(value: unknown): GoalVerificationRequirement {
+  const requirement = record(value);
+  const { checkId, verifierBasisRef, coverageDigest } = requirement;
+  if (Object.keys(requirement).some(key => !["checkId", "verifierBasisRef", "coverageDigest"].includes(key))
+    || typeof checkId !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(checkId)
+    || typeof verifierBasisRef !== "string" || !/^verify_basis_[a-f0-9]{64}$/u.test(verifierBasisRef)
+    || typeof coverageDigest !== "string" || !/^[a-f0-9]{64}$/u.test(coverageDigest)) throw new Error("goal_acceptance_criteria_invalid");
+  return { checkId, verifierBasisRef, coverageDigest };
+}
+
 export function parseGoalAcceptanceEvidence(value: unknown): GoalAcceptanceEvidence[] {
   if (!Array.isArray(value) || value.length > 32) throw new Error("goal_acceptance_evidence_invalid");
   const ids = new Set<string>();
@@ -62,7 +75,7 @@ export function parseGoalAcceptanceEvidence(value: unknown): GoalAcceptanceEvide
     if (Object.keys(entry).some(key => !["criterionId", "evidence"].includes(key))
       || Object.keys(evidence).some(key => !["kind", "id"].includes(key))
       || typeof entry.criterionId !== "string" || !/^[a-zA-Z0-9_.:-]{1,100}$/.test(entry.criterionId) || ids.has(entry.criterionId)
-      || !["run", "artifact", "workflow"].includes(String(evidence.kind)) || typeof evidence.id !== "string" || !evidence.id || evidence.id.length > 200) throw new Error("goal_acceptance_evidence_invalid");
+      || !["run", "artifact", "workflow", "verification", "github_delivery"].includes(String(evidence.kind)) || typeof evidence.id !== "string" || !evidence.id || evidence.id.length > 200) throw new Error("goal_acceptance_evidence_invalid");
     ids.add(entry.criterionId);
     return { criterionId: entry.criterionId, evidence: { kind: evidence.kind, id: evidence.id } as GoalEvidenceRef };
   });

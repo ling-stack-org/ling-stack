@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { LearningReviewPolicyUpdateRequest, RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 import { LEARNING_REVIEW_MAX_LIMITS, type LearningReviewLimits } from "@ling-stack/contracts";
 import type { EnqueueLearningReviewInput, LearningReviewJob, LearningReviewPolicy, LearningReviewStore } from "../../learning-review-types.js";
+import { learningReviewJobId, workItemLearningReviewSourceKey } from "../../learning-review-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -40,8 +41,10 @@ export class SqliteLearningReviewStore implements LearningReviewStore {
       if (!input.evidence.runId && !input.evidence.decisionId) throw new Error("learning_source_scope_unavailable");
       if (input.evidence.schemaVersion !== 1 || input.evidence.items.length > 64 ||
         Buffer.byteLength(JSON.stringify(input.evidence)) > 32_768 || !/^[a-f0-9]{64}$/.test(input.evidence.digest)) throw new Error("learning_evidence_over_budget");
-      const sourceKey = createHash("sha256").update(JSON.stringify([input.evidence.workspaceId,
-        input.evidence.runId, input.evidence.sourceAttemptId, input.evidence.digest])).digest("hex");
+      const workItem = input.evidence.workItem;
+      const sourceKey = workItem ? workItemLearningReviewSourceKey(input.evidence.workspaceId, workItem.id, workItem.requestKey)
+        : createHash("sha256").update(JSON.stringify([input.evidence.workspaceId,
+          input.evidence.runId, input.evidence.sourceAttemptId, input.evidence.digest])).digest("hex");
       const existing = this.context.database.prepare("SELECT record_json FROM learning_review_jobs WHERE workspace_id = ? AND source_key = ?")
         .get(input.evidence.workspaceId, sourceKey);
       if (existing) return JSON.parse(String(existing.record_json)) as LearningReviewJob;
@@ -50,7 +53,7 @@ export class SqliteLearningReviewStore implements LearningReviewStore {
           .get(input.evidence.workspaceId, `${now.slice(0, 10)}T00:00:00.000Z`);
         if (Number(count?.n) >= (policy.limits ?? LEARNING_REVIEW_MAX_LIMITS).dailyAutomaticJobs) throw new Error("learning_daily_quota_exceeded");
       }
-      const job: LearningReviewJob = { id: `learning_review_${sourceKey.slice(0, 32)}`, workspaceId: input.evidence.workspaceId,
+      const job: LearningReviewJob = { id: learningReviewJobId(sourceKey), workspaceId: input.evidence.workspaceId,
         sourceKey, mode: input.mode, policyRevision: policy.revision, providerPresetId: input.providerPresetId,
         limits: policy.limits ?? LEARNING_REVIEW_MAX_LIMITS,
         evidence: input.evidence, status: "queued", modelRequests: 0, inputTokensReserved: 0, outputTokensReserved: 0,
@@ -65,10 +68,13 @@ export class SqliteLearningReviewStore implements LearningReviewStore {
       .get(id, DEFAULT_WORKSPACE_ID);
     return row ? JSON.parse(String(row.record_json)) as LearningReviewJob : undefined;
   }
-  listLearningReviewJobs(status?: LearningReviewJob["status"], limit = 50, runId?: string, decisionId?: string): LearningReviewJob[] {
+  listLearningReviewJobs(status?: LearningReviewJob["status"], limit = 50, runId?: string, decisionId?: string, workItemId?: string): LearningReviewJob[] {
     if (!Number.isFinite(limit)) throw new Error("learning_limit_invalid");
     return this.context.database.prepare(`SELECT record_json FROM learning_review_jobs WHERE workspace_id = ?${status ? " AND status = ?" : ""}${runId ? " AND json_extract(record_json, '$.evidence.runId') = ?" : ""}${decisionId ? " AND json_extract(record_json, '$.evidence.decisionId') = ?" : ""}
-      ORDER BY created_at ${status ? "ASC" : "DESC"}, rowid ${status ? "ASC" : "DESC"} LIMIT ?`).all(DEFAULT_WORKSPACE_ID, ...(status ? [status] : []), ...(runId ? [runId] : []), ...(decisionId ? [decisionId] : []), Math.max(1, Math.min(100, Math.trunc(limit))))
+      ${workItemId ? "AND json_extract(record_json, '$.evidence.workItem.id') = ?" : ""}
+      ORDER BY created_at ${status ? "ASC" : "DESC"}, rowid ${status ? "ASC" : "DESC"} LIMIT ?`).all(DEFAULT_WORKSPACE_ID,
+        ...(status ? [status] : []), ...(runId ? [runId] : []), ...(decisionId ? [decisionId] : []),
+        ...(workItemId ? [workItemId] : []), Math.max(1, Math.min(100, Math.trunc(limit))))
       .map(row => JSON.parse(String(row.record_json)) as LearningReviewJob);
   }
   claimLearningReviewJob(id: string, fence: RuntimeAttemptFenceV1, now: string): LearningReviewJob | undefined {

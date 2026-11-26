@@ -2,6 +2,7 @@ import type { ConversationStreamRequest } from "@ling-stack/contracts";
 import type { LingThread, LingTurn, RunStore } from "@ling-stack/core";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
+import { appendControlPlaneEvent, type ControlPlaneEventHub } from "../control-plane/events.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import { resolveConversationExecutionSelection } from "./conversation-execution-selection.js";
 import { buildConversationRunRequest } from "./conversation-run-request.js";
@@ -10,6 +11,7 @@ import { prepareNormalConversationInput } from "./normal-conversation-input.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 import { readConversationSubmission } from "./submission-receipts.js";
 import { withProjectInstructions } from "./project-instructions.js";
+import { assertWorkItemConversationAdmission } from "../work-items/conversation-admission.js";
 
 export async function prepareConversationSubmission(options: {
   readonly store: RunStore;
@@ -20,6 +22,7 @@ export async function prepareConversationSubmission(options: {
   readonly resolveThread: () => LingThread;
   readonly title?: string;
   readonly turnKind?: LingTurn["kind"];
+  readonly automaticIntakeReceiptId?: string;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }) {
   const { store, workspaceCwd, runnerRegistry, input, now } = options;
@@ -28,6 +31,10 @@ export async function prepareConversationSubmission(options: {
   }) : undefined;
   const selection = accepted?.status === "accepted" ? undefined : resolveConversationExecutionSelection(store, runnerRegistry, input);
   const thread = options.resolveThread();
+  const acceptedTurn = accepted?.status === "accepted" && accepted.turnId ? store.getLingTurn(accepted.turnId) : undefined;
+  if (!(acceptedTurn?.activeRunId || acceptedTurn?.lastRunId)) {
+    assertWorkItemConversationAdmission(store, thread.id, input.idempotencyKey, options.automaticIntakeReceiptId);
+  }
   const fileRefs = input.fileRefs ?? [];
   const prepared = prepareNormalConversationInput({
     store, thread, message: input.message,
@@ -36,7 +43,8 @@ export async function prepareConversationSubmission(options: {
     turnKind: options.turnKind, now,
   });
   const { turn, attachments } = prepared;
-  if (prepared.replayRequest) return { thread, turn, attachments, runRequest: prepared.replayRequest, replayed: true };
+  if (prepared.replayRequest) return { thread, turn, attachments, runRequest: prepared.replayRequest, replayed: true,
+    replayRunId: prepared.replayRunId };
 
   const attachmentMaterializations = await materializeInlineConversationAttachments({
     store, attachments, now, imageVisionSummarizer: options.imageVisionSummarizer,
@@ -50,11 +58,22 @@ export async function prepareConversationSubmission(options: {
     attachments, attachmentMaterializations, normalConversationContext: prepared.context,
     normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
   });
-  const runRequest = saveNormalConversationPreparedRequest(store, await withProjectInstructions(workspaceCwd, request), now);
+  const runRequest = saveNormalConversationPreparedRequest(store,
+    await withProjectInstructions(workspaceCwd, request, store.getWorkspaceSettings().claudeProjectRules), now);
   return { thread, turn, attachments, runRequest, replayed: accepted?.status === "accepted" };
 }
 
 export function conversationTitle(message: string): string {
   const oneLine = message.replace(/\s+/g, " ").trim();
   return oneLine.length > 48 ? `${oneLine.slice(0, 45)}...` : oneLine || "New conversation";
+}
+
+export function publishPreparedConversationTurn(store: RunStore, events: ControlPlaneEventHub, turn: LingTurn): void {
+  const idempotencyKey = `app-server-turn:${turn.id}`;
+  if (store.getControlPlaneEventByIdempotency(turn.workspaceId, idempotencyKey)) return;
+  appendControlPlaneEvent(store, events, {
+    workspaceId: turn.workspaceId, cwd: store.paths.cwd, domain: "runs",
+    entityType: "turn", entityId: turn.id, action: "turn.started", idempotencyKey,
+    data: { threadId: turn.threadId, turnId: turn.id, status: "queued" },
+  });
 }

@@ -1,8 +1,8 @@
 # Ling App Server 与开发工作流
 
-- **状态** 主线已接入本机传输、Turn 恢复、Verify 和 Federation 的部分能力。 [实施计划](ling-app-server-implementation-plan.md#尚待完成的发布条件)记录剩余发布条件。
+- **状态** 主线已接入本机传输、Turn 恢复、Verify 和 Federation 的部分能力。其余运行时能力见 [实施计划](ling-app-server-implementation-plan.md#当前实现证据)。
 - **维护者** Daemon、Conversation、Workspace 与开发工具维护者
-- **实现状态核对基线** 2026-11-22，`origin/main@469a557ee`
+- **实现状态核对基线** 2026-11-22，`origin/main@e6007992a`
 - **类型** 产品与架构合同
 - **代码锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [普通会话入口](../../packages/daemon/src/features/conversations/routes.ts) · [Goal 验收](../../packages/core/src/storage/sqlite/goal-acceptance.ts)
 

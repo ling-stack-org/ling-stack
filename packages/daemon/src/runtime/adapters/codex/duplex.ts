@@ -4,7 +4,8 @@ export type CodexRpcErrorCode = "protocol_error" | "capacity_exceeded" | "transp
   | "cancelled" | "timeout" | "handler_failed" | "remote_error";
 
 export class CodexRpcError extends Error {
-  constructor(readonly code: CodexRpcErrorCode, readonly remoteCode?: number) { super(code); }
+  constructor(readonly code: CodexRpcErrorCode, readonly remoteCode?: number,
+    readonly requestWrite?: "not_written" | "unknown") { super(code); }
 }
 
 export interface CodexNotification { readonly method: string; readonly params?: unknown }
@@ -21,7 +22,7 @@ interface Limits {
 }
 interface Pending {
   resolve: (value: unknown) => void; reject: (error: CodexRpcError) => void;
-  timer: ReturnType<typeof setTimeout>; written: boolean;
+  timer: ReturnType<typeof setTimeout>; invoked: boolean; written: boolean;
   response?: { result?: unknown; error?: CodexRpcError };
 }
 interface Write {
@@ -29,6 +30,7 @@ interface Write {
   signal?: AbortSignal;
   native?: NativePending;
   sending?: () => void;
+  request?: Pending;
 }
 interface NativePending {
   timer: ReturnType<typeof setTimeout>; abort: AbortController; request: CodexRequest;
@@ -93,17 +95,17 @@ export class CodexDuplex {
   }
 
   request(method: string, params: unknown): Promise<unknown> {
-    if (this.#failure) return Promise.reject(this.#failure);
+    if (this.#failure) return Promise.reject(new CodexRpcError(this.#failure.code, this.#failure.remoteCode, "not_written"));
     if (this.#pending.size >= this.#limits.pendingRequests || this.#id >= Number.MAX_SAFE_INTEGER) {
       this.close(new CodexRpcError("capacity_exceeded"));
-      return Promise.reject(this.#failure);
+      return Promise.reject(new CodexRpcError("capacity_exceeded", undefined, "not_written"));
     }
     const id = `ling:${++this.#id}`;
     return new Promise((resolve, reject) => {
-      const entry: Pending = { resolve, reject, written: false,
+      const entry: Pending = { resolve, reject, invoked: false, written: false,
         timer: setTimeout(() => this.close(new CodexRpcError("timeout")), this.#options.requestTimeoutMs ?? 30000) };
       this.#pending.set(id, entry);
-      void this.#send({ id, method, params }, undefined, undefined, () => this.#options.onRequestSending?.({ id, method, params })).then(() => {
+      void this.#send({ id, method, params }, undefined, undefined, () => this.#options.onRequestSending?.({ id, method, params }), entry).then(() => {
         entry.written = true;
         this.#settle(id, entry);
       }, error => this.close(error));
@@ -130,7 +132,10 @@ export class CodexDuplex {
     this.#options.output.off("data", this.#data).off("end", this.#ended);
     // Retain error handlers until streams close: write callbacks can precede error events.
     this.#fragment = Buffer.alloc(0);
-    for (const entry of this.#pending.values()) { clearTimeout(entry.timer); entry.reject(error); }
+    for (const entry of this.#pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(new CodexRpcError(error.code, error.remoteCode, entry.invoked ? "unknown" : "not_written"));
+    }
     this.#pending.clear();
     for (const id of this.#nativePending.keys()) this.cancelNativeRequest(id);
     clearTimeout(this.#writeTimer);
@@ -154,7 +159,7 @@ export class CodexDuplex {
     this.#options.output.off("error", this.#failed);
   };
 
-  #send(message: unknown, signal?: AbortSignal, native?: NativePending, sending?: () => void): Promise<void> {
+  #send(message: unknown, signal?: AbortSignal, native?: NativePending, sending?: () => void, request?: Pending): Promise<void> {
     if (this.#failure) return Promise.reject(this.#failure);
     if (signal?.aborted) return Promise.resolve();
     let bytes: Buffer;
@@ -168,7 +173,7 @@ export class CodexDuplex {
       // Validate the serialized response, not a mutable result retained by a handler.
       if (native) native.result = (JSON.parse(bytes.toString("utf8")) as { result?: unknown }).result;
       this.#writeBytes += bytes.length;
-      this.#writes.push({ bytes, resolve, reject, signal, native, sending });
+      this.#writes.push({ bytes, resolve, reject, signal, native, sending, request });
       this.#pumpWrites();
     });
   }
@@ -199,6 +204,7 @@ export class CodexDuplex {
     this.#writeTimer = setTimeout(() => this.close(new CodexRpcError("timeout")), this.#options.writeTimeoutMs ?? 30000);
     try {
       if (write.native) write.native.invoked = true;
+      if (write.request) write.request.invoked = true;
       this.#options.input.write(write.bytes, error => {
         clearTimeout(this.#writeTimer);
         this.#writeBytes -= write.bytes.length;

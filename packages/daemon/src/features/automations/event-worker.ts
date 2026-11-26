@@ -2,6 +2,9 @@ import { automationDefinitionDigestInput, automationEventDigest, automationEvent
   type AutomationEventDispatch, type RunStore } from "@ling-stack/core";
 import type { ImDestinationRegistry } from "../im-destinations/registry.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { HttpError } from "../../errors.js";
+import { recoveryBlocked } from "../../server/app-server-recovery.js";
+import type { NativeWorkIntake } from "../work-items/native-intake.js";
 import { runAutomation, type StartAutomationRunExecution } from "./run.js";
 
 /** Durable inbox/outbox execution uses existing Run admission and destination egress. */
@@ -10,7 +13,9 @@ export class AutomationEventWorker {
   private readonly pending = new Set<Promise<void>>();
   private closed = false;
   constructor(private readonly stores: RunStoreRegistry, private readonly destinations: ImDestinationRegistry,
-    private readonly startRun: StartAutomationRunExecution) {}
+    private readonly startRun: StartAutomationRunExecution,
+    private readonly processIntake?: (store: RunStore, signal: AbortSignal) => Promise<void>,
+    private readonly nativeIntake?: NativeWorkIntake) {}
 
   start(cwd: string): void {
     if (this.closed) throw new Error("automation_event_worker_closed");
@@ -41,6 +46,7 @@ export class AutomationEventWorker {
 
   private assertDispatch(store: RunStore, job: AutomationEventDispatch, signal: AbortSignal): void {
     signal.throwIfAborted();
+    if (this.stores.recoveryBlocksDispatch(store.paths.cwd)) throw recoveryBlocked();
     const source = store.getAutomationEventSource(job.sourceId), definition = store.getAutomationDefinition(job.automationId);
     if (!source?.enabled || source.revision !== job.sourceRevision || !definition || definition.status !== "enabled"
       || automationEventDigest(automationDefinitionDigestInput(definition)) !== job.definitionDigest) throw new Error("automation_event_authority_changed");
@@ -48,6 +54,7 @@ export class AutomationEventWorker {
   private async tick(cwd: string, signal: AbortSignal): Promise<void> {
     const store = this.stores.getStore(cwd);
     for (let count = 0; count < 8 && !signal.aborted; count++) {
+      if (this.stores.recoveryBlocksDispatch(cwd)) return;
       const job = store.claimAutomationEventDispatch(new Date().toISOString());
       if (!job?.leaseToken) break;
       try {
@@ -56,20 +63,26 @@ export class AutomationEventWorker {
         if (!envelope) throw new Error("automation_event_envelope_missing");
         const result = await runAutomation({ cwd, automationId: job.automationId, storeRegistry: this.stores,
           request: { triggerType: "event", idempotencyKey: automationEventRunKey(job.id) },
-          event: { envelope, assertCurrent: () => this.assertDispatch(store, job, signal) },
+          nativeIntake: this.nativeIntake,
+          event: { envelope, dispatchId: job.id, assertCurrent: () => this.assertDispatch(store, job, signal) },
           startRun: (request, hooks) => { this.assertDispatch(store, job, signal); return this.startRun(request, hooks); } });
         const own = result.automationRun.idempotencyKey === automationEventRunKey(job.id);
         store.finishAutomationEventDispatch(job.id, job.leaseToken, own
           ? { status: "linked", automationRunId: result.automationRun.id } : { status: "queued", error: "automation_busy" }, new Date().toISOString());
       } catch (error) {
         store.finishAutomationEventDispatch(job.id, job.leaseToken,
-          { status: signal.aborted ? "queued" : "failed", error: error instanceof Error && /^automation_[a-z_]+$/.test(error.message) ? error.message : "automation_event_dispatch_failed" }, new Date().toISOString());
+          { status: signal.aborted || isRecoveryHold(error) ? "queued" : "failed",
+            error: isRecoveryHold(error) ? "app_server_recovery_held" : error instanceof Error && /^automation_[a-z_]+$/.test(error.message)
+              ? error.message : "automation_event_dispatch_failed" }, new Date().toISOString());
       }
     }
+    if (signal.aborted || this.stores.recoveryBlocksDispatch(cwd)) return;
+    await this.processIntake?.(store, signal);
     if (signal.aborted) return;
     store.reconcileAutomationDeliveries(new Date().toISOString());
     await this.destinations.ensureLoaded();
     for (let count = 0; count < 8 && !signal.aborted; count++) {
+      if (this.stores.recoveryBlocksDispatch(cwd)) return;
       const item = store.claimAutomationDelivery(new Date().toISOString());
       if (!item?.leaseToken) break;
       let dispatched = false;
@@ -95,10 +108,15 @@ export class AutomationEventWorker {
         store.settleAutomationDelivery(item.id, item.leaseToken, { status: result.ok ? "delivered" : retryable
           ? item.attempts >= 5 ? "failed" : "queued" : "unknown", receipt: result.ok ? `http:${result.status}` : dispatched ? `http:${result.status ?? "unknown"}` : "delivery_not_dispatched",
           availableAt: new Date(Date.now() + Math.min(60_000, 1000 * 2 ** item.attempts)).toISOString() }, new Date().toISOString());
-      } catch {
-        store.settleAutomationDelivery(item.id, item.leaseToken, { status: dispatched ? "unknown" : item.attempts >= 5 ? "failed" : "queued",
+      } catch (error) {
+        store.settleAutomationDelivery(item.id, item.leaseToken, { status: dispatched ? "unknown"
+          : item.attempts >= 5 && !isRecoveryHold(error) ? "failed" : "queued",
           receipt: dispatched ? "delivery_outcome_unknown" : "delivery_not_dispatched", availableAt: new Date(Date.now() + 10_000).toISOString() }, new Date().toISOString());
       }
     }
   }
+}
+
+function isRecoveryHold(error: unknown): boolean {
+  return error instanceof HttpError && error.code === "resume_blocked";
 }

@@ -29,6 +29,7 @@ import { AutomationSchedulerSummary } from "./AutomationSchedulerSummary.js";
 import { AutomationWorkbenchHeader } from "./AutomationWorkbenchHeader.js";
 import { useDesktopTitlebarPlacement } from "../../app/DesktopTitlebarSurface.js";
 import { useAutomationsPageController } from "./useAutomationsPageController.js";
+import { GitHubIntakePanel } from "./GitHubIntakePanel.js";
 
 export interface AutomationsPageProps {
   readonly cwd: string;
@@ -145,22 +146,25 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
         t={t}
         onCreate={() => controller.openCreate("template")}
       />
-      {controller.summary.totalCount > 0 || props.schedulerError ? (
-        <AutomationSchedulerSummary
-          busy={Boolean(props.schedulerAction)}
-          error={props.schedulerError}
-          scheduler={controller.schedulerViewModel}
-          t={t}
-          onStart={() => void runScheduler("start")}
-          onStop={() => void runScheduler("stop")}
-        />
-      ) : null}
-      {props.refreshError ? (
-        <InlineFeedback className="automation-ui2-stale" title={t("Could not refresh automations")} tone="warning">
-          <span>{props.refreshError}</span>
-          <Button size="sm" variant="secondary" onClick={() => void props.onRefresh()}>{t("Retry")}</Button>
-        </InlineFeedback>
-      ) : null}
+      <div>
+        {controller.summary.totalCount > 0 || props.schedulerError ? (
+          <AutomationSchedulerSummary
+            busy={Boolean(props.schedulerAction)}
+            error={props.schedulerError}
+            scheduler={controller.schedulerViewModel}
+            t={t}
+            onStart={() => void runScheduler("start")}
+            onStop={() => void runScheduler("stop")}
+          />
+        ) : null}
+        {props.refreshError ? (
+          <InlineFeedback className="automation-ui2-stale" title={t("Could not refresh automations")} tone="warning">
+            <span>{props.refreshError}</span>
+            <Button size="sm" variant="secondary" onClick={() => void props.onRefresh()}>{t("Retry")}</Button>
+          </InlineFeedback>
+        ) : null}
+        {props.cwd ? <GitHubIntakePanel key={props.cwd} cwd={props.cwd} /> : null}
+      </div>
       <main className={`automation-ui2-main${hasInspector ? " has-inspector" : ""}`} aria-labelledby="automations-title">
         <AutomationListPane
           activeTab={controller.activeTab}

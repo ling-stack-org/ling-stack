@@ -24,7 +24,7 @@ import { SqliteCodeAssessmentCommentsStore } from "./sqlite/code-assessment-comm
 import type { CodeAssessmentCommentsStore } from "../code-assessment-comments.js";
 import { applyCodeAssessmentCommentsMigration } from "./sqlite/code-assessment-comments-migration.js";
 import { applyCodeAssessmentMigration } from "./sqlite/code-assessment-migration.js";
-import { applyAppServerMigrations } from "./sqlite/app-server-migration.js";
+import { APP_SERVER_STATE_MIGRATION_VERSION, applyAppServerMigrations } from "./sqlite/app-server-migration.js";
 import type { CodeAssessmentStore } from "../code-assessment-store.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
@@ -705,7 +705,7 @@ import { SqliteUserInputHostContinuationStore } from "./sqlite/user-input-host-c
 import { SqliteUserInputPrestartRecoveryStore } from "./sqlite/user-input-prestart-recovery-store.js";
 import { prepareUserInputWorkflowStepAdmissionRecovery, hasUserInputWorkflowTaskRunLineage } from "./sqlite/user-input-workflow-step-admission.js";
 import { applyUserInputDeliveryMigration } from "./sqlite/user-input-delivery-migration.js";
-import { readSqliteSnapshot } from "./sqlite/read-snapshot.js";
+import { readSqliteSnapshot, withSqliteSnapshotParentTransaction } from "./sqlite/read-snapshot.js";
 import { SqliteConversationThreadTopologyStore } from "./sqlite/conversation-thread-topology-store.js";
 import { SqliteMediaStore } from "./sqlite/media-store.js";
 import { SqliteMediaWorkflowStore } from "./sqlite/media-workflow-store.js";
@@ -778,6 +778,7 @@ import { applyHarnessReliabilityMigration } from "./sqlite/harness-reliability-m
 import { applyHarnessRetentionIndexMigration } from "./sqlite/harness-retention-index-migration.js";
 import { applyHarnessRecoveryIndexMigration } from "./sqlite/harness-recovery-index-migration.js";
 import { applyDelegationBudgetMigration } from "./sqlite/delegation-budget-migration.js";
+import { appendWorkItemCollaboration } from "../work-item-collaboration.js";
 import { applyDelegationInstructionMigration } from "./sqlite/delegation-instruction-migration.js";
 import { SqliteDelegationWriteStore } from "./sqlite/delegation-write-store.js";
 import { SqliteDelegationLifecycleStore } from "./sqlite/delegation-lifecycle-store.js";
@@ -868,7 +869,9 @@ import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-schedul
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkItemEvidenceStore } from "./sqlite/work-item-evidence-store.js";
+import { SqliteScheduledCoordinationStore } from "./sqlite/scheduled-coordination-store.js";
 import { SqliteAppServerStateStore } from "./sqlite/app-server-state-store.js";
+import { SqliteNativeWorkIntakeStore } from "./sqlite/native-work-intake-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
@@ -1033,7 +1036,9 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
   private readonly workItemEvidence: SqliteWorkItemEvidenceStore;
+  private readonly scheduledCoordination: SqliteScheduledCoordinationStore;
   private readonly appServerState: SqliteAppServerStateStore;
+  private readonly nativeIntake: SqliteNativeWorkIntakeStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
@@ -1269,7 +1274,8 @@ export class SqliteRunStore implements RunStore {
         getUserInputWait: (threadId, requestId) => this.getUserInputWait(threadId, requestId),
       },
     );
-    this.proposedPlanActions = new SqliteProposedPlanActionStore({ database: this.database }, this);
+    this.proposedPlanActions = new SqliteProposedPlanActionStore({ database: this.database }, this,
+      workflowId => this.hasTable("app_server_state") && Boolean(this.appServerState.get("work_item_workflow", workflowId)));
     this.conversationThreadTopology = new SqliteConversationThreadTopologyStore(
       { database: this.database },
       {
@@ -1340,6 +1346,21 @@ export class SqliteRunStore implements RunStore {
         recordRunSelection: (run) => this.recordRunSkillUsage(run, "selected", run.createdAt),
         assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
         getDelegationCompletionEvidence: (input) => this.getDelegationCompletionEvidence(input),
+        checkWorkItemAdmission: (threadId, turnId, request, automaticIntakeReceiptId) => {
+          const snapshot = request as { idempotencyKey?: string; normalConversationPreparedRequestRef?: { id: string; fingerprint: string } } | null;
+          const workItem = this.checkWorkItemConversationAdmission(threadId, snapshot?.idempotencyKey, automaticIntakeReceiptId);
+          if (workItem && !workItem.runId) {
+            const turn = turnId ? this.getLingTurn(turnId) : undefined;
+            const prepared = turn?.sourceItemId && this.getConversationPreparedInput(turn.sourceItemId, "request");
+            if (!prepared || prepared.threadId !== threadId || prepared.id !== snapshot?.normalConversationPreparedRequestRef?.id
+              || prepared.fingerprint !== snapshot?.normalConversationPreparedRequestRef?.fingerprint) {
+              throw new Error("work_item_dispatch_intent_required");
+            }
+          }
+          return workItem;
+        },
+        linkWorkItemRun: (workItem, runId, now) => this.workItems.linkFirstConversationRun(workItem, runId, now,
+          { store: this.controlPlane, cwd: this.paths.cwd }),
       },
     );
     this.nodeRerunTargets = new SqliteNodeRerunTargetStore({ database: this.database }, this,
@@ -1746,10 +1767,26 @@ export class SqliteRunStore implements RunStore {
       {
         assertChannelExists: (channelId) => this.assertChannelExists(channelId),
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
+        getProposedPlanArtifact: (id) => this.getProposedPlanArtifact(id),
+        getChannelWorkflow: (id) => this.getChannelWorkflow(id),
+        getChannelWorkflowStep: (id) => this.getChannelWorkflowStep(id),
+        listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
+        getLingThreadGoal: (id) => this.getLingThreadGoal(id),
+        getWorkItemEvidence: (id) => this.getWorkItemEvidence(id),
+        listWorkItemEvidence: (options) => this.listWorkItemEvidence(options),
+        getTask: (id) => this.getTask(id),
+        getAutomationRun: (id) => this.getAutomationRun(id),
+        getRun: (id) => this.getRun(id),
+        getArtifact: (id) => this.getArtifact(id),
+        getProviderConfigurationSnapshot: (id) => this.getProviderConfigurationSnapshot(id),
       },
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
     this.appServerState = new SqliteAppServerStateStore({ database: this.database }, this.controlPlane);
+    this.nativeIntake = new SqliteNativeWorkIntakeStore({ database: this.database }, this.appServerState,
+      this.workItems, this.controlPlane, this.tasks, this.automations);
+    this.scheduledCoordination = new SqliteScheduledCoordinationStore({ database: this.database }, this.appServerState,
+      this.automations, this.workItemEvidence, this.controlPlane, this);
     this.approvalResumes = new SqliteApprovalResumeStore(
       { database: this.database },
       {
@@ -2210,6 +2247,8 @@ export class SqliteRunStore implements RunStore {
       const writer = new SqliteDelegationWriteStore({ database: this.database }, {
       ...delegationHost.readers,
       getRun: (id) => this.getRun(id),
+      getWorkItemProviderAdmissionBlocker: (runId, tokens, now) =>
+        this.workItems.getWorkflowProviderAdmissionBlocker(runId, tokens, now, this.appServerState),
       getWorkUnit: (id) => this.getWorkUnit(id),
       createRunWithinTransaction: (input) => this.runSessions.createRunWithinTransaction(input),
       createWorkUnitWithinTransaction: (input) => this.runtimeWorkUnits.createWorkUnit(input),
@@ -2651,6 +2690,11 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): HardDeleteLingThreadResult | undefined {
     return this.lingThreadCleanup.hardDeleteLingThread(threadId, input, now);
+  }
+
+  listLingThreadWorkItemDependencies(threadId: string): readonly string[] {
+    const thread = this.getLingThread(threadId);
+    return thread ? this.lingThreadCleanup.listWorkItemDependencies(threadId, thread.workspaceId) : [];
   }
 
   findLingThreadByOwner(input: {
@@ -5208,7 +5252,52 @@ export class SqliteRunStore implements RunStore {
     input: import("../conversation-turn-ingest-types.js").AppendConversationUserTurnInput,
     now: string,
   ): import("../conversation-turn-ingest-types.js").AppendConversationUserTurnResult {
-    return this.conversationTurnIngest.appendUserTurn(input, now);
+    const target = input.workItemTarget;
+    if (!target) return this.conversationTurnIngest.appendUserTurn(input, now);
+
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const item = this.workItems.getWorkItem(target.workItemId);
+      const owningChannel = item?.workflowId ? this.getChannelWorkflow(item.workflowId)?.channelId : item?.channelId;
+      if (!item || !input.channelId || owningChannel !== input.channelId
+        || item.channelId && item.channelId !== input.channelId) {
+        throw new Error("work_item_target_unavailable");
+      }
+      if (input.dispatch) throw new Error("work_item_target_dispatch_conflict");
+      const result = this.conversationTurnIngest.appendUserTurnWithinTransaction({
+        ...input, domainRefs: [...(input.domainRefs ?? []), { type: "work_item", id: item.id }],
+      }, now);
+      const source = { type: "conversation_item", id: result.item.id, revision: String(result.item.revision) };
+      const evidence = this.workItemEvidence.appendWithinTransaction({
+        workItemId: item.id,
+        expectedWorkItemRevision: target.expectedRevision,
+        idempotencyKey: `channel-input:${result.item.id}`,
+        actorId: "local-user",
+        subjectRevision: String(target.expectedRevision),
+        kind: "evidence_ref",
+        content: "Channel message",
+        visibility: "owner",
+        sourceRefs: [source],
+      }, now, { cwd: this.paths.cwd, store: this.controlPlane });
+      if (!evidence) throw new Error("work_item_target_stale");
+      if (!result.idempotentReplay) {
+        const completed = this.lingTurns.transitionLingTurnStatus({
+          turnId: result.turnId, expectedStatus: "open", event: "succeed",
+          actor: "system", reason: "work_item_source_recorded", now,
+        });
+        if (!completed.ok) throw new Error("work_item_input_completion_conflict");
+      }
+      this.database.exec("COMMIT");
+      return {
+        ...result, workItemInput: {
+          workItemId: item.id, evidenceId: evidence.entry.id, acceptedRevision: target.expectedRevision, sourceItemId: result.item.id,
+        },
+        ...(evidence.event ? { workItemInputEvent: evidence.event } : {}),
+      };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
   }
 
   getConversationItem(id: string): import("@ling-stack/contracts").ConversationItemV1 | undefined {
@@ -6113,8 +6202,29 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.upsertWorkItem(input, now);
   }
 
+  createTaskWithIntake(...args: Parameters<RunStore["createTaskWithIntake"]>) {
+    return this.nativeIntake.createTask(...args);
+  }
+
+  createAutomationRunWithIntake(...args: Parameters<RunStore["createAutomationRunWithIntake"]>) {
+    return this.nativeIntake.createAutomationRun(...args);
+  }
+
+  retryNativeWorkIntake(...args: Parameters<RunStore["retryNativeWorkIntake"]>) {
+    return this.nativeIntake.retry(...args);
+  }
+
+  listNativeWorkIntakeReceipts(...args: Parameters<RunStore["listNativeWorkIntakeReceipts"]>) {
+    return this.nativeIntake.list(...args);
+  }
+
   createWorkItem(input: CreateWorkItemInput, now: string, eventCwd = this.paths.cwd): CreateWorkItemResult {
     return this.workItems.createWorkItem(input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
+  }
+
+  commitWorkItemGitHubDelivery(input: Parameters<RunStore["commitWorkItemGitHubDelivery"]>[0], eventCwd = this.paths.cwd,
+    retainReceipt?: Parameters<RunStore["commitWorkItemGitHubDelivery"]>[2]) {
+    return this.workItems.commitGitHubDelivery(input, this.appServerState, { store: this.controlPlane, cwd: eventCwd }, retainReceipt);
   }
 
   getWorkItem(id: string): WorkItem | undefined {
@@ -6133,12 +6243,114 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.acceptWorkItem(id, input, now, this.appServerState, { store: this.controlPlane, cwd: eventCwd });
   }
 
+  bindWorkItemWorkflow(input: import("@ling-stack/contracts").LingAppServerWorkItemWorkflowBindParams, now: string,
+    previousWorkflowSettled?: (workflowId: string, retainedRunIds: ReadonlySet<string>) => boolean) {
+    return this.workItems.bindWorkflow(input, now, this.appServerState, { store: this.controlPlane, cwd: this.paths.cwd }, previousWorkflowSettled);
+  }
+
+  admitWorkItemDeliberationWorkflow(input: Parameters<RunStore["admitWorkItemDeliberationWorkflow"]>[0], now: string) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const item = this.getWorkItem(input.workItemId);
+      if (item?.revision !== input.expectedWorkItemRevision || this.getWorkItemEvidence(input.roundId)) {
+        this.database.exec("COMMIT");
+        return undefined;
+      }
+      const result = withSqliteSnapshotParentTransaction(this.database, () => {
+        const append = (entry: Parameters<typeof appendWorkItemCollaboration>[1]) => appendWorkItemCollaboration({
+          getWorkItem: id => this.getWorkItem(id),
+          listWorkItemEvidence: options => this.listWorkItemEvidence(options),
+          appendWorkItemEvidence: (input, createdAt, event) => this.workItemEvidence.appendWithinTransaction(input, createdAt,
+            event ? { ...event, store: this.controlPlane } : undefined),
+        }, entry, now, this.paths.cwd);
+        const evaluation = input.evaluation && append(input.evaluation);
+        if (input.evaluation && evaluation?.status !== "appended") throw new Error("work_item_deliberation_evaluation_stale");
+        const { workflow, binding, round } = input.compile();
+        const appended = append({ ...round, assertCurrent: input.assertCurrent });
+        if (appended?.status !== "appended") throw new Error("work_item_deliberation_round_admission_changed");
+        const linked = this.appServerState.putWithinTransaction({ kind: "work_item_deliberation_workflow", recordId: workflow.id,
+          expectedRevision: 0, payload: { binding } }, now);
+        if (!linked) throw new Error("work_item_deliberation_workflow_already_linked");
+        if (binding.automatic) {
+          const { decisionId, policyRevision } = binding.automatic;
+          const prior = this.appServerState.get("work_item_deliberation_admission", decisionId);
+          const admission = this.appServerState.putWithinTransaction({ kind: "work_item_deliberation_admission", recordId: decisionId,
+            expectedRevision: prior?.revision ?? 0, payload: { roundId: binding.roundId, policyRevision } }, now);
+          if (!admission) throw new Error("work_item_deliberation_admission_stale");
+        }
+        if (input.scheduledDecision && evaluation) {
+          this.scheduledCoordination.completeEvaluationWithinTransaction(input.scheduledDecision, evaluation.record.id,
+            appended.workItemRevision, now);
+        }
+        return { ...appended, ...(evaluation?.event ? { evaluationEvent: evaluation.event } : {}) };
+      });
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
+  }
+
+  applyWorkItemDeliberationDecision(...[input, application, now, event]: Parameters<RunStore["applyWorkItemDeliberationDecision"]>) {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.workItemEvidence.appendWithinTransaction(input, now, { ...event, store: this.controlPlane });
+      if (result?.status === "appended") {
+        const previous = this.appServerState.get("work_item_deliberation_application", application.stepId);
+        const updated = this.appServerState.putWithinTransaction({ kind: "work_item_deliberation_application",
+          recordId: application.stepId, expectedRevision: previous?.revision ?? 0, payload: application,
+        }, now);
+        if (!updated) throw new Error("work_item_deliberation_application_stale");
+      }
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
+  }
+
+  getWorkItemWorkflowAdmissionBlocker(workflowId: string, step?: ChannelWorkflowStep, executionRunId?: string): string | undefined {
+    if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
+    return this.workItems.getWorkflowAdmissionBlocker(workflowId, this.appServerState, step, executionRunId);
+  }
+
+  getWorkItemStageRetryBudget(step: ChannelWorkflowStep) {
+    if (!this.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION) && !this.hasTable("app_server_state")) return undefined;
+    return this.workItems.getStageRetryBudget(step, this.appServerState);
+  }
+
+  getWorkItemWorkflowUsage(item: WorkItem, now: string) {
+    return this.workItems.getWorkflowUsage(item, this.appServerState, now);
+  }
+
+  getWorkItemStageProgress(item: WorkItem, step: ChannelWorkflowStep) {
+    return this.workItems.getStageProgress(item, step, this.appServerState);
+  }
+
+  getWorkItemWorkflowStepDecision(step: ChannelWorkflowStep) {
+    return this.workItems.getWorkflowStepDecision(step, this.appServerState);
+  }
+
+  listActiveWorkItemWorkflowIds(limit: number): readonly string[] {
+    return this.workItems.listActiveWorkflowIds(limit);
+  }
+
+  applyWorkItemPlanChange(input: import("../work-item-types.js").WorkItemPlanChangeInput, now: string, cwd = this.paths.cwd) {
+    return this.workItems.applyPlanChange(input, now, this.appServerState, { store: this.controlPlane, cwd });
+  }
+
+  checkWorkItemConversationAdmission(threadId: string, submissionKey: unknown, automaticIntakeReceiptId?: string): WorkItem | undefined {
+    return this.workItems.checkConversationAdmission(threadId, submissionKey, this.appServerState, automaticIntakeReceiptId);
+  }
+
   claimWorkItem(
     id: string,
     input: WorkItemClaimRequest,
     now: string,
   ): { readonly workItem: WorkItem; readonly claimToken?: string; readonly blocker?: WorkItemClaimBlocker } | undefined {
-    return this.workItems.claimWorkItem(id, input, now);
+    return this.workItems.claimWorkItem(id, input, now, this.appServerState);
   }
 
   heartbeatWorkItem(id: string, input: WorkItemHeartbeatRequest, now: string): WorkItem | undefined {
@@ -6165,6 +6377,10 @@ export class SqliteRunStore implements RunStore {
     return this.workItemEvidence.getWorkItemEvidence(id);
   }
 
+  findWorkItemEvidenceByKey(workItemId: string, idempotencyKey: string): import("../work-item-evidence-types.js").WorkItemEvidenceEntry | undefined {
+    return this.workItemEvidence.findWorkItemEvidenceByKey(workItemId, idempotencyKey);
+  }
+
   listWorkItemEvidence(options: import("../work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("../work-item-evidence-types.js").WorkItemEvidenceEntry[] {
     return this.workItemEvidence.listWorkItemEvidence(options);
   }
@@ -6181,12 +6397,93 @@ export class SqliteRunStore implements RunStore {
     return this.appServerState.list(kind, workspaceId);
   }
 
+  getLatestVerificationState(threadId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
+    return this.appServerState.latestVerification(threadId);
+  }
+
+  listPendingGitHubIntakeDispatches(updatedBefore: string, limit: number): import("../app-server-state-types.js").AppServerStateRecord[] {
+    return this.appServerState.pendingGitHubIntakeDispatches(updatedBefore, limit);
+  }
+
   putAppServerState(input: import("../app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("../app-server-state-types.js").PutAppServerStateResult | undefined {
     return this.appServerState.put(input, now, publication);
   }
 
+  writeWorkItemDeviceState<T>(write: (store: import("../work-item-device-bridge.js").WorkItemDeviceMutationStore) => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = withSqliteSnapshotParentTransaction(this.database, () => write({
+        getWorkItem: id => this.getWorkItem(id),
+        getAppServerState: (...args) => this.appServerState.get(...args),
+        findAppServerStateByIdempotencyKey: (...args) => this.appServerState.findByIdempotencyKey(...args),
+        listAppServerState: (...args) => this.appServerState.list(...args),
+        updateDeviceEffect: (...args) => this.workItems.updateDeviceEffectWithinTransaction(...args),
+        putAppServerState: (input, now, publication) => {
+          const result = this.appServerState.putWithinTransaction(input, now);
+          if (!result || result.status === "replayed" || !publication) return result;
+          return { ...result, event: this.controlPlane.appendControlPlaneEventWithinTransaction(publication, now) };
+        },
+      }));
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
+  }
+
   deleteAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean {
     return this.appServerState.delete(kind, recordId, workspaceId);
+  }
+
+  transferAppServerHandoffGoal(handoffId: string, threadId: string, now: string): ReturnType<RunStore["transferAppServerHandoffGoal"]> {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const retained = this.appServerState.get("handoff_goal_transfer", handoffId);
+      if (retained) {
+        const transfer = retained.payload as import("@ling-stack/contracts").LingAppServerHandoffGoalTransfer;
+        if (transfer.threadId !== threadId) throw new Error("handoff_goal_stale");
+        this.database.exec("COMMIT");
+        return { transfer, events: [] };
+      }
+      const record = this.appServerState.get("handoff", handoffId)?.payload as { handoff: import("@ling-stack/contracts").LingAppServerHandoff } | undefined;
+      const handoff = record?.handoff;
+      if (!handoff?.goal) {
+        this.database.exec("COMMIT");
+        return undefined;
+      }
+      const source = this.getLingThread(handoff.sourceThreadId);
+      const goal = this.getLingThreadGoal(handoff.sourceThreadId);
+      const child = this.getNormalConversationForkSeed(threadId);
+      const childThread = child && this.getLingThread(threadId);
+      const [turn] = this.listLingTurns({ threadId: handoff.sourceThreadId, orderBy: "createdAt", limit: 1 });
+      if (!source || source.archivedAt || source.activeRunId || turn?.id !== handoff.sourceTurnId
+        || turn.updatedAt !== handoff.sourceTurnRevision || turn.lastRunId !== handoff.sourceRunId
+        || !goal || goal.id !== handoff.goal.id || goal.updatedAt !== handoff.goal.updatedAt
+        || this.getLingThreadGoal(threadId) || !child || !childThread || childThread.activeRunId || childThread.archivedAt
+        || child.threadId !== source.id || child.turnId !== turn.id || child.sourceRunId !== turn.lastRunId) {
+        throw new Error("handoff_goal_stale");
+      }
+      if (this.database.prepare(`SELECT 1 FROM run_interventions i JOIN run_sessions r ON r.id=i.source_run_id
+        WHERE r.thread_id=? AND i.status IN ('queued','cancelling_source','starting_continuation') LIMIT 1`).get(source.id)) {
+        throw new Error("handoff_goal_busy");
+      }
+      const updated = this.database.prepare(`UPDATE ling_thread_goals SET thread_id=?, updated_at=?
+        WHERE id=? AND thread_id=? AND updated_at=?`).run(threadId, now, goal.id, source.id, goal.updatedAt);
+      if (updated.changes !== 1) throw new Error("handoff_goal_stale");
+      const transfer = { goalId: goal.id, sourceThreadId: source.id, threadId, sourceGoalRevision: goal.updatedAt, transferredAt: now };
+      this.appServerState.putWithinTransaction({ kind: "handoff_goal_transfer", recordId: handoffId, expectedRevision: 0, payload: transfer }, now);
+      const events = [source.id, threadId].map(affectedThreadId => this.controlPlane.appendControlPlaneEventWithinTransaction({
+        workspaceId: goal.workspaceId, cwd: this.paths.cwd, domain: "runs", entityType: "thread_goal", entityId: goal.id,
+        action: "thread.goal.updated", data: { threadId: affectedThreadId, goalId: goal.id, handoffId,
+          ...(affectedThreadId === threadId ? { status: goal.status, revision: now } : { transferred: true }) },
+      }, now));
+      this.database.exec("COMMIT");
+      return { transfer, events };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
   }
 
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
@@ -6451,8 +6748,67 @@ export class SqliteRunStore implements RunStore {
     return this.automations.createAutomationRun(input, now);
   }
 
+  getAutomationCoordinationSchedule(automationId: string) {
+    return this.scheduledCoordination.schedule(automationId);
+  }
+
+  configureAutomationCoordination(input: Parameters<RunStore["configureAutomationCoordination"]>[0], now: string) {
+    return this.scheduledCoordination.configure(input, now);
+  }
+
+  admitScheduledCoordination(input: Parameters<RunStore["admitScheduledCoordination"]>[0], now: string, cwd = this.paths.cwd) {
+    return this.scheduledCoordination.admit(input, now, cwd);
+  }
+
+  readScheduledCoordinationRound(recordId: string) {
+    return this.scheduledCoordination.readRound(recordId);
+  }
+
+  getCurrentScheduledCoordinationAutomationDigest(recordId: string) {
+    const round = this.scheduledCoordination.readRound(recordId);
+    return round && this.scheduledCoordination.currentAutomationDigest(round);
+  }
+
+  findScheduledCoordinationRound(automationRunId: string) {
+    return this.scheduledCoordination.findRound(automationRunId);
+  }
+
+  listOpenScheduledCoordinationRounds() {
+    return this.scheduledCoordination.listOpenRounds();
+  }
+
+  closeScheduledCoordination(input: Parameters<RunStore["closeScheduledCoordination"]>[0], now: string, cwd = this.paths.cwd) {
+    return this.scheduledCoordination.close(input, now, cwd);
+  }
+
+  registerScheduledCoordinationDecision(...args: Parameters<RunStore["registerScheduledCoordinationDecision"]>) {
+    return this.scheduledCoordination.registerDecision(...args);
+  }
+
+  readScheduledCoordinationDecisions(workItemId: string, roundId: string) {
+    return this.scheduledCoordination.readDecisions(workItemId, roundId);
+  }
+
+  listPendingScheduledCoordinationDecisionRounds(limit: number) {
+    return this.scheduledCoordination.listPendingDecisionRounds(limit);
+  }
+
+  getPendingScheduledCoordinationDecision(roundId: string) {
+    return this.scheduledCoordination.pendingDecision(roundId);
+  }
+
+  settleScheduledCoordinationDecision(...args: Parameters<RunStore["settleScheduledCoordinationDecision"]>) {
+    return this.scheduledCoordination.settleDecision(...args);
+  }
+
+  appendScheduledCoordinationEvaluation(...args: Parameters<RunStore["appendScheduledCoordinationEvaluation"]>) {
+    return this.scheduledCoordination.appendEvaluation(...args);
+  }
+
   getAutomationRun(automationRunId: string): AutomationRun | undefined {
-    return this.automations.getAutomationRun(automationRunId);
+    const run = this.automations.getAutomationRun(automationRunId);
+    const round = run && this.findScheduledCoordinationRound(run.id);
+    return run && round ? { ...run, coordinationRoundId: round.recordId } : run;
   }
 
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined {
@@ -6460,7 +6816,10 @@ export class SqliteRunStore implements RunStore {
   }
 
   listAutomationRuns(options: ListAutomationRunsOptions = {}): AutomationRun[] {
-    return this.automations.listAutomationRuns(options);
+    return this.automations.listAutomationRuns(options).map(run => {
+      const round = this.findScheduledCoordinationRound(run.id);
+      return round ? { ...run, coordinationRoundId: round.recordId } : run;
+    });
   }
 
   updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined {
