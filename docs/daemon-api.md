@@ -3942,8 +3942,9 @@ Content-Type: application/json
 
 A local client can publish an MP4 from a successful Run's execution directory. The path may
 be relative to that directory or an absolute path within it. The daemon verifies the file and
-copies it into artifact storage before exposing it as a `video` artifact. The source can be
-moved after publication. The response contains `{ "artifact": ... }` with status `201` for a
+copies it into artifact storage before exposing it as a `video` artifact. Publication accepts
+files up to 512 MiB and returns `507` when the artifact volume cannot reserve space for the copy.
+The source can be moved after publication. The response contains `{ "artifact": ... }` with status `201` for a
 new artifact and `200` for an already published revision of the same file. In normal
 conversations, **Add video to response** publishes the file and shows the player in the reply.
 

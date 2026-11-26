@@ -40,7 +40,7 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 - `POST /plugins/:id/check-update` 返回当前版本和最新匹配版本。
 - `POST /plugins/:id/rollback` 复验并恢复缓存的上一版本。
 
-`scripts/plugins/package-plugin.mjs` 与 `generate-catalog.mjs` 提供本地开发工具。生产者仓库发布固定版本。主仓的 Official plugin catalog 工作流对照审核的资产摘要复核版本、来源、包内容和平台运行文件，再生成签名。工作流输入采用以下格式。
+`scripts/plugins/package-plugin.mjs` 与 `generate-catalog.mjs` 提供本地开发工具。生产者仓库发布固定版本。主仓的 Official plugin catalog 工作流对照审核的资产摘要复核版本、来源、包内容和平台运行文件，再生成签名。工作流使用与客户端内置公钥匹配的 `LING_PLUGIN_ARTIFACT_PRIVATE_KEY` 和 `LING_PLUGIN_CATALOG_PRIVATE_KEY`。默认仅保留已签名的目录产物，发布时传入 `publish=true`，将目录及其签名写入同一分支提交。工作流的 `sources` 输入采用以下格式。[目录工作流](https://github.com/ling-stack-org/ling-stack/actions/workflows/plugin-release.yml)
 
 ```json
 {
@@ -58,6 +58,13 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 - Ling for Chrome 的 macOS 候选包在真实 Chrome 的隔离配置中验证了 Native Messaging 自动连接、全部六项浏览器工具、暂停恢复以及禁用后重新启用。Chrome Web Store 发布的 0.1.2 与候选归档的可执行代码及弹窗文件逐项一致，差异在四个图标、更新地址和商店元数据。商店安装的扩展仍需和正式签名的 Native Host 一起验收。[Chrome 候选构建](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45081594739) · [Chrome Web Store](https://chromewebstore.google.com/detail/ling-for-chrome/mbmlnnfhebclljonhedpjghbhibfapei)
 - Cua Driver 的独立复核根据四个原始归档核对了源码提交、补丁、二进制摘要和两平台锁。新锁在四台独立 runner 上完成原生重建与 MCP 探针，macOS 的 7 个稳定文件和 Windows 的 8 个稳定文件分别逐项一致。Windows 探针覆盖 Medium 完整性、状态目录用户 ACL、链接拒绝和配置持久化。发布文档记录这批签名前产物的来源和后续平台签名步骤。[Cua Driver 发布文档](https://github.com/ling-stack-org/ling-plugin-cua-driver/blob/main/docs/RELEASE.md)
 
+下表是独立仓库开发候选的 `.ling-plugin.zip` 字节数，已逐包核对随包 JSON 中的 SHA-256。Cua Driver 的下载体积待平台签名归档生成后记录。
+
+| 开发候选 | macOS arm64 | Windows x64 |
+| --- | ---: | ---: |
+| [Office Documents 0.1.0](https://github.com/ling-stack-org/ling-plugin-office-documents/actions/runs/45093987051) | 61,262 | 29,514,899 |
+| [Ling for Chrome 0.1.1](https://github.com/ling-stack-org/ling-plugin-chrome-browser/actions/runs/45096848377) | 290,624 | 189,875 |
+
 ### Desktop 安装包对照
 
 四个候选均从 `14be1bdebd3d295a4f822981ae8cc18a32b9dd51` 构建，使用 Electron 45.3.1，各平台的两种模式使用同一版 gstack 源码及适配。各 runner 独立生成资源清单。Windows 候选未签名，macOS 候选使用 ad-hoc 签名。四个开发包均未包含正式 Cua Driver provider。[兼容包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187207804) · [瘦包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187216178)
@@ -70,11 +77,15 @@ Desktop 保留最多两代已验证的 GStack 运行时。两代占满缓存时�
 | macOS arm64 ZIP | 787,617,589 | 787,220,728 | 396,861（0.050%） |
 | macOS arm64 解包后常规文件 | 2,213,099,697 | 2,212,017,079 | 1,082,618（0.049%） |
 
+逐文件对照显示，瘦包移出的独立插件资源在 Windows 共 67,934,412 字节，在 macOS 共 874,891 字节。总差值还计入 `app.asar` 等文件的变化。两种模式各自完成 GStack 构建，资源清单摘要不同，Windows 和 macOS 分别有 17 项和 15 项 GStack 文件的摘要不同，两组 GStack 的总字节数相同。
+
 四组均在隔离配置下通过资源鉴权、连接 Desktop 自有 daemon、加载主窗口和正常退出。Windows 两组还通过安装、同版本覆盖安装和卸载。macOS 两组从已校验的 DMG 复制应用后冷启动。兼容包与瘦包的资源鉴权用时在 Windows 分别为 78.603 和 114.198 秒，在 macOS 分别为 84.168 和 141.566 秒。交互界面、正式插件调用和已有配置迁移仍待签名版验收。
 
 早期 macOS runner 的完整启动在资源准备阶段超时。同批 DMG 的 daemon-only 探针记录了兼容包与瘦包的资源鉴权用时，分别为 115.672 和 136.420 秒，均超过原先的 60 秒上限。当前 macOS 和 Windows 安装版为资源鉴权预留 180 秒，收到鉴权回执后有独立的 20 秒服务就绪时限。[测量运行](https://github.com/ling-stack-org/ling-stack/actions/runs/45177615505)
 
 瘦包插件索引修复提交 `b60f0c396` 的 macOS arm64 和 Windows x64 开发包均通过归档校验与安装启动。Windows 还通过同版本覆盖安装及卸载。[候选构建复验](https://github.com/ling-stack-org/ling-stack/actions/runs/45293564788/attempts/2)
+
+提交 `fb48a9142201cd991a5e7a5e1848088199ca8aea` 的 0.6.1 瘦包通过归档核对和隔离启动。macOS arm64 从 DMG 复制应用后连接自有 daemon、加载主窗口并正常退出。Windows x64 同时通过安装、同版本升级和卸载。该提交的 DMG 为 794,456,589 字节，EXE 为 743,606,765 字节。上表的体积差值取自同一提交的配对构建。[0.6.1 开发候选](https://github.com/ling-stack-org/ling-stack/actions/runs/45677797080)
 
 ### macOS 已有配置切换
 
@@ -83,6 +94,8 @@ macOS arm64 使用同一隔离用户目录，从 `14be1bdeb` 的兼容开发包�
 另一份隔离配置按兼容包 → 瘦包 → 兼容包 → 瘦包的顺序完成四次启动、三次切换。四次均连接 Desktop 自有 daemon、加载主窗口并正常退出。最后两次启动时，两代 gstack 资源均已留存。主工作区启用 Office 和 Chrome，第二工作区禁用 Office。三次切换后的启停状态、MCP 绑定、写入审批和既有插件事件 ID 均与首次启动后的状态一致。[两代资源迁移证据](../release/evidence/macos-plugin-profile-two-generations-20261124.json)
 
 这次复验使用 ad-hoc 签名的开发包。两代 gstack 资源已占满缓存时，Desktop 会保留两代已验证运行时并延后第三代 gstack 的快照发布，已有技能绑定仍可恢复，其他缓存异常仍会阻止启动。针对该路径的 daemon 回归覆盖了第三代延后和两代绑定恢复。正式签名版仍需覆盖该情形。
+
+macOS arm64 使用同一隔离配置依次启动 `14be1bdeb` 兼容包、`b60f0c396` 瘦包和 `1e015ff2` 瘦包。三份应用均从校验过的 DMG 复制安装。两代 GStack 占满缓存后，第三份应用连接自有 daemon、加载主窗口并正常退出。两个工作区各 114 条技能快照通过逐项对照，插件启停、审批、审计事件和 MCP 绑定均得到保留。第三代 GStack 快照延后发布。[第三代 DMG 构建](https://github.com/ling-stack-org/ling-stack/actions/runs/45705368169)
 
 ### Windows 已有配置切换
 

@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import { isConversationVisualizationId, type ConversationVisualization } from "@ling-stack/contracts";
-import { readConversationVisualizationReferences } from "@ling-stack/conversation-ui-core";
+import { readConversationVisualizationReferences } from "@ling-stack/conversation-ui-core/message-body";
 import type { LingThread, RunStore } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { writeJson } from "../../shared/response.js";
