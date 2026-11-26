@@ -4,6 +4,11 @@ import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+if (process.env.LING_PLUGIN_EXTERNAL_ONLY === "1") {
+  process.stdout.write("Skipping the Chrome Native Host executable for the on-demand Desktop build.\n");
+  process.exit(0);
+}
+
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const platform = process.platform;
 if ((platform !== "darwin" || process.arch !== "arm64") && (platform !== "win32" || process.arch !== "x64")) {

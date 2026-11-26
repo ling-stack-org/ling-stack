@@ -58,12 +58,12 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
   if (bundle.identity.target.platform !== (mac ? "darwin" : "win32") || bundle.identity.target.arch !== (mac ? "arm64" : "x64")) throw new Error("Packaged gstack target mismatch");
   const distribution = await inventoryDistribution(join(resources, "distribution"));
   if (distribution.length === 0 || !isDeepStrictEqual(distribution, expectedDistribution)) throw new Error("Packaged distribution materials differ from this build");
-  execFileSync(process.execPath, [join(desktopRoot, "scripts/distribution/materials.mjs"), "verify", "--platform", mac ? "darwin-arm64" : "win32-x64",
-    "--resources", resources], { cwd: root, encoding: "utf8", timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
   const pluginMode = metadata.lingPluginResourceMode ?? "bundled";
   if (pluginMode !== "bundled" && pluginMode !== "on-demand") throw new Error("Unknown Desktop plugin resource mode");
   const expectedPluginMode = process.env.LING_PLUGIN_EXTERNAL_ONLY === "1" ? "on-demand" : "bundled";
   if (pluginMode !== expectedPluginMode) throw new Error("Packaged plugin resource mode does not match the requested build");
+  execFileSync(process.execPath, [join(desktopRoot, "scripts/distribution/materials.mjs"), "verify", "--platform", mac ? "darwin-arm64" : "win32-x64",
+    "--plugin-mode", pluginMode, "--resources", resources], { cwd: root, encoding: "utf8", timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
   const pluginResources = pluginMode === "bundled"
     ? [
         join(resources, "browser-extension/ling-for-chrome.zip"),

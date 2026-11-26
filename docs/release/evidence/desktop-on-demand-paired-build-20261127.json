@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "sourceSha": "b258ac2215f1f3ca59dd670563b11f7451af0e7e",
+  "releaseTag": "v0.6.2-alpha.1",
+  "builds": {
+    "on-demand": {
+      "workflowRun": 45851628780,
+      "attempt": 2,
+      "pluginMode": "on-demand",
+      "signingTier": "unsigned_dev",
+      "macosArm64": {
+        "dmg": {
+          "sizeBytes": 794464137,
+          "sha256": "ac988a742f68ef7a54bd022d14c4add219645e84c20af1055ae325d1a25a4fea"
+        },
+        "zip": {
+          "sizeBytes": 787640821,
+          "sha256": "751ed224ef3253d09e5eb4a5cb3631522fb36929f96ab0ccc5152300db5cec28"
+        },
+        "installedPayloadBytes": 2213790273,
+        "distributionMaterialBytes": 45915927,
+        "distributionMaterialFiles": 4641,
+        "installedStartup": "passed",
+        "desktopOwnedDaemon": true,
+        "normalExit": true
+      },
+      "windowsX64": {
+        "setup": {
+          "sizeBytes": 742869440,
+          "sha256": "3da817ef10c459d2aa9f16773eda0b8db01e3354ee7dd4ca60b5ed6223c244bd"
+        },
+        "installedPayloadBytes": 2528504971,
+        "distributionMaterialBytes": 63107540,
+        "distributionMaterialFiles": 4725,
+        "install": "passed",
+        "sameVersionUpgrade": "passed",
+        "desktopOwnedDaemon": true,
+        "uninstall": "passed"
+      }
+    },
+    "bundled": {
+      "workflowRun": 45851832576,
+      "pluginMode": "bundled",
+      "signingTier": "unsigned_dev",
+      "macosArm64": {
+        "dmg": {
+          "sizeBytes": 794938380,
+          "sha256": "e0674ea66f47e90f719b1f6c759b1ed0efb7aca1c493bba383a73cfd224a4e26"
+        },
+        "zip": {
+          "sizeBytes": 788124669,
+          "sha256": "efdfea8281cd16c105082e0b04ca3c5b86884e63b600843d3d2047506fa13a56"
+        },
+        "installedPayloadBytes": 2214969183,
+        "distributionMaterialBytes": 46004066,
+        "distributionMaterialFiles": 4652,
+        "installedStartup": "passed",
+        "desktopOwnedDaemon": true,
+        "normalExit": true
+      },
+      "windowsX64": {
+        "setup": {
+          "sizeBytes": 789295466,
+          "sha256": "35ced0ae80e892f45fb5213b2aa4bbd24d7be0526901da12c840d344589120db"
+        },
+        "installedPayloadBytes": 2669022013,
+        "distributionMaterialBytes": 68020557,
+        "distributionMaterialFiles": 5062,
+        "install": "passed",
+        "sameVersionUpgrade": "passed",
+        "desktopOwnedDaemon": true,
+        "uninstall": "passed"
+      }
+    }
+  },
+  "comparison": {
+    "macosArm64": {
+      "dmgReductionBytes": 474243,
+      "dmgReductionPercent": 0.0597,
+      "zipReductionBytes": 483848,
+      "zipReductionPercent": 0.0614,
+      "installedPayloadReductionBytes": 1178910,
+      "distributionMaterialReductionBytes": 88139
+    },
+    "windowsX64": {
+      "setupReductionBytes": 46426026,
+      "setupReductionPercent": 5.882,
+      "installedPayloadReductionBytes": 140517042,
+      "distributionMaterialReductionBytes": 4913017
+    }
+  },
+  "officialNativeRuntimeAcceptance": "not_run",
+  "defaultPackaging": "bundled"
+}

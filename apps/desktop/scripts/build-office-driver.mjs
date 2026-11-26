@@ -8,6 +8,11 @@ const requested = process.argv.find((value) => value.startsWith("--platform="))?
 const platform = requested ?? (process.platform === "darwin" ? "darwin-arm64" : process.platform === "win32" ? "win32-x64" : "unsupported");
 const outputRoot = resolve(desktopRoot, "dist", "office-driver");
 
+if (process.env.LING_PLUGIN_EXTERNAL_ONLY === "1") {
+  process.stdout.write("Skipping the Office Documents Excel helper for the on-demand Desktop build.\n");
+  process.exit(0);
+}
+
 if (platform === "unsupported") {
   process.stdout.write("Office driver is not built on this platform.\n");
   process.exit(0);

@@ -75,7 +75,7 @@ Office 和 Chrome 的开发包供源码环境试用。Cua Driver 提供双平台
 
 ### Desktop 安装包对照
 
-四个候选均从 `14be1bdebd3d295a4f822981ae8cc18a32b9dd51` 构建，使用 Electron 45.3.1，各平台的两种模式使用同一版 gstack 源码及适配。各 runner 独立生成资源清单。Windows 候选未签名，macOS 候选使用 ad-hoc 签名。四个开发包均未包含正式 Cua Driver provider。[兼容包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187207804) · [瘦包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187216178)
+旧版 0.6.1 配对构建均从 `14be1bdebd3d295a4f822981ae8cc18a32b9dd51` 构建，使用 Electron 45.3.1。各 runner 独立生成资源清单。Windows 候选未签名，macOS 候选使用 ad-hoc 签名。四个开发包均未包含正式 Cua Driver provider。[0.6.1 兼容包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187207804) · [0.6.1 瘦包](https://github.com/ling-stack-org/ling-stack/actions/runs/45187216178)
 
 | 平台和产物 | 兼容包（字节） | 瘦包（字节） | 减少 |
 | --- | ---: | ---: | ---: |
@@ -86,6 +86,14 @@ Office 和 Chrome 的开发包供源码环境试用。Cua Driver 提供双平台
 | macOS arm64 解包后常规文件 | 2,213,099,697 | 2,212,017,079 | 1,082,618（0.049%） |
 
 逐文件对照显示，瘦包移出的独立插件资源在 Windows 共 67,934,412 字节，在 macOS 共 874,891 字节。总差值还计入 `app.asar` 等文件的变化。两种模式各自完成 GStack 构建，资源清单摘要不同，Windows 和 macOS 分别有 17 项和 15 项 GStack 文件的摘要不同，两组 GStack 的总字节数相同。
+
+### 0.6.2-alpha.1 同源配对构建
+
+提交 `b258ac2215f1f3ca59dd670563b11f7451af0e7e` 的兼容包和瘦包均通过 GitHub Actions 双平台构建。瘦包移除 Office Documents helper、Chrome Native Host 和扩展 ZIP 的构建及分发材料。Windows Setup 从 789,295,466 字节降至 742,869,440 字节，减少 46,426,026 字节（5.882%）。macOS DMG 从 794,938,380 字节降至 794,464,137 字节，减少 474,243 字节（0.060%）。macOS ZIP 从 788,124,669 字节降至 787,640,821 字节，减少 483,848 字节（0.061%）。
+
+解包后的 Windows 常规文件从 2,669,022,013 字节降至 2,528,504,971 字节，减少 140,517,042 字节（5.265%）。macOS 常规文件从 2,214,969,183 字节降至 2,213,790,273 字节，减少 1,178,910 字节（0.053%）。分发材料从 Windows 68,020,557 字节降至 63,107,540 字节，macOS 从 46,004,066 字节降至 45,915,927 字节。两种模式均通过 macOS arm64 DMG 复制启动、Windows x64 安装、同版本覆盖安装和卸载。瘦包构建没有切换默认打包。[0.6.2 配对构建](https://github.com/ling-stack-org/ling-stack/actions/runs/45851832576) · [0.6.2 瘦包](https://github.com/ling-stack-org/ling-stack/actions/runs/45851628780)
+
+两种模式的完整资产摘要、分发材料文件数和安装回执见[配对构建证据](../release/evidence/desktop-on-demand-paired-build-20261127.json)。这批构建的官方签名目录运行时仍未验收，默认打包保持兼容模式。
 
 四组均在隔离配置下通过资源鉴权、连接 Desktop 自有 daemon、加载主窗口和正常退出。Windows 两组还通过安装、同版本覆盖安装和卸载。macOS 两组从已校验的 DMG 复制应用后冷启动。兼容包与瘦包的资源鉴权用时在 Windows 分别为 78.603 和 114.198 秒，在 macOS 分别为 84.168 和 141.566 秒。交互界面、正式插件调用和已有配置迁移仍待签名版验收。
 
