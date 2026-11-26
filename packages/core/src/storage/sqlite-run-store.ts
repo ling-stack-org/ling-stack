@@ -6417,6 +6417,7 @@ export class SqliteRunStore implements RunStore {
         getAppServerState: (...args) => this.appServerState.get(...args),
         findAppServerStateByIdempotencyKey: (...args) => this.appServerState.findByIdempotencyKey(...args),
         listAppServerState: (...args) => this.appServerState.list(...args),
+        updateDeviceEffect: (...args) => this.workItems.updateDeviceEffectWithinTransaction(...args),
         putAppServerState: (input, now, publication) => {
           const result = this.appServerState.putWithinTransaction(input, now);
           if (!result || result.status === "replayed" || !publication) return result;

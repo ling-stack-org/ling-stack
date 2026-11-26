@@ -7,6 +7,8 @@ const WORK_ITEM_EVIDENCE_MIGRATION_VERSION = 236;
 const WORK_ITEM_EVIDENCE_MIGRATION_NAME = "create_work_item_evidence";
 export const APP_SERVER_STATE_MIGRATION_VERSION = 237;
 const APP_SERVER_STATE_MIGRATION_NAME = "create_app_server_state";
+const WORK_ITEM_DEVICE_EFFECTS_MIGRATION_VERSION = 239;
+const WORK_ITEM_DEVICE_EFFECTS_MIGRATION_NAME = "project_unresolved_work_item_device_effects";
 
 const controlColumns = [
   ["revision", "INTEGER NOT NULL DEFAULT 1"],
@@ -24,7 +26,8 @@ export function applyAppServerMigrations(context: SqliteRunStoreMigrationContext
   const hasWorkItemControl = context.hasMigration(WORK_ITEM_CONTROL_MIGRATION_VERSION);
   const hasWorkItemEvidence = context.hasMigration(WORK_ITEM_EVIDENCE_MIGRATION_VERSION);
   const hasAppServerState = context.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION);
-  if (hasWorkItemControl && hasWorkItemEvidence && hasAppServerState && context.hasColumn("work_items", "control_state")) return;
+  const hasDeviceEffects = context.hasMigration(WORK_ITEM_DEVICE_EFFECTS_MIGRATION_VERSION);
+  if (hasWorkItemControl && hasWorkItemEvidence && hasAppServerState && hasDeviceEffects && context.hasColumn("work_items", "control_state")) return;
 
   database.exec("BEGIN IMMEDIATE");
   try {
@@ -81,6 +84,39 @@ export function applyAppServerMigrations(context: SqliteRunStoreMigrationContext
           ON app_server_state(workspace_id, kind, updated_at);
       `);
       context.recordMigration(APP_SERVER_STATE_MIGRATION_VERSION, APP_SERVER_STATE_MIGRATION_NAME);
+    }
+    if (!hasDeviceEffects) {
+      database.exec(`
+        WITH unresolved_devices AS (
+          SELECT binding.workspace_id, binding.record_id AS effect_id,
+            json_extract(binding.payload_json, '$.binding.workItemId') AS work_item_id
+          FROM app_server_state AS binding
+          WHERE binding.kind = 'work_item_device_binding' AND COALESCE((
+            SELECT json_extract(receipt.payload_json, '$.receipt.status')
+            FROM app_server_state AS receipt
+            WHERE receipt.workspace_id = binding.workspace_id AND receipt.kind = 'work_item_device_receipt'
+              AND json_extract(receipt.payload_json, '$.bindingId') = binding.record_id
+              AND json_extract(receipt.payload_json, '$.bindingRevision') = json_extract(binding.payload_json, '$.binding.revision')
+              AND json_extract(receipt.payload_json, '$.receipt.receivedAt') > COALESCE(json_extract(binding.payload_json, '$.binding.receipt.receivedAt'), '')
+            ORDER BY json_extract(receipt.payload_json, '$.receipt.receivedAt') DESC,
+              json_extract(receipt.payload_json, '$.receipt.receiptId') DESC
+            LIMIT 1
+          ), json_extract(binding.payload_json, '$.binding.status')) = 'unknown'
+        )
+        UPDATE work_items AS item SET
+          control_unresolved_effect_ids_json = (
+            SELECT json_group_array(effect_id) FROM (
+              SELECT value AS effect_id FROM json_each(item.control_unresolved_effect_ids_json)
+              UNION
+              SELECT effect_id FROM unresolved_devices WHERE workspace_id = item.workspace_id AND work_item_id = item.id
+            )
+          ),
+          control_recovery_owner = COALESCE(control_recovery_owner, 'device_fabric'),
+          control_state = CASE control_state WHEN 'active' THEN 'blocked' WHEN 'cancelled' THEN 'cancelling' ELSE control_state END,
+          revision = revision + 1
+        WHERE EXISTS (SELECT 1 FROM unresolved_devices WHERE workspace_id = item.workspace_id AND work_item_id = item.id);
+      `);
+      context.recordMigration(WORK_ITEM_DEVICE_EFFECTS_MIGRATION_VERSION, WORK_ITEM_DEVICE_EFFECTS_MIGRATION_NAME);
     }
     database.exec("COMMIT");
   } catch (error) {

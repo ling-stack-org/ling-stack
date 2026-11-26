@@ -443,6 +443,24 @@ export class SqliteWorkItemStore {
     return row ? this.withLinkedExecution(mapWorkItem(row, this.getWorkItemDependencyIds(id))) : undefined;
   }
 
+  updateDeviceEffectWithinTransaction(item: WorkItem, bindingId: string, unresolved: boolean, now: string): number {
+    const { database } = this.context;
+    const pending = item.control.unresolvedEffectIds;
+    if (pending.includes(bindingId) === unresolved) return item.revision;
+    const effects = unresolved ? [...pending, bindingId] : pending.filter(id => id !== bindingId);
+    let state = item.control.state;
+    if (unresolved && state === "active") state = "blocked";
+    if (unresolved && state === "cancelled") state = "cancelling";
+    if (effects.length === 0 && state === "cancelling") state = "cancelled";
+    let owner = item.control.recoveryOwner;
+    if (unresolved) owner ??= "device_fabric";
+    if (effects.length === 0 && owner === "device_fabric") owner = undefined;
+    database.prepare(`UPDATE work_items SET control_unresolved_effect_ids_json=?, control_recovery_owner=?,
+      control_state=?, revision=revision+1, updated_at=? WHERE id=?`)
+      .run(stringifyJson(effects), owner ?? null, state, now, item.id);
+    return item.revision + 1;
+  }
+
   listWorkItems(options: ListWorkItemsOptions = {}, now?: string): WorkItem[] {
     const clauses = ["workspace_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
@@ -1440,7 +1458,7 @@ function nextWorkItemControlState(state: WorkItemControlState, action: WorkItemC
     return state === "active" || state === "blocked" ? "paused" : undefined;
   }
   if (action === "resume") {
-    return state === "paused" || state === "blocked" ? "active" : undefined;
+    return unresolvedEffectCount === 0 && (state === "paused" || state === "blocked") ? "active" : undefined;
   }
   if (state !== "active" && state !== "paused" && state !== "blocked") return undefined;
   return unresolvedEffectCount > 0 ? "cancelling" : "cancelled";

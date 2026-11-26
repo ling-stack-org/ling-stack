@@ -12,7 +12,8 @@ import { openEngineeringChannel } from "./support/test-helpers";
 
 test("Review workbench runs a registered browser check and restores the candidate-bound report", async ({ page }, testInfo) => {
   test.skip(process.platform === "win32", "Host verification process-group cleanup is available on macOS and Linux.");
-  test.setTimeout(45_000);
+  // The verifier launches a second Chromium process before producing its report.
+  test.setTimeout(120_000);
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-verification-web-")));
   const cwd = join(root, "project");
   const home = join(root, "state");
@@ -90,7 +91,7 @@ test("Review workbench runs a registered browser check and restores the candidat
       await page.getByRole("toolbar", { name: "Workspace task toolbar" }).getByRole("button", { name: "Show details" }).click();
       const dock = page.getByRole("complementary", { name: "Channel workspace dock" });
       await dock.getByRole("button", { name: "Review", exact: true }).click();
-      await dock.getByRole("button", { name: "Verification", exact: true }).click();
+      await dock.getByRole("button", { name: "Verification", exact: true }).click({ timeout: 10_000 });
       return dock.getByRole("region", { name: "Verification", exact: true });
     }
 
@@ -98,7 +99,7 @@ test("Review workbench runs a registered browser check and restores the candidat
     const panel = await openVerification();
     await expect(panel.getByText("Not run", { exact: true })).toBeVisible();
     await panel.getByRole("button", { name: "Verify", exact: true }).click();
-    await expect(panel.getByText("Passed", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(panel.getByText("Passed", { exact: true }).first()).toBeVisible({ timeout: 60_000 });
     await expect(panel.getByText("Browser status check", { exact: true })).toBeVisible();
     await panel.getByText("Check output", { exact: true }).click();
     await expect(panel.getByText("Chromium confirmed the project status", { exact: true })).toBeVisible();

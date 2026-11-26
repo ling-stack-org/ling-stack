@@ -4,9 +4,9 @@ import type {
   LingAppServerWorkItemDeviceBindParams,
   LingAppServerWorkItemDeviceReceipt,
   LingAppServerWorkItemDeviceReceiptParams,
-  LingAppServerWorkItemDeviceStatus,
 } from "@ling-stack/contracts";
 import type { AppendControlPlaneEventInput, ControlPlaneEvent, RunStore } from "./run-types.js";
+import type { WorkItem } from "./work-item-types.js";
 
 type DeviceBindingRecord = { readonly binding: LingAppServerWorkItemDeviceBinding };
 type DeviceReceiptRecord = {
@@ -29,7 +29,9 @@ export class WorkItemDeviceBridgeError extends Error {
 }
 
 export type WorkItemDeviceMutationStore = Pick<RunStore, "getWorkItem" | "getAppServerState" | "findAppServerStateByIdempotencyKey"
-  | "listAppServerState" | "putAppServerState">;
+  | "listAppServerState" | "putAppServerState"> & {
+    updateDeviceEffect(workItem: WorkItem, bindingId: string, unresolved: boolean, now: string): number;
+  };
 type WorkItemDeviceMutation = { readonly binding: LingAppServerWorkItemDeviceBinding; readonly replayed: boolean; readonly event?: ControlPlaneEvent };
 
 export function deviceBindingId(workItemId: string, graphId: string, graphNodeId: string): string {
@@ -70,20 +72,20 @@ export function bindWorkItemDevice(
 function commitDeviceBinding(store: WorkItemDeviceMutationStore, input: LingAppServerWorkItemDeviceBindParams, now: string, cwd: string): WorkItemDeviceMutation {
   const workItem = store.getWorkItem(input.workItemId);
   if (!workItem) throw new WorkItemDeviceBridgeError("work_item_not_found", "The Work Item is unavailable.");
-  if (workItem.revision !== input.expectedWorkItemRevision) throw new WorkItemDeviceBridgeError("stale_revision", "The Work Item revision changed.");
-  if (workItem.control.state !== "active" || workItem.holds.some(hold => hold.blocksNewAdmission)) {
-    throw new WorkItemDeviceBridgeError("resume_blocked", "The Work Item is held and cannot admit a device action.");
-  }
   const bindingId = deviceBindingId(input.workItemId, input.graphId, input.graphNodeId);
   const state = store.getAppServerState("work_item_device_binding", bindingId);
   const existing = state?.payload as DeviceBindingRecord | undefined;
-  if (existing) {
-    const current = projectBindingWithLatestReceipt(store, existing.binding);
-    if (state?.idempotencyKey === input.idempotencyKey) {
-      if (!sameBindingRequest(current, input)) throw new WorkItemDeviceBridgeError("device_binding_conflict", "The binding key belongs to a different device node.");
-      return { binding: current, replayed: true };
-    }
-    if (sameBindingRequest(current, input)) return { binding: current, replayed: true };
+  const current = existing && projectBindingWithLatestReceipt(store, existing.binding);
+  if (current && state?.idempotencyKey === input.idempotencyKey && !sameBindingRequest(current, input)) {
+    throw new WorkItemDeviceBridgeError("device_binding_conflict", "The binding key belongs to a different device node.");
+  }
+  if (current && sameBindingRequest(current, input)) return { binding: current, replayed: true };
+  if (workItem.revision !== input.expectedWorkItemRevision) throw new WorkItemDeviceBridgeError("stale_revision", "The Work Item revision changed.");
+  if (workItem.control.state !== "active" || workItem.control.unresolvedEffectIds.length || workItem.holds.some(hold => hold.blocksNewAdmission)
+    || ["done", "cancelled", "archived", "superseded"].includes(workItem.status)) {
+    throw new WorkItemDeviceBridgeError("resume_blocked", "The Work Item is held and cannot admit a device action.");
+  }
+  if (current) {
     if (input.graphRevision <= current.graphRevision) throw new WorkItemDeviceBridgeError("stale_revision", "The device graph revision is stale.");
     if (!["failed", "cancelled"].includes(current.status)) {
       throw new WorkItemDeviceBridgeError("device_binding_conflict", "The device node already has an active binding.");
@@ -98,7 +100,7 @@ function commitDeviceBinding(store: WorkItemDeviceMutationStore, input: LingAppS
   const result = store.putAppServerState({
     kind: "work_item_device_binding", recordId: bindingId, expectedRevision: state?.revision ?? 0,
     idempotencyKey: input.idempotencyKey, payload: { binding } satisfies DeviceBindingRecord,
-  }, now, deviceBridgeEvent(cwd, workItem.workspaceId, input.workItemId, binding, "bound"));
+  }, now, deviceBridgeEvent(cwd, workItem.workspaceId, input.workItemId, binding, workItem.revision));
   if (!result) throw new WorkItemDeviceBridgeError("stale_revision", "The device binding changed before it was committed.");
   return { binding: projectBindingWithLatestReceipt(store, binding), replayed: result.status === "replayed", ...(result.event ? { event: result.event } : {}) };
 }
@@ -116,7 +118,6 @@ export function recordWorkItemDeviceReceipt(
 function commitDeviceReceipt(store: WorkItemDeviceMutationStore, input: LingAppServerWorkItemDeviceReceiptParams, now: string, cwd: string): WorkItemDeviceMutation {
   const workItem = store.getWorkItem(input.workItemId);
   if (!workItem) throw new WorkItemDeviceBridgeError("work_item_not_found", "The Work Item is unavailable.");
-  if (workItem.revision !== input.expectedWorkItemRevision) throw new WorkItemDeviceBridgeError("stale_revision", "The Work Item revision changed.");
   const state = store.getAppServerState("work_item_device_binding", input.bindingId);
   const saved = state?.payload as DeviceBindingRecord | undefined;
   if (!saved || saved.binding.workItemId !== input.workItemId) throw new WorkItemDeviceBridgeError("device_binding_conflict", "The device binding is unavailable.");
@@ -137,6 +138,7 @@ function commitDeviceReceipt(store: WorkItemDeviceMutationStore, input: LingAppS
     }
     return { binding, replayed: true };
   }
+  if (workItem.revision !== input.expectedWorkItemRevision) throw new WorkItemDeviceBridgeError("stale_revision", "The Work Item revision changed.");
   if (binding.receipt && (binding.status !== "unknown" || input.status === "unknown" || input.reconciled !== true)) {
     throw new WorkItemDeviceBridgeError("device_receipt_conflict", "The current device result already has a receipt. An unknown result requires owner reconciliation.");
   }
@@ -147,10 +149,12 @@ function commitDeviceReceipt(store: WorkItemDeviceMutationStore, input: LingAppS
     expectedRevision: 0, idempotencyKey: input.idempotencyKey, payload: receiptRecord }, now);
   if (!savedReceipt) throw new WorkItemDeviceBridgeError("device_receipt_conflict", "The receipt was committed concurrently.");
   const nextBinding = { ...binding, status: input.status, updatedAt: now, receipt } satisfies LingAppServerWorkItemDeviceBinding;
+  const workItemRevision = input.status === "unknown" || binding.status === "unknown"
+    ? store.updateDeviceEffect(workItem, binding.bindingId, input.status === "unknown", now) : workItem.revision;
   const updated = store.putAppServerState({ kind: "work_item_device_binding", recordId: binding.bindingId,
     expectedRevision: state!.revision,
     payload: { binding: nextBinding } satisfies DeviceBindingRecord }, now,
-    deviceBridgeEvent(cwd, workItem.workspaceId, input.workItemId, nextBinding, input.status));
+    deviceBridgeEvent(cwd, workItem.workspaceId, input.workItemId, nextBinding, workItemRevision));
   if (!updated) throw new WorkItemDeviceBridgeError("stale_revision", "The device binding changed while the receipt was being projected.");
   return { binding: nextBinding, replayed: false,
     ...(updated.event ? { event: updated.event } : {}) };
@@ -198,11 +202,13 @@ function validateReceiptInput(input: LingAppServerWorkItemDeviceReceiptParams): 
   }
 }
 
-function deviceBridgeEvent(cwd: string, workspaceId: string, workItemId: string, binding: LingAppServerWorkItemDeviceBinding, status: LingAppServerWorkItemDeviceStatus): AppendControlPlaneEventInput {
+function deviceBridgeEvent(cwd: string, workspaceId: string, workItemId: string, binding: LingAppServerWorkItemDeviceBinding,
+  workItemRevision: number): AppendControlPlaneEventInput {
   return { workspaceId, cwd, domain: "work_items", entityType: "work_item", entityId: workItemId,
-    action: "work_item.device.updated", idempotencyKey: `${binding.bindingId}:${binding.revision}:${status}`,
+    action: "work_item.device.updated", idempotencyKey: `${binding.bindingId}:${binding.revision}:${binding.status}`,
     data: { workItemId, bindingId: binding.bindingId, graphId: binding.graphId, graphNodeId: binding.graphNodeId,
-      graphRevision: binding.graphRevision, ownerHostId: binding.ownerHostId, workUnitId: binding.workUnitId, status, revision: binding.revision } };
+      graphRevision: binding.graphRevision, ownerHostId: binding.ownerHostId, workUnitId: binding.workUnitId,
+      status: binding.status, revision: binding.revision, workItemRevision } };
 }
 
 function digest(values: readonly string[]): string {

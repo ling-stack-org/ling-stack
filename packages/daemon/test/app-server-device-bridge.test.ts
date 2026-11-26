@@ -9,12 +9,15 @@ import { createSqliteRunStore, resolveStoragePaths } from "@ling-stack/core";
 import { WebSocket } from "ws";
 import { createDaemonServer } from "../dist/index.js";
 
-test("App Server reserves device owner writes for the operator and replays them to a scoped controller", { timeout: 15_000 }, async t => {
+test("App Server holds Work Item admission for an unknown device receipt until owner reconciliation", { timeout: 30_000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "ling-app-server-device-bridge-"));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
   const token = randomUUID();
   const createDaemon = () => createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken: token }, {
+    chromeBrowserNativeMessagingEnabled: false,
+    remoteReplyDispatcher: null,
+    remoteAccessStateDir: join(root, "remote-access"),
     storeFactory(workspace) {
       return createSqliteRunStore(workspace, resolveStoragePaths(workspace, { homeDir: root, env: {}, workspaceStateLocation: "repo-local" }).workspace);
     },
@@ -27,6 +30,7 @@ test("App Server reserves device owner writes for the operator and replays them 
     url.searchParams.set("cwd", cwd);
     const client = new LingAppServerClient({
       url: url.href, clientInfo: { name: "Device bridge test", version: "1" }, requiredCapabilities: ["workItem.device"],
+      autoReconnect: false, requestTimeoutMs: 5_000,
       createSocket: address => new WebSocket(address, { headers: { Authorization: `Bearer ${bearer}` } }) as unknown as LingAppServerSocket,
     });
     await client.connect();
@@ -69,6 +73,15 @@ test("App Server reserves device owner writes for the operator and replays them 
   assert.equal(unknown.binding.status, "unknown");
   const beforeRestart = await client.readWorkItemDevice(created.workItem.workItemId);
   assert.equal(beforeRestart.bindings[0]?.receipt?.resultRef, "journal-rpc-unknown");
+  const workItemId = created.workItem.workItemId;
+  const readWorkItem = async (peer: LingAppServerClient) => (await peer.readWorkItemSnapshot(created.workItem.workspaceId, workItemId)).workItem;
+  const held = await readWorkItem(controller);
+  assert.deepEqual(held.control.unresolvedEffectIds, [binding.binding.bindingId]);
+  assert.notEqual(held.revision, created.workItem.revision);
+  const paused = await controller.controlWorkItem("pause", {
+    workItemId, workspaceId: created.workItem.workspaceId, actorId: "fixture", expectedWorkItemRevision: Number(held.revision),
+    expectedControlGeneration: Number(held.control.generation), idempotencyKey: "stop-for-device-recovery",
+  });
   controller.close();
   client.close();
   await daemon.stop();
@@ -78,4 +91,19 @@ test("App Server reserves device owner writes for the operator and replays them 
   const afterRestart = await resumed.readWorkItemDevice(created.workItem.workItemId);
   assert.equal(afterRestart.bindings[0]?.status, "unknown");
   assert.equal(afterRestart.bindings[0]?.ownerHostId, "host-rpc");
+  assert.deepEqual(await readWorkItem(resumed), paused);
+  const resumeInput = { workItemId, workspaceId: created.workItem.workspaceId, actorId: "fixture", expectedControlGeneration: Number(paused.control.generation),
+    expectedWorkItemRevision: Number(paused.revision), idempotencyKey: "resume-after-device-recovery" };
+  await assert.rejects(resumed.controlWorkItem("resume", resumeInput), { code: "resume_blocked" });
+  const operator = await connect();
+  const newerBinding = { ...bindInput, graphNodeId: "other-node", expectedWorkItemRevision: Number(paused.revision), idempotencyKey: "bind-other" };
+  await assert.rejects(operator.bindWorkItemDevice(newerBinding), { code: "resume_blocked" });
+  const settled = await operator.recordWorkItemDeviceReceipt({ ...receiptInput, expectedWorkItemRevision: Number(paused.revision),
+    status: "succeeded", reconciled: true, resultRef: "journal-rpc-readback", idempotencyKey: "receipt-rpc-reconciled" });
+  assert.equal(settled.binding.status, "succeeded");
+  const ready = await readWorkItem(resumed);
+  assert.deepEqual(ready.control.unresolvedEffectIds, []);
+  assert.equal(ready.control.state, "paused");
+  const active = await resumed.controlWorkItem("resume", { ...resumeInput, expectedWorkItemRevision: Number(ready.revision) });
+  assert.equal(active.control.state, "active");
 });
