@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { createHash, createPublicKey, sign } from "node:crypto";
+import { createHash, sign } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -15,6 +15,7 @@ import JSZip from "../../packages/daemon/node_modules/jszip/lib/index.js";
 import { cuaDriverArtifactLayoutFor, cuaDriverArtifactPlatformForRuntime } from "../../apps/desktop/shared/cua-driver-artifact-layout.mjs";
 import { validateCuaDriverProviderLockContract } from "../../apps/desktop/shared/cua-driver-provider-lock-contract.mjs";
 import { CUA_DRIVER_PACKAGE_REVISION } from "../../apps/desktop/scripts/cua-driver-package-staging-contract.mjs";
+import { requireOfficialSigningKey } from "./official-signing-key.mjs";
 
 const repositories = new Map([
   ["official:chrome-browser", "ling-stack-org/ling-plugin-chrome-browser"],
@@ -26,17 +27,14 @@ const manifestPath = ".ling-plugin/plugin.json";
 const checksumsPath = ".ling-plugin/checksums.json";
 const provenancePath = ".ling-plugin/provenance.json";
 
-const sources = JSON.parse(process.env.LING_PLUGIN_RELEASE_SOURCES ?? "null");
+const sources = JSON.parse(process.env.LING_PLUGIN_RELEASE_SOURCES || "null");
 if (sources === null || typeof sources !== "object" || Array.isArray(sources)
   || Object.keys(sources).length !== repositories.size
   || [...repositories.keys()].some((id) => !Object.hasOwn(sources, id))) {
   throw new Error("Release sources must identify each of the three official plugins.");
 }
-const key = process.env.LING_PLUGIN_ARTIFACT_PRIVATE_KEY;
-const pinnedKey = createPublicKey(OFFICIAL_PLUGIN_ARTIFACT_PUBLIC_KEY).export({ type: "spki", format: "der" });
-if (!key || !createPublicKey(key).export({ type: "spki", format: "der" }).equals(pinnedKey)) {
-  throw new Error("The release artifact signing key does not match the client public key.");
-}
+const key = requireOfficialSigningKey(process.env.LING_PLUGIN_ARTIFACT_PRIVATE_KEY,
+  OFFICIAL_PLUGIN_ARTIFACT_PUBLIC_KEY, "LING_PLUGIN_ARTIFACT_PRIVATE_KEY");
 
 const root = await mkdtemp(join(tmpdir(), "ling-plugin-releases-"));
 try {

@@ -3,12 +3,18 @@ name: Official plugin catalog
 on:
   workflow_dispatch:
     inputs:
-      sources:
-        description: Stable plugin Release tags, reviewed source commits and platform asset SHA-256 digests
+      operation:
+        description: Assemble the catalog or verify the configured signing keys
         required: true
+        default: assemble
+        type: choice
+        options: [assemble, verify-keys]
+      sources:
+        description: Stable Release tags, source commits and asset SHA-256 digests required for assembly
+        required: false
         type: string
       publish:
-        description: Publish the signed snapshot after verifying all Release assets
+        description: Publish the assembled signed snapshot after verifying all Release assets
         required: true
         default: false
         type: boolean
@@ -38,7 +44,14 @@ jobs:
           cache: pnpm
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm --filter '@ling-stack/core...' -r run build:ci
+      - name: Verify configured plugin signing keys
+        if: inputs.operation == 'verify-keys'
+        env:
+          LING_PLUGIN_ARTIFACT_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_ARTIFACT_PRIVATE_KEY }}
+          LING_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_CATALOG_PRIVATE_KEY }}
+        run: node scripts/plugins/verify-official-signing-keys.mjs
       - name: Verify released plugin assets and sign the catalog
+        if: inputs.operation == 'assemble'
         env:
           GH_TOKEN: ${{ github.token }}
           LING_PLUGIN_RELEASE_SOURCES: ${{ inputs.sources }}
@@ -49,13 +62,14 @@ jobs:
           node scripts/plugins/collect-official-releases.mjs "$RUNNER_TEMP/catalog/catalog.json"
           node scripts/plugins/sign-catalog.mjs --input "$RUNNER_TEMP/catalog/catalog.json" --output "$RUNNER_TEMP/catalog/catalog.sig" --official
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: inputs.operation == 'assemble'
         with:
           name: official-plugin-catalog
           path: ${{ runner.temp }}/catalog/
           if-no-files-found: error
 
   publish:
-    if: inputs.publish
+    if: inputs.operation == 'assemble' && inputs.publish
     needs: assemble
     runs-on: ubuntu-latest
     permissions:
