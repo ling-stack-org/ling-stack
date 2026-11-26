@@ -2,7 +2,7 @@
 
 - **状态** App Server 本机传输、Turn 控制与恢复、Verify 和 Federation 已通过定向验收。Agent Operating Model 已接入工作项接单、控制和协作记录。下文列出完整实施与发行仍需完成的工作包。
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** `origin/main@05cb86a41`
+- **核对基线** `origin/main@00966e865`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
@@ -82,6 +82,8 @@
 
 同协议切换用例由 `LING_APP_SERVER_BASELINE_BUILD` 指向已构建的 `main@05cb86a41`，涵盖 #747 已合并的 `ling-app-server/1`。候选 SDK、CLI、MCP 和 Codex 宿主连接该 Daemon，核对支持的工具、缺少所需能力时的拒绝和活跃 Turn 入队。切换到候选 Daemon 后，原 SDK、CLI 和 MCP 连接同一隔离工作区，重读待处理审批和旧游标，按原键读取一次派发的后继 Run。用例把旧 Daemon 停在跟进已入队、派发尚未发生的位置。真实 Codex 宿主部分使用 `LING_APP_SERVER_CODEX_EXECUTABLE`。 [协议切换验收](../../packages/daemon/test/app-server-release-acceptance.test.ts)
 
+Schema 导出覆盖 143 个已登记方法，包含已实现方法的请求与成功回执，以及预留方法的不可用合同。实际 Daemon 回归覆盖旧版 Turn 权限输入、带签名的旧游标、归档会话的删除凭据、无 Run 的媒体产物及重启后保留的协作证据。扩展字段按同协议兼容规则保留。 [协议 Schema](../../packages/contracts/src/app-server-schema.ts) · [发行验收](../../packages/daemon/test/app-server-release-acceptance.test.ts)
+
 Windows 源码验收使用独立的 GitHub Actions 作业，启动真实 CLI stdio 和受控 Daemon，在回环 WebSocket 上发起一个 Turn，用 stdio 接收终态，再重启 Daemon 并从原游标恢复事件。macOS 和 Linux 还验证私有 Unix socket 的连接与清理。CLI 的 `app-server schema` 导出方法、通知及服务端请求的合同。TypeScript 客户端用握手实例区分重连和 Daemon 重启。 [Windows 传输验收](../../.github/workflows/app-server-windows.yml)
 
 ### 受保护 GitHub 合并队列
@@ -104,7 +106,7 @@ O9 联合回归在同一 Work Item 确认双端订阅、阶段进度、暂停与
 
 | 工作包 | 代码或验收差距 |
 | --- | --- |
-| A1、B1、C1、C2 | 全方法的 Schema 校验和更多宿主兼容组合。workspace、Thread、Work Item 的 grant 和 WSS 已接入。专用 TLS 监听器实测分离控制和答复权限，支持用户答复原回执与撤权。审批和答复仍需在其他宿主和实际远程部署验收。目标游标已绑定存储代次、授权代次和目标，本机兼容用例覆盖上一版源码与候选组合。 |
+| A1、B1、C1、C2 | workspace、Thread、Work Item 的 grant 和 WSS 已接入。专用 TLS 监听器实测分离控制和答复权限，支持用户答复原回执与撤权。目标游标已绑定存储代次、授权代次和目标。审批和答复仍需在其他宿主和实际远程部署验收。 |
 | D1、D2、E1、E2 | 开工与 Pi 运行中的项目规则加载、显式 Claude 规则、两个开发 Skill、工作区 Verify、独立 verifier basis、托管工作树管理、候选改动分页、Turn 改动恢复、选中 hunk 转移和工作台浏览器验证报告已接入。各发行平台验证仍待完成。 |
 | F1、F2 | 普通会话 Handoff 的候选封存、Goal 预算承接与接手已接入。CLI `app-server codex-host --thread <id> --state <file> --view` 在回环地址提供双端会话视图。本机 Codex 0.171.0-alpha.13、实际 Ling Daemon 与受控 Provider 联调验证两端状态、Ling 在途排队、活跃 Codex Turn 指导、浏览器重连补齐、回执重放和审批提醒。故障回归覆盖原状态库升级、未写出的请求在重连后补投一次，以及已发出但缺少有效回执时保留待确认结果。Pi Host 预算路径的逐请求预留已使用受控 Provider 验证，仍需真实 Provider、隔离工作树和其他 Runner 的对应验收。 |
 | O1、O3–O9 | GitHub 签名 webhook、轮询和显式接单归并至同一工作项。自动接单策略处理免打扰、并发、启动额度和派发前状态重查。现有 Task、AutomationRun 和同频道用户输入可显式关联工作项。已接受的计划能自动开启声明的阶段审议，并可等待当前 Workflow 结果包的交接回执。受影响阶段可单独暂停，后继阶段可显式引用已收敛或仍在途的独立成果，待执行阶段可接收定向消息和有原 Run 证据的 Agent 答复。工作项暂停期间拒绝新增定向消息。阶段客户端和支持协作工具的 Pi 阶段按 Run/Attempt 收发，Pi 在下一次模型输入接收消息和问答。Workflow 执行使用工作项重试上限，并可依据跨 Run 的结构化故障记录暂停单项阶段。可信 Verify 和已接受 Plan 指定的 Review 均可提供停滞恢复证据。决策检查点支持计划前和在途阶段的建议、接受与手工裁决。Device Work Item Bridge 的持久映射、receipt 账本和 App Server 入口已实现。已接受阶段可显式或按 Host 策略开启独立只读审议、按质疑结果投票，并将裁决应用到声明的候选依赖。定时检查点的登记和关轮自动评估已接入 App Server、SDK、MCP 和频道 Ling Agent。原生 Agent 使用独立 Verify、Review 与阶段产物时仍需 Work Item 授权的执行路径。跨主机 Device Fabric owner host 对接仍待完成。 |

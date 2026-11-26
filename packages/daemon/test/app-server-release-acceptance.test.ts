@@ -14,7 +14,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import { parseUserInputAnswerCommandV1, validateLingAppServerNotificationParams } from "@ling-stack/contracts";
+import {
+  isLingAppServerMethod,
+  parseUserInputAnswerCommandV1,
+  validateLingAppServerNotificationParams,
+  validateLingAppServerResult,
+} from "@ling-stack/contracts";
 import type {
   ChannelConversationTurnResponse,
   LingAppServerCandidateReference,
@@ -58,6 +63,7 @@ import type {
   LingAppServerWorkItemFeedbackResult,
   LingAppServerWorkItemPlanChangeResult,
   LingAppServerWorkItemResult,
+  RetentionTombstone,
   LingAppServerWorkItemWorkflowBindResult,
   LingAppServerWorkItemSnapshot,
   ProposedPlanActionResponse,
@@ -466,8 +472,12 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   await assert.rejects(first.call("thread/goal/set", { ...goalInput, objective: "Unaccepted scope change" }), { code: "goal_replace_required" });
   const request = {
     threadId: started.thread.id, message: "Run the configured provider once", providerPresetId: preset.id,
-    execute: true, idempotencyKey: "release-runner-turn", fileRefs: [{ path: "feature/index.ts", source: "explicit_text" }],
+    execute: true, schemaVersion: 1, permissionMode: "balanced",
+    idempotencyKey: "release-runner-turn", fileRefs: [{ path: "feature/index.ts", source: "explicit_text" }],
   };
+  await assert.rejects(first.call("turn/start", { ...request, schemaVersion: 2 }), {
+    code: "invalid_params", message: /accepts authorizationMode and workspaceAccessMode only/u,
+  });
   const result = await first.call<typeof started & { replayed?: boolean }>("turn/start", request);
   assert.ok(result.run.id);
   const delta = await waitFor(() => observer.notices.find(notice => notice.method === "item/delta"));
@@ -2428,6 +2438,7 @@ test("Work Item creation, acceptance, evidence and collaboration retries keep on
   const messageInput = {
     workItemId, expectedWorkItemRevision: secondEvidence.workItemRevision, expectedCollaborationRevision: 2,
     actorId: "local-user", idempotencyKey: "message-once", payload: { text: "Send after the evidence is committed" },
+    sourceRefs: [{ type: "evidence", id: secondEvidence.entry.id, revision: 2 }],
   };
   const message = await client.call<LingAppServerWorkItemCollaborationAppendResult>("workItem/message/send", messageInput);
   const collaborationNotice = await waitFor(() => notices("workItem/collaboration/updated")[0]);
@@ -2451,6 +2462,8 @@ test("Work Item creation, acceptance, evidence and collaboration retries keep on
   const { cwd, workItem: restoredItem } = await restored.call<LingAppServerWorkItemReadResult>("workItem/read", { workItemId });
   assert.deepEqual(await restored.call("workItem/create", creation), { cwd, workItem: restoredItem });
   await assert.rejects(restored.call("workItem/create", { ...creation, title: "Changed intent" }), { code: "idempotency_conflict" });
+  const retained = await restored.call<LingAppServerWorkItemCollaborationReadResult>("workItem/message/list", { workItemId });
+  assert.deepEqual(retained.records[0]?.sourceRefs, messageInput.sourceRefs);
   await restored.call("workItem/subscribe", { workItemId, cursor: beforeMessage });
   const restoredNotice = await waitFor(() => restored.notices.find(notice => notice.method === "workItem/collaboration/updated"));
   assert.equal(restoredNotice.params?.eventId, directNotice.params?.eventId);
@@ -5665,6 +5678,28 @@ test("active Workflow stage grants bind questions, replies and messages to their
   await assert.rejects(fixture.connect("/app-server/rpc", fixture.cwd, sender.token), /401/u);
 });
 
+test("App Server keeps the scoped replay cursor and archived Thread deletion receipt readable", { timeout: 20_000 }, async t => {
+  const fixture = await releaseFixture(t);
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Archivable Thread" });
+  const firstPage = await client.call<LingAppServerThreadEventsResult>("thread/events/read", { threadId: thread.id, afterSeq: "0" });
+  assert.equal(firstPage.window.disposition, "complete");
+  assert.ok(firstPage.events.some(event => event.entityId === thread.id && event.action === "thread.started"));
+  assert.ok(firstPage.cursor);
+  await client.call("thread/archive", { threadId: thread.id });
+  const nextPage = await client.call<LingAppServerThreadEventsResult>("thread/events/read", { threadId: thread.id, afterSeq: firstPage.cursor });
+  assert.ok(nextPage.events.some(event => event.entityId === thread.id && event.action === "thread.archived"));
+  const preview = await client.call<{ allowed: boolean; revision: string }>("thread/delete/preview", { threadId: thread.id });
+  assert.equal(preview.allowed, true);
+  const request = { threadId: thread.id, expectedRevision: preview.revision };
+  const deleted = await client.call<{ deleted: true; tombstone: RetentionTombstone }>("thread/delete", request);
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.tombstone.entityType, "conversation-thread");
+  assert.equal(deleted.tombstone.entityId, thread.id);
+  await assert.rejects(client.call("thread/delete", request), { code: "workspace_binding_invalid" });
+  assert.equal(fixture.getStore().getLingThread(thread.id), undefined);
+});
+
 test("App Server reads bounded artifact ranges without exposing private metadata", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const store = fixture.getStore();
@@ -5683,6 +5718,13 @@ test("App Server reads bounded artifact ranges without exposing private metadata
   });
   assert.equal(Buffer.from(range.contentBase64, "base64").toString("utf8"), "Ling");
   assert.deepEqual({ offset: range.offset, endExclusive: range.endExclusive, sizeBytes: range.sizeBytes }, { offset: 0, endExclusive: 4, sizeBytes: 19 });
+
+  const mediaJob = store.createMediaJob({ providerPresetId: "fixture", operation: "image_generate", prompt: "Generate a fixture image" }, now);
+  const media = store.createArtifact({ mediaJobId: mediaJob.id, type: "image", path: "fixture-image.png", createdAt: now });
+  const mediaMetadata = await client.call<{ artifact: { id: string; mediaJobId: string; runId?: string } }>("artifact/read", { artifactId: media.id });
+  assert.equal(mediaMetadata.artifact.id, media.id);
+  assert.equal(mediaMetadata.artifact.mediaJobId, mediaJob.id);
+  assert.equal(mediaMetadata.artifact.runId, undefined);
 });
 
 test("a channel supplement reaches its active Pi stage through scoped coordination and retains both receipts", { timeout: 30_000 }, async t => {
@@ -7338,6 +7380,10 @@ async function releaseFixture(t: TestContext, {
         const response = await waitFor(() => messages.get(id));
         messages.delete(id);
         if (response.error) throw Object.assign(new Error(response.error.message), { code: response.error.data.code });
+        if (path === "/app-server/rpc" && isLingAppServerMethod(method)) {
+          const validation = validateLingAppServerResult(method, response.result);
+          assert.ok(validation.ok, `${method} ${validation.path} ${validation.message}`);
+        }
         return response.result as T;
       };
       const initialization = path === "/app-server/rpc"

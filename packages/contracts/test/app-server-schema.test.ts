@@ -24,6 +24,11 @@ test("App Server exposes a versioned schema for every registered method", () => 
   assert.equal(document.methods, LING_APP_SERVER_METHOD_SCHEMAS);
   assert.equal(document.methods["turn/start"]?.params.type, "object");
   assert.equal(document.methods["turn/start"]?.result.type, "object");
+  for (const method of LING_APP_SERVER_METHODS) {
+    assert.equal(validateLingAppServerResult(method, {}).ok, false, `${method} must publish a result contract`);
+  }
+  assert.ok(validateLingAppServerParams("thread/mode/get", { threadId: "thread" }).ok);
+  assert.equal(validateLingAppServerParams("thread/mode/set", { threadId: "thread" }).path, "params.mode");
 });
 
 test("App Server consumers can validate streamed text, replay and server request parameters", () => {

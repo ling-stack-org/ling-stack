@@ -1,8 +1,13 @@
 import {
+  LING_APP_SERVER_COLLABORATION_ACTIONS,
+  LING_APP_SERVER_COLLABORATION_KINDS,
   LING_APP_SERVER_DECISION_MATERIALITIES,
   LING_APP_SERVER_DELIBERATION_CHECKPOINTS,
   LING_APP_SERVER_DELIBERATION_DECISION_KINDS,
   LING_APP_SERVER_DELIBERATION_OUTCOMES,
+  LING_APP_SERVER_EXTERNAL_AGENT_ADAPTER_KINDS,
+  LING_APP_SERVER_EXTERNAL_AGENT_SOURCES,
+  LING_APP_SERVER_GRANT_SCOPES,
   LING_APP_SERVER_METHODS,
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
@@ -13,6 +18,7 @@ import {
   type LingAppServerNotificationMethod,
   type LingAppServerServerRequestMethod,
 } from "./app-server.js";
+import { conversationModeKinds, lingThreadKinds } from "./threads.js";
 
 /** The subset of JSON Schema used by the App Server contract registry. */
 export interface LingAppServerJsonSchema {
@@ -25,6 +31,7 @@ export interface LingAppServerJsonSchema {
   readonly items?: LingAppServerJsonSchema;
   readonly enum?: readonly (string | number | boolean | null)[];
   readonly oneOf?: readonly LingAppServerJsonSchema[];
+  readonly not?: LingAppServerJsonSchema;
   readonly description?: string;
 }
 
@@ -54,6 +61,38 @@ const integerSchema: LingAppServerJsonSchema = { type: "integer" };
 const booleanSchema: LingAppServerJsonSchema = { type: "boolean" };
 const arraySchema: LingAppServerJsonSchema = { type: "array" };
 const stringArraySchema: LingAppServerJsonSchema = { type: "array", items: stringSchema };
+const arrayOf = (items: LingAppServerJsonSchema): LingAppServerJsonSchema => ({ type: "array", items });
+const nullable = (schema: LingAppServerJsonSchema): LingAppServerJsonSchema => ({ oneOf: [schema, { type: "null" }] });
+const workspaceParams = objectWith({ cwd: stringSchema });
+const identity = { id: stringSchema };
+const threadMode = { enum: conversationModeKinds };
+const thread = objectWith({ ...identity, workspaceId: stringSchema, kind: { enum: lingThreadKinds }, title: stringSchema,
+  objective: stringSchema, status: stringSchema, updatedAt: stringSchema, createdAt: stringSchema,
+  channelId: stringSchema, activeRunId: stringSchema, lastRunId: stringSchema, parentThreadId: stringSchema, archivedAt: stringSchema,
+}, ["id", "workspaceId", "kind", "title", "objective", "status", "updatedAt", "createdAt"]);
+const threadResultFields = { cwd: stringSchema, thread };
+const threadResultKeys = Object.keys(threadResultFields);
+const goal = objectWith({ ...identity, objective: stringSchema, status: stringSchema, tokenBudget: integerSchema,
+  tokensUsed: integerSchema, timeUsedSeconds: { type: "number" }, updatedAt: stringSchema }, ["id", "objective", "status", "updatedAt"]);
+const turn = objectWith({ ...identity, threadId: stringSchema, kind: stringSchema, status: stringSchema, title: stringSchema,
+  userInstruction: stringSchema, createdAt: stringSchema, updatedAt: stringSchema, activeRunId: stringSchema, lastRunId: stringSchema,
+}, ["id", "threadId", "kind", "status", "title", "userInstruction", "createdAt", "updatedAt"]);
+const run = objectWith({ ...identity, status: stringSchema, startedAt: stringSchema, endedAt: stringSchema }, ["id", "status"]);
+const item = objectWith({ ...identity, threadId: stringSchema, turnId: stringSchema, kind: stringSchema, status: stringSchema,
+  revision: integerSchema, sequence: integerSchema, payload: objectSchema }, ["id", "threadId", "kind", "status", "revision", "sequence", "payload"]);
+const submissionReceipt = objectWith({ cwd: stringSchema, idempotencyKey: stringSchema, status: { enum: ["accepted", "unknown"] },
+  threadId: stringSchema, turnId: stringSchema, sourceItemId: stringSchema, sourceItem: item }, ["cwd", "idempotencyKey", "status"]);
+const intervention = objectWith({ ...identity, sourceRunId: stringSchema, continuationRunId: stringSchema,
+  mode: stringSchema, status: stringSchema, idempotencyKey: stringSchema, createdAt: stringSchema, updatedAt: stringSchema },
+  ["id", "sourceRunId", "mode", "status", "idempotencyKey", "createdAt", "updatedAt"]);
+const interventionResult = objectWith({ cwd: stringSchema, threadId: stringSchema, turnId: stringSchema,
+  intervention, replayed: booleanSchema }, ["cwd", "threadId", "turnId", "intervention", "replayed"]);
+const grantSubject = { oneOf: [objectWith({ kind: { enum: ["workspace"] } }, ["kind"]),
+  objectWith({ kind: { enum: ["thread", "workItem"] }, ...identity }, ["kind", "id"])] };
+const grantScopes = arrayOf({ enum: LING_APP_SERVER_GRANT_SCOPES });
+const grant = objectWith({ grantId: stringSchema, label: stringSchema, subject: grantSubject, scopes: grantScopes,
+  revision: integerSchema, createdAt: stringSchema, expiresAt: stringSchema, revokedAt: stringSchema },
+  ["grantId", "label", "subject", "scopes", "revision", "createdAt", "expiresAt"]);
 
 const clientInfo = objectWith({ name: stringSchema, version: stringSchema }, ["name", "version"]);
 const handshakeLimits = objectWith({ maxInboundFrameBytes: integerSchema, maxOutboundFrameBytes: integerSchema,
@@ -178,9 +217,61 @@ const nativeIntakeReceiptSchema = objectWith({
   "sourceRevision", "executionId", "evaluatedAt", "reasonCode", "outcome"]);
 const subscriptionResult = objectWith({ disposition: { enum: ["complete", "snapshot_required"] },
   subscriptionId: stringSchema, cursor: stringSchema, window: objectSchema }, ["disposition"]);
+// Evidence persisted by protocol 1 can carry opaque metadata alongside the reference identity.
+const sourceRef = objectWith({ ...identity, type: stringSchema }, ["id", "type"]);
 const collaborationAppend = { ...workItemTarget, idempotencyKey: stringSchema, actorId: stringSchema,
   expectedWorkItemRevision: integerSchema, expectedCollaborationRevision: integerSchema, parentRecordId: stringSchema,
-  sourceRefs: arraySchema, payload: {} };
+  sourceRefs: arrayOf(sourceRef), payload: {} };
+const evidenceKinds = ["observation", "proposal", "challenge", "evidence_ref", "correction", "recommendation", "decision_ref", "stage_recovery_ref"] as const;
+const visibility = { enum: ["work_item", "participants", "owner"] };
+const evidenceEntry = objectWith({ ...identity, ...workItemTarget, workspaceId: stringSchema, revision: integerSchema, sequence: integerSchema,
+  subjectRevision: stringSchema, kind: { enum: evidenceKinds }, actorId: stringSchema, content: stringSchema, optionId: stringSchema,
+  sourceRefs: arrayOf(sourceRef), visibility, idempotencyKey: stringSchema, createdAt: stringSchema, updatedAt: stringSchema },
+["id", "workItemId", "workspaceId", "revision", "sequence", "subjectRevision", "kind", "actorId", "content", "sourceRefs", "visibility", "idempotencyKey", "createdAt", "updatedAt"]);
+const collaborationKind = { enum: LING_APP_SERVER_COLLABORATION_KINDS };
+const collaborationAction = { enum: LING_APP_SERVER_COLLABORATION_ACTIONS };
+const collaborationRecord = objectWith({ ...identity, ...workItemTarget, workspaceId: stringSchema,
+  collaborationRevision: integerSchema, workItemRevision: integerSchema, kind: collaborationKind, action: collaborationAction,
+  actorId: stringSchema, payload: {}, parentRecordId: stringSchema, sourceRefs: arrayOf(sourceRef), idempotencyKey: stringSchema,
+  createdAt: stringSchema, updatedAt: stringSchema }, ["id", "workItemId", "workspaceId", "collaborationRevision", "workItemRevision",
+  "kind", "action", "actorId", "payload", "sourceRefs", "idempotencyKey", "createdAt", "updatedAt"]);
+const collaborationMutationFields = { cwd: stringSchema, status: { enum: ["appended", "replayed"] },
+  record: collaborationRecord, workItemRevision: integerSchema };
+const collaborationMutationKeys = ["status", "record", "workItemRevision"];
+const collaborationMutation = objectWith(collaborationMutationFields, collaborationMutationKeys);
+const stageExecution = objectWith({ runId: stringSchema, attemptId: stringSchema }, ["runId", "attemptId"]);
+const workItemStage = objectWith({ stepId: stringSchema, stageId: stringSchema, title: stringSchema, status: stringSchema,
+  participantLabel: stringSchema, dependencyIds: stringArraySchema, updatedAt: stringSchema, runId: stringSchema, outputArtifactId: stringSchema,
+  admissionBlocker: stringSchema, brief: stringSchema, messageReceiver: stageExecution, recoveryVerification, recoveryReview,
+  decision: objectSchema, handoffs: arrayOf(objectSchema), retryBudget: objectSchema, usage: objectSchema, progress: objectSchema,
+  briefBasis: objectWith({ transitionId: stringSchema, committedAt: stringSchema }, ["transitionId", "committedAt"]),
+  retainedStageResults: arrayOf(objectSchema), retainedStageExecutions: arrayOf(objectSchema),
+}, ["stepId", "title", "status", "participantLabel", "dependencyIds", "updatedAt"]);
+const stageWorkflow = objectWith({ workflowId: stringSchema, planRevision: stringSchema, workItemRevision: integerSchema,
+  status: stringSchema, admissionBlocker: stringSchema, nextOffset: integerSchema, steps: arrayOf(workItemStage),
+  usage: objectSchema, goalBudget: objectSchema }, ["workflowId", "planRevision", "status", "steps"]);
+const collaborationQuery = { ...workItemTarget, afterRevision: integerSchema, limit: integerSchema };
+const collaborationPageFields = { cwd: stringSchema, ...workItemTarget, records: arrayOf(collaborationRecord), nextAfterRevision: integerSchema };
+const collaborationPageKeys = Object.keys(collaborationPageFields);
+const coordinationScheduleFields = { automationId: stringSchema, ...workItemTarget, enabled: booleanSchema,
+  kind: { enum: ["checkpoint", "retrospective"] }, durationMs: integerSchema };
+const coordinationSchedule = objectWith({ ...coordinationScheduleFields, revision: integerSchema },
+  [...Object.keys(coordinationScheduleFields), "revision"]);
+const controlReceipt = objectWith({ ...identity, action: { enum: ["pause", "resume", "cancel"] }, generation: stringSchema,
+  requestedAt: stringSchema, actorId: stringSchema, reason: stringSchema, outcome: { enum: ["accepted", "settling", "settled", "blocked"] } },
+  ["id", "action", "generation", "requestedAt", "actorId", "outcome"]);
+const workItemControl = objectWith({ state: { enum: ["active", "pausing", "paused", "cancelling", "cancelled", "blocked"] },
+  generation: stringSchema, receipt: controlReceipt, unresolvedEffectIds: stringArraySchema, recoveryOwner: stringSchema },
+  ["state", "generation", "unresolvedEffectIds"]);
+const workItemHold = objectWith({ ...identity, kind: { enum: ["plan", "control", "approval", "unknown_effect", "scope", "dependency"] },
+  ownerRef: stringSchema, reason: stringSchema, blocksNewAdmission: booleanSchema, workflowStepIds: stringArraySchema },
+  ["id", "kind", "ownerRef", "reason", "blocksNewAdmission"]);
+const workItem = objectWith({ ...workItemTarget, workspaceId: stringSchema, revision: stringSchema, planRevision: stringSchema,
+  goalRevision: stringSchema, status: stringSchema, control: workItemControl, holds: arrayOf(workItemHold), currentExecutionRefs: stringArraySchema,
+  linkedExecution: objectSchema, eventCursor: stringSchema }, ["workItemId", "workspaceId", "revision", "status", "control", "holds", "currentExecutionRefs"]);
+const workItemResult = { cwd: stringSchema, workItem, sourceReceipt: objectSchema };
+const workItemResultKeys = ["cwd", "workItem"];
+const dispatchStatus = { enum: ["pending", "admitted", "held"] };
 const deliberationSettlement = { ...workItemTarget, roundId: stringSchema, expectedRoundRevision: integerSchema,
   expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema, reason: stringSchema };
 const deliberationSettlementFields = ["workItemId", "roundId", "expectedRoundRevision", "expectedWorkItemRevision", "idempotencyKey", "reason"];
@@ -206,6 +297,14 @@ const reviewResult = {
     ["workItemId", "controlGeneration"]),
 };
 const worktreeTarget = { ownerKind: { enum: ["channel", "teammate"] }, ownerId: stringSchema };
+const worktreeEntry = objectWith({ ...worktreeTarget, ownerName: stringSchema, path: stringSchema, branchName: stringSchema,
+  status: { enum: ["ready", "missing", "blocked", "not_created"] }, isDirty: booleanSchema, inUse: booleanSchema, pinned: booleanSchema,
+  kept: booleanSchema, lastUsedAt: stringSchema, initialization: objectSchema, errorMessage: stringSchema },
+  ["ownerKind", "ownerId", "ownerName", "path", "status", "isDirty", "inUse"]);
+const worktreeSnapshot = objectWith({ ...worktreeTarget, ...identity, ownerName: stringSchema, originalPath: stringSchema,
+  snapshotPath: stringSchema, branchName: stringSchema, createdAt: stringSchema, state: { enum: ["prepared", "archived", "restoring", "restored", "blocked"] },
+  errorMessage: stringSchema }, ["ownerKind", "ownerId", "id", "ownerName", "originalPath", "snapshotPath", "branchName", "createdAt", "state"]);
+const worktreeResult = { cwd: stringSchema, entry: worktreeEntry };
 const changeWorktree = objectWith(worktreeTarget, ["ownerKind", "ownerId"]);
 const changeSource = { cwd: stringSchema, sourceWorktree: changeWorktree };
 const candidateResult = { cwd: stringSchema, candidate, coverage: { enum: ["complete", "partial"] }, headCommit: stringSchema };
@@ -257,6 +356,33 @@ const deliveryResult = objectWith({
     mergedCommit: stringSchema, observedAt: stringSchema },
   ["deliveryId", "workItemId", "acceptanceId", "threadId", "candidateDigest", "policyRevision", "subject", "baseCommit", "checks", "status", "observedAt"]),
 }, ["cwd", "delivery"]);
+const intakeReceipt = objectWith({ receiptId: stringSchema, sourceEventId: stringSchema, origin: { enum: ["webhook", "poll"] },
+  repository: stringSchema, policyRevision: stringSchema, subject: objectWith(gitHubTarget, ["kind", "number"]),
+  outcome: { enum: ["manual", "suggested", "accepted", "suppressed", "paused", "deduplicated"] }, reasonCode: stringSchema,
+  workItemId: stringSchema, evaluatedAt: stringSchema },
+  ["receiptId", "sourceEventId", "origin", "repository", "policyRevision", "subject", "outcome", "reasonCode", "evaluatedAt"]);
+const instructionSource = objectWith({ path: stringSchema, digest: stringSchema, scope: stringSchema, applicable: booleanSchema,
+  textBytes: integerSchema, origin: { enum: ["claude"] }, pathPatterns: stringArraySchema }, ["path", "digest", "scope", "applicable"]);
+const instructionManifest = objectWith({ version: { enum: [1] }, digest: stringSchema, sources: arrayOf(instructionSource),
+  omitted: stringArraySchema, claudeProjectRules: stringArraySchema }, ["version", "digest", "sources", "omitted"]);
+const handoffFields = { handoffId: stringSchema, sourceThreadId: stringSchema, sourceTurnId: stringSchema, sourceRunId: stringSchema,
+  sourceTurnRevision: stringSchema, createdAt: stringSchema, candidate, nextInstruction: stringSchema, artifactIds: stringArraySchema };
+const handoff = objectWith({ ...handoffFields, goal, plan: objectWith({ ...identity, revision: integerSchema }, ["id", "revision"]) },
+  Object.keys(handoffFields));
+const handoffResult = objectWith({ cwd: stringSchema, handoff }, ["cwd", "handoff"]);
+const reviewDisposition = { enum: ["open", "acknowledged", "resolved", "dismissed"] };
+const externalAgentRegistrationFields = { agentId: stringSchema, adapterKind: { enum: LING_APP_SERVER_EXTERNAL_AGENT_ADAPTER_KINDS },
+  protocolVersion: stringSchema, displayName: stringSchema, capabilities: stringArraySchema, workspaceScopes: stringArraySchema,
+  toolScopes: stringArraySchema, approvalModes: stringArraySchema, source: { enum: LING_APP_SERVER_EXTERNAL_AGENT_SOURCES }, version: stringSchema };
+const externalAgentRegistration = objectWith(externalAgentRegistrationFields, Object.keys(externalAgentRegistrationFields));
+const externalTaskSubmissionFields = { ...workItemTarget, workItemRevision: stringSchema, objective: stringSchema, acceptanceSnapshot: {},
+  workspaceId: stringSchema, instructionManifestDigest: stringSchema, idempotencyKey: stringSchema };
+const externalTaskSubmission = objectWith({ ...externalTaskSubmissionFields, worktreeId: stringSchema, skillSnapshot: {}, parentLineage: stringArraySchema },
+  Object.keys(externalTaskSubmissionFields));
+const externalTaskReceiptFields = { taskId: stringSchema, submissionId: stringSchema, ...workItemTarget, workItemRevision: stringSchema,
+  status: { enum: ["accepted", "queued", "running", "waiting_for_approval", "completed", "failed", "cancelled", "unknown"] }, dispatchDepth: integerSchema };
+const externalTaskReceipt = objectWith({ ...externalTaskReceiptFields, outcomeReason: stringSchema, eventCursor: stringSchema, parentRunId: stringSchema },
+  Object.keys(externalTaskReceiptFields));
 
 function objectWith(
   properties: Readonly<Record<string, LingAppServerJsonSchema>>,
@@ -266,7 +392,6 @@ function objectWith(
 }
 
 function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
-  const result = objectSchema;
   switch (method) {
     case "initialize":
       return {
@@ -279,7 +404,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         ["protocolVersion", "connectionId", "serverInfo", "effectiveScopes", "capabilities", "limits"]),
       };
     case "server/ping":
-      return { params: objectSchema, result: pingResult };
+      return { params: workspaceParams, result: pingResult };
     case "server/recovery/read":
       return { params: objectWith({ cwd: stringSchema }), result: serverRecoveryResult };
     case "server/recovery/prepare":
@@ -288,68 +413,101 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "server/recovery/reconcile":
       return { params: objectWith({ cwd: stringSchema, expectedRevision: integerSchema }, ["expectedRevision"]), result: serverRecoveryResult };
     case "server/capabilities":
-      return { params: objectSchema, result: objectWith({ protocolVersion: { enum: [LING_APP_SERVER_PROTOCOL_VERSION] },
+      return { params: workspaceParams, result: objectWith({ protocolVersion: { enum: [LING_APP_SERVER_PROTOCOL_VERSION] },
         capabilities: stringArraySchema, methods: stringArraySchema, notifications: stringArraySchema },
       ["protocolVersion", "capabilities", "methods", "notifications"]) };
     case "workspace/list":
-      return { params: objectSchema, result: objectWith({ workspaces: arraySchema }, ["workspaces"]) };
+      return { params: workspaceParams, result: objectWith({ workspaces: arrayOf(objectWith({ cwd: stringSchema, workspaceId: stringSchema },
+        ["cwd", "workspaceId"])) }, ["workspaces"]) };
     case "workspace/read":
       return { params: objectWith({ workspaceId: stringSchema }), result: objectWith({ cwd: stringSchema, workspaceId: stringSchema }, ["cwd", "workspaceId"]) };
     case "provider/list":
     case "skill/list":
-      return { params: objectSchema, result: objectWith({ snapshot: objectSchema, domain: stringSchema }, ["domain"]) };
+      return { params: workspaceParams, result: objectWith({ snapshot: objectSchema, domain: stringSchema }, ["domain"]) };
     case "model/list":
       return { params: objectWith({ offset: integerSchema }), result: objectWith({ models: arraySchema }, ["models"]) };
     case "skill/read":
       return { params: objectWith({ skillId: stringSchema }, ["skillId"]), result: objectWith({ skill: objectSchema }, ["skill"]) };
     case "permissionProfile/list":
-      return { params: objectSchema, result: objectWith({ profiles: arraySchema }, ["profiles"]) };
+      return { params: workspaceParams, result: objectWith({ cwd: stringSchema, profiles: arrayOf(objectWith({ ...identity,
+        authorizationModes: stringArraySchema, workspaceAccessModes: stringArraySchema, sessionPermissionModes: stringArraySchema },
+      ["id", "authorizationModes", "workspaceAccessModes", "sessionPermissionModes"])) }, ["cwd", "profiles"]) };
     case "server/grants/list":
-      return { params: objectSchema, result: objectWith({ grants: arraySchema }, ["grants"]) };
+      return { params: workspaceParams, result: objectWith({ cwd: stringSchema, grants: arrayOf(grant) }, ["cwd", "grants"]) };
     case "server/grants/create":
-      return { params: objectWith({ label: stringSchema, subject: objectSchema, scopes: stringArraySchema, expiresAt: stringSchema,
+      return { params: objectWith({ label: stringSchema, subject: grantSubject, scopes: grantScopes, expiresAt: stringSchema,
         credentialSha256: stringSchema, idempotencyKey: stringSchema,
         stageExecution: objectWith({ runId: stringSchema, attemptId: stringSchema }, ["runId", "attemptId"]),
       }, ["label", "subject", "scopes", "expiresAt", "credentialSha256", "idempotencyKey"]),
-      result: objectWith({ grant: objectSchema }, ["grant"]) };
+      result: objectWith({ cwd: stringSchema, grant }, ["cwd", "grant"]) };
     case "server/grants/revoke":
       return { params: objectWith({ grantId: stringSchema, expectedRevision: integerSchema, revision: integerSchema }, ["grantId"]),
-        result: objectWith({ grant: objectSchema }, ["grant"]) };
+        result: objectWith({ cwd: stringSchema, grant }, ["cwd", "grant"]) };
     case "worktree/list":
-      return { params: objectSchema, result };
+      return { params: workspaceParams, result: objectWith({ cwd: stringSchema, policy: objectSchema, defaultRootDir: stringSchema,
+        effectiveRootDir: stringSchema, entries: arrayOf(worktreeEntry), limitReached: booleanSchema, snapshots: arrayOf(worktreeSnapshot),
+        cleanup: objectSchema }, ["cwd", "policy", "defaultRootDir", "effectiveRootDir", "entries", "limitReached"]) };
     case "worktree/create":
-      return { params: objectWith({ ...worktreeTarget, baseBranch: stringSchema }, ["ownerKind", "ownerId"]), result };
+      return { params: objectWith({ ...worktreeTarget, baseBranch: stringSchema }, ["ownerKind", "ownerId"]), result: objectWith(worktreeResult, ["cwd", "entry"]) };
     case "worktree/refresh":
+      return { params: changeWorktree, result: objectWith(worktreeResult, ["cwd", "entry"]) };
     case "worktree/cleanup/preview":
+      return { params: changeWorktree, result: objectWith({ ...worktreeResult, expectedRevision: stringSchema }, ["cwd", "entry", "expectedRevision"]) };
     case "worktree/cleanup":
-      return { params: objectWith({ ...worktreeTarget, expectedRevision: stringSchema, confirmed: booleanSchema }, ["ownerKind", "ownerId"]), result };
+      return { params: objectWith({ ...worktreeTarget, expectedRevision: stringSchema, confirmed: booleanSchema }, ["ownerKind", "ownerId"]),
+        result: objectWith({ ...worktreeResult, snapshot: worktreeSnapshot }, ["cwd", "entry", "snapshot"]) };
     case "thread/start":
-      return { params: objectWith({ ...threadTarget, title: stringSchema, objective: stringSchema, kind: stringSchema }),
-        result: objectWith({ thread: objectSchema }, ["thread"]) };
+      return { params: objectWith({ ...threadTarget, title: stringSchema, objective: stringSchema, kind: { enum: lingThreadKinds } }),
+        result: objectWith({ ...threadResultFields, replayed: booleanSchema }, threadResultKeys) };
     case "thread/list":
-      return { params: objectWith({ limit: integerSchema }), result: objectWith({ threads: arraySchema }, ["threads"]) };
+      return { params: objectWith({ limit: integerSchema }), result: objectWith({ cwd: stringSchema, threads: arrayOf(thread) }, ["cwd", "threads"]) };
     case "thread/name/set":
-      return { params: objectWith({ ...threadTarget, title: stringSchema }, ["threadId", "title"]), result };
+      return { params: objectWith({ ...threadTarget, title: stringSchema }, ["threadId", "title"]), result: objectWith(threadResultFields, threadResultKeys) };
     case "thread/archive":
     case "thread/unarchive":
+      return { params: objectWith({ ...threadTarget, expectedRevision: stringSchema, reason: stringSchema }, ["threadId"]),
+        result: objectWith(threadResultFields, threadResultKeys) };
     case "thread/delete":
+      return { params: objectWith({ ...threadTarget, expectedRevision: stringSchema, reason: stringSchema }, ["threadId"]),
+        result: objectWith({ cwd: stringSchema, deleted: { enum: [true] }, tombstone: objectWith({
+          ...identity, workspaceId: stringSchema, entityType: { enum: ["conversation-thread"] }, entityId: stringSchema,
+          reason: stringSchema, deletedCounts: objectSchema, createdAt: stringSchema,
+        }, ["id", "workspaceId", "entityType", "entityId", "deletedCounts", "createdAt"]) }, ["cwd", "deleted", "tombstone"]) };
     case "thread/delete/preview":
-      return { params: objectWith({ ...threadTarget, expectedRevision: stringSchema, reason: stringSchema }, ["threadId"]), result };
+      return { params: objectWith(threadTarget, ["threadId"]), result: objectWith({ cwd: stringSchema, ...threadTarget,
+        revision: stringSchema, allowed: booleanSchema, blockers: stringArraySchema,
+        dependencies: objectWith({ turnCount: integerSchema, goalId: stringSchema, planIds: stringArraySchema, workItemIds: stringArraySchema },
+          ["turnCount", "planIds", "workItemIds"]) }, ["cwd", "threadId", "revision", "allowed", "blockers", "dependencies"]) };
     case "thread/read":
+      return { params: objectWith(threadTarget, ["threadId"]), result: objectWith({ ...threadResultFields, goal: nullable(goal) }, [...threadResultKeys, "goal"]) };
     case "thread/goal/get":
-    case "thread/mode/get":
+      return { params: objectWith(threadTarget, ["threadId"]), result: objectWith({ cwd: stringSchema, ...threadTarget, goal: nullable(goal) },
+        ["cwd", "threadId", "goal"]) };
     case "thread/turns/list":
+      return { params: objectWith({ ...threadTarget, limit: integerSchema }, ["threadId"]), result: objectWith({ cwd: stringSchema,
+        ...threadTarget, turns: arrayOf(turn), runLinks: arrayOf(objectSchema) }, ["cwd", "threadId", "turns", "runLinks"]) };
     case "thread/items/list":
+      return { params: objectWith({ ...threadTarget, limit: integerSchema, beforeSequence: integerSchema, effectiveOnly: booleanSchema }, ["threadId"]),
+        result: objectWith({ cwd: stringSchema, ...threadTarget, items: arrayOf(item), nextBeforeSequence: integerSchema }, ["cwd", "threadId", "items"]) };
     case "thread/events/read":
-      return { params: objectWith({ ...threadTarget, limit: integerSchema, beforeSequence: integerSchema, cursor: stringSchema }, ["threadId"]), result };
+      return { params: objectWith({ ...threadTarget, limit: integerSchema, afterSeq: { oneOf: [stringSchema, integerSchema] }, cursor: stringSchema }, ["threadId"]),
+        result: objectWith({ cwd: stringSchema, workspaceId: stringSchema, events: arrayOf(controlPlaneEvent), cursor: stringSchema, window: replayWindow },
+          ["cwd", "workspaceId", "events", "window"]) };
+    case "thread/mode/get":
     case "thread/mode/set":
-      return { params: objectWith({ ...threadTarget, mode: { enum: ["default", "plan"] } }, ["threadId", "mode"]), result };
+      return { params: objectWith({ ...threadTarget, mode: threadMode }, method === "thread/mode/set" ? ["threadId", "mode"] : ["threadId"]),
+        result: objectWith({ cwd: stringSchema, ...threadTarget, mode: objectWith({ mode: threadMode, updatedAt: stringSchema }, ["mode"]) },
+          ["cwd", "threadId", "mode"]) };
     case "thread/goal/set":
     case "thread/goal/pause":
     case "thread/goal/resume":
     case "thread/goal/clear":
     case "thread/goal/complete":
-      return { params: objectWith({ ...threadTarget, expectedGoalRevision: stringSchema }, ["threadId"]), result };
+      return { params: objectWith({ ...threadTarget, expectedGoalRevision: stringSchema, objective: stringSchema, tokenBudget: nullable(integerSchema),
+        replaceExisting: booleanSchema, acceptanceCriteria: arrayOf(objectSchema), supervisionPolicy: objectSchema,
+        actor: { enum: ["local-user", "ling-agent"] }, reason: stringSchema, evidenceRefs: arrayOf(objectSchema),
+        completionVerificationSummary: stringSchema, acceptanceEvidence: arrayOf(objectSchema) }, method === "thread/goal/set" ? ["threadId", "objective"] : ["threadId"]),
+        result: objectWith({ cwd: stringSchema, ...threadTarget, goal }, ["cwd", "threadId", "goal"]) };
     case "plan/read":
       return { params: objectWith({ ...threadTarget, planId: stringSchema, limit: integerSchema }), result: { oneOf: [
         objectWith({ cwd: stringSchema, threadId: stringSchema, plan: objectSchema,
@@ -363,42 +521,58 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ ...planTarget, draft: objectWith({ title: stringSchema, bodyMarkdown: stringSchema }, ["title", "bodyMarkdown"]) },
         ["threadId", "planId", "expectedRevision"]), result: planActionResult };
     case "item/read":
-      return { params: objectWith({ ...threadTarget, itemId: stringSchema }, ["threadId", "itemId"]), result };
+      return { params: objectWith({ ...threadTarget, itemId: stringSchema }, ["threadId", "itemId"]),
+        result: objectWith({ cwd: stringSchema, item }, ["cwd", "item"]) };
     case "context/inspect":
-      return { params: objectWith({ ...threadTarget, turnId: stringSchema }, ["threadId", "turnId"]), result };
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema }, ["threadId", "turnId"]),
+        result: objectWith({ cwd: stringSchema, ...threadTarget, turnId: stringSchema, projectInstructions: nullable(instructionManifest),
+          projectInstructionUpdates: arrayOf(objectWith({ runId: stringSchema, manifest: instructionManifest, presentedSourceCount: integerSchema },
+            ["runId", "manifest", "presentedSourceCount"])), context: nullable(objectSchema) },
+          ["cwd", "threadId", "turnId", "projectInstructions", "context"]) };
     case "submission/read":
-      return { params: objectWith({ ...threadTarget, idempotencyKey: stringSchema }, ["idempotencyKey"]), result };
+      return { params: objectWith({ ...threadTarget, idempotencyKey: stringSchema }, ["idempotencyKey"]), result: submissionReceipt };
     case "thread/resume":
     case "thread/snapshot":
-      return { params: objectWith({ threadId: stringSchema }, ["threadId"]), result: objectWith({ cwd: stringSchema, thread: objectSchema,
-        cursor: stringSchema, pendingApprovals: arraySchema, pendingInputs: arraySchema }, ["cwd", "thread", "cursor", "pendingApprovals", "pendingInputs"]) };
+      return { params: objectWith(threadTarget, ["threadId"]), result: objectWith({ ...threadResultFields,
+        cursor: stringSchema, turn: nullable(turn), goal: nullable(goal), run: nullable(run), pendingApprovals: arrayOf(objectSchema), pendingInputs: arrayOf(objectSchema) },
+        [...threadResultKeys, "cursor", "turn", "goal", "run", "pendingApprovals", "pendingInputs"]) };
     case "thread/subscribe":
       return { params: objectWith({ ...threadTarget, cursor: stringSchema }), result: subscriptionResult };
     case "workItem/subscribe":
       return { params: objectWith({ ...workItemTarget, cursor: stringSchema }, ["workItemId"]), result: subscriptionResult };
     case "thread/unsubscribe":
     case "workItem/unsubscribe":
-      return { params: objectWith({ subscriptionId: stringSchema }, ["subscriptionId"]), result };
+      return { params: objectWith({ subscriptionId: stringSchema }, ["subscriptionId"]),
+        result: objectWith({ ok: { enum: [true] }, subscriptionId: stringSchema }, ["ok", "subscriptionId"]) };
     case "workItem/deliberation/read":
-      return { params: objectWith({ ...workItemTarget, afterRevision: integerSchema, limit: integerSchema }, ["workItemId"]),
-        result: objectWith({ workItemId: stringSchema, records: arraySchema, nextAfterRevision: integerSchema, ballots: arraySchema,
+      return { params: objectWith(collaborationQuery, ["workItemId"]),
+        result: objectWith({ ...collaborationPageFields, ballots: arrayOf(objectSchema),
           deliberationWorkflows: { type: "array", items: objectWith({ ...deliberationWorkflowProgressFields, blocker: stringSchema,
             outcome: deliberationWorkflowOutcome },
             Object.keys(deliberationWorkflowProgressFields)) },
-        }, ["workItemId", "records", "nextAfterRevision"]) };
+        }, collaborationPageKeys) };
     case "workItem/read":
+      return { params: objectWith(workItemTarget, ["workItemId"]), result: objectWith({ ...workItemResult, cursor: stringSchema,
+        intakeDispatch: objectWith({ receiptId: stringSchema, status: dispatchStatus, reasonCode: stringSchema, runId: stringSchema }, ["receiptId", "status"]) },
+      [...workItemResultKeys, "cursor"]) };
     case "workItem/clarify":
+      return { params: objectWith({ ...workItemTarget, question: stringSchema }, ["workItemId"]), result: objectWith({ ...workItemResult,
+        clarification: objectWith({ status: { enum: ["required"] }, question: stringSchema }, ["status", "question"]) }, [...workItemResultKeys, "clarification"]) };
     case "workItem/evidence/read":
+      return { params: objectWith({ ...workItemTarget, afterSequence: integerSchema, limit: integerSchema }, ["workItemId"]),
+        result: objectWith({ cwd: stringSchema, ...workItemTarget, evidence: arrayOf(evidenceEntry), nextAfterSequence: integerSchema },
+        ["cwd", "workItemId", "evidence", "nextAfterSequence"]) };
     case "workItem/collaboration/read":
-    case "workItem/stage/read":
-    case "workItem/stage/brief/read":
     case "workItem/coordination/read":
     case "workItem/message/read":
     case "workItem/message/list":
     case "workItem/question/read":
     case "workItem/handoff/read":
-      return { params: objectWith({ ...workItemTarget, afterRevision: integerSchema, afterSequence: integerSchema,
-        offset: integerSchema, limit: integerSchema }, ["workItemId"]), result };
+      return { params: objectWith(collaborationQuery, ["workItemId"]), result: objectWith(collaborationPageFields, collaborationPageKeys) };
+    case "workItem/stage/read":
+    case "workItem/stage/brief/read":
+      return { params: objectWith({ ...collaborationQuery, stageOffset: integerSchema }, ["workItemId"]),
+        result: objectWith({ ...collaborationPageFields, workflow: stageWorkflow }, collaborationPageKeys) };
     case "workItem/device/read":
       return { params: objectWith({ ...workItemTarget }, ["workItemId"]),
         result: objectWith({ cwd: stringSchema, workItemId: stringSchema, bindings: { type: "array", items: deviceBinding } }, ["cwd", "workItemId", "bindings"]) };
@@ -415,10 +589,13 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
           "ownerRouteGeneration", "workUnitId", "status", "resultRef", "idempotencyKey"]),
       result: objectWith({ cwd: stringSchema, binding: deviceBinding, replayed: booleanSchema }, ["cwd", "binding", "replayed"]) };
     case "workItem/list":
-      return { params: objectWith({ status: stringSchema, channelId: stringSchema, limit: integerSchema }), result };
+      return { params: objectWith({ status: stringSchema, channelId: stringSchema, limit: integerSchema }),
+        result: objectWith({ cwd: stringSchema, workItems: arrayOf(workItem) }, ["cwd", "workItems"]) };
     case "workItem/create":
-      return { params: objectWith({ ...workItemTarget, sourceId: stringSchema, title: stringSchema, gitHubSubject: objectSchema,
-        sourceType: stringSchema, linkExistingExecution: booleanSchema, idempotencyKey: stringSchema }, ["sourceId", "title"]), result };
+      return { params: objectWith({ ...workItemTarget, sourceId: stringSchema, title: stringSchema,
+        gitHubSubject: objectWith({ repository: stringSchema, ...gitHubTarget }, ["repository", "kind", "number"]), description: stringSchema,
+        labels: stringArraySchema, priority: { enum: ["low", "normal", "high", "urgent"] }, sourceType: stringSchema,
+        linkExistingExecution: booleanSchema, idempotencyKey: stringSchema }, ["sourceId", "title"]), result: objectWith(workItemResult, workItemResultKeys) };
     case "workItem/workflow/bind": {
       const resultSource = { sourceStepId: stringSchema, expectedSourceRevision: stringSchema, targetStepId: stringSchema };
       return { params: objectWith({ ...workItemTarget, planId: stringSchema, expectedWorkItemRevision: integerSchema,
@@ -469,13 +646,16 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         method === "workItem/intake/accept" ? ["receiptId"] : ["receiptId", "idempotencyKey"]),
       result: objectWith({ cwd: stringSchema, receipt: nativeIntakeReceiptSchema }, ["cwd", "receipt"]) };
     case "workItem/evidence/append":
-      return { params: objectWith({ ...workItemTarget, actorId: stringSchema, kind: stringSchema, subjectRevision: stringSchema,
-        content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arraySchema, optionId: stringSchema },
-      ["workItemId", "actorId", "kind", "subjectRevision", "content", "idempotencyKey"]), result };
+      return { params: objectWith({ ...workItemTarget, actorId: stringSchema, kind: { enum: evidenceKinds }, subjectRevision: stringSchema,
+        content: stringSchema, idempotencyKey: stringSchema, sourceRefs: arrayOf(sourceRef), optionId: stringSchema, visibility,
+        expectedWorkItemRevision: integerSchema, expectedEvidenceRevision: integerSchema },
+      ["workItemId", "actorId", "kind", "subjectRevision", "content", "idempotencyKey"]),
+      result: objectWith({ cwd: stringSchema, ...workItemTarget, status: { enum: ["appended", "replayed"] }, entry: evidenceEntry, workItemRevision: integerSchema },
+        ["cwd", "workItemId", "status", "entry", "workItemRevision"]) };
     case "workItem/collaboration/append":
-      return { params: objectWith({ ...collaborationAppend, kind: stringSchema, action: stringSchema }, ["workItemId", "kind", "action"]), result };
+      return { params: objectWith({ ...collaborationAppend, kind: collaborationKind, action: collaborationAction }, ["workItemId", "kind", "action"]), result: collaborationMutation };
     case "workItem/deliberation/start":
-      return { params: objectWith({ ...collaborationAppend, workflowStepId: stringSchema }, ["workItemId"]), result };
+      return { params: objectWith({ ...collaborationAppend, workflowStepId: stringSchema }, ["workItemId"]), result: collaborationMutation };
     case "workItem/deliberation/evaluate":
       return {
         params: objectWith({ ...decisionInput, subject: deliberationSubject, checkpoint: deliberationCheckpoint, checkpointRef: stringSchema,
@@ -502,64 +682,79 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       return { params: objectWith({ ...workItemTarget, evaluationId: stringSchema, expectedWorkItemRevision: integerSchema,
         idempotencyKey: stringSchema, execution: { enum: ["read_only_shaping", "read_only_workflow"] }, ballotMode: { enum: ["when_unresolved"] },
         shapingBudget: objectWith({ maxTokens: integerSchema, maxDurationMs: integerSchema }, ["maxTokens", "maxDurationMs"]) },
-      ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result };
+      ["workItemId", "evaluationId", "expectedWorkItemRevision", "idempotencyKey"]), result: collaborationMutation };
     case "workItem/deliberation/cancel":
-      return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result };
+      return { params: objectWith(deliberationSettlement, deliberationSettlementFields), result: collaborationMutation };
     case "workItem/deliberation/decide":
       return { params: objectWith({ ...deliberationSettlement, decision: { oneOf: [
         objectWith({ disposition: { enum: ["selected"] }, option: stringSchema }, ["disposition", "option"]),
         objectWith({ disposition: { enum: ["deferred", "replan_required"] } }, ["disposition"]),
       ] } }, [...deliberationSettlementFields, "decision"]), result: objectWith({
-        status: { enum: ["appended", "replayed"] }, record: objectSchema, workItemRevision: integerSchema,
+        ...collaborationMutationFields,
         appliedTo: objectWith({ workflowId: stringSchema, workflowStepId: stringSchema, planRevision: stringSchema,
           option: stringSchema, candidateDigest: stringSchema }, ["workflowId", "workflowStepId", "planRevision", "option", "candidateDigest"]),
-      }, ["status", "record", "workItemRevision"]) };
+      }, collaborationMutationKeys) };
     case "workItem/coordination/start":
     case "workItem/coordination/close":
-      return { params: objectWith(collaborationAppend, ["workItemId"]), result };
+      return { params: objectWith(collaborationAppend, ["workItemId"]), result: collaborationMutation };
     case "workItem/question/ask":
       return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, waitingStepId: stringSchema,
         respondentStepId: stringSchema, question: stringSchema, deadlineAt: stringSchema, answerFromStageResult: booleanSchema,
-        predecessorQuestion: objectWith({ id: stringSchema, revision: integerSchema }, ["id", "revision"]) }, ["workItemId"]), result };
+        predecessorQuestion: objectWith({ id: stringSchema, revision: integerSchema }, ["id", "revision"]) }, ["workItemId"]), result: collaborationMutation };
     case "workItem/question/reply":
       return { params: objectWith({ ...collaborationAppend, questionId: stringSchema, expectedQuestionRevision: integerSchema,
-        answer: stringSchema }, ["workItemId"]), result };
+        answer: stringSchema }, ["workItemId"]), result: collaborationMutation };
     case "workItem/message/send":
       return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, targetStepId: stringSchema,
         expectedTargetRevision: stringSchema, body: stringSchema,
-        expectedExecution: objectWith({ runId: stringSchema, attemptId: stringSchema }, ["runId", "attemptId"]) }, ["workItemId"]), result };
+        expectedExecution: stageExecution }, ["workItemId"]), result: collaborationMutation };
     case "workItem/handoff/accept":
     case "workItem/handoff/return":
       return { params: objectWith({ ...collaborationAppend, planRevision: stringSchema, sourceStepId: stringSchema, targetStepId: stringSchema,
         expectedSourceRevision: stringSchema, expectedTargetRevision: stringSchema, expectedCandidateDigest: stringSchema,
         previousHandoffId: stringSchema, verification: objectWith({ operationId: stringSchema, checkId: stringSchema }, ["operationId", "checkId"]),
-        reason: stringSchema, detail: stringSchema }, ["workItemId"]), result };
+        reason: stringSchema, detail: stringSchema }, ["workItemId"]), result: collaborationMutation };
     case "workItem/feedback/add":
       return { params: objectWith({ ...collaborationAppend, sourceRunId: stringSchema, providerPresetId: stringSchema }, ["workItemId"]),
         result: { oneOf: [
           objectWith({ cwd: stringSchema, job: objectSchema, replayed: booleanSchema }, ["cwd", "job", "replayed"]),
-          objectWith({ status: { enum: ["appended", "replayed"] }, record: objectSchema, workItemRevision: integerSchema },
-            ["status", "record", "workItemRevision"]),
+          collaborationMutation,
         ] },
       };
     case "workItem/coordination/schedule/read":
+      return { params: objectWith({ ...workItemTarget, automationId: stringSchema }, ["workItemId", "automationId"]),
+        result: objectWith({ cwd: stringSchema, schedule: nullable(coordinationSchedule) }, ["cwd", "schedule"]) };
     case "workItem/coordination/schedule/set":
-      return { params: objectWith({ ...workItemTarget, automationId: stringSchema, expectedRevision: integerSchema,
-        enabled: booleanSchema, kind: { enum: ["checkpoint", "retrospective"] }, durationMs: integerSchema }, ["workItemId", "automationId"]), result };
+      return { params: objectWith({ ...coordinationScheduleFields, expectedRevision: integerSchema }, [...Object.keys(coordinationScheduleFields), "expectedRevision"]),
+        result: objectWith({ cwd: stringSchema, schedule: coordinationSchedule }, ["cwd", "schedule"]) };
     case "turn/start":
       return { params: objectWith({ ...threadTarget, turnId: stringSchema, idempotencyKey: stringSchema, message: stringSchema,
-        userInstruction: stringSchema, providerPresetId: stringSchema, executionBinding: objectSchema, attachmentIds: stringArraySchema }, ["threadId"]), result };
+        userInstruction: stringSchema, providerPresetId: stringSchema, executionBinding: objectSchema, attachmentIds: stringArraySchema,
+        execute: booleanSchema, title: stringSchema, kind: stringSchema, fileRefs: arrayOf(objectSchema), projectPath: stringSchema,
+        thinkingLevel: stringSchema, reasoningSummary: stringSchema, authorizationMode: stringSchema, workspaceAccessMode: stringSchema,
+        permissionPreset: stringSchema, permissionMode: stringSchema, permissionConfirmation: objectSchema, responseLanguage: stringSchema,
+        tools: stringArraySchema, schemaVersion: { enum: [1, 2] } }, ["threadId"]),
+        result: objectWith({ ...threadResultFields, turn, run, receipt: submissionReceipt, replayed: booleanSchema }, [...threadResultKeys, "turn"]) };
     case "turn/queue":
       return { params: objectWith({ threadId: stringSchema, expectedTurnId: stringSchema,
         expectedTurnRevision: stringSchema, message: stringSchema, userInstruction: stringSchema, idempotencyKey: stringSchema },
-      ["threadId", "expectedTurnId", "expectedTurnRevision", "idempotencyKey"]), result };
+      ["threadId", "expectedTurnId", "expectedTurnRevision", "idempotencyKey"]), result: interventionResult };
     case "turn/interrupt":
-      return { params: objectWith({ turnId: stringSchema, expectedTurnId: stringSchema }), result };
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema, expectedTurnId: stringSchema, expectedTurnRevision: stringSchema,
+        message: stringSchema, userInstruction: stringSchema, idempotencyKey: stringSchema }), result: { oneOf: [interventionResult,
+          objectWith({ cwd: stringSchema, turn }, ["cwd", "turn"]),
+          objectWith({ cancelled: { enum: [true] }, active: booleanSchema, run, event: objectSchema, inputWait: objectSchema }, ["cancelled", "active", "run"]),
+        ] } };
     case "turn/resume":
       return { params: objectWith({ ...threadTarget, turnId: stringSchema, expectedTurnRevision: stringSchema,
-        sourceRunId: stringSchema, idempotencyKey: stringSchema, instruction: stringSchema }, ["turnId"]), result };
+        sourceRunId: stringSchema, idempotencyKey: stringSchema, instruction: stringSchema }, ["turnId"]),
+        result: objectWith({ ...threadResultFields, turn, run: nullable(run), runLinks: arrayOf(objectSchema),
+          disposition: { enum: ["existing", "recovered", "continued"] }, resumedFromTurnId: stringSchema },
+        [...threadResultKeys, "turn", "run", "runLinks", "disposition"]) };
     case "thread/fork":
-      return { params: objectWith({ ...threadTarget, turnId: stringSchema, sourceRunId: stringSchema, idempotencyKey: stringSchema }, ["threadId"]), result };
+      return { params: objectWith({ ...threadTarget, turnId: stringSchema, sourceRunId: stringSchema, idempotencyKey: stringSchema }, ["threadId"]),
+        result: objectWith({ ...threadResultFields, sourceThreadId: stringSchema, sourceTurnId: stringSchema,
+          sourceRunId: stringSchema, replayed: booleanSchema }, [...threadResultKeys, "sourceThreadId", "replayed"]) };
     case "approval/respond":
       return { params: objectWith({ approvalId: stringSchema, decision: { enum: ["approve", "deny"] }, expectedRevision: stringSchema,
         runId: stringSchema, threadId: stringSchema, turnId: stringSchema, reason: stringSchema, decisionKind: { enum: ["approve_once"] } },
@@ -569,26 +764,44 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         ["schemaVersion", "authority", "answers", "idempotencyKey"]),
       result: objectWith({ cwd: stringSchema, receipt: objectSchema }, ["cwd", "receipt"]) };
     case "workItem/accept":
-      return { params: objectWith({ workItemId: stringSchema, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema },
-        ["workItemId", "expectedWorkItemRevision", "idempotencyKey"]), result };
+      return { params: objectWith({ ...workItemTarget, expectedWorkItemRevision: integerSchema, idempotencyKey: stringSchema, actorId: stringSchema,
+        dispatch: objectWith({ ...threadTarget, message: stringSchema, providerPresetId: stringSchema }, ["threadId", "message"]) },
+        ["workItemId", "expectedWorkItemRevision", "idempotencyKey"]), result: objectWith({ ...workItemResult,
+          accepted: { enum: [true] }, replayed: booleanSchema,
+          acceptance: objectWith({ ...identity, ...workItemTarget, acceptedRevision: integerSchema, workItemRevision: integerSchema, actorId: stringSchema,
+            idempotencyKey: stringSchema, acceptedAt: stringSchema }, ["id", "workItemId", "acceptedRevision", "workItemRevision", "actorId", "idempotencyKey", "acceptedAt"]),
+          dispatch: objectWith({ ...threadTarget, submissionKey: stringSchema, status: dispatchStatus, runId: stringSchema, blocker: stringSchema },
+            ["threadId", "submissionKey", "status"]) }, [...workItemResultKeys, "accepted", "replayed", "acceptance"]) };
     case "workItem/pause":
     case "workItem/resume":
     case "workItem/cancel":
-      return { params: objectWith({ workItemId: stringSchema, expectedWorkItemRevision: integerSchema,
-        expectedControlGeneration: integerSchema, expectedRevision: integerSchema, controlGeneration: integerSchema, idempotencyKey: stringSchema },
-        ["workItemId", "idempotencyKey"]), result };
+      return { params: objectWith({ ...workItemTarget, expectedWorkItemRevision: integerSchema, expectedControlGeneration: integerSchema,
+        expectedRevision: integerSchema, controlGeneration: integerSchema, idempotencyKey: stringSchema, actorId: stringSchema, reason: stringSchema },
+        ["workItemId", "idempotencyKey"]), result: objectWith({ ...workItemResult, controlReceipt, replayed: booleanSchema },
+        [...workItemResultKeys, "controlReceipt", "replayed"]) };
     case "externalAgent/task/start":
-      return { params: objectWith({ registrationId: stringSchema, submission: objectSchema }, ["registrationId", "submission"]), result };
+      return { params: objectWith({ registrationId: stringSchema, submission: externalTaskSubmission }, ["registrationId", "submission"]),
+        result: objectWith({ task: externalTaskReceipt, replayed: { enum: [true] } }, ["task"]) };
     case "externalAgent/task/reconnect":
-      return { params: objectWith({ registrationId: stringSchema, taskId: stringSchema, submissionId: stringSchema },
-        ["registrationId", "taskId", "submissionId"]), result };
+      return { params: objectWith({ registrationId: stringSchema, taskId: stringSchema, submissionId: stringSchema, eventCursor: stringSchema },
+        ["registrationId", "taskId", "submissionId"]), result: objectWith({ task: externalTaskReceipt, resyncRequired: booleanSchema,
+          reason: { enum: ["cursor_unavailable", "submission_conflict", "authorization_changed"] },
+          events: arrayOf(objectWith({ cursor: stringSchema, type: stringSchema, createdAt: stringSchema, payload: {} }, ["cursor", "type", "createdAt"])) },
+        ["task", "resyncRequired"]) };
     case "externalAgent/task/cancel":
-      return { params: objectWith({ registrationId: stringSchema, taskId: stringSchema, idempotencyKey: stringSchema },
-        ["registrationId", "taskId", "idempotencyKey"]), result };
+      return { params: objectWith({ registrationId: stringSchema, taskId: stringSchema, expectedTaskRevision: stringSchema, idempotencyKey: stringSchema },
+        ["registrationId", "taskId", "idempotencyKey"]), result: objectWith({ taskId: stringSchema,
+          status: { enum: ["cancel_requested", "cancelled", "already_terminal", "unknown"] } }, ["taskId", "status"]) };
     case "externalAgent/register":
-      return { params: objectWith({ registration: objectSchema, idempotencyKey: stringSchema }, ["registration", "idempotencyKey"]), result };
+      return { params: objectWith({ registration: externalAgentRegistration, idempotencyKey: stringSchema }, ["registration", "idempotencyKey"]),
+        result: objectWith({ registrationId: stringSchema, agentId: stringSchema, acceptedCapabilities: stringArraySchema,
+          deniedCapabilities: stringArraySchema, authorizationEpoch: stringSchema },
+        ["registrationId", "agentId", "acceptedCapabilities", "deniedCapabilities", "authorizationEpoch"]) };
     case "externalAgent/capabilities/read":
-      return { params: objectWith({ registrationId: stringSchema }, ["registrationId"]), result };
+      return { params: objectWith({ registrationId: stringSchema }, ["registrationId"]), result: objectWith({ registrationId: stringSchema,
+        capabilities: stringArraySchema, effectiveWorkspaceScopes: stringArraySchema, effectiveToolScopes: stringArraySchema,
+        approvalModes: stringArraySchema, authorizationEpoch: stringSchema },
+      ["registrationId", "capabilities", "effectiveWorkspaceScopes", "effectiveToolScopes", "approvalModes", "authorizationEpoch"]) };
     case "changes/capture":
       return { params: objectWith({ ...changeSource, scope: { enum: ["working_tree", "head"] } }),
         result: objectWith(candidateResult, candidateResultFields) };
@@ -623,7 +836,11 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
       };
     case "artifact/read":
       return { params: objectWith({ artifactId: stringSchema, ...threadTarget, ...workItemTarget, runId: stringSchema,
-        offset: integerSchema, limit: integerSchema }, ["artifactId"]), result };
+        offset: integerSchema, limit: integerSchema }, ["artifactId"]), result: objectWith({ cwd: stringSchema,
+          artifact: objectWith({ ...identity, runId: stringSchema, mediaJobId: stringSchema, externalWorkId: stringSchema,
+            type: stringSchema, createdAt: stringSchema }, ["id", "type", "createdAt"]),
+          contentBase64: stringSchema, offset: integerSchema, endExclusive: integerSchema, sizeBytes: integerSchema, partial: booleanSchema },
+        ["cwd", "artifact"]) };
     case "verify/plan":
       return { params: objectWith({ candidate, ...threadTarget, ...workItemTarget, requestedChecks: stringArraySchema,
         idempotencyKey: stringSchema, planRevision: stringSchema }, ["candidate"]), result: verifyPlanResult };
@@ -647,22 +864,35 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
         result: objectWith({ ...reviewResult, revision: stringSchema, findingIds: stringArraySchema,
           summary: stringSchema, errorMessage: stringSchema, reviewRules: objectSchema }, [...reviewResultFields, "revision", "findingIds"]) };
     case "review/finding/update":
-      return { params: objectWith({ assessmentId: stringSchema, findingId: stringSchema, disposition: { enum: ["open", "acknowledged", "resolved", "dismissed"] },
-        expectedRevision: stringSchema, idempotencyKey: stringSchema }, ["assessmentId", "findingId", "disposition", "idempotencyKey"]), result };
+      return { params: objectWith({ assessmentId: stringSchema, findingId: stringSchema, disposition: reviewDisposition,
+        closeReason: stringSchema, reason: stringSchema, expectedRevision: stringSchema, idempotencyKey: stringSchema },
+        ["assessmentId", "findingId", "disposition", "idempotencyKey"]), result: objectWith({ assessmentId: stringSchema,
+          findingId: stringSchema, revision: stringSchema, disposition: reviewDisposition }, ["assessmentId", "findingId", "revision", "disposition"]) };
     case "simplify/status":
       return { params: objectWith({ operationId: stringSchema, offset: integerSchema }, ["operationId"]), result: operationResult };
     case "simplify/start":
       return { params: objectWith({ candidate, ...workItemTarget, idempotencyKey: stringSchema, providerPresetId: stringSchema },
       ["candidate", "idempotencyKey"]), result: operationResult };
     case "doctor/run":
-      return { params: objectWith({ includeLogTail: booleanSchema, scope: { enum: ["workspace", "project", "candidate"] } }), result };
+      return { params: objectWith({ includeLogTail: booleanSchema, scope: { enum: ["workspace", "project", "candidate"] } }),
+        result: objectWith({ doctorVersion: { enum: [1] }, cwd: stringSchema, generatedAt: stringSchema,
+          overallStatus: { enum: ["ok", "warning", "fail"] },
+          checks: arrayOf(objectWith({ ...identity, category: { enum: ["workspace", "startup", "logs", "config", "instructions", "verification"] },
+            status: { enum: ["ok", "warning", "fail", "unchecked"] }, summary: stringSchema, details: stringSchema, remediation: stringSchema },
+          ["id", "category", "status", "summary"])),
+          logTail: objectWith({ truncated: booleanSchema, lines: stringArraySchema }, ["truncated", "lines"]) },
+        ["doctorVersion", "cwd", "generatedAt", "overallStatus", "checks"]) };
     case "instructions/init":
-      return { params: objectWith({ mode: { enum: ["preview", "apply"] }, idempotencyKey: stringSchema }, ["idempotencyKey"]), result };
+      return { params: objectWith({ mode: { enum: ["preview", "apply"] }, idempotencyKey: stringSchema, taskPath: stringSchema,
+        expectedWorkspaceRevision: stringSchema, sources: arrayOf({ enum: ["README", "CI", "package_scripts", "existing_rules"] }) }, ["idempotencyKey"]),
+        result: objectWith({ proposalId: stringSchema, status: { enum: ["draft", "applied", "blocked"] }, sources: arrayOf(instructionSource),
+          patchArtifactId: stringSchema, draft: objectWith({ path: stringSchema, content: stringSchema }, ["path", "content"]),
+          workspaceRevision: stringSchema, conflicts: stringArraySchema }, ["proposalId", "status", "sources", "conflicts"]) };
     case "handoff/create":
       return { params: objectWith({ ...threadTarget, turnId: stringSchema, idempotencyKey: stringSchema, nextInstruction: stringSchema },
-      ["threadId", "turnId", "idempotencyKey", "nextInstruction"]), result };
+      ["threadId", "turnId", "idempotencyKey", "nextInstruction"]), result: handoffResult };
     case "handoff/read":
-      return { params: objectWith({ handoffId: stringSchema }, ["handoffId"]), result };
+      return { params: objectWith({ handoffId: stringSchema }, ["handoffId"]), result: handoffResult };
     case "handoff/resume":
       return { params: objectWith({ handoffId: stringSchema, providerPresetId: stringSchema }, ["handoffId", "providerPresetId"]),
       result: objectWith({ cwd: stringSchema, handoffId: stringSchema, thread: objectSchema, replayed: booleanSchema,
@@ -670,11 +900,16 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
           sourceGoalRevision: stringSchema, transferredAt: stringSchema },
         ["goalId", "sourceThreadId", "threadId", "sourceGoalRevision", "transferredAt"]) }, ["cwd", "handoffId", "thread", "replayed"]) };
     case "github/intake/policy/list":
-      return { params: objectSchema, result };
+      return { params: workspaceParams, result: objectWith({ cwd: stringSchema, sources: arrayOf(objectWith({ repository: stringSchema,
+        revision: stringSchema, providerAvailable: booleanSchema, policy: objectWith({ mode: { enum: ["manual", "suggest", "auto_start"] },
+          enabled: booleanSchema, requiredLabel: stringSchema, webhookSourceId: stringSchema, priority: stringSchema,
+          providerPresetId: stringSchema, budget: objectSchema, quietHours: objectSchema }, ["mode", "enabled"]) }, ["repository", "revision", "policy"])) },
+      ["cwd", "sources"]) };
     case "github/intake/read":
-      return { params: objectWith({ receiptId: stringSchema }, ["receiptId"]), result };
+      return { params: objectWith({ receiptId: stringSchema }, ["receiptId"]), result: objectWith({ cwd: stringSchema, receipt: intakeReceipt }, ["cwd", "receipt"]) };
     case "github/intake/poll":
-      return { params: objectWith({ repository: stringSchema, page: integerSchema }, ["repository"]), result };
+      return { params: objectWith({ repository: stringSchema, page: integerSchema, retryKey: stringSchema }, ["repository"]),
+        result: objectWith({ cwd: stringSchema, receipts: arrayOf(intakeReceipt), nextPage: integerSchema }, ["cwd", "receipts"]) };
     case "github/subject/read":
       return { params: objectWith({ repository: stringSchema, ...gitHubTarget }, ["repository", "kind", "number"]),
         result: objectWith({ cwd: stringSchema, subject: gitHubSubject }, ["cwd", "subject"]) };
@@ -697,7 +932,7 @@ function schemaFor(method: LingAppServerMethod): LingAppServerMethodSchema {
     case "turn/steer":
     case "thread/compact/start":
     case "thread/revert":
-      return { params: objectSchema, result };
+      return { params: objectSchema, result: { not: {}, description: "This method has no successful result in the current App Server." } };
   }
 }
 
@@ -831,6 +1066,7 @@ export function validateLingAppServerServerRequestParams(method: string, params:
 }
 
 function validateAgainstSchema(value: unknown, schema: LingAppServerJsonSchema, path: string): LingAppServerValidationResult {
+  if (schema.not && validateAgainstSchema(value, schema.not, path).ok) return { ok: false, path, message: "is not allowed" };
   if (schema.oneOf) {
     if (schema.oneOf.filter(candidate => validateAgainstSchema(value, candidate, path).ok).length === 1) return { ok: true };
     return { ok: false, path, message: "does not match any allowed shape" };
