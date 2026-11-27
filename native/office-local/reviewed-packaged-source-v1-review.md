@@ -1,6 +1,7 @@
 # Scoped macOS Development Packaging Review
 
-The current source prerequisite includes the [optional skill pack distribution](#optional-skill-pack-distribution),
+The current source prerequisite includes the [Desktop v0.6.2-alpha.3 inputs](#desktop-v062-alpha3-inputs),
+the [optional skill pack distribution](#optional-skill-pack-distribution),
 the [Desktop development prerelease version](#desktop-development-prerelease-version),
 [visualization and GStack history inputs](#visualization-and-gstack-history-inputs),
 [MP4 publication and packaging inputs](#mp4-publication-and-packaging-inputs),
@@ -12,6 +13,23 @@ the [Desktop development prerelease version](#desktop-development-prerelease-ver
 and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Desktop v0.6.2-alpha.3 inputs
+
+On 2026-11-27, an independent in-host reviewer returned
+`APPROVE_SCOPED_DEVELOPMENT_PACKAGING` for the version inputs at
+`460c68fc5bd26a386d25ea2fb7c48d2afc171c0f`. This scope covers hosted macOS arm64
+development packaging on Darwin 25.6.0, with ad-hoc signing and
+`provider=false`. The Desktop manifest and shared product version resolve to
+`0.6.2-alpha.3`.
+
+The review verified all 2,028 fixed packaging inputs, including 55 generated
+locale catalogs, and all 15 Office native inputs. The 262,110-byte review
+record has SHA-256
+`0423fcb14e94eac5330f99da2322e579082918e89ea71b9053b462d8f91b4acb`.
+The fixed-order packaging and native aggregate SHA-256 values are
+`fc9f2b7f56a019fbd4f0175a799e57be8a8acdb831d90484e1b5094b0d81568c`
+and `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
 
 ## Optional skill pack distribution
 
