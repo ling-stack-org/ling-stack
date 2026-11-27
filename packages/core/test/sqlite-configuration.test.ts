@@ -28,15 +28,16 @@ test("sqlite configuration waits for an existing writer before switching to WAL"
     workerData: { databasePath },
   });
 
-  let database;
+  let database: DatabaseSync | undefined;
   try {
     const [state] = await once(worker, "message");
     assert.equal(state, "locked");
 
-    database = new DatabaseSync(databasePath);
-    assert.doesNotThrow(() => configureSqliteRunStoreDatabase(database));
-    assert.equal(database.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
-    assert.equal(database.prepare("PRAGMA busy_timeout").get().timeout, 5_000);
+    const configuredDatabase = new DatabaseSync(databasePath);
+    database = configuredDatabase;
+    assert.doesNotThrow(() => configureSqliteRunStoreDatabase(configuredDatabase));
+    assert.equal(configuredDatabase.prepare("PRAGMA journal_mode").get()?.journal_mode, "wal");
+    assert.equal(configuredDatabase.prepare("PRAGMA busy_timeout").get()?.timeout, 5_000);
 
     const [released] = await once(worker, "message");
     assert.equal(released, "released");

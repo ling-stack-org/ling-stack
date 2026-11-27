@@ -8,6 +8,12 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+## [0.6.2-alpha.2] - 2026-11-27
+
+### Changed
+
+- **Desktop is repackaged from the merged independent-plugin build** for an unsigned team-testing pre-release. The candidate uses the on-demand plugin profile and keeps the Office Documents, Ling for Chrome, and Cua Driver packages in their public repositories.
+
 ## [0.6.2-alpha.1] - 2026-11-26
 
 ### Added
