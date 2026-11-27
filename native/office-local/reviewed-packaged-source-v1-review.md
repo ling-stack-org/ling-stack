@@ -14,17 +14,17 @@ and the dated reviews below retain their historical evidence and scope.
 
 ## Desktop development prerelease version
 
-The independent review approved the version inputs at
-`36504f8f03741b8ccbd7c3eab8b01846892c6ce4` for hosted macOS arm64 development
+The scoped review binds the `0.6.2-alpha.2` version inputs at source commit
+`dbd9104e4eba6964ff1660f1625a6f3cb67cd7be` for hosted macOS arm64 development
 packaging with ad-hoc signing and `provider=false` on Darwin 25.6.0. The Desktop
-manifest and shared product version both specify `0.6.2-alpha.1`. The candidate
+manifest and shared product version both specify `0.6.2-alpha.2`. The candidate
 validator resolves the matching tag and archive filenames.
 
-The review matched all 2,025 packaging and 15 Office native inputs. The two
-version digests account for the changes to the 261,814-byte record. Record
-SHA-256 is `c7b6ac14ef98c3f11db3e8cdc3b02db8b4a2060fcdf60cfd6318786ad8c3b6ae`.
+The review matches all 2,025 packaging and 15 Office native inputs. The record
+remains 261,814 bytes. Its SHA-256 is
+`788c553d39c7d49db548e10e733757ff462179e1d62e3a7c5666d681f60a5570`.
 The fixed-order packaging and native aggregate SHA-256 values are
-`056e7e45147ff8877b0848fd9f2ef4db53784f56cac44306aa9d0c6b0bdaa9a5`
+`977176dbf327ee0c53e0a5803a31463105c98235aea326017147632500f033d5`
 and `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
 
 ## Visualization and GStack history inputs
