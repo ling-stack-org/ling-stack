@@ -1,12 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readNormalTerminalToolBarrier } from "../dist/index.js";
+import { readNormalTerminalToolBarrier, type RunEventEnvelope, type RunSession, type RunStore } from "../dist/index.js";
 
-const run = { id: "run-fenced", status: "failed" };
-const event = (seq, type, toolCallId = "call") => ({ id: `event-${seq}`, runId: run.id, seq, type,
-  ts: "2026-10-02T00:00:00.000Z", data: { ...(toolCallId === undefined ? {} : { toolCallId }) } });
-const store = events => ({ listEvents: (_runId, { afterSeq = 0, limit = 1000 } = {}) =>
-  events.filter(event => event.seq > afterSeq).sort((a, b) => a.seq - b.seq).slice(0, limit) });
+const run: RunSession = {
+  id: "run-fenced",
+  status: "failed",
+  cwd: "/tmp/workspace",
+  taskId: "task-fenced",
+  providerName: "test",
+  providerModel: "test-model",
+  taskSnapshot: {},
+  providerSnapshot: {},
+  requestSnapshot: {},
+  eventLogPath: "/tmp/run-events.jsonl",
+  createdAt: "2026-10-02T00:00:00.000Z",
+  updatedAt: "2026-10-02T00:00:00.000Z",
+};
+const event = (seq: number, type: RunEventEnvelope["type"], toolCallId = "call"): RunEventEnvelope => ({
+  id: `event-${seq}`,
+  runId: run.id,
+  seq,
+  type,
+  ts: "2026-10-02T00:00:00.000Z",
+  data: { ...(toolCallId === undefined ? {} : { toolCallId }) },
+} as RunEventEnvelope);
+const store = (events: readonly RunEventEnvelope[]): Pick<RunStore, "listEvents"> => ({
+  listEvents: (_runId, { afterSeq = 0, limit = 1000 } = {}) =>
+    events.filter((entry) => entry.seq > afterSeq).sort((a, b) => a.seq - b.seq).slice(0, limit),
+});
 
 test("Run failure fences an open tool but is not its completion receipt", () => {
   const events = [event(1, "tool_start"), event(2, "run_error")];
@@ -39,7 +60,7 @@ test("old failure boundary before a tool start cannot fence the new call", () =>
 });
 
 test("missing tool identity fails the lifecycle barrier", () => {
-  const malformed = { ...event(1, "tool_start"), data: {} };
+  const malformed = { ...event(1, "tool_start"), data: {} } as RunEventEnvelope;
   assert.equal(readNormalTerminalToolBarrier(store([malformed]), run).malformed, true);
 });
 
