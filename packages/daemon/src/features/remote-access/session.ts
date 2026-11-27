@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 import {
+  CONVERSATION_VISUALIZATION_MAX_BYTES,
+  CONVERSATION_VISUALIZATION_MAX_PER_RUN,
   REMOTE_PROTOCOL_VERSION,
   REMOTE_PROTOCOL_LIMITS,
+  REMOTE_VISUALIZATION_CHUNK_BYTES,
+  REMOTE_VISUALIZATION_CHUNKS_FEATURE,
   REMOTE_VISUALIZATION_FEATURE,
   type RemoteAccessPolicySummaryV1,
   type RemoteClientFrameV1,
@@ -32,6 +36,9 @@ import type { AuthenticatedRemoteSession } from "./pairing-auth-service.js";
 
 const MAX_BUFFERED_BYTES = 1024 * 1024;
 const MAX_COMMANDS_PER_MINUTE = 120;
+const MAX_VISUALIZATION_CHUNKS_PER_MINUTE = Math.ceil(CONVERSATION_VISUALIZATION_MAX_BYTES / REMOTE_VISUALIZATION_CHUNK_BYTES)
+  * CONVERSATION_VISUALIZATION_MAX_PER_RUN;
+const MAX_CHUNK_SESSION_FRAMES_PER_MINUTE = 3 * MAX_COMMANDS_PER_MINUTE + 2 * MAX_VISUALIZATION_CHUNKS_PER_MINUTE;
 
 interface RemoteStreamState {
   readonly id: string;
@@ -58,10 +65,13 @@ export class RemoteGatewaySession {
   readonly deviceId: string;
   private readonly now: () => string;
   private readonly controlStream: RemoteStreamState;
+  private readonly supportsVisualizationChunks: boolean;
   private readonly streams = new Map<string, RemoteStreamState>();
   private lastClientSeq = 0;
-  private commandWindowStartedAt = 0;
+  private rateWindowStartedAt = 0;
+  private frameCount = 0;
   private commandCount = 0;
+  private visualizationChunkCount = 0;
   private closed = false;
   private messageQueue = Promise.resolve();
 
@@ -69,6 +79,7 @@ export class RemoteGatewaySession {
     this.sessionId = options.authenticated.sessionId;
     this.deviceId = options.authenticated.device.deviceId;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.supportsVisualizationChunks = options.authenticated.negotiatedFeatures?.includes(REMOTE_VISUALIZATION_CHUNKS_FEATURE) === true;
     this.controlStream = {
       id: `control_${this.sessionId}`,
       scope: { kind: "workspace", workspaceId: options.policy.workspaceId },
@@ -139,7 +150,7 @@ export class RemoteGatewaySession {
     if (this.closed) {
       return;
     }
-    this.consumeRateLimit();
+    this.consumeFrameBudget();
     let frame: RemoteClientFrameV1;
     try {
       frame = parseRemoteClientFrameV1(raw, { nowMs: Date.parse(this.now()) });
@@ -161,8 +172,9 @@ export class RemoteGatewaySession {
       this.handleAck(frame.payload.streamId, frame.payload.ackServerSeq);
       return;
     }
-    if (frame.type === "conversation.visualization.read"
-      && !this.options.authenticated.negotiatedFeatures?.includes(REMOTE_VISUALIZATION_FEATURE)) {
+    const visualizationFeature = frame.type === "conversation.visualization.read" ? REMOTE_VISUALIZATION_FEATURE
+      : frame.type === "conversation.visualization.read_chunk" ? REMOTE_VISUALIZATION_CHUNKS_FEATURE : undefined;
+    if (visualizationFeature && !this.options.authenticated.negotiatedFeatures?.includes(visualizationFeature)) {
       this.closePolicyViolation("Visualization support was not negotiated.");
       return;
     }
@@ -174,6 +186,7 @@ export class RemoteGatewaySession {
     }, this.controlStream, frame.messageId);
     try {
       this.assertCapability(frame.type);
+      this.consumeCommandBudget(commandType);
       await this.executeCommand(frame as Exclude<RemoteClientFrameV1, { readonly type: "stream.ack" }>);
     } catch (error) {
       const remoteError = toRemoteError(error);
@@ -228,6 +241,11 @@ export class RemoteGatewaySession {
       case "conversation.visualization.read": {
         const document = this.options.facade.readVisualization(frame.payload);
         this.complete(frame, { kind: "conversation_visualization", document });
+        return;
+      }
+      case "conversation.visualization.read_chunk": {
+        const document = this.options.facade.readVisualizationChunk(frame.payload);
+        this.complete(frame, { kind: "conversation_visualization_chunk", document });
         return;
       }
       case "conversation.send_text": {
@@ -349,7 +367,8 @@ export class RemoteGatewaySession {
       occurredAt,
     } as RemoteServerFrameV1;
     const encoded = JSON.stringify(frame);
-    if (type === "command.completed" && (payload as RemoteCommandCompletedV1).commandType === "conversation.visualization.read"
+    const commandType = type === "command.completed" ? (payload as RemoteCommandCompletedV1).commandType : undefined;
+    if ((commandType === "conversation.visualization.read" || commandType === "conversation.visualization.read_chunk")
       && Buffer.byteLength(encoded) > REMOTE_PROTOCOL_LIMITS.maxFrameBytes) {
       stream.serverSeq -= 1;
       throw new RemoteAccessError("payload_too_large", "Visualization exceeds the remote frame limit.");
@@ -414,14 +433,27 @@ export class RemoteGatewaySession {
     return this.findOrCreateStream({ kind: "conversation", workspaceId, conversationId });
   }
 
-  private consumeRateLimit(): void {
+  private consumeFrameBudget(): void {
     const nowMs = Date.parse(this.now());
-    if (nowMs - this.commandWindowStartedAt >= 60_000) {
-      this.commandWindowStartedAt = nowMs;
+    if (nowMs - this.rateWindowStartedAt >= 60_000) {
+      this.rateWindowStartedAt = nowMs;
+      this.frameCount = 0;
       this.commandCount = 0;
+      this.visualizationChunkCount = 0;
     }
-    this.commandCount += 1;
-    if (this.commandCount > MAX_COMMANDS_PER_MINUTE) {
+    const limit = this.supportsVisualizationChunks ? MAX_CHUNK_SESSION_FRAMES_PER_MINUTE : MAX_COMMANDS_PER_MINUTE;
+    if (++this.frameCount > limit) {
+      throw new RemoteAccessError("rate_limited", "Remote frame rate exceeded.", true);
+    }
+  }
+
+  private consumeCommandBudget(commandType: RemoteLifecycleCommandTypeV1): void {
+    if (!this.supportsVisualizationChunks) return;
+    if (commandType === "conversation.visualization.read_chunk") {
+      if (++this.visualizationChunkCount > MAX_VISUALIZATION_CHUNKS_PER_MINUTE) {
+        throw new RemoteAccessError("rate_limited", "Visualization read rate exceeded. Try again in a minute.", true);
+      }
+    } else if (++this.commandCount > MAX_COMMANDS_PER_MINUTE) {
       throw new RemoteAccessError("rate_limited", "Remote command rate exceeded.", true);
     }
   }
@@ -443,7 +475,8 @@ export class RemoteGatewaySession {
 function commandCapability(
   commandType: RemoteLifecycleCommandTypeV1,
 ): RemoteAccessPolicySummaryV1["capabilities"][number] | undefined {
-  if (commandType === "conversation.list" || commandType === "conversation.open" || commandType === "conversation.visualization.read" || commandType === "snapshot.request" || commandType === "stream.subscribe") {
+  if (commandType === "conversation.list" || commandType === "conversation.open" || commandType === "conversation.visualization.read"
+    || commandType === "conversation.visualization.read_chunk" || commandType === "snapshot.request" || commandType === "stream.subscribe") {
     return "conversation.read";
   }
   if (commandType === "conversation.send_text") {

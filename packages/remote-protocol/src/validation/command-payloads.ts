@@ -1,5 +1,7 @@
 import {
+  CONVERSATION_VISUALIZATION_MAX_BYTES,
   REMOTE_PROTOCOL_LIMITS,
+  REMOTE_VISUALIZATION_CHUNK_BYTES,
   isConversationVisualizationId,
   type RemoteClientCommandPayloadMapV1,
   type RemoteClientCommandTypeV1,
@@ -117,12 +119,15 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
         }),
       };
       break;
-    case "conversation.visualization.read": {
-      assertStrictKeys(record, ["commandId", "workspaceId", "conversationId", "messageId", "messageRevision", "artifactId"], [], path);
+    case "conversation.visualization.read":
+    case "conversation.visualization.read_chunk": {
+      const chunked = type === "conversation.visualization.read_chunk";
+      assertStrictKeys(record, ["commandId", "workspaceId", "conversationId", "messageId", "messageRevision", "artifactId",
+        ...(chunked ? ["offset"] : [])], [], path);
       if (!isConversationVisualizationId(record.artifactId)) {
         throw new RemoteProtocolError("invalid_field", "Invalid visualization reference", `${path}.artifactId`);
       }
-      payload = {
+      const reference = {
         commandId: expectIdentifier(record.commandId, `${path}.commandId`),
         workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
         conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`),
@@ -130,6 +135,15 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
         messageRevision: expectSafeInteger(record.messageRevision, `${path}.messageRevision`, { minimum: 1 }),
         artifactId: record.artifactId,
       };
+      if (chunked) {
+        const offset = expectSafeInteger(record.offset, `${path}.offset`, { minimum: 0, maximum: CONVERSATION_VISUALIZATION_MAX_BYTES - 1 });
+        if (offset % REMOTE_VISUALIZATION_CHUNK_BYTES !== 0) {
+          throw new RemoteProtocolError("invalid_field", "Invalid visualization chunk offset", `${path}.offset`);
+        }
+        payload = { ...reference, offset };
+      } else {
+        payload = reference;
+      }
       break;
     }
     case "conversation.send_text": {

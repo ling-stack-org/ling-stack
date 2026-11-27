@@ -1,7 +1,8 @@
 import { scanInteractiveHtml } from "./artifacts.js";
 
-export const CONVERSATION_VISUALIZATION_MAX_BYTES = 128 * 1024;
+export const CONVERSATION_VISUALIZATION_MAX_BYTES = 5_000_000;
 export const CONVERSATION_VISUALIZATION_MAX_PER_RUN = 4;
+export const CONVERSATION_VISUALIZATION_MAX_HEIGHT = 640;
 
 const referencePrefix = "#ling-visualization-v1-";
 const artifactIdPattern = /^viz_[a-f0-9]{32}$/u;
@@ -51,7 +52,8 @@ export function normalizeConversationVisualization(value: unknown): Conversation
   const summary = normalizedText(fields.summary, 768);
   if (!title || !summary || typeof html !== "string" || !html.trim() || /[\u0000\p{Cs}]/u.test(html)
     || (layout !== "standard" && layout !== "wide") || (interaction !== "native" && interaction !== "script")
-    || typeof preferredHeight !== "number" || !Number.isInteger(preferredHeight) || preferredHeight < 160 || preferredHeight > 480
+    || typeof preferredHeight !== "number" || !Number.isInteger(preferredHeight)
+    || preferredHeight < 160 || preferredHeight > CONVERSATION_VISUALIZATION_MAX_HEIGHT
     || !scanInteractiveHtml(html, CONVERSATION_VISUALIZATION_MAX_BYTES).ok) return undefined;
   return { title, summary, html, layout, interaction, preferredHeight };
 }

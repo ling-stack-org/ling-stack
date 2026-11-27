@@ -110,9 +110,9 @@ each have their own readiness and approval requirements.
 In a conversation using Pi, ask Ling to include a clickable mockup or chart in
 its reply. For example, ask for a project overview with two tabs and an expandable
 change list. Web and Desktop show the result between the assistant's paragraphs.
-Use **Expand** for more room. A visualization with custom JavaScript has a **Run
-interactive preview** button in the expanded view. Closing it ends the script
-session.
+Use **Run interactive preview** on a visualization with custom JavaScript to
+activate its controls in the reply. Use **Stop interactive preview** to return
+to the static preview. **Expand** provides more room and its own script session.
 
 On a paired phone, press **打开可视化** in the reply while the PC is connected.
 The phone can use built-in HTML controls such as tabs and expandable sections.

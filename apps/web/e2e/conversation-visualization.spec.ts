@@ -34,7 +34,7 @@ const html = `
   <script>const counter = document.getElementById('counter'); counter.onclick = () => { counter.textContent = 'Count 1'; };</script>
 `;
 
-test("committed assistant visualization is inline, expandable and separate from script consent", async ({ page }, info) => {
+test("committed assistant visualization can start and stop scripts inline with independent expanded consent", async ({ page }, info) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   const state = createBaseState({ approvalStatus: "expired" });
   const title = installNormalWorkCellFixture(state);
@@ -80,10 +80,21 @@ test("committed assistant visualization is inline, expandable and separate from 
   await expect(innerInline.getByText("Example branch")).toBeVisible();
   await innerInline.getByRole("button", { name: "Count 0" }).click();
   await expect(innerInline.getByRole("button", { name: "Count 0" })).toBeVisible();
+  const runInline = figure.getByRole("button", { name: "Run interactive preview", exact: true });
+  const stopInline = figure.getByRole("button", { name: "Stop interactive preview", exact: true });
+  await runInline.click();
+  await expect(inline).toHaveAttribute("sandbox", "allow-scripts");
+  await innerInline.getByRole("button", { name: "Count 0" }).click();
+  await expect(innerInline.getByRole("button", { name: "Count 1" })).toBeVisible();
   if (process.env.LING_CAPTURE_UI2_EVIDENCE === "1") {
     await figure.screenshot({ path: info.outputPath("visualization-inline.png") });
   }
 
+  await stopInline.click();
+  await expect(runInline).toBeFocused();
+  await expect(inline).toHaveAttribute("sandbox", "");
+  await expect(innerInline.getByRole("button", { name: "Count 0" })).toBeVisible();
+  await runInline.click();
   const expand = figure.getByRole("button", { name: "Expand", exact: true });
   await expand.click();
   const dialog = page.getByRole("dialog", { name: "Workspace mockup" });
@@ -94,6 +105,7 @@ test("committed assistant visualization is inline, expandable and separate from 
   await expect(expanded.getByRole("button", { name: "Count 1" })).toBeVisible();
   await dialog.getByRole("button", { name: "Close preview" }).click();
   await expect(expand).toBeFocused();
+  await expect(inline).toHaveAttribute("sandbox", "");
   await expand.click();
   await expect(dialog.getByRole("button", { name: "Run interactive preview", exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Close preview" }).click();
@@ -102,5 +114,7 @@ test("committed assistant visualization is inline, expandable and separate from 
   await page.reload();
   await open();
   await expect(figure.getByText("Example data")).toBeVisible();
+  await expect(runInline).toBeVisible();
+  await expect(inline).toHaveAttribute("sandbox", "");
   expect(reads).toBe(2);
 });

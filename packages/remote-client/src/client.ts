@@ -1,5 +1,7 @@
 import {
   REMOTE_PROTOCOL_VERSION,
+  REMOTE_VISUALIZATION_CHUNKS_FEATURE,
+  REMOTE_VISUALIZATION_CHUNK_BYTES,
   REMOTE_VISUALIZATION_FEATURE,
   type ConversationVisualization,
   type RemoteAuthChallengeV1,
@@ -15,6 +17,7 @@ import {
   type RemoteResumeCursorV1,
   type RemoteSendTextCommandV1,
   type RemoteServerFrameV1,
+  type RemoteVisualizationChunk,
 } from "@ling-stack/contracts";
 import {
   authChallengeSigningBytes,
@@ -95,6 +98,7 @@ export class RemoteSessionClient {
   private intentionalClose = false;
   private connectionGeneration = 0;
   private visualizationNegotiated = false;
+  private visualizationChunksNegotiated = false;
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
 
@@ -168,24 +172,46 @@ export class RemoteSessionClient {
   }
 
   async readConversationVisualization(conversationId: string, messageId: string, messageRevision: number,
-    artifactId: string): Promise<ConversationVisualization> {
+    artifactId: string, signal?: AbortSignal): Promise<ConversationVisualization> {
     if (!this.supportsConversationVisualizations) throw new Error("remote_visualization_unavailable");
     const workspaceId = this.requireWorkspaceId();
     const generation = this.connectionGeneration;
     const sessionId = this.requireSessionId();
-    const { completion } = await this.sendCommand("conversation.visualization.read", {
-      commandId: await this.options.entropy.randomId("visualization"),
-      workspaceId, conversationId, messageId, messageRevision, artifactId,
-    }, { sessionId, timeoutMs: 15_000 });
-    const result = await completion;
-    this.assertConnectionActive(generation);
-    if (this.currentSessionId !== sessionId || !this.supportsConversationVisualizations || result.kind !== "conversation_visualization") {
-      throw new Error("remote_visualization_unavailable");
+    const bindingId = this.stateValue.policy?.workspaceBindingId;
+    const chunked = this.visualizationChunksNegotiated;
+    const bounds = { sessionId, timeoutMs: 15_000 };
+    const assertCurrentRead = (): void => {
+      if (signal?.aborted) throw new Error("remote_visualization_cancelled");
+      this.assertConnectionActive(generation);
+      if (this.currentSessionId !== sessionId || !this.supportsConversationVisualizations
+        || this.stateValue.policy?.workspaceBindingId !== bindingId) throw new Error("remote_visualization_unavailable");
+    };
+    const read = async (offset: number): Promise<RemoteVisualizationChunk> => {
+      assertCurrentRead();
+      const commandId = await this.options.entropy.randomId("visualization");
+      assertCurrentRead();
+      const command = { commandId, workspaceId, conversationId, messageId, messageRevision, artifactId };
+      const result = chunked
+        ? await (await this.sendCommand("conversation.visualization.read_chunk", { ...command, offset }, bounds)).completion
+        : await (await this.sendCommand("conversation.visualization.read", command, bounds)).completion;
+      assertCurrentRead();
+      return result.kind === "conversation_visualization_chunk" ? result.document : { ...result.document, offset: 0 };
+    };
+    const first = await read(0);
+    const { offset: _offset, htmlBase64Url: _data, ...document } = first;
+    const bytes = new Uint8Array(document.sizeBytes);
+    for (let offset = 0; offset < bytes.length; offset += REMOTE_VISUALIZATION_CHUNK_BYTES) {
+      const chunk = offset === 0 ? first : await read(offset);
+      const data = decodeBase64Url(chunk.htmlBase64Url);
+      if (chunk.artifactId !== artifactId || chunk.offset !== offset
+        || chunk.sizeBytes !== document.sizeBytes || chunk.sha256 !== document.sha256
+        || data.length !== Math.min(REMOTE_VISUALIZATION_CHUNK_BYTES, bytes.length - offset)) {
+        throw new Error("remote_visualization_integrity_mismatch");
+      }
+      bytes.set(data, offset);
     }
-    const { htmlBase64Url, ...document } = result.document;
-    const bytes = decodeBase64Url(htmlBase64Url);
     const hash = Array.from(sha256(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
-    if (document.artifactId !== artifactId || document.sizeBytes !== bytes.length || document.sha256 !== hash) {
+    if (document.sha256 !== hash) {
       throw new Error("remote_visualization_integrity_mismatch");
     }
     return { ...document, html: decodeUtf8Strict(bytes) };
@@ -321,6 +347,7 @@ export class RemoteSessionClient {
       status: this.reconnectAttempts > 0 ? "reconnecting" : "connecting",
     });
     this.visualizationNegotiated = false;
+    this.visualizationChunksNegotiated = false;
     const proof = await this.createAuthProof(generation);
     this.assertConnectionActive(generation);
     this.clientSeq = 0;
@@ -371,7 +398,8 @@ export class RemoteSessionClient {
   private async createAuthProof(generation: number): Promise<RemoteAuthProofV1> {
     const binding = this.binding;
     const path = this.options.requestConversationVisualizations
-      ? "/v1/auth/challenge?feature=" + REMOTE_VISUALIZATION_FEATURE : "/v1/auth/challenge";
+      ? "/v1/auth/challenge?feature=" + REMOTE_VISUALIZATION_FEATURE + "&feature=" + REMOTE_VISUALIZATION_CHUNKS_FEATURE
+      : "/v1/auth/challenge";
     const response = await this.options.http.postJson<unknown>(binding.gatewayOrigin, path, {
       deviceId: binding.deviceId,
     });
@@ -422,6 +450,8 @@ export class RemoteSessionClient {
     this.assertConnectionActive(generation);
     this.visualizationNegotiated = this.options.requestConversationVisualizations === true
       && challenge.negotiatedFeatures?.includes(REMOTE_VISUALIZATION_FEATURE) === true;
+    this.visualizationChunksNegotiated = this.visualizationNegotiated
+      && challenge.negotiatedFeatures?.includes(REMOTE_VISUALIZATION_CHUNKS_FEATURE) === true;
     return {
       ...unsignedProof,
       signature,
@@ -459,10 +489,17 @@ export class RemoteSessionClient {
       return;
     }
     this.streamSequences.set(frame.streamId, frame.serverSeq);
+    const visualizationChunk = (frame.type === "command.accepted" || frame.type === "command.completed" || frame.type === "command.failed")
+      && frame.payload.commandType === "conversation.visualization.read_chunk";
+    if (visualizationChunk && frame.type === "command.accepted") {
+      // The terminal chunk event acknowledges both frames cumulatively.
+      return;
+    }
     await this.applyFrame(frame, generation, socket);
     this.assertCurrentSocket(generation, socket);
     await this.sendAck(frame.streamId, frame.serverSeq);
     this.assertCurrentSocket(generation, socket);
+    if (visualizationChunk) return;
     await this.persistCache();
     this.assertCurrentSocket(generation, socket);
   }
@@ -522,7 +559,7 @@ export class RemoteSessionClient {
         }
         return;
       case "command.failed":
-        this.failCommand(frame.payload);
+        this.failCommand(frame.payload, frame.requestId);
         return;
       case "stream.resync_required":
       case "workspace.binding_changed":
@@ -598,17 +635,20 @@ export class RemoteSessionClient {
     if (!pending) {
       return;
     }
-    if (pending.type === "conversation.visualization.read" && (pending.type !== type || pending.messageId !== requestId)) return;
+    const visualization = isVisualizationCommand(pending.type);
+    if (visualization && (pending.type !== type || pending.messageId !== requestId)) return;
     this.commands.delete(commandId);
-    if (pending.type === "conversation.visualization.read") this.outboundByMessage.delete(pending.messageId);
+    if (visualization) this.outboundByMessage.delete(pending.messageId);
     pending.resolve(result);
   }
 
-  private failCommand(failed: RemoteCommandFailedV1): void {
+  private failCommand(failed: RemoteCommandFailedV1, requestId?: string): void {
     const pending = this.commands.get(failed.commandId);
     if (pending) {
+      const visualization = isVisualizationCommand(pending.type);
+      if (visualization && (pending.type !== failed.commandType || pending.messageId !== requestId)) return;
       this.commands.delete(failed.commandId);
-      if (pending.type === "conversation.visualization.read") this.outboundByMessage.delete(pending.messageId);
+      if (visualization) this.outboundByMessage.delete(pending.messageId);
       pending.reject(new Error(`${failed.error.code}: ${failed.error.message}`));
     }
     if (failed.commandType === "conversation.send_text") {
@@ -814,6 +854,10 @@ export class RemoteSessionClient {
       throw new Error("remote_connection_invalidated");
     }
   }
+}
+
+function isVisualizationCommand(type: CommandType): boolean {
+  return type === "conversation.visualization.read" || type === "conversation.visualization.read_chunk";
 }
 
 async function attemptCleanup(operation: () => Promise<void>, errors: unknown[]): Promise<void> {
