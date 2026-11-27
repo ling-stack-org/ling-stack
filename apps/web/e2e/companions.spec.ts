@@ -155,6 +155,21 @@ async function openPanel(page: Page) {
   return panel;
 }
 
+async function openDesktopCompanion(page: Page) {
+  await page.addInitScript(workspace => {
+    Object.defineProperty(window, "lingCompanionDesktop", {
+      value: {
+        cwd: workspace,
+        daemonBaseUrl: "http://127.0.0.1:17891",
+        close: async () => ({ accepted: true }),
+        openSettings: async () => ({ accepted: true }),
+      },
+    });
+  }, cwd);
+  await page.goto("/?companionWindow=1");
+  return page.getByRole("dialog", { name: "Intelligent companion" });
+}
+
 function renderedSize(character: Locator) {
   return character.evaluate((element) => {
     const { width, height } = element.getBoundingClientRect();
@@ -175,9 +190,11 @@ async function mockAttentionCard(page: Page, card: Pick<CompanionAttentionItem, 
     updatedAt: now,
     action: { kind: "open_source", enabled: true, source: card.source },
   };
-  await page.route("http://127.0.0.1:17891/companion-attention*", route => route.fulfill({
+  const attentionRoute = "http://127.0.0.1:17891/companion-attention*";
+  await page.route(attentionRoute, route => route.fulfill({
     json: { schemaVersion: 1, cwd, generatedAt: now, items: [item] },
   }));
+  return () => page.unroute(attentionRoute);
 }
 
 async function openAttentionSource(page: Page): Promise<void> {
@@ -453,25 +470,14 @@ test("Yui keeps its size through an approval in a narrow unconfigured desktop co
   try {
     await page.setViewportSize({ width: 320, height: 480 });
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await page.addInitScript(workspace => {
-      Object.defineProperty(window, "lingCompanionDesktop", {
-        value: {
-          cwd: workspace,
-          daemonBaseUrl: "http://127.0.0.1:17891",
-          close: async () => ({ accepted: true }),
-          openSettings: async () => ({ accepted: true }),
-        },
-      });
-    }, cwd);
-    await page.goto("/?companionWindow=1");
-    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    const panel = await openDesktopCompanion(page);
     const yui = panel.getByRole("img", { name: "Yui", exact: true });
     await expect(panel.getByText("All clear", { exact: true })).toBeVisible();
     await expect(yui).toBeInViewport({ ratio: 1 });
     const idleSize = await renderedSize(yui);
     const evidence = process.env.LING_COMPANION_VISUAL_EVIDENCE;
     if (evidence) await page.screenshot({ path: `${evidence}/companion-yui-fallback-idle.png`, omitBackground: true });
-    await mockAttentionCard(page, {
+    const clearCard = await mockAttentionCard(page, {
       source: { workspaceId: "workspace_default", cwd, kind: "approval", id: approvalId, approvalId },
       priority: "approval",
       status: "pending",
@@ -490,10 +496,47 @@ test("Yui keeps its size through an approval in a narrow unconfigured desktop co
     if (evidence) await page.screenshot({ path: `${evidence}/companion-yui-fallback-approval.png`, omitBackground: true });
     await approve.click();
     await expect(panel.getByRole("status")).toContainText("Approval submitted");
-    await page.unroute("http://127.0.0.1:17891/companion-attention*");
+    await clearCard();
     await panel.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(panel.getByText("All clear", { exact: true })).toBeVisible();
     expect(await renderedSize(yui)).toEqual(idleSize);
+  } finally { await f.close(); }
+});
+
+test("a long approval and the desktop chat composer remain accessible together", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "pending" });
+  const approvalId = base.approvals[0]!.id;
+  const f = await fixture(page, "normal", 10, { base });
+  try {
+    await page.setViewportSize({ width: 760, height: 480 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const panel = await openDesktopCompanion(page);
+    const character = panel.getByRole("img", { name: "Yui", exact: true });
+    const composer = panel.getByRole("textbox", { name: "Message companion" });
+    const talk = panel.getByRole("button", { name: "Talk", exact: true });
+    await expect(talk).toBeVisible();
+    const idleSize = await renderedSize(character);
+    await talk.click();
+    await expect(composer).toBeFocused();
+    await mockAttentionCard(page, {
+      source: { workspaceId: "workspace_default", cwd, kind: "approval", id: approvalId, approvalId },
+      priority: "approval",
+      status: "pending",
+      payload: { kind: "approval", approvalId, status: "pending", risk: "medium" },
+      summary: "Review the release publication. " + "Confirm the destination before the release is published. ".repeat(12),
+    });
+    const card = panel.locator(".companion-attention-card");
+    await expect(card).toBeVisible({ timeout: 10_000 });
+    await expect(card).toBeInViewport({ ratio: 1 });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await expect(composer).toBeFocused();
+    await composer.click({ timeout: 5_000 });
+    await composer.fill("A draft while the approval is pending");
+    await expect(panel.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
+    await panel.getByRole("button", { name: "Approve", exact: true }).click({ timeout: 5_000 });
+    await expect(card.getByRole("status")).toContainText("Approval submitted");
+    await expect(character).toBeInViewport({ ratio: 1 });
+    expect(await renderedSize(character)).toEqual(idleSize);
   } finally { await f.close(); }
 });
 
@@ -897,10 +940,13 @@ test("attention cards render actor questions and submit the authoritative answer
     await expect(composer).toBeInViewport({ ratio: 1 });
     await expect(question).toBeHidden();
     expect(await renderedSize(character)).toEqual(idleSize);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(question).toBeInViewport({ ratio: 1 });
-    await expect(composer).toBeInViewport({ ratio: 1 });
-    expect(await renderedSize(character)).toEqual(idleSize);
+    for (const viewport of [{ width: 390, height: 844 }, { width: 640, height: 620 }]) {
+      await page.setViewportSize(viewport);
+      await expect(question).toBeInViewport({ ratio: 1 });
+      await expect(composer).toBeInViewport({ ratio: 1 });
+      await composer.click({ timeout: 5_000 });
+      expect(await renderedSize(character)).toEqual(idleSize);
+    }
     await page.setViewportSize({ width: 320, height: 480 });
     await page.keyboard.press("Escape");
     await expect(question).toBeVisible();

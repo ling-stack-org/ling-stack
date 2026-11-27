@@ -552,6 +552,18 @@ html[data-companion-window="true"] #root {
 .companion-desktop-panel select,
 .companion-desktop-panel .companion-mini-messages,
 .companion-desktop-panel .companion-attention-card { -webkit-app-region: no-drag; }
+@media (width > 640px) {
+  .companion-overlay:has(> .companion-mini-conversation.is-open) > .companion-attention-card-slot {
+    position: static;
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    align-self: start;
+    width: auto;
+    max-height: 33dvh;
+  }
+}
 @media (max-width: 640px) {
   .companion-overlay {
     --companion-stage-height: min(260px, 55dvh);
@@ -604,6 +616,8 @@ html[data-companion-window="true"] #root {
 }
 @media (max-width: 640px) and (height < 620px) {
   .companion-overlay:has(> .companion-mini-conversation.is-open) > .companion-attention-card-slot { display: none; }
+}
+@media (height < 720px) {
   .companion-overlay .companion-mini-conversation.is-open {
     padding-block: 0;
     scroll-padding-block: 44px 54px;
