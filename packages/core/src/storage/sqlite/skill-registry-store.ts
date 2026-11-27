@@ -213,8 +213,8 @@ export class SqliteSkillRegistryStore {
     return rollbackSkillSourceSnapshot(this.context, snapshotId, now);
   }
 
-  publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch {
-    return publishSkillSourceBatch(this.context, this, input, now);
+  publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string, insideParentTransaction = false): PublishedSkillSourceBatch {
+    return publishSkillSourceBatch(this.context, this, input, now, insideParentTransaction);
   }
 
   getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined {

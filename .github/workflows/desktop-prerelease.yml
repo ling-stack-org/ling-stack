@@ -184,11 +184,6 @@ jobs:
           $linker = Join-Path $env:VCToolsInstallDir 'bin\Hostx64\x64\link.exe'
           if (-not (Test-Path -LiteralPath $linker -PathType Leaf)) { throw "MSVC linker is unavailable: $linker" }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        if: env.DESKTOP_OPERATION == 'build'
-        with:
-          go-version: 1.26.3
-          cache: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         if: env.DESKTOP_OPERATION == 'build'
         with:
@@ -230,51 +225,12 @@ jobs:
           export LING_BUN_ENTRY_PROBE_BINARY=bun
           node --test --test-concurrency=1 scripts/ci/desktop-release.test.mjs scripts/ci/desktop-package.test.mjs \
             scripts/ci/desktop-bun-entry.test.mjs \
-            scripts/gstack/source-checkout.test.mjs \
-            scripts/gstack/filter-upstream-self-test-packages.test.mjs \
-            scripts/gstack/prepare-desktop-candidate.test.mjs scripts/gstack/prepare-platform-resource-stage.test.mjs \
-            scripts/gstack/native-runtime-observer-path.test.mjs \
-            scripts/gstack/publish-staged-directory.test.mjs \
-            scripts/gstack/testsavant-model-cache.test.mjs scripts/gstack/testsavant-model-state.test.mjs \
-            scripts/gstack/browser-acquisition.test.mjs scripts/gstack/packaged-browse-launch.test.mjs \
-            apps/desktop/tests/packaged-gstack-identity.test.mjs \
             apps/desktop/tests/distribution*.test.mjs
-      - name: Check browser publication with bounded managed fixtures
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          node --input-type=module <<'NODE'
-          import { join } from "node:path";
-          import { initResourceWorkspace } from "./scripts/gstack/resource-workspace.mjs";
-          import { managedNodeArguments, runManagedNode } from "./scripts/gstack/run-managed.mjs";
-          const root = join(process.env.RUNNER_TEMP, "gstack-contract-fixtures");
-          await initResourceWorkspace({ root, ciEphemeral: true });
-          const testFiles = ["scripts/gstack/collect-browser-archives.test.mjs", "scripts/gstack/browser-publication-pipeline.test.mjs",
-            "scripts/gstack/materialize-playwright-browser.test.mjs"];
-          const result = await runManagedNode({ root, additionalBytes: 0,
-            args: managedNodeArguments("test", testFiles) });
-          if (result.exitCode !== 0) throw new Error(`gstack_browser_contracts_failed:${result.reason ?? result.exitCode}`);
-          NODE
       - name: Inspect current distribution inputs without approving redistribution
         run: |
           node apps/desktop/scripts/distribution/materials.mjs inspect \
             --platform "$DESKTOP_MATERIAL_PLATFORM" \
             > .codex-artifacts/desktop-release/distribution-inspection.json
-      - name: Produce complete package-owned gstack resources from pinned upstream inputs
-        if: env.DESKTOP_OPERATION == 'build'
-        run: |
-          set -euo pipefail
-          desktop_bun="$(command -v bun)"
-          desktop_shell="$(command -v bash)"
-          desktop_go="$(command -v go)"
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            desktop_bun="$(cygpath -m "$desktop_bun")"
-            desktop_shell="$(cygpath -m "$desktop_shell")"
-            desktop_go="$(cygpath -m "$desktop_go")"
-          fi
-          node scripts/gstack/prepare-desktop-candidate.mjs \
-            --workspace "$RUNNER_TEMP/gstack-candidate" \
-            --bun "$desktop_bun" --shell "$desktop_shell" --go "$desktop_go" --ci-ephemeral \
-            --selection "$GITHUB_WORKSPACE/.ling-stack/build/gstack-desktop-selection.json"
       - name: Require original native and resource prerequisites before packaging
         if: env.DESKTOP_OPERATION == 'build'
         run: node scripts/release/desktop-prerequisites.mjs require
@@ -304,9 +260,7 @@ jobs:
       - name: Generate version-matched notices, original licenses and SBOM
         if: env.DESKTOP_OPERATION == 'build'
         run: |
-          node apps/desktop/scripts/distribution/materials.mjs prepare \
-            --platform "$DESKTOP_MATERIAL_PLATFORM" \
-            --gstack-workspace "$RUNNER_TEMP/gstack-candidate"
+          node apps/desktop/scripts/distribution/materials.mjs prepare --platform "$DESKTOP_MATERIAL_PLATFORM"
       - name: Assemble the native unsigned development candidate from prepared inputs
         if: env.DESKTOP_OPERATION == 'build'
         run: |
@@ -337,9 +291,6 @@ jobs:
           path: ${{ runner.temp }}/desktop-${{ matrix.target }}/*
           if-no-files-found: error
           retention-days: 14
-      - name: Collect bounded gstack source and import graph evidence
-        if: always() && env.DESKTOP_OPERATION == 'build'
-        run: node scripts/release/collect-gstack-evidence.mjs
       - name: Retain failed macOS archives for diagnosis without admitting a candidate
         if: failure() && env.DESKTOP_OPERATION == 'build' && runner.os == 'macOS'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

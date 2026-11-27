@@ -7,7 +7,7 @@ import test from "node:test";
 import { createDaemonServer } from "../dist/index.js";
 import { allowLocalServiceRequest } from "../dist/shared/local-workspace-access.js";
 
-async function withDaemon(fn, options = {}) {
+async function withDaemon(fn, options = {}, dependencies = {}) {
   const previousHome = process.env.LING_STACK_HOME;
   const previousPollWait = process.env.LING_NOTIFICATIONS_POLL_WAIT_MS;
   const ownedPaths = [];
@@ -23,7 +23,7 @@ async function withDaemon(fn, options = {}) {
     ownedPaths.push(home);
     process.env.LING_STACK_HOME = home;
     process.env.LING_NOTIFICATIONS_POLL_WAIT_MS = "800";
-    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, ...options });
+    daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, ...options }, dependencies);
     await daemon.start();
     const port = daemon.server.address().port;
     await fn(`http://127.0.0.1:${port}`, cwd);
@@ -133,6 +133,30 @@ test("user-level notification and IM routes reject foreign browsers before readi
     assert.deepEqual((await (await fetch(`${baseUrl}/im-destinations`)).json()).destinations, []);
     assert.equal((await fetch(`${baseUrl}/notifications`, { headers: { origin: "http://localhost:5173" } })).status, 200);
   });
+});
+
+test("skill pack mutations allow the trusted local web origin without a Desktop bridge token", async () => {
+  await withDaemon(async (baseUrl, fixtureCwd) => {
+    const response = await fetch(`${baseUrl}/plugins/skill-packs/gstack?cwd=${encodeURIComponent(fixtureCwd)}`, {
+      method: "POST",
+      headers: { origin: "http://localhost:5173", "content-type": "application/json" },
+      body: JSON.stringify({ action: "disable" }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, "skill_pack_not_installed");
+  });
+});
+
+test("skill pack mutations keep the Desktop bridge requirement when configured", async () => {
+  await withDaemon(async (baseUrl, fixtureCwd) => {
+    const response = await fetch(`${baseUrl}/plugins/skill-packs/gstack?cwd=${encodeURIComponent(fixtureCwd)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "disable" }),
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error, "desktop_bridge_forbidden");
+  }, {}, { desktopBridgeToken: "synthetic-desktop-bridge-token" });
 });
 
 test("local service transport rejects rebinding, forwarding and missing browser Origin", () => {

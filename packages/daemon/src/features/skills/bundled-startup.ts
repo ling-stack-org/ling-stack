@@ -3,7 +3,7 @@ import {
   isSourceManagedSkill, parseSkillFrontMatter, previewSkillSourceDefinition,
   type PublishSkillSourceBatchInput, type RunStore,
 } from "@ling-stack/core";
-import { verifyBundledSkillSource } from "@ling-stack/core/bundled-skill-source";
+import { verifyBundledSkillSource, type VerifiedBundledSkillSource } from "@ling-stack/core/bundled-skill-source";
 
 /** Preload all authenticated bodies before opening any workspace or listener. */
 export async function prepareBundledSkillStartup(
@@ -11,6 +11,12 @@ export async function prepareBundledSkillStartup(
   onAdmitted?: (source: Awaited<ReturnType<typeof verifyBundledSkillSource>>) => void | Promise<void>,
 ): Promise<(store: RunStore) => void> {
   const source = await verifyBundledSkillSource({ ...selection, requireExecutable: true });
+  const publish = await preparePackagedGstackPublication(source);
+  await onAdmitted?.(source);
+  return publish;
+}
+
+export async function preparePackagedGstackPublication(source: VerifiedBundledSkillSource, allowRollback = false): Promise<(store: RunStore) => void> {
   const definitions = getBuiltinSkillPack("gstack-default")?.skills ?? [];
   const prepared = await Promise.all(source.manifest.skills.map(async skill => {
     if (isLingNativeSkillId(skill.id)) throw new Error("bundled_skill_native_identity_collision");
@@ -18,7 +24,6 @@ export async function prepareBundledSkillStartup(
     if (body.markdown.length > 256 * 1024) throw new Error("bundled_skill_body_over_budget");
     return { skill, body };
   }));
-  await onAdmitted?.(source);
   return store => {
     const records: PublishSkillSourceBatchInput["records"][number][] = [];
     const newDefinitions: NonNullable<PublishSkillSourceBatchInput["newSkills"]>["definitions"][number][] = [];
@@ -29,7 +34,7 @@ export async function prepareBundledSkillStartup(
       const active = store.getSkillSourceSnapshot(skill.id);
       const follow = active?.bundleUpdateMode === "follow" && existing?.reviewStatus !== "archived" && existing?.reviewStatus !== "disabled"
         && !history.some(snapshot => snapshot.reviewStatus === "draft" || snapshot.reviewStatus === "reviewed")
-        && !isOlderVersion(source.manifest.upstream.version, active.upstreamVersion);
+        && (allowRollback || !isOlderVersion(source.manifest.upstream.version, active.upstreamVersion));
       // Old imports, explicit pins/rollback and unpublished user work stay put.
       if ((existing || history.length) && !follow) continue;
       const builtin = definitions.find(definition => definition.id === skill.id);
@@ -60,7 +65,7 @@ export async function prepareBundledSkillStartup(
     if (!records.length) return;
     store.publishSkillSourceBatch({ records, newSkills: {
       source: "gstack", packId: "gstack-default", name: "Bundled GStack",
-      version: source.manifest.upstream.version, description: "Authenticated client-bundled skill sources.",
+      version: source.manifest.upstream.version, description: "Verified gstack skill sources.",
       definitions: newDefinitions,
     } }, new Date().toISOString());
   };

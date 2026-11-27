@@ -157,7 +157,7 @@ test("verified executable package initializes full sources atomically and restar
     const entry = listEffectiveSkillRegistryEntries(store).find(s => s.id === id);
     assert.equal(entry.version, "1.91.101.0");
     assert.equal(entry.checksum, hash(body));
-    const loaded = prepareRunSkillSource(store, id, "no_operation");
+    const loaded = await prepareRunSkillSource(store, id, "no_operation");
     assert.equal(loaded.context.loadedChars, body.length);
     assert.equal(loaded.context.truncated, false);
   }

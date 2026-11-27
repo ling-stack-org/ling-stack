@@ -208,7 +208,8 @@ import {
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
-const builtinSlashCommandSkills = builtinSkillPack?.skills ?? [];
+const builtinSlashCommandSkills = (builtinSkillPack?.skills ?? [])
+  .filter(skill => !window.lingDesktop || skill.id === "implement" || skill.id === "checkpoint");
 
 const defaultForm: RunFormState = {
   cwd: "",
@@ -3439,6 +3440,8 @@ export function AppShell(): React.JSX.Element {
                   />
                 ) : activeView === "plugins" ? (
                   <PluginManagerPage
+                    workspaceCwd={form.cwd.trim()}
+                    onSkillPacksChanged={() => setSkillLibraryRefreshToken(value => value + 1)}
                     plugins={pluginManagerPlugins}
                     catalog={pluginCatalog}
                     catalogLoading={pluginCatalogLoading}

@@ -3,7 +3,6 @@
 import { startDaemon } from "./index.js";
 import { readPackagedRestrictedCommandConfig } from "./runtime/sandbox/packaged-restricted-command-bootstrap.js";
 import { readPackagedOfficeLocalNativeArtifact } from "./runtime/sandbox/packaged-office-native-bootstrap.js";
-import { preparePackagedGstackStartup } from "./features/skills/packaged-startup.js";
 import { readPackagedQaHarnessSelection } from "./runtime/packaged-qa-harness-bootstrap.js";
 import { createDaemonSignalShutdown } from "./runtime/signal-shutdown.js";
 import { writeExecutionEngineHostAuthority } from "@ling-stack/core/execution-engine-host-authority";
@@ -45,15 +44,13 @@ const restrictedCommands = process.platform === "darwin"
   ? readPackagedRestrictedCommandConfig()
   : undefined;
 const officeLocalNativeArtifact = readPackagedOfficeLocalNativeArtifact();
-const initializeBundledSkills = await preparePackagedGstackStartup();
 if (resourceBootstrapChannel === "4") writeDaemonResourceBootstrap({ fd: 4 });
 const daemon = await startDaemon({
   host,
   port,
   ...(qaHarness ? { harness: qaHarness } : {}),
   ...(restrictedCommands ? { sandbox: { restrictedCommands } } : {}),
-}, { ...(officeLocalNativeArtifact ? { officeLocalNativeArtifact } : {}),
-  ...(initializeBundledSkills ? { initializeBundledSkills } : {}) });
+}, officeLocalNativeArtifact ? { officeLocalNativeArtifact } : {});
 const address = daemon.server.address();
 const managementHost = host === "::1" ? "[::1]" : host === "localhost" ? "localhost" : "127.0.0.1";
 if (engineAuthorityChannel === "3" && ["127.0.0.1", "localhost", "::1"].includes(host) && address && typeof address !== "string") {
