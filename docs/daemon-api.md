@@ -3961,6 +3961,15 @@ authenticated session when the PC and phone negotiate
 revision comes from the remote conversation projection. The request uses the
 existing conversation read policy. The correlated result uses
 `htmlBase64Url` for the UTF-8 document and carries the same size and SHA-256.
+This command keeps the single-response limit of 128 KiB. A larger document
+returns `payload_too_large`. With `conversation.visualization.chunks.v1`
+negotiated, `conversation.visualization.read_chunk` also accepts a zero-based
+`offset` aligned to 128 KiB. Each result carries the document metadata, offset,
+and the corresponding base64url bytes. The client verifies the complete UTF-8
+document against its size and digest before rendering. The document limit is
+5,000,000 bytes (5 MB). A session can read up to 156 chunks per minute, enough for
+four maximum-size documents. The Gateway returns retryable `rate_limited` errors
+when this budget is exhausted.
 See [Conversation Visualization Design](design/conversation-inline-visualizations.md#读取与跨设备兼容).
 
 ## Media Jobs

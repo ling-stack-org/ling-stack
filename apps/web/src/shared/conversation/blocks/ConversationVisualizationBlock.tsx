@@ -27,6 +27,7 @@ export function ConversationVisualizationBlock({ cwd, message, reference }: {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [reload, setReload] = useState(0);
   const [expanded, setExpanded] = useState(false);
+  const [inlineScriptDigest, setInlineScriptDigest] = useState<string>();
   const { artifactId, label } = reference;
   const { threadId, messageId, messageRevision } = message;
 
@@ -61,6 +62,11 @@ export function ConversationVisualizationBlock({ cwd, message, reference }: {
   }, [state.kind, expanded]);
 
   const document = state.kind === "ready" ? state.document : undefined;
+  const allowInlineScripts = document?.interaction === "script" && inlineScriptDigest === document.sha256;
+  const open = (): void => {
+    setInlineScriptDigest(undefined);
+    setExpanded(true);
+  };
   const close = (): void => {
     setExpanded(false);
     requestAnimationFrame(() => expand.current?.focus());
@@ -69,15 +75,19 @@ export function ConversationVisualizationBlock({ cwd, message, reference }: {
     <figure ref={root} className="conversation-visualization" data-visualization-layout={document?.layout ?? "standard"}>
       <figcaption className="conversation-visualization-caption">
         <strong>{document?.title ?? label}</strong>
-        {document ? <Button ref={expand} variant="ghost" size="sm" onClick={() => setExpanded(true)}>{t("Expand")}</Button> : null}
+        {document ? <Button ref={expand} variant="ghost" size="sm" onClick={open}>{t("Expand")}</Button> : null}
       </figcaption>
       {document ? (
         <>
           <p className="conversation-visualization-summary">{document.summary}</p>
+          {!expanded && document.interaction === "script" ? (
+            <VisualizationScriptControl enabled={allowInlineScripts}
+              onToggle={() => setInlineScriptDigest(allowInlineScripts ? undefined : document.sha256)} />
+          ) : null}
           {expanded
             ? <div style={{ blockSize: document.preferredHeight }} aria-hidden="true" />
-            : <VisualizationFrame document={document} allowScripts={false} />}
-          {expanded ? <ExpandedVisualization document={document} onClose={close} /> : null}
+            : <VisualizationFrame document={document} allowScripts={allowInlineScripts} />}
+          {expanded ? <ExpandedVisualization key={document.sha256} document={document} onClose={close} /> : null}
         </>
       ) : state.kind === "unavailable" ? (
         <div className="conversation-visualization-status">
@@ -102,17 +112,27 @@ function ExpandedVisualization({ document, onClose }: {
         <DialogBody>
           <p className="conversation-visualization-summary">{document.summary}</p>
           {document.interaction === "script" ? (
-            <div className="artifact-preview-script-controls">
-              <p>{t("Scripts can contact external services. Only run documents you trust.")}</p>
-              <Button variant="secondary" onClick={() => setAllowScripts(value => !value)}>
-                {t(allowScripts ? "Stop interactive preview" : "Run interactive preview")}
-              </Button>
-            </div>
+            <VisualizationScriptControl enabled={allowScripts} onToggle={() => setAllowScripts(value => !value)} />
           ) : null}
           <VisualizationFrame document={document} allowScripts={allowScripts} expanded />
         </DialogBody>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function VisualizationScriptControl({ enabled, onToggle }: {
+  readonly enabled: boolean;
+  readonly onToggle: () => void;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="conversation-visualization-script-controls">
+      <Button size="sm" variant="secondary" onClick={onToggle}>
+        {t(enabled ? "Stop interactive preview" : "Run interactive preview")}
+      </Button>
+      <p className="conversation-visualization-summary">{t("Scripts can contact external services. Only run documents you trust.")}</p>
+    </div>
   );
 }
 

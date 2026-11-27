@@ -1,6 +1,9 @@
 import type { ConversationVisualization } from "./conversation-visualizations.js";
 
 export const REMOTE_VISUALIZATION_FEATURE = "conversation.visualization.v1";
+export const REMOTE_VISUALIZATION_CHUNKS_FEATURE = "conversation.visualization.chunks.v1";
+export const REMOTE_VISUALIZATION_CHUNK_BYTES = 128 * 1024;
+export const REMOTE_VISUALIZATION_V1_MAX_HEIGHT = 480;
 
 export const REMOTE_PROTOCOL_VERSION = 1 as const;
 
@@ -54,6 +57,7 @@ export const REMOTE_CLIENT_COMMAND_TYPES_V1 = [
   "conversation.list",
   "conversation.open",
   "conversation.visualization.read",
+  "conversation.visualization.read_chunk",
   "conversation.send_text",
   "conversation.mark_read",
   "profile.read",
@@ -71,6 +75,7 @@ export const REMOTE_LIFECYCLE_COMMAND_TYPES_V1 = [
   "conversation.list",
   "conversation.open",
   "conversation.visualization.read",
+  "conversation.visualization.read_chunk",
   "conversation.send_text",
   "conversation.mark_read",
   "profile.read",
@@ -211,7 +216,7 @@ export interface RemoteAuthChallengeV1 {
   readonly issuedAt: string;
   readonly expiresAt: string;
   readonly supportedProtocolVersions: typeof REMOTE_SUPPORTED_PROTOCOL_VERSIONS;
-  readonly negotiatedFeatures?: readonly [typeof REMOTE_VISUALIZATION_FEATURE];
+  readonly negotiatedFeatures?: readonly [base: typeof REMOTE_VISUALIZATION_FEATURE, chunks?: typeof REMOTE_VISUALIZATION_CHUNKS_FEATURE];
   readonly gatewaySignature: string;
 }
 
@@ -425,7 +430,12 @@ export interface RemoteConversationVisualizationReadCommandV1 {
   readonly artifactId: string;
 }
 
+export interface RemoteConversationVisualizationReadChunkCommandV1 extends RemoteConversationVisualizationReadCommandV1 {
+  readonly offset: number;
+}
+
 export type RemoteVisualizationDocument = Omit<ConversationVisualization, "html"> & { readonly htmlBase64Url: string };
+export type RemoteVisualizationChunk = RemoteVisualizationDocument & { readonly offset: number };
 
 export interface RemoteProfileReadCommandV1 {
   readonly commandId: string;
@@ -464,6 +474,7 @@ export interface RemoteCommandResultMapV1 {
   readonly "conversation.list": { readonly kind: "conversation_list_requested" };
   readonly "conversation.open": { readonly kind: "conversation_opened"; readonly conversationId: string };
   readonly "conversation.visualization.read": { readonly kind: "conversation_visualization"; readonly document: RemoteVisualizationDocument };
+  readonly "conversation.visualization.read_chunk": { readonly kind: "conversation_visualization_chunk"; readonly document: RemoteVisualizationChunk };
   readonly "conversation.send_text": {
     readonly kind: "message_created";
     readonly conversationId: string;
@@ -541,6 +552,7 @@ export interface RemoteClientCommandPayloadMapV1 {
   readonly "conversation.list": RemoteConversationListCommandV1;
   readonly "conversation.open": RemoteConversationOpenCommandV1;
   readonly "conversation.visualization.read": RemoteConversationVisualizationReadCommandV1;
+  readonly "conversation.visualization.read_chunk": RemoteConversationVisualizationReadChunkCommandV1;
   readonly "conversation.send_text": RemoteSendTextCommandV1;
   readonly "conversation.mark_read": RemoteMarkConversationReadCommandV1;
   readonly "profile.read": RemoteProfileReadCommandV1;

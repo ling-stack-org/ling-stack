@@ -1,9 +1,12 @@
 import {
   CONVERSATION_VISUALIZATION_MAX_BYTES,
+  CONVERSATION_VISUALIZATION_MAX_HEIGHT,
   isConversationVisualizationId,
   REMOTE_ERROR_CODES_V1,
   REMOTE_LIFECYCLE_COMMAND_TYPES_V1,
   REMOTE_PROTOCOL_LIMITS,
+  REMOTE_VISUALIZATION_CHUNK_BYTES,
+  REMOTE_VISUALIZATION_V1_MAX_HEIGHT,
   type RemoteCommandAcceptedV1,
   type RemoteCommandCompletedV1,
   type RemoteCommandFailedV1,
@@ -49,6 +52,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "conversation_list_requested",
     "conversation_opened",
     "conversation_visualization",
+    "conversation_visualization_chunk",
     "message_created",
     "conversation_marked_read",
     "profile_read_requested",
@@ -72,25 +76,37 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "conversation_opened":
       assertStrictKeys(record, ["kind", "conversationId"], [], path);
       return { kind, conversationId: expectIdentifier(record.conversationId, `${path}.conversationId`) };
-    case "conversation_visualization": {
+    case "conversation_visualization":
+    case "conversation_visualization_chunk": {
+      const chunked = kind === "conversation_visualization_chunk";
       assertStrictKeys(record, ["kind", "document"], [], path);
       const docPath = `${path}.document`;
       const doc = expectRecord(record.document, docPath);
-      assertStrictKeys(doc, ["artifactId", "title", "summary", "layout", "interaction", "preferredHeight", "sha256", "sizeBytes", "htmlBase64Url"], [], docPath);
-      const sizeBytes = expectSafeInteger(doc.sizeBytes, `${docPath}.sizeBytes`, { minimum: 1, maximum: CONVERSATION_VISUALIZATION_MAX_BYTES });
-      const base64Length = Math.ceil(sizeBytes * 4 / 3);
+      assertStrictKeys(doc, ["artifactId", "title", "summary", "layout", "interaction", "preferredHeight", "sha256", "sizeBytes", "htmlBase64Url",
+        ...(chunked ? ["offset"] : [])], [], docPath);
+      const sizeBytes = expectSafeInteger(doc.sizeBytes, `${docPath}.sizeBytes`, {
+        minimum: 1, maximum: chunked ? CONVERSATION_VISUALIZATION_MAX_BYTES : REMOTE_VISUALIZATION_CHUNK_BYTES,
+      });
+      const offset = chunked ? expectSafeInteger(doc.offset, `${docPath}.offset`, { minimum: 0, maximum: sizeBytes - 1 }) : 0;
+      if (offset % REMOTE_VISUALIZATION_CHUNK_BYTES !== 0) {
+        throw new RemoteProtocolError("invalid_field", "Invalid visualization chunk offset", `${docPath}.offset`);
+      }
+      const base64Length = Math.ceil(Math.min(sizeBytes - offset, REMOTE_VISUALIZATION_CHUNK_BYTES) * 4 / 3);
       if (!isConversationVisualizationId(doc.artifactId) || typeof doc.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(doc.sha256)
         || typeof doc.htmlBase64Url !== "string" || doc.htmlBase64Url.length !== base64Length || !/^[A-Za-z0-9_-]+$/u.test(doc.htmlBase64Url)) {
         throw new RemoteProtocolError("invalid_field", "Invalid visualization content encoding", docPath);
       }
-      return { kind, document: {
+      const document = {
         artifactId: doc.artifactId, sha256: doc.sha256, sizeBytes, htmlBase64Url: doc.htmlBase64Url,
         title: expectString(doc.title, `${docPath}.title`, { minBytes: 1, maxBytes: 240 }),
         summary: expectString(doc.summary, `${docPath}.summary`, { minBytes: 1, maxBytes: 768 }),
         layout: expectEnum(doc.layout, ["standard", "wide"] as const, `${docPath}.layout`),
         interaction: expectEnum(doc.interaction, ["native", "script"] as const, `${docPath}.interaction`),
-        preferredHeight: expectSafeInteger(doc.preferredHeight, `${docPath}.preferredHeight`, { minimum: 160, maximum: 480 }),
-      } };
+        preferredHeight: expectSafeInteger(doc.preferredHeight, `${docPath}.preferredHeight`, {
+          minimum: 160, maximum: chunked ? CONVERSATION_VISUALIZATION_MAX_HEIGHT : REMOTE_VISUALIZATION_V1_MAX_HEIGHT,
+        }),
+      };
+      return chunked ? { kind, document: { ...document, offset } } : { kind, document };
     }
     case "message_created":
       assertStrictKeys(record, ["kind", "conversationId", "messageId"], [], path);
@@ -154,6 +170,7 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "conversation.list": "conversation_list_requested",
   "conversation.open": "conversation_opened",
   "conversation.visualization.read": "conversation_visualization",
+  "conversation.visualization.read_chunk": "conversation_visualization_chunk",
   "conversation.send_text": "message_created",
   "conversation.mark_read": "conversation_marked_read",
   "profile.read": "profile_read_requested",

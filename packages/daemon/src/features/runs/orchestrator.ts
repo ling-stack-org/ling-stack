@@ -3548,7 +3548,7 @@ async function executeAdmittedRunRequest(
       onConversationVisualization: runnerRequest.initialToolSurface?.conversationVisualization ? (request) => {
         assertCurrentRunAdmission();
         request.signal.throwIfAborted();
-        return publishConversationVisualization(store, run.id, runnerCallbackFence, request.toolCallId, request.input, executionNow());
+        return publishConversationVisualization(store, run, runnerCallbackFence, request.toolCallId, request.input, executionNow());
       } : undefined,
       onToolBefore: (request) => {
         try { assertCurrentRunAdmission(); }

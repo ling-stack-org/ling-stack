@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { on, once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { REMOTE_PROTOCOL_VERSION, REMOTE_VISUALIZATION_FEATURE, type RemoteConversationVisualizationReadCommandV1 } from "@ling-stack/contracts";
+import { CONVERSATION_VISUALIZATION_MAX_BYTES, CONVERSATION_VISUALIZATION_MAX_PER_RUN, REMOTE_PROTOCOL_LIMITS, REMOTE_PROTOCOL_VERSION,
+  REMOTE_VISUALIZATION_CHUNKS_FEATURE, REMOTE_VISUALIZATION_CHUNK_BYTES, REMOTE_VISUALIZATION_FEATURE,
+  type RemoteConversationVisualizationReadCommandV1, type RemoteConversationVisualizationReadChunkCommandV1,
+  type RemoteServerFrameV1, type RemoteStreamAckV1 } from "@ling-stack/contracts";
 import { readConversationVisualizationReferences } from "@ling-stack/conversation-ui-core";
 import { createDirectWorkspaceSnapshot, createSqliteRunStore, projectConversationItemToChannelMessage, type RunStore } from "@ling-stack/core";
 import { authProofSigningBytes, authProofSigningInput, fingerprintPublicJwkSync, parseRemoteServerFrameV1, sha256,
@@ -38,7 +41,7 @@ const document = {
   layout: "wide",
 };
 
-async function createFixture(t: TestContext) {
+async function createFixture(t: TestContext, sourceHtml?: string) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-visualization-"));
   const stores = new RunStoreRegistry(createSqliteRunStore);
   stores.trustWorkspaceRoot(cwd);
@@ -48,6 +51,7 @@ async function createFixture(t: TestContext) {
   const active = new ActiveRunRegistry();
   t.after(async () => { supervisor.releaseAll(); stores.closeAll(); await rm(cwd, { recursive: true, force: true }); });
   const now = new Date().toISOString();
+  if (sourceHtml !== undefined) store.updateApprovalPolicy({ toolDecisions: { write: "allow" }, allowedWritePaths: [cwd] }, now);
   const preset = store.createProviderPreset({ kind: "openai-compatible", displayName: "Visualization provider",
     providerId: "visualization-fixture", model: "fixture", api: "openai-completions", baseUrl: "https://fixture.invalid/v1",
     authHeader: false, reasoning: false, capabilities: ["chat"], enabled: true }, now);
@@ -63,15 +67,44 @@ async function createFixture(t: TestContext) {
       const invoke = (input: unknown, toolCallId = "mockup-call") => options.onConversationVisualization!({
         input, toolCallId, signal: new AbortController().signal,
       });
-      const result = await invoke(document);
+      let input: unknown = document;
+      let sourcePath: string | undefined;
+      if (sourceHtml !== undefined) {
+        input = { title: document.title, summary: document.summary, layout: document.layout, sourceFile: "preview.html",
+          preferredHeight: 550, interaction: "script" };
+        const missing = await invoke(input, "missing-file");
+        assert.equal(Reflect.get(missing.details as object, "code"), "visualization_source_unavailable");
+        const outside = await invoke({ ...(input as Record<string, unknown>), sourceFile: "../preview.html" }, "outside-run");
+        assert.equal(Reflect.get(outside.details as object, "code"), "visualization_invalid");
+        const directory = join(options.cwd, ".ling", "artifacts", "visualizations", runId);
+        assert.ok(missing.content[0]?.type === "text" && missing.content[0].text.includes(directory));
+        await mkdir(directory, { recursive: true });
+        await writeFile(join(directory, "oversized.html"), Buffer.alloc(CONVERSATION_VISUALIZATION_MAX_BYTES + 1, 65));
+        const oversized = await invoke({ ...(input as Record<string, unknown>), sourceFile: "oversized.html" }, "oversized-file");
+        assert.equal(Reflect.get(oversized.details as object, "code"), "visualization_source_unavailable");
+        await rm(directory, { recursive: true });
+        sourcePath = join(directory, "preview.html");
+        assert.ok(options.onApprovalRequired);
+        const write = await options.onApprovalRequired({
+          cwd: options.cwd, task: options.task, toolName: "write", toolCallId: "visualization-file",
+          input: { path: sourcePath, content: sourceHtml },
+        });
+        assert.ok(write.approved, write.reason ?? "The Run's file policy permits this source.");
+        assert.equal(await readFile(sourcePath, "utf8"), sourceHtml);
+      }
+      const result = await invoke(input);
       assert.equal(result.isError, undefined);
       const artifactId = Reflect.get(result.details as object, "artifactId") as string;
       assert.match(artifactId, /^viz_[a-f0-9]{32}$/);
-      assert.deepEqual(await invoke(document), result);
-      assert.equal(Reflect.get((await invoke({ ...document, title: "Changed" })).details as object, "code"), "visualization_conflict");
+      assert.deepEqual(await invoke(input), result);
+      assert.equal(Reflect.get((await invoke({ ...(input as Record<string, unknown>), title: "Changed" })).details as object, "code"), "visualization_conflict");
       assert.equal(Reflect.get((await invoke({ ...document, html: "<img src='https://fixture.invalid/image'>" }, "unsafe")).details as object, "code"), "visualization_invalid");
       const saved = store.getConversationVisualization(artifactId);
       assert.equal(saved?.runId, runId);
+      if (sourcePath) {
+        await rm(sourcePath);
+        assert.equal(store.getConversationVisualization(artifactId)?.html, sourceHtml);
+      }
       assert.equal(readConversationVisualization(store, { artifactId, messageId: saved.messageId, messageRevision: 0 }, { threadId: saved.threadId }), undefined);
       const block = result.content[0];
       assert.equal(block?.type, "text");
@@ -93,8 +126,14 @@ async function createFixture(t: TestContext) {
   return { cwd, config, now, store, stores, preset, runners, startRun, secretResolver };
 }
 
-test("a Pi reply publishes a durable visualization with a readable committed message and scoped remote access", async t => {
-  const { cwd, config, now, store, stores, preset, runners, startRun } = await createFixture(t);
+const firstChunk = "<main>" + "a".repeat(REMOTE_VISUALIZATION_CHUNK_BYTES - 7) + "界面";
+const largeHtml = firstChunk + "a".repeat(CONVERSATION_VISUALIZATION_MAX_BYTES - Buffer.byteLength(firstChunk + "</main>")) + "</main>";
+test("a Pi reply publishes a durable inline-input visualization with scoped reads", t => assertDurablePublication(t));
+test("a Pi reply publishes a durable file-backed visualization with scoped reads", t => assertDurablePublication(t, largeHtml));
+
+async function assertDurablePublication(t: TestContext, sourceHtml?: string) {
+  const expectedHtml = sourceHtml ?? document.html;
+  const { cwd, config, now, store, stores, preset, runners, startRun } = await createFixture(t, sourceHtml);
   const thread = store.createLingThread({ kind: "conversation", teammateId: "ling_agent", title: "Visualization", objective: "Show a mockup" }, now);
   const foreign = store.createLingThread({ kind: "conversation", teammateId: "ling_agent", title: "Other", objective: "Unrelated" }, now);
   const server = createServer((request, response) => {
@@ -119,7 +158,7 @@ test("a Pi reply publishes a durable visualization with a readable committed mes
   const transcript = await response.text();
   assert.match(transcript, /event: done/);
   assert.match(transcript, /After the mockup/);
-  assert.ok(!transcript.includes(document.html));
+  assert.ok(!transcript.includes(expectedHtml));
   const run = store.listRuns({ threadId: thread.id })[0];
   assert.ok(run);
   const item = store.getConversationItem("narration:" + run.id);
@@ -134,27 +173,31 @@ test("a Pi reply publishes a durable visualization with a readable committed mes
   const preview = await read();
   assert.equal(preview.status, 200, await preview.clone().text());
   assert.equal(preview.headers.get("cache-control"), "no-store");
-  assert.equal((await preview.json() as { html: string }).html, document.html);
+  assert.equal((await preview.json() as { html: string }).html, expectedHtml);
   const facade = new RemoteConversationFacade({ store, workspaceId: thread.workspaceId, workspaceBindingId: "binding",
     workspaceDisplayName: "Workspace", conversationAccess: { mode: "selected", conversationIds: [thread.id] }, policyVersion: 1 });
   const phone = facade.openConversation(thread.workspaceId, thread.id).messages.find(message => message.role === "assistant");
   assert.ok(phone);
   assert.ok(phone.body.includes(artifactId));
-  assert.ok(!phone.body.includes(document.html));
+  assert.ok(!phone.body.includes(expectedHtml));
   const command = { commandId: "read", workspaceId: thread.workspaceId, conversationId: thread.id,
     messageId: phone.messageId, messageRevision: phone.revision, artifactId };
-  assert.equal(Buffer.from(facade.readVisualization(command).htmlBase64Url, "base64url").toString(), document.html);
+  if (sourceHtml) {
+    assert.throws(() => facade.readVisualization(command), /supports chunked reads/);
+  } else {
+    assert.equal(Buffer.from(facade.readVisualization(command).htmlBase64Url, "base64url").toString(), expectedHtml);
+  }
   assert.throws(() => facade.readVisualization({ ...command, conversationId: foreign.id }), /not available/);
   const reopened = createSqliteRunStore(cwd);
   try {
     assert.equal(readConversationVisualization(reopened, { artifactId, messageId: item.id, messageRevision: item.revision },
-      { threadId: thread.id })?.html, document.html);
+      { threadId: thread.id })?.html, expectedHtml);
   } finally { reopened.close(); }
-  await assertAuthenticatedVisualizationRead(cwd, store, command, foreign.id);
-});
+  await assertAuthenticatedVisualizationRead(cwd, store, command, foreign.id, expectedHtml);
+}
 
 async function assertAuthenticatedVisualizationRead(cwd: string, store: RunStore,
-  command: RemoteConversationVisualizationReadCommandV1, foreignConversationId: string) {
+  command: RemoteConversationVisualizationReadCommandV1, foreignConversationId: string, html: string) {
   const portProbe = createServer();
   portProbe.listen(0, "127.0.0.1");
   await once(portProbe, "listening");
@@ -178,15 +221,18 @@ async function assertAuthenticatedVisualizationRead(cwd: string, store: RunStore
     managementCapability: "visualization-test-capability", managementAllowedOrigins: ["http://localhost"] });
   await gateway.startIfEnabled();
   try {
-    for (const negotiated of [false, true]) {
-      const signal = AbortSignal.timeout(5_000);
+    const expected = Buffer.from(html);
+    for (const features of [[], [REMOTE_VISUALIZATION_FEATURE], [REMOTE_VISUALIZATION_FEATURE, REMOTE_VISUALIZATION_CHUNKS_FEATURE]]) {
+      const chunked = features.includes(REMOTE_VISUALIZATION_CHUNKS_FEATURE);
+      const query = new URLSearchParams(features.map(feature => ["feature", feature]));
+      const signal = AbortSignal.timeout(15_000);
       const response = await fetch("http://127.0.0.1:" + listenerPort + "/v1/auth/challenge" +
-        (negotiated ? "?feature=" + REMOTE_VISUALIZATION_FEATURE : ""), {
+        "?" + query, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceId }), signal,
       });
       assert.equal(response.status, 200);
       const { gatewaySignature: _signature, ...challenge } = validateRemoteAuthChallengeV1(await response.json());
-      assert.deepEqual(challenge.negotiatedFeatures, negotiated ? [REMOTE_VISUALIZATION_FEATURE] : undefined);
+      assert.deepEqual(challenge.negotiatedFeatures, features.length ? features : undefined);
       const proof = {
         version: REMOTE_PROTOCOL_VERSION, protocolVersion: REMOTE_PROTOCOL_VERSION, resume: [],
         gatewayId: challenge.gatewayId, challengeId: challenge.challengeId, candidateSessionId: challenge.candidateSessionId,
@@ -199,36 +245,77 @@ async function assertAuthenticatedVisualizationRead(cwd: string, store: RunStore
       const nextFrame = async () => {
         const result = await frames.next();
         assert.equal(result.done, false);
-        return parseRemoteServerFrameV1(String(result.value[0]));
+        const raw = String(result.value[0]);
+        assert.ok(Buffer.byteLength(raw) <= REMOTE_PROTOCOL_LIMITS.maxFrameBytes);
+        return parseRemoteServerFrameV1(raw);
       };
-      const send = (clientSeq: number, payload: RemoteConversationVisualizationReadCommandV1) => {
+      let clientSeq = 0;
+      const send = (payload: RemoteConversationVisualizationReadCommandV1 | RemoteConversationVisualizationReadChunkCommandV1 | RemoteStreamAckV1) => {
         const now = Date.now();
+        clientSeq += 1;
         socket.send(JSON.stringify({
-          version: REMOTE_PROTOCOL_VERSION, type: "conversation.visualization.read", payload,
+          version: REMOTE_PROTOCOL_VERSION,
+          type: "ackServerSeq" in payload ? "stream.ack" : "offset" in payload ? "conversation.visualization.read_chunk" : "conversation.visualization.read",
+          payload,
           gatewayId: challenge.gatewayId, sessionId: challenge.candidateSessionId, messageId: "request_" + clientSeq,
           clientSeq, sentAt: new Date(now).toISOString(), expiresAt: new Date(now + 10_000).toISOString(),
         }));
+      };
+      const ack = (frame: RemoteServerFrameV1) => send({ streamId: frame.streamId, ackServerSeq: frame.serverSeq });
+      const outcome = async () => {
+        let frame = await nextFrame();
+        while (frame.type !== "command.completed" && frame.type !== "command.failed") frame = await nextFrame();
+        return frame;
       };
       try {
         await once(socket, "open", { signal });
         socket.send(JSON.stringify({ ...proof, signature }));
         assert.equal((await nextFrame()).type, "session.ready");
-        if (!negotiated) {
+        if (!features.length) {
           const closed = once(socket, "close", { signal });
-          send(1, command);
+          send(command);
           assert.equal((await closed)[0], 1008);
           continue;
         }
-        send(1, command);
-        let frame = await nextFrame();
-        while (frame.type !== "command.completed") frame = await nextFrame();
-        assert.equal(frame.payload.commandId, command.commandId);
-        assert.equal(frame.payload.commandType, "conversation.visualization.read");
-        assert.equal(frame.payload.result.kind, "conversation_visualization");
-        assert.equal(Buffer.from(frame.payload.result.document.htmlBase64Url, "base64url").toString(), document.html);
-        send(2, { ...command, commandId: "foreign-read", conversationId: foreignConversationId });
-        frame = await nextFrame();
-        while (frame.type !== "command.failed") frame = await nextFrame();
+        if (chunked) {
+          const reads = expected.length === CONVERSATION_VISUALIZATION_MAX_BYTES ? CONVERSATION_VISUALIZATION_MAX_PER_RUN : 1;
+          for (let read = 0; read < reads; read += 1) {
+            const blocks: Buffer[] = [];
+            for (let offset = 0; offset < expected.length; offset += REMOTE_VISUALIZATION_CHUNK_BYTES) {
+              send({ ...command, commandId: `chunk-${read}-${offset}`, offset });
+              const frame = await outcome();
+              assert.ok(frame.type === "command.completed" && frame.payload.result.kind === "conversation_visualization_chunk");
+              assert.equal(frame.payload.result.document.offset, offset);
+              assert.equal(frame.payload.result.document.sizeBytes, expected.length);
+              blocks.push(Buffer.from(frame.payload.result.document.htmlBase64Url, "base64url"));
+              ack(frame);
+            }
+            assert.deepEqual(Buffer.concat(blocks), expected);
+          }
+          if (reads > 1) {
+            send({ ...command, commandId: "over-read-budget", offset: 0 });
+            const frame = await outcome();
+            assert.ok(frame.type === "command.failed");
+            assert.equal(frame.payload.error.code, "rate_limited");
+            assert.equal(frame.payload.error.retryable, true);
+            ack(frame);
+          }
+        } else {
+          send(command);
+          const frame = await outcome();
+          assert.equal(frame.payload.commandId, command.commandId);
+          if (expected.length > REMOTE_VISUALIZATION_CHUNK_BYTES) {
+            assert.ok(frame.type === "command.failed");
+            assert.equal(frame.payload.error.code, "payload_too_large");
+          } else {
+            assert.ok(frame.type === "command.completed" && frame.payload.result.kind === "conversation_visualization");
+            assert.deepEqual(Buffer.from(frame.payload.result.document.htmlBase64Url, "base64url"), expected);
+          }
+        }
+        send({ ...command, commandId: "foreign-read", conversationId: foreignConversationId,
+          ...(chunked && expected.length !== CONVERSATION_VISUALIZATION_MAX_BYTES ? { offset: 0 } : {}) });
+        const frame = await outcome();
+        assert.ok(frame.type === "command.failed");
         assert.equal(frame.payload.commandId, "foreign-read");
         assert.equal(frame.payload.error.code, "conversation_not_allowed");
       } finally {

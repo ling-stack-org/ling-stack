@@ -10,6 +10,7 @@ const appServerAndLaterMarkers = [
   [236, "create_work_item_evidence"],
   [237, "create_app_server_state"],
   [238, "conversation_visualizations"],
+  [239, "conversation_visualization_document_limits"],
 ] as const;
 
 const workItemControlDefaults = [
@@ -25,7 +26,7 @@ const workItemControlDefaults = [
 
 /** Restore the schema from before App Server migrations in an owned temporary fixture. */
 export function rewindToPreAppServerSchema(db: DatabaseSync): void {
-  const markers = db.prepare("SELECT version, name FROM schema_migrations WHERE version IN (235, 236, 237, 238) ORDER BY version").all();
+  const markers = db.prepare("SELECT version, name FROM schema_migrations WHERE version IN (235, 236, 237, 238, 239) ORDER BY version").all();
   if (markers.length === 0) return;
   assert.deepEqual(markers.map(({ version, name }) => [version, name]), appServerAndLaterMarkers);
   const file = db.prepare("PRAGMA database_list").all().find(row => row.name === "main")?.file;

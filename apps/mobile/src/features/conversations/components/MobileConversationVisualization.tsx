@@ -22,9 +22,9 @@ export function MobileConversationVisualization({ message, reference }: {
   const connected = remoteState.connection === "connected";
   const available = connected && client?.supportsConversationVisualizations && Boolean(Preview);
   const binding = remoteState.policy?.workspaceBindingId;
-  const load = useCallback(() => {
+  const load = useCallback((signal: AbortSignal) => {
     if (!client) return Promise.reject(new Error("remote_visualization_unavailable"));
-    return client.readConversationVisualization(message.conversationId, message.messageId, message.revision, reference.artifactId);
+    return client.readConversationVisualization(message.conversationId, message.messageId, message.revision, reference.artifactId, signal);
   }, [client, message.conversationId, message.messageId, message.revision, reference.artifactId]);
   useEffect(() => {
     setOpened(false);
@@ -47,7 +47,7 @@ export function MobileConversationVisualization({ message, reference }: {
       )}
       {opened && available && client ? (
         <VisualizationModal
-          key={binding}
+          key={JSON.stringify([binding, message.conversationId, message.messageId, message.revision, reference.artifactId])}
           label={reference.label}
           onClose={() => setOpened(false)}
           load={load}
@@ -60,16 +60,22 @@ export function MobileConversationVisualization({ message, reference }: {
 function VisualizationModal({ label, onClose, load }: {
   readonly label: string;
   readonly onClose: () => void;
-  readonly load: () => Promise<ConversationVisualization>;
+  readonly load: (signal: AbortSignal) => Promise<ConversationVisualization>;
 }) {
   const { theme } = useMobileTheme();
   const [document, setDocument] = useState<ConversationVisualization>();
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<"unavailable" | "requires_chunks" | "rate_limited">();
   const [revision, setRevision] = useState(0);
   useEffect(() => {
-    let active = true;
-    void load().then(result => { if (active) setDocument(result); }, () => { if (active) setFailed(true); });
-    return () => { active = false; };
+    const controller = new AbortController();
+    void load(controller.signal).then(result => {
+      if (!controller.signal.aborted) setDocument(result);
+    }, (error: unknown) => {
+      if (controller.signal.aborted) return;
+      const code = error instanceof Error ? error.message.split(":", 1)[0] : undefined;
+      setFailure(code === "payload_too_large" ? "requires_chunks" : code === "rate_limited" ? "rate_limited" : "unavailable");
+    });
+    return () => controller.abort();
   }, [load, revision]);
 
   const html = useMemo(() => document
@@ -85,20 +91,24 @@ function VisualizationModal({ label, onClose, load }: {
           </Pressable>
         </View>
         {document ? <Text style={[styles.summary, { color: theme.text.muted }]}>{document.summary}</Text> : null}
-        {html && Preview && !failed ? <Preview style={styles.content} html={html} onLoadError={() => setFailed(true)} /> : null}
-        {document?.interaction === "script" && !failed ? (
+        {html && Preview && !failure ? <Preview style={styles.content} html={html} onLoadError={() => setFailure("unavailable")} /> : null}
+        {document?.interaction === "script" && !failure ? (
           <Text style={[styles.summary, { color: theme.text.muted }]}>在电脑上开启脚本交互</Text>
         ) : null}
-        {failed ? (
+        {failure ? (
           <View style={styles.status}>
-            <Text style={{ color: theme.text.muted }}>无法打开可视化</Text>
-            <Pressable accessibilityRole="button" style={styles.action} onPress={() => {
-              setDocument(undefined);
-              setFailed(false);
-              setRevision(value => value + 1);
-            }}>
-              <Text style={{ color: theme.text.strong }}>重试</Text>
-            </Pressable>
+            <Text style={{ color: theme.text.muted }}>{failure === "requires_chunks"
+              ? "此可视化需要更新的连接版本，可在电脑上打开"
+              : failure === "rate_limited" ? "读取次数较多，请稍后重试" : "无法打开可视化"}</Text>
+            {failure !== "requires_chunks" ? (
+              <Pressable accessibilityRole="button" style={styles.action} onPress={() => {
+                setDocument(undefined);
+                setFailure(undefined);
+                setRevision(value => value + 1);
+              }}>
+                <Text style={{ color: theme.text.strong }}>重试</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : !document ? <ActivityIndicator accessibilityLabel="正在读取可视化" style={styles.status} /> : null}
       </SafeAreaView>

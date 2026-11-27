@@ -21,9 +21,22 @@ type ReadScope = { readonly threadId: string } | {
 
 export function readConversationVisualization(store: RunStore, query: ConversationVisualizationRead,
   scope: ReadScope): ConversationVisualization | undefined {
+  return readOwnedVisualization(store, query, scope, id => store.getConversationVisualization(id));
+}
+
+export function readConversationVisualizationChunk(store: RunStore, query: ConversationVisualizationRead,
+  scope: ReadScope, offset: number): (Omit<ConversationVisualization, "html"> & { readonly bytes: Uint8Array }) | undefined {
+  return readOwnedVisualization(store, query, scope, id => store.getConversationVisualizationChunk(id, offset));
+}
+
+type VisualizationOwnership = Pick<NonNullable<ReturnType<RunStore["getConversationVisualization"]>>,
+  "workspaceId" | "threadId" | "turnId" | "runId" | "messageId">;
+
+function readOwnedVisualization<T extends VisualizationOwnership>(store: RunStore, query: ConversationVisualizationRead,
+  scope: ReadScope, read: (id: string) => T | undefined): Omit<T, keyof VisualizationOwnership> | undefined {
   if (!isConversationVisualizationId(query.artifactId)) return undefined;
   return store.readSnapshot(() => {
-    const saved = store.getConversationVisualization(query.artifactId);
+    const saved = read(query.artifactId);
     if (!saved) return undefined;
     const { workspaceId, threadId, turnId, runId, messageId, ...document } = saved;
     const thread = store.getLingThread(threadId);

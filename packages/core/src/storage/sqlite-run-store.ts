@@ -880,7 +880,7 @@ import { applyRunProgressCheckpointMigration } from "./sqlite/run-progress-check
 import { applyConversationContextViewLineageMigration } from "./sqlite/conversation-context-view-lineage-migration.js";
 import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
-import { applyConversationVisualizationMigration, getConversationVisualization, saveConversationVisualization } from "./sqlite/conversation-visualization-store.js";
+import { applyConversationVisualizationMigration, getConversationVisualization, getConversationVisualizationChunk, saveConversationVisualization } from "./sqlite/conversation-visualization-store.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -5175,6 +5175,10 @@ export class SqliteRunStore implements RunStore {
 
   getConversationVisualization(artifactId: string): ReturnType<RunStore["getConversationVisualization"]> {
     return getConversationVisualization(this.database, artifactId);
+  }
+
+  getConversationVisualizationChunk(artifactId: string, offset: number): ReturnType<RunStore["getConversationVisualizationChunk"]> {
+    return getConversationVisualizationChunk(this.database, artifactId, offset);
   }
 
   listUnpublishedNormalNarrationRunIds(afterRunId: string, limit: number): string[] {

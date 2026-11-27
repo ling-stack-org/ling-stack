@@ -1,5 +1,6 @@
 import {
   REMOTE_PROTOCOL_LIMITS,
+  REMOTE_VISUALIZATION_CHUNKS_FEATURE,
   REMOTE_VISUALIZATION_FEATURE,
   type RemoteAuthChallengeV1,
   type RemoteAuthProofV1,
@@ -239,9 +240,13 @@ export function validateRemoteAuthChallengeV1(
   assertExpiryWindow(issuedAt, expiresAt, 30_000, options, path);
   const negotiatedFeatures = record.negotiatedFeatures === undefined ? undefined : expectArray(
     record.negotiatedFeatures, `${path}.negotiatedFeatures`,
-    (feature, featurePath) => expectLiteral(feature, REMOTE_VISUALIZATION_FEATURE, featurePath),
-    { minItems: 1, maxItems: 1 },
+    (feature, featurePath) => expectEnum(feature, [REMOTE_VISUALIZATION_FEATURE, REMOTE_VISUALIZATION_CHUNKS_FEATURE], featurePath),
+    { minItems: 1, maxItems: 2 },
   );
+  if (negotiatedFeatures && (negotiatedFeatures[0] !== REMOTE_VISUALIZATION_FEATURE
+    || (negotiatedFeatures.length === 2 && negotiatedFeatures[1] !== REMOTE_VISUALIZATION_CHUNKS_FEATURE))) {
+    throw new RemoteProtocolError("invalid_field", "Invalid visualization feature negotiation", `${path}.negotiatedFeatures`);
+  }
   const supported = expectArray(
     record.supportedProtocolVersions,
     `${path}.supportedProtocolVersions`,
@@ -258,7 +263,8 @@ export function validateRemoteAuthChallengeV1(
     issuedAt,
     expiresAt,
     supportedProtocolVersions: supported as unknown as readonly [1],
-    ...(negotiatedFeatures ? { negotiatedFeatures: [negotiatedFeatures[0]!] } : {}),
+    ...(negotiatedFeatures ? { negotiatedFeatures: negotiatedFeatures.length === 2
+      ? [REMOTE_VISUALIZATION_FEATURE, REMOTE_VISUALIZATION_CHUNKS_FEATURE] : [REMOTE_VISUALIZATION_FEATURE] } : {}),
     gatewaySignature: expectEs256Signature(record.gatewaySignature, `${path}.gatewaySignature`),
   };
 }

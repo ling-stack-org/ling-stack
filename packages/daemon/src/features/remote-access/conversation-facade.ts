@@ -5,19 +5,23 @@ import {
   type RemoteProjectionOutboxRecord,
   type RunStore,
 } from "@ling-stack/core";
-import type {
-  RemoteAccessPolicySummaryV1,
-  RemoteConversationAccessV1,
-  RemoteConversationDeltaV1,
-  RemoteConversationListSnapshotV1,
-  RemoteConversationSnapshotV1,
-  RemoteConversationVisualizationReadCommandV1,
-  RemoteVisualizationDocument,
-  RemoteMarkConversationReadCommandV1,
-  RemoteProfileUpdateCommandV1,
-  RemoteSendTextCommandV1,
-  RemoteUserProfileV1,
-  RemoteWorkspaceSummaryV1,
+import {
+  REMOTE_VISUALIZATION_CHUNK_BYTES,
+  REMOTE_VISUALIZATION_V1_MAX_HEIGHT,
+  type RemoteAccessPolicySummaryV1,
+  type RemoteConversationAccessV1,
+  type RemoteConversationDeltaV1,
+  type RemoteConversationListSnapshotV1,
+  type RemoteConversationSnapshotV1,
+  type RemoteConversationVisualizationReadCommandV1,
+  type RemoteConversationVisualizationReadChunkCommandV1,
+  type RemoteVisualizationChunk,
+  type RemoteVisualizationDocument,
+  type RemoteMarkConversationReadCommandV1,
+  type RemoteProfileUpdateCommandV1,
+  type RemoteSendTextCommandV1,
+  type RemoteUserProfileV1,
+  type RemoteWorkspaceSummaryV1,
 } from "@ling-stack/contracts";
 import {
   ChannelRemoteConversationAdapter,
@@ -25,7 +29,7 @@ import {
   TeammateDirectRemoteConversationAdapter,
   type RemoteConversationAdapter,
 } from "./conversation-adapters.js";
-import { readConversationVisualization } from "../conversations/visualization-read.js";
+import { readConversationVisualizationChunk } from "../conversations/visualization-read.js";
 import { RemoteAccessError } from "./errors.js";
 import { RemoteProfileService } from "./profile-service.js";
 
@@ -154,14 +158,30 @@ export class RemoteConversationFacade {
   }
 
   readVisualization(command: RemoteConversationVisualizationReadCommandV1): RemoteVisualizationDocument {
+    const { bytes, ...metadata } = this.requireVisualizationChunk(command, 0);
+    if (metadata.sizeBytes > REMOTE_VISUALIZATION_CHUNK_BYTES) {
+      throw new RemoteAccessError("payload_too_large", "This visualization requires a client that supports chunked reads.");
+    }
+    return { ...metadata, preferredHeight: Math.min(metadata.preferredHeight, REMOTE_VISUALIZATION_V1_MAX_HEIGHT),
+      htmlBase64Url: Buffer.from(bytes).toString("base64url") };
+  }
+
+  readVisualizationChunk(command: RemoteConversationVisualizationReadChunkCommandV1): RemoteVisualizationChunk {
+    const { bytes, ...metadata } = this.requireVisualizationChunk(command, command.offset);
+    if (command.offset >= metadata.sizeBytes) {
+      throw new RemoteAccessError("protocol_incompatible", "Visualization chunk offset exceeds the document size.");
+    }
+    return { ...metadata, offset: command.offset, htmlBase64Url: Buffer.from(bytes).toString("base64url") };
+  }
+
+  private requireVisualizationChunk(command: RemoteConversationVisualizationReadCommandV1, offset: number) {
     this.assertWorkspace(command.workspaceId);
     const adapter = this.resolveAllowedAdapter(command.conversationId, this.now());
-    const document = readConversationVisualization(this.store, command, {
+    const document = readConversationVisualizationChunk(this.store, command, {
       workspaceId: this.workspaceId, conversationId: command.conversationId, kind: adapter.kind,
-    });
+    }, offset);
     if (!document) throw new RemoteAccessError("conversation_not_allowed", "Visualization unavailable in this message.");
-    const { html, ...metadata } = document;
-    return { ...metadata, htmlBase64Url: Buffer.from(html, "utf8").toString("base64url") };
+    return document;
   }
 
   sendText(

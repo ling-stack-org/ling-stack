@@ -1,11 +1,19 @@
 import type { ConversationVisualization, ConversationVisualizationInput, RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 
-export interface SavedConversationVisualization extends ConversationVisualization {
+interface SavedConversationVisualizationMetadata extends Omit<ConversationVisualization, "html"> {
   readonly workspaceId: string;
   readonly threadId: string;
   readonly turnId: string;
   readonly messageId: string;
   readonly runId: string;
+}
+
+export interface SavedConversationVisualization extends SavedConversationVisualizationMetadata {
+  readonly html: string;
+}
+
+export interface SavedConversationVisualizationChunk extends SavedConversationVisualizationMetadata {
+  readonly bytes: Uint8Array;
 }
 
 export interface SaveConversationVisualization {

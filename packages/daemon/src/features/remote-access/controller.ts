@@ -341,7 +341,7 @@ export class RemoteAccessController {
       }
       if (url.pathname === "/v1/auth/challenge") {
         const input = requireRecord(body);
-        writeRemoteJson(response, 200, this.auth.createAuthChallenge(requireString(input.deviceId, "deviceId"), url.searchParams.get("feature") ?? undefined));
+        writeRemoteJson(response, 200, this.auth.createAuthChallenge(requireString(input.deviceId, "deviceId"), url.searchParams.getAll("feature")));
         return;
       }
       writeRemoteJson(response, 404, { error: "not_found", message: "Remote Gateway route not found." });

@@ -1,19 +1,51 @@
 import { createHash } from "node:crypto";
-import { CONVERSATION_VISUALIZATION_MAX_BYTES, CONVERSATION_VISUALIZATION_MAX_PER_RUN, normalizeConversationVisualization } from "@ling-stack/contracts";
-import type { DatabaseSync } from "node:sqlite";
-import type { SavedConversationVisualization, SaveConversationVisualization, SaveConversationVisualizationResult } from "../../conversation-visualization-types.js";
+import { CONVERSATION_VISUALIZATION_MAX_BYTES, CONVERSATION_VISUALIZATION_MAX_HEIGHT, CONVERSATION_VISUALIZATION_MAX_PER_RUN,
+  REMOTE_VISUALIZATION_CHUNK_BYTES, normalizeConversationVisualization } from "@ling-stack/contracts";
+import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import type { SavedConversationVisualization, SavedConversationVisualizationChunk,
+  SaveConversationVisualization, SaveConversationVisualizationResult } from "../../conversation-visualization-types.js";
 import type { RunStore } from "../../run-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteRunStoreMigrationContext } from "./migrations.js";
 
-const version = 238;
+const initialVersion = 238;
+const documentLimitsVersion = 239;
 
 export function applyConversationVisualizationMigration({ database, hasMigration, recordMigration }:
   Pick<SqliteRunStoreMigrationContext, "database" | "hasMigration" | "recordMigration">): void {
-  if (hasMigration(version)) return;
+  if (hasMigration(documentLimitsVersion)) return;
   database.exec("BEGIN IMMEDIATE");
   try {
-    database.exec(`
+    if (hasMigration(documentLimitsVersion)) {
+      database.exec("COMMIT");
+      return;
+    }
+    const extendingExistingTable = hasMigration(initialVersion);
+    if (extendingExistingTable) {
+      database.exec("ALTER TABLE conversation_visualizations RENAME TO conversation_visualizations_pre_limits");
+    } else {
+      recordMigration(initialVersion, "conversation_visualizations");
+    }
+    createVisualizationTable(database);
+    if (extendingExistingTable) database.exec(`
+      INSERT INTO conversation_visualizations (
+        id, run_id, thread_id, turn_id, workspace_id, message_id, title, summary, html, sha256,
+        input_sha256, layout, interaction, preferred_height, created_at
+      ) SELECT id, run_id, thread_id, turn_id, workspace_id, message_id, title, summary, html, sha256,
+        input_sha256, layout, interaction, preferred_height, created_at FROM conversation_visualizations_pre_limits;
+      DROP TABLE conversation_visualizations_pre_limits;
+    `);
+    database.exec("CREATE INDEX idx_conversation_visualizations_run ON conversation_visualizations(run_id)");
+    recordMigration(documentLimitsVersion, "conversation_visualization_document_limits");
+    database.exec("COMMIT");
+  } catch (error) {
+    rollbackOwnedSqliteTransaction(database);
+    throw error;
+  }
+}
+
+function createVisualizationTable(database: DatabaseSync): void {
+  database.exec(`
     CREATE TABLE conversation_visualizations (
       id TEXT PRIMARY KEY NOT NULL,
       run_id TEXT NOT NULL REFERENCES run_sessions(id) ON DELETE CASCADE,
@@ -28,17 +60,10 @@ export function applyConversationVisualizationMigration({ database, hasMigration
       input_sha256 TEXT NOT NULL,
       layout TEXT NOT NULL CHECK(layout IN ('standard', 'wide')),
       interaction TEXT NOT NULL CHECK(interaction IN ('native', 'script')),
-      preferred_height INTEGER NOT NULL CHECK(preferred_height BETWEEN 160 AND 480),
+      preferred_height INTEGER NOT NULL CHECK(preferred_height BETWEEN 160 AND ${CONVERSATION_VISUALIZATION_MAX_HEIGHT}),
       created_at TEXT NOT NULL
     );
-    CREATE INDEX idx_conversation_visualizations_run ON conversation_visualizations(run_id);
-    `);
-    recordMigration(version, "conversation_visualizations");
-    database.exec("COMMIT");
-  } catch (error) {
-    rollbackOwnedSqliteTransaction(database);
-    throw error;
-  }
+  `);
 }
 
 type Ports = Pick<RunStore, "isCurrentRunExecutionOwner" | "getRun" | "getLingThread" | "getLingTurnForRun" |
@@ -118,9 +143,29 @@ export function getConversationVisualization(database: DatabaseSync, id: string)
   const document = normalizeConversationVisualization({ title: row.title, summary: row.summary, html,
     layout: row.layout, interaction: row.interaction, preferredHeight: row.preferred_height });
   if (!document) return undefined;
-  return { ...document, artifactId: id, sizeBytes: row.html.byteLength, sha256: String(row.sha256),
+  return { ...document, ...visualizationOwnership(row), artifactId: id, sizeBytes: row.html.byteLength, sha256: String(row.sha256) };
+}
+
+export function getConversationVisualizationChunk(database: DatabaseSync, id: string, offset: number): SavedConversationVisualizationChunk | undefined {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset >= CONVERSATION_VISUALIZATION_MAX_BYTES) return undefined;
+  const row = database.prepare(`SELECT run_id, thread_id, turn_id, workspace_id, message_id,
+      title, summary, sha256, layout, interaction, preferred_height, length(html) AS size_bytes,
+      substr(html, ?, ?) AS bytes
+    FROM conversation_visualizations WHERE id = ? AND length(html) BETWEEN 1 AND ?`)
+    .get(offset + 1, REMOTE_VISUALIZATION_CHUNK_BYTES, id, CONVERSATION_VISUALIZATION_MAX_BYTES);
+  if (!row || !(row.bytes instanceof Uint8Array) || typeof row.size_bytes !== "number" || typeof row.preferred_height !== "number"
+    || typeof row.title !== "string" || typeof row.summary !== "string" || typeof row.sha256 !== "string"
+    || (row.layout !== "standard" && row.layout !== "wide") || (row.interaction !== "native" && row.interaction !== "script")) return undefined;
+  return { ...visualizationOwnership(row), artifactId: id, sizeBytes: row.size_bytes, sha256: row.sha256,
+    title: row.title, summary: row.summary, layout: row.layout, interaction: row.interaction,
+    preferredHeight: row.preferred_height, bytes: row.bytes };
+}
+
+function visualizationOwnership(row: Record<string, SQLOutputValue>) {
+  return {
     workspaceId: String(row.workspace_id), threadId: String(row.thread_id), turnId: String(row.turn_id),
-    messageId: String(row.message_id), runId: String(row.run_id) };
+    messageId: String(row.message_id), runId: String(row.run_id),
+  };
 }
 
 function digest(value: string | Uint8Array): string {
