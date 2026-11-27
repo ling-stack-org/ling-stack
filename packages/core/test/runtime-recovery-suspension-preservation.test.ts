@@ -19,6 +19,8 @@ for (const state of ["requested", "sealed"]) {
 test("a source without a suspension request keeps ordinary stale-run failure semantics", async t => {
   const f = await createSuspensionStartupFixture(t, "absent");
   assert.equal(f.store.recoverStaleRuns("2026-10-23T00:00:00.000Z"), 1);
-  assert.equal(f.store.getRun(f.source.runId).status, "failed");
+  const run = f.store.getRun(f.source.runId);
+  assert.ok(run);
+  assert.equal(run.status, "failed");
   assert.equal(f.store.listEvents(f.source.runId).filter(event => event.type === "run_error").length, 1);
 });
