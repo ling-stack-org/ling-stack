@@ -339,8 +339,8 @@ window closes the Companion.
   question's text field when the user requests a free-text answer and the question
   allows it. Conversation messages have their own reading surfaces on the transparent
   canvas. Both entry points focus the editor. Collapse the editor on Escape or when
-  focus leaves its entire input area, including its controls, after text composition
-  or submission settles. An active work card can remain visible on its own.
+  focus leaves the companion controls after text composition or submission settles.
+  Moving focus between the editor and an active work card keeps their controls in place.
 - Bind a conversation to its selected teammate when it opens. Keep its draft scoped to
   that private conversation and a question draft scoped to its request and version.
   Restore the draft when the corresponding editor reopens. A compact mode presents

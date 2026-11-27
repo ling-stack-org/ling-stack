@@ -533,7 +533,7 @@ test("a long approval and the desktop chat composer remain accessible together",
     await composer.click({ timeout: 5_000 });
     await composer.fill("A draft while the approval is pending");
     await expect(panel.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
-    await panel.getByRole("button", { name: "Approve", exact: true }).click({ timeout: 5_000 });
+    await panel.getByRole("button", { name: "Approve", exact: true }).click({ delay: 100, timeout: 5_000 });
     await expect(card.getByRole("status")).toContainText("Approval submitted");
     await expect(character).toBeInViewport({ ratio: 1 });
     expect(await renderedSize(character)).toEqual(idleSize);

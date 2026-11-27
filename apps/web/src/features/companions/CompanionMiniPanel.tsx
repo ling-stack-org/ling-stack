@@ -604,6 +604,13 @@ export function CompanionMiniPanel({
       onPointerMove={moveDrag}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onBlur={(event) => {
+        if (!conversationOpen || event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        window.setTimeout(() => {
+          if (!panelRef.current?.contains(document.activeElement)
+            && !chat.sending && !answering) setConversationOpen(false);
+        }, 0);
+      }}
     >
       {activeAttention ? (
         <div
@@ -638,14 +645,6 @@ export function CompanionMiniPanel({
       <div
         ref={conversationRef}
         className={`companion-mini-conversation${conversationOpen && selected ? " is-open" : " is-collapsed"}`}
-        onBlur={(event: React.FocusEvent<HTMLDivElement>) => {
-          const next = event.relatedTarget as Node | null;
-          if (next && conversationRef.current?.contains(next)) return;
-          window.setTimeout(() => {
-            if (!conversationRef.current?.contains(document.activeElement)
-              && !chat.sending && !answering) setConversationOpen(false);
-          }, 0);
-        }}
       >
         <header className="companion-mini-header">
           <div className="companion-mini-heading">
