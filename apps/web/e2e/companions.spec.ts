@@ -1,5 +1,5 @@
 import { createServer, type ServerResponse } from "node:http";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { defaultCompanionManifest } from "@ling-stack/core";
 import type { AiTeammate, CompanionAttentionItem, CompanionProfile, CompanionState, TeammateDirectMessage } from "@ling-stack/contracts";
 import { createChannelBranchFromBody, mockDaemon } from "./support/mock-daemon";
@@ -153,6 +153,13 @@ async function openPanel(page: Page) {
   await expect(panel.getByRole("img", { name: "Yui" })).toBeVisible();
   await panel.locator(".companion-talk-button").evaluate((element) => (element as HTMLButtonElement).click());
   return panel;
+}
+
+function renderedSize(character: Locator) {
+  return character.evaluate((element) => {
+    const { width, height } = element.getBoundingClientRect();
+    return { width, height };
+  });
 }
 
 async function mockAttentionCard(page: Page, card: Pick<CompanionAttentionItem, "source" | "priority" | "status" | "payload" | "summary">, revision = 1) {
@@ -439,10 +446,13 @@ test("desktop companion retries teammate discovery after a transient daemon fail
   } finally { await f.close(); }
 });
 
-test("Yui and a pending approval are both visible in a narrow unconfigured desktop companion", async ({ page }) => {
-  const f = await fixture(page, "normal", 0, { empty: true });
+test("Yui keeps its size through an approval in a narrow unconfigured desktop companion", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "pending" });
+  const approvalId = base.approvals[0]!.id;
+  const f = await fixture(page, "normal", 0, { empty: true, base });
   try {
-    await page.setViewportSize({ width: 380, height: 480 });
+    await page.setViewportSize({ width: 320, height: 480 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.addInitScript(workspace => {
       Object.defineProperty(window, "lingCompanionDesktop", {
         value: {
@@ -453,25 +463,37 @@ test("Yui and a pending approval are both visible in a narrow unconfigured deskt
         },
       });
     }, cwd);
-    await mockAttentionCard(page, {
-      source: { workspaceId: "workspace_default", cwd, kind: "approval", id: "approval_release", approvalId: "approval_release" },
-      priority: "approval",
-      status: "pending",
-      payload: { kind: "approval", approvalId: "approval_release", status: "pending", risk: "medium" },
-      summary: "Review the release permission",
-    });
     await page.goto("/?companionWindow=1");
     const panel = page.getByRole("dialog", { name: "Intelligent companion" });
-    await expect(panel.getByRole("button", { name: "Close", exact: true })).toBeInViewport({ ratio: 1 });
     const yui = panel.getByRole("img", { name: "Yui", exact: true });
+    await expect(panel.getByText("All clear", { exact: true })).toBeVisible();
+    await expect(yui).toBeInViewport({ ratio: 1 });
+    const idleSize = await renderedSize(yui);
+    const evidence = process.env.LING_COMPANION_VISUAL_EVIDENCE;
+    if (evidence) await page.screenshot({ path: `${evidence}/companion-yui-fallback-idle.png`, omitBackground: true });
+    await mockAttentionCard(page, {
+      source: { workspaceId: "workspace_default", cwd, kind: "approval", id: approvalId, approvalId },
+      priority: "approval",
+      status: "pending",
+      payload: { kind: "approval", approvalId, status: "pending", risk: "medium" },
+      summary: "Review the release permission",
+    });
+    await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+    const approve = panel.getByRole("button", { name: "Approve", exact: true });
+    await expect(approve).toBeVisible();
+    expect(await renderedSize(yui)).toEqual(idleSize);
+    await expect(panel.getByRole("button", { name: "Close", exact: true })).toBeInViewport({ ratio: 1 });
     await expect(yui).toBeInViewport({ ratio: 1 });
     await expect(panel.getByRole("button", { name: "Open companion settings", exact: true })).toBeInViewport({ ratio: 1 });
-    const approve = panel.getByRole("button", { name: "Approve", exact: true });
+    await approve.scrollIntoViewIfNeeded();
     await expect(approve).toBeInViewport({ ratio: 1 });
-    await approve.click({ trial: true });
-    await expect.poll(async () => (await yui.boundingBox())?.height ?? 0).toBeGreaterThan(180);
-    const evidence = process.env.LING_COMPANION_VISUAL_EVIDENCE;
     if (evidence) await page.screenshot({ path: `${evidence}/companion-yui-fallback-approval.png`, omitBackground: true });
+    await approve.click();
+    await expect(panel.getByRole("status")).toContainText("Approval submitted");
+    await page.unroute("http://127.0.0.1:17891/companion-attention*");
+    await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(panel.getByText("All clear", { exact: true })).toBeVisible();
+    expect(await renderedSize(yui)).toEqual(idleSize);
   } finally { await f.close(); }
 });
 
@@ -615,39 +637,62 @@ test("conversation stays beside the character across themes and below it on narr
   const evidence = process.env.LING_COMPANION_VISUAL_EVIDENCE;
   try {
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await openPanel(page);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    const character = panel.getByRole("img", { name: "Yui", exact: true });
+    const composer = panel.getByRole("textbox", { name: "Message companion" });
+    const talk = panel.getByRole("button", { name: "Talk", exact: true });
     for (const themeId of ["ling-light", "ling-dark", "ling-breeze", "ling-ocean", "ling-night", "ling-journey"]) {
       await page.evaluate(id => {
         const selection = JSON.stringify({ mode: "fixed", themeId: id });
         localStorage.setItem("ling-stack.themeSelection", selection);
         localStorage.setItem("ling-stack.themeBootstrapSelection", selection);
       }, themeId);
-      const panel = await openPanel(page);
+      await page.reload();
       await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
+      await page.locator(".companion-config-button").click();
+      await expect(talk).toBeVisible();
+      await expect(character).toBeInViewport({ ratio: 1 });
+      const idleSize = await renderedSize(character);
+      await talk.click();
+      await expect(composer).toBeFocused();
       const conversation = await panel.locator(".companion-mini-conversation").boundingBox();
-      const character = await panel.getByRole("img", { name: "Yui" }).boundingBox();
-      expect(conversation!.x).toBeGreaterThanOrEqual(character!.x);
-      expect(await panel.getByRole("img", { name: "Yui" }).evaluate(async el => {
+      const characterBox = await character.boundingBox();
+      expect(conversation!.x).toBeGreaterThanOrEqual(characterBox!.x + characterBox!.width);
+      expect(await renderedSize(character)).toEqual(idleSize);
+      expect(await character.evaluate(async el => {
         const url = getComputedStyle(el).backgroundImage.slice(5, -2);
         const image = new Image(); image.src = url; await image.decode();
         return image.naturalWidth;
       })).toBeGreaterThan(1000);
       await expect(panel.getByRole("log")).toContainText("History 9");
       await expect(panel.getByRole("log")).not.toContainText("Internal proactive scheduler prompt");
-      await panel.getByRole("textbox").fill("A draft beside Yui");
-      await expect(panel.getByRole("textbox")).toHaveValue("A draft beside Yui");
+      await composer.fill("A draft beside Yui");
+      await expect(composer).toHaveValue("A draft beside Yui");
       if (evidence) await page.screenshot({ path: `${evidence}/companion-chat-${themeId}.png` });
+      await page.keyboard.press("Escape");
+      await expect(talk).toBeVisible();
+      expect(await renderedSize(character)).toEqual(idleSize);
     }
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
-    const stage = await panel.locator(".companion-pet-stage").boundingBox();
-    const conversation = await panel.locator(".companion-mini-conversation").boundingBox();
-    expect(stage!.y + stage!.height).toBeLessThanOrEqual(conversation!.y);
-    expect(await panel.getByRole("img", { name: "Yui" }).evaluate(el => getComputedStyle(el).animationName)).toBe("none");
-    await panel.getByRole("textbox").focus();
-    await expect(panel.getByRole("textbox")).toBeFocused();
-    if (evidence) await page.screenshot({ path: `${evidence}/companion-chat-mobile.png` });
+    for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 480 }]) {
+      await page.setViewportSize(viewport);
+      const idleSize = await renderedSize(character);
+      await talk.click();
+      await expect(composer).toBeFocused();
+      await expect(composer).toBeInViewport({ ratio: 1 });
+      await expect(panel.getByRole("button", { name: "Hide chat", exact: true })).toBeInViewport({ ratio: 1 });
+      await expect(character).toBeInViewport({ ratio: 1 });
+      const stage = await panel.locator(".companion-pet-stage").boundingBox();
+      const conversation = await panel.locator(".companion-mini-conversation").boundingBox();
+      expect(stage!.y + stage!.height).toBeLessThanOrEqual(conversation!.y);
+      expect(await renderedSize(character)).toEqual(idleSize);
+      await expect(character).toHaveCSS("animation-name", "none");
+      if (evidence) await page.screenshot({ path: `${evidence}/companion-chat-${viewport.width}.png` });
+      await page.keyboard.press("Escape");
+      await expect(talk).toBeVisible();
+      expect(await renderedSize(character)).toEqual(idleSize);
+    }
     expect(errors).toEqual([]);
   } finally { await f.close(); }
 });
@@ -782,6 +827,7 @@ test("editing a name preserves zero and non-minute custom cooldowns", async ({ p
 
 test("attention cards render actor questions and submit the authoritative answer", async ({ page }) => {
   const f = await fixture(page);
+  let pending = false;
   const authority = {
     schemaVersion: 1,
     threadId: "thread-qa",
@@ -799,7 +845,7 @@ test("attention cards render actor questions and submit the authoritative answer
         cwd: "/tmp/ling-stack-workspace",
         schemaVersion: 1,
         generatedAt: new Date().toISOString(),
-        items: [{
+        items: pending ? [{
           schemaVersion: 1,
           id: "user_input:request-qa",
           priority: "required_input",
@@ -807,7 +853,7 @@ test("attention cards render actor questions and submit the authoritative answer
           source: { workspaceId: "workspace_default", cwd: "/tmp/ling-stack-workspace", kind: "user_input", id: "request-qa", sourceItemId: "item-qa", channelId: "channel-qa", threadId: "thread-qa", requestId: "request-qa", revision: 3 },
           actor: { kind: "teammate", teammateId: "teammate_companion", label: "QA" },
           title: "Answer needed",
-          summary: "Choose a release target.",
+          summary: "Choose a release target. " + "This target determines where the verified release is published. ".repeat(12),
           revision: 3,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -822,7 +868,7 @@ test("attention cards render actor questions and submit the authoritative answer
             answerAuthority: authority,
           },
           action: { kind: "answer", enabled: true, source: { workspaceId: "workspace_default", cwd: "/tmp/ling-stack-workspace", kind: "user_input", id: "request-qa", sourceItemId: "item-qa", channelId: "channel-qa", threadId: "thread-qa", requestId: "request-qa", revision: 3 } },
-        }],
+        }] : [],
       },
     });
   });
@@ -832,14 +878,42 @@ test("attention cards render actor questions and submit the authoritative answer
     await route.fulfill({ status: 200, json: { accepted: true, receipt: { requestId: "request-qa", requestVersion: 2, answerId: "answer-qa", answerItemId: "item-answer", deliveryId: "delivery-qa", acceptedAt: new Date().toISOString(), replayed: false }, delivery: { status: "pending" } } });
   });
   try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
     await page.locator(".companion-config-button").click();
+    await page.setViewportSize({ width: 320, height: 480 });
     const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    const character = panel.getByRole("img", { name: "Yui", exact: true });
+    const refresh = panel.getByRole("button", { name: "Refresh", exact: true });
+    const question = panel.locator(".companion-attention-card");
+    await expect(panel.getByText("All clear", { exact: true })).toBeVisible();
+    const idleSize = await renderedSize(character);
+    pending = true;
+    await refresh.click();
     await expect(panel.getByText("QA", { exact: true })).toBeVisible();
+    expect(await renderedSize(character)).toEqual(idleSize);
+    await panel.getByRole("button", { name: "Talk", exact: true }).click();
+    const composer = panel.getByRole("textbox", { name: "Message companion" });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    await expect(question).toBeHidden();
+    expect(await renderedSize(character)).toEqual(idleSize);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(question).toBeInViewport({ ratio: 1 });
+    await expect(composer).toBeInViewport({ ratio: 1 });
+    expect(await renderedSize(character)).toEqual(idleSize);
+    await page.setViewportSize({ width: 320, height: 480 });
+    await page.keyboard.press("Escape");
+    await expect(question).toBeVisible();
+    expect(await question.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await panel.getByRole("button", { name: "Staging", exact: true }).click();
     await panel.getByRole("button", { name: "Submit answer", exact: true }).click();
     await expect(panel.getByRole("status")).toContainText("Answer submitted");
     expect(answerBody).toMatchObject({ authority, answers: [{ questionId: "target", kind: "option", optionId: "staging" }] });
+    pending = false;
+    await refresh.click();
+    await expect(question).toBeHidden();
+    await expect(character).toBeInViewport({ ratio: 1 });
+    expect(await renderedSize(character)).toEqual(idleSize);
   } finally {
     await f.close();
     await page.unrouteAll({ behavior: "wait" });

@@ -313,17 +313,19 @@ html[data-companion-window="true"] #root {
 
 /* Floating collaboration layer */
 .companion-overlay {
+  --companion-stage-height: min(360px, calc(100dvh - 32px));
   position: fixed;
   z-index: 100;
   right: 20px;
   bottom: 20px;
   display: grid;
   grid-template-columns: minmax(220px, 300px) minmax(280px, 420px);
-  grid-template-rows: auto auto;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   align-items: end;
   width: min(760px, calc(100vw - 32px));
-  min-height: 360px;
+  min-height: var(--companion-stage-height);
+  max-height: calc(100dvh - 32px);
   color: var(--ling-text-default);
   pointer-events: none;
 }
@@ -331,12 +333,11 @@ html[data-companion-window="true"] #root {
 .companion-overlay > .companion-pet-stage-slot {
   grid-column: 1;
   grid-row: 1 / span 2;
-  min-height: 360px;
+  width: 100%;
+  height: var(--companion-stage-height);
+  min-width: 0;
+  pointer-events: none;
 }
-.companion-overlay > .companion-attention-card-slot,
-.companion-overlay > .companion-pet-stage-slot { min-width: 0; }
-.companion-overlay > .companion-pet-stage-slot { pointer-events: none; }
-.companion-overlay > .companion-pet-stage-slot { height: 100%; }
 .companion-overlay > .companion-attention-card-slot {
   position: absolute;
   top: 44px;
@@ -345,7 +346,14 @@ html[data-companion-window="true"] #root {
   z-index: 2;
   min-width: 0;
 }
-.companion-overlay > .companion-mini-conversation.is-open { grid-column: 2; grid-row: 2; }
+.companion-overlay > .companion-mini-conversation.is-open {
+  grid-column: 2;
+  grid-row: 2;
+  max-height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.companion-overlay .companion-mini-conversation.is-open .companion-mini-messages { min-height: 64px; }
 .companion-overlay .companion-mini-conversation {
   min-width: 0;
   min-height: 0;
@@ -409,7 +417,6 @@ html[data-companion-window="true"] #root {
   color: var(--ling-text-default);
   font-size: 12px;
 }
-.companion-overlay > .companion-pet-stage-slot { width: 100%; }
 .companion-overlay .companion-pet-stage { width: 100%; height: 100%; cursor: grab; pointer-events: auto; }
 .companion-overlay.is-dragging .companion-pet-stage { cursor: grabbing; }
 .companion-attention-card {
@@ -418,6 +425,7 @@ html[data-companion-window="true"] #root {
   min-width: 0;
   max-height: min(360px, calc(100dvh - 32px));
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--ling-action-accent) 30%, var(--ling-overlay-border));
   border-radius: 18px;
@@ -527,15 +535,17 @@ html[data-companion-window="true"] #root {
   font-size: 12px;
 }
 .companion-desktop-panel {
+  /* The wide desktop layout reserves room for the setup header above the stage. */
+  --companion-stage-height: max(0px, calc(100dvh - 140px));
   inset: 0;
   right: auto;
   bottom: auto;
   width: 100%;
   height: 100dvh;
   min-height: 0;
+  max-height: none;
   padding: 10px;
 }
-.companion-desktop-panel > .companion-pet-stage-slot { min-height: 320px; }
 .companion-desktop-panel .companion-mini-heading { -webkit-app-region: drag; }
 .companion-desktop-panel button,
 .companion-desktop-panel textarea,
@@ -544,47 +554,80 @@ html[data-companion-window="true"] #root {
 .companion-desktop-panel .companion-attention-card { -webkit-app-region: no-drag; }
 @media (max-width: 640px) {
   .companion-overlay {
+    --companion-stage-height: min(260px, 55dvh);
     right: 12px;
     bottom: 12px;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(260px, auto) auto auto;
+    grid-template:
+      "toolbar" auto
+      "stage" var(--companion-stage-height)
+      "card" minmax(0, 1fr)
+      / minmax(0, 1fr);
+    gap: 6px;
     width: calc(100vw - 24px);
     min-height: 0;
-  }
-  .companion-overlay[data-companion-setup] {
-    grid-template-rows: auto minmax(0, 1fr) auto;
     max-height: calc(100dvh - 24px);
   }
-  .companion-overlay[data-companion-setup] > .companion-attention-card-slot,
-  .companion-overlay[data-companion-setup] > .companion-overlay-idle { grid-row: 3; }
-  .companion-overlay[data-companion-setup] .companion-attention-card {
-    max-height: min(360px, 45dvh);
+  .companion-desktop-panel {
+    inset: 0;
+    width: 100%;
+    max-height: none;
   }
-  .companion-overlay > .companion-pet-stage-slot,
+  .companion-overlay > .companion-mini-conversation.is-collapsed {
+    position: relative;
+    grid-area: toolbar;
+    max-width: 100%;
+  }
+  .companion-overlay > .companion-pet-stage-slot { grid-area: stage; }
   .companion-overlay > .companion-attention-card-slot,
-  .companion-overlay > .companion-mini-conversation.is-open,
-  .companion-overlay > .companion-overlay-idle { grid-column: 1; }
-  .companion-overlay > .companion-pet-stage-slot { grid-row: 1; }
-  .companion-overlay > .companion-pet-stage-slot,
-  .companion-overlay .companion-pet-stage {
-    height: 260px;
-    min-height: 260px;
-    max-height: 260px;
+  .companion-overlay > .companion-overlay-idle { grid-area: card; }
+  .companion-overlay > .companion-mini-conversation.is-open {
+    grid-area: chat;
+    align-self: stretch;
   }
-  .companion-overlay[data-companion-setup] > .companion-pet-stage-slot {
-    min-height: 0;
-    max-height: 100%;
-  }
-  .companion-overlay[data-companion-setup] .companion-pet-stage {
-    height: 100%;
-    min-height: 0;
-  }
-  .companion-overlay > .companion-attention-card-slot,
-  .companion-overlay > .companion-overlay-idle { grid-row: 2; }
-  .companion-overlay > .companion-mini-conversation.is-open { grid-row: 3; }
   .companion-overlay > .companion-attention-card-slot {
     position: static;
+    display: flex;
+    flex-direction: column;
+    align-self: start;
     width: auto;
+    max-height: 100%;
+  }
+  .companion-overlay .companion-attention-card {
+    gap: 6px;
+    padding: 10px;
+  }
+  .companion-overlay:has(> .companion-mini-conversation.is-open) {
+    grid-template-areas: "stage" "chat";
+    grid-template-rows: var(--companion-stage-height) minmax(0, 1fr);
+  }
+  .companion-overlay:has(> .companion-mini-conversation.is-open) > .companion-overlay-idle { display: none; }
+}
+@media (max-width: 640px) and (height < 620px) {
+  .companion-overlay:has(> .companion-mini-conversation.is-open) > .companion-attention-card-slot { display: none; }
+  .companion-overlay .companion-mini-conversation.is-open {
+    padding-block: 0;
+    scroll-padding-block: 44px 54px;
+  }
+  .companion-overlay .companion-mini-conversation.is-open :is(.companion-mini-header, .companion-mini-composer) {
+    position: sticky;
+    z-index: 1;
+    flex-shrink: 0;
+    background: var(--ling-bg-panel);
+  }
+  .companion-overlay .companion-mini-conversation.is-open .companion-mini-header {
+    top: 0;
+    padding-block: 8px 4px;
+  }
+  .companion-overlay .companion-mini-conversation.is-open .companion-mini-composer {
+    bottom: 0;
+    padding-block: 4px 8px;
+  }
+  .companion-overlay .companion-mini-conversation.is-open .companion-mini-messages { overscroll-behavior: auto; }
+}
+@media (max-width: 640px) and (height >= 620px) {
+  .companion-overlay:has(> .companion-attention-card-slot):has(> .companion-mini-conversation.is-open) {
+    grid-template-areas: "stage" "card" "chat";
+    grid-template-rows: var(--companion-stage-height) minmax(0, 1fr) minmax(0, 2fr);
   }
 }
 .companion-settings-page {
