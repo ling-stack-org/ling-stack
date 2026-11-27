@@ -10,20 +10,38 @@ Ling 的主安装包只保留 gstack 的插件入口和接入代码。用户安�
 
 gstack 的默认来源是 [garrytan/gstack](https://github.com/garrytan/gstack)。优先复用上游的源码、安装说明和可验证的构建产物，沿用 Ling 已有的宿主适配。若某平台需要由 Ling 提供开箱即用的安装资产，可用同一锁定版本的现有构建产出独立签名资产，复用 [Ling 的官方插件发布机制](plugin-independent-packaging.md)。上游版本与 Ling 适配版本分别记录。
 
-当前 macOS 预发布 DMG 为 794,517,399 字节，Windows 安装程序为 743,682,530 字节。macOS 应用资源清单中，gstack 文件解压后约 1.37 GB。预发布瘦包已经移出部分独立插件，发布流程仍会构建并装入 gstack。浏览器和 TestSavant 模型在现有候选构建中已是按需获取。切换后分别测量主包、插件和附加组件的归档大小及实际占用。[预发布和验证清单](https://github.com/ling-stack-org/ling-stack/releases/tag/v0.6.2-alpha.1) · [当前候选构建](../../scripts/gstack/prepare-desktop-candidate.mjs)
+对照版本 `v0.6.2-alpha.1` 的 macOS DMG 为 794,517,399 字节，Windows 安装程序为 743,682,530 字节。该版 macOS 安装后的 gstack 资源约 1.37 GB。主包和独立运行时分别记录归档与解压大小。Chrome 和 TestSavant 模型由独立运行时按需获取。[预发布和验证清单](https://github.com/ling-stack-org/ling-stack/releases/tag/v0.6.2-alpha.1)
 
 ## 安装与连接
 
-“设置 → 插件 → gstack”显示来源、适用版本、工作区启用状态、能力状态和可用操作。下载体积从固定版本的资产清单读取。官方安装需要额外工具或手动步骤时，界面据当前平台列出实际前置条件。
+在“设置 → 插件 → 技能包”选择 gstack 或 Superpowers。每项显示安装状态、版本、当前工作区是否启用，以及可用的安装、连接或回滚操作。
 
 | 入口 | 用户操作和结果 |
 | --- | --- |
-| 从官方来源安装 | 首版优先提供对应版本的官方安装说明，完成后回到 Ling 检查并选择连接。通过平台验收的自动安装入口可以直接显示准备进度。 |
-| 连接本机安装 | 选择已检测到的候选或手动选目录，预览上游版本、可用能力和缺失依赖，再确认。检测阶段只读。 |
+| 从官方来源安装 | Superpowers 的“安装”从固定的官方归档下载并校验。gstack 的“安装指南”提供从固定上游源码准备 Ling 运行时的步骤。 |
+| 连接本机安装 | gstack 选择适配当前平台的 Ling 运行目录，并填写来自独立构建记录或可信分发渠道的清单 SHA-256。Superpowers 选择上游仓库根目录或 `skills`。连接成功后，启用开关只作用于当前工作区。 |
 | 使用已有 Ling 资源 | 升级时发现已验证的旧内置版本，可在插件页确认启用，复用相同版本资源。 |
 | 从技能入口进入 | 显式调用未准备好的 gstack 技能时，打开插件详情并显示对应补救操作。首次启用成功后，用户从原任务继续。 |
 
 上游 `setup` 按宿主注册技能，当前固定版本支持 Codex、Claude Code 等宿主，Ling 的渲染适配位于本仓。核查时，上游最近三条 GitHub Release 均没有附加的平台二进制资产。因此当前 gstack 入口是官方安装说明加本机连接，已验证的旧 Ling 资源可以直接复用，自动构建入口保留在独立候选准备流程中，尚未在插件页标为“一键安装”。Superpowers 固定提交支持 Ling 内部下载、校验和快照发布。[上游宿主安装契约](https://github.com/garrytan/gstack/blob/47d639abffa882b8cbb641d7d1dedf08ecada9ec/docs/ADDING_A_HOST.md) · [上游发布](https://github.com/garrytan/gstack/releases) · [Ling 宿主适配](../../scripts/gstack/render-upstream.ts)
+
+### 从源码准备 gstack 运行时
+
+在原生 macOS arm64 或 Windows x64 环境运行。准备 Git、Node.js 22.22.1 或更新版本、Bun 1.4.2 或更新版本、Bash、Go 及平台构建工具。脚本从官方仓库获取锁定提交，在独立目录生成运行时。工作目录预算为 12 GiB，构建过程中保留至少 20 GiB 磁盘余量。macOS 可在 Ling 源码根目录执行：
+
+```bash
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter '@ling-stack/core...' build
+gstack_build_root="$(realpath "$(mktemp -d)")/gstack-runtime"
+node scripts/gstack/prepare-desktop-candidate.mjs \
+  --workspace "$gstack_build_root" \
+  --bun "$(command -v bun)" --shell "$(command -v bash)" \
+  --go "$(command -v go)" --local-bounded
+```
+
+Windows 使用同一个脚本，在参数中传入 Windows 原生 Bun、Go 和 Git for Windows 的 Bash 绝对路径。生成完成后，在 gstack 条目中点击“连接文件夹”，选择 `$gstack_build_root/artifacts/native/desktop-executable`，填写构建输出 `selection.identity.manifestChecksum` 的值。该目录包含同级的 `gstack` 和 `gstack-browser`。Ling 构建脚本会为技能生成 Ling 宿主指令和绑定清单。Codex 和 Claude Code 的 `setup` 生成各自的宿主文件。当前工作区若曾使用已知的旧 Ling 运行时，插件页会提供“使用上次安装”。
+
+[固定上游提交](../../scripts/gstack/upstream-lock.json) · [独立构建入口](../../scripts/gstack/prepare-desktop-candidate.mjs)
 
 连接本机安装时，先核对来源和版本，再检查技能、引用、工具以及依赖。官方 Git 来源可以用作接入的输入，运行文件需要自己的校验依据。连接成功后，Ling 从只读的已验证版本读取资源。可直接匹配已审核清单的文件复用，缺少验证依据的部分根据固定上游版本和 Ling 适配步骤准备。任一能力的运行文件未就绪时，插件页给出对应状态。用户通过原宿主管理外部安装，Ling 中的“重新检查”预览变化，采纳后作为另一代资源启用。普通的官方技能同步与共享技能导入仍按各自契约管理，它们的技能快照不会成为运行时安装证明。[官方技能来源](managed-official-skill-source-p16.md) · [共享技能发现](external-agent-skill-discovery.md)
 
@@ -46,13 +64,13 @@ gstack 的默认来源是 [garrytan/gstack](https://github.com/garrytan/gstack)�
 | 状态 | 行为 |
 | --- | --- |
 | 未安装 | 新工作区的自动技能选择跳过 gstack，显式选择可跳转到插件页。 |
-| 正在准备 | 展示下载、验证、准备进度及取消入口。相同版本的并行请求共享一次准备结果。 |
+| 正在准备 | 操作按钮显示处理中。并行的 Superpowers 官方安装共用一次下载。 |
 | 已安装，当前工作区未启用 | 文件可供本机其他工作区复用，用户可以在当前工作区启用。 |
 | 已启用 | 注册和分配当前版本可用的技能。需要 Chrome、模型或其他组件的动作按各自状态提示。 |
 | 缺少依赖或版本不兼容 | 显示受影响的能力和补救操作，其余已验收的能力按已知状态使用。 |
 | 安装失败或资源损坏 | 主窗口和普通任务可用。首次安装可重试，更新失败时保留原先可用版本。发生损坏的资源暂停执行并可修复。 |
 
-一个插件页面管理 Node、Bun 和其他运行依赖。它们随 gstack 可用版本准备，可在版本相同且校验一致时共用。Chrome 和模型维持首次调用获取，可在有网时预先下载，已验证的组件离线复用。技能的真实外部前置条件仍单独显示，例如 AI 设计所需的模型服务。首版先迁移现有工具，后续依据实际测量减少重复 Bun 和资源文件。
+Node、Bun 和 `browse` 随独立的 gstack 运行时准备。Chrome 和模型在相关功能首次使用时按需获取，已验证的缓存可离线复用。技能需要的外部服务由相应工作流处理。
 
 ## 运行边界
 

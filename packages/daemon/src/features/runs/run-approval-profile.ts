@@ -3,6 +3,7 @@ import { mergeRunProgressApprovalProfiles as mergeApprovalProfiles,
 import { isRecord } from "../../shared/validation.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { resolveCurrentRunSkill } from "./skill-selection.js";
+import { readStoredRunnerExecution } from "./existing-run-request.js";
 
 export function mergeRunTools(base: readonly RunTool[], required: readonly RunTool[]): RunTool[] {
   return [...new Set([...base, ...required])];
@@ -24,7 +25,8 @@ export function readCurrentRunApprovalProfile(store: RunStore, run: RunSession):
   const requestedSkillId = run.selectedSkillId ?? requested;
   if (requestedSkillId === undefined) return base;
   const skill = resolveCurrentRunSkill(store, { requestedSkillId: requestedSkillId as string,
-    teammateId: run.teammateId, providerPresetId: run.providerPresetId, task: { channelId: run.channelId } });
+    teammateId: run.teammateId, providerPresetId: run.providerPresetId, task: { channelId: run.channelId } },
+    readStoredRunnerExecution(run)?.skillSourceContext);
   if (!skill) throw new Error("unified_exec_raw_skill_source_invalid");
   return mergeApprovalProfiles(base, skill.skill.approvalProfile);
 }

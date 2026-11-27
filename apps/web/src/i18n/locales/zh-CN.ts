@@ -1,6 +1,9 @@
 export const zhCN = {
   "Select a workspace to manage skill packs.": "选择一个工作区以管理技能包。",
   "Skill packs could not be loaded.": "无法加载技能包。",
+  "Connect gstack runtime": "连接 gstack 运行时",
+  "Ling can run tools from this folder when gstack is enabled. Use a runtime you built or obtained from a trusted source.": "启用 gstack 后，Ling 可以运行此目录中的工具。请选择自行构建或来自可信渠道的运行时。",
+  "Manifest SHA-256 from your build output or trusted source": "来自构建输出或可信渠道的清单 SHA-256",
   "Enabled in this workspace": "已在此工作区启用",
   "Disabled in this workspace": "已在此工作区停用",
   "Enable {name} in this workspace": "在此工作区启用 {name}",

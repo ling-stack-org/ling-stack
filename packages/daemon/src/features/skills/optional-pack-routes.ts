@@ -30,13 +30,9 @@ export async function handleOptionalSkillPackRoute(input: {
     const cwd = url.searchParams.get("cwd");
     if (!cwd) throw new HttpError(400, "bad_request", "A workspace is required.");
     if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return true;
-    if (request.method === "POST" && input.desktopBridgeToken) {
-      if (request.headers.origin !== undefined) {
-        throw new HttpError(403, "desktop_bridge_forbidden", "Manage skill packs from the Ling desktop application.");
-      }
-      if (input.desktopBridgeToken && desktopBridgeTokenStatus(request, input.desktopBridgeToken) !== "accepted") {
-        throw new HttpError(403, "desktop_bridge_forbidden", "Manage skill packs from the Ling desktop application.");
-      }
+    if (request.method === "POST" && input.desktopBridgeToken && (request.headers.origin !== undefined
+      || desktopBridgeTokenStatus(request, input.desktopBridgeToken) !== "accepted")) {
+      throw new HttpError(403, "desktop_bridge_forbidden", "Manage skill packs from the Ling desktop application.");
     }
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET" && !route[1]) {
@@ -44,7 +40,7 @@ export async function handleOptionalSkillPackRoute(input: {
     } else if (request.method === "POST" && route[1]) {
       if (!Object.hasOwn(optionalSkillPacks, route[1])) throw new HttpError(404, "skill_pack_not_found", "Skill pack not found.");
       const id = route[1] as OptionalSkillPackId;
-      const action = parseAction(await readJsonBody(request, input.maxBodyBytes));
+      const action = parseAction(await readJsonBody(request, input.maxBodyBytes), id);
       await changeOptionalSkillPack(store, id, action, new Date().toISOString());
       flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
       appendControlPlaneEvent(store, controlPlaneEvents, { workspaceId: DEFAULT_WORKSPACE_ID, cwd, domain: "skills",
@@ -64,12 +60,18 @@ export async function handleOptionalSkillPackRoute(input: {
   return true;
 }
 
-function parseAction(raw: unknown): OptionalSkillPackAction {
+function parseAction(raw: unknown, id: OptionalSkillPackId): OptionalSkillPackAction {
   if (isRecord(raw)) {
     switch (raw.action) {
       case "install": case "enable": case "disable": case "uninstall": case "rollback": return { action: raw.action };
       case "connect": {
-        if (typeof raw.path === "string" && raw.path.trim() && raw.path.length <= 4096) return { action: raw.action, path: raw.path.trim() };
+        if (typeof raw.path !== "string" || !raw.path.trim() || raw.path.length > 4096) break;
+        if (id === "superpowers") return { action: raw.action, path: raw.path.trim() };
+        const checksum = typeof raw.expectedManifestChecksum === "string" && raw.expectedManifestChecksum.trim().toLowerCase();
+        if (!checksum || !/^(?:sha256:)?[a-f0-9]{64}$/u.test(checksum)) {
+          throw new HttpError(400, "skill_pack_checksum_required", "Enter the gstack manifest SHA-256 from the build output or a trusted source.");
+        }
+        return { action: raw.action, path: raw.path.trim(), expectedManifestChecksum: `sha256:${checksum.replace(/^sha256:/u, "")}` };
       }
     }
   }

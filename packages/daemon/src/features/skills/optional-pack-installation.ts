@@ -3,7 +3,7 @@ import type { OptionalSkillPackAction, OptionalSkillPackId, OptionalSkillPackVie
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import { preparePackagedGstackPublication } from "./bundled-startup.js";
-import { findRetainedGstackChecksum, inspectGstackPack, openGstackPack, prepareGstackPack, type GstackPack } from "./optional-gstack-source.js";
+import { inspectGstackPack, openGstackPack, prepareGstackPack, retainedGstackVersion, type GstackPack } from "./optional-gstack-source.js";
 import { optionalSkillPackDescriptor, optionalSkillPackEnabled, optionalSkillPackPluginId, optionalSkillPacks } from "./optional-pack-catalog.js";
 import { prepareInstructionPackPublication } from "./optional-pack-publication.js";
 import { downloadSuperpowersSkills, readInstructionSkills, readRetainedInstructionPack, retainInstructionPack,
@@ -47,7 +47,7 @@ export async function listOptionalSkillPacks(store: RunStore): Promise<OptionalS
       if (installed?.current.kind === "instructions") await readRetainedInstructionPack(installed.current.checksum);
       return { ...info, state: issue ? "unavailable" : !installed ? "not_installed" : enabled ? "enabled" : "disabled", issue,
         version: installed?.current.version, skillCount: installed?.current.skillCount, previousVersion: installed?.previous?.version,
-        retainedVersion: id === "gstack" && !installed ? (await findRetainedGstackChecksum(store))?.slice(7, 19) : undefined };
+        retainedVersion: id === "gstack" && !installed ? await retainedGstackVersion(store) : undefined };
     } catch {
       return { ...info, state: "unavailable", issue: "invalid_resources", version: installedPackage?.version };
     }
@@ -59,10 +59,10 @@ async function installSuperpowers(): Promise<InstructionPack> {
   return retainInstructionPack(release.skills, release.version);
 }
 
-async function connectOrInstall(store: RunStore, id: OptionalSkillPackId, path?: string): Promise<Pack> {
-  if (id === "gstack") return prepareGstackPack(store, path);
-  if (path) {
-    const skills = await readInstructionSkills(path);
+async function connectOrInstall(store: RunStore, id: OptionalSkillPackId, connection?: Extract<OptionalSkillPackAction, { action: "connect" }>): Promise<Pack> {
+  if (id === "gstack") return prepareGstackPack(store, connection);
+  if (connection) {
+    const skills = await readInstructionSkills(connection.path);
     if (!skills.some(skill => skill.name === "using-superpowers" && parseSkillFrontMatter(skill.markdown).frontMatter.name === skill.name)) {
       throw new HttpError(400, "skill_pack_source_invalid", "Choose a Superpowers repository or its skills directory.");
     }
@@ -72,11 +72,11 @@ async function connectOrInstall(store: RunStore, id: OptionalSkillPackId, path?:
   return superpowersInstallation;
 }
 
-async function preparePublication(pack: Pack, rollback = false): Promise<(store: RunStore, now: string) => void> {
+async function preparePublication(pack: Pack): Promise<(store: RunStore, now: string) => void> {
   if (pack.kind === "instructions") return prepareInstructionPackPublication(pack);
   const runtime = await openGstackPack(pack.checksum);
   registerPackagedSkillGeneration(runtime);
-  return preparePackagedGstackPublication(runtime.source, rollback);
+  return preparePackagedGstackPublication(runtime.source, true);
 }
 
 export async function changeOptionalSkillPack(store: RunStore, id: OptionalSkillPackId, input: OptionalSkillPackAction, now: string): Promise<void> {
@@ -119,15 +119,15 @@ export async function changeOptionalSkillPack(store: RunStore, id: OptionalSkill
     }
     let next: Selection;
     if (action === "install" || action === "connect") {
-      const current = await connectOrInstall(store, id, action === "connect" ? input.path : undefined);
+      const current = await connectOrInstall(store, id, action === "connect" ? input : undefined);
       next = { current, previous: current.checksum === prior?.current.checksum ? prior.previous : prior?.current };
     } else {
       if (!prior) throw notInstalled();
       if (action === "rollback" && !prior.previous) throw new HttpError(409, "skill_pack_previous_missing", "No previous skill pack version is available.");
       next = action === "rollback" ? { current: prior.previous!, previous: prior.current } : prior;
     }
-    const publish = await preparePublication(next.current, action === "rollback");
     const nextEnabled = action === "enable" || previousEnabled === true;
+    const publish = await preparePublication(next.current);
     commit(() => {
       if (nextEnabled) publish(store, now);
       const descriptor = optionalSkillPackDescriptor(id, next.current.version);

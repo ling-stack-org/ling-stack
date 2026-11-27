@@ -1218,7 +1218,7 @@ async function executeAdmittedRunRequest(
     assertPreparationCurrent();
     // SDK/backend setup both await. Policy must be read after them, not before.
     refreshPreparedExecution();
-    selectedSkill = resolveCurrentRunSkill(store, runRequest, frozenExecution?.skillSourceContext);
+    selectedSkill = resolveCurrentRunSkill(store, runRequest, selectedSkillSourceContext);
     runtimeApprovalProfile = selectedSkill ? mergeApprovalProfiles(policyRequest.approvalProfile, selectedSkill.skill.approvalProfile)
       : policyRequest.approvalProfile;
     if (executionInput && selectedSkill) {

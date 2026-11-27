@@ -1,4 +1,5 @@
-import { buildEffectiveTeammateSkills, getEffectiveTeammateSkill, type RunStore, type SkillSourceRuntimeContext } from "@ling-stack/core";
+import { buildEffectiveTeammateSkills, getEffectiveTeammateSkill, readFrozenInstructionPackSnapshot, withInstructionPackApproval,
+  type RunStore, type SkillSourceRuntimeContext } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { listEffectiveSkillRegistryEntries, listExecutableSkillDefinitions } from "../skills/registry.js";
 import { assertOptionalSkillPackEnabledForRecovery, optionalPackForExecution, optionalPackForRegistryEntry } from "../skills/optional-pack-catalog.js";
@@ -26,8 +27,16 @@ export function resolveCurrentRunSkill(store: RunStore, request: Pick<RunRequest
     const optional = unavailable && optionalPackForRegistryEntry(unavailable);
     if (optional) throw new HttpError(409, "skill_pack_unavailable", `Install and enable ${optional} in Settings → Plugins to use this skill.`);
   }
+  const definitions = recoveryEntry ? [...skills, recoveryEntry.definition] : skills;
+  const frozenSnapshot = pack === "superpowers" && frozenSource ? readFrozenInstructionPackSnapshot(store, request.requestedSkillId, frozenSource) : undefined;
+  if (pack === "superpowers" && !frozenSnapshot) {
+    throw new HttpError(409, "skill_pack_version_unavailable", "The selected skill pack version is unavailable.");
+  }
   const selected = getEffectiveTeammateSkill(buildEffectiveTeammateSkills({ teammate,
-    bindings: store.listTeammateSkillBindings(teammate.id), skills: recoveryEntry ? [...skills, recoveryEntry.definition] : skills,
+    bindings: store.listTeammateSkillBindings(teammate.id), skills: frozenSnapshot
+      ? definitions.map(definition => definition.id === frozenSnapshot.skillId
+        ? withInstructionPackApproval(definition, frozenSnapshot) : definition)
+      : definitions,
     channelAllowedTools: channel?.allowedTools, providerCapabilities: preset?.capabilities }), request.requestedSkillId);
   if (!selected) throw new HttpError(400, "skill_not_bound", `Skill is not bound to teammate: ${request.requestedSkillId}`);
   if (!selected.executable) throw new HttpError(400, "skill_not_executable",

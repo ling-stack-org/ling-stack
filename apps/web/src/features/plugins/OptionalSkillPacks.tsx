@@ -4,7 +4,7 @@ import type { OptionalSkillPackAction, OptionalSkillPackView } from "@ling-stack
 import { daemonClient } from "../../api/client.js";
 import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n } from "../../i18n.js";
-import { Button, InlineFeedback, Switch } from "../../shared/ui/index.js";
+import { Button, Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, Field, InlineFeedback, Input, Switch } from "../../shared/ui/index.js";
 
 export function OptionalSkillPacks({ cwd, onSkillPacksChanged }: {
   readonly cwd: string;
@@ -53,6 +53,8 @@ function SkillPackRow({ pack, cwd, onChanged, locale }: {
   const { t } = useI18n();
   const [busy, setBusy] = useState<OptionalSkillPackAction["action"]>();
   const [error, setError] = useState("");
+  const [gstackPath, setGstackPath] = useState<string>();
+  const [manifestChecksum, setManifestChecksum] = useState("");
   const installed = pack.version !== undefined;
   const canInstall = pack.id === "superpowers" || Boolean(pack.retainedVersion);
   const status = pack.state === "enabled" ? t("Enabled in this workspace")
@@ -66,21 +68,34 @@ function SkillPackRow({ pack, cwd, onChanged, locale }: {
     ? "https://github.com/ling-stack-org/ling-stack/blob/main/docs/design/gstack-optional-plugin.md#从源码准备-gstack-运行时"
     : pack.upstreamUrl;
 
-  async function change(action: OptionalSkillPackAction["action"]): Promise<void> {
+  function closeGstackConnection(): void {
+    setGstackPath(undefined);
+    setManifestChecksum("");
+    setError("");
+  }
+
+  async function change(action: OptionalSkillPackAction["action"], gstackConnection?: { path: string; expectedManifestChecksum: string }): Promise<void> {
     setError("");
     setBusy(action);
     try {
       let request: OptionalSkillPackAction;
-      if (action === "connect") {
+      if (action !== "connect") {
+        request = { action };
+      } else if (gstackConnection) {
+        request = { action, ...gstackConnection };
+      } else {
         const selected = await selectWorkspaceDirectory(cwd);
         if (selected.cancelled) return;
+        if (pack.id === "gstack") {
+          setGstackPath(selected.path);
+          return;
+        }
         request = { action, path: selected.path };
-      } else {
-        request = { action };
       }
       const result = await daemonClient.changeOptionalSkillPack(cwd, pack.id, request);
       const changed = result.packs.find(item => item.id === pack.id);
       if (changed) onChanged(changed);
+      if (gstackConnection) closeGstackConnection();
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -95,7 +110,7 @@ function SkillPackRow({ pack, cwd, onChanged, locale }: {
         <div className="plugin-marketplace-name"><strong>{pack.name}</strong></div>
         <span>{status}{pack.version && ` · ${pack.version}`}{!installed && size ? ` · ${size}` : null}</span>
         <a href={guide} target="_blank" rel="noreferrer">{t("Installation guide")}</a>
-        {error ? <InlineFeedback role="alert" tone="danger">{error}</InlineFeedback> : null}
+        {error && !gstackPath ? <InlineFeedback role="alert" tone="danger">{error}</InlineFeedback> : null}
       </div>
       <div className="plugin-marketplace-toggle">
         {canInstall && (!installed || pack.state === "unavailable") ? (
@@ -118,6 +133,32 @@ function SkillPackRow({ pack, cwd, onChanged, locale }: {
             onClick={() => void change("uninstall")}>{t("Disconnect")}</Button>
         ) : null}
       </div>
+      {gstackPath ? (
+        <Dialog open busy={Boolean(busy)} onOpenChange={open => { if (!open) closeGstackConnection(); }}>
+          <DialogContent asChild size="md">
+            <form onSubmit={event => {
+              event.preventDefault();
+              if (!busy && /^(?:sha256:)?[a-f0-9]{64}$/iu.test(manifestChecksum.trim())) {
+                void change("connect", { path: gstackPath, expectedManifestChecksum: manifestChecksum.trim() });
+              }
+            }}>
+              <DialogHeader closeLabel={t("Close")} title={t("Connect gstack runtime")} />
+              <DialogBody>
+                <p>{t("Ling can run tools from this folder when gstack is enabled. Use a runtime you built or obtained from a trusted source.")}</p>
+                <Field label={t("Manifest SHA-256 from your build output or trusted source")} required>
+                  <Input autoFocus value={manifestChecksum} maxLength={71} onChange={event => setManifestChecksum(event.target.value)} />
+                </Field>
+                {error ? <InlineFeedback role="alert" tone="danger">{error}</InlineFeedback> : null}
+              </DialogBody>
+              <DialogFooter>
+                <Button type="button" disabled={Boolean(busy)} onClick={closeGstackConnection}>{t("Cancel")}</Button>
+                <Button type="submit" variant="primary" loading={busy === "connect"}
+                  disabled={!/^(?:sha256:)?[a-f0-9]{64}$/iu.test(manifestChecksum.trim())}>{t("Connect folder")}</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </article>
   );
 }

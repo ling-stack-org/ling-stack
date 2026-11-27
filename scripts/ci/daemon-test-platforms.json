@@ -327,11 +327,11 @@
     "test/office-artifact-preparation.test.mjs",
     "test/office-parser-compatibility.test.mjs",
     "test/openclaw-owned-execution.test.mjs",
+    "test/optional-pack-catalog.test.ts",
     "test/owned-native-process.test.mjs",
     "test/p2-stop-attempt-fencing.test.mjs",
     "test/packaged-gstack-prepared-input.test.mjs",
     "test/packaged-gstack-runtime.test.mjs",
-    "test/optional-pack-catalog.test.ts",
     "test/packaged-gstack-unified-exec.test.mjs",
     "test/packaged-qa-harness-bootstrap.test.mjs",
     "test/patch-actions.test.mjs",
@@ -564,6 +564,7 @@
     "test/worktree-management.test.ts"
   ],
   "darwin": [
+    "test/optional-gstack-source.test.ts",
     "test/acp-host-terminal-process.test.mjs",
     "test/acp-journaled-lifecycle.test.mjs",
     "test/acp-kimi-host-read.test.mjs",

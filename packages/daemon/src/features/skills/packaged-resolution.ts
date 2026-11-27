@@ -7,10 +7,13 @@ import { getPackagedSkillGenerationChecksum, hasPackagedSkillGeneration, registe
 const loading = new Map<string, Promise<void>>();
 
 /** Desktop can start offline without inspecting optional resources. Load the known generation at use. */
-export async function preparePackagedSkillGeneration(context: SkillSourceRuntimeContext | undefined): Promise<void> {
+export async function preparePackagedSkillGeneration(
+  context: SkillSourceRuntimeContext | undefined,
+  workspaceEnabled = false,
+): Promise<void> {
   const checksum = getPackagedSkillGenerationChecksum(context);
   if (!checksum || hasPackagedSkillGeneration(checksum)
-    || process.env.LING_STACK_PACKAGED_DESKTOP !== "1" && !context?.resourceBinding) return;
+    || (!workspaceEnabled && process.env.LING_STACK_PACKAGED_DESKTOP !== "1" && !context?.resourceBinding)) return;
   const pending = loading.get(checksum);
   if (pending) return pending;
   const cache = join(resolveUserConfigPaths().sourcesDir, "bundled-gstack");

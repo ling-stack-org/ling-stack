@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { resolveUserConfigPaths } from "@ling-stack/core";
+import { classifySkillSourceWarnings, parseSkillFrontMatter, resolveUserConfigPaths } from "@ling-stack/core";
 import JSZip from "jszip";
 import { HttpError } from "../../errors.js";
 import { downloadPluginBytes } from "../plugins/plugin-download.js";
@@ -28,6 +28,25 @@ export interface InstructionPack {
   readonly version: string;
   readonly checksum: string;
   readonly skillCount: number;
+}
+
+export function inspectInstructionSkill(skill: InstructionSkill) {
+  const { frontMatter, warnings: metadataWarnings } = parseSkillFrontMatter(skill.markdown);
+  const warnings = [...metadataWarnings, ...classifySkillSourceWarnings(
+    skill.markdown, Buffer.byteLength(skill.markdown), maxMarkdownBytes,
+  )];
+  for (const { path, markdown } of skill.references) {
+    for (const warning of classifySkillSourceWarnings(markdown, Buffer.byteLength(markdown), maxMarkdownBytes)) {
+      warnings.push({ ...warning, location: path });
+    }
+  }
+  if (warnings.some(warning => warning.severity === "error")) {
+    throw new HttpError(409, "skill_pack_source_risky", "A skill or reference contains a blocked source pattern.");
+  }
+  if (!frontMatter.name || !frontMatter.description) {
+    throw new HttpError(409, "skill_pack_missing_metadata", "A skill in the pack is missing its name or description.");
+  }
+  return { frontMatter, warnings };
 }
 
 export function packDigest(bytes: string | Uint8Array): string {
@@ -140,6 +159,7 @@ function sourcePath(checksum: string): string {
 }
 
 export async function retainInstructionPack(skills: readonly InstructionSkill[], version?: string): Promise<InstructionPack> {
+  for (const skill of skills) inspectInstructionSkill(skill);
   const raw = JSON.stringify(skills);
   if (Buffer.byteLength(raw) > maxPackBytes || !skills.length) throw invalidSource();
   const checksum = packDigest(raw);

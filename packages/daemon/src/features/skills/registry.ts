@@ -5,6 +5,7 @@ import {
   listDefaultSkills,
   isLingNativeSkillId,
   resolveEffectiveSkillRegistryEntries,
+  withInstructionPackApproval,
   type ReplaceTeammateSkillBindingInput,
   type ManagedPluginStoreFacet,
   type SkillDefinition,
@@ -50,6 +51,7 @@ export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryS
   if (includeInactivePacks) return entries;
   const desktop = process.env.LING_STACK_PACKAGED_DESKTOP === "1";
   const gstack = optionalSkillPackEnabled(store, "gstack");
+  const gstackPackage = store.getManagedPluginPackage(optionalSkillPackPluginId("gstack"));
   const superpowers = store.getManagedPluginPackage(optionalSkillPackPluginId("superpowers"));
   const active = new Map(snapshots.map(snapshot => [snapshot.skillId, snapshot]));
   return entries.filter(entry => {
@@ -57,10 +59,18 @@ export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryS
     if (!pack || isLingNativeSkillId(entry.id)) return true;
     if (pack === "gstack") {
       if (gstack === false || desktop && gstack !== true) return false;
-      return !desktop || active.get(entry.id)?.referencedFiles.some(file => file.path === "manifest.json") === true;
+      if (!desktop && gstack === undefined) return true;
+      const snapshot = active.get(entry.id);
+      return gstackPackage?.status === "installed" && snapshot?.referencedFiles.some(file => file.path === "manifest.json"
+        && (snapshot.bundleUpdateMode === "pinned" || file.checksum === `sha256:${gstackPackage.packageHash}`)) === true;
     }
     return optionalSkillPackEnabled(store, "superpowers") === true && superpowers?.status === "installed"
       && active.get(entry.id)?.referencedFiles.some(file => file.path === "skill-pack.json" && file.checksum === `sha256:${superpowers.packageHash}`);
+  }).map(entry => {
+    if (optionalPackForRegistryEntry(entry) !== "superpowers") return entry;
+    const snapshot = active.get(entry.id)!;
+    return { ...entry, version: snapshot.upstreamVersion, checksum: snapshot.sourceChecksum,
+      definition: withInstructionPackApproval(entry.definition, snapshot) };
   });
 }
 

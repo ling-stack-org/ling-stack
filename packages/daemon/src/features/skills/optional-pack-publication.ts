@@ -1,8 +1,8 @@
-import { classifySkillSourceWarnings, createSkillSourceSnapshotId, parseSkillFrontMatter, previewSkillSourceDefinition,
+import { createSkillSourceSnapshotId, instructionPackChecksum, previewSkillSourceDefinition,
   type PublishSkillSourceBatchInput, type RunStore, type SkillSourceRuntimeContext } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { optionalSkillPacks } from "./optional-pack-catalog.js";
-import { packDigest, readRetainedInstructionPack, type InstructionPack } from "./optional-pack-source.js";
+import { inspectInstructionSkill, packDigest, readRetainedInstructionPack, type InstructionPack } from "./optional-pack-source.js";
 
 const owner = optionalSkillPacks.superpowers.packId;
 const upstream = "obra/superpowers";
@@ -13,16 +13,8 @@ export async function prepareInstructionPackPublication(pack: InstructionPack): 
   const skills = await readRetainedInstructionPack(pack.checksum);
   const prepared = skills.map(skill => {
     const id = `${owner}-${skill.name}`;
-    const meta = parseSkillFrontMatter(skill.markdown);
-    const warnings = [...meta.warnings, ...classifySkillSourceWarnings(skill.markdown,
-      Buffer.byteLength(skill.markdown), 256 * 1024)];
-    if (warnings.some(warning => warning.severity === "error")) {
-      throw new HttpError(409, "skill_pack_source_risky", "A skill in the pack contains a blocked secret or unsafe source pattern.");
-    }
-    if (!meta.frontMatter.name || !meta.frontMatter.description) {
-      throw new HttpError(409, "skill_pack_missing_metadata", "A skill in the pack is missing its name or description.");
-    }
-    const definition = previewSkillSourceDefinition(id, { frontMatter: meta.frontMatter, warnings,
+    const { frontMatter, warnings } = inspectInstructionSkill(skill);
+    const definition = previewSkillSourceDefinition(id, { frontMatter, warnings,
       markdown: skill.markdown, skillDirectoryName: skill.name, root: { sourceKind } });
     const sourceChecksum = `sha256:${packDigest(skill.markdown)}`;
     const references = skill.references.map(file => ({ path: file.path, kind: "reference" as const,
@@ -51,12 +43,6 @@ export async function prepareInstructionPackPublication(pack: InstructionPack): 
       version: pack.version, description: "Superpowers workflow skills.", definitions,
     } : undefined }, now);
   };
-}
-
-export function instructionPackChecksum(context: Pick<SkillSourceRuntimeContext, "sourceKind" | "upstreamName" | "referencedFiles">): string | undefined {
-  if (context.sourceKind !== sourceKind || context.upstreamName !== upstream) return undefined;
-  const digest = context.referencedFiles?.find(ref => ref.path === versionRef)?.checksum;
-  return digest && /^sha256:[a-f0-9]{64}$/u.test(digest) ? digest.slice(7) : undefined;
 }
 
 export async function readInstructionSkillReferences(context: SkillSourceRuntimeContext): Promise<string | undefined> {

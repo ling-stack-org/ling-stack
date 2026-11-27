@@ -19,4 +19,4 @@ export interface OptionalSkillPackListResponse {
 
 export type OptionalSkillPackAction =
   | { readonly action: "install" | "enable" | "disable" | "uninstall" | "rollback" }
-  | { readonly action: "connect"; readonly path: string };
+  | { readonly action: "connect"; readonly path: string; readonly expectedManifestChecksum?: string };
