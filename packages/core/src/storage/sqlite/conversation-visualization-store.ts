@@ -22,6 +22,10 @@ export function applyConversationVisualizationMigration({ database, hasMigration
     }
     const extendingExistingTable = hasMigration(initialVersion);
     if (extendingExistingTable) {
+      // SQLite keeps an existing index name when its table is renamed. Drop the
+      // legacy index before rebuilding the table so the new index can be created
+      // with the stable name used by the store.
+      database.exec("DROP INDEX IF EXISTS idx_conversation_visualizations_run");
       database.exec("ALTER TABLE conversation_visualizations RENAME TO conversation_visualizations_pre_limits");
     } else {
       recordMigration(initialVersion, "conversation_visualizations");
