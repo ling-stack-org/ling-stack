@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createSqliteRunStore } from "../dist/index.js";
+import { testDatabase } from "./support/sqlite-test-database.ts";
 
-function assertNativeCompletionSchema(store) {
-  assert.ok(store.database.prepare("PRAGMA table_info(host_attempt_completions)").all()
-    .some((column) => column.name === "native_effect_inventory_json"));
-  assert.equal(store.database.prepare("SELECT name FROM schema_migrations WHERE version = 175").get().name,
+type Store = ReturnType<typeof createSqliteRunStore>;
+
+function assertNativeCompletionSchema(store: Store) {
+  assert.ok(testDatabase(store).prepare("PRAGMA table_info(host_attempt_completions)").all()
+    .some((column: { readonly name?: unknown }) => column.name === "native_effect_inventory_json"));
+  assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version = 175").get()?.name,
     "original_native_attempt_effect_inventory");
 }
 
@@ -38,7 +41,7 @@ test("work summary storage upgrades a database with native migration 175 already
     store = createSqliteRunStore(cwd);
     assertNativeCompletionSchema(store);
     // Stage the main-branch schema before work summary was introduced.
-    store.database.exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE name = 'create_work_summary_pull_requests'");
+    testDatabase(store).exec("DROP TABLE work_summary_pull_requests; DELETE FROM schema_migrations WHERE name = 'create_work_summary_pull_requests'");
     store.close();
     store = createSqliteRunStore(cwd);
     assertNativeCompletionSchema(store);
@@ -49,7 +52,7 @@ test("work summary storage upgrades a database with native migration 175 already
     assert.deepEqual(store.listWorkSummaryPullRequests(), [{ url, createdAt: now }]);
     store.detachWorkSummaryPullRequest(url);
     assert.deepEqual(store.listWorkSummaryPullRequests(), []);
-    assert.equal(store.database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+    assert.equal(testDatabase(store).prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
   } finally {
     store?.close();
     await rm(cwd, { recursive: true, force: true });
