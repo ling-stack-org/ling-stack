@@ -42,6 +42,8 @@ import { normalizeBashRequest } from "./unified-exec-request.js";
 import { bindWorkflowCommandRequest } from "./workflow-command-cwd.js";
 import { readStoredRunnerExecution } from "./existing-run-request.js";
 import { packagedSkillEnvironment, preparePackagedSkillState, restorePackagedSkillContext } from "../skills/packaged-runtime.js";
+import { preparePackagedSkillGeneration } from "../skills/packaged-resolution.js";
+import { assertOptionalSkillPackEnabledForRecovery } from "../skills/optional-pack-catalog.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -174,7 +176,11 @@ async function executeUnifiedExec(input: {
     input.hostOperation?.bindCommandExecution(ticket.executionId);
     try {
       const selectedId = input.run.selectedSkillId;
-      const sourceContext = restorePackagedSkillContext(readStoredRunnerExecution(input.run)?.skillSourceContext, selectedId);
+      const storedContext = readStoredRunnerExecution(input.run)?.skillSourceContext;
+      assertOptionalSkillPackEnabledForRecovery(input.store, storedContext);
+      await preparePackagedSkillGeneration(storedContext);
+      throwIfAborted(input.signal);
+      const sourceContext = restorePackagedSkillContext(storedContext, selectedId);
       if (sourceContext?.resourceBinding && input.restrictedDispatch === undefined) {
         const key = createHash("sha256").update(input.run.id).update(sourceContext.resourceBinding.manifestChecksum).digest("hex");
         let stateRoot = "";
@@ -229,6 +235,7 @@ async function executeUnifiedExec(input: {
       input.restrictedDispatch?.assertMayLaunch();
       input.rawDispatch?.assertMayLaunch();
       const context = readStoredRunnerExecution(input.run)?.skillSourceContext;
+      assertOptionalSkillPackEnabledForRecovery(input.store, context);
       restorePackagedSkillContext(context, input.run.selectedSkillId);
     };
     if (input.hostOperation) input.hostOperation.launch(ticket, launch, preflight);

@@ -125,6 +125,7 @@ import { resolveCurrentRunSkill } from "./skill-selection.js";
 import { prepareRunSkillSource } from "./skill-source-context.js";
 import { withGstackHostContext } from "./gstack-host-context.js";
 import { restorePackagedSkillContext } from "../skills/packaged-runtime.js";
+import { preparePackagedSkillGeneration } from "../skills/packaged-resolution.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { recallMemory } from "../memory/recall-service.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
@@ -911,14 +912,15 @@ async function executeAdmittedRunRequest(
     });
     const skillTeammate = runRequest.teammateId ? resolveAiTeammateReference(store, runRequest.teammateId) : undefined;
     const skillProviderPreset = runRequest.providerPresetId ? store.getProviderPreset(runRequest.providerPresetId) : undefined;
-    selectedSkill = resolveCurrentRunSkill(store, runRequest);
+    selectedSkill = resolveCurrentRunSkill(store, runRequest, frozenExecution?.skillSourceContext);
     selectedSkillDefinitionSnapshot = frozenExecution?.skillDefinitionSnapshot
       ?? (!frozenExecution && selectedSkill ? captureSkillDefinitionSnapshot(store, selectedSkill.skill) : undefined);
     if (frozenExecution) {
+      await preparePackagedSkillGeneration(frozenExecution.skillSourceContext);
       selectedSkillSourceContext = restorePackagedSkillContext(frozenExecution.skillSourceContext, selectedSkill?.skillId);
     } else if (selectedSkill) {
       const skillOptimizationMode = runRequest.skillOptimizationMode ?? "no_operation";
-      const sourcePrompt = prepareRunSkillSource(store, selectedSkill.skillId, skillOptimizationMode);
+      const sourcePrompt = await prepareRunSkillSource(store, selectedSkill.skillId, skillOptimizationMode);
       selectedSkillSourceContext = sourcePrompt.context;
       selectedSkillSourcePrompt = sourcePrompt.promptFragment;
     }
@@ -1216,7 +1218,7 @@ async function executeAdmittedRunRequest(
     assertPreparationCurrent();
     // SDK/backend setup both await. Policy must be read after them, not before.
     refreshPreparedExecution();
-    selectedSkill = resolveCurrentRunSkill(store, runRequest);
+    selectedSkill = resolveCurrentRunSkill(store, runRequest, selectedSkillSourceContext);
     runtimeApprovalProfile = selectedSkill ? mergeApprovalProfiles(policyRequest.approvalProfile, selectedSkill.skill.approvalProfile)
       : policyRequest.approvalProfile;
     if (executionInput && selectedSkill) {

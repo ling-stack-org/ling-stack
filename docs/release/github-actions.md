@@ -11,7 +11,7 @@ macOS 使用 ad-hoc 签名，不含 Developer ID 或公证；Windows 不含 Auth
 
 1. 合入工作流以及对应平台的构建适配，保持仓库 Actions 开启。
 2. 使用 GitHub-hosted `macos-26` 和 `windows-2025` runner；不需要配置本机 runner。
-   工具由工作流安装，Node、pnpm、Rust、Go、Bun 使用明确版本，依赖使用锁文件。
+   工作流安装固定版本的构建工具，依赖使用锁文件。
 3. 不新增 PAT、签名证书或模型 API Key。构建 job 只有 `contents: read`；
    只有手动选择创建 Draft 的汇总 job 使用内置 `GITHUB_TOKEN` 的 `contents: write`。
 4. 首先运行 `inspect`，下载两个 `desktop-evidence-*` artifact。
@@ -19,17 +19,10 @@ macOS 使用 ad-hoc 签名，不含 Developer ID 或公证；Windows 不含 Auth
 5. 按报告补齐并独立审查平台输入。Mac 的编译器、SDK、headers、源码闭包和
    Electron/OS 指纹必须与静态审查记录匹配；流水线不会根据测试成功自动批准它们。
 
-仓库现有编译/打包流程仍是唯一打包入口。gstack 从固定的上游 commit 生产，随包提供本平台的
-FFmpeg 与原生工具；不会复制开发者全局安装或静默省略资源。
-浏览器功能保留，首次使用时从官方固定版本下载 Chrome for Testing，校验 ZIP 大小、SHA 和完整文件清单后，
-原子写入应用自己的缓存；之后可离线复用。Windows 首次下载约 201 MB。下载失败会阻止浏览器服务启动，
-可重试，不会退回系统浏览器或未经校验的文件。普通应用启动和停止浏览器服务不会触发下载。
-安装包只包含浏览器固定版本、官方地址和校验信息，不转发 Chrome 二进制，也不宣称已取得其再分发授权。
-TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固定版本下载，逐文件验证大小和 SHA，
-成功后保存在应用自己的缓存中，后续本地运行。首次使用需要联网；模型下载中或失败时会明确阻止扫描通过。
-安装包仅包含模型固定版本和校验信息，不代表获得了权重的再分发授权。
-`releaseEligible: false` 和未完成的 installed-client 验收会保留，不能被解释为正式产品就绪。
-原生审查失配、缺少实际资源或未解决的分发材料缺口都会阻止候选包进入汇总。
+桌面工作流独立于 gstack 构建。归档校验确认 `gstack`、`gstack-browser` 和旧嵌入身份均已排除，
+安装启动验收使用全新的用户目录。用户可在“工程 → 插件管理 → 技能包”连接已经准备好的 gstack。
+独立运行时的 Chrome for Testing 和 TestSavant 模型由相关能力按需下载和校验，验证随技能包进行。
+原生审查、实际随包资源和分发材料通过后，候选才可进入汇总。[gstack 使用指南](../design/gstack-optional-plugin.md#从源码准备-gstack-运行时)
 
 ## 每次发版
 
@@ -67,9 +60,7 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
    [开发候选验收](development-packages.md) 在测试机验证。
    macOS 从校验过的 DMG 复制应用到真实路径的临时目录，使用隔离用户配置验证资源准备（资源鉴权最多等待 180 秒）、
    Desktop 自有 daemon、主窗口载入与正常退出，并在证据 artifact 中保存 `macos-installed-startup.json`。
-   两端还会在私有缓存中验证随包 CLI 的真实浏览器首次下载、页面交互、停止及缓存重启，
-   保存 `browser-acquisition-smoke.json`。零请求缓存检查和不可用代理重启属于受控网络模拟，
-   不代表操作系统断网或完整 GUI、模型、Office 验收。
+   技能包的安装、浏览器下载与页面交互另用连接后的运行时验收。
 6. 维护者核对 Draft 内容与证据、完成适用的签名与发行门禁后，再决定是否手动发布。
    工作流不会自动取消 Draft、完成签名或验收、发布 Release、重写 tag 或覆盖已有资产。
    只有发布在 `ling-stack-org/ling-stack`、`draft=false` 且 `prerelease=false` 的合格 Release，

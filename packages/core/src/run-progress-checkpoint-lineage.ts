@@ -7,11 +7,14 @@ import { conversationModeKinds, type RunSession, type RunStore } from "./run-typ
 import { RunProgressCheckpointError, type RunProgressCheckpointLineage } from "./run-progress-checkpoint-types.js";
 import { applyConversationModeToEffectiveRunPolicySnapshot, resolveSessionRunPolicy,
   type EffectiveRunPolicySnapshot, type ResolveSessionRunPolicyInput } from "./session-permissions.js";
-import type { SkillApprovalProfile } from "./skill-types.js";
+import { instructionPackChecksum, readFrozenInstructionPackSnapshot, skillSourceApprovalProfile } from "./skill-source-definition.js";
+import type { SkillApprovalProfile, SkillDefinition, SkillRegistryEntry, SkillSourceSnapshot } from "./skill-types.js";
 
 export type RunProgressLineageStore = Pick<RunStore, "getWorkUnit" | "getApprovalPolicy" | "getLingThread" | "getChannel"
   | "getProviderPreset" | "getAiTeammate" | "listTeammateSkillBindings" | "getSkillRegistryEntry"
   | "getLatestWorkspaceProvenanceWatermark">;
+type RunProgressPolicyStore = RunProgressLineageStore & Pick<RunStore,
+  "getSkillSourceSnapshot" | "getSkillSourceSnapshotById" | "getManagedPlugin" | "getManagedPluginPackage">;
 
 const executionKeys = ["schemaVersion", "runnerId", "input", "toolHydrationEnabled", "preparedInput", "usedMemory", "skillSourceContext"];
 const inputKeys = ["cwd", "task", "provider", "tools", "mcpTools", "thinkingLevel", "reasoningSummary", "systemPrompt",
@@ -103,7 +106,7 @@ export function captureRunProgressCheckpointLineage(
  * drift into an indistinguishable checkpoint exception.
  */
 export function readCurrentRunProgressPolicySnapshot(
-  store: RunProgressLineageStore,
+  store: RunProgressPolicyStore,
   run: RunSession,
 ): EffectiveRunPolicySnapshot {
   const request = record(run.requestSnapshot);
@@ -124,7 +127,8 @@ export function readCurrentRunProgressPolicySnapshot(
     const teammate = store.getAiTeammate(run.teammateId);
     const entry = store.getSkillRegistryEntry(run.selectedSkillId);
     const builtin = listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID).find(skill => skill.id === run.selectedSkillId);
-    const definition = builtin ?? (entry?.reviewStatus === "published" ? entry.definition : undefined);
+    const execution = isRecord(request.runnerExecutionInput) ? request.runnerExecutionInput : undefined;
+    const definition = currentSkillDefinition(store, run.selectedSkillId, entry, builtin, execution?.skillSourceContext);
     const bindings = store.listTeammateSkillBindings(run.teammateId);
     if (!teammate || teammate.status !== "active" || !definition) throw invalid("checkpoint.permission_drift");
     const effective = getEffectiveTeammateSkill(buildEffectiveTeammateSkills({ teammate, bindings, skills: [definition],
@@ -156,6 +160,32 @@ export function mergeRunProgressApprovalProfiles(base: SkillApprovalProfile | un
   return { ...(!base || rank(required.mode) > rank(base.mode) ? required : base),
     requiredForTools: [...new Set([...(base?.requiredForTools ?? []), ...(required.requiredForTools ?? [])])],
     requiredForActions: [...new Set([...(base?.requiredForActions ?? []), ...(required.requiredForActions ?? [])])] };
+}
+
+export function withInstructionPackApproval(definition: SkillDefinition, snapshot: SkillSourceSnapshot | undefined): SkillDefinition {
+  if (!snapshot || !instructionPackChecksum(snapshot)) return definition;
+  const required = skillSourceApprovalProfile(snapshot.warnings);
+  return required.mode === "none" ? definition : {
+    ...definition, approvalProfile: mergeRunProgressApprovalProfiles(definition.approvalProfile, required),
+  };
+}
+
+function currentSkillDefinition(store: RunProgressPolicyStore, skillId: string, entry: SkillRegistryEntry | undefined,
+  builtin: SkillDefinition | undefined, context: unknown): SkillDefinition | undefined {
+  const definition = builtin ?? (entry?.reviewStatus === "published" ? entry.definition : undefined);
+  const source = isRecord(context) ? context : undefined;
+  if (source?.sourceKind === "gstack-skill-directory" && store.getManagedPlugin("skill-pack:gstack")?.enabled === false) {
+    throw invalid("checkpoint.permission_drift");
+  }
+  if (entry?.source !== "skill-directory" || entry.packId !== "superpowers" || !definition) return definition;
+  const installed = store.getManagedPluginPackage("skill-pack:superpowers");
+  const frozen = source && readFrozenInstructionPackSnapshot(store, skillId, source);
+  if (store.getManagedPlugin("skill-pack:superpowers")?.enabled !== true || installed?.status !== "installed" || !frozen) {
+    throw invalid("checkpoint.permission_drift");
+  }
+  const active = store.getSkillSourceSnapshot(skillId);
+  const effective = active && instructionPackChecksum(active) === installed.packageHash ? withInstructionPackApproval(definition, active) : definition;
+  return withInstructionPackApproval(effective, frozen);
 }
 
 /** No normalization: hash the durable parser envelope in its original JSON field order. */

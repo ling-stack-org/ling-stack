@@ -4,6 +4,8 @@
 
 三个独立仓库维护各自的源码、构建流程和发布文档，均提供 macOS arm64 和 Windows x64 的公开开发预发布。Desktop 也提供两平台瘦包供手动试用。官方插件目录待发布，所需的 macOS Developer ID 签名和公证、Windows Authenticode 签名及 Cua Driver 完整性目录签名尚未就绪。Desktop 默认使用兼容打包，待正式签名资产和官方目录通过安装版验收后切换。
 
+gstack 的上游安装、运行时接入和内置版迁移由 [gstack 可选插件设计](gstack-optional-plugin.md) 记录，状态为提案。
+
 | 插件 | 独立仓库职责 | Ling 主仓职责 |
 | --- | --- | --- |
 | [Office Documents](https://github.com/ling-stack-org/ling-plugin-office-documents) | Apple Events 与 Excel COM helper、原生构建和发布文档 | 文件级 Office 工具、审批、`ling.office.driver.v1` 宿主、恢复和界面 |

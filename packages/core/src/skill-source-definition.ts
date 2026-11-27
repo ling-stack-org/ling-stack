@@ -1,8 +1,9 @@
 import { parseDocument } from "yaml";
 import { readOnlyRunTools, type RunTool } from "./approval-policy.js";
+import type { SkillRegistryStoreFacet } from "./run-types.js";
 import type {
-  AiTeammateRoleKey, SkillAgentMetadata, SkillDefinition, SkillRegistryEntry,
-  SkillSourceFrontMatter, SkillSourceKind, SkillSourceWarning,
+  AiTeammateRoleKey, SkillAgentMetadata, SkillApprovalProfile, SkillDefinition, SkillRegistryEntry,
+  SkillSourceFrontMatter, SkillSourceKind, SkillSourceSnapshot, SkillSourceWarning,
 } from "./skill-types.js";
 
 interface SkillSourceDefinitionInput {
@@ -90,12 +91,34 @@ function normalizeDefinitionFromSource(skillId: string, source: SkillSourceDefin
     name: source.frontMatter.name ?? source.agentMetadata?.displayName ?? skillId.split("-").filter(Boolean).map((part) => `${part[0].toUpperCase()}${part.slice(1)}`).join(" "),
     summary: firstLine(summary), roleAffinity: inferRoleAffinity(skillId, summary), promptFragments: [summary],
     requiredTools: inferRequiredTools(source), requiredProviderCapabilities: ["chat", "reasoning"],
-    approvalProfile: source.warnings.some((warning) => warning.code === "destructive_command" || warning.code === "external_send_claim")
-      ? { mode: "strict", risk: "high", requiredForTools: ["bash", "edit", "write"], requiredForActions: ["external_send", "deploy"] }
-      : source.warnings.some((warning) => warning.code === "host_specific_tool" || warning.code === "unsupported_tool")
-        ? { mode: "standard", risk: "medium", requiredForTools: ["bash"] } : { mode: "none" },
+    approvalProfile: skillSourceApprovalProfile(source.warnings),
     stateEffects: [],
   };
+}
+
+export function skillSourceApprovalProfile(warnings: readonly SkillSourceWarning[]): SkillApprovalProfile {
+  if (warnings.some(warning => warning.code === "destructive_command" || warning.code === "external_send_claim")) {
+    return { mode: "strict", risk: "high", requiredForTools: ["bash", "edit", "write"], requiredForActions: ["external_send", "deploy"] };
+  }
+  if (warnings.some(warning => warning.code === "host_specific_tool" || warning.code === "unsupported_tool")) {
+    return { mode: "standard", risk: "medium", requiredForTools: ["bash"] };
+  }
+  return { mode: "none" };
+}
+
+export function instructionPackChecksum(context: { sourceKind?: unknown; upstreamName?: unknown; referencedFiles?: unknown }): string | undefined {
+  if (context.sourceKind !== "workspace-skill-directory" || context.upstreamName !== "obra/superpowers" || !Array.isArray(context.referencedFiles)) return undefined;
+  const digest: unknown = context.referencedFiles.find(ref => ref && typeof ref === "object" && ref.path === "skill-pack.json")?.checksum;
+  return typeof digest === "string" && /^sha256:[a-f0-9]{64}$/u.test(digest) ? digest.slice(7) : undefined;
+}
+
+export function readFrozenInstructionPackSnapshot(store: Pick<SkillRegistryStoreFacet, "getSkillSourceSnapshotById">, skillId: string,
+  context: { snapshotId?: unknown; skillId?: unknown; sourceChecksum?: unknown; sourceKind?: unknown; upstreamName?: unknown; referencedFiles?: unknown },
+): SkillSourceSnapshot | undefined {
+  const digest = instructionPackChecksum(context);
+  if (!digest || typeof context.snapshotId !== "string" || context.skillId !== skillId) return undefined;
+  const snapshot = store.getSkillSourceSnapshotById(context.snapshotId);
+  if (snapshot?.skillId === skillId && snapshot.sourceChecksum === context.sourceChecksum && instructionPackChecksum(snapshot) === digest) return snapshot;
 }
 
 function inferRoleAffinity(skillId: string, summary: string): readonly AiTeammateRoleKey[] {

@@ -970,6 +970,7 @@ export class SqliteRunStore implements RunStore {
   private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
   private readonly skillRegistry: SqliteSkillRegistryStore;
+  private skillPackTransactionDepth = 0;
   private readonly skillRegression: SqliteSkillRegressionStore;
   private readonly skillCandidates: SqliteSkillCandidateStore;
   private readonly skillUsage: SqliteSkillUsageStore;
@@ -4621,7 +4622,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch {
-    return this.skillRegistry.publishSkillSourceBatch(input, now);
+    return this.skillRegistry.publishSkillSourceBatch(input, now, this.skillPackTransactionDepth > 0);
   }
 
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined {
@@ -6533,6 +6534,20 @@ export class SqliteRunStore implements RunStore {
 
   getManagedPlugin(pluginId: string): ManagedPluginRecord | undefined {
     return this.managedPlugins.getManagedPlugin(pluginId);
+  }
+
+  commitManagedSkillPackChange(write: () => void): void {
+    this.database.exec("BEGIN IMMEDIATE");
+    this.skillPackTransactionDepth += 1;
+    try {
+      write();
+      this.database.exec("COMMIT");
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    } finally {
+      this.skillPackTransactionDepth -= 1;
+    }
   }
 
   upsertManagedPlugin(input: UpsertManagedPluginInput, now: string): ManagedPluginRecord {

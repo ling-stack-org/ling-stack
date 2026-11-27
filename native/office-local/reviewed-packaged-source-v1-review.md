@@ -1,6 +1,7 @@
 # Scoped macOS Development Packaging Review
 
-The current source prerequisite includes the [Desktop development prerelease version](#desktop-development-prerelease-version),
+The current source prerequisite includes the [optional skill pack distribution](#optional-skill-pack-distribution),
+the [Desktop development prerelease version](#desktop-development-prerelease-version),
 [visualization and GStack history inputs](#visualization-and-gstack-history-inputs),
 [MP4 publication and packaging inputs](#mp4-publication-and-packaging-inputs),
 [Workspace and device storage inputs](#workspace-and-device-storage-inputs),
@@ -11,6 +12,29 @@ The current source prerequisite includes the [Desktop development prerelease ver
 and [Official plugin packaging source closure](#official-plugin-packaging-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Optional skill pack distribution
+
+On 2026-11-27, a separate in-host Codex reviewer returned
+`APPROVE_SCOPED_DEVELOPMENT_PACKAGING` for the exact packaging input projection
+at `01bc09ae2a7faea8462144da0d5eb93eed339c24`. The review covers the existing
+hosted macOS arm64 Darwin 25.6.0 `unsigned_dev` lane with ad-hoc signing and
+`provider=false`. The preexisting compiler, SDK, headers and runtime profiles
+retain their recorded values.
+
+The 2,028 fixed packaging inputs include 8 additions, 5 removals, and 85
+updated digests. All 55 generated locale catalogs were reproduced independently.
+The 15 Office and 19 Codesign native sources match their existing records.
+The real Daemon and worker esbuild source graphs passed the authored input
+checks in the independent review fixture. Desktop packaging omits the gstack
+payload and retains the runtime adapter for explicitly selected skill sources.
+
+The 262,110-byte Office record has SHA-256
+`9f5587d0d1534d4d5c28c3b6e56c1843e3b358891fd1067f89af3717fb35fd4c`.
+The fixed-order packaging and native aggregate SHA-256 values are
+`1b931a65f1225674a6aa3224d0dd63d10415c301d6799a069dec01411c38fc54`
+and `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
+The candidate workflow records archive and installed startup evidence.
 
 ## Desktop development prerelease version
 

@@ -2776,6 +2776,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   ): RecordAutomationMonitorSnapshotResult;
   listManagedPlugins(options?: ListManagedPluginsOptions): ManagedPluginRecord[];
   getManagedPlugin(pluginId: string): ManagedPluginRecord | undefined;
+  commitManagedSkillPackChange(write: () => void): void;
   upsertManagedPlugin(input: UpsertManagedPluginInput, now: string): ManagedPluginRecord;
   updateManagedPlugin(pluginId: string, input: UpdateManagedPluginInput, now: string): ManagedPluginRecord | undefined;
   replaceManagedPluginContributions(

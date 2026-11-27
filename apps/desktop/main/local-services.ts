@@ -4,6 +4,7 @@ import { readDesktopLocalServiceRequest, type DesktopLocalServiceResponse } from
 
 const RESPONSE_LIMIT = 2 * 1024 * 1024;
 const TIMEOUT_MS = 30_000;
+const SKILL_PACK_PREPARATION_TIMEOUT_MS = 180_000;
 
 export function registerLocalServiceIpc(input: {
   readonly ipcMainImpl: Pick<IpcMain, "handle" | "removeHandler">;
@@ -20,9 +21,10 @@ export function registerLocalServiceIpc(input: {
       assertSender(input, event);
       if (args.length !== 1) throw new Error("local_service_invalid_request");
       const request = readDesktopLocalServiceRequest(args[0]);
-      const workspaceRequest = request.path === "/workspaces/activate" || request.path === "/workspaces/registered";
+      const skillPackMutation = request.method === "POST" && request.path.startsWith("/plugins/skill-packs/");
+      const workspaceRequest = request.path === "/workspaces/activate" || request.path === "/workspaces/registered" || skillPackMutation;
       if (workspaceRequest && !input.desktopBridgeToken) throw new Error("local_service_unavailable");
-      const signal = AbortSignal.timeout(TIMEOUT_MS);
+      const signal = AbortSignal.timeout(skillPackMutation ? SKILL_PACK_PREPARATION_TIMEOUT_MS : TIMEOUT_MS);
       const result = await withAbort(signal, async () => {
         const response = await fetchImpl(`${baseUrl}${request.path}`, {
           method: request.method,
