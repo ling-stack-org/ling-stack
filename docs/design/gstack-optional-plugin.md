@@ -14,14 +14,14 @@ gstack 的默认来源是 [garrytan/gstack](https://github.com/garrytan/gstack)�
 
 ## 安装与连接
 
-在“设置 → 插件 → 技能包”选择 gstack 或 Superpowers。每项显示安装状态、版本、当前工作区是否启用，以及可用的安装、连接或回滚操作。
+展开侧栏的“工程”，进入“插件管理 → 技能包”，选择 gstack 或 Superpowers。每项显示安装状态、版本、当前工作区是否启用，以及可用的安装、连接或回滚操作。
 
 | 入口 | 用户操作和结果 |
 | --- | --- |
 | 从官方来源安装 | Superpowers 的“安装”从固定的官方归档下载并校验。gstack 的“安装指南”提供从固定上游源码准备 Ling 运行时的步骤。 |
 | 连接本机安装 | gstack 选择适配当前平台的 Ling 运行目录，并填写来自独立构建记录或可信分发渠道的清单 SHA-256。Superpowers 选择上游仓库根目录或 `skills`。连接成功后，启用开关只作用于当前工作区。 |
 | 使用已有 Ling 资源 | 升级时发现已验证的旧内置版本，可在插件页确认启用，复用相同版本资源。 |
-| 从技能入口进入 | 显式调用未准备好的 gstack 技能时，打开插件详情并显示对应补救操作。首次启用成功后，用户从原任务继续。 |
+| 从技能入口进入 | 显式调用当前工作区不可用的技能包条目时，执行入口提示安装并启用相应技能包。 |
 
 上游 `setup` 按宿主注册技能，当前固定版本支持 Codex、Claude Code 等宿主，Ling 的渲染适配位于本仓。核查时，上游最近三条 GitHub Release 均没有附加的平台二进制资产。因此当前 gstack 入口是官方安装说明加本机连接，已验证的旧 Ling 资源可以直接复用，自动构建入口保留在独立候选准备流程中，尚未在插件页标为“一键安装”。Superpowers 固定提交支持 Ling 内部下载、校验和快照发布。[上游宿主安装契约](https://github.com/garrytan/gstack/blob/47d639abffa882b8cbb641d7d1dedf08ecada9ec/docs/ADDING_A_HOST.md) · [上游发布](https://github.com/garrytan/gstack/releases) · [Ling 宿主适配](../../scripts/gstack/render-upstream.ts)
 
@@ -86,7 +86,7 @@ flowchart LR
 ```
 
 - **桌面构建与启动**负责正常启动并提供插件入口。把 gstack 资源准备、原生构建、打包、归档校验和浏览器冒烟搬到插件的发布或接入验收。主包验证改为断网且不存在 gstack 时仍可启动，并检查归档里已没有 gstack 运行文件。启动路径上的缓存缺失、损坏和保留超限转成插件状态。[桌面构建流程](../../.github/workflows/desktop-prerelease.yml) · [延迟资源解析](../../packages/daemon/src/features/skills/packaged-resolution.ts) · [归档验证](../../scripts/release/verify-desktop-package.mjs)
-- **插件管理**复用现有目录、安装记录、启停、更新、回滚和审计。用户级选择记录管理已验证资源，工作区保存启用和绑定状态。签名资产沿用目录验签、平台匹配和完整文件清单。当前远程安装器对归档和解包共用 1 GiB 上限，并在内存中持有 ZIP。完整 gstack 资源已经超过解包上限。若选独立资产路径，单独验收有界流式下载与解包、容量及文件数，并复用现有 gstack 清单和安装验证。保持其他插件的现有约束。[下载安装器](../../packages/daemon/src/features/plugins/remote-package.ts) · [原生运行时验证](../../packages/core/src/official-plugin-runtime.ts)
+- **插件管理**复用现有安装记录、启停、更新、回滚和审计。已验证资源按摘要保存在用户缓存，工作区记录自己的选定版本和启用状态。完整 gstack 资源超过当前远程安装器的 1 GiB 解包上限。若提供独立签名资产，下载与解包路径需验证容量、文件数、签名和完整文件清单。[下载安装器](../../packages/daemon/src/features/plugins/remote-package.ts) · [原生运行时验证](../../packages/core/src/official-plugin-runtime.ts)
 - **技能管理**为 gstack 注册 `skill-pack` 贡献。现有远程贡献接入只处理 MCP，技能装载沿用 gstack 的原子发布、稳定技能 ID、完整正文和依赖校验。只有启用且可运行的条目进入自动选择。既有模板和工作流中对 gstack 的绑定保留，缺少插件时有明确状态。`implement`、`checkpoint` 等 Ling 原生能力由 Ling 注册，独立可用。[插件贡献接入](../../packages/daemon/src/features/plugins/install.ts) · [有效技能列表](../../packages/daemon/src/features/skills/registry.ts) · [技能来源发布](../../packages/daemon/src/features/skills/bundled-startup.ts)
 - **任务执行**从已验证版本解析入口和兼容运行时，以绝对路径运行 gstack 工具，状态与工作区或任务隔离。已装、工作区已启用、能力可用是独立判断。工具调用沿用 Runner 的工作区权限、审批和审计。技能文本、项目目录或继承的 `PATH` 无权替换受管入口。宿主未提供的能力按实际状态显示。浏览器的内容安全处理沿用现有契约，组件失败按对应的不可用语义处理。[运行绑定](../../packages/daemon/src/features/skills/packaged-runtime.ts) · [宿主工具映射](../../packages/daemon/src/features/runs/gstack-host-context.ts) · [浏览器启动](../../scripts/gstack/packaged-browse-launch.mjs)
 

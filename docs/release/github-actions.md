@@ -20,7 +20,7 @@ macOS 使用 ad-hoc 签名，不含 Developer ID 或公证；Windows 不含 Auth
    Electron/OS 指纹必须与静态审查记录匹配；流水线不会根据测试成功自动批准它们。
 
 桌面工作流独立于 gstack 构建。归档校验确认 `gstack`、`gstack-browser` 和旧嵌入身份均已排除，
-安装启动验收使用全新的用户目录。用户可在“设置 → 插件 → 技能包”连接已经准备好的 gstack。
+安装启动验收使用全新的用户目录。用户可在“工程 → 插件管理 → 技能包”连接已经准备好的 gstack。
 独立运行时的 Chrome for Testing 和 TestSavant 模型由相关能力按需下载和校验，验证随技能包进行。
 原生审查、实际随包资源和分发材料通过后，候选才可进入汇总。[gstack 使用指南](../design/gstack-optional-plugin.md#从源码准备-gstack-运行时)
 
