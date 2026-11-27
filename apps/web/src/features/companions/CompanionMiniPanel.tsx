@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CompanionNavigationRequest } from "../../../../desktop/shared/companion-capabilities.js";
-import { ArrowUp, ExternalLink, Pause, Play, RefreshCw, Send, Sparkles, X, Zap } from "lucide-react";
+import { ArrowUp, ExternalLink, Pause, Play, RefreshCw, Send, Settings2, Sparkles, X, Zap } from "lucide-react";
 import type {
   AiTeammate,
   CompanionAttentionItem,
@@ -95,6 +95,9 @@ export function CompanionMiniPanel({
     ?? activeCompanions.find((companion) => companion.id === selectedId)
     ?? actorCompanion
     ?? activeCompanions[0];
+  const hasWorkspace = Boolean(cwd.trim());
+  const needsCompanion = hasWorkspace && !selected;
+  const characterName = selected?.displayName ?? "Yui";
   const teammate = selected ? teammates.find((item) => item.id === selected.teammateId) : undefined;
   const chat = useCompanionChat({ cwd, companion: selected, open,
     onActions: enqueueActionIds,
@@ -589,6 +592,7 @@ export function CompanionMiniPanel({
       ref={panelRef}
       className={`companion-overlay${desktop ? " companion-desktop-panel" : ""}${chat.connection !== "connected" ? " has-connection-issue" : ""}${dragging ? " is-dragging" : ""}`}
       data-card-side={cardSide}
+      data-companion-setup={needsCompanion || undefined}
       role="dialog"
       aria-label={t("Intelligent companion")}
       style={floatingPosition ? {
@@ -600,6 +604,13 @@ export function CompanionMiniPanel({
       onPointerMove={moveDrag}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onBlur={(event) => {
+        if (!conversationOpen || event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        window.setTimeout(() => {
+          if (!panelRef.current?.contains(document.activeElement)
+            && !chat.sending && !answering) setConversationOpen(false);
+        }, 0);
+      }}
     >
       {activeAttention ? (
         <div
@@ -633,21 +644,13 @@ export function CompanionMiniPanel({
 
       <div
         ref={conversationRef}
-        className={`companion-mini-conversation${conversationOpen ? " is-open" : " is-collapsed"}`}
-        onBlur={(event: React.FocusEvent<HTMLDivElement>) => {
-          const next = event.relatedTarget as Node | null;
-          if (next && conversationRef.current?.contains(next)) return;
-          window.setTimeout(() => {
-            if (!conversationRef.current?.contains(document.activeElement)
-              && !chat.sending && !answering) setConversationOpen(false);
-          }, 0);
-        }}
+        className={`companion-mini-conversation${conversationOpen && selected ? " is-open" : " is-collapsed"}`}
       >
         <header className="companion-mini-header">
           <div className="companion-mini-heading">
             <span className="companion-mini-heading-icon" aria-hidden="true"><Icon icon={Sparkles} size="sm" /></span>
             <div>
-              <strong>{t("Intelligent companion")}</strong>
+              <strong>{needsCompanion ? characterName : t("Intelligent companion")}</strong>
               <span>{selected ? selected.displayName : t("No companion selected")}</span>
             </div>
           </div>
@@ -655,6 +658,7 @@ export function CompanionMiniPanel({
             {selected ? <button type="button" className="companion-talk-button" onPointerDown={(event) => event.stopPropagation()} onClick={() => setConversationOpen((current) => !current)}>{conversationOpen ? t("Hide chat") : t("Talk")}</button> : null}
             {selected ? <IconButton label={t("Switch companion")} icon={Sparkles} size="sm" onClick={() => setRoleMenuOpen((current) => !current)} /> : null}
             {selected ? <IconButton label={pinnedId === selected.id ? t("Unpin companion") : t("Pin companion")} icon={Sparkles} size="sm" onClick={pinCompanion} /> : null}
+            {needsCompanion && activeAttention ? <IconButton label={t("Open companion settings")} icon={Settings2} size="sm" onClick={onOpenSettings} /> : null}
             {!desktop && window.lingDesktop?.companionWindow ? <IconButton label={t("Open desktop companion")} icon={ExternalLink} size="sm" onClick={() => {
               void window.lingDesktop!.companionWindow!.open(cwd.trim()).then((result) => {
                 if (result.accepted) onClose();
@@ -694,11 +698,11 @@ export function CompanionMiniPanel({
           </label>
         ) : null}
 
-        {!cwd.trim() ? (
+        {!hasWorkspace ? (
           <div className="companion-mini-empty">
             <span>{t("Choose a workspace before opening a companion.")}</span>
           </div>
-        ) : activeCompanions.length === 0 ? (
+        ) : needsCompanion && !activeAttention ? (
           <div className="companion-mini-empty">
             <span>{t("Create a companion in Settings to start chatting.")}</span>
             <Button size="sm" variant="primary" leadingIcon={<Sparkles />} onClick={onOpenSettings}>{t("Open companion settings")}</Button>
@@ -783,10 +787,15 @@ export function CompanionMiniPanel({
           <Button size="sm" variant="ghost" className="companion-mini-settings-link" onClick={onOpenSettings}>{t("Manage companions in Settings")}</Button>
         </footer>
       </div>
-      {selected ? (
+      {hasWorkspace ? (
         <div ref={stageRef} className="companion-pet-stage-slot">
-          <CompanionPetStage companionName={selected.displayName} phase={visiblePhase}
-            actionId={activeActionId} emotionId={state?.emotionId} onPointerDown={beginDrag} />
+          <CompanionPetStage
+            companionName={characterName}
+            phase={selected ? visiblePhase : undefined}
+            actionId={selected ? activeActionId : undefined}
+            emotionId={selected ? state?.emotionId : undefined}
+            onPointerDown={beginDrag}
+          />
         </div>
       ) : null}
     </aside>

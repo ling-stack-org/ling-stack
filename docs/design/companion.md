@@ -327,6 +327,8 @@ window closes the Companion.
 - Show one full-body character at a time. Use the existing Yui pose atlas for Yui and
   an associated character resource for each teammate with its own appearance. The
   character menu provides manual switching and pinning, conversation, and close.
+  The window size determines the character's dimensions. Opening, updating, or closing a
+  card preserves those dimensions. Card content scrolls within the available space.
 - Place the character and cards on a transparent, frameless desktop surface. A visible
   card supplies its own theme-aware reading background. Idle shows the character, with
   a single short activity label when there is useful current progress. An active work
@@ -337,8 +339,8 @@ window closes the Companion.
   question's text field when the user requests a free-text answer and the question
   allows it. Conversation messages have their own reading surfaces on the transparent
   canvas. Both entry points focus the editor. Collapse the editor on Escape or when
-  focus leaves its entire input area, including its controls, after text composition
-  or submission settles. An active work card can remain visible on its own.
+  focus leaves the companion controls after text composition or submission settles.
+  Moving focus between the editor and an active work card keeps their controls in place.
 - Bind a conversation to its selected teammate when it opens. Keep its draft scoped to
   that private conversation and a question draft scoped to its request and version.
   Restore the draft when the corresponding editor reopens. A compact mode presents
