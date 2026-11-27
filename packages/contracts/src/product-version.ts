@@ -1,5 +1,5 @@
 /** Product version shared by the Web, Desktop, daemon health and CLI surfaces. */
-export const LING_PRODUCT_VERSION = "0.6.2-alpha.2" as const;
+export const LING_PRODUCT_VERSION = "0.6.2-alpha.3" as const;
 
 /** Version of the local Desktop-to-daemon health/bridge contract. */
 export const LING_DAEMON_PROTOCOL_VERSION = 1 as const;

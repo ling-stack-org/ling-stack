@@ -131,6 +131,9 @@ maintainer action after the [Desktop release gates](desktop.md) pass.
 
 ## Release Notes
 
+Write GitHub Release titles and descriptions, changelog entries, and attached
+release notes in English for all releases and pre-releases.
+
 Release notes should explain user-visible changes, migrations, security impact, known
 limitations, supported platforms, and verification evidence. Do not paste implementation
 diaries, raw test logs, local paths, credentials, or unredacted diagnostics.

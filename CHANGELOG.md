@@ -8,6 +8,15 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+## [0.6.2-alpha.3] - 2026-11-27
+
+### Changed
+
+- **GStack is available as an optional skill pack.** The macOS and Windows
+  development installers omit the GStack runtime. Users can connect a
+  prepared runtime from Plugin Manager and enable it per workspace.
+- **Superpowers can be enabled per workspace** from Plugin Manager.
+
 ## [0.6.2-alpha.2] - 2026-11-27
 
 ### Changed
