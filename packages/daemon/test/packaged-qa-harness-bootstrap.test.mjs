@@ -57,12 +57,11 @@ for (const [label, value] of [
     /packaged_qa_harness_selection_invalid/);
 });
 
-test("actual CLI validates QA snapshot before invoking native or skill startup", () => {
+test("actual CLI validates QA snapshot before invoking native startup", () => {
   const source = readFileSync(new URL("../src/cli.ts", import.meta.url), "utf8");
   const selectionAt = source.indexOf("const qaHarness = readPackagedQaHarnessSelection(process.env)");
   assert.ok(selectionAt > 0 && selectionAt < source.indexOf("? readPackagedRestrictedCommandConfig()"));
   assert.ok(selectionAt < source.indexOf("const officeLocalNativeArtifact = readPackagedOfficeLocalNativeArtifact()"));
-  assert.ok(selectionAt < source.indexOf("await preparePackagedGstackStartup()"));
   assert.match(source, /\.\.\.\(qaHarness \? \{ harness: qaHarness \} : \{\}\)/u);
 });
 
@@ -79,7 +78,6 @@ const modules = new Map([
  ['./index.js', "export async function startDaemon(config) { console.log(JSON.stringify({probe:'startup',config})); return {server:{address:()=>({port:17928})},config,stop:async()=>{}}; }"],
  ['./runtime/sandbox/packaged-restricted-command-bootstrap.js', "export function readPackagedRestrictedCommandConfig(){console.log('probe:native');}"],
  ['./runtime/sandbox/packaged-office-native-bootstrap.js', "export function readPackagedOfficeLocalNativeArtifact(){console.log('probe:office');}"],
- ['./features/skills/packaged-startup.js', "export async function preparePackagedGstackStartup(){console.log('probe:skills');}"],
  ['@ling-stack/core/execution-engine-host-authority', "export function writeExecutionEngineHostAuthority(){throw new Error('unexpected fd');}"]
 ]);
 registerHooks({resolve(specifier,context,next){
@@ -104,5 +102,5 @@ registerHooks({resolve(specifier,context,next){
   const invalid = run({ ...env(), LING_STACK_QA_HARNESS_SELECTION: "{}" });
   assert.equal(invalid.error, undefined); assert.notEqual(invalid.status, 0);
   assert.match(invalid.stderr, /packaged_qa_harness_selection_invalid/);
-  assert.equal(invalid.stdout, "", "invalid selection must not enter native, skills or startup");
+  assert.equal(invalid.stdout, "", "invalid selection must not enter native or startup");
 });

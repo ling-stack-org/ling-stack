@@ -286,7 +286,7 @@ export function collectMaterials(options) {
     collectInstallerMaterials(root, add, components, gaps);
     if (bundledPlugins) collectDotnetRuntimeMaterials(root, add, components, gaps);
   }
-  collectGstack(options.gstackWorkspace, add, components, gaps, root, options.platform);
+  if (options.gstackWorkspace) collectGstack(options.gstackWorkspace, add, components, gaps, root, options.platform);
   components.sort((a, b) => a.identifier.localeCompare(b.identifier, "en"));
   for (const entries of [gaps, limitations]) {
     entries.splice(0, entries.length, ...new Map(entries.map(entry => [JSON.stringify(entry), entry])).values());

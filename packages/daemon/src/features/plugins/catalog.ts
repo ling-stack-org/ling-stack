@@ -179,7 +179,7 @@ function listProductManagedBuiltInPluginDescriptors(
 }
 
 function shouldIncludePersistedManagedPluginRecord(record: ManagedPluginRecord): boolean {
-  return !isPlainBuiltInRuntimeExtensionRecord(record);
+  return !record.id.startsWith("skill-pack:") && !isPlainBuiltInRuntimeExtensionRecord(record);
 }
 
 function isPlainBuiltInRuntimeExtensionRecord(record: ManagedPluginRecord): boolean {

@@ -9,7 +9,6 @@ import {
   validateCuaDriverPackageAuthority,
 } from "../shared/cua-driver-package-authority-contract.mjs";
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
-import { preparePackagedGstackBuild, packagedGstackBuilderConfig } from "./packaged-gstack-resources.mjs";
 import { lockedUseReleaseBuilderConfig } from "./locked-use-release-build.ts";
 import { lockedUseValidationBuilderConfig } from "./locked-use-validation-build.ts";
 import { lockedUseLocalBuilderConfig } from "./locked-use-local-build.ts";
@@ -30,8 +29,6 @@ if (localElectronDist) {
   }
 }
 const baseBuild = packageJson.build;
-await preparePackagedGstackBuild();
-const gstackBuild = packagedGstackBuilderConfig();
 const packageProvider = process.env.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1";
 const externalPluginsOnly = process.env.LING_PLUGIN_EXTERNAL_ONLY === "1";
 const catalogManaged = process.env.LING_CUA_DRIVER_CATALOG_MANAGED === "1";
@@ -98,7 +95,6 @@ export default {
   asar: true,
   extraMetadata: {
     ...(baseBuild.extraMetadata ?? {}),
-    ...(gstackBuild.extraMetadata ?? {}),
     ...(lockedUseBuild.extraMetadata ?? {}),
     ...(lockedUseValidationBuild.extraMetadata ?? {}),
     ...(lockedUseLocalBuild.extraMetadata ?? {}),
@@ -120,7 +116,6 @@ export default {
     ...(baseBuild.extraResources ?? []),
     // Builder merges package.json arrays with the in-process macOS config.
     ...(!externalPluginsOnly ? packageJson.lingBundledPluginResources : []),
-    ...(gstackBuild.extraResources ?? []),
     ...(lockedUseBuild.extraResources ?? []),
     ...(lockedUseValidationBuild.extraResources ?? []),
     ...(lockedUseLocalBuild.extraResources ?? []),
@@ -135,7 +130,6 @@ export default {
   ],
   mac: {
     ...baseBuild.mac,
-    ...(gstackBuild.mac ?? {}),
     ...(signingProfile.signingTier === "unsigned_dev"
       ? {
           identity: "-",

@@ -66,6 +66,9 @@ import type {
   PluginPackageDetailResponse,
   PluginPackageValidationResponse,
   ManagedPluginCatalogResponse,
+  OptionalSkillPackAction,
+  OptionalSkillPackId,
+  OptionalSkillPackListResponse,
   PluginSourceListResponse,
   ProviderCheckResult,
   ProviderDraftCheckRequest,
@@ -94,6 +97,15 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const adminEndpoints = {
+  async listOptionalSkillPacks(this: LingDaemonEndpointContext, cwd: string): Promise<OptionalSkillPackListResponse> {
+    return this._get("/plugins/skill-packs", { cwd });
+  },
+
+  async changeOptionalSkillPack(this: LingDaemonEndpointContext, cwd: string, id: OptionalSkillPackId,
+    input: OptionalSkillPackAction): Promise<OptionalSkillPackListResponse> {
+    return this._post(`/plugins/skill-packs/${encodeURIComponent(id)}`, { cwd }, input);
+  },
+
   async listProviders(this: LingDaemonEndpointContext, cwd: string): Promise<ProviderListResponse> {
       return this._get("/providers", { cwd });
     },

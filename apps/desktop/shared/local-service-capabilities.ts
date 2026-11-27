@@ -57,6 +57,8 @@ function routeRules(path: string): { readonly methods: readonly string[]; readon
   if (path === "/workspaces/registered") return { methods: ["GET"], query: [] };
   if (path === "/workspaces/activate") return { methods: ["POST"], query: [] };
   if (path === "/skills/marketplace/inspect") return { methods: ["GET"], query: ["url"] };
+  if (path === "/plugins/skill-packs") return { methods: ["GET"], query: ["cwd"] };
+  if (/^\/plugins\/skill-packs\/(?:gstack|superpowers)$/u.test(path)) return { methods: ["POST"], query: ["cwd"] };
   if (path === "/im-destinations") return { methods: ["GET", "POST"], query: [] };
   if (/^\/im-destinations\/[A-Za-z0-9_-]+$/u.test(path)) return { methods: ["PATCH", "DELETE"], query: [] };
   if (/^\/im-destinations\/[A-Za-z0-9_-]+\/test$/u.test(path)) return { methods: ["POST"], query: [] };

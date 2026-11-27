@@ -6,13 +6,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { fileRecord, readCandidate, targetAssets } from "./desktop-release.mjs";
 import { extractCuaDriverFinalArtifact } from "../../apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs";
-import { readExecutableBundle } from "../gstack/executable-bundle.mjs";
 import { extractedApplicationPath, inventoryApplicationTree } from "./desktop-payload.mjs";
 import { smokeWindowsInstaller } from "./windows-installer-smoke.mjs";
 import { createVerifiedDistributionArchive, inventoryDistribution } from "./distribution-archive.mjs";
 import { verifyNsisPlugins } from "./verify-nsis-plugins.mjs";
-import { runManagedNode } from "../gstack/run-managed.mjs";
-import { prepareBrowserSmokeWorkspace } from "./browser-acquisition-smoke.mjs";
 import { prepareNsisExtractor } from "./nsis-extractor.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -53,9 +50,8 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
   const exe = mac ? join(app, "Contents/MacOS/Ling Stack") : join(app, "Ling Stack.exe");
   const archive = join(resources, "app.asar");
   const metadata = JSON.parse(asar.extractFile(archive, "package.json").toString("utf8"));
-  if (metadata.version !== candidate.version || !metadata.lingPackagedGstack) throw new Error("Packaged version or bundled gstack identity is missing");
-  const bundle = await readExecutableBundle(join(resources, "gstack"), metadata.lingPackagedGstack);
-  if (bundle.identity.target.platform !== (mac ? "darwin" : "win32") || bundle.identity.target.arch !== (mac ? "arm64" : "x64")) throw new Error("Packaged gstack target mismatch");
+  if (metadata.version !== candidate.version) throw new Error("Packaged version is unexpected");
+  if (Object.hasOwn(metadata, "lingPackagedGstack")) throw new Error("Unexpected Desktop gstack package identity");
   const distribution = await inventoryDistribution(join(resources, "distribution"));
   if (distribution.length === 0 || !isDeepStrictEqual(distribution, expectedDistribution)) throw new Error("Packaged distribution materials differ from this build");
   const pluginMode = metadata.lingPluginResourceMode ?? "bundled";
@@ -94,6 +90,10 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
   }
   const payload = await inventoryApplicationTree(app, { allowLinks: mac });
   const prefix = mac ? "Contents/Resources/" : "resources/";
+  if (payload.some(entry => entry.name.startsWith(prefix)
+    && /^(?:gstack|gstack-browser)(?:\/|$)/u.test(entry.name.slice(prefix.length)))) {
+    throw new Error("Unexpected gstack runtime in the default Desktop payload");
+  }
   const bundledPluginPath = /^(?:(?:bundled|browser-extension|browser-host|office-driver)(?:\/|$)|providers\/cua-driver\/(?!packaged-provider-capabilities\.json$|runtime-trust-policy\.json$))/u;
   if (pluginMode === "on-demand" && (payload.some(entry => entry.name.startsWith(prefix)
     && bundledPluginPath.test(entry.name.slice(prefix.length)))
@@ -101,7 +101,7 @@ async function inspectApplication(app, candidate, target, expectedDistribution) 
     throw new Error("Unexpected bundled plugin resource in the on-demand Desktop payload");
   }
   return { files, payload, pluginMode, installedPayloadBytes: payload.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0),
-    gstack: bundle.identity, distributionFileCount: distribution.length };
+    distributionFileCount: distribution.length };
 }
 
 /** Archive verification is intentionally distinct from installed-user acceptance. */
@@ -154,13 +154,6 @@ export async function verifyDesktopPackage() {
     : await smokeWindowsInstaller({ installer: join(releaseRoot, targetAssets(candidate, target)[0]), unpacked, candidate });
   await writeFile(join(evidenceRoot, "runner-installer-smoke.json"),
     JSON.stringify({ ...candidate, target, ...runnerInstallerSmoke }, null, 2) + "\n", { flag: "wx" });
-  const browserSmokePath = join(evidenceRoot, "browser-acquisition-smoke.json");
-  const browserSmoke = await runManagedNode({ root: await prepareBrowserSmokeWorkspace(),
-    args: [join(root, "scripts/release/browser-acquisition-smoke.mjs"),
-      join(unpacked, mac ? "Contents/Resources/gstack" : "resources/gstack"), browserSmokePath],
-    additionalBytes: 2 * 1024 ** 3, timeoutMs: 8 * 60000 });
-  if (browserSmoke.exitCode !== 0) throw new Error(`desktop_browser_acquisition_smoke_failed:${browserSmoke.reason ?? browserSmoke.exitCode}`);
-  const runnerBrowserSmoke = JSON.parse(await readFile(browserSmokePath));
   for (const record of archives) {
     if (!isDeepStrictEqual(await fileRecord(join(releaseRoot, record.name)), record)) throw new Error("Final archive changed during installer smoke");
   }
@@ -168,7 +161,7 @@ export async function verifyDesktopPackage() {
     archivePath: join(evidenceRoot, "distribution.tar.gz"), expected: distribution });
   const report = { ...candidate, target, status: "passed", acceptance: "archive_contents_and_unsigned_structure_only",
     archives, distributionArchive, ...(installerPlugins ? { installerPlugins } : {}), ...baseline,
-    electronRuntime: runtime, runnerInstallerSmoke, runnerBrowserSmoke, runtimeAcceptance: "not_run", installedUserAcceptance: "not_run" };
+    electronRuntime: runtime, runnerInstallerSmoke, runtimeAcceptance: "not_run", installedUserAcceptance: "not_run" };
   await writeFile(join(evidenceRoot, "package-verification.json"), JSON.stringify(report, null, 2) + "\n", { flag: "wx" });
   return report;
 }

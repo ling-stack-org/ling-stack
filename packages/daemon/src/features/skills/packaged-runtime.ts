@@ -10,6 +10,13 @@ type Binding = NonNullable<SkillSourceRuntimeContext["resourceBinding"]>;
 const sameFile = (a: BigIntStats, b: BigIntStats) =>
   ["dev", "ino", "size", "mode", "mtimeNs", "ctimeNs", "nlink"].every(key => Reflect.get(a, key) === Reflect.get(b, key));
 let activeRuntime: PackagedSkillRuntimeCatalog | undefined;
+const loadedGenerations = new Map<string, PackagedSkillRuntime>();
+
+function contextManifestChecksum(context: SkillSourceRuntimeContext | undefined): string | undefined {
+  if (context?.sourceKind !== "gstack-skill-directory") return undefined;
+  return context.resourceBinding?.manifestChecksum
+    ?? context.referencedFiles?.find(file => file.path === "manifest.json")?.checksum;
+}
 
 /** Constructed only after full package admission, never from task text or environment. */
 export class PackagedSkillRuntime {
@@ -18,6 +25,7 @@ export class PackagedSkillRuntime {
   readonly #facts: readonly { path: string; stat: BigIntStats }[];
   readonly #directories: readonly { path: string; stat: BigIntStats }[];
   get manifestChecksum(): string { return this.#source.manifestChecksum; }
+  get source(): VerifiedBundledSkillSource { return this.#source; }
   constructor(root: string, source: VerifiedBundledSkillSource, readonly browser?: VerifiedBundledBrowser) {
     this.#root = resolve(root); this.#source = source;
     if (realpathSync(this.#root) !== this.#root || source.manifest.deliveryStage !== "executable") throw new Error("packaged_skill_runtime_not_admitted");
@@ -120,9 +128,9 @@ export class PackagedSkillRuntimeCatalog {
     this.#generations = new Map(available.map(runtime => [runtime.manifestChecksum, runtime]));
     if (!this.#generations.size) throw new Error("packaged_skill_resource_version_unavailable");
   }
+  hasGeneration(checksum: string): boolean { return this.#generations.has(checksum); }
   #resolve(context: SkillSourceRuntimeContext): PackagedSkillRuntime {
-    const key = context.resourceBinding?.manifestChecksum
-      ?? context.referencedFiles?.find(file => file.path === "manifest.json")?.checksum;
+    const key = contextManifestChecksum(context);
     const runtime = key && this.#generations.get(key);
     if (!runtime) throw new Error("packaged_skill_resource_version_unavailable");
     return runtime;
@@ -171,7 +179,23 @@ export function installPackagedSkillRuntime(runtime: PackagedSkillRuntime | unde
   if (activeRuntime) throw new Error("packaged_skill_runtime_already_installed");
   activeRuntime = new PackagedSkillRuntimeCatalog(runtime, retained);
 }
+export function hasPackagedSkillGeneration(checksum: string): boolean {
+  return loadedGenerations.has(checksum) || activeRuntime?.hasGeneration(checksum) === true;
+}
+export function registerPackagedSkillGeneration(runtime: PackagedSkillRuntime): void {
+  runtime.assertCurrent();
+  loadedGenerations.set(runtime.manifestChecksum, runtime);
+}
+export function getPackagedSkillGenerationChecksum(context: SkillSourceRuntimeContext | undefined): string | undefined {
+  return contextManifestChecksum(context);
+}
+function loadedGeneration(context: SkillSourceRuntimeContext | undefined): PackagedSkillRuntime | undefined {
+  const key = contextManifestChecksum(context);
+  return key ? loadedGenerations.get(key) : undefined;
+}
 export function bindPackagedSkillContext(context: SkillSourceRuntimeContext): SkillSourceRuntimeContext {
+  const runtime = loadedGeneration(context);
+  if (runtime) return runtime.bind(context);
   if (!activeRuntime) {
     if (context.resourceBinding) throw new Error("packaged_skill_resource_version_unavailable");
     return context;
@@ -180,6 +204,8 @@ export function bindPackagedSkillContext(context: SkillSourceRuntimeContext): Sk
 }
 export function restorePackagedSkillContext(context: SkillSourceRuntimeContext | undefined, skillId?: string): SkillSourceRuntimeContext | undefined {
   try {
+    const runtime = loadedGeneration(context);
+    if (runtime) return runtime.restore(context, skillId);
     if (activeRuntime) return activeRuntime.restore(context, skillId);
     return context && bindPackagedSkillContext(context);
   } catch (error) {
@@ -193,6 +219,8 @@ export function restorePackagedSkillContext(context: SkillSourceRuntimeContext |
 }
 export function packagedSkillEnvironment(context: SkillSourceRuntimeContext | undefined, stateRoot: string, path?: string): NodeJS.ProcessEnv {
   if (!context) return {};
+  const runtime = loadedGeneration(context);
+  if (runtime) return runtime.environment(context, stateRoot, path);
   if (!activeRuntime) {
     if (context.resourceBinding) throw new Error("packaged_skill_resource_version_unavailable");
     return {};

@@ -3,25 +3,29 @@ import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
   GSTACK_DEFAULT_UPSTREAM_VERSION,
   listDefaultSkills,
+  isLingNativeSkillId,
   resolveEffectiveSkillRegistryEntries,
+  withInstructionPackApproval,
   type ReplaceTeammateSkillBindingInput,
+  type ManagedPluginStoreFacet,
   type SkillDefinition,
   type SkillRegistryEntry,
   type SkillRegistryStoreFacet,
   type TeammateStoreFacet,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import { optionalPackForRegistryEntry, optionalSkillPackEnabled, optionalSkillPackPluginId } from "./optional-pack-catalog.js";
 
 let skillRegistryGeneration = 0;
 
-type EffectiveSkillRegistryStore = SkillRegistryStoreFacet;
+type EffectiveSkillRegistryStore = SkillRegistryStoreFacet & Pick<ManagedPluginStoreFacet, "getManagedPlugin" | "getManagedPluginPackage">;
 type TeammateSkillValidationStore = EffectiveSkillRegistryStore & TeammateStoreFacet;
 
 export function getSkillRegistryGeneration(): number {
   return skillRegistryGeneration;
 }
 
-export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryStore): SkillRegistryEntry[] {
+export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryStore, includeInactivePacks = false): SkillRegistryEntry[] {
   const builtInTimestamp = new Date(0).toISOString();
   const builtInEntries = listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID).map((definition): SkillRegistryEntry => ({
     id: definition.id,
@@ -38,10 +42,35 @@ export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryS
     createdAt: builtInTimestamp,
     updatedAt: builtInTimestamp,
   }));
-  return resolveEffectiveSkillRegistryEntries({
+  const snapshots = store.listSkillSourceSnapshots({ reviewStatus: "published" });
+  const entries = resolveEffectiveSkillRegistryEntries({
     builtinEntries: builtInEntries,
     persistedEntries: store.listSkillRegistryEntries({ includeArchived: true, includeDisabled: true }),
-    sourceSnapshots: store.listSkillSourceSnapshots({ reviewStatus: "published" }),
+    sourceSnapshots: snapshots,
+  });
+  if (includeInactivePacks) return entries;
+  const desktop = process.env.LING_STACK_PACKAGED_DESKTOP === "1";
+  const gstack = optionalSkillPackEnabled(store, "gstack");
+  const gstackPackage = store.getManagedPluginPackage(optionalSkillPackPluginId("gstack"));
+  const superpowers = store.getManagedPluginPackage(optionalSkillPackPluginId("superpowers"));
+  const active = new Map(snapshots.map(snapshot => [snapshot.skillId, snapshot]));
+  return entries.filter(entry => {
+    const pack = optionalPackForRegistryEntry(entry);
+    if (!pack || isLingNativeSkillId(entry.id)) return true;
+    if (pack === "gstack") {
+      if (gstack === false || desktop && gstack !== true) return false;
+      if (!desktop && gstack === undefined) return true;
+      const snapshot = active.get(entry.id);
+      return gstackPackage?.status === "installed" && snapshot?.referencedFiles.some(file => file.path === "manifest.json"
+        && (snapshot.bundleUpdateMode === "pinned" || file.checksum === `sha256:${gstackPackage.packageHash}`)) === true;
+    }
+    return optionalSkillPackEnabled(store, "superpowers") === true && superpowers?.status === "installed"
+      && active.get(entry.id)?.referencedFiles.some(file => file.path === "skill-pack.json" && file.checksum === `sha256:${superpowers.packageHash}`);
+  }).map(entry => {
+    if (optionalPackForRegistryEntry(entry) !== "superpowers") return entry;
+    const snapshot = active.get(entry.id)!;
+    return { ...entry, version: snapshot.upstreamVersion, checksum: snapshot.sourceChecksum,
+      definition: withInstructionPackApproval(entry.definition, snapshot) };
   });
 }
 

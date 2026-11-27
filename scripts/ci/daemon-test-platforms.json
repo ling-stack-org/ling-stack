@@ -327,6 +327,7 @@
     "test/office-artifact-preparation.test.mjs",
     "test/office-parser-compatibility.test.mjs",
     "test/openclaw-owned-execution.test.mjs",
+    "test/optional-pack-catalog.test.ts",
     "test/owned-native-process.test.mjs",
     "test/p2-stop-attempt-fencing.test.mjs",
     "test/packaged-gstack-prepared-input.test.mjs",
@@ -563,6 +564,7 @@
     "test/worktree-management.test.ts"
   ],
   "darwin": [
+    "test/optional-gstack-source.test.ts",
     "test/acp-host-terminal-process.test.mjs",
     "test/acp-journaled-lifecycle.test.mjs",
     "test/acp-kimi-host-read.test.mjs",
@@ -672,7 +674,6 @@
     "test/packaged-codesign-native-source.test.mjs",
     "test/packaged-codesign-original-issuer.test.mjs",
     "test/packaged-gstack-history.test.mjs",
-    "test/packaged-gstack-startup.test.ts",
     "test/packaged-office-native-bootstrap.test.mjs",
     "test/packaged-office-native-published-review.test.mjs",
     "test/packaged-office-native-resources.test.mjs",

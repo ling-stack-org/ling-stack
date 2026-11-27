@@ -68,7 +68,7 @@ export async function inspectDesktopPrerequisites() {
     const directory = await realpath(process.env.RUNNER_TEMP ?? evidenceRoot);
     const volume = await statfs(directory);
     return { directory, availableBytes: volume.bavail * volume.bsize, totalBytes: volume.blocks * volume.bsize,
-      approval: "not_granted", budgetCheck: "gstack_producer_checks_live_capacity_before_each_stage" };
+      approval: "not_granted" };
   });
   if (target === "macos-arm64") {
     let runtimeObservation;
@@ -115,17 +115,6 @@ export async function inspectDesktopPrerequisites() {
       return { reviewId: review.reviewId };
     });
   }
-  await check("bundled-gstack-resources", async () => {
-    const selectionPath = join(repositoryRoot, ".ling-stack/build/gstack-desktop-selection.json");
-    try { await readFile(selectionPath); }
-    catch (error) {
-      if (error.code === "ENOENT") throw new Error("Missing genuine platform gstack selection. Current retained local resources are not a cross-platform release producer.");
-      throw error;
-    }
-    const { preparePackagedGstackBuild } = await import("../../apps/desktop/scripts/packaged-gstack-resources.mjs");
-    const identity = await preparePackagedGstackBuild({ required: true });
-    return { identity, publicDistributionApproval: "not_established_by_package_inspection" };
-  });
   const report = { ...candidate, target, operation: "inspect", approval: "not_granted",
     buildPrerequisitesPass: checks.every(check => check.status === "passed"),
     artifactAcceptance: "not_run", distributionMaterials: "must_be_generated_and_verified_for_this_build", checks };

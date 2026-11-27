@@ -55,6 +55,12 @@ async function load(root: string): Promise<PackagedSkillRuntime> {
   return admit(root, record.identity, record.browserChecksum);
 }
 
+/** Resolve only the generation already recorded by an authenticated skill snapshot. */
+export async function loadRetainedPackagedSkillGeneration(cache: string, manifestChecksum: string): Promise<PackagedSkillRuntime> {
+  if (!/^sha256:[a-f0-9]{64}$/.test(manifestChecksum) || await realpath(cache) !== cache) fail("identity_invalid");
+  return load(join(cache, manifestChecksum.slice(7)));
+}
+
 /** Immutable, bounded generations with atomic publication and process-restart retention.
  * Not a power-loss durability guarantee. Interrupted ownership requires review;
  * never evict a possibly pinned run or silently recover an unknown staging tree. */
