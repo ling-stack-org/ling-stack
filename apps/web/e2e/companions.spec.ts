@@ -108,6 +108,10 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | 
       if (policy.quietHours === null) delete policy.quietHours;
       companion = { ...companion, ...body, behaviorPolicy: policy }; json(response, { companion }); return;
     }
+    if (request.method === "DELETE") {
+      companion = { ...companion, status: "disabled" };
+      json(response, { companion }); return;
+    }
     json(response, { events: [] });
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -428,9 +432,46 @@ test("desktop companion retries teammate discovery after a transient daemon fail
   try {
     await page.goto("/?companionWindow=1");
     const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await expect(panel.getByRole("img", { name: "Yui", exact: true })).toBeInViewport();
     await expect(panel.locator(".companion-mini-avatar-wrap .teammate-avatar-image")).toHaveCount(1, { timeout: 12_000 });
     expect(teammateReads).toBeGreaterThanOrEqual(2);
     expect(companionReads).toBeGreaterThanOrEqual(2);
+  } finally { await f.close(); }
+});
+
+test("Yui and a pending approval are both visible in a narrow unconfigured desktop companion", async ({ page }) => {
+  const f = await fixture(page, "normal", 0, { empty: true });
+  try {
+    await page.setViewportSize({ width: 380, height: 480 });
+    await page.addInitScript(workspace => {
+      Object.defineProperty(window, "lingCompanionDesktop", {
+        value: {
+          cwd: workspace,
+          daemonBaseUrl: "http://127.0.0.1:17891",
+          close: async () => ({ accepted: true }),
+          openSettings: async () => ({ accepted: true }),
+        },
+      });
+    }, cwd);
+    await mockAttentionCard(page, {
+      source: { workspaceId: "workspace_default", cwd, kind: "approval", id: "approval_release", approvalId: "approval_release" },
+      priority: "approval",
+      status: "pending",
+      payload: { kind: "approval", approvalId: "approval_release", status: "pending", risk: "medium" },
+      summary: "Review the release permission",
+    });
+    await page.goto("/?companionWindow=1");
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await expect(panel.getByRole("button", { name: "Close", exact: true })).toBeInViewport({ ratio: 1 });
+    const yui = panel.getByRole("img", { name: "Yui", exact: true });
+    await expect(yui).toBeInViewport({ ratio: 1 });
+    await expect(panel.getByRole("button", { name: "Open companion settings", exact: true })).toBeInViewport({ ratio: 1 });
+    const approve = panel.getByRole("button", { name: "Approve", exact: true });
+    await expect(approve).toBeInViewport({ ratio: 1 });
+    await approve.click({ trial: true });
+    await expect.poll(async () => (await yui.boundingBox())?.height ?? 0).toBeGreaterThan(180);
+    const evidence = process.env.LING_COMPANION_VISUAL_EVIDENCE;
+    if (evidence) await page.screenshot({ path: `${evidence}/companion-yui-fallback-approval.png`, omitBackground: true });
   } finally { await f.close(); }
 });
 
@@ -633,17 +674,57 @@ test("companion settings persist explicit cooldown and quiet hours and can clear
   } finally { await f.close(); }
 });
 
-test("the first companion form defaults to proactive behavior off", async ({ page }) => {
+test("Yui appears whenever the workspace has no usable companion", async ({ page }) => {
   const f = await fixture(page, "normal", 0, { empty: true });
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
   try {
     await page.goto("/");
-    await page.locator(".companion-config-button").click();
-    await page.getByRole("button", { name: "Open companion settings", exact: true }).evaluate((element) => (element as HTMLButtonElement).click());
+    const [listResponse] = await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === "/companions" && response.ok()),
+      page.locator(".companion-config-button").click(),
+    ]);
+    expect(await listResponse.json()).toMatchObject({ companions: [] });
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    const yui = panel.getByRole("img", { name: "Yui", exact: true });
+    const setup = panel.getByRole("button", { name: "Open companion settings", exact: true });
+    await expect(yui).toBeInViewport({ ratio: 1 });
+    await expect(yui).toHaveCSS("background-image", /yui-poses\.png/u);
+    await expect(setup).toBeVisible();
+    await expect(panel.getByRole("button", { name: "Talk", exact: true })).toHaveCount(0);
+    await expect(panel.getByRole("textbox", { name: "Message companion" })).toHaveCount(0);
+
+    const evidence = process.env.LING_COMPANION_VISUAL_EVIDENCE;
+    if (evidence) await panel.screenshot({ path: `${evidence}/companion-yui-fallback-wide.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(yui).toBeInViewport({ ratio: 1 });
+    await expect(setup).toBeInViewport({ ratio: 1 });
+    if (evidence) await panel.screenshot({ path: `${evidence}/companion-yui-fallback-narrow.png` });
+
+    await setup.click();
     const settings = page.locator(".companion-settings-page");
     await expect(settings.getByLabel("Allow proactive companion prompts")).not.toBeChecked();
-    await settings.getByLabel("Companion name").fill("First Yui");
+    await settings.getByLabel("Companion name").fill("QA partner");
     await settings.getByRole("button", { name: "Create companion", exact: true }).last().click();
-    await expect.poll(() => f.companion.behaviorPolicy).toEqual({ proactiveEnabled: false, cooldownMs: 900_000 });
+    await expect.poll(() => f.companion).toMatchObject({
+      displayName: "QA partner",
+      behaviorPolicy: { proactiveEnabled: false, cooldownMs: 900_000 },
+    });
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await settings.getByRole("button", { name: "Show mini companion", exact: true }).click();
+    await expect(panel.getByRole("img", { name: "QA partner", exact: true })).toBeVisible();
+    await expect(yui).toHaveCount(0);
+    await panel.getByRole("button", { name: "Talk", exact: true }).click();
+    await expect(panel.getByRole("textbox", { name: "Message companion" })).toBeFocused();
+
+    await panel.getByRole("button", { name: "Close", exact: true }).click();
+    await settings.getByRole("button", { name: "Disable companion", exact: true }).click();
+    await expect.poll(() => f.companion.status).toBe("disabled");
+    await settings.getByRole("button", { name: "Show mini companion", exact: true }).click();
+    await expect(yui).toBeInViewport({ ratio: 1 });
+    await expect(panel.getByRole("button", { name: "Talk", exact: true })).toHaveCount(0);
+    expect(errors).toEqual([]);
   } finally { await f.close(); }
 });
 
