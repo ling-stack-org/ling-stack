@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "acorn": "8.19.0",
-    "@agentclientprotocol/sdk": "2.9.1",
+    "@agentclientprotocol/sdk": "2.7.0",
     "@anthropic-ai/sdk": "0.135.0",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/browser-host": "workspace:*",
