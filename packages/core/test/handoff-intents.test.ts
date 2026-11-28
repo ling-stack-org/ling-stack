@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { ChannelHandoff, WorkflowHandoffIntent } from "../dist/index.js";
 import {
   normalizeChannelHandoffToLingIntent,
   normalizeLingHandoffIntents,
@@ -7,7 +8,7 @@ import {
 } from "../dist/index.js";
 
 test("normalizes channel handoffs into shared Ling handoff intents", () => {
-  const handoff = {
+  const handoff: ChannelHandoff = {
     id: "handoff_channel",
     workspaceId: "workspace_default",
     channelId: "channel_1",
@@ -54,7 +55,7 @@ test("normalizes channel handoffs into shared Ling handoff intents", () => {
 });
 
 test("normalizes workflow handoff intents and preserves explicit source refs", () => {
-  const intent = {
+  const intent: WorkflowHandoffIntent = {
     schemaVersion: 1,
     id: "wf_handoff_intent_1",
     workspaceId: "workspace_default",
@@ -124,7 +125,7 @@ test("normalizes workflow handoff intents and preserves explicit source refs", (
   assert.equal(normalized.inputPacket.workflowId, "workflow_1");
   assert.equal(normalized.inputPacket.sourceWorkflowStepId, "step_1");
   assert.deepEqual(normalized.inputPacket.agentContext, intent.agentContext);
-  assert.equal(normalized.validation.targetTeammateExists, true);
+  assert.equal(normalized.validation?.targetTeammateExists, true);
 });
 
 test("normalizes mixed handoff intents in newest-first order", () => {
@@ -144,7 +145,7 @@ test("normalizes mixed handoff intents in newest-first order", () => {
     createdAt: "2026-06-19T02:00:00.000Z",
     updatedAt: "2026-06-19T02:00:00.000Z",
   });
-  const workflow = {
+  const workflow: WorkflowHandoffIntent = {
     schemaVersion: 1,
     id: "wf_handoff_intent_new",
     workspaceId: "workspace_default",
