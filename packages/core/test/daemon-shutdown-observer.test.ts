@@ -5,11 +5,13 @@ import { closeSync, openSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { observeDaemonShutdown, DAEMON_SHUTDOWN_OBSERVER_MAX_BYTES } from "../dist/daemon-shutdown-observer.js";
+import { observeDaemonShutdown, DAEMON_SHUTDOWN_OBSERVER_MAX_BYTES, type DaemonShutdownObserverError, type DaemonShutdownPhase } from "../dist/daemon-shutdown-observer.js";
 
-const frame = (phase, extra = {}) => `${JSON.stringify({ schemaVersion: 1, pid: 42, phase, ...extra })}\n`;
+const frame = (phase: DaemonShutdownPhase | "stopped", extra: Record<string, unknown> = {}) => `${JSON.stringify({ schemaVersion: 1, pid: 42, phase, ...extra })}\n`;
 function fixture(pid = 42) {
-  const channel = new PassThrough(), phases = [], unavailable = [];
+  const channel = new PassThrough();
+  const phases: DaemonShutdownPhase[] = [];
+  const unavailable: DaemonShutdownObserverError["code"][] = [];
   const closed = once(channel, "close");
   const dispose = observeDaemonShutdown({ channel, pid,
     onPhase: value => phases.push(value), onUnavailable: value => unavailable.push(value) });
@@ -41,7 +43,7 @@ for (const [kind, wire] of Object.entries({
   f.channel.end(wire);
   await f.closed;
   assert.deepEqual(f.unavailable, ["daemon_shutdown_observer_invalid"]);
-  assert.ok(!f.phases.includes("stopped"));
+  assert.equal(f.phases.includes("stopped" as DaemonShutdownPhase), false);
 });
 
 test("EOF before actual child exit is unavailable, never stopped", async () => {
@@ -75,7 +77,9 @@ test("invalid expected identities and lost or disposed channels cannot publish n
 });
 
 test("a failed callback is isolated, sanitized and disposes the reader", async () => {
-  const channel = new PassThrough(), closed = once(channel, "close"), failures = [];
+  const channel = new PassThrough();
+  const closed = once(channel, "close");
+  const failures: DaemonShutdownObserverError["code"][] = [];
   observeDaemonShutdown({ channel, pid: 42,
     onPhase: () => { throw new Error("private_callback_detail"); },
     onUnavailable: code => { failures.push(code); throw new Error("failed_diagnostic"); } });
@@ -98,13 +102,19 @@ test("actual inherited FD5 reporter binds PID and emits at most draining then bl
   `], { stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", "pipe"] });
   const exited = once(child, "exit");
   let output = "";
-  child.stdout.on("data", chunk => { output += chunk; });
-  child.stderr.on("data", chunk => { output += chunk; });
+  child.stdout?.on("data", chunk => { output += chunk; });
+  child.stderr?.on("data", chunk => { output += chunk; });
   t.after(async () => {
     if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exited; }
   });
-  const phases = [], failures = [], ended = once(child.stdio[5], "close");
-  observeDaemonShutdown({ channel: child.stdio[5], pid: child.pid,
+  const phases: DaemonShutdownPhase[] = [];
+  const failures: DaemonShutdownObserverError["code"][] = [];
+  const childChannel = (child.stdio as unknown as Array<import("node:stream").Readable | null>)[5];
+  assert.ok(childChannel);
+  const childPid = child.pid;
+  assert.ok(childPid);
+  const ended = once(childChannel, "close");
+  observeDaemonShutdown({ channel: childChannel, pid: childPid,
     onPhase: phase => phases.push(phase), onUnavailable: code => failures.push(code) });
   assert.deepEqual(await exited, [0, null], output);
   await ended;

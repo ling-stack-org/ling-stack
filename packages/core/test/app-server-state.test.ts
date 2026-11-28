@@ -15,6 +15,7 @@ test("App Server state survives SQLite reopen with CAS and idempotency", async (
       idempotencyKey: "plan-idem-1",
       payload: { candidateDigest: "candidate-1", checks: ["typecheck"] },
     }, "2026-11-21T00:00:00.000Z");
+    assert.ok(created);
     assert.equal(created.status, "created");
     assert.equal(created.record.revision, 1);
     const replay = store.putAppServerState({
@@ -24,6 +25,7 @@ test("App Server state survives SQLite reopen with CAS and idempotency", async (
       idempotencyKey: "plan-idem-1",
       payload: { candidateDigest: "candidate-1", checks: ["typecheck"] },
     }, "2026-11-21T00:01:00.000Z");
+    assert.ok(replay);
     assert.equal(replay.status, "replayed");
     assert.equal(store.putAppServerState({
       kind: "verify_plan",
@@ -41,6 +43,7 @@ test("App Server state survives SQLite reopen with CAS and idempotency", async (
       idempotencyKey: "plan-idem-2",
       payload: { candidateDigest: "candidate-1", checks: ["typecheck", "test"] },
     }, "2026-11-21T00:03:00.000Z");
+    assert.ok(updated);
     assert.equal(updated.status, "updated");
     assert.equal(updated.record.revision, 2);
   } finally {
