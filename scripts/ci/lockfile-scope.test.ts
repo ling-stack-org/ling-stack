@@ -58,6 +58,7 @@ test("lockfile changes select the importer whose dependency closure changed", ()
     mode: "affected",
     directories: ["apps/alpha", "apps/beta"],
     runtimeDirectories: ["apps/alpha"],
+    directRuntimeDirectories: ["apps/alpha"],
     reason: "verified lockfile dependency closure",
   });
 });
@@ -68,6 +69,7 @@ test("importer-only resolution changes remain scoped when the target node alread
     mode: "affected",
     directories: ["apps/alpha"],
     runtimeDirectories: ["apps/alpha"],
+    directRuntimeDirectories: ["apps/alpha"],
     reason: "verified lockfile dependency closure",
   });
 });
