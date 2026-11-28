@@ -4,22 +4,23 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import type { RunEventEnvelope } from "../dist/index.js";
 import * as eventLog from "../dist/storage/event-log.js";
 
-const event = { id: "mirror-fact", runId: "mirror-run", seq: 1,
-  ts: "2026-10-19T00:00:00.000Z", type: "run_created", data: { taskId: "mirror-task" } };
+const event: RunEventEnvelope = { id: "mirror-fact", runId: "mirror-run", seq: 1,
+  ts: "2026-10-19T00:00:00.000Z", type: "run_created", data: { taskId: "mirror-task" } } as RunEventEnvelope;
 
 for (const [method, operation] of [["mkdirSync", "prepare_directory"], ["readFileSync", "read"],
-  ["appendFileSync", "append"]]) {
+  ["appendFileSync", "append"]] as const) {
   for (const code of ["EDQUOT", "ESTALE", "ETIMEDOUT"]) {
-    test(`event mirror classifies ${operation} ${code} at its filesystem boundary`, async t => {
+    test(`event mirror classifies ${operation} ${code} at its filesystem boundary`, async (t: TestContext) => {
       const root = await mkdtemp(join(tmpdir(), "ling-mirror-io-"));
       t.after(() => rm(root, { recursive: true, force: true }));
       const path = join(root, "events.jsonl");
       const fault = Object.assign(new Error("Synthetic filesystem fault"), { code });
-      const original = fs[method];
-      const mocked = t.mock.method(fs, method, (...args) => {
+      const original = fs[method] as (...args: any[]) => any;
+      const mocked = t.mock.method(fs as any, method, (...args: any[]) => {
         if (args[0] === (method === "mkdirSync" ? dirname(path) : path)) throw fault;
         return Reflect.apply(original, fs, args);
       });
@@ -36,9 +37,9 @@ for (const [method, operation] of [["mkdirSync", "prepare_directory"], ["readFil
   }
 }
 
-test("event mirror serialization failure is not disguised as filesystem I/O", async t => {
+test("event mirror serialization failure is not disguised as filesystem I/O", async (t: TestContext) => {
   const root = await mkdtemp(join(tmpdir(), "ling-mirror-serialization-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const data = {}; data.circular = data;
-  assert.throws(() => eventLog.ensureEventLogLine(join(root, "events.jsonl"), { ...event, data }), TypeError);
+  const data: Record<string, unknown> = {}; data.circular = data;
+  assert.throws(() => eventLog.ensureEventLogLine(join(root, "events.jsonl"), { ...event, data } as RunEventEnvelope), TypeError);
 });
