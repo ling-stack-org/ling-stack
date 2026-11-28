@@ -7,7 +7,7 @@ import test from "node:test";
 import { classifyChangedFiles } from "./classify-scope.mjs";
 import { analyzeLockfileChange } from "./lockfile-scope.mjs";
 import { auditScope, auditTestPlanSubset } from "./scope-audit.mjs";
-import { hasDaemonBabelParserCoverage } from "./test-file-profiles.mjs";
+import { daemonBabelParser, hasDaemonBabelParserCoverage } from "./test-file-profiles.mjs";
 import { createTestPlan } from "./test-shard-plan.mjs";
 
 const daemon = "@ling-stack/daemon";
@@ -38,6 +38,11 @@ const currentDesktop = {
 const mobilePackage = {
   directory: "apps/mobile", name: mobile, dependencies: [],
   hasTestScript: true, hasTypecheckScript: true, scriptsFingerprint: "[]",
+};
+const webPackage = {
+  directory: "apps/web", name: "@ling-stack/web", dependencies: [],
+  hasTestScript: true, hasTypecheckScript: true, scriptsFingerprint: "[]",
+  manifest: { name: "@ling-stack/web", devDependencies: { "@playwright/test": "1.65.1" } },
 };
 
 function lockfile(parser: string, electron: string, mobileHelper: string, verifyHelper = "1.0.0") {
@@ -126,9 +131,35 @@ test("an isolated Daemon parser update runs the Linux consumers and preserves ot
   assert.equal(auditTestPlanSubset(plan, fullPlan).passed, true);
 });
 
+test("a transitive runtime closure from another development update does not widen the Daemon parser profile", () => {
+  const runner = {
+    directory: "packages/runner-pi", name: "@ling-stack/runner-pi", dependencies: [],
+    hasTestScript: true, hasTypecheckScript: true, scriptsFingerprint: "[]",
+  };
+  const cli = {
+    directory: "packages/cli", name: "@ling-stack/cli", dependencies: [daemon],
+    hasTestScript: true, hasTypecheckScript: true, scriptsFingerprint: "[]",
+  };
+  const daemonWithRunner = { ...currentDaemon, dependencies: [runner.name] };
+  const scope = classify({
+    files: ["apps/web/package.json", "packages/daemon/package.json", "pnpm-lock.yaml"],
+    packageEntries: [webPackage, daemonWithRunner, runner, cli],
+    basePackageEntries: [{ ...webPackage }, { ...previousDaemon, dependencies: [runner.name] }, { ...runner }, { ...cli }],
+    lockfileScope: {
+      mode: "affected",
+      directories: ["apps/web", "packages/daemon", "packages/runner-pi"],
+      runtimeDirectories: ["packages/runner-pi"],
+      isolatedDevelopmentUpdates: new Map([["packages/daemon", { name: daemonBabelParser, before: "8.1.2", after: "8.1.3" }]]),
+      reason: "verified lockfile dependency closure",
+    },
+  });
+  assert.equal(scope.testProfile, "daemon-babel-parser");
+  assert.deepEqual(scope.daemonPlatforms, ["linux"]);
+});
+
 test("another Daemon development dependency's transitive update retains both platforms", () => {
   const lockfileScope = analyzeLockfileChange({
-    before, after: lockfile("8.1.3", "45.4.1", "1.0.1", "1.0.1"),
+    before, after: lockfile("8.1.2", "45.4.1", "1.0.1", "1.0.1"),
   });
   assert.equal(lockfileScope.mode, "affected");
   assert.ok(lockfileScope.directories.includes("packages/daemon"));

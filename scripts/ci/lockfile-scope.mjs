@@ -9,7 +9,7 @@ const DEPENDENCY_SECTIONS = new Set(["dependencies", "devDependencies", "optiona
  * Trace changes in a pnpm v9 lockfile to workspace importers. Unsupported
  * lockfile shapes and changes to shared settings use the full CI scope.
  * @param {{before: string, after: string}} input
- * @returns {{mode: "affected"|"full", directories: string[], runtimeDirectories: string[], isolatedDevelopmentUpdates?: Map<string, PinnedDependencyUpdate>, reason: string}}
+ * @returns {{mode: "affected"|"full", directories: string[], runtimeDirectories: string[], directRuntimeDirectories?: string[], isolatedDevelopmentUpdates?: Map<string, PinnedDependencyUpdate>, reason: string}}
  */
 export function analyzeLockfileChange({ before, after }) {
   const base = parseLockfile(before);
@@ -34,17 +34,21 @@ export function analyzeLockfileChange({ before, after }) {
   const reachedChanges = new Set();
   const directories = [];
   const runtimeDirectories = [];
+  const directRuntimeDirectories = [];
   const isolatedDevelopmentUpdates = new Map();
   for (const [directory, previous] of base.importers) {
     const current = head.importers.get(directory);
+    const directRuntimeChanges = changedDirectImporterDependencies(previous.runtime, current.runtime);
+    const directDevelopmentChanges = changedDirectImporterDependencies(previous.development, current.development);
     const runtimeChanges = changedImporterDependencies(previous.runtime, current.runtime, base, head, changedNodes, reachedChanges);
     const developmentChanges = changedImporterDependencies(previous.development, current.development, base, head, changedNodes, reachedChanges);
     if (runtimeChanges.size === 0 && developmentChanges.size === 0) continue;
     if (directory === ".") return full("root lockfile dependency closure changed");
     directories.push(directory);
     if (runtimeChanges.size > 0) runtimeDirectories.push(directory);
-    if (runtimeChanges.size === 0 && developmentChanges.size === 1) {
-      const [name] = developmentChanges;
+    if (directRuntimeChanges.size > 0) directRuntimeDirectories.push(directory);
+    if (directRuntimeChanges.size === 0 && directDevelopmentChanges.size === 1) {
+      const [name] = directDevelopmentChanges;
       const from = previous.development.get(name);
       const to = current.development.get(name);
       if (from?.reference && to?.reference && from.specifier === from.version && to.specifier === to.version
@@ -59,6 +63,7 @@ export function analyzeLockfileChange({ before, after }) {
   }
   if (directories.length === 0) return full("lockfile changed without a verifiable dependency graph delta");
   return { mode: "affected", directories: directories.sort(), runtimeDirectories: runtimeDirectories.sort(),
+    ...(directRuntimeDirectories.length ? { directRuntimeDirectories: directRuntimeDirectories.sort() } : {}),
     ...(isolatedDevelopmentUpdates.size ? { isolatedDevelopmentUpdates } : {}),
     reason: "verified lockfile dependency closure" };
 }
@@ -89,6 +94,11 @@ function changedImporterDependencies(previous, current, base, head, changedNodes
     }
   }
   return affected;
+}
+
+function changedDirectImporterDependencies(previous, current) {
+  const names = new Set([...previous.keys(), ...current.keys()]);
+  return new Set([...names].filter(name => !isDeepStrictEqual(previous.get(name), current.get(name))));
 }
 
 function parseLockfile(text) {

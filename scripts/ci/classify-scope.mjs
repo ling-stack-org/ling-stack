@@ -319,7 +319,7 @@ export function classifyChangedFiles(input) {
     && scopeFiles.includes(LOCKFILE) && scopeFiles.includes("packages/daemon/package.json")
     && scopeFiles.every(file => file === LOCKFILE || dependencyOnlyManifests.has(file) || isDocumentationPath(file))
     && !testSupportImporters.has("@ling-stack/daemon")
-    && matchesDaemonBabelParserUpdate({ lockfileScope: input.lockfileScope, dependencyGraph, affectedNames,
+    && matchesDaemonBabelParserUpdate({ lockfileScope: input.lockfileScope, dependencyGraph,
       basePackageEntries: input.basePackageEntries });
   const daemonPlatforms = deviceProfile || daemonParserUpdate ? ["linux"] : affectedNames.has("@ling-stack/daemon")
     ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters }) : [];
@@ -362,8 +362,8 @@ export function classifyChangedFiles(input) {
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
 /** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, testProfile?: "device"|"terminal-report"|typeof daemonBabelParserProfile, testFiles?: Record<string, string[]>, documentationOnly?: boolean, reason: string}} CiScope */
 
-/** @param {{lockfileScope?: LockfileScope, dependencyGraph: PackageEntry[], affectedNames: Set<string>, basePackageEntries?: PackageEntry[]}} input */
-function matchesDaemonBabelParserUpdate({ lockfileScope, dependencyGraph, affectedNames, basePackageEntries }) {
+/** @param {{lockfileScope?: LockfileScope, dependencyGraph: PackageEntry[], basePackageEntries?: PackageEntry[]}} input */
+function matchesDaemonBabelParserUpdate({ lockfileScope, dependencyGraph, basePackageEntries }) {
   const directory = "packages/daemon";
   const daemon = "@ling-stack/daemon";
   const update = lockfileScope?.isolatedDevelopmentUpdates?.get(directory);
@@ -377,13 +377,24 @@ function matchesDaemonBabelParserUpdate({ lockfileScope, dependencyGraph, affect
       ...previous, devDependencies: { ...previous.devDependencies, [daemonBabelParser]: update.after },
     })) return false;
 
-  const otherAffected = new Set([...affectedNames].filter(name => name !== daemon));
-  const visited = new Set();
-  for (const name of [...otherAffected]) collectDependents(name, dependencyGraph, otherAffected, visited);
-  const validationInputs = [...VALIDATION_INPUT_BUILD_DEPENDENCIES]
-    .filter(([file]) => file.startsWith(directory + "/")).flatMap(([, packages]) => packages);
-  if (otherAffected.has(daemon) || [...(VALIDATION_BUILD_DEPENDENCIES.get(daemon) ?? []), ...validationInputs]
-    .some(name => otherAffected.has(name))) return false;
+  const packagesByDirectory = new Map(dependencyGraph.map(entry => [entry.directory, entry.name]));
+  const previousDaemon = basePackageEntries?.find(entry => entry.directory === directory);
+  const currentDaemon = dependencyGraph.find(entry => entry.directory === directory);
+  if (!previousDaemon || !currentDaemon
+    || !isDeepStrictEqual(new Set(previousDaemon.dependencies), new Set(currentDaemon.dependencies))) return false;
+  const daemonDependencies = new Set([
+    ...(previousDaemon?.dependencies ?? []),
+    ...(currentDaemon.dependencies ?? []),
+    ...(VALIDATION_BUILD_DEPENDENCIES.get(daemon) ?? []),
+    ...[...VALIDATION_INPUT_BUILD_DEPENDENCIES]
+      .filter(([file]) => file.startsWith(directory + "/"))
+      .flatMap(([, packages]) => packages),
+  ]);
+  const directRuntimeDirectories = lockfileScope.directRuntimeDirectories ?? [];
+  if (directRuntimeDirectories.some(changedDirectory => {
+    const name = packagesByDirectory.get(changedDirectory);
+    return changedDirectory === directory || (name !== undefined && daemonDependencies.has(name));
+  })) return false;
 
   const platformManifest = loadDaemonPlatformManifest();
   return daemonBabelParserTestFiles.every(file => platformManifest?.get(file) === "linux")
